@@ -162,6 +162,11 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         "TaskHandle",
         &[handle("SPICE-aBcD"), handle("WIRE-1kJJP2Qc")],
     );
+    spelling_law(
+        covered,
+        "TaskStamp",
+        &[stamp("00000000"), stamp("00000001"), stamp("0000000B")],
+    );
     spelling_law(covered, "Phase", &[phase("todo"), phase("review")]);
     spelling_law(
         covered,
@@ -264,16 +269,14 @@ fn any_fact<F: wire::Body>(fact: Fact<F>) -> AnyFact {
 /// Task statement and workflow heads.
 fn cover_task_heads(covered: &mut BTreeSet<String>) {
     let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
-    let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
-    let task = handle("SPICE-aBcD");
+    let task = stamp("1kKRRsDP");
 
     law(
         covered,
         "TaskHead",
         &[
             TaskHead {
-                handle: task.clone(),
-                uuid: first_uuid,
+                incepted: task.clone(),
                 queue_origin: seq(9),
                 title: "Build the gate".to_owned(),
                 description: None,
@@ -285,16 +288,15 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
                 revision: seq(10),
             },
             TaskHead {
-                handle: task.clone(),
-                uuid: second_uuid,
+                incepted: task.clone(),
                 queue_origin: seq(9),
                 title: "Review the gate".to_owned(),
                 description: Some("Confirm every edge".to_owned()),
                 acceptance: vec!["The gate passes".to_owned()],
                 project: "gate".to_owned(),
                 tags: vec!["guard".to_owned(), "review".to_owned()],
-                dependencies: vec![handle("WIRE-eFgH")],
-                provenance: "task:SPICE-aBcD".parse().expect("origin"),
+                dependencies: vec![stamp("1kKRRsDQ")],
+                provenance: "task:1kKRRsDP".parse().expect("origin"),
                 revision: seq(11),
             },
         ],
@@ -898,11 +900,11 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
         "Witness",
         &[
             Witness::Task {
-                task: handle("SPICE-aBcD"),
+                task: stamp("1kKRRsDP"),
                 head: seq(48190),
             },
             Witness::Workflow {
-                task: handle("SPICE-aBcD"),
+                task: stamp("1kKRRsDP"),
                 head: seq(48190),
                 phase: "todo".parse().expect("phase"),
             },

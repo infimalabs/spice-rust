@@ -30,6 +30,68 @@ const FAILURE_EXCERPT_LIMIT: usize = 16 * 1024;
 const RECORD_FRAME_LIMIT: usize = 256 * 1024;
 const RECORD_QUEUE_CAPACITY: usize = 4_096;
 
+/// Successful typed inventory of every target the canonical test execution ran.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceTestExecution {
+    tests: Vec<String>,
+}
+
+impl WorkspaceTestExecution {
+    /// Stable package-qualified test-target identities in execution inventory order.
+    #[must_use]
+    pub fn tests(&self) -> &[String] {
+        &self.tests
+    }
+
+    /// Join canonical target execution with authoritative per-test coverage.
+    ///
+    /// Complete coverage must include every executed target. It may also name
+    /// unexecuted suite targets so the graph can expose a suite-seam reach edge.
+    pub fn publish(
+        &self,
+        source: wire::Digest,
+        changed_sources: Vec<String>,
+        coverage: Vec<gate::TestCoverage>,
+        completeness: gate::CoverageCompleteness,
+    ) -> Result<gate::CanonicalTestExecution, WorkspaceTestError> {
+        gate::CanonicalTestExecution::new(
+            source,
+            changed_sources,
+            self.tests.clone(),
+            coverage,
+            completeness,
+        )
+        .map_err(|error| WorkspaceTestError::new(error.to_string()))
+    }
+
+    /// Publish an explicit non-clean graph input when no coverage authority completed.
+    pub fn publish_unknown(
+        &self,
+        source: wire::Digest,
+        changed_sources: Vec<String>,
+        reason: impl Into<String>,
+    ) -> Result<gate::CanonicalTestExecution, WorkspaceTestError> {
+        let completeness = gate::CoverageCompleteness::unknown(reason)
+            .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
+        self.publish(source, changed_sources, Vec::new(), completeness)
+    }
+
+    fn from_inventory(inventory: &Inventory) -> Self {
+        let mut tests = inventory
+            .packages
+            .iter()
+            .flat_map(|package| {
+                package
+                    .targets
+                    .iter()
+                    .map(|target| format!("{}::{}", package.name, target.display()))
+            })
+            .collect::<Vec<_>>();
+        tests.sort();
+        Self { tests }
+    }
+}
+
 /// A refusal from the bounded workspace-test coordinator.
 #[derive(Debug)]
 pub struct WorkspaceTestError {
@@ -65,24 +127,44 @@ pub fn run(
     environment: Environment,
     concurrency: usize,
     output: &mut impl Write,
-) -> Result<(), WorkspaceTestError> {
-    let policy = RunPolicy::production(concurrency)?;
+) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
     let root = env::current_dir().map_err(|error| {
         WorkspaceTestError::new(format!("working directory unavailable: {error}"))
     })?;
-    let inventory = acquire_inventory(&root, &environment, OsStr::new("cargo"))?;
+    run_at(&root, environment, concurrency, output)
+}
+
+/// Run the canonical workspace-test coordinator against one already selected root.
+///
+/// This is the same inventory, partitioner, process contract, and coordinator as
+/// [`run`]; only the working root is supplied by the caller that owns an
+/// immutable source selection.
+///
+/// # Errors
+///
+/// Returns metadata, partition, launch, supervision, timeout, or test failures.
+pub fn run_at(
+    root: &Path,
+    environment: Environment,
+    concurrency: usize,
+    output: &mut impl Write,
+) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
+    let policy = RunPolicy::production(concurrency)?;
+    let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
+    let execution = WorkspaceTestExecution::from_inventory(&inventory);
     let shards = partition(&inventory);
     validate_partition(&inventory, &shards)?;
     let policy = policy.for_shards(shards.len());
     Coordinator::new(
         shards,
-        root,
+        root.to_path_buf(),
         environment,
         OsString::from("cargo"),
         policy,
         output,
     )
-    .run()
+    .run()?;
+    Ok(execution)
 }
 
 #[derive(Clone, Debug, Deserialize)]

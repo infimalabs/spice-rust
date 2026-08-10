@@ -116,7 +116,7 @@ pub(super) fn next_topology_revision(
     if observed != head.topology_revision {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
-                "lane::topology-moved".to_owned(),
+                "lane::topology-moved",
                 Some("topology_revision".to_owned()),
                 Some(observed.to_string()),
                 Some(head.topology_revision.to_string()),

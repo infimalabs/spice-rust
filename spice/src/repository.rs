@@ -11,6 +11,86 @@
 //! `<git-dir>/spice-rs-agent.gitconfig`. Neither implementation relies on
 //! byte-compatible whole-file writes by the other.
 //!
+//! The policy that shared root imposes:
+//!
+//! 1. No command in this port may import, convert, or rewrite the predecessor's
+//!    durable state, and none may do so as an incidental effect of another verb.
+//!    An in-place rewrite is still an in-place rewrite when it is called a
+//!    migration.
+//! 2. The only paths this runtime creates or writes under that root are the ones
+//!    [`StatePaths::owned_directories`] and [`StatePaths::owned_files`] name,
+//!    plus whatever sits inside a [`StatePaths::exclusive_directories`] entry --
+//!    a lock is named after whoever asked for it, so no list could enumerate one
+//!    in advance. Everything else under the root is another system's property
+//!    and is left exactly as found, byte for byte.
+//! 3. A cross-system bridge is refused by default. The sole translator that
+//!    exists, `spice config migrate-tasks`, runs only when an operator names an
+//!    export path on the command line, reads that one file, and writes nothing.
+//!
+//! `tests/coexistence.rs` enforces 2 and 3 by identity rather than by reading
+//! this comment: it seeds predecessor-owned files under a fixture root, runs the
+//! binary, and compares the bytes back.
+//!
+//! # Why the root is shared rather than split
+//!
+//! Taking a distinct Rust-owned root beside the predecessor's was considered and
+//! rejected. The two systems are already disjoint inside the one root, so a
+//! split would buy a separation that is there, at the cost of moving every path
+//! below and stranding the state written under the old name:
+//!
+//! * The **journal** is separate by filename. This port writes
+//!   `data/spicejournal.sqlite3` and `data/spicefolds.sqlite3`. The predecessor
+//!   writes `spiceacks`, `spicemaxims`, `spiceprojections`, `spiceteams` and
+//!   `taskchampion` beside them. Neither opens a database the other writes, so
+//!   an operator running both at once has no journal to cross-write -- the
+//!   guarantee holds per file, and does not depend on the two never running
+//!   together.
+//! * **Config** is separate by name and anchor. This runtime reads tracked
+//!   `spice-rust.toml` plus common-root `.spice-rs/config.toml`; the predecessor
+//!   owns tracked `spice.toml` plus its `<git-dir>/.spice` configuration.
+//! * **Hooks** were separate before the question was asked: the installer owns
+//!   `.spice-install/`, which is not under this root at all.
+//! * **Worktree Git-dir state** is not shared, because this port keeps none.
+//!   Every `.spice` here hangs off the Git *common* directory --
+//!   [`Repository::admit_state`], `gate::state::current_state_path` and
+//!   `crate::config::load::locations` all anchor there -- so `<git-dir>/.spice`
+//!   is the predecessor's per-worktree config root alone, and no path in this
+//!   port constructs it.
+//!
+//! Under the shared root, `artifacts/tasks/<INCEPTION-STAMP>/` is the Rust
+//! artifact path. Its directory key is the same sole identity stored by the
+//! board; the current rendered handle is never a second filesystem authority.
+//!
+//! # The one file both write outside the shared root
+//!
+//! `<git-dir>/agent.gitconfig` is written by both systems, at the per-worktree
+//! Git directory `rev-parse --absolute-git-dir` reports and not under any
+//! `.spice`. [`crate::git_shadow`] publishes it here and the predecessor's
+//! `spice/agent/shadow.py` publishes it there. Neither contributes an entry to
+//! it: each writes the whole file, so the bytes the later run leaves are the
+//! only bytes left.
+//!
+//! That is safe today only because the two generate identical bytes and both
+//! read the file back before writing, so whichever runs second finds its own
+//! content already there and writes nothing. It stays safe only while they stay
+//! agreed on every part of it: the filename, the `--absolute-git-dir` anchor,
+//! the header line, the `[include]` and `[branch]` section order, the tab
+//! indentation and trailing newline, the subsection quoting -- backslash then
+//! quote, in that order -- and the `git config --system --edit` probe under
+//! `GIT_EDITOR=echo` that fills in the include path. Change one of those on one
+//! side and the two overwrite each other on every alternating run, each leaving
+//! a file the other replaces, with nothing anywhere to notice it.
+//!
+//! Policy point 2 and `tests/coexistence.rs` do not reach this file: both are
+//! scoped to `<git-common-dir>/.spice`, and this path is under neither. What
+//! holds it is `tests/git_shadow.rs`, which pins the anchor and filename against
+//! a linked worktree, where the per-worktree Git directory and the common one
+//! are different paths. It also pins the complete bytes for a simple branch --
+//! header, section order, tab indentation and trailing newline -- plus the
+//! reachable double-quote subsection escaping. Git refuses backslashes in a
+//! refname, so that first escape replacement is recorded at the writer as a
+//! defensive predecessor-compatible arm rather than covered by a forged branch.
+//!
 //! Release-one `.spice-rust` state remains retired and is refused explicitly.
 //! Previous shared-root state under `.spice` is not admitted as current state:
 //! reading it would recreate the routing ambiguity this namespace boundary is

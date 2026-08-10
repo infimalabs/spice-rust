@@ -210,7 +210,7 @@ fn schema_six_migration_requires_one_explicit_rebuild_then_stays_current() {
     ordinary
         .fact(
             TaskNoted {
-                task: "JOURNAL-a1".parse().expect("fixture task"),
+                task: "1kKRRsDP".parse().expect("fixture task"),
                 note: "normal write after steering rebuild".to_owned(),
             },
             FactCause::Root,

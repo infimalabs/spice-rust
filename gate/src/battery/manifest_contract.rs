@@ -102,14 +102,14 @@ impl BatteryManifest {
                 "battery predecessor release must be {PREDECESSOR_GATE_RELEASE:?}"
             )));
         }
-        if self.arms.len() != GateId::ALL.len() {
+        if self.arms.len() != GateId::BATTERY.len() {
             return Err(BatteryError::new(format!(
                 "battery manifest must contain exactly {} arms, received {}",
-                GateId::ALL.len(),
+                GateId::BATTERY.len(),
                 self.arms.len()
             )));
         }
-        for (position, (arm, expected)) in self.arms.iter().zip(GateId::ALL).enumerate() {
+        for (position, (arm, expected)) in self.arms.iter().zip(GateId::BATTERY).enumerate() {
             validate_arm(position, arm, expected)?;
         }
         Ok(())

@@ -10,6 +10,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use super::judge::{DEFAULT_JUDGE, FunctionJudge, failure, invoke, parse_yes_no};
 use super::store::{LearningStore, write_unchecked};
 use super::*;
+use crate::message_shape::classify;
 use crate::session_command::model::{MessageRecord, TurnRecord, Vendor};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -49,6 +50,7 @@ fn context(start: &str, end: &str) -> CompletionContext {
 }
 
 fn message(ts: &str, turn: &str, text: &str) -> MessageRecord {
+    let classified = classify(text);
     MessageRecord {
         source: "fixture.jsonl".to_owned(),
         ts: ts.to_owned(),
@@ -59,7 +61,8 @@ fn message(ts: &str, turn: &str, text: &str) -> MessageRecord {
         primary_flavor: "work".to_owned(),
         flavor_tags: Vec::new(),
         matched_cues: Vec::new(),
-        human: false,
+        shape: classified.shape,
+        authored: classified.authored.map(str::to_owned),
     }
 }
 
@@ -232,6 +235,31 @@ fn reversed_or_empty_completion_bounds_extract_nothing() {
 }
 
 #[test]
+fn generated_patch_and_tool_output_bodies_do_not_seed_learnings() {
+    let start = "2026-08-08T10:00:00.000Z";
+    let end = "2026-08-08T11:00:00.000Z";
+    let mut data = Dataset::default();
+    data.turns.push(turn(
+        "turn",
+        start,
+        end,
+        &[
+            "*** Begin Patch\n+Always adopt this generated patch sentence.\n*** End Patch",
+            "Process exited with code 0\nAlways adopt this generated tool output.",
+            "Always retain this assistant-authored operational fact.",
+        ],
+    ));
+
+    let candidates = extract(&data, &context(start, end));
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        candidates[0].statement,
+        "Always retain this assistant-authored operational fact"
+    );
+}
+
+#[test]
 fn transcript_and_candidate_input_are_bounded_before_judgment() {
     let scratch = Scratch::new("input-bound");
     let compressed = scratch.path().join("session.jsonl.gz");
@@ -391,9 +419,9 @@ fn task_done_declares_the_compiled_independent_judge() {
         .find(|tool| tool.name == DEFAULT_JUDGE)
         .expect("compiled learning judge is declared");
 
-    assert_eq!(tool.owner, "session_command::learnings::ProcessJudge");
+    assert_eq!(tool.owner, "judge::Process");
     assert_eq!(tool.requirement, wire::DoctorToolRequirement::Optional);
-    assert_eq!(tool.bounds, wire::DoctorToolBounds::TaskBoundary);
+    assert_eq!(tool.bounds, wire::DoctorToolBounds::Adjudication);
     assert_eq!(tool.cancellation, wire::DoctorToolCancellation::Deadline);
 }
 

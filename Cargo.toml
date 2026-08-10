@@ -45,5 +45,17 @@ disallowed_methods = "deny"
 [profile.dev]
 debug = 1
 
+[profile.dev.package.blake3]
+opt-level = 3
+
+[profile.dev.package.sha1]
+opt-level = 3
+
 [profile.test]
 debug = 1
+
+[profile.test.package.blake3]
+opt-level = 3
+
+[profile.test.package.sha1]
+opt-level = 3

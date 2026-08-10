@@ -562,7 +562,7 @@ fn sanitize(
         if !entry.layers().contains(&source) {
             let message = if entry.layers().contains(&ConfigSource::Tracked) {
                 format!(
-                    "{} is tracked policy; set it in tracked spice.toml",
+                    "{} is tracked policy; set it in tracked spice-rust.toml",
                     entry.template().as_str()
                 )
             } else {

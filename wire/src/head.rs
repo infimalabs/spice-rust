@@ -11,7 +11,7 @@ use crate::body::{
 };
 use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Disposition, Phase, TaskHandle};
+use crate::witness::{Disposition, Phase, TaskStamp};
 
 /// One allocator locality coordinate captured when a claim is won.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -27,10 +27,8 @@ pub struct ClaimCell {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskHead {
-    /// Public task name.
-    pub handle: TaskHandle,
-    /// Stable task identity.
-    pub uuid: CanonicalUuid,
+    /// Sole task identity, minted from its inception instant.
+    pub incepted: TaskStamp,
     /// Fact that first placed this task in the queue.
     pub queue_origin: Seq,
     /// Authored title.
@@ -50,7 +48,7 @@ pub struct TaskHead {
     /// Authored task labels.
     pub tags: Vec<String>,
     /// Tasks that must complete first.
-    pub dependencies: Vec<TaskHandle>,
+    pub dependencies: Vec<TaskStamp>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: Origin,
     /// Fact that established this statement revision.

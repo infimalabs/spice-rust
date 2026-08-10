@@ -166,7 +166,7 @@ pub(crate) fn policy_document(body: &str) -> String {
 #[allow(dead_code)]
 pub(crate) fn contract_repository(label: &str) -> Tree {
     let repository = git_repository(label);
-    repository.write("spice.toml", &workspace_document("spice.toml"));
+    repository.write("spice-rust.toml", &workspace_document("spice-rust.toml"));
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("src/app.rs", "fn main() {}\n");
     git_commit(&repository, "fixture contract");
@@ -175,7 +175,7 @@ pub(crate) fn contract_repository(label: &str) -> Tree {
 
 #[allow(dead_code)]
 pub(crate) fn set_environment_names(repository: &Tree, names: &[&str]) {
-    let path = repository.root.join("spice.toml");
+    let path = repository.root.join("spice-rust.toml");
     let mut document: toml::Value =
         toml::from_str(&fs::read_to_string(&path).expect("read fixture environment policy"))
             .expect("parse fixture environment policy");
@@ -186,7 +186,7 @@ pub(crate) fn set_environment_names(repository: &Tree, names: &[&str]) {
             .collect(),
     );
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &toml::to_string(&document).expect("encode fixture environment policy"),
     );
 }

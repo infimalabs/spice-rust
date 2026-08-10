@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 use spice::repository::{Repository, StatePaths};
+use wire::SpiceVariable;
 
 /// Representative durable state Python Spice owns inside `.spice`.
 const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
@@ -47,6 +48,18 @@ const PREDECESSOR_GATE_STATE: &[(&str, &[u8])] = &[
     ),
     ("repo-doc-chars-sticky.json", b"python repo-doc state"),
     ("flex-slice-claims.json", b"python flex claims"),
+];
+
+/// Environment variables the predecessor owns for its live shell handoff.
+const PREDECESSOR_HOOKS_ENV: &str = "SPICE_HOOKS"; // env-policy: allow
+const PREDECESSOR_INBOX_ENV: &str = "SPICE_INBOX"; // env-policy: allow
+const PREDECESSOR_LANE_ENV: &str = "SPICE_LANE"; // env-policy: allow
+const PREDECESSOR_NATIVE_SHELL_ENV: &str = "SPICE_NATIVE_SHELL"; // env-policy: allow
+const PREDECESSOR_ENVIRONMENT: &[&str] = &[
+    PREDECESSOR_HOOKS_ENV,
+    PREDECESSOR_INBOX_ENV,
+    PREDECESSOR_LANE_ENV,
+    PREDECESSOR_NATIVE_SHELL_ENV,
 ];
 
 /// One accepted release-0.31.0 export, the only input the bridge admits.
@@ -168,6 +181,68 @@ fn ownership_covers_unnameable_files_inside_an_exclusive_directory() {
         fixture.predecessor_identity(),
         before,
         "a dynamically named Rust file changed Python's state tree"
+    );
+}
+
+/// Live Rust shell handoff variables are not the predecessor's names.
+#[test]
+fn runtime_environment_names_are_rust_specific() {
+    let rust_environment = [
+        steer::hook::HOOKS,
+        steer::hook::INBOX,
+        steer::hook::LANE,
+        steer::hook::NATIVE_SHELL,
+    ];
+
+    assert_eq!(
+        rust_environment,
+        [
+            "SPICE_RS_HOOKS",
+            "SPICE_RS_INBOX",
+            "SPICE_RS_LANE",
+            "SPICE_RS_NATIVE_SHELL",
+        ]
+    );
+    assert_eq!(SpiceVariable::Hooks.as_str(), steer::hook::HOOKS);
+    assert_eq!(SpiceVariable::Inbox.as_str(), steer::hook::INBOX);
+    assert_eq!(SpiceVariable::Lane.as_str(), steer::hook::LANE);
+    assert_eq!(
+        SpiceVariable::NativeShell.as_str(),
+        steer::hook::NATIVE_SHELL
+    );
+    assert_eq!(spice::agent_launch::SPICE_RS_LANE, steer::hook::LANE);
+    for name in rust_environment {
+        assert!(
+            !PREDECESSOR_ENVIRONMENT.contains(&name),
+            "Rust environment name collides with predecessor variable {name}"
+        );
+    }
+}
+
+/// A predecessor lane with the same UUID does not activate this runtime.
+#[test]
+fn predecessor_lane_environment_does_not_activate_rust_hook_context() {
+    let fixture = Fixture::seeded("lane-environment");
+    let before = fixture.predecessor_identity();
+    let lane = "018f82d4-6f59-7d06-92e3-bce9131163c7";
+
+    let output = fixture.invoke_with_predecessor_environment(&["--json", "hook", "claude"], lane);
+
+    assert!(
+        !output.status.success(),
+        "predecessor lane context must not satisfy Rust hook admission: {output:?}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("steer::lane-context-absent")
+            || stderr.contains("steer::lane-context-absent"),
+        "refusal must be missing Rust lane context, stdout={stdout:?} stderr={stderr:?}",
+    );
+    assert_eq!(
+        fixture.predecessor_identity(),
+        before,
+        "refused Rust hook read or changed predecessor state"
     );
 }
 
@@ -350,7 +425,7 @@ impl Fixture {
         fs::create_dir_all(self.root.join("src")).expect("create gate source directory");
         fs::create_dir_all(self.root.join("gate/src")).expect("create camp loci");
         fs::write(
-            self.root.join("spice.toml"),
+            self.root.join("spice-rust.toml"),
             format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
         )
         .expect("write gate policy");
@@ -409,13 +484,39 @@ impl Fixture {
     }
 
     fn invoke(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_spice"))
+        let mut command = self.command();
+        command.args(args).output().expect("run the spice binary")
+    }
+
+    fn invoke_with_predecessor_environment(&self, args: &[&str], lane: &str) -> Output {
+        let mut command = self.command();
+        command
             .args(args)
+            .env(PREDECESSOR_HOOKS_ENV, self.predecessor_root().join("hooks"))
+            .env(
+                PREDECESSOR_INBOX_ENV,
+                self.predecessor_root().join("inbox").join(lane),
+            )
+            .env(PREDECESSOR_LANE_ENV, lane)
+            .env(PREDECESSOR_NATIVE_SHELL_ENV, "/bin/sh")
+            .output()
+            .expect("run the spice binary with predecessor environment")
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command
             .current_dir(&self.root)
             .env("PATH", "")
+            .env_remove(steer::hook::HOOKS)
             .env_remove(steer::hook::INBOX)
-            .output()
-            .expect("run the spice binary")
+            .env_remove(steer::hook::LANE)
+            .env_remove(steer::hook::NATIVE_SHELL)
+            .env_remove(PREDECESSOR_HOOKS_ENV)
+            .env_remove(PREDECESSOR_INBOX_ENV)
+            .env_remove(PREDECESSOR_LANE_ENV)
+            .env_remove(PREDECESSOR_NATIVE_SHELL_ENV);
+        command
     }
 
     /// The runtime's own declaration of where its state lives.

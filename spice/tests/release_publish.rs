@@ -7,6 +7,7 @@
 ))]
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,6 +35,7 @@ mod readiness;
 use readiness::Readiness;
 
 const REFUSAL_EXIT: i32 = 2;
+const RELEASE_VERSION: &str = "0.0.1";
 /// The client bound this battery needs for one durable publication.
 ///
 /// Applying a plan publishes objects, signs receipts, and commits the journal
@@ -50,6 +52,8 @@ struct Fixture {
     canvas: PathBuf,
     manifest: Digest,
     notes: PathBuf,
+    cargo: PathBuf,
+    effects: PathBuf,
 }
 
 impl Fixture {
@@ -79,7 +83,7 @@ impl Fixture {
             ],
         );
         staged_app::seed(&root);
-        git(&root, &["add", "dist/stage-app"]);
+        git(&root, &["add", "-A"]);
         git(
             &root,
             &[
@@ -102,19 +106,49 @@ impl Fixture {
         let canvas = runtime.join("canvas");
         let manifest = publish_stage(&root);
         seed_proof(&journal, &manifest);
+        let tools = root.join("test-tools");
+        fs::create_dir_all(&tools).expect("test tool directory");
+        let cargo = tools.join("cargo");
+        fs::write(
+            &cargo,
+            concat!(
+                "#!/bin/sh\n",
+                "effect_log=\"$(dirname \"$0\")/../release-effects.log\"\n",
+                "printf '%s\\n' \"$*\" >> \"$effect_log\"\n",
+                "case \"$*\" in\n",
+                "  'xtask verify'|'xtask stage-target aarch64-apple-darwin'|",
+                "'xtask stage-target x86_64-unknown-linux-musl') exit 0 ;;\n",
+                "  *) exit 64 ;;\n",
+                "esac\n",
+            ),
+        )
+        .expect("test Cargo shim");
+        fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))
+            .expect("test Cargo shim mode");
+        let effects = root.join("release-effects.log");
         Self {
             root,
             journal,
             canvas,
             manifest,
             notes,
+            cargo,
+            effects,
         }
     }
 
     fn invoke(&self, arguments: &[&str]) -> Output {
+        let path = format!(
+            "{}:/usr/local/bin:/usr/bin:/bin",
+            self.cargo
+                .parent()
+                .expect("test Cargo shim has a parent")
+                .display()
+        );
         Command::new(env!("CARGO_BIN_EXE_spice"))
             .args(arguments)
             .current_dir(&self.root)
+            .env("PATH", path)
             .output()
             .expect("spice release command launches")
     }
@@ -239,8 +273,29 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let fixture = Fixture::new("durable");
     let resident = Resident::start(&fixture);
 
-    let notes = fixture.notes.to_str().expect("notes path is UTF-8");
-    let text = fixture.invoke(&["release", "publish", "--notes-file", notes]);
+    // Keep the lifecycle phases explicit so a failure identifies whether
+    // preview, application, recovery, or durable replay broke its contract.
+    let (notes, plan) = preview_publication(&fixture);
+    let (apply, first) = apply_publication(&fixture, &notes, &plan);
+    recover_publication(&fixture, &notes);
+    replay_and_stop(&fixture, &notes, &apply, resident);
+    replay_after_restart(&fixture, &notes, &apply, &first);
+}
+
+fn preview_publication(fixture: &Fixture) -> (String, ReleasePlan) {
+    let notes = fixture
+        .notes
+        .to_str()
+        .expect("notes path is UTF-8")
+        .to_owned();
+    let text = fixture.invoke(&[
+        "release",
+        "publish",
+        "--version",
+        RELEASE_VERSION,
+        "--notes-file",
+        &notes,
+    ]);
     assert!(
         text.status.success(),
         "text preview failed: {}",
@@ -250,49 +305,42 @@ fn publication_plans_commits_replays_and_survives_restart() {
     assert_eq!(text_plan.manifest, fixture.manifest);
     assert_eq!(text_plan.targets.len(), 2);
     assert_eq!(text_plan.action, "publish");
-    assert_eq!(text_plan.requested_version.as_str(), "0.0.0");
+    assert_eq!(text_plan.requested_version.as_str(), RELEASE_VERSION);
     assert_eq!(text_plan.source_commit.len(), 40);
     assert_eq!(text_plan.release_commit.len(), 40);
     assert_eq!(text_plan.package_object.len(), 40);
     assert!(text_plan.observations.clean);
-    assert!(text_plan.observations.bump_claimed);
+    assert!(!text_plan.observations.bump_claimed);
     assert!(text_plan.observations.credentials_valid);
     assert_eq!(text_plan.observations.unrecorded_local_commits, 0);
     assert!(text_plan.observations.registry.is_none());
     assert_eq!(
-        text_plan.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "run-correctness-gate",
-            "bump-and-verify-version",
-            "create-release-commit",
-            "rebuild-artifacts",
-            "install-and-probe-artifacts",
-            "rehearse-upload",
-            "publish-source",
-            "upload-package",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
+        fs::read_to_string(fixture.root.join("dist/VERSION")).expect("source version"),
+        "0.0.0\n"
     );
-    let draft = fixture.invoke(&["--json", "release", "notes"]);
-    let Outcome::Reply(draft) =
-        wire::decode::<Outcome<wire::ReleaseNotes>>(&draft.stdout).expect("draft is typed")
-    else {
-        panic!("release notes did not reply")
-    };
-    let candidate = fs::read_to_string(&fixture.notes).expect("curated notes read");
-    let expected_notes =
-        dist::curated_release_notes(&candidate, &draft.body).expect("notes are curated");
-    assert_eq!(text_plan.notes, expected_notes.identity);
-    assert_eq!(text_plan.notes_document, expected_notes.document);
+    assert!(!fixture.effects.exists(), "preview invoked a Cargo effect");
+    assert_eq!(text_plan.operations, publish_operations());
+    assert_eq!(
+        text_plan.notes,
+        Digest::compute(
+            Domain::DistReleaseNotes,
+            text_plan.notes_document.as_bytes()
+        )
+    );
     assert!(
-        remote_refs(&fixture).is_empty(),
+        remote_refs(fixture).is_empty(),
         "preview changed remote refs"
     );
 
-    let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
+    let json = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--version",
+        RELEASE_VERSION,
+        "--notes-file",
+        &notes,
+    ]);
     assert!(
         json.status.success(),
         "JSON preview failed: {}",
@@ -305,12 +353,21 @@ fn publication_plans_commits_replays_and_survives_restart() {
     };
     assert_eq!(json_plan.position, ReplyPosition::Direct {});
     assert_eq!(json_plan.body, text_plan);
+    (notes, text_plan)
+}
 
-    let apply = format!("--apply={}", text_plan.key);
+fn apply_publication(
+    fixture: &Fixture,
+    notes: &str,
+    plan: &ReleasePlan,
+) -> (String, (ReplyPosition, RecognitionAnswer)) {
+    let apply = format!("--apply={}", plan.key);
     let first = fixture.invoke(&[
         "--json",
         "release",
         "publish",
+        "--version",
+        RELEASE_VERSION,
         "--notes-file",
         notes,
         &apply,
@@ -322,29 +379,21 @@ fn publication_plans_commits_replays_and_survives_restart() {
     );
     let first = recognition(&first);
     assert!(first.1.fresh);
+    assert_eq!(remote_refs(fixture), published_refs());
     assert_eq!(
-        remote_refs(&fixture),
-        [
-            "refs/heads/main",
-            "refs/spice/packages/v0.0.0",
-            "refs/spice/releases/v0.0.0",
-            "refs/tags/v0.0.0",
-        ]
-    );
-    assert_eq!(
-        remote_object_type(&fixture, "refs/spice/packages/v0.0.0"),
+        remote_object_type(fixture, "refs/spice/packages/v0.0.1"),
         "tree"
     );
     assert_eq!(
-        remote_object(&fixture, "refs/spice/packages/v0.0.0"),
-        text_plan.package_object
+        remote_object(fixture, "refs/spice/packages/v0.0.1"),
+        plan.package_object
     );
     let operation_journal = fixture
         .journal
         .parent()
         .expect("journal data directory")
         .join("release-operations")
-        .join(format!("{}.json", text_plan.key));
+        .join(format!("{}.json", plan.key));
     let operation_journal: serde_json::Value = serde_json::from_slice(
         &fs::read(operation_journal).expect("external operation journal exists"),
     )
@@ -354,20 +403,41 @@ fn publication_plans_commits_replays_and_survives_restart() {
             .as_array()
             .expect("accepted operation rows")
             .len(),
-        text_plan.operations.len()
+        plan.operations.len()
     );
     assert_eq!(
         operation_journal["receipts"]
             .as_array()
             .expect("operation receipt rows")
             .len(),
-        text_plan.operations.len()
+        plan.operations.len()
     );
+    assert_eq!(
+        fs::read_to_string(&fixture.effects).expect("release effect log"),
+        concat!(
+            "xtask verify\n",
+            "xtask stage-target aarch64-apple-darwin\n",
+            "xtask stage-target x86_64-unknown-linux-musl\n",
+        )
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("dist/VERSION")).expect("release version"),
+        "0.0.1\n"
+    );
+    assert_eq!(
+        remote_object(fixture, "refs/heads/main"),
+        plan.release_commit
+    );
+    (apply, first)
+}
 
+fn recover_publication(fixture: &Fixture, notes: &str) {
     let recovery = fixture.invoke(&[
         "--json",
         "release",
         "publish",
+        "--version",
+        RELEASE_VERSION,
         "--notes-file",
         notes,
         "--action",
@@ -394,20 +464,14 @@ fn publication_plans_commits_replays_and_survives_restart() {
             .release_commit,
         recovery.body.release_commit
     );
-    assert_eq!(
-        recovery.body.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
+    assert_eq!(recovery.body.operations, recovery_operations());
     let recovery_apply = format!("--apply={}", recovery.body.key);
     let recovered = fixture.invoke(&[
         "--json",
         "release",
         "publish",
+        "--version",
+        RELEASE_VERSION,
         "--notes-file",
         notes,
         "--action",
@@ -420,8 +484,18 @@ fn publication_plans_commits_replays_and_survives_restart() {
         spoken(&recovered)
     );
     assert!(!recognition(&recovered).1.fresh);
+}
 
-    let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, &apply]);
+fn replay_and_stop(fixture: &Fixture, notes: &str, apply: &str, resident: Resident) {
+    let replay = fixture.invoke(&[
+        "release",
+        "publish",
+        "--version",
+        RELEASE_VERSION,
+        "--notes-file",
+        notes,
+        apply,
+    ]);
     assert!(
         replay.status.success(),
         "text replay failed: {}",
@@ -430,9 +504,9 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let replay_answer: RecognitionAnswer =
         wire::decode(&replay.stdout).expect("text replay body is typed");
     assert!(!replay_answer.fresh);
-    let snapshot = facts(&fixture);
+    let snapshot = facts(fixture);
     assert_eq!(kind_count(&snapshot, FactKind::ReleasePublished), 1);
-    resident.stop(&fixture);
+    resident.stop(fixture);
     assert_eq!(
         journal::Journal::open(&fixture.journal)
             .expect("journal opens")
@@ -441,15 +515,24 @@ fn publication_plans_commits_replays_and_survives_restart() {
             .receipts,
         1
     );
+}
 
-    let restarted = Resident::start(&fixture);
+fn replay_after_restart(
+    fixture: &Fixture,
+    notes: &str,
+    apply: &str,
+    first: &(ReplyPosition, RecognitionAnswer),
+) {
+    let restarted = Resident::start(fixture);
     let after_restart = fixture.invoke(&[
         "--json",
         "release",
         "publish",
+        "--version",
+        RELEASE_VERSION,
         "--notes-file",
         notes,
-        &apply,
+        apply,
     ]);
     assert!(
         after_restart.status.success(),
@@ -459,8 +542,8 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let after_restart = recognition(&after_restart);
     assert!(!after_restart.1.fresh);
     assert_eq!(after_restart.0, first.0);
-    assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 1);
-    restarted.stop(&fixture);
+    assert_eq!(kind_count(&facts(fixture), FactKind::ReleasePublished), 1);
+    restarted.stop(fixture);
 }
 
 #[test]
@@ -486,6 +569,10 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
         panic!("stale apply did not refuse")
     };
     assert_eq!(refusal.reason(), "release::plan-moved");
+    assert!(
+        !fixture.effects.exists(),
+        "stale apply reached the correctness gate or artifact build"
+    );
 
     fs::remove_file(fixture.receipt_path(1)).expect("remove one detached receipt");
 
@@ -497,6 +584,10 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
         panic!("missing evidence did not refuse")
     };
     assert_eq!(refusal.reason(), "release::manifest-refused");
+    assert!(
+        !fixture.effects.exists(),
+        "missing evidence reached the correctness gate or artifact build"
+    );
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
     resident.stop(&fixture);
 }
@@ -522,6 +613,41 @@ fn publication_refuses_every_uncurated_notes_shape_before_resident_work() {
     let heading_only = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
     assert_notes_refusal(&heading_only);
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
+}
+
+fn publish_operations() -> [&'static str; 12] {
+    [
+        "resolve-preconditions-and-credentials",
+        "run-correctness-gate",
+        "bump-and-verify-version",
+        "create-release-commit",
+        "rebuild-artifacts",
+        "install-and-probe-artifacts",
+        "rehearse-upload",
+        "publish-source",
+        "upload-package",
+        "await-registry-visibility",
+        "create-immutable-tag",
+        "announce",
+    ]
+}
+
+fn recovery_operations() -> [&'static str; 4] {
+    [
+        "resolve-preconditions-and-credentials",
+        "await-registry-visibility",
+        "create-immutable-tag",
+        "announce",
+    ]
+}
+
+fn published_refs() -> [&'static str; 4] {
+    [
+        "refs/heads/main",
+        "refs/spice/packages/v0.0.1",
+        "refs/spice/releases/v0.0.1",
+        "refs/tags/v0.0.1",
+    ]
 }
 
 fn publish_stage(root: &Path) -> Digest {

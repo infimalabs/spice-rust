@@ -25,10 +25,10 @@ fn configure_task_fixture(fixture: &Fixture) {
     );
     fs::write(&vendor, script.replacen("#!/bin/sh\n", &switch, 1))
         .expect("automatic lifecycle vendor switches write");
-    let mut config = fs::read_to_string(fixture.root.join("spice.toml"))
+    let mut config = fs::read_to_string(fixture.root.join("spice-rust.toml"))
         .expect("automatic lifecycle configuration reads");
     config.push_str("\n[tasks]\nstems = [\"spice\"]\n");
-    fs::write(fixture.root.join("spice.toml"), config)
+    fs::write(fixture.root.join("spice-rust.toml"), config)
         .expect("automatic lifecycle task policy writes");
     initialize_task_git_fixture(fixture);
 }
@@ -469,7 +469,9 @@ fn rust_resident_carries_a_held_claim_to_the_successor_without_python() {
             carried.epoch,
         ),
         (
-            task.task,
+            task.task
+                .incepted()
+                .expect("claimed handle carries its inception stamp"),
             seated.lane,
             successor,
             first,
@@ -531,9 +533,13 @@ fn rust_resident_claims_one_of_two_settled_ready_tasks_without_python() {
     assert_eq!(won[0].fact.body()["lane"], serde_json::json!(seated.lane));
     assert_eq!(won[0].fact.body()["occupant"], serde_json::json!(successor));
     assert!(
-        [first_task.task, second_task.task]
-            .iter()
-            .any(|task| won[0].fact.body()["task"] == serde_json::json!(task)),
+        [first_task.task, second_task.task].iter().any(|task| {
+            won[0].fact.body()["task"]
+                == serde_json::json!(
+                    task.incepted()
+                        .expect("created handle carries its inception stamp")
+                )
+        }),
         "the automatic claim selects one of the two READY tasks",
     );
     drop(snapshot);
@@ -607,9 +613,13 @@ fn available_work_startup_failure_frees_only_its_automatic_claim() {
     assert_eq!((won.len(), freed.len()), (1, 1));
     assert_eq!(won[0].fact.body()["task"], freed[0].fact.body()["task"]);
     assert!(
-        [first_task.task, second_task.task]
-            .iter()
-            .any(|task| won[0].fact.body()["task"] == serde_json::json!(task)),
+        [first_task.task, second_task.task].iter().any(|task| {
+            won[0].fact.body()["task"]
+                == serde_json::json!(
+                    task.incepted()
+                        .expect("created handle carries its inception stamp")
+                )
+        }),
         "the released claim belongs to the selected READY task",
     );
     let row = durable_head(&fixture)

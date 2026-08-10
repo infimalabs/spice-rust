@@ -60,8 +60,8 @@ use wire::{
     ProofEvidence, Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlanObservations,
     ReleaseRegistryEvidence, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
     RestoreVerification, Seq, SeqRange, SpiceVariable, StreamCursor, StreamFact, StreamFrame,
-    StreamRequest, TapeLocus, TaskHandle, TaskHead, TrustHead, TrustState, TrustView, ViewSubject,
-    WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    StreamRequest, TapeLocus, TaskHandle, TaskHead, TaskStamp, TrustHead, TrustState, TrustView,
+    ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
 
 #[path = "identity_law/laws.rs"]

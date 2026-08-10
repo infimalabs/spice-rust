@@ -64,8 +64,8 @@ fn runner_executes_all_27_once_in_order_with_complete_context() {
     let mut executor = RecordingExecutor::all_passed(&fixture.source);
     let report = run_battery(&inputs, &mut executor).expect("complete battery");
 
-    assert_eq!(executor.calls, GateId::ALL);
-    assert_eq!(report.results().len(), GateId::ALL.len());
+    assert_eq!(executor.calls, GateId::BATTERY);
+    assert_eq!(report.results().len(), GateId::BATTERY.len());
     assert!(report.admits());
     assert_eq!(report.context().source(), &fixture.source);
     assert_eq!(report.context().actor().source(), "active-actor");
@@ -85,7 +85,10 @@ fn runner_executes_all_27_once_in_order_with_complete_context() {
         report.context().configuration()[0].layer(),
         OriginLayer::Repository
     );
-    assert_eq!(report.context().configuration()[0].document(), "spice.toml");
+    assert_eq!(
+        report.context().configuration()[0].document(),
+        "spice-rust.toml"
+    );
     assert_eq!(
         report.context().configuration()[0].field(),
         &["policy".to_owned(), "test_paths".to_owned()]
@@ -132,7 +135,7 @@ fn runner_executes_all_27_once_in_order_with_complete_context() {
     assert_eq!(report.context().policy(), &fixture.policy_digest());
     assert_eq!(report.context().state(), &fixture.state.before().digest());
 
-    for (position, (result, expected)) in report.results().iter().zip(GateId::ALL).enumerate() {
+    for (position, (result, expected)) in report.results().iter().zip(GateId::BATTERY).enumerate() {
         assert_eq!(result.position(), position);
         assert_eq!(
             result.predecessor(),
@@ -590,7 +593,7 @@ fn assert_captured_authorities(
     );
 
     let tracked: toml::Value = toml::from_str(
-        &fs::read_to_string(repository.join("spice.toml")).expect("tracked policy document"),
+        &fs::read_to_string(repository.join("spice-rust.toml")).expect("tracked policy document"),
     )
     .expect("tracked policy parses");
     let expected = tracked
@@ -604,7 +607,7 @@ fn assert_captured_authorities(
         .expect("the resolved configuration names every tracked leaf");
     assert_eq!(evidence.release(), "current");
     assert_eq!(evidence.layer(), OriginLayer::Repository);
-    assert_eq!(evidence.document(), "spice.toml");
+    assert_eq!(evidence.document(), "spice-rust.toml");
     assert_eq!(evidence.field(), ["policy", "env_names"]);
     assert_eq!(
         evidence.value_digest(),
@@ -617,7 +620,7 @@ fn assert_captured_authorities(
         context
             .configuration()
             .iter()
-            .all(|evidence| evidence.document() == "spice.toml"),
+            .all(|evidence| evidence.document() == "spice-rust.toml"),
         "every resolved value must name the document it was read from"
     );
 
@@ -748,7 +751,7 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
             | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
         })
         .collect();
-    assert_eq!(arm_events, GateId::ALL);
+    assert_eq!(arm_events, GateId::BATTERY);
 
     let family_events: Vec<_> = events
         .iter()
@@ -776,7 +779,7 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
             | RepositoryExecutionEvent::FamilyInvoked { .. } => None,
         })
         .collect::<Vec<_>>();
-    let mut expected = GateId::ALL.to_vec();
+    let mut expected = GateId::BATTERY.to_vec();
     analyses.sort_unstable();
     expected.sort_unstable();
     assert_eq!(analyses, expected);
@@ -784,7 +787,7 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
 
 /// Each result carries evidence its own family owns, refusals included.
 fn assert_every_family_projected_its_own_evidence(report: &BatteryReport) {
-    assert_eq!(report.results().len(), GateId::ALL.len());
+    assert_eq!(report.results().len(), GateId::BATTERY.len());
     for result in report.results() {
         match result.family() {
             ArmFamily::Core => {
@@ -1090,7 +1093,7 @@ fn executor_refusals_and_invalid_evidence_stay_visible_and_total() {
     let mut executor = RecordingExecutor::faulting(&fixture.source, 3, 4);
     let report = run_battery(&inputs, &mut executor).expect("total executor-failure report");
 
-    assert_eq!(executor.calls, GateId::ALL);
+    assert_eq!(executor.calls, GateId::BATTERY);
     assert_eq!(report.results().len(), 27);
     assert_eq!(report.results()[3].state(), BatteryState::Failed);
     assert_eq!(

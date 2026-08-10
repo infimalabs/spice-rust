@@ -24,7 +24,7 @@ const SELECTED_SOURCES: [&str; 7] = [
     "app/main.py",
     "baseline.toml",
     "pyproject.toml",
-    "spice.toml",
+    "spice-rust.toml",
     "src/lib.rs",
     "tests/test_main.py",
 ];

@@ -187,7 +187,7 @@ impl JournalRead<'_> {
         Ok(self.cursor)
     }
 
-    /// Every current task storage bundle in ascending handle order.
+    /// Every current task storage bundle in ascending inception order.
     ///
     /// The union makes loose workflow, claim, and lease rows observable rather
     /// than silently treating the statement table as the complete key set.
@@ -195,12 +195,12 @@ impl JournalRead<'_> {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT handle FROM (\
-                    SELECT handle FROM task_heads UNION \
-                    SELECT handle FROM workflow_heads UNION \
-                    SELECT handle FROM claim_heads UNION \
-                    SELECT handle FROM lease_heads\
-                 ) ORDER BY handle",
+                "SELECT stamp FROM (\
+                    SELECT stamp FROM task_heads UNION \
+                    SELECT stamp FROM workflow_heads UNION \
+                    SELECT stamp FROM claim_heads UNION \
+                    SELECT stamp FROM lease_heads\
+                 ) ORDER BY stamp",
             )
             .map_err(GuardError::Store)?;
         let rows = statement
@@ -209,13 +209,13 @@ impl JournalRead<'_> {
         let mut bundles = Vec::new();
         for row in rows {
             let indexed = row.map_err(GuardError::Store)?;
-            let handle = indexed.parse::<wire::TaskHandle>().map_err(|error| {
+            let stamp = indexed.parse::<wire::TaskStamp>().map_err(|error| {
                 GuardError::Invalid(format!("task head key {indexed:?} is invalid: {error}"))
             })?;
-            let statement = self.task_head(&handle)?;
-            let workflow = self.workflow_head(&handle)?;
-            let claim = self.claim_head(&handle)?;
-            let lease = self.lease_head(&handle)?;
+            let statement = self.task_head(&stamp)?;
+            let workflow = self.workflow_head(&stamp)?;
+            let claim = self.claim_head(&stamp)?;
+            let lease = self.lease_head(&stamp)?;
             let loose_planes = [
                 workflow.as_ref().map(|_| "workflow"),
                 claim.as_ref().map(|_| "claim"),
@@ -226,13 +226,13 @@ impl JournalRead<'_> {
             .collect::<Vec<_>>();
             let statement = statement.ok_or_else(|| {
                 GuardError::Invalid(format!(
-                    "task {handle} has loose {} head(s) without a statement head",
+                    "task {stamp} has loose {} head(s) without a statement head",
                     loose_planes.join(", ")
                 ))
             })?;
             let workflow = workflow.ok_or_else(|| {
                 GuardError::Invalid(format!(
-                    "task {handle} has a statement head but no workflow head"
+                    "task {stamp} has a statement head but no workflow head"
                 ))
             })?;
             bundles.push(TaskHeads {
@@ -245,60 +245,60 @@ impl JournalRead<'_> {
         Ok(bundles)
     }
 
-    /// Current task statement head, when the handle exists.
+    /// Current task statement head, when the inception stamp exists.
     pub fn task_head(
         &self,
-        handle: &wire::TaskHandle,
+        stamp: &wire::TaskStamp,
     ) -> Result<Option<JournalHead<wire::TaskHead>>, GuardError> {
-        let head = self.text_head::<wire::TaskHead>("task_heads", "handle", handle.as_str())?;
+        let head = self.text_head::<wire::TaskHead>("task_heads", "stamp", stamp.as_str())?;
         if let Some(head) = &head
-            && head.body.handle != *handle
+            && head.body.incepted != *stamp
         {
             return Err(GuardError::Invalid(format!(
-                "task head indexed as {handle} carries body handle {}",
-                head.body.handle
+                "task head indexed as {stamp} carries body stamp {}",
+                head.body.incepted
             )));
         }
         if let Some(head) = &head
             && head.body.revision != head.position
         {
             return Err(GuardError::Invalid(format!(
-                "task {handle} statement head revision disagrees with head_seq"
+                "task {stamp} statement head revision disagrees with head_seq"
             )));
         }
         Ok(head)
     }
 
-    /// Current workflow head, when the handle exists.
+    /// Current workflow head, when the inception stamp exists.
     pub fn workflow_head(
         &self,
-        handle: &wire::TaskHandle,
+        stamp: &wire::TaskStamp,
     ) -> Result<Option<JournalHead<wire::WorkflowHead>>, GuardError> {
-        self.text_head("workflow_heads", "handle", handle.as_str())
+        self.text_head("workflow_heads", "stamp", stamp.as_str())
     }
 
-    /// Current claim head, when the handle exists.
+    /// Current claim head, when the inception stamp exists.
     pub fn claim_head(
         &self,
-        handle: &wire::TaskHandle,
+        stamp: &wire::TaskStamp,
     ) -> Result<Option<JournalHead<wire::ClaimHead>>, GuardError> {
-        let head = self.text_head::<wire::ClaimHead>("claim_heads", "handle", handle.as_str())?;
+        let head = self.text_head::<wire::ClaimHead>("claim_heads", "stamp", stamp.as_str())?;
         if let Some(head) = &head
             && head.body.fact != head.position
         {
             return Err(GuardError::Invalid(format!(
-                "task {handle} claim head fact disagrees with head_seq"
+                "task {stamp} claim head fact disagrees with head_seq"
             )));
         }
         Ok(head)
     }
 
-    /// Current lease head, when the handle exists.
+    /// Current lease head, when the inception stamp exists.
     pub fn lease_head(
         &self,
-        handle: &wire::TaskHandle,
+        stamp: &wire::TaskStamp,
     ) -> Result<Option<JournalHead<wire::LeaseHead>>, GuardError> {
-        self.text_head("lease_heads", "handle", handle.as_str())
+        self.text_head("lease_heads", "stamp", stamp.as_str())
     }
 
     /// Current named witness head, when the predicate exists.
@@ -464,7 +464,7 @@ impl JournalRead<'_> {
     pub fn actively_claimed_lanes(&self) -> Result<Vec<wire::CanonicalUuid>, GuardError> {
         let mut statement = self
             .connection
-            .prepare("SELECT handle, head_seq, body FROM claim_heads ORDER BY handle")
+            .prepare("SELECT stamp, head_seq, body FROM claim_heads ORDER BY stamp")
             .map_err(GuardError::Store)?;
         let rows = statement
             .query_map([], |row| {
@@ -477,8 +477,8 @@ impl JournalRead<'_> {
             .map_err(GuardError::Store)?;
         let mut lanes = Vec::new();
         for row in rows {
-            let (handle, position, bytes) = row.map_err(GuardError::Store)?;
-            let head = self.decoded_claim_head(&handle, position, &bytes)?;
+            let (stamp, position, bytes) = row.map_err(GuardError::Store)?;
+            let head = self.decoded_claim_head(&stamp, position, &bytes)?;
             if head.body.disposition == wire::ClaimDisposition::Active {
                 lanes.push(head.body.lane);
             }
@@ -513,10 +513,10 @@ impl JournalRead<'_> {
     /// Decode one claim head and prove it against its stored position.
     ///
     /// The same two checks [`Self::claim_head`] makes when it is asked for one
-    /// handle, so a scan cannot admit a row the keyed read would have refused.
+    /// stamp, so a scan cannot admit a row the keyed read would have refused.
     fn decoded_claim_head(
         &self,
-        handle: &str,
+        stamp: &str,
         position: i64,
         bytes: &[u8],
     ) -> Result<JournalHead<wire::ClaimHead>, GuardError> {
@@ -525,16 +525,16 @@ impl JournalRead<'_> {
                 GuardError::Invalid(detail) => detail,
                 other => other.to_string(),
             };
-            GuardError::Invalid(format!("claim head {handle:?} is invalid: {detail}"))
+            GuardError::Invalid(format!("claim head {stamp:?} is invalid: {detail}"))
         })?;
         if head.body.fact != head.position {
             return Err(GuardError::Invalid(format!(
-                "task {handle} claim head fact disagrees with head_seq"
+                "task {stamp} claim head fact disagrees with head_seq"
             )));
         }
         if self.cursor.is_none_or(|cursor| head.position > cursor) {
             return Err(GuardError::Invalid(format!(
-                "claim head {handle:?} position {} is beyond cursor {:?}",
+                "claim head {stamp:?} position {} is beyond cursor {:?}",
                 head.position,
                 self.cursor.map(wire::Seq::get)
             )));
@@ -838,17 +838,17 @@ impl JournalWrite {
             HeadUpdateKind::Ordinary,
             move |seq| {
                 let head = build(seq);
-                let key = head.handle.as_str().to_owned();
+                let key = head.incepted.as_str().to_owned();
                 if head.revision != seq {
                     return Err("task head revision does not name its assigned fact".to_owned());
                 }
-                HeadRow::text("task_heads", "handle", key, seq, &head)
+                HeadRow::text("task_heads", "stamp", key, seq, &head)
             },
         ));
     }
 
     /// Replace the current workflow head at the assigned fact position.
-    pub fn workflow_head<F>(&mut self, task: wire::TaskHandle, fact: PendingFact, build: F)
+    pub fn workflow_head<F>(&mut self, task: wire::TaskStamp, fact: PendingFact, build: F)
     where
         F: FnOnce(wire::Seq) -> wire::WorkflowHead + Send + 'static,
     {
@@ -858,7 +858,7 @@ impl JournalWrite {
             move |seq| {
                 HeadRow::text(
                     "workflow_heads",
-                    "handle",
+                    "stamp",
                     task.as_str().to_owned(),
                     seq,
                     &build(seq),
@@ -868,7 +868,7 @@ impl JournalWrite {
     }
 
     /// Replace the current claim head at the assigned fact position.
-    pub fn claim_head<F>(&mut self, task: wire::TaskHandle, fact: PendingFact, build: F)
+    pub fn claim_head<F>(&mut self, task: wire::TaskStamp, fact: PendingFact, build: F)
     where
         F: FnOnce(wire::Seq) -> wire::ClaimHead + Send + 'static,
     {
@@ -880,19 +880,13 @@ impl JournalWrite {
                 if head.fact != seq {
                     return Err("claim head fact does not name its assigned fact".to_owned());
                 }
-                HeadRow::text(
-                    "claim_heads",
-                    "handle",
-                    task.as_str().to_owned(),
-                    seq,
-                    &head,
-                )
+                HeadRow::text("claim_heads", "stamp", task.as_str().to_owned(), seq, &head)
             },
         ));
     }
 
     /// Replace the current lease head at the assigned fact position.
-    pub fn lease_head<F>(&mut self, task: wire::TaskHandle, fact: PendingFact, build: F)
+    pub fn lease_head<F>(&mut self, task: wire::TaskStamp, fact: PendingFact, build: F)
     where
         F: FnOnce(wire::Seq) -> wire::LeaseHead + Send + 'static,
     {
@@ -902,7 +896,7 @@ impl JournalWrite {
             move |seq| {
                 HeadRow::text(
                     "lease_heads",
-                    "handle",
+                    "stamp",
                     task.as_str().to_owned(),
                     seq,
                     &build(seq),

@@ -157,7 +157,7 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
                 id: uuid(COMMAND_ONE),
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: CommandKind::TaskAdd,
-                expected: vec![Witness::Absence { task: task.clone() }],
+                expected: vec![Witness::Absence { task: stamp() }],
                 body: intent::TaskNote {
                     task: task.clone(),
                     note: "not an add body".to_owned(),
@@ -180,7 +180,7 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
                 id: uuid(COMMAND_ONE),
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: CommandKind::TaskAdd,
-                expected: vec![Witness::Absence { task }],
+                expected: vec![Witness::Absence { task: stamp() }],
                 body: intent::TaskAdd {
                     title: "Implement bus writer".to_owned(),
                     project: Some("bus".to_owned()),
@@ -204,7 +204,6 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
 
 fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>) -> JournalWrite {
     let task = task();
-    let task_uuid = uuid("018f82d4-6f59-7d06-92e3-bce913116301");
     let at = instant("2030-04-12T18:44:09.271Z");
     let origin: Origin = "task:BUS-a1".parse().expect("origin");
     let phase = phase("todo");
@@ -224,8 +223,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
     let fact = write
         .fact(
             body::TaskAdded {
-                task: task.clone(),
-                uuid: task_uuid,
+                task: stamp(),
                 title: "Implement bus writer".to_owned(),
                 description: Some("Persist one ordered write".to_owned()),
                 acceptance: vec!["The journal commits atomically".to_owned()],
@@ -240,11 +238,10 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         )
         .expect("registered command-door fact");
 
-    let task_for_head = task.clone();
+    let task_for_head = stamp();
     let origin_for_head = origin.clone();
     write.task_head(fact, move |seq| TaskHead {
-        handle: task_for_head,
-        uuid: task_uuid,
+        incepted: task_for_head,
         queue_origin: seq,
         title: "Implement bus writer".to_owned(),
         description: Some("Persist one ordered write".to_owned()),
@@ -256,7 +253,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         revision: seq,
     });
     let phase_for_head = phase.clone();
-    write.workflow_head(task.clone(), fact, move |_| WorkflowHead {
+    write.workflow_head(stamp(), fact, move |_| WorkflowHead {
         flow: vec![phase_for_head.clone()],
         phase: phase_for_head,
         status: "pending".to_owned(),
@@ -273,7 +270,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
                 id: command_id,
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: CommandKind::TaskAdd,
-                expected: vec![Witness::Absence { task: task.clone() }],
+                expected: vec![Witness::Absence { task: stamp() }],
                 body: intent::TaskAdd {
                     title: "Implement bus writer".to_owned(),
                     project: Some("bus".to_owned()),
@@ -304,7 +301,7 @@ fn note_write(
         at,
         Producer::CommandDoor,
     );
-    let guarded_task = task.clone();
+    let guarded_task = stamp();
     write.guard(JournalGuard::new(move |read| {
         observed
             .lock()
@@ -324,7 +321,7 @@ fn note_write(
     write
         .fact(
             body::TaskNoted {
-                task: task.clone(),
+                task: stamp(),
                 note: "writer observation".to_owned(),
             },
             FactCause::Existing(Seq::new(expected_cursor).expect("existing cause")),
@@ -337,7 +334,7 @@ fn note_write(
                 id: command_id,
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: CommandKind::TaskNote,
-                expected: vec![Witness::Existence { task: task.clone() }],
+                expected: vec![Witness::Existence { task: stamp() }],
                 body: intent::TaskNote {
                     task: task.clone(),
                     note: "writer observation".to_owned(),
@@ -351,7 +348,6 @@ fn note_write(
 }
 
 fn cross_origin_write() -> JournalWrite {
-    let task = task();
     let mut write = JournalWrite::new(
         Actor::Operator,
         "task:OTHER-a1".parse().expect("other origin"),
@@ -361,7 +357,7 @@ fn cross_origin_write() -> JournalWrite {
     write
         .fact(
             body::TaskNoted {
-                task,
+                task: stamp(),
                 note: "invalid cross-origin cause".to_owned(),
             },
             FactCause::Existing(Seq::new(1).expect("existing cause")),
@@ -394,7 +390,11 @@ fn result(task: &TaskHandle, status: &str) -> BTreeMap<String, String> {
 }
 
 fn task() -> TaskHandle {
-    "BUS-a1".parse().expect("task handle")
+    TaskHandle::for_project("bus", &stamp())
+}
+
+fn stamp() -> journal::crossing::TaskStamp {
+    "1kKRRsDP".parse().expect("task stamp")
 }
 
 fn phase(value: &str) -> Phase {

@@ -287,6 +287,15 @@ fn steering_subject(fact: &wire::AnyFact) -> Option<String> {
         wire::FactKind::TasteReminded => fact
             .read::<wire::body::TasteReminded>()
             .map(|body| format!("directive:{}", body.directive)),
+        wire::FactKind::TasteJudged => {
+            fact.read::<wire::body::TasteJudged>()
+                .and_then(|body| match body.decision {
+                    wire::body::TasteDecision::Confirmed { directive, .. } => {
+                        Some(format!("directive:{directive}"))
+                    }
+                    wire::body::TasteDecision::Cleared => None,
+                })
+        }
         wire::FactKind::SteerEscalated => fact
             .read::<wire::body::SteerEscalated>()
             .map(|body| format!("directive:{}", body.directive)),
@@ -657,6 +666,7 @@ fn steering_head_agrees(
     match fact.kind() {
         wire::FactKind::SteerSent => sent_head_agrees(fact, at, seq, head),
         wire::FactKind::TasteReminded => reminder_head_agrees(fact, at, seq, head),
+        wire::FactKind::TasteJudged => judgment_head_agrees(fact, at, seq, head),
         wire::FactKind::SteerEscalated => escalation_head_agrees(fact, at, head),
         wire::FactKind::SteerRecovered => recovery_head_agrees(fact, head),
         wire::FactKind::SteerAcked => {
@@ -755,6 +765,37 @@ fn reminder_head_agrees(
         && head.escalations.is_empty())
     .then_some(())
     .ok_or_else(|| "taste reminder head disagrees with its creating fact".to_owned())
+}
+
+fn judgment_head_agrees(
+    fact: &wire::AnyFact,
+    at: wire::Instant,
+    seq: wire::Seq,
+    head: &wire::SteeringHead,
+) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::TasteJudged>()
+        .expect("registered kind");
+    let wire::body::TasteDecision::Confirmed {
+        directive,
+        key,
+        text,
+        expires,
+    } = &body.decision
+    else {
+        return Err("cleared taste judgment cannot establish a steering head".to_owned());
+    };
+    steering_identity_agrees(*directive, key, body.lane, wire::Disposition::Live, head)?;
+    (head.created == seq
+        && head.published == at
+        && head.text == *text
+        && head.control.is_none()
+        && head.attachments.is_empty()
+        && head.expires == *expires
+        && head.stage == wire::body::SteeringStage::Published
+        && head.escalations.is_empty())
+    .then_some(())
+    .ok_or_else(|| "taste judgment head disagrees with its creating fact".to_owned())
 }
 
 fn escalation_head_agrees(

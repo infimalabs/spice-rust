@@ -114,7 +114,7 @@ fn a_long_line_only_refusal_names_its_actionable_locus_first() {
 
 fn fixture(label: &str) -> Tree {
     let repository = git_repository(label);
-    repository.write("spice.toml", gate::NARROWEST_FILE_CLASSES);
+    repository.write("spice-rust.toml", gate::NARROWEST_FILE_CLASSES);
     repository.write("baseline.toml", BASELINE);
     repository
 }

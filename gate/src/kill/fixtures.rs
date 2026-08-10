@@ -38,7 +38,7 @@ fi
 for argument in "$@"; do
     if [ "$argument" = "--list" ]; then
         if [ -f "$FAKE_DRIFT" ]; then
-            printf '[{"name":"Drifted"}]\n'
+            printf '[{"name":"Drifted","file":"src/lib.rs"}]\n'
         else
             /bin/cat inventory.json
         fi
@@ -303,9 +303,11 @@ esac
                 "attempt-argument src/z.rs\n",
                 "target src/z.rs\n",
                 "mutant Killed\n",
+                "mutant-source src/lib.rs\n",
                 "mutant-argument --re\n",
                 "mutant-argument ^Killed$\n",
                 "mutant Survived\n",
+                "mutant-source src/z.rs\n",
                 "mutant-argument --re\n",
                 "mutant-argument ^Survived$\n",
             ),
@@ -320,8 +322,8 @@ esac
     fn current_inventory_is_stable_pinned_and_baselined_before_scoring() {
         let (source, tool, log) = fixture(
             r#"[
-                {"name":"Survived", "extra":"ignored by the pinned decoder"},
-                {"name":"Killed"}
+                {"name":"Survived", "file":"src/z.rs", "extra":"ignored"},
+                {"name":"Killed", "file":"src/lib.rs"}
             ]"#,
         );
         let gate = gate(&tool, &log, &["src/z.rs", "src/lib.rs"], 2, 4096);
@@ -335,6 +337,7 @@ esac
                     fs::read_to_string(&log)
                 )
             });
+        assert_graph_projection(&run, floor);
 
         assert_eq!(run.inventory().targets(), ["src/lib.rs", "src/z.rs"]);
         assert_eq!(run.inventory().mutants(), ["Killed", "Survived"]);
@@ -411,9 +414,68 @@ esac
         );
     }
 
+    fn assert_graph_projection(run: &KillRun, floor: SurvivorRate) {
+        let graph_evidence = crate::test_evidence::MutationExecution::from_kill(run)
+            .expect("completed KillRun projects typed graph evidence");
+        assert_eq!(graph_evidence.source(), run.source());
+        assert_eq!(graph_evidence.floor(), Some(floor));
+        assert_eq!(
+            graph_evidence
+                .mutants()
+                .iter()
+                .map(crate::test_evidence::MutationObservation::source)
+                .collect::<Vec<_>>(),
+            vec!["src/lib.rs", "src/z.rs"]
+        );
+        let tests = crate::CanonicalTestExecution::new(
+            run.source().clone(),
+            vec!["src/lib.rs".to_owned()],
+            vec!["gate::lib".to_owned()],
+            Vec::new(),
+            crate::CoverageCompleteness::unknown(
+                "fixture has no authoritative per-test coverage denominator",
+            )
+            .expect("coverage reason"),
+        )
+        .expect("canonical test evidence");
+        let report = crate::TestEvidenceGraph::from_kill(tests, run, Vec::new())
+            .expect("one graph joins the canonical kill run")
+            .report();
+        assert_eq!(report.source(), run.source());
+        assert_eq!(report.mutation().mutants(), graph_evidence.mutants());
+        let foreign_tests = crate::CanonicalTestExecution::new(
+            Digest::compute(Domain::GateTree, b"foreign workspace-test source"),
+            vec!["src/lib.rs".to_owned()],
+            vec!["gate::lib".to_owned()],
+            Vec::new(),
+            crate::CoverageCompleteness::unknown(
+                "fixture has no authoritative per-test coverage denominator",
+            )
+            .expect("coverage reason"),
+        )
+        .expect("foreign canonical test evidence");
+        let mismatch = crate::TestEvidenceGraph::from_kill(foreign_tests, run, Vec::new())
+            .expect_err("a canonical KillRun cannot cross selected-source identities");
+        assert!(mismatch.detail().contains("different selected sources"));
+    }
+
+    #[test]
+    fn multi_target_inventory_requires_one_declared_structured_source_per_mutant() {
+        for inventory in [
+            r#"[{"name":"MissingSource"}]"#,
+            r#"[{"name":"OutsideSource","file":"src/outside.rs"}]"#,
+        ] {
+            let (source, tool, log) = fixture(inventory);
+            let error = gate(&tool, &log, &["src/lib.rs", "src/z.rs"], 1, 4096)
+                .run(&source.root, &empty_ignore(), None)
+                .expect_err("multi-target inventory source must be exact and declared");
+            assert!(matches!(error, KillError::InvalidMutantSource { .. }));
+        }
+    }
+
     #[test]
     fn a_non_green_baseline_refuses_before_the_first_mutant() {
-        let (source, tool, log) = fixture(r#"[{"name":"Killed"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
         source.write("baseline-fails", "yes\n");
         let gate = gate(&tool, &log, &["src/lib.rs"], 2, 4096);
 
@@ -428,7 +490,7 @@ esac
 
     #[test]
     fn immutable_selected_sources_are_writable_only_inside_private_attempts() {
-        let (source, tool, log) = fixture(r#"[{"name":"Killed"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
         fs::set_permissions(source.path("src/lib.rs"), fs::Permissions::from_mode(0o400))
             .expect("make selected source immutable");
 
@@ -456,7 +518,9 @@ esac
 
     #[test]
     fn flaky_and_timed_out_mutants_keep_ordered_evidence_without_moving_the_floor() {
-        let (source, tool, log) = fixture(r#"[{"name":"Timeout"},{"name":"Flaky"}]"#);
+        let (source, tool, log) = fixture(
+            r#"[{"name":"Timeout","file":"src/lib.rs"},{"name":"Flaky","file":"src/lib.rs"}]"#,
+        );
         let gate = gate(&tool, &log, &["src/lib.rs"], 2, 4096);
         let floor = SurvivorRate::new(1, 3).expect("floor");
 
@@ -499,7 +563,7 @@ esac
 
     #[test]
     fn unviable_and_incomplete_attempts_never_masquerade_as_kills() {
-        let (source, tool, log) = fixture(r#"[{"name":"Incomplete"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"Incomplete","file":"src/lib.rs"}]"#);
         let incomplete_gate = gate(&tool, &log, &["src/lib.rs"], 2, 64);
 
         let run = incomplete_gate
@@ -522,7 +586,7 @@ esac
                 .is_some_and(|stdout| stdout.truncated && stdout.complete)
         }));
 
-        let (source, tool, log) = fixture(r#"[{"name":"Unviable"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"Unviable","file":"src/lib.rs"}]"#);
         let run = gate(&tool, &log, &["src/lib.rs"], 2, 4096)
             .run(&source.root, &empty_ignore(), None)
             .expect("unviable attempt remains evidence");
@@ -544,7 +608,7 @@ esac
 
     #[test]
     fn mutation_tool_removal_refuses_the_completed_run_identity() {
-        let (source, tool, log) = fixture(r#"[{"name":"RemoveTool"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"RemoveTool","file":"src/lib.rs"}]"#);
         let refused = gate(&tool, &log, &["src/lib.rs"], 2, 4096)
             .run(&source.root, &empty_ignore(), None)
             .expect_err("removed executable cannot retain its earlier identity");
@@ -557,7 +621,7 @@ esac
 
     #[test]
     fn a_stale_caller_outcome_cannot_masquerade_as_current_evidence() {
-        let (source, tool, log) = fixture(r#"[{"name":"NoOutcome"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"NoOutcome","file":"src/lib.rs"}]"#);
         source.write(
             ".spice-gate-mutants/mutants.out/outcomes.json",
             concat!(
@@ -586,7 +650,7 @@ esac
 
     #[test]
     fn a_confirmed_survivor_regresses_survivor_debt_and_cannot_raise_the_floor() {
-        let (source, tool, log) = fixture(r#"[{"name":"Survived"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"Survived","file":"src/lib.rs"}]"#);
         let gate = gate(&tool, &log, &["src/lib.rs"], 2, 4096);
         let floor = SurvivorRate::new(0, 1).expect("zero floor");
 
@@ -614,7 +678,8 @@ esac
             "unexpected empty-inventory refusal: {empty:?}"
         );
 
-        let (drift_source, drift_tool, drift_log) = fixture(r#"[{"name":"Killed"}]"#);
+        let (drift_source, drift_tool, drift_log) =
+            fixture(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
         drift_source.write("drift-after-baseline", "yes\n");
         let drift = gate(&drift_tool, &drift_log, &["src/lib.rs"], 1, 4096)
             .run(&drift_source.root, &empty_ignore(), None)
@@ -622,7 +687,7 @@ esac
         assert!(matches!(drift, KillError::InventoryDrift { .. }));
 
         let (missing_mutants_source, missing_mutants_tool, missing_mutants_log) =
-            fixture(r#"[{"name":"Killed"}]"#);
+            fixture(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
         let environment = Environment::empty();
         let tool = MutationTool::new(
             missing_mutants_tool.path("cargo"),
@@ -661,7 +726,7 @@ esac
         );
 
         let (missing_cargo_source, missing_cargo_tool, missing_cargo_log) =
-            fixture(r#"[{"name":"Killed"}]"#);
+            fixture(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
         let mut missing_cargo = gate(
             &missing_cargo_tool,
             &missing_cargo_log,
@@ -683,7 +748,8 @@ esac
             "missing Cargo reached process attestation"
         );
 
-        let (drifted_source, drifted_tool, drifted_log) = fixture(r#"[{"name":"Killed"}]"#);
+        let (drifted_source, drifted_tool, drifted_log) =
+            fixture(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
         drifted_tool.write("bad-version", "yes\n");
         let drifted = gate(&drifted_tool, &drifted_log, &["src/lib.rs"], 1, 4096)
             .run(&drifted_source.root, &empty_ignore(), None)
@@ -693,7 +759,7 @@ esac
 
     #[test]
     fn executable_content_identities_are_stable_and_same_version_bytes_move_them() {
-        let (source, tool, log) = fixture(r#"[{"name":"Killed"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
         let gate = gate(&tool, &log, &["src/lib.rs"], 1, 4096);
         let first = gate
             .run(&source.root, &empty_ignore(), None)
@@ -727,7 +793,7 @@ esac
 
     #[test]
     fn executable_byte_drift_during_a_run_refuses_the_run() {
-        let (source, tool, log) = fixture(r#"[{"name":"Killed"}]"#);
+        let (source, tool, log) = fixture(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
         tool.write("tool-drift", "armed\n");
         let refused = gate(&tool, &log, &["src/lib.rs"], 1, 4096)
             .run(&source.root, &empty_ignore(), None)

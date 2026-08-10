@@ -445,9 +445,15 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
 
 fn assert_bounded_refusal(output: &std::process::Output, selected: &BatteryArmResult) {
     let stdout = String::from_utf8(output.stdout.clone()).expect("verifier stdout is UTF-8");
+    let first_arm = format!(
+        "arm position={} gate={} state={}",
+        selected.position(),
+        selected.gate_id(),
+        selected.state().as_str(),
+    );
     let fold_start = stdout
-        .find("arm position=")
-        .expect("verifier leads its refusal fold with arm evidence");
+        .find(&first_arm)
+        .unwrap_or_else(|| panic!("verifier emits the refusal fold: {}", streams(output)));
     let summary_start = stdout
         .rfind("battery refusal summary:")
         .expect("verifier closes its refusal fold with a summary");
@@ -609,7 +615,7 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
         "run `cargo xtask verify` before task completion\n"
     )));
     assert!(stdout.contains("[verify] scoped gate arms run: none\n"));
-    let skipped = GateId::ALL
+    let skipped = GateId::BATTERY
         .into_iter()
         .map(GateId::as_str)
         .collect::<Vec<_>>()
@@ -658,7 +664,7 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
         streams(&output)
     );
     assert!(stdout.contains("not a completion verifier"));
-    for gate_id in GateId::ALL {
+    for gate_id in GateId::BATTERY {
         assert!(
             stdout
                 .lines()
@@ -951,7 +957,7 @@ impl Fixture {
             &["config", "user.name", "Verifier Process Fixture"],
         );
         fs::write(
-            repository.join("spice.toml"),
+            repository.join("spice-rust.toml"),
             format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
         )
         .expect("write verifier fixture policy");

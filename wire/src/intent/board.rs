@@ -99,10 +99,10 @@ impl ProjectVisibility {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardStatement {
-    /// Public task name.
+    /// Public task name derived from `project` and `incepted`.
     pub handle: crate::TaskHandle,
-    /// Stable task identity.
-    pub uuid: crate::CanonicalUuid,
+    /// Sole durable task identity.
+    pub incepted: crate::TaskStamp,
     /// Fact that first placed this task in the queue.
     pub queue_origin: crate::Seq,
     /// Longer authored context.
@@ -120,7 +120,7 @@ pub struct BoardStatement {
     /// Authored task labels.
     pub tags: Vec<String>,
     /// Tasks that must complete first.
-    pub dependencies: Vec<crate::TaskHandle>,
+    pub dependencies: Vec<crate::TaskStamp>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: crate::Origin,
     /// Fact that established this statement revision.
@@ -130,8 +130,8 @@ pub struct BoardStatement {
 impl From<&crate::TaskHead> for BoardStatement {
     fn from(statement: &crate::TaskHead) -> Self {
         Self {
-            handle: statement.handle.clone(),
-            uuid: statement.uuid,
+            handle: crate::TaskHandle::for_project(&statement.project, &statement.incepted),
+            incepted: statement.incepted.clone(),
             queue_origin: statement.queue_origin,
             description: statement.description.clone(),
             acceptance: statement.acceptance.clone(),
@@ -149,8 +149,7 @@ impl BoardStatement {
     #[must_use]
     pub fn with_title(&self, title: &str) -> crate::TaskHead {
         crate::TaskHead {
-            handle: self.handle.clone(),
-            uuid: self.uuid,
+            incepted: self.incepted.clone(),
             queue_origin: self.queue_origin,
             title: title.to_owned(),
             description: self.description.clone(),

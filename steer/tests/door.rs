@@ -180,11 +180,14 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
         .bytes();
 
     assert!(entry.contains(
-        "exec spice run -- \"${SPICE_HOOKS:?spice hooks directory}/static/stage.sh\" \"$@\""
+        "exec spice run -- \"${SPICE_RS_HOOKS:?rust spice hooks directory}/static/stage.sh\" \"$@\""
     ));
     assert!(!entry.contains("spice agent run"));
     let removed_proof_name = ["spice", "proof"].join("_").to_ascii_uppercase();
-    assert!(!entry.contains(&removed_proof_name));
+    assert!(
+        !entry.contains(&removed_proof_name),
+        "entry stage no longer carries proof routing"
+    );
     assert!(!entry.contains("if ["));
 }
 
@@ -202,7 +205,7 @@ fn the_inner_stage_execs_the_native_shell_with_native_descendant_routing() {
     let output = Command::new(hooks.stage(STAGES[1]))
         .args([
             "-c",
-            "printf '<%s><%s><%s>' \"$SHELL\" \"${SPICE_HOOKS-unset}\" \"${SPICE_NATIVE_SHELL-unset}\"",
+            "printf '<%s><%s><%s>' \"$SHELL\" \"${SPICE_RS_HOOKS-unset}\" \"${SPICE_RS_NATIVE_SHELL-unset}\"",
         ])
         .env(steer::hook::HOOKS, hooks.root())
         .env(steer::hook::NATIVE_SHELL, "/bin/sh")

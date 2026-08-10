@@ -59,7 +59,7 @@ impl Fixture {
         fs::set_permissions(&vendor, fs::Permissions::from_mode(0o700))
             .expect("fixture vendor becomes executable");
         fs::write(
-            root.join("spice.toml"),
+            root.join("spice-rust.toml"),
             format!(
                 "[lane]\nlease = \"1s\"\n\n[vendor.claude]\nbinary = {:?}\n",
                 vendor.display().to_string()

@@ -146,6 +146,62 @@ fn metadata_inventory_keeps_library_binary_and_integration_targets() {
 }
 
 #[test]
+fn successful_execution_publishes_one_exact_target_inventory_without_parsing_logs() {
+    let execution = WorkspaceTestExecution::from_inventory(&fixture_inventory());
+    assert_eq!(
+        execution.tests(),
+        ["fixture-a::test:resident", "fixture-b::bin:fixture-b"]
+    );
+
+    let source = wire::Digest::compute(wire::Domain::GateTree, b"workspace tests");
+    let unknown = execution
+        .publish_unknown(
+            source,
+            vec!["src/lib.rs".to_owned()],
+            "coverage publisher emitted no complete receipt",
+        )
+        .expect("unknown coverage remains typed");
+    assert_eq!(unknown.tests_run().len(), 2);
+    assert!(unknown.test_coverage().is_empty());
+    assert!(matches!(
+        unknown.coverage(),
+        gate::CoverageCompleteness::Unknown { .. }
+    ));
+}
+
+#[test]
+fn complete_coverage_cannot_omit_an_executed_target_but_may_name_the_known_suite() {
+    let execution = WorkspaceTestExecution::from_inventory(&fixture_inventory());
+    let source = wire::Digest::compute(wire::Domain::GateTree, b"workspace tests");
+    let partial = vec![gate::TestCoverage::new("fixture-a::test:resident", Vec::new()).unwrap()];
+    let error = execution
+        .publish(
+            source,
+            Vec::new(),
+            partial,
+            gate::CoverageCompleteness::Complete,
+        )
+        .expect_err("partial target coverage refuses");
+    assert!(error.to_string().contains("omits executed test"));
+
+    let complete = vec![
+        gate::TestCoverage::new("fixture-a::test:resident", Vec::new()).unwrap(),
+        gate::TestCoverage::new("fixture-b::bin:fixture-b", Vec::new()).unwrap(),
+        gate::TestCoverage::new("fixture-c::test:unrun", Vec::new()).unwrap(),
+    ];
+    let published = execution
+        .publish(
+            wire::Digest::compute(wire::Domain::GateTree, b"workspace tests"),
+            Vec::new(),
+            complete,
+            gate::CoverageCompleteness::Complete,
+        )
+        .expect("known-suite coverage may include an unexecuted target");
+    assert_eq!(published.tests_run().len(), 2);
+    assert_eq!(published.test_coverage().len(), 3);
+}
+
+#[test]
 fn last_test_observation_ignores_the_harness_summary() {
     let observer = LastTest::default();
     observer

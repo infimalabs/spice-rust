@@ -389,7 +389,7 @@ impl Corpus {
                 .iter()
                 .filter(|exception| !couplings.iter().any(|item| exception.matches(item)))
                 .map(|exception| HygieneFinding {
-                    path: "spice.toml".to_owned(),
+                    path: "spice-rust.toml".to_owned(),
                     line: None,
                     detail: HygieneFindingDetail::StalePrivateException {
                         test_name: exception.test_name.clone(),

@@ -40,7 +40,7 @@ fn evidence(source: &Digest, nonpassing: bool) -> Vec<ArmEvidence> {
             .iter()
             .map(ArmEvidence::gate_id)
             .collect::<Vec<_>>(),
-        GateId::ALL
+        GateId::BATTERY
     );
     evidence
 }
@@ -262,7 +262,7 @@ fn metric_measurement(metric: MetricId) -> MetricMeasurement {
             RuleBinding::new(
                 "magic.examine_threshold",
                 Some("fixture-source-rule"),
-                "spice.toml",
+                "spice-rust.toml",
                 "path src/app.rs",
             )
             .expect("magic policy binding"),
@@ -304,7 +304,7 @@ fn bounded_metric(metric: MetricId, value: u64, field: &str) -> MetricMeasuremen
             RuleBinding::new(
                 field,
                 Some("fixture-source-rule"),
-                "spice.toml",
+                "spice-rust.toml",
                 "path src/app.rs",
             )
             .expect("metric policy binding"),
@@ -361,7 +361,7 @@ fn hygiene_observation(
             provenance: HygieneProvenance {
                 release: "current".to_owned(),
                 layer: "repository".to_owned(),
-                document: "spice.toml".to_owned(),
+                document: "spice-rust.toml".to_owned(),
                 field: "policy.exclude[0]".to_owned(),
             },
             reason: "generated fixture tree".to_owned(),
@@ -465,7 +465,7 @@ fn hygiene_language(applicable: bool) -> AnalysisEvidence {
         language: "python".to_owned(),
         selected_files: u32::from(applicable) * 6,
         project_markers: if applicable {
-            vec!["spice.toml".to_owned()]
+            vec!["spice-rust.toml".to_owned()]
         } else {
             Vec::new()
         },

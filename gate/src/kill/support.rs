@@ -210,6 +210,8 @@ pub enum KillError {
     InventoryUnreadable(String),
     /// Inventory named an invalid mutant.
     InvalidMutant(String),
+    /// Structured mutation source was absent or outside the declared targets.
+    InvalidMutantSource { mutant: String, source: String },
     /// Inventory named one mutant twice.
     DuplicateMutant(String),
     /// Inventory contained no selected mutants.
@@ -266,6 +268,10 @@ impl fmt::Display for KillError {
                 write!(formatter, "mutation inventory is undecodable: {evidence}")
             }
             Self::InvalidMutant(mutant) => write!(formatter, "invalid mutant identity {mutant:?}"),
+            Self::InvalidMutantSource { mutant, source } => write!(
+                formatter,
+                "mutation {mutant:?} names undeclared structured source {source:?}"
+            ),
             Self::DuplicateMutant(mutant) => {
                 write!(formatter, "mutant identity {mutant:?} is repeated")
             }

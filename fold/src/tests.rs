@@ -553,7 +553,7 @@ fn snapshot(count: u64) -> journal::FactSnapshot {
                 .parse::<wire::Instant>()
                 .expect("fixture instant"),
             actor: wire::Actor::Spice,
-            origin: "task:FOLD-a1".parse().expect("fixture origin"),
+            origin: "task:1kKRRsDP".parse().expect("fixture origin"),
             cause: (position > 1).then(|| seq(position - 1)),
             fact: opaque_note(),
         })
@@ -567,7 +567,7 @@ fn snapshot(count: u64) -> journal::FactSnapshot {
 /// one out, so it can never carry fields the decoder would refuse.
 fn opaque_note() -> wire::AnyFact {
     let fact = wire::Fact::new(wire::body::TaskNoted {
-        task: "FOLD-a1".parse().expect("fixture task handle"),
+        task: "1kKRRsDP".parse().expect("fixture task stamp"),
         note: "fixture".to_owned(),
     });
     let bytes = wire::encode(&fact).expect("a typed fact encodes");

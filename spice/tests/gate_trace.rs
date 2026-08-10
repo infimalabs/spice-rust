@@ -29,18 +29,18 @@ fn shared_rim_invokes_each_compiled_arm_and_family_once_in_order() {
             | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(arms.len(), GateId::ALL.len());
+    assert_eq!(arms.len(), GateId::BATTERY.len());
     assert_eq!(
         arms.iter()
             .map(|(_, gate_id, _)| *gate_id)
             .collect::<Vec<_>>(),
-        GateId::ALL
+        GateId::BATTERY
     );
     assert_eq!(
         arms.iter()
             .map(|(position, _, _)| *position)
             .collect::<Vec<_>>(),
-        (0..GateId::ALL.len()).collect::<Vec<_>>()
+        (0..GateId::BATTERY.len()).collect::<Vec<_>>()
     );
     assert_eq!(
         events
@@ -58,7 +58,7 @@ fn shared_rim_invokes_each_compiled_arm_and_family_once_in_order() {
             ArmFamily::Hygiene,
         ]
     );
-    assert_eq!(report.results().len(), GateId::ALL.len());
+    assert_eq!(report.results().len(), GateId::BATTERY.len());
 }
 
 struct Repository(PathBuf);
@@ -77,7 +77,7 @@ impl Repository {
         git(&root, &["config", "user.name", "Trace Fixture"]);
         fs::create_dir_all(root.join("src")).expect("create source directory");
         fs::write(
-            root.join("spice.toml"),
+            root.join("spice-rust.toml"),
             format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
         )
         .expect("write policy");

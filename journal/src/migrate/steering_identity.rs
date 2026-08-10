@@ -558,7 +558,7 @@ fn rewrite_receipts(
         let mut response = decode("command_receipts", &command, &response)?;
         let mut changed = rewrite_value(&mut request, by_key, by_directive);
         changed |= rewrite_value(&mut response, by_key, by_directive);
-        changed |= rewrite_legacy_refusal(&mut response);
+        changed |= rewrite_refusal(&mut response, &command)?;
         // Schema 3 exposed `steer::resend` only as the recovery command. Schema
         // 4 gives live re-delivery that name and moves recovery to its own kind,
         // so successful and refused historical receipts must both be renamed.
@@ -584,6 +584,39 @@ fn rewrite_receipts(
         });
     }
     Ok(updates)
+}
+
+fn rewrite_refusal(response: &mut Value, row: &str) -> Result<bool, OpenError> {
+    let outcome = response
+        .as_object_mut()
+        .and_then(|object| object.get_mut("outcome"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("command_receipts", row, "response.outcome is not an object"))?;
+    if outcome.get("kind").and_then(Value::as_str) != Some("refusal")
+        || outcome.contains_key("form")
+    {
+        return Ok(false);
+    }
+
+    let reason = outcome.remove("reason").ok_or_else(|| {
+        invalid(
+            "command_receipts",
+            row,
+            "historical refusal reason is missing",
+        )
+    })?;
+    let mut diagnostic = Map::from_iter([("reason".to_owned(), reason)]);
+    for field in ["witness", "expected", "observed"] {
+        if let Some(value) = outcome.remove(field) {
+            diagnostic.insert(field.to_owned(), value);
+        }
+    }
+    if let Some(remedy) = outcome.remove("remedy") {
+        diagnostic.insert("detail".to_owned(), remedy);
+    }
+    outcome.insert("form".to_owned(), Value::String("bare".to_owned()));
+    outcome.insert("diagnostic".to_owned(), Value::Object(diagnostic));
+    Ok(true)
 }
 
 fn rewrite_value(
@@ -629,55 +662,23 @@ fn rewrite_value(
     changed
 }
 
-/// Lift the schema-3 flat refusal into the current explicit refusal sum type.
-fn rewrite_legacy_refusal(response: &mut Value) -> bool {
-    let Some(outcome) = response
-        .as_object_mut()
-        .and_then(|object| object.get_mut("outcome"))
-        .and_then(Value::as_object_mut)
-    else {
-        return false;
-    };
-    if outcome.get("kind").and_then(Value::as_str) != Some("refusal")
-        || outcome.contains_key("form")
-    {
-        return false;
-    }
-    let Some(reason) = outcome.remove("reason") else {
-        return false;
-    };
-    let mut diagnostic = serde_json::Map::new();
-    diagnostic.insert("reason".to_owned(), reason);
-    for field in ["witness", "expected", "observed"] {
-        if let Some(value) = outcome.remove(field) {
-            diagnostic.insert(field.to_owned(), value);
-        }
-    }
-    if let Some(detail) = outcome.remove("remedy") {
-        diagnostic.insert("detail".to_owned(), detail);
-    }
-    outcome.insert("form".to_owned(), Value::String("bare".to_owned()));
-    outcome.insert("diagnostic".to_owned(), Value::Object(diagnostic));
-    true
-}
-
 fn rewrite_expected_witnesses(
     request: &mut Value,
     by_directive: &BTreeMap<String, Node>,
-    remove_lineage: bool,
+    recovery: bool,
     row: &str,
 ) -> Result<bool, OpenError> {
     let expected = request
         .as_object_mut()
         .and_then(|object| object.get_mut("expected"))
         .ok_or_else(|| invalid("command_receipts", row, "request.expected is missing"))?;
-    rewrite_witness_array(expected, by_directive, remove_lineage, row)
+    rewrite_witness_array(expected, by_directive, recovery, row)
 }
 
 fn rewrite_witness_array(
     witnesses: &mut Value,
     by_directive: &BTreeMap<String, Node>,
-    remove_lineage: bool,
+    recovery: bool,
     row: &str,
 ) -> Result<bool, OpenError> {
     let values = witnesses.as_array_mut().ok_or_else(|| {
@@ -700,20 +701,32 @@ fn rewrite_witness_array(
         let kind = object
             .get("kind")
             .and_then(Value::as_str)
-            .map(str::to_owned)
             .ok_or_else(|| {
                 invalid(
                     "command_receipts",
                     row,
                     "a steering witness kind is missing",
                 )
-            })?;
-        if kind == "lineage" && remove_lineage {
+            })?
+            .to_owned();
+        if kind == "lineage" && recovery {
             values.remove(index);
             changed = true;
             continue;
         }
-        if matches!(kind.as_str(), "directive" | "lineage") {
+        if kind == "directive" && recovery {
+            if object.get("disposition").and_then(Value::as_str) != Some("lapsed") {
+                return Err(invalid(
+                    "command_receipts",
+                    row,
+                    "a historical recovery witness is not lapsed",
+                ));
+            }
+            object.insert("kind".to_owned(), Value::String("recoverable".to_owned()));
+            object.remove("disposition");
+            changed = true;
+        }
+        if matches!(kind.as_str(), "directive" | "lineage" | "recoverable") {
             let steer = object
                 .get_mut("steer")
                 .and_then(|value| value.as_str())
@@ -737,11 +750,6 @@ fn rewrite_witness_array(
                     "steer".to_owned(),
                     Value::String(node.root_directive.clone()),
                 );
-                changed = true;
-            }
-            if kind == "directive" && remove_lineage {
-                object.insert("kind".to_owned(), Value::String("recoverable".to_owned()));
-                object.remove("disposition");
                 changed = true;
             }
         }
@@ -914,6 +922,13 @@ fn encode_command(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
             "command_receipts",
             row,
             &format!("migrated request is invalid: {error}"),
+        )
+    })?;
+    command.witnessed().map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("migrated request violates its command law: {error}"),
         )
     })?;
     command

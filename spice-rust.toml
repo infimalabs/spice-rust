@@ -1,0 +1,199 @@
+# Tracked repository policy owned by Rust Spice. Every active entry is admitted
+# through Rust Spice's typed configuration registry and compiled Gate.
+
+[tasks]
+# Public scheduler stems beyond the packaged `task` and `serve` defaults.
+# Product work routes directly by ownership so the allocator can retain domain
+# locality instead of collapsing every crate under one `task` bucket.
+#
+# The dependency lattice owns the workspace inventory. Every product member is
+# present below except `xtask`: it is the verification launcher for `gate`, not
+# a second verification domain. `doctrine` owns settled repository law;
+# `scheduler` owns the task-plane topology; `rim` owns the cross-crate command,
+# exit, and environment edge; and `corpus` owns fixture bodies replayed across
+# multiple crates.
+#
+# One sense keeps one name. Work formerly described as `release`, `studies`,
+# `mail`, `lifecycle`, or `hooks` routes to its current owner (`dist`, `gate`,
+# `steer`, or `lane`). `cli` and `tests` remain `rim` and `corpus`. Generic
+# activity/history labels such as `docs`, `config`, `toolchain`, and `spec` do
+# not become scheduler domains; they route to the organ whose contract moves.
+stems = [
+    "app",
+    "atomic",
+    "board",
+    "bus",
+    "canvas",
+    "consent",
+    "corpus",
+    "dialect",
+    "dist",
+    "doctrine",
+    "fold",
+    "gate",
+    "journal",
+    "lane",
+    "listen",
+    "proof",
+    "rim",
+    "scheduler",
+    "sill",
+    "spice",
+    "steer",
+    "tape",
+    "taste",
+    "vendor",
+    "wire",
+]
+
+# A stem names the domain that owns the work, never the work itself. Every
+# project therefore takes a child segment saying what moves inside that domain,
+# with a third available when a child needs to subdivide. A bare stem would let
+# a domain accumulate rows that are distinguishable only by handle, which is the
+# same undifferentiated bucket the stem inventory above exists to break up.
+project_min_depth = 2
+project_max_depth = 3
+
+[judge]
+# Adjudicate maxim trigger candidates before they become lane direction.
+enabled = true
+
+[policy]
+# The native Git publisher runs this cheap repository load over every
+# synthesized integration before it can reach the shared baseline.
+admission = [
+    "cargo", "metadata", "--no-deps", "--offline", "--format-version", "1",
+]
+
+# Every environment name this workspace defines, spelled once.
+#
+# This is the workspace's own vocabulary: the names Spice writes and the names
+# Spice reads back. Gate matches it against the tracked tree in both
+# directions, so a name used without being listed fails, and a name listed
+# after its last use fails too. That is what makes the vocabulary countable
+# rather than a set of literals accumulating across crates.
+#
+# Session forensics reads the live Codex or Claude identity and the selected
+# agent vendor. `steer` owns the four hook/session names. A supervised launch
+# separates the installed outer shell from the native shell restored by its
+# inner stage, while the wrapper reads the lane's rendered inbox and lane-bound
+# commands carry that lane identity. `gate` owns the mutation seed and attempt
+# number it repeats into every bounded cargo-mutants process. Its hygiene
+# acquisition fixture passes the captured repository and execution-tripwire
+# marker to an isolated copy of the current test process, and fixes `TMPDIR` at
+# private writable scratch so that isolation remains valid on a read-only proof
+# host.
+#
+# Nine foreign environment names are admitted here. The installed pre-commit
+# hook unsets Git's three local-environment names before it execs verify, and
+# the hooks fixture exports exactly those three to prove the child sees none of
+# them. The Git shadow writes three more, and it is production rather than a
+# fixture: it points `GIT_CONFIG_SYSTEM` at the per-worktree config it
+# publishes, counts the command-scope pairs it appends in `GIT_CONFIG_COUNT`,
+# and sets `GIT_EDITOR` to `echo` for the one probe that asks Git to print its
+# own system config path. The hygiene acquisition fixture fixes the seventh,
+# `TMPDIR`, at its own writable scratch. The verifier writes the eighth to pass
+# the Canvas battery its binary inside that family's isolated Cargo root. Spice
+# owns none of these names and writes all of them. The ledger accounts what the
+# tree references rather than what it invented, so they are counted here; the
+# shadow's indexed
+# `GIT_CONFIG_KEY_` and `GIT_CONFIG_VALUE_` pairs are not, because a ledger
+# name is a whole name and a trailing underscore is a prefix. Their access
+# waiver is a separate arm and does not account them; a waived name is still a
+# name, and one written without being counted here is one nobody can find
+# again. Doctor reports only the names Spice owns, so these thirteen are the
+# difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
+# rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
+# retained only as coexistence sentinels.
+env_names = [
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_DIR",
+    "GIT_EDITOR",
+    "GIT_INDEX_FILE",
+    "GIT_WORK_TREE",
+    "SPICE_AGENT_VENDOR",
+    "SPICE_APP_SOURCE_IDENTITY",
+    "SPICE_CANVAS_BINARY",
+    "SPICE_HOOKS",
+    "SPICE_RS_HOOKS",
+    "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
+    "SPICE_HYGIENE_INTERPRETER_MARKER",
+    "SPICE_INBOX",
+    "SPICE_RS_INBOX",
+    "SPICE_INSTALL_TEST_PAUSE_ACTION",
+    "SPICE_INSTALL_TEST_PAUSE_CONTROL",
+    "SPICE_INSTALL_TEST_PAUSE_PATH",
+    "SPICE_LANE",
+    "SPICE_RS_LANE",
+    "SPICE_MUTATION_ATTEMPT",
+    "SPICE_MUTATION_SEED",
+    "SPICE_NATIVE_PINS",
+    "SPICE_NATIVE_SHELL",
+    "SPICE_RS_NATIVE_SHELL",
+    "SPICE_PROOF",
+    "TMPDIR",
+]
+
+# Which files the shape arm measures lines and bytes over.
+#
+# Nothing packages a fallback for this. An arm offered no paths reports a clean
+# family over nothing, which reads exactly like a repository that passed, so the
+# selection is declared here or the document refuses to load. The inventory is
+# the complete set Gate measures in this repository; a shorter list would not
+# tighten the gate, it would silently stop measuring
+# whatever it dropped.
+[policy.file_shape]
+source_suffixes = [
+    ".astro", ".bash", ".c", ".cc", ".cjs", ".cpp", ".cs", ".css", ".cts",
+    ".go", ".h", ".hpp", ".html", ".java", ".js", ".json", ".jsx", ".kt",
+    ".less", ".lua", ".m", ".md", ".mjs", ".mm", ".mts", ".php", ".py",
+    ".pyi", ".rb", ".rs", ".rst", ".sass", ".scala", ".scss", ".sh", ".sql",
+    ".svelte", ".swift", ".toml", ".ts", ".tsx", ".txt", ".vue", ".xml",
+    ".yaml", ".yml", ".zsh",
+]
+
+# Which files each language arm reads.
+#
+# These are two selections rather than one because they are genuinely different
+# sets. `complexity` preserves the repository's routine-language selection; the
+# compiled arm measures suffixes with a vendored grammar and names every other
+# selected suffix as unsupported. `magic` compares literals against a baseline
+# through a C-family grammar, and a language that grammar cannot parse exactly
+# would have every literal in it read as a regression.
+[policy.languages]
+complexity = [
+    ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".kt",
+    ".lua", ".m", ".mm", ".php", ".py", ".rb", ".rs", ".scala", ".swift",
+    ".ts",
+]
+magic = [
+    ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".kt",
+    ".m", ".mm", ".py", ".rs", ".scala", ".swift", ".ts",
+]
+
+[taste.polling]
+words = ["delay*", "poll*", "sleep*", "slept"]
+message = "Respond to the real event, signal, or completion notification through a blocking call, watcher, or callback, or restructure the flow so nothing remains to await."
+
+[taste.fallbacks]
+words = ["fall back", "fall backs", "fallback*", "falls back"]
+message = "Keep one deterministic path and let violated assumptions refuse immediately. Add a default or resolver order only when the contract names it."
+
+[taste.compatibility]
+words = ["compatib*"]
+message = "Keep one tested, visible current path. Migrate retained data forward once or refuse naming its owning release; never accumulate release-specific execution arms."
+
+[taste.shims]
+words = ["shim", "shimmed", "shimming", "shims"]
+message = "Replace the old shape outright, delete it, and route every caller to the current interface."
+
+[taste.aliases]
+words = ["alias*"]
+message = "Rename in place, update every reference in one change, and leave exactly one name."
+
+[taste.legacy]
+words = ["legac*"]
+message = "Treat old implementations as evidence, never as executable arms. Migrate retained data forward once or refuse naming its owning release."

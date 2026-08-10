@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, Retention, Store};
 use serde::de::DeserializeOwned;
 use wire::intent::TaskAnswer;
-use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle};
+use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle, TaskStamp};
 
 #[path = "support/readiness.rs"]
 mod readiness;
@@ -31,7 +31,7 @@ impl Fixture {
         ));
         fs::create_dir_all(root.join(".git")).expect("create repository fixture");
         staged_app::seed(&root);
-        fs::write(root.join("spice.toml"), "[tasks]\nstems = [\"rim\"]\n")
+        fs::write(root.join("spice-rust.toml"), "[tasks]\nstems = [\"rim\"]\n")
             .expect("write task project policy");
         let bundle = root.join("artifact-backup");
         Self { root, bundle }
@@ -154,16 +154,42 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
     let binary = fixture.source("capture.png", b"\x89PNG\r\n\x1a\n");
 
     let (first, second) = assert_artifact_surface(&fixture, &task, &text, &binary);
+    // Shape CASE 146 / INVARIANTS ID-01 reaches the sidecar store too: a
+    // project edit changes the current handle without moving artifact identity.
+    let rehomed = fixture
+        .reply::<TaskAnswer>(&[
+            "task".to_owned(),
+            "modify".to_owned(),
+            task.to_string(),
+            "--project".to_owned(),
+            "rim.evidence".to_owned(),
+        ])
+        .body
+        .task;
+    assert_ne!(rehomed, task);
+    assert_eq!(rehomed.incepted(), task.incepted());
+    let ArtifactAnswer::Listed { artifacts, .. } = fixture
+        .reply::<ArtifactAnswer>(&[
+            "task".to_owned(),
+            "artifact".to_owned(),
+            "list".to_owned(),
+            rehomed.to_string(),
+        ])
+        .body
+    else {
+        panic!("artifact list returned another answer after rehome")
+    };
+    assert_eq!(artifacts, [first.clone(), second.clone()]);
     assert_invalid_task_refusals(&fixture);
     resident.stop(&fixture);
-    assert_backup_restore(&fixture, &task, first, second);
+    assert_backup_restore(&fixture, &rehomed, first, second);
 }
 
 #[test]
 fn task_artifact_refuses_malformed_project_policy_before_state_access() {
     let fixture = Fixture::new();
     fs::write(
-        fixture.root.join("spice.toml"),
+        fixture.root.join("spice-rust.toml"),
         "[tasks]\nstems = [\"rim\"]\nhidden_stems = [\"sandbox\", \"bad-stem\"]\n",
     )
     .expect("write malformed hidden project policy");
@@ -260,9 +286,7 @@ fn restore_refuses_an_internally_valid_artifact_for_an_unknown_task_inertly() {
         runtime.join("artifacts/tasks"),
         runtime.join("locks/task-artifacts.lock"),
     );
-    let unknown = "UNKNOWN-12345678"
-        .parse::<TaskHandle>()
-        .expect("unknown task handle");
+    let unknown = "12345678".parse::<TaskStamp>().expect("unknown task stamp");
     let source = fixture.source("unknown.txt", b"internally valid unknown task artifact\n");
     store
         .add(AddRequest {
@@ -405,11 +429,14 @@ fn assert_backup_restore(
     second: artifact::Artifact,
 ) {
     fixture.reply::<JournalBackup>(&["backup".to_owned(), fixture.bundle.display().to_string()]);
+    let incepted = task
+        .incepted()
+        .expect("fixture handle carries its inception stamp");
     assert!(
         fixture
             .bundle
             .join(format!(
-                "artifacts/tasks/{task}/objects/{}/payload",
+                "artifacts/tasks/{incepted}/objects/{}/payload",
                 first.digest
             ))
             .is_file(),

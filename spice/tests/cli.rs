@@ -549,6 +549,10 @@ fn run_preserves_the_childs_argument_vector() {
 
 #[test]
 #[cfg(unix)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the integration fixture acquires ambient PATH at its process boundary"
+)]
 fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -585,7 +589,7 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
         concat!(
             "#!/bin/sh\n",
             "printf 'executed=<%s>:<%s>:<%s>\\n' \"$SHELL\" ",
-            "\"${SPICE_HOOKS-unset}\" \"${SPICE_NATIVE_SHELL-unset}\"\n",
+            "\"${SPICE_RS_HOOKS-unset}\" \"${SPICE_RS_NATIVE_SHELL-unset}\"\n",
             "printf 'hidden descendant stderr\\n' >&2\n",
         ),
     )

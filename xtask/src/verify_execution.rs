@@ -1071,7 +1071,7 @@ fn write_scope_inventory(package: &str, output: &mut impl Write) -> Result<(), V
     )
     .map_err(VerifyError::Output)?;
     writeln!(output, "[verify] scoped gate arms run: none").map_err(VerifyError::Output)?;
-    let skipped_arms = gate::GateId::ALL
+    let skipped_arms = gate::GateId::BATTERY
         .into_iter()
         .map(gate::GateId::as_str)
         .collect::<Vec<_>>()

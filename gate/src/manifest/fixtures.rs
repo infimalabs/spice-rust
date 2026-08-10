@@ -7,13 +7,13 @@ const REPOSITORY: &str = include_str!("../../tests/fixtures/gate-manifest/reposi
 const WORKTREE: &str = include_str!("../../tests/fixtures/gate-manifest/worktree.toml");
 
 fn inputs() -> PredecessorInputs<'static> {
-    PredecessorInputs::new("/installed/0.31.0/spice.toml", SYSTEM)
+    PredecessorInputs::new("/installed/0.31.0/spice-rust.toml", SYSTEM)
 }
 
 fn migrate(repository: &str, worktree: &str) -> GateManifest {
     migrate_predecessor(
         inputs()
-            .repository("/repo/spice.toml", repository)
+            .repository("/repo/spice-rust.toml", repository)
             .worktree("/git/common/spice/config.toml", worktree),
     )
     .expect("fixture migrates")
@@ -54,17 +54,17 @@ fn declaration(manifest: &GateManifest, id: GateId) -> &GateDeclaration {
 fn error(repository: &str, worktree: &str) -> MigrationError {
     migrate_predecessor(
         inputs()
-            .repository("/repo/spice.toml", repository)
+            .repository("/repo/spice-rust.toml", repository)
             .worktree("/git/common/spice/config.toml", worktree),
     )
     .expect_err("fixture must refuse")
 }
 
 #[test]
-fn current_manifest_is_exactly_the_ordered_compiled_battery() {
+fn current_manifest_is_exactly_the_ordered_instrument_registry() {
     let manifest = GateManifest::default();
     assert_eq!(manifest.version(), GATE_MANIFEST_VERSION);
-    assert_eq!(manifest.gates().len(), 27);
+    assert_eq!(manifest.gates().len(), 30);
     assert_eq!(
         manifest
             .gates()
@@ -173,7 +173,7 @@ fn packaged_fixture_migrates_every_id_in_exact_order() {
         assert_eq!(declaration.id_provenance().layer(), OriginLayer::System);
         assert_eq!(
             declaration.id_provenance().document(),
-            "/installed/0.31.0/spice.toml"
+            "/installed/0.31.0/spice-rust.toml"
         );
         let mut expected = vec!["policy", "pre_commit_builtins"];
         if !absent_from_battery(declaration.id()) {
@@ -191,7 +191,7 @@ fn packaged_fixture_migrates_every_id_in_exact_order() {
 #[test]
 fn an_omitted_builtin_selects_its_compiled_id_from_the_packaged_registry_root() {
     let manifest = migrate_predecessor(PredecessorInputs::new(
-        "/installed/0.31.0/spice.toml",
+        "/installed/0.31.0/spice-rust.toml",
         "[policy.pre_commit_builtins]\n",
     ))
     .expect("omitted builtins select compiled defaults");
@@ -275,7 +275,7 @@ fn every_spelling_of_an_identity_the_release_never_declared_is_refused_by_rule()
                     "{id}: {spelling:?} = {entry}"
                 );
                 assert_eq!(refusal.layer(), OriginLayer::Repository);
-                assert_eq!(refusal.document(), "/repo/spice.toml");
+                assert_eq!(refusal.document(), "/repo/spice-rust.toml");
                 assert_eq!(
                     refusal.field().last().map(String::as_str),
                     Some(spelling.as_str()),
@@ -293,7 +293,7 @@ fn every_spelling_of_an_identity_the_release_never_declared_is_refused_by_rule()
                 toml_string(&spelling)
             );
             let refusal = migrate_predecessor(PredecessorInputs::new(
-                "/installed/0.31.0/spice.toml",
+                "/installed/0.31.0/spice-rust.toml",
                 &named,
             ))
             .expect_err("the packaged layer must refuse the same name");
@@ -389,7 +389,13 @@ fn release_standard_arm_table_is_complete_and_names_what_the_release_declared() 
         .collect();
     assert_eq!(
         grown_past,
-        vec![GateId::RustTypecheck, GateId::CsharpUnusedCandidates]
+        vec![
+            GateId::RustTypecheck,
+            GateId::CsharpUnusedCandidates,
+            GateId::SuiteSeam,
+            GateId::MutationCoverage,
+            GateId::TestSubsumption,
+        ]
     );
     for id in GateId::ALL {
         assert_eq!(id.predecessor_declared(), !absent_from_battery(id), "{id}");
@@ -435,7 +441,7 @@ fn every_executable_form_resolves_then_refuses_for_every_compiled_arm() {
                 "{id}: {repository}"
             );
             assert_eq!(refusal.layer(), OriginLayer::Repository);
-            assert_eq!(refusal.document(), "/repo/spice.toml");
+            assert_eq!(refusal.document(), "/repo/spice-rust.toml");
             assert_eq!(
                 refusal.field().last().map(String::as_str),
                 Some(expected_leaf),
@@ -570,7 +576,7 @@ fn malformed_registry_and_syntax_name_the_exact_source() {
         let refusal = error(repository, "");
         assert_eq!(refusal.kind(), kind);
         assert_eq!(refusal.layer(), OriginLayer::Repository);
-        assert_eq!(refusal.document(), "/repo/spice.toml");
+        assert_eq!(refusal.document(), "/repo/spice-rust.toml");
         assert_eq!(refusal.field().last().map(String::as_str), Some(field));
     }
 }

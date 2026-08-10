@@ -6,7 +6,10 @@ use clap::ArgMatches;
 use serde::Serialize;
 use spice::config::LoadError;
 use spice::repository::Repository;
-use wire::body::{LaneSeated, TasteCleared, TasteConfirmed, TasteReminded};
+use wire::body::{
+    LaneSeated, TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt, TasteJudged,
+    TasteReminded,
+};
 use wire::intent::{CommandAnswer, TaskAdd, TaskAnswer};
 use wire::{
     CanonicalUuid, ConfigSource, Digest, Disposition, Domain, Fault, FaultClass, Instant, Name,
@@ -123,6 +126,17 @@ struct TasteFire {
     locus: String,
 }
 
+struct FireEvidence {
+    taste: String,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    compaction: u64,
+    content: Digest,
+    directive: CanonicalUuid,
+    key: String,
+    locus: wire::body::TranscriptLocus,
+}
+
 /// Fires and answers for one vendor, over the fires this report carries.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct VendorTally {
@@ -161,6 +175,20 @@ struct TasteJudgment {
     at: Instant,
     verdict: Verdict,
     locus: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<Digest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bag: Option<Digest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trigger: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    driver: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compaction: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attempts: Vec<TasteJudgeAttempt>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -220,7 +248,8 @@ pub(crate) fn add(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnsw
             project: Some(PROJECT.to_owned()),
             description: Some(description),
             acceptance: vec![
-                "Operator review adds one exact [taste.NAME] row to tracked spice.toml.".to_owned(),
+                "Operator review adds one exact [taste.NAME] row to tracked spice-rust.toml."
+                    .to_owned(),
                 concat!(
                     "Paired behavior and mention fixtures confirm and clear the proposed bag, ",
                     "and the standing non-hit corpus remains clear."
@@ -325,7 +354,7 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
                 format!(
                     concat!(
                         "Operator review narrows, revises, or deletes [taste.{}] in tracked ",
-                        "spice.toml."
+                        "spice-rust.toml."
                     ),
                     row.name
                 ),
@@ -448,21 +477,62 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
 fn collect_judgments(snapshot: &journal::FactSnapshot) -> BTreeMap<String, Vec<TasteJudgment>> {
     let mut judgments = BTreeMap::<String, Vec<TasteJudgment>>::new();
     for envelope in snapshot.facts() {
-        let (taste, verdict, locus) = if let Some(body) = envelope.fact.read::<TasteConfirmed>() {
-            (body.taste, Verdict::Confirmed, body.locus)
+        let (taste, judgment) = if let Some(body) = envelope.fact.read::<TasteConfirmed>() {
+            (
+                body.taste,
+                historical_judgment(envelope, Verdict::Confirmed, body.locus),
+            )
         } else if let Some(body) = envelope.fact.read::<TasteCleared>() {
-            (body.taste, Verdict::Cleared, body.locus)
+            (
+                body.taste,
+                historical_judgment(envelope, Verdict::Cleared, body.locus),
+            )
+        } else if let Some(body) = envelope.fact.read::<TasteJudged>() {
+            (
+                body.taste,
+                TasteJudgment {
+                    position: envelope.seq,
+                    at: envelope.at,
+                    verdict: match body.decision {
+                        TasteDecision::Confirmed { .. } => Verdict::Confirmed,
+                        TasteDecision::Cleared => Verdict::Cleared,
+                    },
+                    locus: locus_text(&body.locus),
+                    content: Some(body.content),
+                    bag: Some(body.bag),
+                    trigger: Some(body.trigger),
+                    driver: Some(body.driver),
+                    source: Some(body.source),
+                    compaction: Some(body.compaction),
+                    attempts: body.attempts,
+                },
+            )
         } else {
             continue;
         };
-        judgments.entry(taste).or_default().push(TasteJudgment {
-            position: envelope.seq,
-            at: envelope.at,
-            verdict,
-            locus,
-        });
+        judgments.entry(taste).or_default().push(judgment);
     }
     judgments
+}
+
+fn historical_judgment(
+    envelope: &wire::Envelope<wire::AnyFact>,
+    verdict: Verdict,
+    locus: String,
+) -> TasteJudgment {
+    TasteJudgment {
+        position: envelope.seq,
+        at: envelope.at,
+        verdict,
+        locus,
+        content: None,
+        bag: None,
+        trigger: None,
+        driver: None,
+        source: None,
+        compaction: None,
+        attempts: Vec::new(),
+    }
 }
 
 /// Every reminder in the snapshot, grouped by taste and newest first.
@@ -473,35 +543,57 @@ fn collect_fires(
 ) -> Result<BTreeMap<String, Vec<TasteFire>>, EvidenceError> {
     let mut fires = BTreeMap::<String, Vec<TasteFire>>::new();
     for envelope in snapshot.facts() {
-        let Some(body) = envelope.fact.read::<TasteReminded>() else {
+        let evidence = if let Some(body) = envelope.fact.read::<TasteReminded>() {
+            FireEvidence {
+                taste: body.taste,
+                lane: body.lane,
+                occupant: body.occupant,
+                compaction: body.compaction,
+                content: body.content,
+                directive: body.directive,
+                key: body.key,
+                locus: body.locus,
+            }
+        } else if let Some(body) = envelope.fact.read::<TasteJudged>() {
+            let TasteDecision::Confirmed { directive, key, .. } = body.decision else {
+                continue;
+            };
+            FireEvidence {
+                taste: body.taste,
+                lane: body.lane,
+                occupant: body.occupant,
+                compaction: body.compaction,
+                content: body.content,
+                directive,
+                key,
+                locus: body.locus,
+            }
+        } else {
             continue;
         };
         let vendor = seating
-            .get(&body.lane)
-            .ok_or(EvidenceError::LaneUnseated(body.lane))?
+            .get(&evidence.lane)
+            .ok_or(EvidenceError::LaneUnseated(evidence.lane))?
             .clone();
         // Escalation never replaces the reminder's identity, so this directive
         // carries its current disposition directly. Reading it here counts one
         // publication exactly once regardless of presentation stage.
         let standing = ledger
-            .directive(body.directive)
-            .ok_or(EvidenceError::DirectiveMissing(body.directive))?
+            .directive(evidence.directive)
+            .ok_or(EvidenceError::DirectiveMissing(evidence.directive))?
             .disposition();
-        fires
-            .entry(body.taste.clone())
-            .or_default()
-            .push(TasteFire {
-                position: envelope.seq,
-                at: envelope.at,
-                lane: body.lane,
-                vendor,
-                occupant: body.occupant,
-                compaction: body.compaction,
-                content: body.content,
-                key: body.key,
-                standing,
-                locus: locus_text(&body.locus),
-            });
+        fires.entry(evidence.taste).or_default().push(TasteFire {
+            position: envelope.seq,
+            at: envelope.at,
+            lane: evidence.lane,
+            vendor,
+            occupant: evidence.occupant,
+            compaction: evidence.compaction,
+            content: evidence.content,
+            key: evidence.key,
+            standing,
+            locus: locus_text(&evidence.locus),
+        });
     }
     for rows in fires.values_mut() {
         rows.sort_by_key(|row| std::cmp::Reverse(row.position));

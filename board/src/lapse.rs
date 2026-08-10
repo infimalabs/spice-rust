@@ -271,14 +271,19 @@ fn observe(
     request: &Request,
 ) -> Result<Observation, ObserveError> {
     let task = &request.intent.task;
+    let stamp = task.incepted().map_err(|error| {
+        GuardError::Invalid(format!(
+            "task {task} has no canonical inception stamp: {error}"
+        ))
+    })?;
     let statement = read
-        .task_head(task)?
+        .task_head(&stamp)?
         .ok_or_else(|| Refusal::MissingTask(task.clone()))?;
     let workflow = read
-        .workflow_head(task)?
+        .workflow_head(&stamp)?
         .ok_or_else(|| GuardError::Invalid(format!("task {task} has no workflow head")))?;
-    let claim = read.claim_head(task)?.ok_or(Refusal::MissingClaim)?;
-    let lease = read.lease_head(task)?.ok_or(Refusal::MissingLease)?;
+    let claim = read.claim_head(&stamp)?.ok_or(Refusal::MissingClaim)?;
+    let lease = read.lease_head(&stamp)?.ok_or(Refusal::MissingLease)?;
     Entry::new(
         statement.body().clone(),
         workflow.body().clone(),
@@ -383,17 +388,18 @@ fn admit_residency(
 
 fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, LapseError> {
     let task = request.intent.task.clone();
+    let stamp = observed.statement.body().incepted.clone();
     let holder = observed.claim.body().actor.clone();
     let lane = observed.claim.body().lane;
-    let origin = format!("task:{task}")
+    let origin = format!("task:{stamp}")
         .parse()
-        .expect("task handle forms an origin");
+        .expect("task stamp forms an origin");
     let mut write = JournalWrite::new(holder.clone(), origin, request.at, Producer::BusTimer);
     write.guard(change_guard(request.clone(), observed.clone()));
     let fact = write
         .fact(
             body::ClaimLapsed {
-                task: task.clone(),
+                task: stamp.clone(),
                 occupant: request.occupant,
                 expiry: request.expiry,
             },
@@ -402,7 +408,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
         .map_err(LapseError::Build)?;
     let mut next = observed.claim.body().clone();
     next.disposition = ClaimDisposition::Lapsed;
-    write.claim_head(task.clone(), fact, move |position| {
+    write.claim_head(stamp, fact, move |position| {
         next.fact = position;
         next
     });
@@ -429,7 +435,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
 }
 
 fn witnesses(request: &Request, observed: &Observation, lane: CanonicalUuid) -> Vec<Witness> {
-    let task = request.intent.task.clone();
+    let task = observed.statement.body().incepted.clone();
     vec![
         Witness::Claim {
             task: task.clone(),
@@ -499,7 +505,11 @@ mod tests {
     }
 
     fn task() -> TaskHandle {
-        "BOARD-a1".parse().expect("task")
+        TaskHandle::for_project("board.possession", &incepted())
+    }
+
+    fn incepted() -> wire::TaskStamp {
+        "1kKRRsDP".parse().expect("task stamp")
     }
 
     fn projects() -> crate::ProjectPolicy {
@@ -535,21 +545,21 @@ mod tests {
             .expect("heads before the claim");
         let selected = heads
             .iter()
-            .find(|heads| heads.statement().body().handle == task())
+            .find(|heads| heads.statement().body().incepted == incepted())
             .expect("the fixture task is on the board");
         let workflow = selected.workflow().body().clone();
         let expected = vec![
             Witness::Task {
-                task: task(),
+                task: incepted(),
                 head: selected.statement().position(),
             },
             Witness::Workflow {
-                task: task(),
+                task: incepted(),
                 head: selected.workflow().position(),
                 phase: workflow.phase.clone(),
             },
             Witness::Claim {
-                task: task(),
+                task: incepted(),
                 head: selected.claim().map(journal::JournalHead::position),
             },
             Witness::Eligibility {
@@ -571,7 +581,7 @@ mod tests {
         mint(
             &mut write,
             Mint {
-                task: &task(),
+                task: &incepted(),
                 actor: &actor,
                 workflow: &workflow,
                 project: "board.possession",
@@ -623,8 +633,7 @@ mod tests {
         let fact = write
             .fact(
                 body::TaskAdded {
-                    task: task(),
-                    uuid: uuid(1),
+                    task: incepted(),
                     title: "Lapse".to_owned(),
                     description: None,
                     acceptance: Vec::new(),
@@ -639,8 +648,7 @@ mod tests {
             )
             .expect("task fact");
         write.task_head(fact, move |position| TaskHead {
-            handle: task(),
-            uuid: uuid(1),
+            incepted: incepted(),
             queue_origin: position,
             title: "Lapse".to_owned(),
             description: None,
@@ -651,7 +659,7 @@ mod tests {
             provenance: origin,
             revision: position,
         });
-        write.workflow_head(task(), fact, move |_| WorkflowHead {
+        write.workflow_head(incepted(), fact, move |_| WorkflowHead {
             flow: vec![phase.clone()],
             phase,
             status: "pending".to_owned(),
@@ -663,6 +671,7 @@ mod tests {
         write.residency_head(fact, |_| ResidencyHead {
             epoch: uuid(22),
             state: ResidentState::Seated,
+            topology_revision: 0,
             lanes: vec![LaneResidency {
                 lane: uuid(20),
                 lineage_id: uuid(20),
