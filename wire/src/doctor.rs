@@ -22,8 +22,8 @@ pub enum SpiceVariable {
     /// Source identity of the canvas app generation the build stamped.
     #[serde(rename = "SPICE_APP_SOURCE_IDENTITY")] // env-policy: allow
     AppSourceIdentity,
-    /// Installed shell-hook directory.
-    #[serde(rename = "SPICE_HOOKS")] // env-policy: allow
+    /// Installed Rust shell-hook directory.
+    #[serde(rename = "SPICE_RS_HOOKS")] // env-policy: allow
     Hooks,
     /// Repository path supplied to the isolated hygiene acquisition fixture.
     #[serde(rename = "SPICE_HYGIENE_ACQUIRE_REPOSITORY")] // env-policy: allow
@@ -31,8 +31,8 @@ pub enum SpiceVariable {
     /// Interpreter-tripwire marker supplied to the isolated hygiene acquisition fixture.
     #[serde(rename = "SPICE_HYGIENE_INTERPRETER_MARKER")] // env-policy: allow
     HygieneInterpreterMarker,
-    /// Rendered lane direction.
-    #[serde(rename = "SPICE_INBOX")] // env-policy: allow
+    /// Rendered Rust lane direction.
+    #[serde(rename = "SPICE_RS_INBOX")] // env-policy: allow
     Inbox,
     /// Debug install mutation-rendezvous action.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_ACTION")] // env-policy: allow
@@ -43,8 +43,8 @@ pub enum SpiceVariable {
     /// Debug install mutation-rendezvous destination path.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_PATH")] // env-policy: allow
     InstallTestPausePath,
-    /// Lane bound to an intercepted shell.
-    #[serde(rename = "SPICE_LANE")] // env-policy: allow
+    /// Rust lane bound to an intercepted shell.
+    #[serde(rename = "SPICE_RS_LANE")] // env-policy: allow
     Lane,
     /// Current mutation attempt number.
     #[serde(rename = "SPICE_MUTATION_ATTEMPT")] // env-policy: allow
@@ -55,8 +55,8 @@ pub enum SpiceVariable {
     /// Pin document sealed into the native proof runner as it is built.
     #[serde(rename = "SPICE_NATIVE_PINS")] // env-policy: allow
     NativePins,
-    /// User shell restored behind the structural command wrapper.
-    #[serde(rename = "SPICE_NATIVE_SHELL")] // env-policy: allow
+    /// User shell restored behind the Rust structural command wrapper.
+    #[serde(rename = "SPICE_RS_NATIVE_SHELL")] // env-policy: allow
     NativeShell,
 }
 
@@ -89,14 +89,14 @@ impl SpiceVariable {
             Self::CodexThread => "CODEX_THREAD_ID",          // env-policy: allow
             Self::AgentVendor => "SPICE_AGENT_VENDOR",       // env-policy: allow
             Self::AppSourceIdentity => "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
-            Self::Hooks => "SPICE_HOOKS",                    // env-policy: allow
+            Self::Hooks => "SPICE_RS_HOOKS",                 // env-policy: allow
             Self::HygieneAcquireRepository => {
                 "SPICE_HYGIENE_ACQUIRE_REPOSITORY" // env-policy: allow
             }
             Self::HygieneInterpreterMarker => {
                 "SPICE_HYGIENE_INTERPRETER_MARKER" // env-policy: allow
             }
-            Self::Inbox => "SPICE_INBOX", // env-policy: allow
+            Self::Inbox => "SPICE_RS_INBOX", // env-policy: allow
             Self::InstallTestPauseAction => {
                 "SPICE_INSTALL_TEST_PAUSE_ACTION" // env-policy: allow
             }
@@ -106,11 +106,11 @@ impl SpiceVariable {
             Self::InstallTestPausePath => {
                 "SPICE_INSTALL_TEST_PAUSE_PATH" // env-policy: allow
             }
-            Self::Lane => "SPICE_LANE", // env-policy: allow
+            Self::Lane => "SPICE_RS_LANE", // env-policy: allow
             Self::MutationAttempt => "SPICE_MUTATION_ATTEMPT", // env-policy: allow
             Self::MutationSeed => "SPICE_MUTATION_SEED", // env-policy: allow
             Self::NativePins => "SPICE_NATIVE_PINS", // env-policy: allow
-            Self::NativeShell => "SPICE_NATIVE_SHELL", // env-policy: allow
+            Self::NativeShell => "SPICE_RS_NATIVE_SHELL", // env-policy: allow
         }
     }
 }
@@ -443,9 +443,9 @@ mod tests {
             r#"{"target":{"os":"linux","architecture":"x86_64"}"#,
             r#","locations":{"working":"/repo","repository":"/repo""#,
             r#","repository_common":"/repo/.git""#,
-            r#","tracked_configuration":"/repo/spice.toml""#,
+            r#","tracked_configuration":"/repo/spice-rust.toml""#,
             r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
-            r#","environment":[{"variable":"SPICE_HOOKS""#, // env-policy: allow
+            r#","environment":[{"variable":"SPICE_RS_HOOKS""#, // env-policy: allow
             r#","observation":{"status":"ready"}}]"#,
             r#","configuration":null"#,
             r#","provenance":[{"path":"lane.lease","source":"builtin"}]"#,

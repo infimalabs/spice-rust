@@ -4,10 +4,11 @@ use super::*;
 fn typed_task_commands_retain_the_ambient_lane_principal() {
     let fixture = Fixture::new("lane-task-principal");
     configure_fake_vendor(&fixture);
-    let mut config = fs::read_to_string(fixture.root.join("spice.toml"))
+    let mut config = fs::read_to_string(fixture.root.join("spice-rust.toml"))
         .expect("task fixture configuration reads");
     config.push_str("\n[tasks]\nstems = [\"spice\"]\n");
-    fs::write(fixture.root.join("spice.toml"), config).expect("task fixture project policy writes");
+    fs::write(fixture.root.join("spice-rust.toml"), config)
+        .expect("task fixture project policy writes");
     initialize_task_git_fixture(&fixture);
     let mut resident = RunningResident::spawn(&fixture);
     resident.assert_ready(&fixture);

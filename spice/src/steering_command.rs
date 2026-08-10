@@ -172,7 +172,10 @@ fn select<'a>(
                 return Err(refusal(
                     "steer::lane-context-absent",
                     None,
-                    "hook requires the SPICE_LANE identity of an activated lane shell",
+                    &format!(
+                        "hook requires the {} identity of an activated Rust lane shell",
+                        steer::hook::LANE
+                    ),
                 ));
             };
             Ok((SelectedCommand::SteerInbox { lane: None }, Some(lane)))
@@ -204,14 +207,14 @@ fn lane_context(value: Option<OsString>) -> Result<Option<CanonicalUuid>, Outcom
         refusal(
             "steer::lane-context-invalid",
             Some(value.to_string_lossy().into_owned()),
-            "SPICE_LANE must name one canonical lane UUID",
+            &format!("{} must name one canonical lane UUID", steer::hook::LANE),
         )
     })?;
     text.parse().map(Some).map_err(|_| {
         refusal(
             "steer::lane-context-invalid",
             Some(text),
-            "SPICE_LANE must name one canonical lane UUID",
+            &format!("{} must name one canonical lane UUID", steer::hook::LANE),
         )
     })
 }

@@ -187,12 +187,12 @@ fn findings(report: &BatteryReport, id: GateId) -> &[crate::ArmFinding] {
 fn merged_repository(root: &Path) -> PathBuf {
     let repository = production_repository(root);
     let mut tracked: toml::Value = toml::from_str(
-        &fs::read_to_string(repository.join("spice.toml")).expect("fixture tracked policy"),
+        &fs::read_to_string(repository.join("spice-rust.toml")).expect("fixture tracked policy"),
     )
     .expect("fixture tracked policy parses");
     tracked["policy"]["env_names"] = toml::Value::Array(Vec::new());
     fs::write(
-        repository.join("spice.toml"),
+        repository.join("spice-rust.toml"),
         toml::to_string(&tracked).expect("fixture tracked policy encodes"),
     )
     .expect("fixture tracked policy without unrelated ledger names");
@@ -209,7 +209,10 @@ fn merged_repository(root: &Path) -> PathBuf {
     fs::write(repository.join(INHERITED), "pub fn inherited() {}\n").expect("fixture base source");
     fs::write(repository.join(REINTRODUCED), "pub fn reintroduced() {}\n")
         .expect("fixture merge-base source");
-    fixture_git(&repository, &["add", "spice.toml", INHERITED, REINTRODUCED]);
+    fixture_git(
+        &repository,
+        &["add", "spice-rust.toml", INHERITED, REINTRODUCED],
+    );
     fixture_git(
         &repository,
         &["commit", "-q", "-m", "drop the unreadable class"],

@@ -18,7 +18,7 @@ acknowledgment state belong to a different runtime.
 2. `spice board`
 3. `spice inbox`
 
-The launcher supplies the lane identity through `SPICE_LANE`. Treat a missing
+The launcher supplies the lane identity through `SPICE_RS_LANE`. Treat a missing
 lane, resident, or repository as a real refusal; do not fall back to another
 runtime or infer work from this skill invocation.
 

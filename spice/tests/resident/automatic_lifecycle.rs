@@ -25,10 +25,10 @@ fn configure_task_fixture(fixture: &Fixture) {
     );
     fs::write(&vendor, script.replacen("#!/bin/sh\n", &switch, 1))
         .expect("automatic lifecycle vendor switches write");
-    let mut config = fs::read_to_string(fixture.root.join("spice.toml"))
+    let mut config = fs::read_to_string(fixture.root.join("spice-rust.toml"))
         .expect("automatic lifecycle configuration reads");
     config.push_str("\n[tasks]\nstems = [\"spice\"]\n");
-    fs::write(fixture.root.join("spice.toml"), config)
+    fs::write(fixture.root.join("spice-rust.toml"), config)
         .expect("automatic lifecycle task policy writes");
     initialize_task_git_fixture(fixture);
 }

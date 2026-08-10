@@ -13,7 +13,7 @@ use support::{
 fn shape_contract_repository(label: &str) -> Tree {
     let repository = git_repository(label);
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document(concat!(
             "[policy]\npackage_roots = [\"src/sample\"]\n",
             "name_cluster_threshold = 3\n"
@@ -99,7 +99,7 @@ fn repository_shape_measures_a_clean_declared_package() {
 fn repository_shape_exempts_the_declared_generated_subtree() {
     let repository = git_repository("core-acquire-shape-generated");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document(concat!(
             "[policy]\n",
             "package_roots = [\"src/sample\"]\n",
@@ -178,7 +178,7 @@ fn repository_shape_reports_the_exact_canonical_violation_set() {
 fn repository_shape_measures_a_package_root_only_pyproject_metadata_names() {
     let repository = git_repository("core-acquire-shape-derived");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document("[policy]\nname_cluster_threshold = 3\n"),
     );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
@@ -258,7 +258,7 @@ fn repository_shape_derives_a_package_root_from_every_supported_backend() {
     ] {
         let repository = git_repository(&format!("core-acquire-shape-backend-{label}"));
         repository.write(
-            "spice.toml",
+            "spice-rust.toml",
             &policy_document("[policy]\nname_cluster_threshold = 3\n"),
         );
         repository.write("baseline.toml", &workspace_document("baseline.toml"));
@@ -297,7 +297,7 @@ fn repository_shape_derives_a_package_root_from_every_supported_backend() {
 fn repository_shape_refuses_packaging_metadata_it_cannot_read() {
     let repository = git_repository("core-acquire-shape-malformed");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document("[policy]\nname_cluster_threshold = 3\n"),
     );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
@@ -319,7 +319,7 @@ fn repository_shape_refuses_a_boundary_pattern_that_cannot_govern() {
     for (label, pattern) in [("blank", "''"), ("uncompilable", "'^[a-z'")] {
         let repository = git_repository(&format!("core-acquire-shape-pattern-{label}"));
         repository.write(
-            "spice.toml",
+            "spice-rust.toml",
             &policy_document(&format!(
                 "[policy.package]\nboundary_underscore_pattern = {pattern}\n"
             )),
@@ -347,7 +347,7 @@ fn repository_shape_scans_every_configured_test_root() {
     // root is, and neither is one of its own findings.
     let repository = git_repository("core-acquire-shape-test-roots");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document(concat!(
             "[policy]\n",
             "package_roots = [\"src/sample\"]\n",
@@ -403,7 +403,7 @@ fn repository_shape_scans_every_configured_test_root() {
 fn repository_shape_holds_names_to_the_tracked_boundary_pattern() {
     let repository = git_repository("core-acquire-shape-boundary");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document(concat!(
             "[policy]\n",
             "package_roots = [\"src/sample\"]\n",
@@ -446,7 +446,7 @@ fn repository_shape_holds_names_to_the_tracked_boundary_pattern() {
 fn repository_shape_exempts_nested_generated_globs_and_nothing_else() {
     let repository = git_repository("core-acquire-shape-generated-glob");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document(concat!(
             "[policy]\n",
             "package_roots = [\"src/sample\"]\n",

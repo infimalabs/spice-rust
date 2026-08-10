@@ -357,9 +357,9 @@ fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
 
 fn prepare_coexistence_repository(fixture: &Fixture, rig: &Rig) {
     let mut document =
-        fs::read_to_string(fixture.root.join("spice.toml")).expect("fixture config reads");
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).expect("fixture config reads");
     document.push_str("\n[tasks]\nstems = [\"coexistence\"]\n");
-    fs::write(fixture.root.join("spice.toml"), &document).expect("Claude config extends");
+    fs::write(fixture.root.join("spice-rust.toml"), &document).expect("Claude config extends");
     fs::write(
         fixture.root.join(".gitignore"),
         format!(
@@ -387,7 +387,7 @@ fn prepare_coexistence_repository(fixture: &Fixture, rig: &Rig) {
         &fixture.root,
         &["config", "user.email", "coexistence@spice.invalid"],
     );
-    fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
+    fixture_git(&fixture.root, &["add", ".gitignore", "spice-rust.toml"]);
     fixture_git(&fixture.root, &["commit", "-m", "coexistence fixture"]);
     assert_fixture_repository_clean(&fixture.root);
     fs::remove_dir_all(&rig.codex_worktree).expect("synthetic Codex worktree withdraws");
@@ -441,21 +441,21 @@ fn install_coexisting_appliance(fixture: &Fixture) -> (PathBuf, String, String) 
         Path::new(".spice-install/agents/skills/spice/SKILL.md")
     );
     let skill = fs::read_to_string(&installed_skill).expect("installed skill reads");
-    for command in [
+    for required in [
         "spice recall",
         "spice board",
         "spice inbox",
         "spice ack",
-        "spice run --",
+        "SPICE_RS_LANE",
         "spice task next",
         "spice task done",
     ] {
         assert!(
-            skill.contains(command),
-            "installed skill omitted {command:?}"
+            skill.contains(required),
+            "installed skill omitted {required:?}"
         );
     }
-    for unavailable in ["spice agent", "spice task status"] {
+    for unavailable in ["SPICE_LANE", "spice agent", "spice task status"] {
         assert!(
             !skill.contains(unavailable),
             "installed skill named unavailable command {unavailable:?}"

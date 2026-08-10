@@ -364,48 +364,7 @@ esac
                     fs::read_to_string(&log)
                 )
             });
-        let graph_evidence = crate::test_evidence::MutationExecution::from_kill(&run)
-            .expect("completed KillRun projects typed graph evidence");
-        assert_eq!(graph_evidence.source(), run.source());
-        assert_eq!(graph_evidence.floor(), Some(floor));
-        assert_eq!(
-            graph_evidence
-                .mutants()
-                .iter()
-                .map(crate::test_evidence::MutationObservation::source)
-                .collect::<Vec<_>>(),
-            vec!["src/lib.rs", "src/z.rs"]
-        );
-        let tests = crate::CanonicalTestExecution::new(
-            run.source().clone(),
-            vec!["src/lib.rs".to_owned()],
-            vec!["gate::lib".to_owned()],
-            Vec::new(),
-            crate::CoverageCompleteness::unknown(
-                "fixture has no authoritative per-test coverage denominator",
-            )
-            .expect("coverage reason"),
-        )
-        .expect("canonical test evidence");
-        let report = crate::TestEvidenceGraph::from_kill(tests, &run, Vec::new())
-            .expect("one graph joins the canonical kill run")
-            .report();
-        assert_eq!(report.source(), run.source());
-        assert_eq!(report.mutation().mutants(), graph_evidence.mutants());
-        let foreign_tests = crate::CanonicalTestExecution::new(
-            Digest::compute(Domain::GateTree, b"foreign workspace-test source"),
-            vec!["src/lib.rs".to_owned()],
-            vec!["gate::lib".to_owned()],
-            Vec::new(),
-            crate::CoverageCompleteness::unknown(
-                "fixture has no authoritative per-test coverage denominator",
-            )
-            .expect("coverage reason"),
-        )
-        .expect("foreign canonical test evidence");
-        let mismatch = crate::TestEvidenceGraph::from_kill(foreign_tests, &run, Vec::new())
-            .expect_err("a canonical KillRun cannot cross selected-source identities");
-        assert!(mismatch.detail().contains("different selected sources"));
+        assert_graph_projection(&run, floor);
 
         assert_eq!(run.inventory().targets(), ["src/lib.rs", "src/z.rs"]);
         assert_eq!(run.inventory().mutants(), ["Killed", "Survived"]);
@@ -461,6 +420,51 @@ esac
 
         assert_source_untouched(&source);
         assert_baseline_precedes_mutants(&log);
+    }
+
+    fn assert_graph_projection(run: &KillRun, floor: SurvivorRate) {
+        let graph_evidence = crate::test_evidence::MutationExecution::from_kill(run)
+            .expect("completed KillRun projects typed graph evidence");
+        assert_eq!(graph_evidence.source(), run.source());
+        assert_eq!(graph_evidence.floor(), Some(floor));
+        assert_eq!(
+            graph_evidence
+                .mutants()
+                .iter()
+                .map(crate::test_evidence::MutationObservation::source)
+                .collect::<Vec<_>>(),
+            vec!["src/lib.rs", "src/z.rs"]
+        );
+        let tests = crate::CanonicalTestExecution::new(
+            run.source().clone(),
+            vec!["src/lib.rs".to_owned()],
+            vec!["gate::lib".to_owned()],
+            Vec::new(),
+            crate::CoverageCompleteness::unknown(
+                "fixture has no authoritative per-test coverage denominator",
+            )
+            .expect("coverage reason"),
+        )
+        .expect("canonical test evidence");
+        let report = crate::TestEvidenceGraph::from_kill(tests, run, Vec::new())
+            .expect("one graph joins the canonical kill run")
+            .report();
+        assert_eq!(report.source(), run.source());
+        assert_eq!(report.mutation().mutants(), graph_evidence.mutants());
+        let foreign_tests = crate::CanonicalTestExecution::new(
+            Digest::compute(Domain::GateTree, b"foreign workspace-test source"),
+            vec!["src/lib.rs".to_owned()],
+            vec!["gate::lib".to_owned()],
+            Vec::new(),
+            crate::CoverageCompleteness::unknown(
+                "fixture has no authoritative per-test coverage denominator",
+            )
+            .expect("coverage reason"),
+        )
+        .expect("foreign canonical test evidence");
+        let mismatch = crate::TestEvidenceGraph::from_kill(foreign_tests, run, Vec::new())
+            .expect_err("a canonical KillRun cannot cross selected-source identities");
+        assert!(mismatch.detail().contains("different selected sources"));
     }
 
     #[test]

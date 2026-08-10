@@ -99,7 +99,7 @@ impl Fixture {
         assert!(output.status.success(), "git init: {output:?}");
         let root = fs::canonicalize(root).expect("canonicalize lock fixture root");
         fs::write(
-            root.join("spice.toml"),
+            root.join("spice-rust.toml"),
             concat!(
                 "[lock]\n",
                 "busy = 70\n",
@@ -542,7 +542,7 @@ fn explicit_absolute_file_and_pool_locations_are_reported_before_creation() {
     let file = fixture.root.join("absolute-state/single.lock");
     let directory = fixture.root.join("absolute-state/pool");
     fs::write(
-        fixture.root.join("spice.toml"),
+        fixture.root.join("spice-rust.toml"),
         format!(
             concat!(
                 "[lock]\nbusy = 70\ntaken = 71\nfull = 72\n",
@@ -862,7 +862,7 @@ fn malformed_names_shards_and_configuration_refuse_without_running_a_child() {
         "[lock.solo]\npath = 'locks/solo.lock'\ndirectory = 'locks/solo'\n",
         "[lock.solo]\nshards = 1\n",
     ] {
-        fs::write(fixture.root.join("spice.toml"), document)
+        fs::write(fixture.root.join("spice-rust.toml"), document)
             .expect("write invalid lock configuration");
         let invalid = fixture.invoke(&["lock", "--json"]);
         assert_eq!(invalid.code, Some(2));

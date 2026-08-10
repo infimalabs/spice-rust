@@ -567,7 +567,7 @@ fn exercise_commit_message(scratch: &Scratch) {
     assert!(diagnostic.contains("Spice-Origin: v2 unresolved"));
 
     fs::write(
-        scratch.join("spice.toml"),
+        scratch.join("spice-rust.toml"),
         "[policy.commit_message]\nblocked_trailers = [\"Co-Authored-By\"]\n",
     )
     .expect("write tracked trailer policy");
