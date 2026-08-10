@@ -1221,64 +1221,39 @@ fn transcript_ack_persists_the_tape_generation_source() {
     stop(&fixture, resident);
 }
 
-#[test]
-fn mining_deduplicates_one_real_canvas_fanout_across_distinct_lane_tapes() {
-    const CORRECTION: &str = "Do not use grep for repository searches; use rg instead.";
-
-    let (fixture, resident, lanes) = setup();
-    let tracked_before =
-        fs::read_to_string(fixture.root.join("spice-rust.toml")).expect("tracked policy reads");
+fn shared_canvas_fanout(
+    fixture: &Fixture,
+    lanes: Lanes,
+    correction: &str,
+) -> (
+    wire::CanonicalUuid,
+    wire::intent::DirectiveAnswer,
+    wire::intent::DirectiveAnswer,
+) {
     let fanout = uuid("00000000-0000-4000-8000-000000000080");
-    let target_directive = uuid("00000000-0000-4000-8000-000000000081");
-    let other_directive = uuid("00000000-0000-4000-8000-000000000082");
-    let (mut socket, discovery) = operator_socket(&fixture);
+    let (mut socket, discovery) = operator_socket(fixture);
     let target = send_operator_direction(
         &mut socket,
         &discovery,
-        target_directive,
+        uuid("00000000-0000-4000-8000-000000000081"),
         fanout,
         lanes.target,
-        current_occupant(&fixture, lanes.target),
-        CORRECTION,
+        current_occupant(fixture, lanes.target),
+        correction,
     );
     let other = send_operator_direction(
         &mut socket,
         &discovery,
-        other_directive,
+        uuid("00000000-0000-4000-8000-000000000082"),
         fanout,
         lanes.other,
-        current_occupant(&fixture, lanes.other),
-        CORRECTION,
+        current_occupant(fixture, lanes.other),
+        correction,
     );
     drop(socket);
 
-    let target_locus = record_reply(
-        &fixture,
-        lanes.target,
-        &format!("ACK {}: applied", target.key),
-        &target.key,
-    );
-    let target_ack = text_directive(&invoke_as_lane(
-        &fixture,
-        &lanes.target.to_string(),
-        &["ack", &target.key],
-        false,
-    ));
-    assert_eq!(target_ack.disposition, wire::Disposition::Acked);
-    let other_locus = record_reply(
-        &fixture,
-        lanes.other,
-        &format!("ACK {}: applied", other.key),
-        &other.key,
-    );
-    let other_ack = text_directive(&invoke_as_lane(
-        &fixture,
-        &lanes.other.to_string(),
-        &["ack", &other.key],
-        false,
-    ));
-    assert_eq!(other_ack.disposition, wire::Disposition::Acked);
-
+    let target_locus = acknowledge(fixture, lanes.target, &target);
+    let other_locus = acknowledge(fixture, lanes.other, &other);
     assert_ne!(target_locus.source, other_locus.source);
     assert_eq!(
         (
@@ -1299,35 +1274,56 @@ fn mining_deduplicates_one_real_canvas_fanout_across_distinct_lane_tapes() {
         ),
         "separate real tapes deliberately share local coordinates"
     );
+    (fanout, target, other)
+}
 
+fn acknowledge(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+    sent: &wire::intent::DirectiveAnswer,
+) -> wire::body::TranscriptLocus {
+    let locus = record_reply(
+        fixture,
+        lane,
+        &format!("ACK {}: applied", sent.key),
+        &sent.key,
+    );
+    let acknowledged = text_directive(&invoke_as_lane(
+        fixture,
+        &lane.to_string(),
+        &["ack", &sent.key],
+        false,
+    ));
+    assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
+    locus
+}
+
+fn distinct_cli_fanouts(
+    fixture: &Fixture,
+    lanes: Lanes,
+    correction: &str,
+) -> (wire::intent::DirectiveAnswer, wire::intent::DirectiveAnswer) {
     let target_lane = lanes.target.to_string();
     let other_lane = lanes.other.to_string();
-    let cli_target = text_directive(&invoke(
-        &fixture,
-        &["steer", &target_lane, CORRECTION],
+    let target = text_directive(&invoke(
+        fixture,
+        &["steer", &target_lane, correction],
         false,
     ));
-    let cli_other = text_directive(&invoke(
-        &fixture,
-        &["steer", &other_lane, CORRECTION],
-        false,
-    ));
-    for (lane, sent) in [(lanes.target, &cli_target), (lanes.other, &cli_other)] {
-        record_reply(
-            &fixture,
-            lane,
-            &format!("ACK {}: applied", sent.key),
-            &sent.key,
-        );
-        let acknowledged = text_directive(&invoke_as_lane(
-            &fixture,
-            &lane.to_string(),
-            &["ack", &sent.key],
-            false,
-        ));
-        assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
-    }
+    let other = text_directive(&invoke(fixture, &["steer", &other_lane, correction], false));
+    acknowledge(fixture, lanes.target, &target);
+    acknowledge(fixture, lanes.other, &other);
+    (target, other)
+}
 
+fn assert_fanout_authority(
+    fixture: &Fixture,
+    fanout: wire::CanonicalUuid,
+    target: &wire::intent::DirectiveAnswer,
+    other: &wire::intent::DirectiveAnswer,
+    cli_target: &wire::intent::DirectiveAnswer,
+    cli_other: &wire::intent::DirectiveAnswer,
+) {
     let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
     let facts = journal.fact_snapshot().expect("steering facts read");
     let sent_fanout = |directive| {
@@ -1359,8 +1355,16 @@ fn mining_deduplicates_one_real_canvas_fanout_across_distinct_lane_tapes() {
             .expect("steering head exists");
         assert_eq!(head.body().fanout, Some(sent_fanout(directive)));
     }
+}
 
-    let mined = invoke(&fixture, &["taste", "mine"], true);
+fn assert_fanout_mining(
+    fixture: &Fixture,
+    target: &wire::intent::DirectiveAnswer,
+    other: &wire::intent::DirectiveAnswer,
+    cli_target: &wire::intent::DirectiveAnswer,
+    cli_other: &wire::intent::DirectiveAnswer,
+) {
+    let mined = invoke(fixture, &["taste", "mine"], true);
     assert!(mined.status.success(), "mining failed: {:?}", mined.stderr);
     let Outcome::Reply(report): Outcome<serde_json::Value> = json_outcome(&mined) else {
         panic!("mining did not reply: {:?}", mined.stderr)
@@ -1372,6 +1376,7 @@ fn mining_deduplicates_one_real_canvas_fanout_across_distinct_lane_tapes() {
     assert_eq!(report.body["findings"][0]["recurrence"], 3);
     assert_eq!(report.body["findings"][0]["standing"], "filed");
 
+    let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
     let final_facts = journal.fact_snapshot().expect("mined facts read");
     let proposals = final_facts
         .facts()
@@ -1389,6 +1394,19 @@ fn mining_deduplicates_one_real_canvas_fanout_across_distinct_lane_tapes() {
     assert!(!description.contains(&other.key), "{description}");
     assert!(description.contains(&cli_target.key), "{description}");
     assert!(description.contains(&cli_other.key), "{description}");
+}
+
+#[test]
+fn mining_deduplicates_one_real_canvas_fanout_across_distinct_lane_tapes() {
+    const CORRECTION: &str = "Do not use grep for repository searches; use rg instead.";
+
+    let (fixture, resident, lanes) = setup();
+    let tracked_before =
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).expect("tracked policy reads");
+    let (fanout, target, other) = shared_canvas_fanout(&fixture, lanes, CORRECTION);
+    let (cli_target, cli_other) = distinct_cli_fanouts(&fixture, lanes, CORRECTION);
+    assert_fanout_authority(&fixture, fanout, &target, &other, &cli_target, &cli_other);
+    assert_fanout_mining(&fixture, &target, &other, &cli_target, &cli_other);
     assert_eq!(
         fs::read_to_string(fixture.root.join("spice-rust.toml"))
             .expect("tracked policy still reads"),
