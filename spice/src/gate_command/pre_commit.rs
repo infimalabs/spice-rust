@@ -196,6 +196,11 @@ struct CompilerPreparation {
     authority: Vec<u8>,
 }
 
+struct CompilerArtifacts {
+    receipt: Vec<u8>,
+    authority: Vec<u8>,
+}
+
 fn prepare_compilers() -> Result<CompilerPreparation, WorkerFailure> {
     let cargo_jobs = std::thread::available_parallelism()
         .map_err(|error| WorkerFailure {
@@ -393,6 +398,44 @@ fn terminal(path: &Path, progress: &Path) -> Outcome<BatteryReport> {
     }
 }
 
+fn read_compiler_artifacts(
+    receipt_path: &Path,
+    authority_path: &Path,
+    terminal: &Path,
+) -> io::Result<Option<CompilerArtifacts>> {
+    let receipt = match read_receipt(receipt_path) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            write_failure(
+                terminal,
+                &WorkerFailure {
+                    reason: "gate::verifier-receipt-unavailable".to_owned(),
+                    detail: error.to_string(),
+                    fault: true,
+                },
+            )?;
+            return Ok(None);
+        }
+    };
+    let authority = match read_authority(authority_path) {
+        Ok(authority) => authority,
+        Err(error) => {
+            write_failure(
+                terminal,
+                &WorkerFailure {
+                    reason: "gate::verifier-receipt-authority-unavailable".to_owned(),
+                    detail: error.to_string(),
+                    fault: true,
+                },
+            )?;
+            return Ok(None);
+        }
+    };
+    fs::remove_file(receipt_path)?;
+    fs::remove_file(authority_path)?;
+    Ok(Some(CompilerArtifacts { receipt, authority }))
+}
+
 fn worker(
     progress_path: &Path,
     terminal: &Path,
@@ -401,34 +444,11 @@ fn worker(
     cargo_jobs: usize,
 ) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
-    let receipt = match read_receipt(receipt_path) {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            return write_failure(
-                terminal,
-                &WorkerFailure {
-                    reason: "gate::verifier-receipt-unavailable".to_owned(),
-                    detail: error.to_string(),
-                    fault: true,
-                },
-            );
-        }
+    let Some(CompilerArtifacts { receipt, authority }) =
+        read_compiler_artifacts(receipt_path, authority_path, terminal)?
+    else {
+        return Ok(());
     };
-    let authority = match read_authority(authority_path) {
-        Ok(authority) => authority,
-        Err(error) => {
-            return write_failure(
-                terminal,
-                &WorkerFailure {
-                    reason: "gate::verifier-receipt-authority-unavailable".to_owned(),
-                    detail: error.to_string(),
-                    fault: true,
-                },
-            );
-        }
-    };
-    fs::remove_file(receipt_path)?;
-    fs::remove_file(authority_path)?;
 
     let mut progress = OpenOptions::new().append(true).open(progress_path)?;
     write_phase(&mut progress, &WorkerPhase::Capture)?;
@@ -860,254 +880,4 @@ fn ambient_environment() -> Result<Environment, sill::SpecError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use gate::CoverageCompleteness;
-    use std::cell::Cell;
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::thread;
-    use std::time::Instant;
-
-    const TEST_AUTHORITY: [u8; AUTHORITY_SIZE] = [0x5a; AUTHORITY_SIZE];
-
-    #[test]
-    fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
-        let bounds = ProcessBounds::production();
-        let envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
-        assert_eq!(envelope, Duration::from_secs(150));
-        assert!(envelope < HARD_DEADLINE);
-    }
-
-    #[test]
-    fn compiler_preparation_and_receipt_publication_precede_supervision() {
-        let phase = Cell::new(0);
-        let answer = run_with(
-            || {
-                assert_eq!(phase.get(), 0);
-                phase.set(1);
-                Ok(CompilerPreparation {
-                    cargo_jobs: 3,
-                    receipt: b"source-bound compiler receipt".to_vec(),
-                    authority: TEST_AUTHORITY.to_vec(),
-                })
-            },
-            |files, cargo_jobs| {
-                assert_eq!(phase.get(), 1);
-                assert_eq!(cargo_jobs, 3);
-                assert_eq!(
-                    fs::read(&files.receipt).expect("read published compiler receipt"),
-                    b"source-bound compiler receipt"
-                );
-                assert_eq!(
-                    fs::read(&files.authority).expect("read receipt authority"),
-                    TEST_AUTHORITY
-                );
-                phase.set(2);
-                fault("gate::supervisor-fixture", "bounded supervisor entered")
-            },
-        );
-
-        assert_eq!(phase.get(), 2);
-        let Outcome::Fault(fault) = answer else {
-            panic!("fixture supervisor returns its typed marker fault");
-        };
-        assert_eq!(fault.reason, "gate::supervisor-fixture");
-    }
-
-    #[test]
-    fn compiler_receipt_artifact_is_private_and_size_bounded() {
-        let document = b"source-bound compiler receipt";
-        let files =
-            WorkerFiles::create(document, &TEST_AUTHORITY).expect("create private receipt files");
-        assert_eq!(
-            fs::metadata(&files.root)
-                .expect("receipt root metadata")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-        for path in [
-            &files.progress,
-            &files.terminal,
-            &files.receipt,
-            &files.authority,
-        ] {
-            assert_eq!(
-                fs::metadata(path)
-                    .expect("worker artifact metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
-        }
-        assert_eq!(
-            read_receipt(&files.receipt).expect("read receipt"),
-            document
-        );
-        assert_eq!(
-            read_authority(&files.authority).expect("read receipt authority"),
-            TEST_AUTHORITY
-        );
-        fs::write(&files.receipt, vec![0; RECEIPT_LIMIT + 1])
-            .expect("write oversized receipt fixture");
-        assert!(read_receipt(&files.receipt).is_err());
-        fs::write(&files.authority, [0; AUTHORITY_SIZE + 1])
-            .expect("write oversized authority fixture");
-        assert!(read_authority(&files.authority).is_err());
-        files.cleanup().expect("remove private receipt files");
-
-        let oversized = vec![0; RECEIPT_LIMIT + 1];
-        assert!(WorkerFiles::create(&oversized, &TEST_AUTHORITY).is_err());
-        assert!(WorkerFiles::create(document, &TEST_AUTHORITY[..AUTHORITY_SIZE - 1]).is_err());
-    }
-
-    #[test]
-    fn unknown_staged_source_coverage_refuses_with_the_exact_selection_report() {
-        let report = gate::TestEvidenceGraph::select_tests(
-            wire::Digest::compute(wire::Domain::GateTree, b"unknown staged selection"),
-            vec!["tools/outside.rs".to_owned()],
-            Vec::new(),
-            Vec::new(),
-            CoverageCompleteness::unknown("changed Rust source is outside every workspace package")
-                .expect("unknown reason"),
-        )
-        .expect("unknown selection remains typed");
-
-        let outcome = selection_refusal(report.clone());
-        let Outcome::Refusal(refusal) = &outcome else {
-            panic!("unknown source-to-test coverage must refuse");
-        };
-        assert_eq!(refusal.reason(), "gate::test-selection-coverage-unknown");
-        let rendering = crate::render::render_commit_gate(&outcome, crate::render::Form::Text)
-            .expect("selection refusal renders")
-            .expect("a selection refusal is not silent");
-        assert_eq!(rendering.stream(), crate::render::Stream::Err);
-        let evidence = std::str::from_utf8(rendering.document())
-            .expect("selection evidence is UTF-8")
-            .lines()
-            .next()
-            .expect("selection evidence precedes its summary");
-        assert_eq!(
-            TestSelectionReport::decode(evidence.as_bytes()).expect("decode refusal evidence"),
-            report
-        );
-    }
-
-    #[test]
-    fn deadline_terminates_the_worker_group_and_names_its_last_phase() {
-        let files = WorkerFiles::create(b"receipt fixture", &TEST_AUTHORITY)
-            .expect("create deadline worker files");
-        let pid = files.root.join("descendant.pid");
-        let script = concat!(
-            "printf '%s\\n' '{\"phase\":\"family\",\"family\":\"toolchain\"}' >> \"$1\"; ",
-            "sleep 30 & child=$!; printf '%s\\n' \"$child\" > \"$2\"; wait"
-        );
-        let bounds = ProcessBounds {
-            runtime: Duration::from_millis(100),
-            output_drain: Duration::from_millis(100),
-            reap: Duration::from_millis(100),
-            grace: Duration::from_millis(100),
-        };
-        let spec = worker_spec(
-            "/bin/sh",
-            [
-                OsString::from("-c"),
-                OsString::from(script),
-                OsString::from("commit-gate-deadline-fixture"),
-                files.progress.as_os_str().to_owned(),
-                pid.as_os_str().to_owned(),
-            ],
-            bounds,
-        )
-        .expect("declare deadline worker");
-        let started = Instant::now();
-        let waited = sill::spawn(spec)
-            .expect("launch deadline worker")
-            .wait()
-            .expect("terminate and reap deadline worker group");
-        assert!(matches!(waited.completion(), Completion::TimedOut(_)));
-        assert!(started.elapsed() < Duration::from_secs(2));
-
-        let pid = fs::read_to_string(pid)
-            .expect("read descendant pid")
-            .trim()
-            .parse::<u32>()
-            .expect("descendant pid is numeric");
-        for _ in 0..100 {
-            if !process_exists(pid) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        assert!(!process_exists(pid), "deadline leaked descendant {pid}");
-
-        let Outcome::Refusal(refusal) = deadline(&files.progress) else {
-            panic!("deadline is a typed refusal");
-        };
-        assert_eq!(refusal.reason(), "gate::pre-commit-deadline-elapsed");
-        let observed = refusal
-            .diagnostic()
-            .and_then(RefusalDiagnostic::observed)
-            .expect("deadline retains phase evidence");
-        assert!(observed.contains("phase=family family=toolchain"));
-        assert!(observed.contains("findings=incomplete"));
-        files.cleanup().expect("remove deadline worker files");
-    }
-
-    #[test]
-    fn abnormal_worker_exit_is_typed_and_retains_the_last_exact_phase() {
-        let files = WorkerFiles::create(b"receipt fixture", &TEST_AUTHORITY)
-            .expect("create lost-worker files");
-        let script = concat!(
-            "printf '%s\\n' ",
-            "'{\"phase\":\"arm\",\"ordinal\":12,\"gate_id\":\"rust-typecheck\",",
-            "\"family\":\"toolchain\"}' >> \"$1\"; exit 17"
-        );
-        let spec = worker_spec(
-            "/bin/sh",
-            [
-                OsString::from("-c"),
-                OsString::from(script),
-                OsString::from("commit-gate-lost-worker-fixture"),
-                files.progress.as_os_str().to_owned(),
-            ],
-            ProcessBounds {
-                runtime: Duration::from_secs(1),
-                output_drain: Duration::from_millis(100),
-                reap: Duration::from_millis(100),
-                grace: Duration::from_millis(100),
-            },
-        )
-        .expect("declare lost worker");
-        let waited = sill::spawn(spec)
-            .expect("launch lost worker")
-            .wait()
-            .expect("reap lost worker");
-
-        let Outcome::Fault(fault) = classify(&files, &waited) else {
-            panic!("worker loss is a typed fault");
-        };
-        assert_eq!(fault.reason, "gate::pre-commit-worker-lost");
-        assert!(
-            fault.detail.contains(concat!(
-                "phase=arm ordinal=12 gate=rust-typecheck family=toolchain; ",
-                "findings=incomplete"
-            )),
-            "worker loss omitted exact phase evidence: {}",
-            fault.detail,
-        );
-        assert!(fault.detail.contains("worker exited Some(17)"));
-        files.cleanup().expect("remove lost-worker files");
-    }
-
-    #[cfg(unix)]
-    fn process_exists(pid: u32) -> bool {
-        let Ok(pid) = libc::pid_t::try_from(pid) else {
-            return false;
-        };
-        // SAFETY: signal zero changes no process state and probes this exact pid.
-        unsafe { libc::kill(pid, 0) == 0 }
-    }
-}
+mod tests;
