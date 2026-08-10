@@ -89,6 +89,9 @@ impl LineageSpeech {
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct LineageControl {
     pub(super) mode: LineageMode,
+    pub(super) menu_open: bool,
+    pub(super) import_open: bool,
+    pub(super) previous_topology: Option<Vec<LineageArrangement>>,
     pub(super) speech: LineageSpeech,
     pub(super) life: LineageLife,
     pub(super) pending_life: bool,
@@ -100,6 +103,9 @@ impl Default for LineageControl {
     fn default() -> Self {
         Self {
             mode: LineageMode::Compose,
+            menu_open: false,
+            import_open: false,
+            previous_topology: None,
             speech: LineageSpeech::Speak,
             life: LineageLife::Steer,
             pending_life: false,
@@ -114,12 +120,32 @@ impl Default for LineageControl {
 pub(crate) struct LineageControls {
     lineages: BTreeMap<CanonicalUuid, LineageControl>,
     empty_mode: LineageMode,
+    closed: BTreeSet<CanonicalUuid>,
 }
 
 pub(crate) enum LineageControlAction {
     SetMode {
         lineage: Option<CanonicalUuid>,
         mode: LineageMode,
+    },
+    ToggleMenu {
+        lineage: CanonicalUuid,
+    },
+    ToggleImport {
+        lineage: CanonicalUuid,
+    },
+    CloseTeam {
+        lineage: CanonicalUuid,
+    },
+    OpenTeam {
+        lineage: CanonicalUuid,
+    },
+    SaveSplit {
+        lineage: CanonicalUuid,
+        topology: Vec<LineageArrangement>,
+    },
+    ClearRestore {
+        lineage: CanonicalUuid,
     },
     SetSpeech {
         lineage: CanonicalUuid,
@@ -148,6 +174,16 @@ impl Reducible for LineageControls {
         let mut next = (*self).clone();
         match action {
             LineageControlAction::SetMode { lineage, mode } => next.set_mode(lineage, mode),
+            LineageControlAction::ToggleMenu { lineage } => next.toggle_menu(lineage),
+            LineageControlAction::ToggleImport { lineage } => next.toggle_import(lineage),
+            LineageControlAction::CloseTeam { lineage } => next.close_team(lineage),
+            LineageControlAction::OpenTeam { lineage } => next.open_team(lineage),
+            LineageControlAction::SaveSplit { lineage, topology } => {
+                next.save_split(lineage, topology);
+            }
+            LineageControlAction::ClearRestore { lineage } => {
+                next.lineages.entry(lineage).or_default().previous_topology = None;
+            }
             LineageControlAction::SetSpeech {
                 lineage,
                 authoritative_life,
@@ -189,12 +225,50 @@ impl LineageControls {
         self.empty_mode
     }
 
+    pub(in crate::browser) fn is_closed(&self, lineage: CanonicalUuid) -> bool {
+        self.closed.contains(&lineage)
+    }
+
     fn set_mode(&mut self, lineage: Option<CanonicalUuid>, mode: LineageMode) {
         if let Some(lineage) = lineage {
             self.lineages.entry(lineage).or_default().mode = mode;
         } else {
             self.empty_mode = mode;
         }
+    }
+
+    fn toggle_menu(&mut self, lineage: CanonicalUuid) {
+        let state = self.lineages.entry(lineage).or_default();
+        if state.import_open {
+            state.import_open = false;
+            state.menu_open = false;
+            return;
+        }
+        state.menu_open = !state.menu_open;
+    }
+
+    fn toggle_import(&mut self, lineage: CanonicalUuid) {
+        let state = self.lineages.entry(lineage).or_default();
+        state.menu_open = false;
+        state.import_open = !state.import_open;
+    }
+
+    fn close_team(&mut self, lineage: CanonicalUuid) {
+        let state = self.lineages.entry(lineage).or_default();
+        state.menu_open = false;
+        state.import_open = false;
+        self.closed.insert(lineage);
+    }
+
+    fn open_team(&mut self, lineage: CanonicalUuid) {
+        self.closed.remove(&lineage);
+    }
+
+    fn save_split(&mut self, lineage: CanonicalUuid, topology: Vec<LineageArrangement>) {
+        let state = self.lineages.entry(lineage).or_default();
+        state.menu_open = false;
+        state.import_open = false;
+        state.previous_topology = Some(topology);
     }
 
     fn set_speech(
@@ -245,6 +319,8 @@ impl LineageControls {
             .collect::<BTreeSet<_>>();
         self.lineages
             .retain(|lineage, _| live_lineages.contains(lineage));
+        self.closed
+            .retain(|lineage| live_lineages.contains(lineage));
 
         // A seat submitted from the empty Info view must keep that view when
         // its first real surface arrives. The resident's authoritative

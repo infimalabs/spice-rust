@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import { assertTeamActions } from "./team-actions.mjs";
 
 const darkPalette = {
   quiet: "rgb(138, 169, 232)",
@@ -360,6 +361,21 @@ async function assertReportedTaskChip(surface) {
 /// name both the action and the request it sends, stay on the exact agent lane
 /// it was drawn for, and reach the resident rather than only the message list.
 export async function assertAgentRenewalRequest(page, surface, fixture) {
+  const surfaces = page.locator('[data-pane="agent-console"] .team-surface');
+  if ((await surfaces.count()) === 2) {
+    const primaryLineage = await surface.getAttribute("data-lineage-id");
+    assert.ok(primaryLineage, "the primary control surface names its lineage");
+    const first = surfaces.first();
+    const secondaryRow = await first.getAttribute("data-lineage-id") === primaryLineage
+      ? surfaces.nth(1)
+      : first;
+    const secondaryLineage = await secondaryRow.getAttribute("data-lineage-id");
+    assert.ok(secondaryLineage, "the sibling control surface names its lineage");
+    const secondary = page.locator(
+      `[data-pane="agent-console"] .team-surface[data-lineage-id="${secondaryLineage}"]`,
+    );
+    await assertTeamActions(page, surface, secondary, primaryLineage);
+  }
   const renewalRequest = "Renew your current task lease now.";
   const menu = surface
     .locator(

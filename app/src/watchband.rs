@@ -234,6 +234,37 @@ pub fn arrangement(
     (arranged != teams).then_some(arranged)
 }
 
+/// Replace one multi-agent team with one team per agent.
+///
+/// The first agent keeps the source team's identity so browser-local state can
+/// offer a one-click restore after the resident returns the split topology.
+/// Every later agent becomes an individual team under its own stable lane
+/// identity. Teams outside the target keep both their identity and order.
+#[must_use]
+pub fn split_team(
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    target: CanonicalUuid,
+) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
+    let members = teams.iter().find(|(team, _)| *team == target)?.1.as_slice();
+    if members.len() < 2 {
+        return None;
+    }
+    let mut split = Vec::with_capacity(teams.len() + members.len() - 1);
+    for (team, lanes) in teams {
+        if *team != target {
+            split.push((*team, lanes.clone()));
+            continue;
+        }
+        split.extend(
+            lanes
+                .iter()
+                .enumerate()
+                .map(|(index, member)| (if index == 0 { target } else { *member }, vec![*member])),
+        );
+    }
+    Some(split)
+}
+
 /// Join the lane table, the inbox and the board into one row per lane.
 ///
 /// Lane order is the resident's; this never sorts. No clock reaches this

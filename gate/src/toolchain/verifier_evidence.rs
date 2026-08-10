@@ -1,11 +1,13 @@
 //! Opaque compiler evidence passed from the full verifier into one battery run.
 //!
 //! The verifier already compiles the native workspace and the browser target
-//! before it reaches the canonical battery.  These values let that one caller
-//! hand the successful process evidence forward without turning success into a
-//! string, an environment flag, or a reusable file. A process token can only
-//! be minted by executing a [`VerifierCompilerContract`], and a complete arm
-//! token can only be assembled from the exact successful stages that arm requires.
+//! before it reaches the canonical battery. These values let that caller retain
+//! successful process evidence in memory or encode only its source-bound
+//! identities for one cross-process receipt. Admission reconstructs authority
+//! against a fresh contract; raw environment values never cross the boundary.
+//! A process token can only be minted by executing a [`VerifierCompilerContract`],
+//! and a complete arm token can only be assembled from the exact successful
+//! stages that arm requires.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -13,6 +15,7 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
 use sill::{
     Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
     ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
@@ -23,6 +26,14 @@ use super::ToolEvidence;
 use crate::VERIFIER_APP_PUBLISH_FLAG;
 use crate::battery::CANONICAL_BATTERY_MANIFEST;
 use crate::manifest::GateId;
+
+#[path = "verifier_receipt.rs"]
+mod receipt;
+
+pub use receipt::{admit_verifier_compiler_receipt, encode_verifier_compiler_receipt};
+
+#[cfg(test)]
+use receipt::VerifierCompilerReceiptSet;
 
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
@@ -55,7 +66,8 @@ const CANVAS_CHECK_TARGETS: &[&str] = &["wasm32-unknown-unknown", "workspace", "
 const CANVAS_APP_TARGETS: &[&str] = &["wasm32-unknown-unknown", "app", "release"];
 
 /// One full-verifier compiler process which can contribute to reusable proof.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum VerifierCompilerStage {
     /// Clippy's native workspace/all-targets compiler analysis.
     NativeClippy,
@@ -205,6 +217,12 @@ impl VerifierCompilerContract {
     #[must_use]
     pub const fn gate_id(&self) -> GateId {
         self.gate_id
+    }
+
+    /// Exact compiler stages required to prove this arm.
+    #[must_use]
+    pub fn stages(&self) -> &'static [VerifierCompilerStage] {
+        expected_stages(self.gate_id)
     }
 
     /// Run one exact compiler stage and mint evidence only after a clean exit.
@@ -677,6 +695,8 @@ mod tests {
 
     use super::*;
 
+    const AUTHORITY: &[u8] = b"one-time verifier authority fixture";
+
     fn source(label: &[u8]) -> Digest {
         Digest::compute(Domain::GateTree, label)
     }
@@ -748,6 +768,12 @@ mod tests {
             .processes
             .first_mut()
             .expect("complete evidence has a compiler process")
+    }
+
+    fn complete_evidence(contract: &VerifierCompilerContract) -> VerifierCompilerEvidence {
+        contract
+            .complete(&complete_processes(contract))
+            .expect("complete fixture evidence")
     }
 
     #[test]
@@ -930,6 +956,133 @@ mod tests {
             &producer.environment,
             &producer.tools,
         ));
+    }
+
+    #[test]
+    fn canonical_receipt_crosses_capture_roots_without_leaking_environment_values() {
+        let mut producers = [
+            contract(GateId::RustTypecheck),
+            contract(GateId::CanvasWebTypecheck),
+        ];
+        for producer in &mut producers {
+            producer.environment.push((
+                OsString::from("RECEIPT_SECRET_FIXTURE"),
+                OsString::from("receipt-secret-must-not-cross-process"),
+            ));
+            producer.environment.sort();
+        }
+        let evidence = producers.iter().map(complete_evidence).collect::<Vec<_>>();
+        let receipt =
+            encode_verifier_compiler_receipt(&evidence, AUTHORITY).expect("encode receipt");
+        assert!(
+            !receipt
+                .windows(b"receipt-secret-must-not-cross-process".len())
+                .any(|window| window == b"receipt-secret-must-not-cross-process"),
+            "receipt leaked an ambient environment value"
+        );
+        assert!(
+            !receipt
+                .windows(AUTHORITY.len())
+                .any(|window| window == AUTHORITY),
+            "receipt leaked its one-time provenance authority"
+        );
+
+        let consumers = producers
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, mut consumer)| {
+                consumer.selection_root = PathBuf::from(format!("/consumer/selection/{index}"));
+                consumer
+            })
+            .collect::<Vec<_>>();
+        let admitted = admit_verifier_compiler_receipt(&receipt, &consumers, AUTHORITY)
+            .expect("fresh receipt admits across private capture roots");
+        assert_eq!(admitted.len(), consumers.len());
+        assert!(
+            admitted
+                .iter()
+                .zip(&consumers)
+                .all(|(candidate, consumer)| admits(candidate, consumer))
+        );
+    }
+
+    #[test]
+    fn missing_partial_duplicate_and_stale_receipts_fail_closed() {
+        let producers = [
+            contract(GateId::RustTypecheck),
+            contract(GateId::CanvasWebTypecheck),
+        ];
+        let evidence = producers.iter().map(complete_evidence).collect::<Vec<_>>();
+        let exact =
+            encode_verifier_compiler_receipt(&evidence, AUTHORITY).expect("encode exact receipt");
+
+        assert!(admit_verifier_compiler_receipt(&[], &producers, AUTHORITY).is_err());
+        assert!(admit_verifier_compiler_receipt(&exact, &producers, b"foreign authority").is_err());
+        let partial =
+            encode_verifier_compiler_receipt(&evidence[..1], AUTHORITY).expect("encode partial");
+        assert!(admit_verifier_compiler_receipt(&partial, &producers, AUTHORITY).is_err());
+        let duplicate = encode_verifier_compiler_receipt(
+            &[evidence[0].clone(), evidence[0].clone()],
+            AUTHORITY,
+        )
+        .expect("encode duplicate");
+        assert!(admit_verifier_compiler_receipt(&duplicate, &producers, AUTHORITY).is_err());
+
+        let mut stale_source = producers.to_vec();
+        stale_source[0].source = source(b"changed staged source");
+        assert!(admit_verifier_compiler_receipt(&exact, &stale_source, AUTHORITY).is_err());
+
+        let mut stale_environment = producers.to_vec();
+        stale_environment[0]
+            .environment
+            .push((OsString::from("RUSTFLAGS"), OsString::from("--cfg=changed")));
+        stale_environment[0].environment.sort();
+        assert!(admit_verifier_compiler_receipt(&exact, &stale_environment, AUTHORITY).is_err());
+
+        let mut stale_tool = producers.to_vec();
+        stale_tool[0].tools = vec![tool("cargo", "/changed/cargo")];
+        assert!(admit_verifier_compiler_receipt(&exact, &stale_tool, AUTHORITY).is_err());
+    }
+
+    #[test]
+    fn malformed_noncanonical_and_tampered_receipts_fail_closed() {
+        let contracts = [
+            contract(GateId::RustTypecheck),
+            contract(GateId::CanvasWebTypecheck),
+        ];
+        let evidence = contracts.iter().map(complete_evidence).collect::<Vec<_>>();
+        let exact =
+            encode_verifier_compiler_receipt(&evidence, AUTHORITY).expect("encode exact receipt");
+
+        let mut noncanonical = exact.clone();
+        noncanonical.push(b'\n');
+        assert!(admit_verifier_compiler_receipt(&noncanonical, &contracts, AUTHORITY).is_err());
+
+        let mut unsupported: VerifierCompilerReceiptSet =
+            wire::decode(&exact).expect("decode receipt fixture");
+        unsupported.version += 1;
+        unsupported.authority_seal = unsupported.compute_authority_seal(AUTHORITY);
+        let unsupported = wire::encode(&unsupported).expect("encode unsupported receipt");
+        assert!(admit_verifier_compiler_receipt(&unsupported, &contracts, AUTHORITY).is_err());
+
+        let mut partial_stage: VerifierCompilerReceiptSet =
+            wire::decode(&exact).expect("decode receipt fixture");
+        partial_stage.evidence[1].processes.pop();
+        partial_stage.evidence[1].seal = partial_stage.evidence[1].compute_seal();
+        partial_stage.authority_seal = partial_stage.compute_authority_seal(AUTHORITY);
+        let partial_stage = wire::encode(&partial_stage).expect("encode partial-stage receipt");
+        assert!(admit_verifier_compiler_receipt(&partial_stage, &contracts, AUTHORITY).is_err());
+
+        let mut tampered: VerifierCompilerReceiptSet =
+            wire::decode(&exact).expect("decode receipt fixture");
+        tampered.evidence[0].processes[0].targets =
+            Digest::compute(Domain::GateReceipt, b"foreign targets");
+        tampered.evidence[0].processes[0].seal = tampered.evidence[0].processes[0].compute_seal();
+        tampered.evidence[0].seal = tampered.evidence[0].compute_seal();
+        tampered.authority_seal = tampered.compute_authority_seal(AUTHORITY);
+        let tampered = wire::encode(&tampered).expect("encode tampered receipt");
+        assert!(admit_verifier_compiler_receipt(&tampered, &contracts, AUTHORITY).is_err());
     }
 
     #[test]

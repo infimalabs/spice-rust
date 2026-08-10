@@ -582,13 +582,14 @@ fn retro_backfills_tool_media_from_durable_tape_even_when_the_call_is_missing() 
 fn retro_backfills_delivered_directive_media_beside_its_authored_message() {
     let scratch = Scratch::new("directive-media-backfill");
     let (codex, tape) = session(scratch.path(), "lane-a", "codex");
-    let text = concat!(
-        "<1kInbox>\n",
-        "directive=018f82d4-6f59-7d06-92e3-bce9131163af ",
-        "key=1kAsk001 stage=published expires=2026-08-01T06:30:00.000Z\n",
-        "inspect this capture\n\n",
-        "![operator-capture.png](data:image/png;base64,iVBORw0KGgo=)\n",
-        "</1kInbox>\n",
+    let name = r"operator](capture)\雪.png";
+    let media = wire::Media::from_base64(name, "image/png", "iVBORw0KGgo=")
+        .expect("fixture attachment admits");
+    let text = format!(
+        "<1kInbox>\ndirective=018f82d4-6f59-7d06-92e3-bce9131163af \
+         key=1kAsk001 stage=published expires=2026-08-01T06:30:00.000Z\n\
+         inspect this capture\n\n{}\n</1kInbox>\n",
+        media.markdown().expect("fixture Markdown renders"),
     );
     let message = serde_json::to_vec(&serde_json::json!({
         "type": "response_item",
@@ -614,9 +615,10 @@ fn retro_backfills_delivered_directive_media_beside_its_authored_message() {
                 ..
             },
             ..
-        }] if observed == text
+        }] if observed == &text
             && spans == &vec![Span { member: 1, offset: 0, length: u64::try_from(message.len() + 1).expect("fixture record length fits") }]
             && media.len() == 1
+            && media[0].name == name
             && media[0].identity().is_ok()
     ));
 

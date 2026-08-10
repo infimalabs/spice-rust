@@ -128,6 +128,7 @@ fn partition_splits_large_packages_in_stable_target_order() {
             kind: "test".to_owned(),
             name: format!("target-{index:02}"),
             source: PathBuf::from(format!("/workspace/tests/target-{index:02}.rs")),
+            declared_path_sources: Vec::new(),
         })
         .collect();
 
@@ -252,32 +253,77 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
     );
 }
 
+/// A nested file named by `#[path]` belongs to that integration target without
+/// making its same-directory peers part of the selection.
 #[test]
-fn staged_integration_test_module_selects_its_parent_cargo_test_target() {
-    let mut inventory = fixture_inventory();
-    inventory.packages[0].targets.push(TargetIdentity {
-        package: "fixture-a-id".to_owned(),
-        kind: "test".to_owned(),
-        name: "session_cli".to_owned(),
-        source: PathBuf::from("/workspace/fixture-a/tests/session_cli.rs"),
-    });
+fn staged_path_module_selects_only_its_declaring_integration_target() {
+    let root = fixture_root("workspace-path-module-selection");
+    let tests = root.join("fixture/tests");
+    fs::create_dir_all(tests.join("resident")).expect("create path-module fixture");
+    fs::write(
+        tests.join("resident.rs"),
+        "#[path = \"resident/lane_continuity.rs\"]\nmod lane_continuity;\n",
+    )
+    .expect("write declaring integration target");
+    fs::write(
+        tests.join("resident/lane_continuity.rs"),
+        "#[test]\nfn continuity() {}\n",
+    )
+    .expect("write declared path module");
+    fs::write(tests.join("other.rs"), "#[test]\nfn other() {}\n")
+        .expect("write unrelated integration target");
+    fs::write(
+        root.join("fixture/Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\n",
+    )
+    .expect("write path-module fixture manifest");
+    let root = fs::canonicalize(root).expect("canonical path-module fixture root");
+    let tests = root.join("fixture/tests");
+    let inventory = inventory_from_metadata(
+        Metadata {
+            workspace_members: vec!["fixture-id".to_owned()],
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+            packages: vec![MetadataPackage {
+                id: "fixture-id".to_owned(),
+                name: "fixture".to_owned(),
+                manifest_path: root.join("fixture/Cargo.toml"),
+                targets: vec![
+                    MetadataTarget {
+                        name: "other".to_owned(),
+                        kind: vec!["test".to_owned()],
+                        test: true,
+                        src_path: tests.join("other.rs"),
+                    },
+                    MetadataTarget {
+                        name: "resident".to_owned(),
+                        kind: vec!["test".to_owned()],
+                        test: true,
+                        src_path: tests.join("resident.rs"),
+                    },
+                ],
+            }],
+        },
+        &root,
+    )
+    .expect("acquire path-module target inventory");
 
     let report = selection_report(
         &inventory,
-        Path::new("/workspace"),
-        wire::Digest::compute(wire::Domain::GateTree, b"integration test module"),
-        &["fixture-a/tests/session_cli/authority.rs".to_owned()],
+        &root,
+        wire::Digest::compute(wire::Domain::GateTree, b"declared path module"),
+        &["fixture/tests/resident/lane_continuity.rs".to_owned()],
     )
-    .expect("integration test module reaches its parent target");
+    .expect("declared path module maps to its integration target");
 
     assert!(report.admits());
-    assert_eq!(report.tests(), ["fixture-a::test:session_cli"]);
+    assert_eq!(report.tests(), ["fixture::test:resident"]);
     assert_eq!(report.edges().len(), 1);
     assert_eq!(
         report.edges()[0].source(),
-        "fixture-a/tests/session_cli/authority.rs"
+        "fixture/tests/resident/lane_continuity.rs"
     );
-    assert_eq!(report.edges()[0].test(), "fixture-a::test:session_cli");
+    fs::remove_dir_all(root).expect("remove path-module fixture");
 }
 
 #[test]
@@ -288,6 +334,7 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
         kind: "test".to_owned(),
         name: "behavior".to_owned(),
         source: PathBuf::from("/workspace/fixture-a/tests/behavior.rs"),
+        declared_path_sources: Vec::new(),
     });
 
     let report = selection_report(
@@ -902,6 +949,7 @@ fn quick_package() -> PackageInventory {
             kind: "test".to_owned(),
             name: "quick".to_owned(),
             source: PathBuf::from("/workspace/quick/tests/quick.rs"),
+            declared_path_sources: Vec::new(),
         }],
     }
 }
@@ -920,6 +968,7 @@ fn fixture_inventory() -> Inventory {
                     kind: "lib".to_owned(),
                     name: "fixture-a".to_owned(),
                     source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
+                    declared_path_sources: Vec::new(),
                 }],
             },
             PackageInventory {
@@ -931,6 +980,7 @@ fn fixture_inventory() -> Inventory {
                     kind: "bin".to_owned(),
                     name: "fixture-b".to_owned(),
                     source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
+                    declared_path_sources: Vec::new(),
                 }],
             },
         ],
@@ -957,6 +1007,7 @@ fn target_identity(kind: &str, name: &str) -> TargetIdentity {
         kind: kind.to_owned(),
         name: name.to_owned(),
         source: PathBuf::from(format!("/workspace/{kind}/{name}.rs")),
+        declared_path_sources: Vec::new(),
     }
 }
 
