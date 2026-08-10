@@ -504,15 +504,7 @@ fn release_git_state(
     )?
     .parse::<u64>()
     .map_err(|error| format!("Git returned an invalid local commit count: {error}"))?;
-    let source_commit = if release_subject.starts_with("release: bump to ") {
-        git_optional(
-            root,
-            &["rev-parse", "--verify", &format!("{release_commit}^")],
-        )?
-        .unwrap_or_else(|| release_commit.to_owned())
-    } else {
-        release_commit.to_owned()
-    };
+    let source_commit = release_source_commit(root, release_commit, &release_subject)?;
     let clean = tracked_worktree_clean(root)?;
     Ok(ReleaseGitState {
         source_commit,
@@ -616,6 +608,21 @@ fn ensure_release_ref_absent(
         ));
     }
     Ok(())
+}
+
+fn release_source_commit(
+    root: &Path,
+    release_commit: &str,
+    release_subject: &str,
+) -> Result<String, String> {
+    if !release_subject.starts_with("release: bump to ") {
+        return Ok(release_commit.to_owned());
+    }
+    Ok(git_optional(
+        root,
+        &["rev-parse", "--verify", &format!("{release_commit}^")],
+    )?
+    .unwrap_or_else(|| release_commit.to_owned()))
 }
 
 fn bind_external_plan(

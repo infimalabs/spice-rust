@@ -12,6 +12,8 @@
 # These handoff reads are the complete environment contract this stage consumes.
 native_shell=${SPICE_NATIVE_SHELL:?spice native shell} # env-policy: allow
 unset SPICE_HOOKS SPICE_NATIVE_SHELL # env-policy: allow
+# `native_shell` is a shell-local handoff after the packaged environment is
+# removed; these scoped markers do not admit another inherited environment key.
 SHELL=$native_shell # env-policy: allow
 export SHELL
 exec "$native_shell" "$@" # env-policy: allow

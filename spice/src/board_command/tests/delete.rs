@@ -51,7 +51,9 @@ fn refused_as(outcome: &Outcome<CommandAnswer>) -> (String, Option<String>) {
 
 /// Reason and overridden holder recorded by each withdrawal of this task.
 fn delete_facts(bus: &Bus, task: &TaskHandle) -> Vec<(String, Option<String>)> {
-    let handle = task.to_string();
+    let incepted = task
+        .incepted()
+        .expect("fixture handle carries an inception stamp");
     bus.fact_snapshot()
         .expect("withdrawal facts read")
         .facts()
@@ -63,7 +65,7 @@ fn delete_facts(bus: &Bus, task: &TaskHandle) -> Vec<(String, Option<String>)> {
                     .body()
                     .get("task")
                     .and_then(serde_json::Value::as_str)
-                    == Some(handle.as_str())
+                    == Some(incepted.as_str())
         })
         .map(|fact| {
             (
@@ -353,16 +355,15 @@ fn a_withdrawn_prerequisite_releases_the_task_that_waited_on_it() {
         "A prerequisite filed by mistake",
         Some("todo"),
     );
-    let dependent = "CLI-drop00004"
-        .parse::<TaskHandle>()
-        .expect("fixture task handle");
+    let dependent_stamp = wire::TaskStamp::for_millis(40_004).expect("fixture task stamp");
+    let dependent = TaskHandle::for_project("board.test", &dependent_stamp);
     assert_committed(issue(
         &bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
         vec![Witness::Absence {
-            task: dependent.clone(),
+            task: dependent_stamp,
         }],
         &TaskAdd {
             title: "Work waiting on the mistake".to_owned(),
@@ -421,16 +422,14 @@ fn a_released_dependent_is_not_still_reported_blocked() {
         "A prerequisite filed by mistake",
         Some("todo"),
     );
-    let dependent = "CLI-drop00009"
-        .parse::<TaskHandle>()
-        .expect("fixture task handle");
+    let dependent_stamp = wire::TaskStamp::for_millis(40_009).expect("fixture task stamp");
     assert_committed(issue(
         &bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
         vec![Witness::Absence {
-            task: dependent.clone(),
+            task: dependent_stamp,
         }],
         &TaskAdd {
             title: "Work waiting on the mistake".to_owned(),

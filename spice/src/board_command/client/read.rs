@@ -326,9 +326,9 @@ pub(in crate::board_command) fn task_status(
     // The board owns which prerequisites are satisfied. Deciding it again here
     // is how the same row gets counted ready and blocked at once: `ready` asks
     // the board through `eligible_entry`, so `blocked` has to ask the board too.
-    let satisfied = board::satisfied_handles(&entries);
+    let satisfied = board::satisfied_tasks(&entries);
     let pending_actor = |entry: &&Entry| {
-        routed.contains(&entry.statement().handle)
+        routed.contains(entry.handle())
             && entry.workflow().status == "pending"
             && entry.workflow().completion.is_none()
     };
@@ -347,10 +347,7 @@ pub(in crate::board_command) fn task_status(
                     .claim()
                     .is_some_and(|claim| claim.actor == board.principal)
         })
-        .map_or_else(
-            || "-".to_owned(),
-            |entry| entry.statement().handle.to_string(),
-        );
+        .map_or_else(|| "-".to_owned(), |entry| entry.handle().to_string());
     let active_count = rows.iter().copied().filter(active).count();
     let review = rows
         .iter()

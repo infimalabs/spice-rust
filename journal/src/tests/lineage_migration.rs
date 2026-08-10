@@ -52,14 +52,17 @@ fn current_rows_cross_schema_two_without_an_alternate_rewrite() {
     let scratch = Scratch::new();
     let path = scratch.path().join("current.sqlite3");
     schema_two_lineage_authority(&path, [StoredLineage::Current; 3]);
-    let before = carrier_bytes(&Connection::open(&path).expect("open current fixture"));
+    let before = lineage_payloads(&Connection::open(&path).expect("open current fixture"));
 
     let journal = Journal::open(&path).expect("the current authority migrates");
 
-    let after = carrier_bytes(&journal.connection);
-    assert_eq!(without_topology_revision(&after[0], ""), before[0]);
-    assert_eq!(after[1], before[1]);
-    assert_eq!(without_topology_revision(&after[2], "/body"), before[2]);
+    let mut after = lineage_payloads(&journal.connection);
+    after[2]
+        .as_object_mut()
+        .expect("lane seat request body")
+        .remove("topology_revision")
+        .expect("schema-six request carries topology revision");
+    assert_eq!(after, before);
     assert_all_carriers(&journal.connection, LINEAGE);
 }
 
@@ -158,6 +161,7 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
         "/body",
         shapes[2],
     );
+    downgrade_task_identity_to_five(&journal.connection);
     remove_head_topology_revision(&journal.connection);
     journal
         .connection
@@ -367,18 +371,18 @@ fn carrier_bytes(connection: &Connection) -> Vec<Vec<u8>> {
         .collect()
 }
 
-fn without_topology_revision(bytes: &[u8], pointer: &str) -> Vec<u8> {
-    let mut document: Value = serde_json::from_slice(bytes).expect("decode migrated carrier");
-    let object = if pointer.is_empty() {
-        document.as_object_mut()
-    } else {
-        document.pointer_mut(pointer).and_then(Value::as_object_mut)
-    }
-    .expect("topology-bearing carrier object");
-    object
-        .remove("topology_revision")
-        .expect("schema-six carrier carries topology revision");
-    serde_json::to_vec(&document).expect("encode pre-topology request")
+fn lineage_payloads(connection: &Connection) -> Vec<Value> {
+    carrier_bytes(connection)
+        .into_iter()
+        .zip(["/lanes/0", "/fact", "/body"])
+        .map(|(bytes, pointer)| {
+            serde_json::from_slice::<Value>(&bytes)
+                .expect("decode lineage carrier")
+                .pointer(pointer)
+                .expect("lineage payload")
+                .clone()
+        })
+        .collect()
 }
 
 fn residency_head_from(connection: &Connection) -> ResidencyHead {
