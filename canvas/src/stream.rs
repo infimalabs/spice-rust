@@ -739,7 +739,7 @@ mod tests {
             "2030-04-12T18:44:09.271Z".parse().expect("instant"),
             Producer::CommandDoor,
         );
-        let task: wire::TaskHandle = "STREAM-a1".parse().expect("task handle");
+        let task: wire::TaskStamp = "1kKRRsDP".parse().expect("task stamp");
         let mut cause = FactCause::Root;
         for index in 0..notes {
             let fact = write

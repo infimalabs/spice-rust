@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use wire::{Instant, TaskHandle};
+use wire::{Instant, TaskHandle, TaskStamp};
 
 use super::{
     AddRequest, BackupFile, BackupImage, Error, ErrorClass, MediaType, Retention, Store,
@@ -46,8 +46,15 @@ impl Drop for Fixture {
     }
 }
 
-fn task(text: &str) -> TaskHandle {
-    text.parse().expect("fixture task")
+fn task(text: &str) -> TaskStamp {
+    let millis = text.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 1_000_000_000
+    });
+    TaskStamp::for_millis(millis).expect("fixture task stamp")
+}
+
+fn handle(task: &TaskStamp) -> TaskHandle {
+    TaskHandle::for_project("task.artifact", task)
 }
 
 fn instant(text: &str) -> Instant {
@@ -56,7 +63,7 @@ fn instant(text: &str) -> Instant {
 
 fn add(
     store: &Store,
-    task: &TaskHandle,
+    task: &TaskStamp,
     source: &Path,
     retention: Retention,
     at: Instant,
@@ -246,7 +253,7 @@ fn duplicate_payload_survives_pruning_of_one_citation() {
     );
     assert_eq!(permanent.digest, prunable.digest);
 
-    let statuses = BTreeMap::from([(task.clone(), "completed".to_owned())]);
+    let statuses = BTreeMap::from([(task.clone(), (handle(&task), "completed".to_owned()))]);
     let plan = fixture
         .store
         .plan_prune(&statuses, None, None)
@@ -298,8 +305,11 @@ fn prune_requires_completed_status_and_honors_the_age_bound() {
         instant("2030-01-01T00:00:00.000Z"),
     );
     let statuses = BTreeMap::from([
-        (completed.clone(), "completed".to_owned()),
-        (pending.clone(), "pending".to_owned()),
+        (
+            completed.clone(),
+            (handle(&completed), "completed".to_owned()),
+        ),
+        (pending.clone(), (handle(&pending), "pending".to_owned())),
     ]);
 
     let plan = fixture
@@ -311,9 +321,11 @@ fn prune_requires_completed_status_and_honors_the_age_bound() {
         )
         .expect("bounded plan");
     assert_eq!(plan.operations.len(), 1);
-    assert_eq!(plan.operations[0].task, completed);
+    assert_eq!(plan.operations[0].incepted, completed);
+    assert_eq!(plan.operations[0].handle, handle(&completed));
     assert_eq!(plan.skipped.len(), 1);
-    assert_eq!(plan.skipped[0].task, pending);
+    assert_eq!(plan.skipped[0].incepted, pending);
+    assert_eq!(plan.skipped[0].handle, Some(handle(&pending)));
     assert_eq!(plan.skipped[0].status, "pending");
 }
 
@@ -370,6 +382,23 @@ fn dangling_manifest_link_is_corruption_not_an_omitted_backup_task() {
             .to_string()
             .contains("manifest is not a regular file")
     );
+}
+
+#[test]
+fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback() {
+    let fixture = Fixture::new();
+    let legacy = fixture.store.root().join("ARTIFACT-a1");
+    fs::create_dir_all(&legacy).expect("create legacy task directory");
+
+    let failure = fixture
+        .store
+        .capture()
+        .expect_err("release-one task directory must be refused");
+
+    assert_eq!(failure.class(), ErrorClass::Refusal);
+    assert!(failure.to_string().contains("artifact store release 1"));
+    assert!(failure.to_string().contains("version 2"));
+    assert!(failure.to_string().contains("inception-stamp directory"));
 }
 
 #[test]

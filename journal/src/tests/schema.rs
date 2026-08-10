@@ -83,6 +83,7 @@ fn table_census(connection: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::t
 /// which is correct, since schema 1 had nowhere to put it.
 fn schema_one_authority(path: &Path) {
     let journal = authority_file_fixture(path);
+    downgrade_task_identity_to_five(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -151,8 +152,9 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         Some(Vec::new()),
         "the step creates the new table empty; a schema-1 authority has no head to carry"
     );
-    // Compared one table at a time so a failure prints the table that lost a
-    // row rather than every blob in the authority.
+    // Compared one table at a time so a failure prints the unrelated table
+    // that lost a row. Task identity carriers are deliberately rewritten by
+    // schema 4 and have their own byte- and rollback-level migration cases.
     let mut expected = before;
     expected.remove("journal_schema");
     assert_eq!(
@@ -161,10 +163,22 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         "the step must add a table and drop none"
     );
     for (table, rows) in expected {
+        if [
+            "fact_envelopes",
+            "thread_index",
+            "command_receipts",
+            "task_heads",
+            "workflow_heads",
+            "claim_heads",
+            "lease_heads",
+        ]
+        .contains(&table.as_str())
+        {
+            continue;
+        }
         assert_eq!(
             after[&table], rows,
-            "{table} must survive byte for byte: an additive step migrates the \
-             authority, a step that recreated the table would lose it"
+            "unrelated table {table} must survive byte for byte across the chained migration"
         );
     }
 

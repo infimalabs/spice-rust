@@ -10,7 +10,7 @@ use super::*;
 /// writer exists.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AutomaticClaim {
-    pub(crate) task: TaskHandle,
+    pub(crate) task: TaskStamp,
     pub(crate) lane: wire::CanonicalUuid,
     pub(crate) occupant: wire::CanonicalUuid,
 }
@@ -44,7 +44,7 @@ pub(crate) fn claim_automatic(
     );
     match committed(bus, prepared.write, CommandAnswer::Claim(answer)) {
         Outcome::Reply(_) => Ok(AutomaticClaim {
-            task: prepared.task,
+            task: prepared.incepted,
             lane,
             occupant,
         }),
@@ -58,6 +58,7 @@ struct PreparedClaim {
     selected: Entry,
     entries: Vec<Entry>,
     task: TaskHandle,
+    incepted: TaskStamp,
     actor: Actor,
 }
 
@@ -80,11 +81,12 @@ fn prepare_claim(
     let row = available_lane(&snapshot, lane)?;
     let subscription = available_subscription(&snapshot, row)?;
     let selected = select_task(&snapshot, &actor, subscription)?;
-    let task = selected.statement().handle.clone();
+    let task = selected.handle().clone();
+    let incepted = selected.incepted().clone();
     let (at, expiry, maximum) = claim_deadlines()?;
     let git = prepare_git(repository, &row.worktree)?;
     let source = claim_source_boundary(bus, &lane)?;
-    let origin = task_origin(&task)?;
+    let origin = task_origin(&incepted)?;
     let mut write = JournalWrite::new(actor.clone(), origin, at, Producer::CommandDoor);
     guard_allocation(
         &mut write,
@@ -101,7 +103,7 @@ fn prepare_claim(
         },
     );
     mint_claim(
-        &mut write, &selected, &task, &actor, lane, occupant, epoch, at, expiry, maximum, git,
+        &mut write, &selected, &incepted, &actor, lane, occupant, epoch, at, expiry, maximum, git,
         source,
     )?;
     Ok(PreparedClaim {
@@ -109,6 +111,7 @@ fn prepare_claim(
         selected,
         entries: snapshot.entries,
         task,
+        incepted,
         actor,
     })
 }
@@ -242,7 +245,7 @@ fn claim_source_boundary(
 fn mint_claim(
     write: &mut JournalWrite,
     selected: &Entry,
-    task: &TaskHandle,
+    task: &TaskStamp,
     actor: &Actor,
     lane: wire::CanonicalUuid,
     occupant: wire::CanonicalUuid,
@@ -307,7 +310,7 @@ pub(crate) fn release_automatic(
     bus: &Bus,
     automatic: &AutomaticClaim,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    let (observed, actor) = active_claim(bus, automatic)?;
+    let (observed, actor, handle) = active_claim(bus, automatic)?;
     let at = current_instant()?;
     let origin = task_origin(&automatic.task)?;
     let mut write = JournalWrite::new(actor.clone(), origin, at, Producer::CommandDoor);
@@ -332,7 +335,7 @@ pub(crate) fn release_automatic(
     let task = automatic.task.clone();
     write.claim_head(task.clone(), freed, move |fact| ClaimHead { fact, ..next });
     let answer = wire::intent::ClaimAnswer {
-        task,
+        task: handle,
         holder: actor,
         warnings: Vec::new(),
         next: None,
@@ -347,14 +350,14 @@ pub(crate) fn release_automatic(
 fn active_claim(
     bus: &Bus,
     automatic: &AutomaticClaim,
-) -> Result<(journal::JournalHead<ClaimHead>, Actor), Outcome<CommandAnswer>> {
+) -> Result<(journal::JournalHead<ClaimHead>, Actor, TaskHandle), Outcome<CommandAnswer>> {
     let snapshot = bus
         .task_snapshot()
         .map_err(|error| store_fault("lifecycle::claim-release-read", &error.to_string()))?;
     let heads = snapshot
         .tasks()
         .iter()
-        .find(|heads| heads.statement().body().handle == automatic.task)
+        .find(|heads| heads.statement().body().incepted == automatic.task)
         .ok_or_else(|| {
             store_fault(
                 "lifecycle::claim-release-task-missing",
@@ -388,5 +391,9 @@ fn active_claim(
             "the exact automatic claim is no longer owned by its allocating lane",
         ));
     }
-    Ok((observed, actor))
+    let handle = TaskHandle::for_project(
+        &heads.statement().body().project,
+        &heads.statement().body().incepted,
+    );
+    Ok((observed, actor, handle))
 }
