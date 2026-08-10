@@ -972,7 +972,7 @@ fn phase(value: &str) -> Phase {
     value.parse().expect("fixture phase")
 }
 
-fn vendor() -> Name {
+fn vendor() -> wire::Name {
     "claude".parse().expect("fixture vendor")
 }
 

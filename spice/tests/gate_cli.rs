@@ -91,21 +91,20 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
         "the pre-commit refusal names how a merge is recorded: {}",
         refusal.remedy
     );
-    let pre_commit_report = BatteryReport::decode(
+    assert_eq!(
         refusal
             .observed
             .as_deref()
-            .expect("pre-commit retains its complete report")
-            .as_bytes(),
-    )
-    .expect("pre-commit refusal carries a canonical report");
+            .expect("pre-commit retains its complete refusal board"),
+        report.refusal_fold().as_str(),
+        "the commit surface renders the same complete failure projection as the canonical report",
+    );
     let receipt = receipt_body(&invoke_with_path(
         &["gate", "receipt"],
         repository.path(),
         Some(tripwires.path()),
     ));
 
-    assert_equivalent_except_rust_elapsed(&pre_commit_report, &report);
     assert_eq!(receipt.tree(), report.context().source());
     assert_eq!(
         receipt.manifest(),
@@ -395,6 +394,47 @@ fn repository_selection_and_contract_failures_are_named_and_never_fall_through()
         !contract
             .remedy
             .contains(PlaceholderReason::NotLanded.as_str())
+    );
+}
+
+#[test]
+fn gate_findings_refuse_unregistered_and_cannot_run_before_board_dispatch() {
+    let repository = GateRepository::new();
+    let unregistered = invoke(
+        &["--json", "gate", "findings", "not-a-gate"],
+        repository.path(),
+    );
+    assert_eq!(unregistered.code, Some(REFUSAL_EXIT));
+    assert!(unregistered.out.is_empty());
+    let unregistered: Outcome<serde_json::Value> =
+        wire::decode(&unregistered.err).expect("unregistered refusal is typed");
+    let Outcome::Refusal(unregistered) = unregistered else {
+        panic!("unregistered focused instrument must refuse: {unregistered:?}");
+    };
+    assert_eq!(unregistered.reason, "gate::instrument-unregistered");
+    assert!(
+        !repository.path().join(".git/.spice-rs").exists(),
+        "an unregistered instrument must not reach board state"
+    );
+
+    let outside = Scratch::new("focused-cannot-run");
+    let cannot_run = invoke(
+        &["--json", "gate", "findings", "file-shape"],
+        outside.path(),
+    );
+    assert_eq!(cannot_run.code, Some(REFUSAL_EXIT));
+    assert!(cannot_run.out.is_empty());
+    let cannot_run: Outcome<serde_json::Value> =
+        wire::decode(&cannot_run.err).expect("cannot-run refusal is typed");
+    let Outcome::Refusal(cannot_run) = cannot_run else {
+        panic!("unavailable focused instrument must refuse: {cannot_run:?}");
+    };
+    assert_eq!(cannot_run.reason, "gate::instrument-cannot-run");
+    assert!(
+        cannot_run
+            .observed
+            .as_deref()
+            .is_some_and(|observed| observed.contains("gate::repository-unresolved"))
     );
 }
 

@@ -5,6 +5,21 @@ static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 const WORKTREE: &str = "/worktrees/resumed";
 const IDENTITY: &str = "018f7777-7777-7444-8888-999999999999";
 
+#[derive(Default)]
+struct ExitSink(std::sync::Mutex<Vec<CaptureExit>>);
+
+impl CaptureReporter for ExitSink {
+    fn record(&self, _record: CaptureRecord) -> Result<(), CaptureReportError> {
+        Ok(())
+    }
+
+    fn failed(&self, _failure: CaptureFailure) {}
+
+    fn exited(&self, exit: CaptureExit) {
+        self.0.lock().expect("exit sink lock").push(exit);
+    }
+}
+
 /// One isolated durable root. Resuming a lane reads a session head and a tape
 /// and nothing else, so these tests need neither a bus nor a repository.
 struct Fixture {
@@ -91,6 +106,37 @@ fn head(row: &mut wire::LaneResidency) -> &mut wire::LaneSession {
     row.session
         .as_mut()
         .expect("fixture row declares session authority")
+}
+
+#[test]
+fn declaration_reporter_forwards_the_kernel_exit_to_its_resident_sink() {
+    let lane = uuid(1);
+    let occupant = uuid(2);
+    let inner = Arc::new(ExitSink::default());
+    let (reply, _session) = mpsc::sync_channel(1);
+    let reporter = DeclarationReporter {
+        inner: inner.clone(),
+        lane,
+        occupant,
+        worktree: WORKTREE.to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        model: "sonnet".to_owned(),
+        effort: "high".to_owned(),
+        git: "skipped:test".to_owned(),
+        epoch: uuid(3),
+        stream: vendor::RecordStream::Stdout,
+        expected: None,
+        state: Arc::new(Mutex::new(DeclarationState {
+            reply,
+            seen: None,
+            witness: DeclarationWitness::default(),
+        })),
+    };
+    let exit = CaptureExit { lane, occupant };
+
+    reporter.exited(exit);
+
+    assert_eq!(*inner.0.lock().expect("exit sink lock"), vec![exit]);
 }
 
 /// One Claude initialization record, in the words the dialect actually reads.

@@ -24,6 +24,15 @@ pub(super) fn validated_snapshot(
     let observed = bus
         .task_snapshot()
         .map_err(|error| store_fault("board::heads-unreadable", &error.to_string()))?;
+    validated_snapshot_from(&observed, principal, projects, allocation)
+}
+
+pub(super) fn validated_snapshot_from(
+    observed: &bus::TaskSnapshot,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let cursor = observed.cursor().ok_or_else(|| {
         store_fault(
             "board::cursor-missing",
@@ -765,7 +774,7 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         | Witness::Preview { .. }
         | Witness::Barrier { .. } => board_witness_holds(read, witness),
         Witness::Directive { .. }
-        | Witness::Lineage { .. }
+        | Witness::Recoverable { .. }
         | Witness::Consent { .. }
         | Witness::Rule { .. }
         | Witness::Budget { .. }
@@ -930,6 +939,47 @@ pub(super) fn task_origin(task: &TaskHandle) -> Result<wire::Origin, Outcome<Com
             &format!("validated handle did not form a task origin: {error}"),
         )
     })
+}
+
+/// Resolve the causal realm for one task-creation transaction.
+///
+/// Authored provenance wins because it is how an inline steering capture names
+/// its exact `ack:` directive. Otherwise the actor's one active claim is the
+/// parent work that caused the creation. Typed system routes may finally name
+/// an intrinsic cause they have already proved, such as a gate report or
+/// authored-document digest. Dependency edges never participate: scheduling
+/// order and creation causality are independent facts.
+pub(super) fn resolve_creation_origin(
+    authored: Option<&wire::Origin>,
+    actor: &Actor,
+    snapshot: &ValidatedSnapshot,
+    intrinsic: Option<wire::Origin>,
+) -> Result<wire::Origin, Outcome<CommandAnswer>> {
+    if let Some(origin) = authored {
+        return Ok(origin.clone());
+    }
+    let mut held = snapshot.entries.iter().filter(|entry| {
+        entry.claim().is_some_and(|claim| {
+            claim.actor == *actor && claim.disposition == ClaimDisposition::Active
+        })
+    });
+    if let Some(parent) = held.next() {
+        if held.next().is_some() {
+            return Err(protocol_fault(
+                "task::origin-ambiguous",
+                "one actor holds more than one active claim at task creation",
+            ));
+        }
+        return task_origin(&parent.statement().handle);
+    }
+    if let Some(origin) = intrinsic {
+        return Ok(origin);
+    }
+    Err(refusal(
+        "task::origin-required",
+        Some(actor.to_string()),
+        "supply --origin ack:<steering-key> or --origin task:<parent-handle>, or create while holding one active claim",
+    ))
 }
 
 pub(super) fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {

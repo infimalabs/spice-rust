@@ -76,7 +76,9 @@ pub(crate) enum SelectedCommand<'a> {
     },
     /// The operator withdraws one live directive.
     SteerCancel { directive: CanonicalUuid },
-    /// The operator restores one exact lapsed directive.
+    /// The operator re-presents one live directive at the urgency now due.
+    SteerResend { directive: CanonicalUuid },
+    /// The operator restores one exact lapsed or dead-lettered directive.
     SteerRecover { directive: CanonicalUuid },
     /// The authenticated principal reads visible pending direction.
     SteerInbox { lane: Option<CanonicalUuid> },
@@ -940,6 +942,14 @@ fn position_matches(law: ReplyPositionLaw, position: ReplyPosition) -> bool {
         (ReplyPositionLaw::Direct, ReplyPosition::Direct {})
             | (ReplyPositionLaw::Snapshot, ReplyPosition::Snapshot(_))
             | (ReplyPositionLaw::Committed, ReplyPosition::Committed(_))
+            | (
+                ReplyPositionLaw::SnapshotOrCommitted,
+                ReplyPosition::Snapshot(_)
+            )
+            | (
+                ReplyPositionLaw::SnapshotOrCommitted,
+                ReplyPosition::Committed(_)
+            )
     )
 }
 

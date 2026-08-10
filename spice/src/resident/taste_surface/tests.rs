@@ -718,7 +718,7 @@ fn unrelated_journal_movement_does_not_starve_a_lane_fold() {
 }
 
 #[test]
-fn emitted_reminders_ack_decline_resend_and_expire_as_ordinary_steering() {
+fn emitted_reminders_ack_decline_escalate_and_expire_as_ordinary_steering() {
     let fixture = Fixture::new("ordinary-steering");
     let bag = bag(&[
         ("polling", &["poll*"], "Wait."),
@@ -760,25 +760,23 @@ fn emitted_reminders_ack_decline_resend_and_expire_as_ordinary_steering() {
     );
 
     let mut lifecycle = steer::Ledger::from_snapshot(&snapshot).expect("ledger");
-    let climbed = uuid(90);
     lifecycle
-        .absorb(steer::Steering::Resent(&wire::body::SteerResent {
-            directive: climbed,
-            key: "1kJK6M0V".to_owned(),
-            ancestor: reminders[0].key.clone(),
+        .absorb(steer::Steering::Escalated(&wire::body::SteerEscalated {
+            directive: reminders[0].directive,
+            key: reminders[0].key.clone(),
             lane: fixture.lane,
-            escalation: 1,
+            stage: wire::body::SteeringStage::Reminded,
         }))
-        .expect("reminder resends");
+        .expect("reminder escalates");
     lifecycle
         .absorb(steer::Steering::Lapsed(&wire::body::SteerLapsed {
-            key: "1kJK6M0V".to_owned(),
+            key: reminders[0].key.clone(),
             lane: fixture.lane,
             expires: reminders[0].expires,
         }))
-        .expect("reminder lineage expires");
+        .expect("stable reminder expires");
     assert_eq!(
-        lifecycle.disposition(&"1kJK6M0V".parse().expect("key")),
+        lifecycle.disposition(&reminders[0].key.parse().expect("key")),
         Some(Disposition::Lapsed)
     );
     fixture.finish();

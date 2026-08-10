@@ -10,7 +10,6 @@ publish.workspace = true
 atomic = { path = "../atomic" }
 journal = { path = "../journal" }
 serde = { version = "1.0.229", features = ["derive"] }
-sill = { path = "../sill" }
 wire = { path = "../wire" }
 
 [dev-dependencies]

@@ -49,14 +49,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::GateFindings,
         r#"{
   "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "findings": [{
-    "identity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "severity": "high",
-    "locus": "wire/src/intent.rs:1",
-    "title": "Gate finding needs board work",
-    "description": "The explicit gate findings route files this row as deferred work.",
-    "acceptance": ["the finding has a deferred task"]
-  }]
+  "evidence": "{\"version\":1}"
 }"#,
     ),
     (
@@ -134,6 +127,10 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (
         CommandKind::SteerResend,
+        r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
+    ),
+    (
+        CommandKind::SteerRecover,
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
     ),
     (
@@ -448,6 +445,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "text": "drain the queue",
       "preview": "drain the queue",
       "authored": "2026-08-01T06:07:19.000Z",
+      "stage": "published",
       "expires": "2026-08-01T07:07:19.000Z"
     }]
   }]
@@ -678,7 +676,18 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "provenance": {
       "kind": "steering",
       "key": "1kJJP87B",
-      "disposition": "acked"
+      "disposition": "acked",
+      "stage": "overdue",
+      "escalations": [{
+        "stage": "reminded",
+        "at": "2026-08-06T03:00:02.000Z"
+      }, {
+        "stage": "escalated",
+        "at": "2026-08-06T03:01:00.000Z"
+      }, {
+        "stage": "overdue",
+        "at": "2026-08-06T03:05:00.000Z"
+      }]
     }
   }]
 }"#,
@@ -998,6 +1007,32 @@ fn a_body_spelled_for_another_kind_is_refused() {
 }
 
 #[test]
+fn release_publication_requires_an_explicit_current_or_historical_note_state() {
+    let shape = CommandKind::ReleasePublish.binding().body;
+    let missing = r#"{
+        "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }"#;
+    assert!(
+        shape.decode(missing.as_bytes()).is_err(),
+        "unmigrated publication intent must not enter the current decoder"
+    );
+
+    let historical = r#"{
+        "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "notes": null
+    }"#;
+    let Intent::ReleasePublish(publish) = shape
+        .decode(historical.as_bytes())
+        .expect("migrated historical absence decodes")
+    else {
+        panic!("release body decoded as another intent")
+    };
+    assert_eq!(publish.notes, wire::ReleaseNotesIdentity::HistoricalAbsent);
+}
+
+#[test]
 fn every_declared_shape_is_bound_by_some_kind() {
     // A shape no kind selects is dead vocabulary, and an answer no kind
     // returns is a reply that can never be sent.
@@ -1026,6 +1061,22 @@ fn a_kind_binds_one_body_and_one_answer() {
         // resolve to two bodies depending on when it is asked.
         assert_eq!(kind.binding(), kind.binding(), "{kind} binds unstably");
     }
+}
+
+#[test]
+fn gate_findings_accept_only_one_report_evidence_binding() {
+    let shape = CommandKind::GateFindings.binding().body;
+    let missing = br#"{
+      "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }"#;
+    let injected = br#"{
+      "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": "{}",
+      "findings": []
+    }"#;
+
+    assert!(shape.decode(missing).is_err());
+    assert!(shape.decode(injected).is_err());
 }
 
 /// Shapes a body may take, listed so an unreachable one is caught.

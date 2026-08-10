@@ -418,7 +418,7 @@ fn nonzero_vendor_exits_are_reaped_and_recorded_for_both_dialects() {
 
         let lane = add_lane(&fixture, None, dialect);
         observer.join().expect("vendor exit is observed");
-        drain(&fixture, lane);
+        wait_for_lane_exit(&fixture, lane);
         let pid = fs::read_to_string(&pid_file)
             .expect("vendor pid reads")
             .trim()
@@ -648,13 +648,10 @@ fn the_shutdown_ladder_records_an_untrapped_vendor_the_way_the_drain_does() {
 /// something true — a signal this resident did not send. A Unix status code is 0
 /// to 255, so it cannot be confused with a status a vendor chose to return.
 ///
-/// The fifo is the synchronisation, not the pid: a killed child stays visible as
-/// a zombie until someone reaps it, so polling for the process to disappear would
-/// wait on the very drain this test has not run yet. Reaching EOF on the write
-/// end proves the vendor is gone regardless of who has reaped it. That the
-/// already-dead vendor is still waiting to be observed at drain time is the same
-/// arrangement `nonzero_vendor_exits_are_reaped_and_recorded_for_both_dialects`
-/// relies on.
+/// The fifo is the process-side synchronization, not the pid: reaching EOF on
+/// its write end proves the vendor is gone. The resident's journal event is the
+/// independent synchronization proving the kernel callback reaped and durably
+/// vacated that exact occupant without a later drain command.
 #[test]
 fn a_vendor_killed_by_another_hand_is_still_recorded_as_an_exit() {
     let fixture = Fixture::linked("vendor-foreign-signal");
@@ -705,7 +702,7 @@ fn a_vendor_killed_by_another_hand_is_still_recorded_as_an_exit() {
         .expect("kill launches");
     assert!(killed.status.success(), "kill failed: {:?}", killed.stderr);
     observer.join().expect("foreign kill reaches the vendor");
-    drain(&fixture, lane);
+    wait_for_lane_exit(&fixture, lane);
 
     let facts = journal::JournalReader::open(fixture.journal())
         .expect("signal journal reads")

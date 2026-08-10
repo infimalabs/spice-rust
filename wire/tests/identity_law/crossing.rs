@@ -909,6 +909,11 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
                 steer: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
                 disposition: Disposition::Live,
             },
+            // Recovery names the same stable subject without collapsing its
+            // lapsed and dead-lettered states into one false disposition.
+            Witness::Recoverable {
+                steer: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+            },
             Witness::Consent {
                 request: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 answer: Answer::Asked,

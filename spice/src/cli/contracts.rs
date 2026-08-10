@@ -308,7 +308,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["gate", "findings"],
-        "gate findings [--at REV]",
+        "gate findings INSTRUMENT [--at REV]",
         OperatorOrLane,
         Command,
         [GateFindingsFiled, TaskAdded, TaskDeferred],
@@ -521,7 +521,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "capture"],
-        "task capture [HANDLE] [--title TITLE] [--project PROJECT] [--steal]",
+        "task capture [HANDLE] [--title TITLE] [--project PROJECT] [--origin ORIGIN] [--steal]",
         OperatorOrLane,
         Command,
         [ClaimWon],
@@ -595,7 +595,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "oops"],
-        "task oops TEXT",
+        "task oops TEXT [--origin ORIGIN]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskNoted],
@@ -766,6 +766,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "steer::cancel"
     ),
     row!(
+        ["steer", "resend"],
+        "steer resend ID",
+        Operator,
+        Command => SnapshotOrCommitted,
+        [SteerEscalated],
+        [Resident, OperatorCapability],
+        Reply,
+        "steer::resend"
+    ),
+    row!(
         ["steer", "recover"],
         "steer recover ID",
         Operator,
@@ -867,7 +877,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["taste", "add"],
-        "taste add TEXT",
+        "taste add TEXT [--origin ORIGIN]",
         Operator,
         Command,
         [TaskAdded],
@@ -877,7 +887,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["taste", "drop"],
-        "taste drop NAME",
+        "taste drop NAME [--origin ORIGIN]",
         Operator,
         Command,
         [TaskAdded],

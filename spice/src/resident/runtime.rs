@@ -25,6 +25,7 @@ pub(super) struct SurfaceConfig {
     speech: canvas::SpeechConfig,
     pub(super) allocation: board::NextConfig,
     pub(super) projects: board::ProjectPolicy,
+    pub(super) lane: lane::Config,
 }
 
 struct SurfaceLaunch<'a> {
@@ -69,6 +70,7 @@ where
             speech: loaded.resolved().root().say().clone(),
             allocation: *loaded.resolved().root().board().next(),
             projects: loaded.resolved().root().tasks().project_policy(),
+            lane: loaded.resolved().root().lane().clone(),
         },
         trust: crate::trust_command::Surface::from_loaded(&loaded),
     })
@@ -793,23 +795,27 @@ fn latest_surface_digest(snapshot: &journal::FactSnapshot) -> CommandResult<Opti
     Ok(None)
 }
 
-async fn run_surface(
+struct StartedSurface<'a> {
+    capabilities: canvas::axum::Capabilities,
+    discovery: canvas::Discovery,
+    control: canvas::axum::Control,
+    published: PublishedDiscovery,
+    shutdown: oneshot::Sender<()>,
+    server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
+    message_publisher: canvas::stream::MessagePublisher,
+    progress: &'a mut dyn io::Write,
+}
+
+async fn start_surface<'a>(
     bus: &Bus,
-    repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    residency: &ResidencyHead,
     config: &SurfaceConfig,
-    seats: &mut Seats,
-    launch: SurfaceLaunch<'_>,
-) -> CommandResult<()> {
+    launch: SurfaceLaunch<'a>,
+) -> CommandResult<StartedSurface<'a>> {
     let operator = new_uuid();
-    let residency = current_residency(bus, epoch)?;
-    let capabilities = surface_capabilities(operator, residency.body())?;
-    let timer_commits = bus.reader().subscribe();
-    let timers = timers::Runtime::start(config.projects.clone())?;
-    // Settled before the listener exists, so a app stage that cannot supply
-    // the whole app stops the resident with its own name rather than turning
-    // into a page the operator has to diagnose from the browser.
+    let capabilities = surface_capabilities(operator, residency)?;
     let app = canvas::AppSource::resolve(&paths.worktree)
         .map_err(|error| environment_fault("canvas::app-source-invalid", &error.to_string()))?;
     let app_description = app.to_string();
@@ -831,9 +837,6 @@ async fn run_surface(
         config.canvas.rows(),
     )
     .await
-    // Naming the address is the whole diagnosis now that one can be asked for:
-    // the common failure is a port another process already holds, and "address
-    // already in use" alone does not say which address or how to pick another.
     .map_err(|error| {
         environment_fault(
             "canvas::bind-failed",
@@ -853,8 +856,8 @@ async fn run_surface(
         path: paths.canvas.clone(),
         lane_root: paths.lane_canvas.clone(),
     };
-    steering::publish_lane_discoveries(paths, &discovery, residency.body())?;
-    steering::publish_inboxes(bus, paths, residency.body())?;
+    steering::publish_lane_discoveries(paths, &discovery, residency)?;
+    steering::publish_inboxes(bus, paths, residency)?;
     discovery
         .publish(&paths.canvas)
         .map_err(|error| environment_fault("canvas::publish-failed", &error.to_string()))?;
@@ -862,10 +865,38 @@ async fn run_surface(
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
+    announce_started_surface(
+        paths,
+        &app_description,
+        token.as_deref(),
+        open,
+        endpoint,
+        progress,
+    );
+    Ok(StartedSurface {
+        capabilities,
+        discovery,
+        control,
+        published,
+        shutdown,
+        server_task,
+        message_publisher,
+        progress,
+    })
+}
+
+fn announce_started_surface(
+    paths: &RuntimePaths,
+    app_description: &str,
+    token: Option<&str>,
+    open: bool,
+    endpoint: &mut dyn io::Write,
+    progress: &mut dyn io::Write,
+) {
     let _ = writeln!(progress, "canvas app source: {app_description}");
     announce_canvas(
         &paths.canvas,
-        token.as_deref(),
+        token,
         open,
         || {},
         crate::command_client::system_browser,
@@ -874,15 +905,39 @@ async fn run_surface(
     );
     let _ = endpoint.flush();
     let _ = progress.flush();
+}
+
+async fn run_surface(
+    bus: &Bus,
+    repository: &Repository,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    config: &SurfaceConfig,
+    seats: &mut Seats,
+    launch: SurfaceLaunch<'_>,
+) -> CommandResult<()> {
+    let residency = current_residency(bus, epoch)?;
+    let timer_commits = bus.reader().subscribe();
+    let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
+    let lifecycle = lifecycle::Runtime::new(&config.lane);
+    let started = start_surface(bus, paths, epoch, residency.body(), config, launch).await?;
+    let StartedSurface {
+        capabilities,
+        discovery,
+        control,
+        published,
+        shutdown,
+        server_task,
+        message_publisher,
+        progress,
+    } = started;
     let capture::Channels {
         reporter,
         records,
         failures,
+        exits,
     } = capture::channels();
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
-    // Tapes kept growing while this resident was down. Accounting what they
-    // gained before the surface is driven means the first live record continues
-    // a head that already stands past everything the outage missed.
     ingest_transcripts(bus, paths, None, progress)?;
     let command_surface = command_surface::Surface::new(
         bus,
@@ -905,12 +960,14 @@ async fn run_surface(
         message_publisher,
         records,
         failures,
+        exits,
         progress,
-        timers.drive(bus, timer_commits),
+        timers,
+        timer_commits,
+        lifecycle,
     )
     .await
 }
-
 /// Announce the app this start serves, and dial it when asked to.
 ///
 /// The endpoint is read back out of the discovery file the resident has just
@@ -1007,69 +1064,209 @@ async fn drive_surface(
     message_publisher: canvas::stream::MessagePublisher,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
+    mut exits: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureExit>,
     diagnostic: &mut dyn io::Write,
-    timer: impl std::future::Future<Output = CommandResult<()>>,
+    mut timers: timers::Runtime,
+    mut timer_commits: bus::BroadcastSubscriber,
+    mut lifecycle: lifecycle::Runtime,
 ) -> CommandResult<()> {
-    tokio::pin!(timer);
-    // One resident owns one correlation table: a tool result names its tool only
-    // by the call it answers, and calls outlive the record that announced them.
+    reconcile_wakes(
+        bus,
+        command_surface,
+        seats,
+        diagnostic,
+        &mut timers,
+        &mut lifecycle,
+    )?;
     let mut tool_previews = CallPreviews::default();
     loop {
         tokio::select! {
             request = control.recv() => {
-                if dispatch_control(command_surface, seats, &mut control, request).await? {
-                    drop(published);
-                    let _ = shutdown.send(());
-                    return match server_task.await {
-                        Ok(Ok(())) => Ok(()),
-                        ending => Err(server_outcome(ending)),
-                    };
+                if dispatch_control(
+                    command_surface, seats, &mut lifecycle, &mut control, request,
+                ).await? {
+                    return stop_surface(published, shutdown, server_task).await;
                 }
             }
-            record = records.recv() => {
-                let record = record.ok_or_else(|| environment_fault(
-                    "lane::capture-records-closed",
-                    "lane capture record receiver closed",
+            record = records.recv() => accept_record(
+                bus, epoch, seats, command_surface, &message_publisher,
+                record, &mut tool_previews, diagnostic,
+            )?,
+            failure = failures.recv() => accept_failure(
+                bus, epoch, seats, command_surface, &mut lifecycle, failure,
+            )?,
+            exit = exits.recv() => accept_exit(
+                bus, epoch, seats, command_surface, &mut lifecycle, exit,
+            )?,
+            timer = timers.recv() => {
+                let timer = timer.ok_or_else(|| environment_fault(
+                    "bus::timer-events-closed",
+                    "the production timer event stream closed while the resident was live",
                 ))?;
-                accept_capture_record(
-                    bus,
-                    epoch,
-                    seats,
-                    &CaptureSurfaces::new(
-                        command_surface.paths,
-                        &command_surface.config.taste,
-                        &command_surface.config.steering,
-                        &message_publisher,
-                    ),
-                    &record,
-                    &mut tool_previews,
-                    diagnostic,
+                let fired = timers.consume(bus, timer)?;
+                accept_timer_fired(bus, command_surface, &mut lifecycle, fired)?;
+                reconcile_wakes(
+                    bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
                 )?;
             }
-            failure = failures.recv() => {
-                let failure = failure.ok_or_else(|| environment_fault(
-                    "lane::capture-failures-closed",
-                    "lane capture failure receiver closed",
-                ))?;
-                lane_surface::capture_failed(bus, epoch, seats, &failure)?;
-            }
-            timed = &mut timer => return timed,
-            ending = &mut server_task => {
-                return Err(server_outcome(ending));
-            }
+            committed = timer_commits.recv() => accept_commit(
+                bus, command_surface, seats, diagnostic, &mut timers,
+                &mut lifecycle, committed,
+            )?,
+            ending = &mut server_task => return Err(server_outcome(ending)),
         }
     }
 }
 
+fn accept_timer_fired(
+    bus: &Bus,
+    command_surface: &command_surface::Surface<'_>,
+    lifecycle: &mut lifecycle::Runtime,
+    fired: timers::Fired,
+) -> CommandResult<()> {
+    match fired {
+        timers::Fired::LaneResume(lane) => command_surface.expire_lifecycle_hold(lifecycle, lane),
+        timers::Fired::Steering => {
+            let residency = bus
+                .residency_head()
+                .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
+            if let Some(residency) = residency {
+                steering::publish_inboxes(bus, command_surface.paths, residency.body())?;
+            }
+            Ok(())
+        }
+        timers::Fired::Stale | timers::Fired::ClaimLapse | timers::Fired::TaskWake(_) => Ok(()),
+    }
+}
+
+async fn stop_surface(
+    published: PublishedDiscovery,
+    shutdown: oneshot::Sender<()>,
+    server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
+) -> CommandResult<()> {
+    drop(published);
+    let _ = shutdown.send(());
+    match server_task.await {
+        Ok(Ok(())) => Ok(()),
+        ending => Err(server_outcome(ending)),
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one capture record crosses all resident-owned projection surfaces"
+)]
+fn accept_record(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    message_publisher: &canvas::stream::MessagePublisher,
+    record: Option<lane::capture::CaptureRecord>,
+    tool_previews: &mut CallPreviews,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let record = record.ok_or_else(|| {
+        environment_fault(
+            "lane::capture-records-closed",
+            "lane capture record receiver closed",
+        )
+    })?;
+    accept_capture_record(
+        bus,
+        epoch,
+        seats,
+        &CaptureSurfaces::new(
+            command_surface.paths,
+            &command_surface.config.taste,
+            &command_surface.config.steering,
+            message_publisher,
+        ),
+        &record,
+        tool_previews,
+        diagnostic,
+    )
+}
+
+fn accept_failure(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    lifecycle: &mut lifecycle::Runtime,
+    failure: Option<lane::capture::CaptureFailure>,
+) -> CommandResult<()> {
+    let failure = failure.ok_or_else(|| {
+        environment_fault(
+            "lane::capture-failures-closed",
+            "lane capture failure receiver closed",
+        )
+    })?;
+    command_surface.observe_lifecycle_death(lifecycle, seats, failure.lane, failure.occupant)?;
+    lane_surface::capture_failed(bus, epoch, seats, &failure)
+}
+
+fn accept_exit(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    lifecycle: &mut lifecycle::Runtime,
+    exit: Option<lane::capture::CaptureExit>,
+) -> CommandResult<()> {
+    let exit = exit.ok_or_else(|| {
+        environment_fault(
+            "lane::capture-exits-closed",
+            "lane process exit receiver closed",
+        )
+    })?;
+    command_surface.observe_lifecycle_death(lifecycle, seats, exit.lane, exit.occupant)?;
+    lane_surface::occupant_exited(bus, epoch, seats, exit)
+}
+
+fn accept_commit(
+    bus: &Bus,
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    diagnostic: &mut dyn io::Write,
+    timers: &mut timers::Runtime,
+    lifecycle: &mut lifecycle::Runtime,
+    committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
+) -> CommandResult<()> {
+    match committed {
+        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+            reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Closed) => Err(environment_fault(
+            "bus::lifecycle-commits-closed",
+            "the durable commit stream closed while the resident was live",
+        )),
+    }
+}
+
+fn reconcile_wakes(
+    bus: &Bus,
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    diagnostic: &mut dyn io::Write,
+    timers: &mut timers::Runtime,
+    lifecycle: &mut lifecycle::Runtime,
+) -> CommandResult<()> {
+    timers.synchronize(bus)?;
+    let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
+    timers.synchronize_wake(wake)
+}
 async fn dispatch_control(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
+    lifecycle: &mut lifecycle::Runtime,
     control: &mut canvas::axum::Control,
     request: Option<canvas::axum::ControlRequest>,
 ) -> CommandResult<bool> {
     let request = request.ok_or_else(|| {
         environment_fault("canvas::control-closed", "canvas control receiver closed")
     })?;
+    command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?;
     let dark = is_dark_command(request.command());
     let outcome = command_surface.dispatch(seats, request.command());
     let reached_dark = dark && matches!(outcome, Outcome::Reply(_));

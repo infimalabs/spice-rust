@@ -9,7 +9,7 @@ use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
 use serde::de::DeserializeOwned;
 use wire::body::{
-    LaneSeated, SteerAcked, SteerDeclined, SteerResent, TasteCleared, TasteConfirmed,
+    LaneSeated, SteerAcked, SteerDeclined, SteerEscalated, TasteCleared, TasteConfirmed,
     TasteReminded, TranscriptLocus,
 };
 use wire::intent::{BoardAnswer, CommandAnswer, TaskAdd, TaskAnswer, TextAnswer};
@@ -25,6 +25,7 @@ mod staged_app;
 use readiness::Readiness;
 
 const REFUSAL_EXIT: i32 = 2;
+const CURATION_ORIGIN: &str = "taste:curation";
 const ADD_TITLE: &str = concat!(
     "Propose tracked taste addition: Repeated alternate execution branches hide the current ",
     "path"
@@ -44,16 +45,11 @@ words = ["alias*"]
 message = "Keep one current name."
 "#;
 
-/// Steering keys the fire fixtures spell, each eight alphanumeric characters.
-///
-/// `FIRST_RUNG` and `RESENT_RUNG` are one ladder: the resend climbs the key the
-/// reminder opened, so an answer landing on the upper rung is the answer the
-/// one fire below it carries.
-const FIRST_RUNG: &str = "1kKmT001";
-const RESENT_RUNG: &str = "1kKmT002";
-const RENEWED_RUNG: &str = "1kKmT003";
-const ALPHA_RUNG: &str = "1kKmT004";
-const UNSEATED_RUNG: &str = "1kKmT005";
+/// Stable steering keys the fire fixtures spell, each eight alphanumeric characters.
+const FIRST_DIRECTIVE: &str = "1kKmT001";
+const RENEWED_DIRECTIVE: &str = "1kKmT003";
+const ALPHA_DIRECTIVE: &str = "1kKmT004";
+const UNSEATED_DIRECTIVE: &str = "1kKmT005";
 /// Prose the `zeta` bag selects, authored once and written again after
 /// compaction so one unchanged identity spans two epochs.
 const REPEATED_PROSE: &str = "we will wait for the build and sleep between checks";
@@ -176,12 +172,38 @@ fn taste_reporting_and_review_plans_survive_restart() {
     assert!(matches!(json.position, ReplyPosition::Snapshot(_)));
     assert_eq!(json.body, text);
 
+    let before_ungrounded = fixture.cursor();
+    let ungrounded = fixture.invoke(&[
+        "--json",
+        "taste",
+        "add",
+        "Repeated alternate execution branches hide the current path",
+    ]);
+    assert_eq!(ungrounded.status.code(), Some(REFUSAL_EXIT));
+    let Outcome::Refusal(refusal) = wire::decode::<Outcome<serde_json::Value>>(&ungrounded.stderr)
+        .expect("ungrounded refusal is typed")
+    else {
+        panic!("ungrounded taste filing did not refuse")
+    };
+    assert_eq!(refusal.reason, "task::origin-required");
+    assert!(refusal.remedy.contains("--origin"));
+    assert_eq!(fixture.cursor(), before_ungrounded);
+
     let added = text_reply::<TaskAnswer>(&fixture.invoke(&[
         "taste",
         "add",
         "Repeated alternate execution branches hide the current path",
+        "--origin",
+        CURATION_ORIGIN,
     ]));
-    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&["--json", "taste", "drop", "alpha"]));
+    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&[
+        "--json",
+        "taste",
+        "drop",
+        "alpha",
+        "--origin",
+        CURATION_ORIGIN,
+    ]));
     assert!(matches!(dropped.position, ReplyPosition::Committed(_)));
 
     let before_unknown = fixture.cursor();
@@ -195,12 +217,14 @@ fn taste_reporting_and_review_plans_survive_restart() {
     assert_eq!(refusal.reason, "taste::unknown");
     assert_eq!(fixture.cursor(), before_unknown);
 
+    let causal: wire::Origin = CURATION_ORIGIN.parse().expect("curation origin");
     let current_board = board(&fixture);
-    assert_review_plan(&current_board, &added, ADD_TITLE);
+    assert_review_plan(&current_board, &added, ADD_TITLE, &causal);
     assert_review_plan(
         &current_board,
         &dropped.body,
         "Propose tracked taste retirement: alpha",
+        &causal,
     );
 
     resident.stop(&fixture);
@@ -210,17 +234,25 @@ fn taste_reporting_and_review_plans_survive_restart() {
         text
     );
     let restarted_board = board(&fixture);
-    assert_review_plan(&restarted_board, &added, ADD_TITLE);
+    assert_review_plan(&restarted_board, &added, ADD_TITLE, &causal);
     assert_review_plan(
         &restarted_board,
         &dropped.body,
         "Propose tracked taste retirement: alpha",
+        &causal,
     );
     restarted.stop(&fixture);
 
     let reader = journal::JournalReader::open(&fixture.journal).expect("final journal opens");
     let facts = reader.fact_snapshot().expect("final fact snapshot");
     assert_eq!(kind_count(&facts, FactKind::TaskAdded), 2);
+    assert!(
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == FactKind::TaskAdded)
+            .all(|fact| fact.origin == causal)
+    );
     reader.verify().expect("final authority verifies");
     let plans = task_add_requests(&fixture);
     assert_eq!(plans.len(), 2);
@@ -245,11 +277,12 @@ fn taste_reporting_and_review_plans_survive_restart() {
         plan.project.as_deref() == Some("taste.policy")
             && plan.flow.as_deref() == Some("todo,review")
             && plan.acceptance.len() == 2
+            && plan.origin.as_ref() == Some(&causal)
     }));
 }
 
 #[test]
-fn live_fires_count_one_lineage_once_and_keep_one_durable_vendor() {
+fn live_fires_count_each_stable_directive_once_and_keep_one_durable_vendor() {
     let fixture = Fixture::new();
     seed_fires(&fixture);
     let resident = Resident::start(&fixture);
@@ -263,19 +296,15 @@ fn live_fires_count_one_lineage_once_and_keep_one_durable_vendor() {
     assert_eq!(zeta["name"], "zeta");
     let fires = zeta["fires"].as_array().expect("zeta fires");
     assert_eq!(fires.len(), 2, "{zeta}");
-    // Newest first. The resent rung minted no reminder, so the acknowledgment
-    // that landed above it is the standing this one fire carries.
-    assert_eq!(fires[0]["key"], RENEWED_RUNG);
+    // Newest first. Escalation retained the first reminder's identity, so its
+    // acknowledgment is the standing that publication carries directly.
+    assert_eq!(fires[0]["key"], RENEWED_DIRECTIVE);
     assert_eq!(fires[0]["standing"], "declined");
     assert_eq!(fires[0]["compaction"], 20);
-    assert_eq!(fires[1]["key"], FIRST_RUNG);
+    assert_eq!(fires[1]["key"], FIRST_DIRECTIVE);
     assert_eq!(fires[1]["standing"], "acked");
     assert_eq!(fires[1]["compaction"], 10);
-    assert!(
-        fires
-            .iter()
-            .all(|fire| fire["key"] != RESENT_RUNG && fire["vendor"] == "claude")
-    );
+    assert!(fires.iter().all(|fire| fire["vendor"] == "claude"));
     // Two occupant generations, one seat: a renewal cannot split the vendor.
     assert_ne!(fires[0]["occupant"], fires[1]["occupant"]);
     assert_eq!(
@@ -306,16 +335,26 @@ fn live_fires_count_one_lineage_once_and_keep_one_durable_vendor() {
     assert_eq!(alpha["judgments"][0]["verdict"], "cleared");
     assert_eq!(alpha["judgments"][0]["locus"], "tape:alpha");
 
-    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&["--json", "taste", "drop", "zeta"]));
+    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&[
+        "--json",
+        "taste",
+        "drop",
+        "zeta",
+        "--origin",
+        CURATION_ORIGIN,
+    ]));
+    let causal = CURATION_ORIGIN.parse().expect("curation origin");
     assert_review_plan(
         &board(&fixture),
         &dropped.body,
         "Propose tracked taste retirement: zeta",
+        &causal,
     );
     let retirement = task_add_requests(&fixture)
         .into_iter()
         .find(|plan| plan.title == "Propose tracked taste retirement: zeta")
         .expect("retirement receipt is durable");
+    assert_eq!(retirement.origin, Some(causal));
     let cited = retirement
         .description
         .as_deref()
@@ -376,6 +415,8 @@ fn native_task_add_carries_authored_context_through_client_add() {
         "Description reaches the authoritative statement",
         "--acceptance",
         "Every acceptance criterion survives the client seam",
+        "--origin",
+        "ack:1kLGp2NJ",
     ]));
 
     let current = board(&fixture);
@@ -397,11 +438,13 @@ fn native_task_add_carries_authored_context_through_client_add() {
             "Every acceptance criterion survives the client seam",
         ]
     );
+    assert_eq!(statement.provenance.to_string(), "ack:1kLGp2NJ");
 
     let requests = task_add_requests(&fixture);
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].description, statement.description);
     assert_eq!(requests[0].acceptance, statement.acceptance);
+    assert_eq!(requests[0].origin, Some(statement.provenance.clone()));
 
     let listed = text_reply::<TextAnswer>(&fixture.invoke(&[
         "task",
@@ -476,7 +519,12 @@ fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
     );
 }
 
-fn assert_review_plan(board: &BoardAnswer, answer: &TaskAnswer, title: &str) {
+fn assert_review_plan(
+    board: &BoardAnswer,
+    answer: &TaskAnswer,
+    title: &str,
+    origin: &wire::Origin,
+) {
     let task = board
         .tasks
         .iter()
@@ -484,6 +532,7 @@ fn assert_review_plan(board: &BoardAnswer, answer: &TaskAnswer, title: &str) {
         .expect("planned task is on the current board");
     assert_eq!(task.presentation_title(), title);
     assert_eq!(task.statement.body.project, "taste.policy");
+    assert_eq!(&task.statement.body.provenance, origin);
     assert!(!task.visibility.is_hidden());
     assert_eq!(
         task.workflow
@@ -561,7 +610,7 @@ fn seed_judgments(fixture: &Fixture) {
 ///
 /// One lane is seated once with one vendor. `zeta` fires twice on the same
 /// prose across two occupant generations and two compaction epochs; the first
-/// lineage is resent before it is acknowledged, and the second is declined.
+/// directive escalates before it is acknowledged, and the second is declined.
 /// `alpha` fires once and is left live.
 fn seed_fires(fixture: &Fixture) {
     let bus = open_bus(fixture);
@@ -571,22 +620,22 @@ fn seed_fires(fixture: &Fixture) {
             .expect("lane seating");
         write
             .fact(
-                reminded(FIRST_RUNG, "zeta", uuid(0x21), REPEATED_PROSE, 10),
+                reminded(FIRST_DIRECTIVE, "zeta", uuid(0x21), REPEATED_PROSE, 10),
                 FactCause::Root,
             )
             .expect("first zeta reminder");
     });
-    climb_and_acknowledge(&bus);
+    escalate_and_acknowledge(&bus);
     commit(&bus, Producer::ResidentRecognition, "04", |write| {
         write
             .fact(
-                reminded(RENEWED_RUNG, "zeta", uuid(0x22), REPEATED_PROSE, 20),
+                reminded(RENEWED_DIRECTIVE, "zeta", uuid(0x22), REPEATED_PROSE, 20),
                 FactCause::Root,
             )
             .expect("renewed zeta reminder");
         write
             .fact(
-                reminded(ALPHA_RUNG, "alpha", uuid(0x22), "keep the alias", 20),
+                reminded(ALPHA_DIRECTIVE, "alpha", uuid(0x22), "keep the alias", 20),
                 FactCause::Root,
             )
             .expect("alpha reminder");
@@ -595,8 +644,8 @@ fn seed_fires(fixture: &Fixture) {
         write
             .fact(
                 SteerDeclined {
-                    directive: directive(RENEWED_RUNG),
-                    key: RENEWED_RUNG.to_owned(),
+                    directive: directive(RENEWED_DIRECTIVE),
+                    key: RENEWED_DIRECTIVE.to_owned(),
                     lane: uuid(0x20),
                     epoch: uuid(0x2f),
                     locus: locus(11),
@@ -609,38 +658,34 @@ fn seed_fires(fixture: &Fixture) {
     bus.shutdown().expect("fixture bus stops");
 }
 
-/// Climb the first lineage one rung, then answer the rung above it.
-///
-/// The answer never touches the key the reminder opened, so a report that
-/// counted rungs instead of reminders would show two fires and one answer.
-fn climb_and_acknowledge(bus: &Bus) {
-    commit(bus, Producer::CommandDoor, "02", |write| {
+/// Escalate the first directive, then answer that same stable identity.
+fn escalate_and_acknowledge(bus: &Bus) {
+    commit(bus, Producer::BusTimer, "02", |write| {
         write
             .fact(
-                SteerResent {
-                    directive: directive(RESENT_RUNG),
-                    key: RESENT_RUNG.to_owned(),
-                    ancestor: FIRST_RUNG.to_owned(),
+                SteerEscalated {
+                    directive: directive(FIRST_DIRECTIVE),
+                    key: FIRST_DIRECTIVE.to_owned(),
                     lane: uuid(0x20),
-                    escalation: 1,
+                    stage: wire::body::SteeringStage::Reminded,
                 },
                 FactCause::Root,
             )
-            .expect("the first lineage climbs one rung");
+            .expect("the first directive reaches reminded presentation");
     });
     commit(bus, Producer::AckScanner, "03", |write| {
         write
             .fact(
                 SteerAcked {
-                    directive: directive(RESENT_RUNG),
-                    key: RESENT_RUNG.to_owned(),
+                    directive: directive(FIRST_DIRECTIVE),
+                    key: FIRST_DIRECTIVE.to_owned(),
                     lane: uuid(0x20),
                     epoch: uuid(0x2f),
                     locus: locus(9),
                 },
                 FactCause::Root,
             )
-            .expect("the upper rung is acknowledged");
+            .expect("the stable directive is acknowledged");
     });
 }
 
@@ -650,7 +695,7 @@ fn seed_unseated_reminder(fixture: &Fixture) {
     commit(&bus, Producer::ResidentRecognition, "01", |write| {
         write
             .fact(
-                reminded(UNSEATED_RUNG, "zeta", uuid(0x21), REPEATED_PROSE, 10),
+                reminded(UNSEATED_DIRECTIVE, "zeta", uuid(0x21), REPEATED_PROSE, 10),
                 FactCause::Root,
             )
             .expect("reminder for an unseated lane");
@@ -714,7 +759,7 @@ fn reminded(
     }
 }
 
-/// A distinct durable identity per key, so no two rungs collide.
+/// A distinct durable identity per key, so no two publications collide.
 fn directive(key: &str) -> CanonicalUuid {
     let suffix = key.bytes().fold(0_u64, |value, byte| {
         value.wrapping_mul(131).wrapping_add(u64::from(byte))

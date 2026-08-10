@@ -339,6 +339,7 @@ impl CommandKind {
             | Self::SteerInbox
             | Self::SteerRepair
             | Self::SteerResend
+            | Self::SteerRecover
             | Self::SteerDispose
             | Self::SteerCancel
             | Self::ConsentRead
@@ -404,7 +405,9 @@ impl CommandKind {
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
             Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
             Self::SteerRepair => Binding::of(B::SteerRepair, A::Delivery),
-            Self::SteerResend | Self::SteerCancel => Binding::of(B::DirectiveRef, A::Directive),
+            Self::SteerResend | Self::SteerRecover | Self::SteerCancel => {
+                Binding::of(B::DirectiveRef, A::Directive)
+            }
             Self::SteerDispose => Binding::of(B::SteerDispose, A::Directive),
             Self::ConsentDecide => Binding::of(B::ConsentDecide, A::Consent),
             Self::ConsentRead => Binding::of(B::ConsentRead, A::ConsentQueue),

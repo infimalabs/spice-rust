@@ -26,6 +26,7 @@ impl MappedCommand {
             SelectedCommand::LaneState { body } => Self::lane_state(contract, body),
             SelectedCommand::LaneRecall { body } => Self::lane_recall(contract, body),
             SelectedCommand::SteerCancel { directive } => Self::steer_cancel(contract, directive),
+            SelectedCommand::SteerResend { directive } => Self::steer_resend(contract, directive),
             SelectedCommand::SteerRecover { directive } => Self::steer_recover(contract, directive),
             SelectedCommand::SteerRepair { lane } => Self::steer_repair(contract, lane),
             SelectedCommand::SteerSend { .. }
@@ -120,7 +121,7 @@ impl MappedCommand {
             &wire::intent::ReleasePublish {
                 key: release.key().clone(),
                 manifest: release.manifest().clone(),
-                notes: release.notes().clone(),
+                notes: release.notes().clone().into(),
             },
         )
     }
@@ -182,14 +183,21 @@ impl MappedCommand {
         Self::new(
             contract,
             &["steer", "recover"],
+            CommandKind::SteerRecover,
+            vec![Witness::Recoverable { steer: directive }],
+            &wire::intent::DirectiveRef { directive },
+        )
+    }
+
+    fn steer_resend(contract: &Contract, directive: CanonicalUuid) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["steer", "resend"],
             CommandKind::SteerResend,
-            vec![
-                Witness::Directive {
-                    steer: directive,
-                    disposition: Disposition::Lapsed,
-                },
-                Witness::Lineage { steer: directive },
-            ],
+            vec![Witness::Directive {
+                steer: directive,
+                disposition: Disposition::Live,
+            }],
             &wire::intent::DirectiveRef { directive },
         )
     }

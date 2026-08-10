@@ -70,7 +70,7 @@ fn landings(
     release_commit: &str,
 ) -> Result<Vec<Landing>, Error> {
     let format = concat!(
-        "--format=%H%x1f%s%x1f%(trailers:key=Task-Project,valueonly)",
+        "--format=%H%x1f%P%x1f%s%x1f%(trailers:key=Task-Project,valueonly)",
         "%x1f%(trailers:key=Task-Key,valueonly)",
         "%x1f%(trailers:key=Task-Handle,valueonly)%x1f%b%x1e",
     );
@@ -94,8 +94,9 @@ fn landings(
         if raw_record.is_empty() {
             continue;
         }
-        let mut fields = raw_record.splitn(6, '\x1f');
+        let mut fields = raw_record.splitn(7, '\x1f');
         let commit = fields.next().unwrap_or_default().trim();
+        let parents = fields.next().unwrap_or_default().trim();
         let subject = fields.next().unwrap_or_default().trim();
         let project = fields.next().unwrap_or_default().trim();
         let task_key = fields.next().unwrap_or_default().trim();
@@ -111,6 +112,7 @@ fn landings(
         };
         landings.push(Landing {
             commit: commit.to_owned(),
+            first_parent: parents.split_whitespace().next().map(str::to_owned),
             subject: subject.to_owned(),
             project: project.to_owned(),
             task: (!task.is_empty()).then(|| task.to_owned()),

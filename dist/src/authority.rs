@@ -208,12 +208,18 @@ impl ReleaseAuthority {
                 Some(None),
                 false,
             ))),
-            RefState::Matching => Ok(GitMutation::Converged),
-            RefState::Different(observed) => Err(AuthorityError::RefMoved {
-                reference,
-                expected: object.to_owned(),
-                observed: observed.to_owned(),
-            }),
+            RefState::Present(observed) => {
+                object_id(observed)?;
+                if observed == object {
+                    Ok(GitMutation::Converged)
+                } else {
+                    Err(AuthorityError::RefMoved {
+                        reference,
+                        expected: object.to_owned(),
+                        observed: observed.to_owned(),
+                    })
+                }
+            }
         }
     }
 }
@@ -222,8 +228,7 @@ impl ReleaseAuthority {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RefState<'a> {
     Absent,
-    Matching,
-    Different(&'a str),
+    Present(&'a str),
 }
 
 /// Whether one release mutation already converged or needs one command.
@@ -265,7 +270,10 @@ impl GitCommand {
 /// when any workspace crate is externally publishable.
 pub fn current_authority(workspace: &Path) -> Result<ReleaseAuthority, AuthorityError> {
     admit_workspace_publish_policy(workspace)?;
-    admit_authority(AUTHORITY_BYTES.trim_ascii(), VERSION_TEXT.trim_ascii())
+    admit_authority(
+        tracked_line(AUTHORITY_BYTES, "release authority")?,
+        tracked_text_line(VERSION_TEXT, "product version")?,
+    )
 }
 
 /// Admit one exact authority document and product version.
@@ -354,6 +362,28 @@ fn read_manifest(path: &Path) -> Result<toml::Value, AuthorityError> {
         path: path.to_path_buf(),
         detail: source.to_string(),
     })
+}
+
+fn tracked_line<'a>(bytes: &'a [u8], label: &'static str) -> Result<&'a [u8], AuthorityError> {
+    let line = bytes
+        .strip_suffix(b"\n")
+        .ok_or(AuthorityError::TrackedLine(label))?;
+    if line.contains(&b'\n') || line.contains(&b'\r') {
+        Err(AuthorityError::TrackedLine(label))
+    } else {
+        Ok(line)
+    }
+}
+
+fn tracked_text_line<'a>(text: &'a str, label: &'static str) -> Result<&'a str, AuthorityError> {
+    let line = text
+        .strip_suffix('\n')
+        .ok_or(AuthorityError::TrackedLine(label))?;
+    if line.contains('\n') || line.contains('\r') {
+        Err(AuthorityError::TrackedLine(label))
+    } else {
+        Ok(line)
+    }
 }
 
 fn fixed(document: &AuthorityDocument) -> Result<(), AuthorityError> {
@@ -476,6 +506,8 @@ pub enum AuthorityError {
     Encode(String),
     #[error("release authority JSON is not canonical")]
     NonCanonical,
+    #[error("tracked {0} must be exactly one LF-terminated line")]
+    TrackedLine(&'static str),
     #[error("release authority field {0} differs from the fixed Git topology")]
     Fixed(&'static str),
     #[error(transparent)]
@@ -526,6 +558,17 @@ mod tests {
         let authority = current_authority(workspace()).expect("tracked authority admits");
         assert_eq!(authority.package_name(), "spice");
         assert_eq!(authority.version().as_str(), "0.0.0");
+        assert!(tracked_line(AUTHORITY_BYTES, "authority").is_ok());
+        assert!(tracked_text_line(VERSION_TEXT, "version").is_ok());
+        assert!(tracked_line(b"{}\n\n", "authority").is_err());
+        assert!(tracked_text_line("1.2.3\n\n", "version").is_err());
+        assert!(matches!(
+            admit_authority(
+                tracked_line(AUTHORITY_BYTES, "authority").expect("tracked line"),
+                tracked_text_line("1.2.3 \n", "version").expect("one framed line"),
+            ),
+            Err(AuthorityError::Version(_))
+        ));
     }
 
     #[test]
@@ -591,12 +634,16 @@ mod tests {
         );
         assert_eq!(
             authority
-                .package_push(&version, OBJECT, RefState::Matching)
+                .package_push(&version, OBJECT, RefState::Present(OBJECT))
                 .expect("matching ref converges"),
             GitMutation::Converged
         );
         let error = authority
-            .tag_push(&version, OBJECT, RefState::Different("2222"))
+            .tag_push(
+                &version,
+                OBJECT,
+                RefState::Present("2222222222222222222222222222222222222222"),
+            )
             .expect_err("mismatched immutable tag refuses");
         assert!(matches!(error, AuthorityError::RefMoved { .. }));
 
@@ -616,7 +663,7 @@ mod tests {
 
     #[test]
     fn malformed_noncanonical_and_moved_authorities_refuse() {
-        let canonical = AUTHORITY_BYTES.trim_ascii();
+        let canonical = tracked_line(AUTHORITY_BYTES, "authority").expect("tracked line");
         let mut whitespace = canonical.to_vec();
         whitespace.push(b'\n');
         assert!(matches!(
@@ -662,8 +709,10 @@ mod tests {
             assert!(validate_template(template).is_err(), "{template}");
         }
 
-        let mut document: AuthorityDocument =
-            wire::decode(AUTHORITY_BYTES.trim_ascii()).expect("fixture authority");
+        let mut document: AuthorityDocument = wire::decode(
+            tracked_line(AUTHORITY_BYTES, "authority").expect("tracked authority line"),
+        )
+        .expect("fixture authority");
         document.announcement_ref.clone_from(&document.package_ref);
         assert!(matches!(
             disjoint(&document),

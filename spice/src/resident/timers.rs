@@ -8,18 +8,20 @@ use bus::timer::{TimerEvent, TimerId, TimerKind, TimerWorker};
 use bus::{Bus, JournalTransaction};
 use wire::{CanonicalUuid, ClaimDisposition, Instant, ResidentState, TaskHandle, intent};
 
-use super::{CommandResult, environment_fault, new_uuid, store_fault};
+use super::{CommandResult, environment_fault, new_uuid, steering, store_fault};
 
-/// The only currently armed production kind is `ClaimLapse`: it has a complete
-/// guarded `BusTimer` transition. The other declared kinds remain unarmed
-/// until their own durable transition contracts exist; they are never routed
-/// through a user command as a fallback.
+/// Process-local waits mirror durable claim, steering, and lifecycle authority.
+/// Each fired event re-proves its captured durable state before appending, so
+/// restart catch-up and stale races use the same guarded transition path.
 pub(super) struct Runtime {
     worker: Option<TimerWorker>,
     events: tokio::sync::mpsc::UnboundedReceiver<TimerEvent>,
     forwarder: Option<JoinHandle<()>>,
     projects: ProjectPolicy,
+    steering: steer::Config,
     claims: BTreeMap<TaskHandle, ArmedClaim>,
+    directives: BTreeMap<CanonicalUuid, ArmedDirective>,
+    wake: Option<ArmedWake>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,8 +37,35 @@ struct ArmedClaim {
     authority: ClaimAuthority,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DirectiveAuthority {
+    deadline: Instant,
+    body: steering::SteeringDeadline,
+}
+
+struct ArmedDirective {
+    id: TimerId,
+    authority: DirectiveAuthority,
+}
+
+struct ArmedWake {
+    id: TimerId,
+    lane: CanonicalUuid,
+    deadline: Instant,
+    kind: super::lifecycle::WakeKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Fired {
+    Stale,
+    ClaimLapse,
+    Steering,
+    TaskWake(CanonicalUuid),
+    LaneResume(CanonicalUuid),
+}
+
 impl Runtime {
-    pub(super) fn start(projects: ProjectPolicy) -> CommandResult<Self> {
+    pub(super) fn start(projects: ProjectPolicy, steering: steer::Config) -> CommandResult<Self> {
         let (worker, events) = TimerWorker::start()
             .map_err(|error| environment_fault("bus::timer-start-failed", &error.to_string()))?;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -63,7 +92,10 @@ impl Runtime {
             events: receiver,
             forwarder: Some(forwarder),
             projects,
+            steering,
             claims: BTreeMap::new(),
+            directives: BTreeMap::new(),
+            wake: None,
         })
     }
 
@@ -71,36 +103,45 @@ impl Runtime {
         self.events.recv().await
     }
 
-    /// Continuously reconcile durable commits and consume fired claim timers.
-    pub(super) async fn drive(
-        mut self,
-        bus: &Bus,
-        mut commits: bus::BroadcastSubscriber,
+    /// Make the sole automatic lifecycle wait match the resolver's next event.
+    pub(super) fn synchronize_wake(
+        &mut self,
+        desired: Option<super::lifecycle::WakeDeadline>,
     ) -> CommandResult<()> {
-        self.synchronize(bus)?;
-        loop {
-            tokio::select! {
-                timer = self.recv() => {
-                    let timer = timer.ok_or_else(|| environment_fault(
-                        "bus::timer-events-closed",
-                        "the production timer event stream closed while the resident was live",
-                    ))?;
-                    self.consume(bus, timer)?;
-                    self.synchronize(bus)?;
-                }
-                committed = commits.recv() => match committed {
-                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        self.synchronize(bus)?;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        return Err(environment_fault(
-                            "bus::timer-commits-closed",
-                            "the durable commit stream closed while the resident was live",
-                        ));
-                    }
-                }
-            }
+        if self.wake.as_ref().is_some_and(|armed| {
+            desired.is_some_and(|desired| {
+                armed.lane == desired.lane
+                    && armed.deadline == desired.at
+                    && armed.kind == desired.kind
+            })
+        }) {
+            return Ok(());
         }
+        if let Some(armed) = self.wake.take() {
+            self.worker()?
+                .cancel(armed.id)
+                .map_err(|error| store_fault("bus::timer-cancel-failed", &error.to_string()))?;
+        }
+        if let Some(desired) = desired {
+            let id = self
+                .worker()?
+                .arm(
+                    desired.lane.to_string(),
+                    match desired.kind {
+                        super::lifecycle::WakeKind::Task => TimerKind::TaskWake,
+                        super::lifecycle::WakeKind::Hold => TimerKind::LaneResume,
+                    },
+                    desired.at,
+                )
+                .map_err(|error| store_fault("bus::timer-arm-failed", &error.to_string()))?;
+            self.wake = Some(ArmedWake {
+                id,
+                lane: desired.lane,
+                deadline: desired.at,
+                kind: desired.kind,
+            });
+        }
+        Ok(())
     }
 
     /// Make process-local waits exactly match current lapse-capable claim heads.
@@ -109,6 +150,7 @@ impl Runtime {
             .task_snapshot()
             .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
         let desired = desired_claims(&snapshot)?;
+        let desired_directives = desired_directives(snapshot.facts(), &self.steering)?;
         let stale = self
             .claims
             .iter()
@@ -135,25 +177,89 @@ impl Runtime {
                 .map_err(|error| store_fault("bus::timer-arm-failed", &error.to_string()))?;
             self.claims.insert(task, ArmedClaim { id, authority });
         }
+        let stale = self
+            .directives
+            .iter()
+            .filter_map(|(directive, armed)| {
+                (desired_directives.get(directive) != Some(&armed.authority)).then_some(*directive)
+            })
+            .collect::<Vec<_>>();
+        for directive in stale {
+            let armed = self
+                .directives
+                .remove(&directive)
+                .expect("stale directive came from the armed map");
+            self.worker()?
+                .cancel(armed.id)
+                .map_err(|error| store_fault("bus::timer-cancel-failed", &error.to_string()))?;
+        }
+        for (directive, authority) in desired_directives {
+            if self.directives.contains_key(&directive) {
+                continue;
+            }
+            let kind = match authority.body.transition {
+                steering::DeadlineTransition::Escalate { .. } => TimerKind::SteerEscalate,
+                steering::DeadlineTransition::Lapse => TimerKind::SteerLapse,
+            };
+            let id = self
+                .worker()?
+                .arm(directive.to_string(), kind, authority.deadline)
+                .map_err(|error| store_fault("bus::timer-arm-failed", &error.to_string()))?;
+            self.directives
+                .insert(directive, ArmedDirective { id, authority });
+        }
         Ok(())
     }
 
     /// Consume one fired event using only authority captured when it was armed.
-    pub(super) fn consume(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<()> {
-        if event.kind() != TimerKind::ClaimLapse {
-            return Err(environment_fault(
+    pub(super) fn consume(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<Fired> {
+        match event.kind() {
+            TimerKind::TaskWake | TimerKind::LaneResume => self.consume_lifecycle(event),
+            TimerKind::SteerEscalate | TimerKind::SteerLapse => {
+                self.consume_steering(bus, event).map(|()| Fired::Steering)
+            }
+            TimerKind::ClaimLapse => self.consume_claim(bus, event),
+            kind => Err(environment_fault(
                 "bus::timer-kind-unhandled",
-                &format!("production received unarmed timer kind {:?}", event.kind()),
+                &format!("production received unarmed timer kind {kind:?}"),
+            )),
+        }
+    }
+
+    fn consume_lifecycle(&mut self, event: TimerEvent) -> CommandResult<Fired> {
+        let fired_kind = event.kind();
+        let Some(armed) = self.wake.take() else {
+            return Ok(Fired::Stale);
+        };
+        if armed.id != event.id() {
+            self.wake = Some(armed);
+            return Ok(Fired::Stale);
+        }
+        if armed.lane.to_string() != event.owner()
+            || armed.deadline != event.deadline()
+            || match armed.kind {
+                super::lifecycle::WakeKind::Task => fired_kind != TimerKind::TaskWake,
+                super::lifecycle::WakeKind::Hold => fired_kind != TimerKind::LaneResume,
+            }
+        {
+            return Err(environment_fault(
+                "bus::timer-authority-mismatch",
+                "fired lifecycle timer disagreed with its captured authority",
             ));
         }
+        Ok(match armed.kind {
+            super::lifecycle::WakeKind::Task => Fired::TaskWake(armed.lane),
+            super::lifecycle::WakeKind::Hold => Fired::LaneResume(armed.lane),
+        })
+    }
+
+    fn consume_claim(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<Fired> {
         let Some(task) = self
             .claims
             .iter()
             .find_map(|(task, armed)| (armed.id == event.id()).then_some(task.clone()))
         else {
-            // A cancellation can race an already-emitted event. The durable
-            // re-proof made its authority stale before this consumer saw it.
-            return Ok(());
+            return Ok(Fired::Stale);
         };
         let armed = self
             .claims
@@ -189,9 +295,39 @@ impl Runtime {
             })
             .map_err(|error| store_fault("bus::timer-lapse-failed", &error.to_string()))?;
         match lapse {
-            Ok(_) | Err(board::lapse::LapseError::Refused(_)) => Ok(()),
+            Ok(_) | Err(board::lapse::LapseError::Refused(_)) => Ok(Fired::ClaimLapse),
             Err(error) => Err(store_fault("bus::timer-lapse-failed", &error.to_string())),
         }
+    }
+
+    fn consume_steering(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<()> {
+        let Some(directive) = self
+            .directives
+            .iter()
+            .find_map(|(directive, armed)| (armed.id == event.id()).then_some(*directive))
+        else {
+            return Ok(());
+        };
+        let armed = self
+            .directives
+            .remove(&directive)
+            .expect("event directive came from the armed map");
+        let expected_kind = match armed.authority.body.transition {
+            steering::DeadlineTransition::Escalate { .. } => TimerKind::SteerEscalate,
+            steering::DeadlineTransition::Lapse => TimerKind::SteerLapse,
+        };
+        if event.owner() != directive.to_string()
+            || event.deadline() != armed.authority.deadline
+            || event.kind() != expected_kind
+        {
+            return Err(environment_fault(
+                "bus::timer-authority-mismatch",
+                "fired timer identity disagreed with its captured steering authority",
+            ));
+        }
+        let at = Instant::new(jiff::Timestamp::now())
+            .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))?;
+        steering::apply_deadline(bus, &armed.authority.body, at).map(drop)
     }
 
     fn worker(&self) -> CommandResult<&TimerWorker> {
@@ -283,10 +419,85 @@ fn desired_claims(
     Ok(desired)
 }
 
+fn desired_directives(
+    snapshot: &journal::FactSnapshot,
+    config: &steer::Config,
+) -> CommandResult<BTreeMap<CanonicalUuid, DirectiveAuthority>> {
+    let ledger = steer::Ledger::from_snapshot(snapshot)
+        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+    let horizons = config.stage_horizons();
+    let mut desired = BTreeMap::new();
+    for directive in ledger
+        .directives()
+        .into_iter()
+        .filter(|directive| directive.disposition() == wire::Disposition::Live)
+    {
+        let published = directive.published().ok_or_else(|| {
+            store_fault(
+                "steer::publication-missing",
+                &format!(
+                    "directive {} replayed without an original publication instant",
+                    directive.directive()
+                ),
+            )
+        })?;
+        let next = directive.stage().next();
+        let stage_deadline = next
+            .map(|stage| {
+                let index = match stage {
+                    wire::body::SteeringStage::Reminded => 0,
+                    wire::body::SteeringStage::Escalated => 1,
+                    wire::body::SteeringStage::Overdue => 2,
+                    wire::body::SteeringStage::Published => {
+                        unreachable!("published is not a transition target")
+                    }
+                };
+                shifted(published, horizons[index])
+            })
+            .transpose()?;
+        let (deadline, transition) = match (next, stage_deadline) {
+            (Some(to), Some(deadline)) if deadline < directive.expires() => (
+                deadline,
+                steering::DeadlineTransition::Escalate {
+                    from: directive.stage(),
+                    to,
+                },
+            ),
+            _ => (directive.expires(), steering::DeadlineTransition::Lapse),
+        };
+        desired.insert(
+            directive.directive(),
+            DirectiveAuthority {
+                deadline,
+                body: steering::SteeringDeadline {
+                    directive: directive.directive(),
+                    key: directive.key().clone(),
+                    lane: directive.lane(),
+                    expires: directive.expires(),
+                    transition,
+                },
+            },
+        );
+    }
+    Ok(desired)
+}
+
+fn shifted(at: Instant, duration: std::time::Duration) -> CommandResult<Instant> {
+    let duration = jiff::SignedDuration::try_from(duration)
+        .map_err(|error| environment_fault("steer::horizon-invalid", &error.to_string()))?;
+    let shifted = at
+        .get()
+        .checked_add(duration)
+        .map_err(|error| environment_fault("steer::horizon-invalid", &error.to_string()))?;
+    Instant::new(shifted)
+        .map_err(|error| environment_fault("steer::horizon-invalid", &error.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use board::Entry;
     use journal::{FactCause, Journal, JournalWrite, PendingFact, TaskHeads};
+    use steer::Standing as _;
     use wire::body::GitBoundary;
     use wire::{
         Accepted, Actor, ClaimHead, Command, CommandKind, LaneResidency, LeaseHead, Origin,
@@ -319,7 +530,8 @@ mod tests {
             .bus
             .subscribe()
             .expect("lapse commit subscription registers");
-        let mut timers = Runtime::start(fixture.projects.clone()).expect("timer runtime starts");
+        let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+            .expect("timer runtime starts");
         timers
             .synchronize(&fixture.bus)
             .expect("expired claim arms");
@@ -344,6 +556,276 @@ mod tests {
         assert_commit_history(&fixture.bus);
         drop(timers);
         fixture.bus.shutdown().expect("fixture bus stops");
+    }
+
+    #[test]
+    fn task_wake_is_an_explicit_timer_event_for_the_selected_lane() {
+        let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        let mut timers =
+            Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
+        let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+        let lane = uuid(41);
+        timers
+            .synchronize_wake(Some(super::super::lifecycle::WakeDeadline {
+                lane,
+                at: shifted(now, -1),
+                kind: super::super::lifecycle::WakeKind::Task,
+            }))
+            .expect("past task wake arms");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("fixture async runtime builds");
+        let event = runtime
+            .block_on(timers.recv())
+            .expect("task wake timer fires");
+        assert_eq!(event.kind(), TimerKind::TaskWake);
+        assert_eq!(event.owner(), lane.to_string());
+        assert_eq!(
+            timers.consume(&bus, event).expect("task wake consumes"),
+            Fired::TaskWake(lane)
+        );
+        drop(timers);
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    #[test]
+    fn lane_resume_is_an_explicit_timer_event_for_the_held_lane() {
+        let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        let mut timers =
+            Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
+        let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+        let lane = uuid(42);
+        timers
+            .synchronize_wake(Some(super::super::lifecycle::WakeDeadline {
+                lane,
+                at: shifted(now, -1),
+                kind: super::super::lifecycle::WakeKind::Hold,
+            }))
+            .expect("past lane resume arms");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("fixture async runtime builds");
+        let event = runtime
+            .block_on(timers.recv())
+            .expect("lane resume timer fires");
+        assert_eq!(event.kind(), TimerKind::LaneResume);
+        assert_eq!(
+            timers.consume(&bus, event).expect("lane resume consumes"),
+            Fired::LaneResume(lane)
+        );
+        drop(timers);
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    #[test]
+    fn an_expired_silence_horizon_moves_one_stable_directive_and_rearms_the_next() {
+        let (bus, directive, key) = steering_fixture();
+        let mut timers =
+            Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
+        timers.synchronize(&bus).expect("steering horizon arms");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("fixture async runtime builds");
+        let fired = runtime
+            .block_on(timers.recv())
+            .expect("past reminder horizon fires");
+        assert_eq!(fired.kind(), TimerKind::SteerEscalate);
+        timers
+            .consume(&bus, fired)
+            .expect("reminder transition commits");
+        timers.synchronize(&bus).expect("next horizon re-arms");
+
+        let snapshot = bus.fact_snapshot().expect("steering facts read");
+        let ledger = steer::Ledger::from_snapshot(&snapshot).expect("steering replays");
+        let standing = ledger
+            .directive(directive)
+            .expect("stable directive remains");
+        assert_eq!(standing.key(), &key);
+        assert_eq!(standing.stage(), wire::body::SteeringStage::Reminded);
+        assert_eq!(standing.escalations().len(), 1);
+        assert_eq!(ledger.directives().len(), 1);
+        let armed = timers
+            .directives
+            .get(&directive)
+            .expect("escalated horizon is armed next");
+        assert!(matches!(
+            armed.authority.body.transition,
+            steering::DeadlineTransition::Escalate {
+                from: wire::body::SteeringStage::Reminded,
+                to: wire::body::SteeringStage::Escalated,
+            }
+        ));
+        drop(timers);
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    #[test]
+    fn retirement_winning_the_race_makes_a_fired_escalation_append_nothing() {
+        let (bus, directive, key) = steering_fixture();
+        let mut timers =
+            Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
+        timers.synchronize(&bus).expect("steering horizon arms");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("fixture async runtime builds");
+        let fired = runtime
+            .block_on(timers.recv())
+            .expect("past reminder horizon fires");
+
+        let at = Instant::new(jiff::Timestamp::now()).expect("fixture clock");
+        let mut retirement = JournalWrite::new(
+            Actor::Lane(lane_uuid()),
+            format!("resident:{}", epoch_uuid())
+                .parse()
+                .expect("fixture origin"),
+            at,
+            Producer::AckScanner,
+        );
+        retirement
+            .fact(
+                body::SteerAcked {
+                    directive,
+                    key: key.to_string(),
+                    lane: lane_uuid(),
+                    epoch: epoch_uuid(),
+                    locus: body::TranscriptLocus {
+                        member: 1,
+                        offset: 2,
+                        length: 3,
+                        event: 0,
+                        line: 1,
+                        column: 1,
+                    },
+                },
+                FactCause::Root,
+            )
+            .expect("retirement fact builds");
+        assert!(matches!(
+            bus.commit(retirement).expect("retirement submits"),
+            bus::CommitOutcome::Committed(_)
+        ));
+
+        timers
+            .consume(&bus, fired)
+            .expect("stale fired transition settles harmlessly");
+        timers.synchronize(&bus).expect("retired timer disarms");
+        let snapshot = bus.fact_snapshot().expect("steering facts read");
+        assert_eq!(
+            snapshot
+                .facts()
+                .iter()
+                .filter(|fact| fact.fact.kind() == wire::FactKind::SteerEscalated)
+                .count(),
+            0
+        );
+        let ledger = steer::Ledger::from_snapshot(&snapshot).expect("steering replays");
+        assert_eq!(ledger.disposition(&key), Some(wire::Disposition::Acked));
+        assert!(!timers.directives.contains_key(&directive));
+        drop(timers);
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    #[test]
+    fn overdue_startup_catches_up_all_missing_stages_in_order_on_one_identity() {
+        let (bus, directive, key) = steering_fixture_with_age(600);
+        let mut timers =
+            Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("fixture async runtime builds");
+        for expected in [
+            wire::body::SteeringStage::Reminded,
+            wire::body::SteeringStage::Escalated,
+            wire::body::SteeringStage::Overdue,
+        ] {
+            timers.synchronize(&bus).expect("next overdue horizon arms");
+            let fired = runtime
+                .block_on(timers.recv())
+                .expect("overdue horizon fires");
+            timers
+                .consume(&bus, fired)
+                .expect("ordered transition commits");
+            let snapshot = bus.fact_snapshot().expect("steering facts read");
+            let ledger = steer::Ledger::from_snapshot(&snapshot).expect("steering replays");
+            let standing = ledger
+                .directive(directive)
+                .expect("stable directive remains");
+            assert_eq!(standing.key(), &key);
+            assert_eq!(standing.stage(), expected);
+        }
+        timers
+            .synchronize(&bus)
+            .expect("expiry re-arms after overdue");
+        let snapshot = bus.fact_snapshot().expect("steering facts read");
+        let ledger = steer::Ledger::from_snapshot(&snapshot).expect("steering replays");
+        let standing = ledger
+            .directive(directive)
+            .expect("stable directive remains");
+        assert_eq!(standing.escalations().len(), 3);
+        assert_eq!(ledger.directives().len(), 1);
+        assert!(matches!(
+            timers
+                .directives
+                .get(&directive)
+                .expect("expiry is armed")
+                .authority
+                .body
+                .transition,
+            steering::DeadlineTransition::Lapse
+        ));
+        drop(timers);
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    fn steering_fixture() -> (Bus, CanonicalUuid, steer::Key) {
+        steering_fixture_with_age(30)
+    }
+
+    fn steering_fixture_with_age(age_seconds: i64) -> (Bus, CanonicalUuid, steer::Key) {
+        let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock");
+        let published = shifted(now, -age_seconds);
+        let expires = shifted(now, 3600);
+        let directive = uuid(80);
+        let key: steer::Key = "1kJK6N3R".parse().expect("fixture key");
+        let mut write = JournalWrite::new(
+            Actor::Operator,
+            format!("resident:{}", epoch_uuid())
+                .parse()
+                .expect("fixture origin"),
+            published,
+            Producer::CommandDoor,
+        );
+        write
+            .fact(
+                body::SteerSent {
+                    directive,
+                    key: key.to_string(),
+                    lane: lane_uuid(),
+                    text: "hold the stable line".to_owned(),
+                    control: None,
+                    attachments: Vec::new(),
+                    expires,
+                },
+                FactCause::Root,
+            )
+            .expect("steering publication builds");
+        let mut journal = Journal::in_memory().expect("fixture journal opens");
+        journal.apply(write).expect("steering publication seeds");
+        (
+            Bus::start(journal).expect("fixture bus starts"),
+            directive,
+            key,
+        )
+    }
+
+    fn lane_uuid() -> CanonicalUuid {
+        uuid(81)
+    }
+
+    fn epoch_uuid() -> CanonicalUuid {
+        uuid(82)
     }
 
     fn fixture() -> Fixture {

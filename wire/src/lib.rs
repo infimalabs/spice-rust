@@ -55,6 +55,8 @@ pub mod manifest;
 mod optional;
 pub mod packed;
 pub mod reply;
+/// Steering-specific bodies that sit outside the core body module's shape boundary.
+pub mod steering;
 pub mod stream;
 pub mod witness;
 
@@ -78,7 +80,7 @@ pub use head::{
     WorkflowHead,
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
-pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
+pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,

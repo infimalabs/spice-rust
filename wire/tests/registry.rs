@@ -102,6 +102,15 @@ fn every_command_names_the_witnesses_it_requires() {
     }
 }
 
+#[test]
+fn recovery_requires_the_exact_recoverable_directive_predicate() {
+    let law = CommandKind::SteerRecover.law();
+    // The predicate admits either failed standing while still making an
+    // unwitnessed mutation structurally impossible.
+    assert_eq!(law.required, &[WitnessKind::Recoverable]);
+    assert!(law.optional.is_empty());
+}
+
 /// Lane lifecycle is the operator's move alone, and this row is the only place
 /// that is enforced: `Command::admit` refuses every non-operator actor before a
 /// handler runs, so the resident's own import path deliberately carries no
@@ -133,13 +142,15 @@ fn lane_lifecycle_is_admitted_for_the_operator_alone() {
 /// already refuses a lane that command through `admit` itself, which pins the
 /// row more strongly than reading it.
 ///
-/// Recall and resend are the contrasts that explain the shape: their laws admit
-/// any connected actor, so their handlers are entitled to discriminate between
-/// them and keep the matches this test would otherwise make redundant.
+/// Recall is the contrast that explains the shape: its law admits any connected
+/// actor, so its handler is entitled to discriminate between principals and
+/// keep the match this test would otherwise make redundant.
 #[test]
 fn operator_only_moves_are_admitted_for_the_operator_alone() {
     for kind in [
         CommandKind::SteerSend,
+        CommandKind::SteerResend,
+        CommandKind::SteerRecover,
         CommandKind::SteerRepair,
         CommandKind::ConsentDecide,
         CommandKind::TrustGrant,
@@ -156,11 +167,6 @@ fn operator_only_moves_are_admitted_for_the_operator_alone() {
         CommandKind::LaneRecall.law().authority,
         Authority::Connected,
         "lane recall admits a lane, which is why its handler still tells actors apart",
-    );
-    assert_eq!(
-        CommandKind::SteerResend.law().authority,
-        Authority::Connected,
-        "steering resend admits a lane, which is why its handler still tells actors apart",
     );
 }
 
@@ -418,7 +424,7 @@ fn sample_witnesses() -> Vec<Witness> {
             steer: lane,
             disposition: Disposition::Live,
         },
-        Witness::Lineage { steer: lane },
+        Witness::Recoverable { steer: lane },
         Witness::Consent {
             request: lane,
             answer: Answer::Asked,

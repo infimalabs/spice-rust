@@ -53,11 +53,31 @@ mod followup;
 use followup::*;
 mod next_action;
 use next_action::*;
+mod automatic_lifecycle;
+pub(crate) use automatic_lifecycle::{AutomaticClaim, claim_automatic, release_automatic};
 mod mutation;
 use mutation::*;
 mod progress;
 use progress::*;
 mod read_guard;
 use read_guard::*;
+
+pub(crate) fn parse_origin(
+    matches: &ArgMatches,
+) -> Result<Option<wire::Origin>, Outcome<CommandAnswer>> {
+    matches
+        .get_one::<String>("origin")
+        .map(|written| {
+            written.parse::<wire::Origin>().map_err(|error| {
+                refusal(
+                    "task::origin-invalid",
+                    Some(written.clone()),
+                    &error.to_string(),
+                )
+            })
+        })
+        .transpose()
+}
+
 #[cfg(test)]
 mod tests;
