@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use wire::ConfigSource;
 
 mod load;
+mod pre_commit;
 mod resolve;
 mod task_migration;
 
@@ -18,6 +19,7 @@ pub use load::{
     AcquisitionIssue, AcquisitionKind, CaptureGeneration, LoadError, Loaded, Locations,
     capture_repository, load, load_repository, locations,
 };
+pub use pre_commit::predecessor_bridge;
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
     Provenance, ResolveError, Resolved, resolve,
@@ -287,6 +289,7 @@ impl<'de> Deserialize<'de> for TaskMetadata {
 pub struct WorkspacePolicy {
     #[serde(deserialize_with = "unique_names")]
     env_names: Vec<String>,
+    pre_commit_builtins: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pre_commit: Vec<PreCommitStep>,
     commit_message: gate::CommitMessagePolicy,
@@ -307,6 +310,12 @@ impl WorkspacePolicy {
     #[must_use]
     pub fn env_names(&self) -> &[String] {
         &self.env_names
+    }
+
+    /// Whether the installed predecessor may run its Python builtin battery.
+    #[must_use]
+    pub const fn pre_commit_builtins(&self) -> bool {
+        self.pre_commit_builtins
     }
 
     /// Repository-owned commands the predecessor runs before its own commit gate.
@@ -827,6 +836,13 @@ registry! {
     fixed "policy.env_names" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.pre_commit_builtins" {
+        kind: Boolean,
+        builtin: Some(Builtin::Boolean(false)),
         layers: TRACKED,
         class: Policy,
         flag: None,

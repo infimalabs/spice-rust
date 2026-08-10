@@ -1006,18 +1006,24 @@ pub fn migrate_predecessor(inputs: PredecessorInputs<'_>) -> Result<GateManifest
         let Some(raw_registry) = policy.get("pre_commit_builtins") else {
             continue;
         };
-        let registry = raw_registry.as_table().ok_or_else(|| {
-            SourceRef::new(
-                document,
-                vec!["policy".to_owned(), "pre_commit_builtins".to_owned()],
-            )
-            .error(
-                MigrationErrorKind::Malformed,
-                "pre_commit_builtins must be a table",
-                "restore [policy.pre_commit_builtins] as a TOML table",
-            )
-        })?;
-        apply_builtin_layer(&mut entries, registry, document)?;
+        let source = SourceRef::new(
+            document,
+            vec!["policy".to_owned(), "pre_commit_builtins".to_owned()],
+        );
+        match raw_registry {
+            Value::Boolean(false) => entries
+                .iter_mut()
+                .filter(|(id, _)| id.predecessor_declared())
+                .for_each(|(_, entry)| entry.merge(raw_registry, source.clone())),
+            Value::Table(registry) => apply_builtin_layer(&mut entries, registry, document)?,
+            _ => {
+                return Err(source.error(
+                    MigrationErrorKind::Malformed,
+                    "pre_commit_builtins must be false or a table",
+                    "set pre_commit_builtins = false or restore its typed table",
+                ));
+            }
+        }
     }
 
     let gates = GateId::ALL

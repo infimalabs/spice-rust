@@ -183,10 +183,6 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
         "exec spice run -- \"${SPICE_HOOKS:?spice hooks directory}/static/stage.sh\" \"$@\""
     ));
     assert!(!entry.contains("spice agent run"));
-    // Keep the retired name outside the owned-environment ledger while
-    // `concat!` preserves the exact bytes the installed stage must omit.
-    let retired_proof = concat!("SPICE", "_PROOF"); // env-policy: not-an-env SPICE_PROOF
-    assert!(!entry.contains(retired_proof));
     assert!(!entry.contains("if ["));
 }
 

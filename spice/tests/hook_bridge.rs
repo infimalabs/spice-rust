@@ -76,9 +76,8 @@ fn a_missing_cargo_executable_refuses_without_another_route() {
 fn declared_command() -> spice::config::PreCommitStep {
     let document = fs::read_to_string(workspace().join("spice.toml")).unwrap();
     let root: Root = toml::from_str(&document).expect("tracked policy loads in Rust");
-    let [command] = root.policy().pre_commit() else {
-        panic!("tracked policy must carry exactly one predecessor bridge");
-    };
+    let command = spice::config::predecessor_bridge(&root)
+        .expect("tracked policy must disable builtins and carry exactly one predecessor bridge");
     command.clone()
 }
 
