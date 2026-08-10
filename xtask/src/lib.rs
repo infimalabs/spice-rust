@@ -18,6 +18,8 @@ mod landing;
 mod proof_image;
 mod reference_transaction;
 mod release;
+#[cfg(not(target_arch = "wasm32"))]
+mod test_evidence;
 mod verify_browser;
 mod verify_execution;
 mod verify_timing;
@@ -47,7 +49,12 @@ pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use reference_transaction::{ReferenceTransactionError, WorktreeDamage};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
 #[cfg(not(target_arch = "wasm32"))]
-pub use workspace_tests::{WorkspaceTestError, WorkspaceTestExecution, run as run_workspace_tests};
+pub use test_evidence::{TestEvidenceRunError, run as run_test_evidence};
+#[cfg(not(target_arch = "wasm32"))]
+pub use workspace_tests::{
+    WorkspaceTestError, WorkspaceTestExecution, run as run_workspace_tests,
+    run_at as run_workspace_tests_at,
+};
 
 /// Apply the repository's native commit-message law to one Git message file.
 ///
