@@ -225,6 +225,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["doc", "ledger"][..], CommandKind::DocLedger),
         (&["taste", "add"][..], CommandKind::TaskAdd),
         (&["taste", "drop"][..], CommandKind::TaskAdd),
+        (&["taste", "mine"][..], CommandKind::TasteProposalAdd),
     ];
     assert_eq!(
         kind_for(&["taste"]),

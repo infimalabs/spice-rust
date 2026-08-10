@@ -202,6 +202,7 @@ fn contradictory_startup_replay_refuses_without_fold_mutation() {
 fn send_write(directive: &str, key: &str) -> JournalWrite {
     let body = SteerSent {
         directive: uuid(directive),
+        fanout: None,
         key: key.to_owned(),
         lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
         text: "repair the startup fold".to_owned(),
@@ -215,6 +216,7 @@ fn send_write(directive: &str, key: &str) -> JournalWrite {
         .expect("sent fact builds");
     write.steering_head(pending, move |seq| SteeringHead {
         directive: body.directive,
+        fanout: body.fanout,
         key: body.key,
         lane: body.lane,
         text: body.text,

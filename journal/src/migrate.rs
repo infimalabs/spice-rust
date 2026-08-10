@@ -471,7 +471,16 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (7, MigrationStep::Rust(claim_index::migrate)),
     (8, MigrationStep::Rust(vocabulary::migrate)),
     (9, MigrationStep::Sql(MIGRATE_9_TO_10_SQL)),
+    (10, MigrationStep::Sql(MIGRATE_10_TO_11_SQL)),
 ];
+
+/// Schema 10 to 11: operator fanout identity in steering facts and heads.
+///
+/// The SQL tables do not change. Existing steering facts and heads omit the
+/// optional identity; every current operator send writes it. The explicit step
+/// makes the durable wire expansion visible to schema-10 releases before they
+/// try to decode current authority.
+const MIGRATE_10_TO_11_SQL: &str = "SELECT 1;";
 
 /// Schema 9 to 10: source-aware transcript loci in immutable fact envelopes.
 ///
@@ -685,8 +694,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 10, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 11, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 10;
+PRAGMA user_version = 11;
 "#;

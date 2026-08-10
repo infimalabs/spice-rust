@@ -146,6 +146,7 @@ fn steering_fixture() -> Journal {
 fn send_write() -> JournalWrite {
     let body = SteerSent {
         directive: uuid(DIRECTIVE),
+        fanout: None,
         key: KEY.to_owned(),
         lane: uuid(LANE),
         text: "hold the verified line".to_owned(),
@@ -164,6 +165,7 @@ fn send_write() -> JournalWrite {
         .expect("sent fact builds");
     write.steering_head(pending, move |seq| SteeringHead {
         directive: body.directive,
+        fanout: body.fanout,
         key: body.key,
         lane: body.lane,
         text: body.text,

@@ -42,6 +42,17 @@ pub struct DocApplied {
 pub struct SteerSent {
     /// Durable directive identity, equal to the command that created it.
     pub directive: CanonicalUuid,
+    /// Operator submit action that may fan out into target-specific directives.
+    ///
+    /// Facts written before fanout provenance omit this value. Current operator
+    /// sends always carry it; consumers must use their named compatibility rule
+    /// for an absent value rather than infer equality from transcript loci.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fanout: Option<CanonicalUuid>,
     /// Directive key.
     pub key: String,
     /// Lane the directive addresses.

@@ -129,6 +129,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::SteerSend,
         r##"{
+  "fanout": "018f82d4-6f59-7d06-92e3-bce9131163c1",
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "message": "drain the queue"
 }"##,

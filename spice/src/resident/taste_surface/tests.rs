@@ -1058,6 +1058,7 @@ fn append_send(
         JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let body = wire::body::SteerSent {
         directive,
+        fanout: None,
         key: key.to_owned(),
         lane,
         text: "concurrent command".to_owned(),

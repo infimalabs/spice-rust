@@ -442,6 +442,7 @@ async fn send_steer(
     attachments: Vec<DirectiveAttachment>,
 ) -> Result<(), String> {
     let body = SteerSend {
+        fanout: random_uuid()?,
         lane,
         message,
         attachments,
@@ -556,6 +557,7 @@ async fn drain_submissions(
             )
         })?;
         let body = SteerSend {
+            fanout: submission.fanout,
             lane: submission.lane,
             message: submission.message.clone(),
             attachments: submission.attachments.clone(),
