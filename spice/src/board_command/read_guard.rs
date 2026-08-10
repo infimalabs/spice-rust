@@ -416,14 +416,16 @@ pub(super) fn read_graph(
         );
     }
     let view = match graph.view.as_str() {
+        "origin" => View::Origin,
         "dependencies" => View::Dependencies,
+        "review" => View::Review,
         "workflow" => View::Workflow,
         "claims" => View::Claims,
         other => {
             return refusal(
                 "board::graph-view-invalid",
                 Some(other.to_owned()),
-                "choose dependencies, workflow, or claims",
+                "choose origin, dependencies, review, workflow, or claims",
             );
         }
     };
