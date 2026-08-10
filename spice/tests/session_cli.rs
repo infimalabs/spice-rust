@@ -821,12 +821,48 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
         ),
         codex_message(
             "2026-01-03T00:00:05Z",
+            "user",
+            None,
+            "[Please keep this bracketed ask.]",
+        ),
+        codex_message(
+            "2026-01-03T00:00:06Z",
+            "user",
+            None,
+            "The malformed tool call was discussed before retrying with valid syntax.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:07Z",
+            "user",
+            None,
+            "Lead prose.\n[$spice](.agents/skills/spice/SKILL.md)\nTail prose.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:08Z",
+            "user",
+            None,
+            "Malformed <future-envelope>tool output",
+        ),
+        codex_message(
+            "2026-01-03T00:00:09Z",
+            "user",
+            None,
+            "Same text at a distinct source position.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:10Z",
+            "user",
+            None,
+            "Same text at a distinct source position.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:11Z",
             "assistant",
             Some("commentary"),
             "Authored commentary.\ndiff --git a/a.rs b/a.rs\n+generated body",
         ),
         codex_message(
-            "2026-01-03T00:00:06Z",
+            "2026-01-03T00:00:12Z",
             "assistant",
             Some("commentary"),
             "*** Begin Patch\n+generated body\n*** End Patch",
@@ -859,6 +895,12 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             "scaffolding",
             "compaction-rehydration",
             "tool-generated-envelope",
+            "authored-ask",
+            "authored-ask",
+            "authored-ask",
+            "authored-ask",
+            "authored-ask",
+            "authored-ask",
         ]
     );
 
@@ -867,10 +909,22 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
         &[],
         "summary",
     );
-    assert_eq!(summary["recent_prompts"].as_array().map(Vec::len), Some(1));
     assert_eq!(
-        summary["recent_prompts"][0]["text"],
-        "Please preserve the authored ask."
+        summary["recent_prompts"]
+            .as_array()
+            .expect("recent prompts")
+            .iter()
+            .map(|row| row["text"].as_str().expect("prompt text"))
+            .collect::<Vec<_>>(),
+        [
+            "Please preserve the authored ask.",
+            "[Please keep this bracketed ask.]",
+            "The malformed tool call was discussed before retrying with valid syntax.",
+            "Lead prose.\nTail prose.",
+            "Malformed <future-envelope>tool output",
+            "Same text at a distinct source position.",
+            "Same text at a distinct source position.",
+        ]
     );
 
     let briefing = reply_forms(
@@ -882,6 +936,15 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
         briefing["window"]["turns"][0]["dialogue"],
         json!([
             {"side": "user", "text": "Please preserve the authored ask."},
+            {"side": "user", "text": "[Please keep this bracketed ask.]"},
+            {
+                "side": "user",
+                "text": "The malformed tool call was discussed before retrying with valid syntax."
+            },
+            {"side": "user", "text": "Lead prose. Tail prose."},
+            {"side": "user", "text": "Malformed <future-envelope>tool output"},
+            {"side": "user", "text": "Same text at a distinct source position."},
+            {"side": "user", "text": "Same text at a distinct source position."},
             {"side": "assistant", "text": "Authored commentary."},
         ])
     );

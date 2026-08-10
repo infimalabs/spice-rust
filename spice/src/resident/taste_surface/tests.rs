@@ -622,6 +622,11 @@ fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
         occupant,
         "Polling is discussed here.\ndiff --git a/a b/a\n+polling",
     );
+    let tail = prose_record(
+        lane,
+        occupant,
+        "*** Begin Patch\n+polling forever\n*** End Patch\nPolling after the patch is authored.",
+    );
 
     assert!(candidates(&bag, &patch).expect("patch scans").is_empty());
     assert!(
@@ -635,6 +640,13 @@ fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
             .len(),
         1,
         "only the authored prefix remains eligible"
+    );
+    assert_eq!(
+        candidates(&bag, &tail)
+            .expect("post-patch authored tail scans")
+            .len(),
+        1,
+        "authored text after a complete generated block remains eligible"
     );
 }
 

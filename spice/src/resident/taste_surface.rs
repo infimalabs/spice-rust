@@ -304,12 +304,12 @@ fn candidates(
         };
         // Echo classification precedes bag matching. No trigger can make a
         // resident-authored reminder become a candidate again.
-        if taste::is_reminder_echo(authored) {
+        if taste::is_reminder_echo(&authored) {
             continue;
         }
         let authored = listen::Event::Prose(listen::Prose {
             role: prose.role,
-            text: authored.to_owned(),
+            text: authored,
             phase: prose.phase.clone(),
             locus: prose.locus,
         });

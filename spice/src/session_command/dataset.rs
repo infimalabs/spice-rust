@@ -454,7 +454,7 @@ fn push_message(
         flavor_tags,
         matched_cues,
         shape: classified.shape,
-        authored: classified.authored.map(str::to_owned),
+        authored: classified.authored,
     };
     if dataset.turns[index].messages.iter().any(|row| {
         row.ts == message.ts
