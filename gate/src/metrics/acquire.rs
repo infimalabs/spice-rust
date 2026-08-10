@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use super::baseline::{BaselineCapture, CommittedTexts, selects};
+use super::baseline::{BaselineCapture, CommittedTexts, FileShapeAuthorship, selects};
 use super::{
     ArmDeclaration, ComplexityRoutine, EvidenceError, EvidenceState, MetricEvidence, MetricFinding,
     MetricId, MetricKey, MetricMeasurement, MetricStateBinding, ParseError, ParserEvidence,
@@ -325,10 +325,12 @@ fn file_shape_metrics(
 /// measured beside a bytes row that refused would claim this file was half
 /// observed, and the arm would report a keyset its declaration forbids.
 ///
-/// A file a pending merge inherits verbatim from a parent reports both rows the
-/// same way, and for the same reason it takes no bound decision: this run is not
-/// where that shape was authored, so measuring it would hold the merging lane to
-/// a limit and hand it the flex slice for a file it never wrote.
+/// A file a pending merge inherits verbatim from a parent or from Git's exact
+/// clean merge tree reports both rows the same way, and for the same reason it
+/// takes no bound decision: this run is not where that shape was authored, so
+/// measuring it would hold the merging lane to a limit and hand it the flex
+/// slice for a file it never wrote. A conflict or one changed byte matches
+/// neither source and remains merge-authored.
 fn file_shape_rows(
     source: &MetricSource<'_>,
     declaration: ArmDeclaration,
@@ -348,17 +350,19 @@ fn file_shape_rows(
             );
         }
     };
-    if source.baselines.merge_inherits(path, &bytes) {
-        return declared_rows(
-            declaration,
-            key,
-            &EvidenceState::NotApplicable {
-                reason: format!(
-                    "{path:?} is byte-identical to a parent of this merge, so its shape was \
-                     authored by the commit that already answered for it"
-                ),
-            },
-        );
+    let inherited = match source.baselines.file_shape_authorship(path, &bytes) {
+        FileShapeAuthorship::Parent => Some(format!(
+            "{path:?} is byte-identical to a parent of this merge, so its shape was \
+             authored by the commit that already answered for it"
+        )),
+        FileShapeAuthorship::CleanMerge => Some(format!(
+            "{path:?} is byte-identical to Git's clean merge result, so its shape is \
+             inherited synthesis rather than work authored by the merge receiver"
+        )),
+        FileShapeAuthorship::MergeAuthored => None,
+    };
+    if let Some(reason) = inherited {
+        return declared_rows(declaration, key, &EvidenceState::NotApplicable { reason });
     }
     let shape = match measure_file_shape(path, &bytes) {
         Ok(shape) => shape,

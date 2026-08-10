@@ -281,19 +281,45 @@ impl<'a> CoreSource<'a> {
     pub const fn actor(&self) -> &ActorCapture {
         &self.actor
     }
+
+    /// Git's exact tree for a clean two-parent synthesis, when one was proven.
+    ///
+    /// This private capture evidence lets structural acquisition distinguish a
+    /// file Git synthesized from a file the merge receiver edited. Conflicted,
+    /// octopus, absent, and unmeasured merges return no tree and therefore grant
+    /// no authorship exemption.
+    #[must_use]
+    pub(crate) fn clean_merge_tree(&self) -> Option<(&str, &str, &str)> {
+        self.git.clean_merge_tree.as_ref().map(|capture| {
+            (
+                capture.head.as_str(),
+                capture.merging.as_str(),
+                capture.tree.as_str(),
+            )
+        })
+    }
 }
 
-/// Both Git-declared observations, taken once when the source is captured.
+/// The two exact parent objects and clean tree one Git invocation joined.
+#[derive(Debug)]
+struct CleanMergeTree {
+    head: String,
+    merging: String,
+    tree: String,
+}
+
+/// Git observations taken once when the source is captured.
 ///
 /// Acquisition projects these rather than running the declared vectors again,
 /// so the repository is read exactly once, in the same capture that fixes the
-/// identity the arms are labelled with. Neither observation can refuse the
-/// capture: a Git failure is already typed evidence, and an arm that could not
-/// be measured crosses saying so.
+/// identity the arms are labelled with. The two declared observations cross as
+/// typed evidence; the private clean-merge tree is optional and can only grant
+/// a narrow authorship exemption when Git proved it.
 #[derive(Debug)]
 struct GitObservations {
     merge_integrity: Option<CoreObservation>,
     staging: Option<CoreObservation>,
+    clean_merge_tree: Option<CleanMergeTree>,
 }
 
 impl GitObservations {
@@ -301,6 +327,7 @@ impl GitObservations {
         Self {
             merge_integrity: Some(merge_integrity(repository, bounds)),
             staging: Some(staging(repository, bounds)),
+            clean_merge_tree: clean_merge_tree(repository, bounds),
         }
     }
 
@@ -309,6 +336,9 @@ impl GitObservations {
             merge_integrity: (gate_id == GateId::MergeIntegrity)
                 .then(|| merge_integrity(repository, bounds)),
             staging: (gate_id == GateId::Staging).then(|| staging(repository, bounds)),
+            clean_merge_tree: (gate_id == GateId::FileShape)
+                .then(|| clean_merge_tree(repository, bounds))
+                .flatten(),
         }
     }
 }
@@ -616,6 +646,53 @@ fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
         )),
         Err(refusal) => refusal.into_observation(),
     }
+}
+
+/// Compute Git's clean two-parent result without granting it gate standing.
+///
+/// The merge-integrity arm only needs `merge-tree` when the staged tree still
+/// equals `HEAD`; file authorship needs the clean result even when the pending
+/// index correctly contains it. This observation therefore rides beside the
+/// public core evidence. Only exit zero proves an automatic clean synthesis.
+/// A conflict, multiple merge heads, unreadable state, or process failure is a
+/// conservative absence: structural arms keep measuring the staged bytes.
+fn clean_merge_tree(repository: &Path, bounds: &Bounds) -> Option<CleanMergeTree> {
+    let (_, merge_head_path) = git(
+        repository,
+        bounds,
+        &["rev-parse", "--git-path", "MERGE_HEAD"],
+        &[0],
+    )
+    .ok()?;
+    let merge_heads = fs::read_to_string(repository.join(merge_head_path.trim())).ok()?;
+    let mut merge_heads = merge_heads
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let merging = merge_heads.next()?;
+    if merge_heads.next().is_some() {
+        return None;
+    }
+    let (_, head) = git(repository, bounds, &["rev-parse", "HEAD"], &[0]).ok()?;
+    let head = head.trim().to_owned();
+    validate_git_tree(&head).ok()?;
+    let (code, output) = git(
+        repository,
+        bounds,
+        &["merge-tree", "--write-tree", &head, merging],
+        &[0, 1],
+    )
+    .ok()?;
+    if code != 0 {
+        return None;
+    }
+    let tree = output.lines().next()?.trim().to_owned();
+    validate_git_tree(&tree).ok()?;
+    Some(CleanMergeTree {
+        head,
+        merging: merging.to_owned(),
+        tree,
+    })
 }
 
 /// Split `--write-tree -z --name-only` output into its tree and conflict names.
