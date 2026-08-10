@@ -74,13 +74,13 @@ fn lane_rows() -> Vec<StaleRow> {
 fn task_and_claim_rows() -> Vec<StaleRow> {
     vec![
         (
-            serde_json::json!({"kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify"}),
+            serde_json::json!({"kind": "task::phased", "task": "1kKRRsDP", "phase": "verify"}),
             [true, false, false, false, true],
         ),
         (
             serde_json::json!({
                 "kind": "task::done",
-                "task": "SPICE-aBcD",
+                "task": "1kKRRsDP",
                 "validation": "the suite is green",
             }),
             [true, false, false, false, true],
@@ -88,7 +88,7 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
         (
             serde_json::json!({
                 "kind": "claim::won",
-                "task": "SPICE-aBcD",
+                "task": "1kKRRsDP",
                 "actor": "operator",
                 "lane": LANE,
                 "occupant": REQUEST,
@@ -98,7 +98,7 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
             [true, true, false, false, true],
         ),
         (
-            serde_json::json!({"kind": "claim::freed", "task": "SPICE-aBcD", "actor": "operator"}),
+            serde_json::json!({"kind": "claim::freed", "task": "1kKRRsDP", "actor": "operator"}),
             [true, true, false, false, true],
         ),
     ]
@@ -261,7 +261,7 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
     });
     let won = serde_json::json!({
         "kind": "claim::won",
-        "task": "SPICE-aBcD",
+        "task": "1kKRRsDP",
         "actor": "operator",
         "lane": LANE,
         "occupant": REQUEST,
@@ -271,7 +271,7 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
     let lane = format!("lane:{LANE}");
     let ascending = [
         envelope(41, "spice", &lane, &sent),
-        envelope(42, "operator", "task:SPICE-aBcD", &won),
+        envelope(42, "operator", "task:1kKRRsDP", &won),
     ];
 
     let tail = admitted_stream(&session, &packed_frame("facts", &ascending, None, 42));
@@ -299,7 +299,7 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
     );
 
     let descending = [
-        envelope(42, "operator", "task:SPICE-aBcD", &won),
+        envelope(42, "operator", "task:1kKRRsDP", &won),
         envelope(41, "spice", &lane, &sent),
     ];
     let thread = admitted_stream(&session, &packed_frame("thread", &descending, None, 42));
@@ -546,7 +546,7 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
         Outcome::Reply(Reply {
             position: ReplyPosition::Snapshot(seq(41)),
             body: wire::intent::TaskAnswer {
-                task: "SPICE-aBcD".parse().expect("fixture task handle"),
+                task: "SPICE-1kKRRsDP".parse().expect("fixture task handle"),
                 status: "done".to_owned(),
                 learning: None,
                 next: None,
@@ -569,7 +569,7 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
         let bytes = support::response(WireVersion::CURRENT, uuid(REQUEST), uuid(EPOCH), outcome);
         let admitted: app::Admitted<Response<wire::intent::TaskAnswer>> =
             session.admit_frame(&bytes).expect("response is admitted");
-        runtime.apply_note(&admitted, "SPICE-aBcD");
+        runtime.apply_note(&admitted, "SPICE-1kKRRsDP");
     }
 
     assert_eq!(
@@ -605,7 +605,7 @@ fn the_second_command_outcome_is_the_ticker_source() {
         let bytes = support::response(WireVersion::CURRENT, uuid(REQUEST), uuid(EPOCH), outcome);
         let admitted: app::Admitted<Response<wire::intent::TaskAnswer>> =
             session.admit_frame(&bytes).expect("response is admitted");
-        runtime.apply_note(&admitted, "SPICE-aBcD");
+        runtime.apply_note(&admitted, "SPICE-1kKRRsDP");
     }
 
     let ticker = runtime.newest_event().expect("the ticker has one source");

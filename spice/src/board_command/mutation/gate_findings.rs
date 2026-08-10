@@ -38,10 +38,10 @@ struct GateFindingPlan {
 #[derive(Clone)]
 enum GateFindingAction {
     Reused {
-        task: TaskHandle,
+        task: wire::TaskStamp,
     },
     Created {
-        task: TaskHandle,
+        task: wire::TaskStamp,
         finding: FindingRow,
         predecessor: Option<TaskHandle>,
     },
@@ -151,7 +151,7 @@ fn prepare_finding_fold(
     let at = current_instant()?;
     let until = gate_finding_defer_until()?;
     let origin = gate_findings_origin(command.actor(), &snapshot, &dispatch.report)?;
-    let plans = plan_gate_findings(findings, &snapshot, &project, at)?;
+    let plans = plan_gate_findings(findings, &snapshot, at)?;
     let created = plans
         .iter()
         .filter(|plan| matches!(plan.action, GateFindingAction::Created { .. }))
@@ -297,7 +297,6 @@ fn gate_findings_origin(
 fn plan_gate_findings(
     findings: &[FindingRow],
     snapshot: &ValidatedSnapshot,
-    project: &Project,
     at: Instant,
 ) -> Result<Vec<GateFindingPlan>, Outcome<CommandAnswer>> {
     let mut planned = Vec::with_capacity(findings.len());
@@ -319,7 +318,7 @@ fn plan_gate_findings(
         }
         let action = if let Some(entry) = open.first() {
             GateFindingAction::Reused {
-                task: entry.statement().handle.clone(),
+                task: entry.incepted().clone(),
             }
         } else {
             let predecessor = matches
@@ -328,9 +327,8 @@ fn plan_gate_findings(
                     entry.workflow().status == "completed" || entry.workflow().completion.is_some()
                 })
                 .max_by_key(|entry| entry.statement().revision)
-                .map(|entry| entry.statement().handle.clone());
-            let task =
-                mint_gate_finding_handle(snapshot, &mut minted, project, &finding.title, at, index);
+                .map(|entry| entry.handle().clone());
+            let task = mint_gate_finding_stamp(snapshot, &mut minted, at, index);
             GateFindingAction::Created {
                 task,
                 finding: finding.clone(),
@@ -364,26 +362,22 @@ fn gate_finding_task_open(entry: &Entry) -> bool {
     entry.workflow().status == "pending" && entry.workflow().completion.is_none()
 }
 
-fn mint_gate_finding_handle(
+fn mint_gate_finding_stamp(
     snapshot: &ValidatedSnapshot,
-    minted: &mut std::collections::BTreeSet<TaskHandle>,
-    project: &Project,
-    title: &str,
+    minted: &mut std::collections::BTreeSet<wire::TaskStamp>,
     at: Instant,
     index: usize,
-) -> TaskHandle {
+) -> wire::TaskStamp {
     let occupied = snapshot
         .entries
         .iter()
-        .map(|entry| entry.statement().handle.clone())
+        .map(|entry| entry.incepted().clone())
         .collect::<std::collections::BTreeSet<_>>();
     let mut offset = index as i64;
     loop {
-        let candidate = mint_handle_at(
-            Some(project.as_str()),
-            title,
-            at.get().as_millisecond().saturating_add(offset),
-        );
+        let candidate =
+            wire::TaskStamp::for_millis(at.get().as_millisecond().saturating_add(offset))
+                .expect("the current timestamp fits the task stamp codec");
         if !occupied.contains(&candidate) && minted.insert(candidate.clone()) {
             return candidate;
         }
@@ -396,7 +390,7 @@ fn write_gate_finding_task(
     write: &mut JournalWrite,
     cause: PendingFact,
     project: &Project,
-    task: &TaskHandle,
+    task: &wire::TaskStamp,
     finding: &FindingRow,
     predecessor: Option<&TaskHandle>,
     origin: &wire::Origin,
@@ -411,12 +405,10 @@ fn write_gate_finding_task(
         gate_finding_tag(&finding.identity),
         format!("gate-severity:{}", finding.severity),
     ];
-    let uuid = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
     let added = write
         .fact(
             body::TaskAdded {
                 task: task.clone(),
-                uuid,
                 title: finding.title.clone(),
                 description: Some(description.clone()),
                 acceptance: finding.acceptance.clone(),
@@ -431,8 +423,7 @@ fn write_gate_finding_task(
         )
         .map_err(|error| store_fault("gate::finding-task-build", &error.to_string()))?;
     let statement = TaskHead {
-        handle: task.clone(),
-        uuid,
+        incepted: task.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: finding.title.clone(),
         description: Some(description),
@@ -515,7 +506,10 @@ fn guard_gate_finding_plan(write: &mut JournalWrite, plans: Vec<GateFindingPlan>
     }));
 }
 
-fn current_open_gate_finding_tasks(heads: &[journal::TaskHeads], tag: &str) -> Vec<TaskHandle> {
+fn current_open_gate_finding_tasks(
+    heads: &[journal::TaskHeads],
+    tag: &str,
+) -> Vec<wire::TaskStamp> {
     heads
         .iter()
         .filter(|heads| {
@@ -530,7 +524,7 @@ fn current_open_gate_finding_tasks(heads: &[journal::TaskHeads], tag: &str) -> V
             heads.workflow().body().status == "pending"
                 && heads.workflow().body().completion.is_none()
         })
-        .map(|heads| heads.statement().body().handle.clone())
+        .map(|heads| heads.statement().body().incepted.clone())
         .collect()
 }
 

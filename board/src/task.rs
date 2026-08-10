@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use wire::intent::ProjectVisibility;
-use wire::{ClaimHead, LeaseHead, TaskHandle, TaskHead, WorkflowHead};
+use wire::{ClaimHead, LeaseHead, TaskHandle, TaskHead, TaskStamp, WorkflowHead};
 
 /// Public scheduler roots compiled into every project policy.
 pub const BUILTIN_PUBLIC_STEMS: [&str; 2] = ["task", "serve"];
@@ -433,9 +433,9 @@ impl fmt::Display for Family {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Dependency {
     /// Task that cannot proceed yet.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Prerequisite task.
-    pub after: TaskHandle,
+    pub after: TaskStamp,
 }
 
 /// One task's current journal-head bundle.
@@ -446,6 +446,7 @@ pub struct Dependency {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {
     statement: TaskHead,
+    handle: TaskHandle,
     workflow: WorkflowHead,
     claim: Option<ClaimHead>,
     lease: Option<LeaseHead>,
@@ -485,15 +486,16 @@ impl Entry {
         lease: Option<LeaseHead>,
         project: Project,
     ) -> Result<Self, TaskError> {
-        let family = Family::of(&statement.handle);
+        let handle = TaskHandle::for_project(&statement.project, &statement.incepted);
+        let family = Family::of(&handle);
         let mut seen = BTreeSet::new();
         for dependency in &statement.dependencies {
-            if dependency == &statement.handle {
-                return Err(TaskError::SelfDependency(statement.handle.clone()));
+            if dependency == &statement.incepted {
+                return Err(TaskError::SelfDependency(statement.incepted.clone()));
             }
             if !seen.insert(dependency) {
                 return Err(TaskError::DuplicateDependency {
-                    task: statement.handle.clone(),
+                    task: statement.incepted.clone(),
                     after: dependency.clone(),
                 });
             }
@@ -502,6 +504,7 @@ impl Entry {
 
         Ok(Self {
             statement,
+            handle,
             workflow,
             claim,
             lease,
@@ -514,6 +517,18 @@ impl Entry {
     #[must_use]
     pub const fn statement(&self) -> &TaskHead {
         &self.statement
+    }
+
+    /// Current public handle derived from project and inception.
+    #[must_use]
+    pub const fn handle(&self) -> &TaskHandle {
+        &self.handle
+    }
+
+    /// Sole durable task identity.
+    #[must_use]
+    pub const fn incepted(&self) -> &TaskStamp {
+        &self.statement.incepted
     }
 
     /// Current workflow head.
@@ -553,7 +568,7 @@ impl Entry {
             .iter()
             .cloned()
             .map(|after| Dependency {
-                task: self.statement.handle.clone(),
+                task: self.statement.incepted.clone(),
                 after,
             })
     }
@@ -565,9 +580,9 @@ pub enum TaskError {
     /// Project spelling is outside the dotted authority vocabulary.
     Project(ProjectError),
     /// A task named itself as a prerequisite.
-    SelfDependency(TaskHandle),
+    SelfDependency(TaskStamp),
     /// One prerequisite appeared more than once.
-    DuplicateDependency { task: TaskHandle, after: TaskHandle },
+    DuplicateDependency { task: TaskStamp, after: TaskStamp },
     /// No station was declared.
     EmptyFlow,
     /// One station appeared more than once.

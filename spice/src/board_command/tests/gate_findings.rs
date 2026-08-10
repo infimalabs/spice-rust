@@ -181,7 +181,12 @@ fn gate_findings_use_the_active_claim_as_origin_when_present() {
         .expect("filed gate finding task");
     assert_eq!(
         task.statement.body.provenance.to_string(),
-        format!("task:{parent}")
+        format!(
+            "task:{}",
+            parent
+                .incepted()
+                .expect("parent handle carries an inception stamp")
+        )
     );
     clean(&root, bus);
 }
@@ -384,6 +389,7 @@ fn text(answer: CommandAnswer) -> String {
 fn complete(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
     let before = gate_board(bus, epoch, Actor::Operator);
     let current = task_heads(&before, task).expect("task exists before completion");
+    let incepted = current.statement.body.incepted.clone();
     let at = Instant::new(jiff::Timestamp::now()).expect("completion instant");
     let origin = format!("task:{task}").parse().expect("task origin");
     let mut workflow = current.workflow.body.clone();
@@ -394,7 +400,7 @@ fn complete(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
     let done = write
         .fact(
             body::TaskDone {
-                task: task.clone(),
+                task: incepted.clone(),
                 validation: "fixture completion".to_owned(),
                 git: None,
                 source: body::SourceBoundary::unrecorded(),
@@ -402,7 +408,7 @@ fn complete(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
             FactCause::Root,
         )
         .expect("completion fact builds");
-    write.workflow_head(task.clone(), done, move |_| workflow);
+    write.workflow_head(incepted, done, move |_| workflow);
     assert!(matches!(
         bus.commit(write).expect("completion commits"),
         CommitOutcome::Committed(_)

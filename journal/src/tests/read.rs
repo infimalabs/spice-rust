@@ -19,21 +19,21 @@ fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
 
     let journal = authority_fixture();
     let mut second = task_head();
-    second.handle = "JOURNAL-b2".parse().expect("second handle");
+    second.incepted = "1kKRRsDQ".parse().expect("second task stamp");
     second.title = "Second journal task".to_owned();
     insert_head(
         &journal.connection,
         "task_heads",
-        "handle",
-        "JOURNAL-b2",
+        "stamp",
+        "1kKRRsDQ",
         1,
         &second,
     );
     insert_head(
         &journal.connection,
         "workflow_heads",
-        "handle",
-        "JOURNAL-b2",
+        "stamp",
+        "1kKRRsDQ",
         2,
         &workflow_head(),
     );
@@ -44,11 +44,11 @@ fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
         .expect("coherent board read");
     let handles = heads
         .into_iter()
-        .map(|heads| heads.into_bodies().0.handle.to_string())
+        .map(|heads| heads.into_bodies().0.incepted.to_string())
         .collect::<Vec<_>>();
 
     assert_eq!(cursor, Seq::new(2));
-    assert_eq!(handles, ["JOURNAL-a1", "JOURNAL-b2"]);
+    assert_eq!(handles, ["1kKRRsDP", "1kKRRsDQ"]);
     assert_eq!(journal.connection.total_changes(), changes);
 }
 
@@ -57,7 +57,7 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
     let missing_workflow = authority_fixture();
     missing_workflow
         .connection
-        .execute("DELETE FROM workflow_heads WHERE handle = 'JOURNAL-a1'", [])
+        .execute("DELETE FROM workflow_heads WHERE stamp = '1kKRRsDP'", [])
         .expect("remove required workflow head");
 
     let loose_claim = authority_fixture();
@@ -68,8 +68,8 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
     insert_head(
         &loose_claim.connection,
         "claim_heads",
-        "handle",
-        "JOURNAL-b2",
+        "stamp",
+        "1kKRRsDQ",
         2,
         &claim_head(),
     );
@@ -80,11 +80,11 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
 
     let mismatched_key = authority_fixture();
     let mut wrong_task = task_head();
-    wrong_task.handle = "JOURNAL-b2".parse().expect("alternate task handle");
+    wrong_task.incepted = "1kKRRsDQ".parse().expect("alternate task stamp");
     mismatched_key
         .connection
         .execute(
-            "UPDATE task_heads SET body = ?1 WHERE handle = 'JOURNAL-a1'",
+            "UPDATE task_heads SET body = ?1 WHERE stamp = '1kKRRsDP'",
             params![wire::encode(&wrong_task).expect("encode wrong task")],
         )
         .expect("mismatch indexed key and body");
@@ -93,7 +93,7 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
     invalid_bytes
         .connection
         .execute(
-            "UPDATE workflow_heads SET body = X'00' WHERE handle = 'JOURNAL-a1'",
+            "UPDATE workflow_heads SET body = X'00' WHERE stamp = '1kKRRsDP'",
             [],
         )
         .expect("corrupt canonical body");
@@ -105,13 +105,13 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
             3,
             Some(2),
             FactKind::TaskNoted,
-            json!({"task": "JOURNAL-a1", "note": "future head fixture"}),
+            json!({"task": "1kKRRsDP", "note": "future head fixture"}),
         ),
     );
     beyond_cursor
         .connection
         .execute(
-            "UPDATE workflow_heads SET head_seq = 3 WHERE handle = 'JOURNAL-a1'",
+            "UPDATE workflow_heads SET head_seq = 3 WHERE stamp = '1kKRRsDP'",
             [],
         )
         .expect("move head beyond visible cursor");
@@ -119,20 +119,20 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
     for (journal, expected) in [
         (
             missing_workflow,
-            "task JOURNAL-a1 has a statement head but no workflow head",
+            "task 1kKRRsDP has a statement head but no workflow head",
         ),
-        (loose_claim, "task JOURNAL-b2 has loose claim head(s)"),
+        (loose_claim, "task 1kKRRsDQ has loose claim head(s)"),
         (
             mismatched_key,
-            "task head indexed as JOURNAL-a1 carries body handle JOURNAL-b2",
+            "task head indexed as 1kKRRsDP carries body stamp 1kKRRsDQ",
         ),
         (
             invalid_bytes,
-            "workflow_heads handle \"JOURNAL-a1\" is invalid",
+            "workflow_heads stamp \"1kKRRsDP\" is invalid",
         ),
         (
             beyond_cursor,
-            "workflow_heads handle \"JOURNAL-a1\" head position 3 is beyond cursor Some(2)",
+            "workflow_heads stamp \"1kKRRsDP\" head position 3 is beyond cursor Some(2)",
         ),
     ] {
         let error = journal

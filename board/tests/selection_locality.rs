@@ -2,11 +2,14 @@ use board::Entry;
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LeaseHead, Origin, Phase, Producer,
-    Seq, TaskHandle, TaskHead, WorkflowHead, body,
+    Seq, TaskHead, TaskStamp, WorkflowHead, body,
 };
 
-fn handle(text: &str) -> TaskHandle {
-    text.parse().expect("task handle")
+fn stamp(text: &str) -> TaskStamp {
+    let value = text.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 10_000_000_000_000
+    });
+    TaskStamp::for_millis(value).expect("fixture name fits the task stamp codec")
 }
 
 fn phase(text: &str) -> Phase {
@@ -58,8 +61,7 @@ fn workflow(current: &str) -> WorkflowHead {
 
 fn statement(name: &str) -> TaskHead {
     TaskHead {
-        handle: handle(name),
-        uuid: uuid("019fbbde-5105-75a3-a76a-722afde1e407"),
+        incepted: stamp(name),
         queue_origin: seq(1),
         title: format!("Implement {name}"),
         description: None,
@@ -138,13 +140,13 @@ fn peer_spread_reads_the_whole_board_cell_and_never_excludes_crowded_work() {
 
     let selected = board::select(&entries, &actor, &all_projects(), 2, None)
         .expect("an uncrowded cell is preferred");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
 
     let second_peer = peer_entry("BOARD-peer2", other, ".oops.workflow", "board.beta", "todo");
     let all_crowded = [crowded, open, entries[2].clone(), second_peer];
     let selected = board::select(&all_crowded, &actor, &all_projects(), 2, None)
         .expect("crowding remains a preference rather than an exclusion");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-a1"));
+    assert_eq!(selected.entry().incepted(), &stamp("BOARD-a1"));
 }
 
 #[test]
@@ -167,7 +169,7 @@ fn peer_spread_precedes_movement_inside_the_shared_cell_vocabulary() {
 
     let selected = board::select(&entries, &actor, &all_projects(), 2, Some(&recent))
         .expect("peer spread speaks before affinity");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
 }
 
 #[test]
@@ -184,7 +186,7 @@ fn movement_counts_project_and_phase_separately_from_only_the_recent_cell() {
     let entries = [both.clone(), phase_only.clone(), project_only.clone(), same];
     let selected = board::select(&entries, &Actor::Spice, &all_projects(), 2, Some(&recent))
         .expect("cost zero wins");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z0"));
+    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z0"));
 
     let one_coordinate = [project_only, phase_only.clone()];
     let selected = board::select(
@@ -195,12 +197,12 @@ fn movement_counts_project_and_phase_separately_from_only_the_recent_cell() {
         Some(&recent),
     )
     .expect("changing project and changing phase each cost one");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
 
     let moved = [both, phase_only];
     let selected = board::select(&moved, &Actor::Spice, &all_projects(), 2, Some(&recent))
         .expect("one-coordinate movement beats changing both");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
 }
 
 #[test]
@@ -216,12 +218,12 @@ fn locality_is_neutral_outside_the_narrow_urgency_band() {
 
     let selected = board::select(&entries, &Actor::Spice, &all_projects(), 2, Some(&recent))
         .expect("locality may speak only for the in-band rows");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-y1"));
+    assert_eq!(selected.entry().incepted(), &stamp("BOARD-y1"));
 
     let outside = [far_local, oldest_remote];
     let selected = board::select(&outside, &Actor::Spice, &all_projects(), 2, Some(&recent))
         .expect("the out-of-band local row remains workable but cannot jump age");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
 }
 
 #[test]
@@ -241,7 +243,7 @@ fn affinity_history_keeps_only_the_most_recent_claimed_cell() {
         write
             .fact(
                 body::ClaimWon {
-                    task: handle(task),
+                    task: stamp(task),
                     actor: Actor::Spice,
                     lane: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
                     occupant: uuid("019fbbde-5105-75a3-a76a-722afde1e409"),

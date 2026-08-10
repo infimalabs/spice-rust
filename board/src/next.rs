@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use wire::{Actor, ClaimCell, ClaimDisposition, LineageSubscription, TaskHandle};
+use wire::{Actor, ClaimCell, ClaimDisposition, LineageSubscription, TaskStamp};
 
 use crate::task::Entry;
 use crate::urgency::{Urgency, declared_priority};
@@ -75,7 +75,7 @@ pub fn project_subscription_history(
             .ok_or_else(|| format!("{} fact has no task", envelope.fact.kind()))?;
         let entry = entries
             .iter()
-            .find(|entry| entry.statement().handle.as_str() == task)
+            .find(|entry| entry.incepted().as_str() == task)
             .ok_or_else(|| format!("subscription history task {task} has no current heads"))?;
         if entry.project().visibility().is_hidden() {
             continue;
@@ -123,7 +123,7 @@ pub fn select<'a>(
     band: u64,
     recent_cell: Option<&ClaimCell>,
 ) -> Option<Selection<'a>> {
-    let completed = satisfied_handles(entries);
+    let completed = satisfied_tasks(entries);
     let priorities = effective_priorities(entries);
     let downstream = downstream_weights(entries);
 
@@ -132,17 +132,14 @@ pub fn select<'a>(
         .filter(|entry| selectable(entry, actor, subscription, &completed))
         .map(|entry| {
             let effective_priority = priorities
-                .get(&entry.statement().handle)
+                .get(entry.incepted())
                 .copied()
                 .unwrap_or_else(|| declared_priority(entry));
             Selection {
                 entry,
                 urgency: Urgency::from_heads(entry),
                 effective_priority,
-                downstream_weight: downstream
-                    .get(&entry.statement().handle)
-                    .copied()
-                    .unwrap_or(0),
+                downstream_weight: downstream.get(entry.incepted()).copied().unwrap_or(0),
                 self_review: is_self_review(entry, actor),
                 peer_occupied: peer_occupies(entries, entry, actor),
                 movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
@@ -195,7 +192,7 @@ pub fn select<'a>(
         .filter(|candidate| {
             candidate.peer_occupied == peer_occupied && candidate.movement == movement
         })
-        .min_by_key(|candidate| &candidate.entry.statement().handle)
+        .min_by_key(|candidate| candidate.entry.handle())
 }
 
 fn peer_occupies(entries: &[Entry], candidate: &Entry, actor: &Actor) -> bool {
@@ -258,12 +255,12 @@ fn is_self_review(entry: &Entry, actor: &Actor) -> bool {
 /// fixed point. Scores only rise through a finite priority set, so even a
 /// malformed cyclic graph terminates. `max` is commutative, which keeps the
 /// result independent of the supplied slice order.
-fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskHandle, i64> {
-    let mut priorities: BTreeMap<TaskHandle, i64> = BTreeMap::new();
+fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskStamp, i64> {
+    let mut priorities: BTreeMap<TaskStamp, i64> = BTreeMap::new();
     for entry in entries {
         let declared = declared_priority(entry);
         priorities
-            .entry(entry.statement().handle.clone())
+            .entry(entry.incepted().clone())
             .and_modify(|current| *current = (*current).max(declared))
             .or_insert(declared);
     }
@@ -272,7 +269,7 @@ fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskHandle, i64> {
         let mut changed = false;
         for dependent in entries.iter().filter(|entry| unsettled_public(entry)) {
             let inherited = priorities
-                .get(&dependent.statement().handle)
+                .get(dependent.incepted())
                 .copied()
                 .unwrap_or_else(|| declared_priority(dependent));
             for prerequisite in &dependent.statement().dependencies {
@@ -298,21 +295,21 @@ fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskHandle, i64> {
 /// the allocator cannot release neither contributes weight nor acts as a bridge
 /// to public work beyond it. A per-root visited set both counts converging paths
 /// once and makes malformed cycles finite.
-fn downstream_weights(entries: &[Entry]) -> BTreeMap<TaskHandle, usize> {
-    let mut dependents: BTreeMap<TaskHandle, BTreeSet<TaskHandle>> = BTreeMap::new();
+fn downstream_weights(entries: &[Entry]) -> BTreeMap<TaskStamp, usize> {
+    let mut dependents: BTreeMap<TaskStamp, BTreeSet<TaskStamp>> = BTreeMap::new();
     for dependent in entries.iter().filter(|entry| unsettled_public(entry)) {
         for prerequisite in &dependent.statement().dependencies {
             dependents
                 .entry(prerequisite.clone())
                 .or_default()
-                .insert(dependent.statement().handle.clone());
+                .insert(dependent.incepted().clone());
         }
     }
 
     entries
         .iter()
         .map(|entry| {
-            let root = &entry.statement().handle;
+            let root = entry.incepted();
             let mut downstream = BTreeSet::new();
             let mut pending = dependents
                 .get(root)
@@ -361,12 +358,12 @@ fn selectable(
     entry: &Entry,
     actor: &Actor,
     subscription: &LineageSubscription,
-    completed: &BTreeSet<TaskHandle>,
+    completed: &BTreeSet<TaskStamp>,
 ) -> bool {
     subscription.admits_project(entry.project().as_str()) && eligible(entry, actor, completed)
 }
 
-fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskHandle>) -> bool {
+fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
     workable(entry, actor, completed) && unheld(entry)
 }
 
@@ -374,7 +371,7 @@ fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskHandle>) -> b
 ///
 /// Allocation and stealing agree on all of this and disagree on possession
 /// alone, so possession is the only thing either caller states for itself.
-fn workable(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskHandle>) -> bool {
+fn workable(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
     let workflow = entry.workflow();
     !entry.project().visibility().is_hidden()
         && workflow.status == "pending"
@@ -401,7 +398,7 @@ fn unheld(entry: &Entry) -> bool {
 /// Whether one named entry satisfies the same eligibility law as allocation.
 #[must_use]
 pub fn eligible_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
-    workable(entry, actor, &satisfied_handles(entries)) && unheld(entry)
+    workable(entry, actor, &satisfied_tasks(entries)) && unheld(entry)
 }
 
 /// Whether one named entry is eligible through the lineage's current task scope.
@@ -412,7 +409,7 @@ pub fn selectable_entry(
     actor: &Actor,
     subscription: &LineageSubscription,
 ) -> bool {
-    selectable(entry, actor, subscription, &satisfied_handles(entries))
+    selectable(entry, actor, subscription, &satisfied_tasks(entries))
 }
 
 /// Whether one named entry may be taken from whoever currently holds it.
@@ -427,10 +424,10 @@ pub fn selectable_entry(
 /// completed, deferred or dependency-blocked task than an allocation can.
 #[must_use]
 pub fn stealable_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
-    workable(entry, actor, &satisfied_handles(entries))
+    workable(entry, actor, &satisfied_tasks(entries))
 }
 
-/// Handles that no longer block a dependent, stated once for every caller.
+/// Inception stamps that no longer block a dependent, stated once for every caller.
 ///
 /// A withdrawn prerequisite belongs here beside a completed one. It will never
 /// complete, so leaving it out would let one deletion block every dependent
@@ -443,13 +440,13 @@ pub fn stealable_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool 
 /// deciding it separately is how one row comes to be counted ready and blocked
 /// at once: the allocator hands over work the report still calls stuck.
 #[must_use]
-pub fn satisfied_handles(entries: &[Entry]) -> BTreeSet<TaskHandle> {
+pub fn satisfied_tasks(entries: &[Entry]) -> BTreeSet<TaskStamp> {
     entries
         .iter()
         .filter(|candidate| {
             let status = candidate.workflow().status.as_str();
             status == "completed" || status == "deleted"
         })
-        .map(|candidate| candidate.statement().handle.clone())
+        .map(|candidate| candidate.incepted().clone())
         .collect()
 }

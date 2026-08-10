@@ -51,7 +51,11 @@ impl Diagram {
 #[must_use]
 pub fn render(view: View, entries: &[Entry]) -> Diagram {
     let mut ordered: Vec<&Entry> = entries.iter().collect();
-    ordered.sort_by(|left, right| left.statement().handle.cmp(&right.statement().handle));
+    ordered.sort_by(|left, right| left.handle().cmp(right.handle()));
+    let handles = entries
+        .iter()
+        .map(|entry| (entry.incepted(), entry.handle()))
+        .collect::<std::collections::BTreeMap<_, _>>();
 
     let mut text = String::new();
     writeln!(text, "graph {}", view.as_str()).expect("String writes are infallible");
@@ -59,8 +63,15 @@ pub fn render(view: View, entries: &[Entry]) -> Diagram {
         View::Dependencies => {
             for entry in ordered {
                 for edge in entry.dependencies() {
-                    writeln!(text, "{} -> {}", edge.task, edge.after)
-                        .expect("String writes are infallible");
+                    let task = handles.get(&edge.task).copied();
+                    let after = handles.get(&edge.after).copied();
+                    writeln!(
+                        text,
+                        "{} -> {}",
+                        task.map_or(edge.task.as_str(), wire::TaskHandle::as_str),
+                        after.map_or(edge.after.as_str(), wire::TaskHandle::as_str)
+                    )
+                    .expect("String writes are infallible");
                 }
             }
         }
@@ -69,7 +80,7 @@ pub fn render(view: View, entries: &[Entry]) -> Diagram {
                 writeln!(
                     text,
                     "{}: {} [{}]",
-                    entry.statement().handle,
+                    entry.handle(),
                     entry.workflow().phase,
                     entry.workflow().status
                 )
@@ -82,7 +93,7 @@ pub fn render(view: View, entries: &[Entry]) -> Diagram {
                     writeln!(
                         text,
                         "{}: {} [{}]",
-                        entry.statement().handle,
+                        entry.handle(),
                         claim.actor,
                         disposition(claim.disposition)
                     )

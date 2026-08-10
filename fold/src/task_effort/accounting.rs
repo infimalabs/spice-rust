@@ -7,7 +7,7 @@ use wire::intent::{
     EffortIdentity, EffortPhaseAnswer, EffortSegmentAnswer, EffortUnavailable,
     EffortUnavailableCode, EffortUsage,
 };
-use wire::{CanonicalUuid, FactKind, Instant, Name, Phase, Seq, TaskHandle};
+use wire::{CanonicalUuid, FactKind, Instant, Name, Phase, Seq, TaskStamp};
 
 use super::ORIGIN;
 
@@ -400,7 +400,7 @@ impl TaskState {
 
 #[derive(Debug)]
 pub(super) struct OpenPhase {
-    pub(super) task: TaskHandle,
+    pub(super) task: TaskStamp,
     pub(super) phase: Phase,
     pub(super) phase_index: u32,
     pub(super) opening: Seq,
@@ -416,7 +416,7 @@ pub(super) struct OpenPhase {
 
 impl OpenPhase {
     pub(super) fn missing(
-        task: TaskHandle,
+        task: TaskStamp,
         phase: Phase,
         phase_index: u32,
         seq: Seq,

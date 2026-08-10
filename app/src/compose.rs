@@ -169,7 +169,7 @@ pub fn note(task: &str, text: &str) -> Result<Note, Refusal> {
     if written.is_empty() {
         return Err(Refusal::Missing {
             field: "Task",
-            hint: "choose a task handle such as SPICE-aBcD",
+            hint: "choose a task handle such as SPICE-1kKRRsDP",
         });
     }
     let task = written
