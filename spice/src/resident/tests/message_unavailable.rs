@@ -51,6 +51,7 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
                     role: listen::ProseRole::Assistant,
                     text: text.to_owned(),
                     phase: None,
+                    media: Vec::new(),
                     locus,
                 })],
             },

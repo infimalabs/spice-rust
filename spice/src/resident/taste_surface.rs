@@ -391,6 +391,7 @@ fn candidates(
             role: prose.role,
             text: authored,
             phase: prose.phase.clone(),
+            media: prose.media.clone(),
             locus: prose.locus,
         });
         let event = checked_locus(event)?;

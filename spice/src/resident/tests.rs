@@ -17,6 +17,8 @@ use super::*;
 // this resident root stays below the file-shape base, not merely its ratchet.
 #[path = "tests/canvas_announcement.rs"]
 mod canvas_announcement;
+#[path = "tests/media.rs"]
+mod media;
 #[path = "tests/message_unavailable.rs"]
 mod message_unavailable;
 #[path = "tests/startup_window.rs"]

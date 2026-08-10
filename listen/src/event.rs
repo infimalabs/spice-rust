@@ -116,6 +116,8 @@ pub struct Prose {
     pub text: String,
     /// Vendor phase when the current dialect reports one.
     pub phase: Option<String>,
+    /// Admitted media blocks carried beside this authored text.
+    pub media: Vec<wire::Media>,
     /// Source bytes.
     pub locus: Locus,
 }
@@ -183,6 +185,8 @@ pub struct ToolOutcome {
     pub output: Option<String>,
     /// Process exit code when the result reports one directly or structurally.
     pub exit_code: Option<i32>,
+    /// Admitted media blocks carried by this exact result.
+    pub media: Vec<wire::Media>,
 }
 
 /// Vendor knowledge of a tool result.

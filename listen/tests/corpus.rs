@@ -1,6 +1,7 @@
 use listen::{
     Canary, Decoded, Dialect, Event, EventKind, Locus, ProseRole, ReasoningContent,
-    RecordDecodeError, ResidueKind, ToolMoment, ToolResult, TurnMoment, decode, decode_record,
+    RecordDecodeError, ResidueKind, SurfaceEvent, SurfaceToolMoment, SurfaceToolResult, ToolMoment,
+    ToolResult, TurnMoment, decode, decode_record,
 };
 
 const CLAUDE_INPUT_TOKENS: u64 = 13;
@@ -193,6 +194,15 @@ fn current_opaque_failure_and_statusless_tool_payloads_are_preserved() {
                     name: "web_search".to_owned(),
                     arguments: r#"{"query":""}"#.to_owned(),
                 }
+    ));
+    assert!(matches!(
+        SurfaceEvent::from(&search.events()[0]),
+        SurfaceEvent::Tool {
+            call_id,
+            moment: SurfaceToolMoment::Call { name, arguments },
+        } if call_id == "item-4"
+            && name == "web_search"
+            && arguments == r#"{"query":""}"#
     ));
 }
 
@@ -462,6 +472,20 @@ fn persisted_records_publish_vendor_neutral_context_and_facts() {
                         && outcome.output.as_deref() == Some("Process exited with code 7")
             )
     ));
+    assert!(matches!(
+        SurfaceEvent::from(&detected.decoded.events()[0]),
+        SurfaceEvent::Tool {
+            call_id,
+            moment: SurfaceToolMoment::Result {
+                standing: SurfaceToolResult::Failed,
+                output: Some(output),
+                exit_code: Some(7),
+                media,
+            },
+        } if call_id == "call-1"
+            && output == "Process exited with code 7"
+            && media.is_empty()
+    ));
 
     let claude_user = br#"{"timestamp":"2026-08-09T02:00:00Z","type":"user","promptId":"prompt-1","message":{"type":"message","role":"user","content":[{"type":"text","text":"inspect"}]}}"#;
     let detected = decode_record(None, claude_user, locus(claude_user))
@@ -490,6 +514,97 @@ fn persisted_records_publish_vendor_neutral_context_and_facts() {
                         && usage.cached_input_tokens == 2
                         && usage.output_tokens == 3)
     ));
+}
+
+#[test]
+fn codex_and_claude_tool_results_preserve_one_admitted_image_per_call() {
+    const PNG: &str = "iVBORw0KGgo=";
+    let codex_call = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "mcp__functions__view_image",
+            "arguments": r#"{"path":"/tmp/capture.png"}"#,
+            "call_id": "call-image",
+        },
+    }))
+    .expect("Codex MCP call fixture encodes");
+    let codex_call =
+        decode(Dialect::Codex, &codex_call, locus(&codex_call)).expect("Codex MCP call decodes");
+    assert!(matches!(
+        SurfaceEvent::from(&codex_call.events()[0]),
+        SurfaceEvent::Tool {
+            call_id,
+            moment: SurfaceToolMoment::Call { name, arguments },
+        } if call_id == "call-image"
+            && name == "mcp__functions__view_image"
+            && arguments == r#"{"path":"/tmp/capture.png"}"#
+    ));
+
+    let codex = serde_json::to_vec(&serde_json::json!({
+        "type": "event_msg",
+        "payload": {
+            "type": "mcp_tool_call_end",
+            "call_id": "call-image",
+            "invocation": {
+                "server": "functions",
+                "tool": "view_image",
+                "arguments": {"path": "/tmp/capture.png"},
+            },
+            "result": {
+                "Ok": {
+                    "content": [
+                        {"type": "image", "data": PNG, "mimeType": "image/png"},
+                        {"type": "image", "data": PNG, "mimeType": "image/png"},
+                    ],
+                    "isError": false,
+                },
+            },
+        },
+    }))
+    .expect("Codex MCP result fixture encodes");
+    let codex = decode(Dialect::Codex, &codex, locus(&codex)).expect("Codex image result decodes");
+    assert!(matches!(
+        SurfaceEvent::from(&codex.events()[0]),
+        SurfaceEvent::Tool {
+            call_id,
+            moment: SurfaceToolMoment::Result {
+                standing: SurfaceToolResult::Succeeded,
+                output: Some(_),
+                media,
+                ..
+            },
+        } if call_id == "call-image" && media.len() == 1
+    ));
+    let [Event::Tool(codex)] = codex.events() else {
+        panic!("Codex image result stays one tool event");
+    };
+    let ToolMoment::Result(codex) = &codex.moment else {
+        panic!("Codex image record is a result");
+    };
+    assert_eq!(codex.media.len(), 1, "duplicate display blocks collapse");
+
+    let claude = format!(
+        concat!(
+            r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"call-image","is_error":false,"content":["#,
+            r#"{{"type":"image","source":{{"type":"base64","media_type":"image/png","data":"{0}"}}}}]}}]}}}}"#,
+        ),
+        PNG,
+    );
+    let claude = decode(Dialect::Claude, claude.as_bytes(), locus(claude.as_bytes()))
+        .expect("Claude image result decodes");
+    let [Event::Tool(claude)] = claude.events() else {
+        panic!("Claude image result stays one tool event");
+    };
+    let ToolMoment::Result(claude) = &claude.moment else {
+        panic!("Claude image record is a result");
+    };
+    assert_eq!(claude.media.len(), 1);
+    assert_eq!(
+        codex.media[0].identity().unwrap(),
+        claude.media[0].identity().unwrap(),
+        "vendor spellings fold onto one decoded-byte identity",
+    );
 }
 
 #[test]
