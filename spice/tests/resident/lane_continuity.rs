@@ -85,7 +85,7 @@ fn supervised_claude_and_codex_continuity_stays_lane_bound_across_restart() {
     let replacement = restart_resident(&fixture, &vendors, resident, &baseline);
     assert_restarted_rows(&fixture, &baseline);
     assert_resumed_tapes_and_launches(&fixture, &vendors, &baseline, &directives);
-    assert_post_restart_surfaces(&fixture, &baseline, &directives);
+    assert_post_restart_surfaces(&fixture, &vendors, &baseline, &directives);
 
     finish_and_verify(&fixture, &vendors, replacement, lanes);
 }
@@ -148,6 +148,12 @@ fn exercise_before_restart(
     vendors: &VendorFixture,
     lanes: LanePair,
 ) -> Directives {
+    let legacy_inbox = fixture.runtime.join("inbox");
+    let legacy_codex = steer::inbox::path(&legacy_inbox, lanes.codex);
+    fs::create_dir_all(legacy_codex.parent().expect("legacy inbox parent"))
+        .expect("create legacy inbox");
+    fs::write(&legacy_codex, b"obsolete common-root rendering\n")
+        .expect("seed legacy Codex rendering");
     let directives = Directives {
         acked: send(fixture, lanes.claude, "ack after compaction"),
         declined: send(fixture, lanes.claude, "decline after compaction"),
@@ -157,7 +163,11 @@ fn exercise_before_restart(
     };
     let compacted = emit_continuity_records(fixture, vendors, lanes, &directives);
     settle_directives(fixture, lanes, &directives);
-    prove_pre_restart_isolation(fixture, lanes, &directives, &compacted);
+    prove_pre_restart_isolation(fixture, vendors, lanes, &directives, &compacted);
+    assert!(
+        !legacy_codex.exists(),
+        "successful per-worktree publication removes the obsolete rendering"
+    );
     directives
 }
 
@@ -235,6 +245,7 @@ fn settle_directives(fixture: &Fixture, lanes: LanePair, directives: &Directives
 
 fn prove_pre_restart_isolation(
     fixture: &Fixture,
+    vendors: &VendorFixture,
     lanes: LanePair,
     directives: &Directives,
     compacted: &wire::body::LaneCompacted,
@@ -254,6 +265,7 @@ fn prove_pre_restart_isolation(
         &directives.codex_pending.key,
         &directives.claude_pending.key,
     );
+    assert_rendered_inboxes_are_worktree_bound(fixture, vendors, lanes, directives);
 }
 
 fn restart_resident(
@@ -356,7 +368,12 @@ fn assert_resumed_tapes_and_launches(
     }
 }
 
-fn assert_post_restart_surfaces(fixture: &Fixture, baseline: &Baseline, directives: &Directives) {
+fn assert_post_restart_surfaces(
+    fixture: &Fixture,
+    vendors: &VendorFixture,
+    baseline: &Baseline,
+    directives: &Directives,
+) {
     assert_pending_isolated(
         fixture,
         baseline.lanes.claude,
@@ -369,6 +386,7 @@ fn assert_post_restart_surfaces(fixture: &Fixture, baseline: &Baseline, directiv
         &directives.codex_pending.key,
         &directives.claude_pending.key,
     );
+    assert_rendered_inboxes_are_worktree_bound(fixture, vendors, baseline.lanes, directives);
     assert_recall(
         fixture,
         baseline.lanes.claude,
@@ -389,6 +407,33 @@ fn assert_post_restart_surfaces(fixture: &Fixture, baseline: &Baseline, directiv
         baseline.capabilities[1],
         None,
     );
+}
+
+fn assert_rendered_inboxes_are_worktree_bound(
+    fixture: &Fixture,
+    vendors: &VendorFixture,
+    lanes: LanePair,
+    directives: &Directives,
+) {
+    let claude = spice::repository::Repository::discover(&fixture.root)
+        .expect("Claude repository resolves")
+        .admit_state()
+        .expect("Claude state admits");
+    let codex = spice::repository::Repository::discover(&vendors.codex_worktree)
+        .expect("Codex repository resolves")
+        .admit_state()
+        .expect("Codex state admits");
+    assert_ne!(claude.inbox(), codex.inbox());
+    assert_eq!(claude.journal(), codex.journal());
+
+    let claude_rendered = fs::read_to_string(steer::inbox::path(claude.inbox(), lanes.claude))
+        .expect("Claude inbox rendering reads");
+    let codex_rendered = fs::read_to_string(steer::inbox::path(codex.inbox(), lanes.codex))
+        .expect("Codex inbox rendering reads");
+    assert!(claude_rendered.contains(&directives.claude_pending.key));
+    assert!(!claude_rendered.contains(&directives.codex_pending.key));
+    assert!(codex_rendered.contains(&directives.codex_pending.key));
+    assert!(!codex_rendered.contains(&directives.claude_pending.key));
 }
 
 fn finish_and_verify(

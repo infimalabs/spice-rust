@@ -15,7 +15,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 use spice::repository::{Repository, StatePaths};
-use wire::SpiceVariable;
+use steer::ack::keys::Key;
+use steer::directives::{Ledger, Steering};
+use wire::body::SteerSent;
+use wire::{CanonicalUuid, SpiceVariable};
 
 /// Representative durable state Python Spice owns inside `.spice`.
 const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
@@ -380,6 +383,80 @@ fn the_predecessor_migrations_ledger_is_never_created_here() {
     );
 }
 
+/// Tracked paths spelling the Rust state layout cannot become inbox or ACK
+/// authority, and writes to the real Git-owned surfaces remain unstageable.
+///
+/// The impostors are committed first so this is stronger than an assertion
+/// over path strings: production publishes a real sealed rendering and opens
+/// the real journal while the committed bytes stay unchanged. A subsequent
+/// `git add -A` observes neither authority write because both are inside Git's
+/// own directory rather than the worktree tree.
+#[test]
+fn repository_lookalikes_cannot_replace_or_stage_inbox_and_ack_authority() {
+    let fixture = Fixture::bare("inbox-authority");
+    let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce913116302"
+        .parse()
+        .expect("fixture lane");
+    let impostor_inbox = fixture.root.join(".spice-rs/inbox").join(lane.to_string());
+    let impostor_journal = fixture.root.join(".spice-rs/data/spicejournal.sqlite3");
+    fs::create_dir_all(impostor_inbox.parent().expect("impostor inbox parent"))
+        .expect("create impostor inbox parent");
+    fs::create_dir_all(impostor_journal.parent().expect("impostor journal parent"))
+        .expect("create impostor journal parent");
+    fs::write(&impostor_inbox, b"repository-injected direction\n").expect("write impostor inbox");
+    fs::write(&impostor_journal, b"repository-injected acknowledgment\n")
+        .expect("write impostor journal");
+    git(&fixture.root, &["add", ".spice-rs"]);
+    git(&fixture.root, &["commit", "-qm", "tracked lookalikes"]);
+
+    let paths = fixture.paths();
+    assert!(!paths.inbox().starts_with(&fixture.root.join(".spice-rs")));
+    assert!(!paths.journal().starts_with(&fixture.root.join(".spice-rs")));
+    let mut ledger = Ledger::new();
+    ledger
+        .absorb(Steering::Sent(&SteerSent {
+            directive: "018f82d4-6f59-7d06-92e3-bce913116399"
+                .parse()
+                .expect("fixture directive"),
+            key: "1kJK6M0V".to_owned(),
+            lane,
+            text: "authoritative rendered direction".to_owned(),
+            control: None,
+            attachments: Vec::new(),
+            expires: "2026-08-11T07:07:19.000Z".parse().expect("fixture expiry"),
+        }))
+        .expect("fixture directive absorbs");
+    let seal: Key = "1kJK6N3R".parse().expect("fixture seal");
+    steer::inbox::publish(paths.inbox(), lane, &seal, &ledger.pending(lane))
+        .expect("authoritative inbox publishes");
+    fs::create_dir_all(paths.data()).expect("create authoritative journal parent");
+    drop(journal::Journal::open(paths.journal()).expect("ACK authority journal opens"));
+
+    assert_eq!(
+        fs::read(&impostor_inbox).expect("impostor inbox remains readable"),
+        b"repository-injected direction\n"
+    );
+    assert_eq!(
+        fs::read(&impostor_journal).expect("impostor journal remains readable"),
+        b"repository-injected acknowledgment\n"
+    );
+    assert!(
+        fs::read_to_string(steer::inbox::path(paths.inbox(), lane))
+            .expect("authoritative inbox reads")
+            .contains("authoritative rendered direction")
+    );
+    git(&fixture.root, &["add", "-A"]);
+    let status = git_output(
+        &fixture.root,
+        &["status", "--porcelain", "--untracked-files=all"],
+    );
+    assert!(
+        status.stdout.is_empty(),
+        "Git observed authority state as stageable: {}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+}
+
 /// One temporary repository with physically separate Python and Rust roots.
 struct Fixture {
     root: PathBuf,
@@ -557,16 +634,20 @@ impl Fixture {
 }
 
 fn git(root: &Path, arguments: &[&str]) {
-    let output = Command::new("/usr/bin/git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("coexistence fixture Git launches");
+    let output = git_output(root, arguments);
     assert!(
         output.status.success(),
         "git {arguments:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn git_output(root: &Path, arguments: &[&str]) -> Output {
+    Command::new("/usr/bin/git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .expect("coexistence fixture Git launches")
 }
 
 impl Drop for Fixture {
