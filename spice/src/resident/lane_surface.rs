@@ -75,7 +75,9 @@ const REAP: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
 const RECORD_QUEUE: usize = 64;
 const SESSION_PROOF: Duration = Duration::from_secs(10);
-const SESSION_SETTLE: Duration = Duration::from_millis(25);
+// A second declaration crosses a separate child write and capture callback.
+// Keep the duplicate window bounded, but long enough to survive scheduler load.
+const SESSION_SETTLE: Duration = Duration::from_millis(250);
 
 /// Resolve the one durable subscription row for a lineage.
 fn subscription_row(

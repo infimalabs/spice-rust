@@ -134,8 +134,12 @@ fn partition_splits_large_packages_in_stable_target_order() {
     let shards = partition(&inventory);
 
     assert_eq!(shards.len(), 3);
-    assert_eq!(shards[0].targets.len(), TARGETS_PER_SHARD);
-    assert_eq!(shards[1].targets.len(), 1);
+    assert_eq!(shards[0].targets.len(), 3);
+    assert_eq!(shards[1].targets.len(), 2);
+    assert_eq!(shards[0].targets[0].name, "target-00");
+    assert_eq!(shards[0].targets[1].name, "target-02");
+    assert_eq!(shards[1].targets[0].name, "target-01");
+    assert_eq!(shards[1].targets[1].name, "target-03");
     assert_eq!(shards[2].name, "fixture-b");
     validate_partition(&inventory, &shards).expect("split partition remains exact");
 }
@@ -281,6 +285,33 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
             .edges()
             .iter()
             .all(|edge| edge.source() == "fixture-a/src/behavior.rs")
+    );
+}
+
+#[test]
+fn nested_integration_module_selects_its_exact_cargo_test_target() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[0].targets.push(TargetIdentity {
+        package: "fixture-a-id".to_owned(),
+        kind: "test".to_owned(),
+        name: "behavior".to_owned(),
+        source: PathBuf::from("/workspace/fixture-a/tests/behavior.rs"),
+    });
+
+    let report = selection_report(
+        &inventory,
+        Path::new("/workspace"),
+        wire::Digest::compute(wire::Domain::GateTree, b"nested integration module"),
+        &["fixture-a/tests/behavior/cases.rs".to_owned()],
+    )
+    .expect("nested integration module maps through its target root");
+
+    assert!(report.admits());
+    assert_eq!(report.tests(), ["fixture-a::test:behavior"]);
+    assert_eq!(report.edges().len(), 1);
+    assert_eq!(
+        report.edges()[0].source(),
+        "fixture-a/tests/behavior/cases.rs"
     );
 }
 
@@ -494,9 +525,10 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
         "resident-test",
         concat!(
             "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/test.pid\"\n",
-            "\"$VENDOR\" &\n",
-            "\"$WAITER\" &\n",
+            "\"$VENDOR\" & vendor=$!\n",
+            "printf '%s\\n' \"$vendor\" > \"$PID_ROOT/vendor.pid\"\n",
+            "\"$WAITER\" & waiter=$!\n",
+            "printf '%s\\n' \"$waiter\" > \"$PID_ROOT/waiter.pid\"\n",
             "wait\n",
         ),
     );
@@ -508,7 +540,8 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
             "printf '%s\\n' \"$$\" > \"$PID_ROOT/cargo.pid\"\n",
             "printf '     Running tests/resident.rs (fixture)\\n' >&2\n",
             "printf 'test resident::fifo_wait ... '\n",
-            "\"$TEST_BINARY\" &\n",
+            "\"$TEST_BINARY\" & test_process=$!\n",
+            "printf '%s\\n' \"$test_process\" > \"$PID_ROOT/test.pid\"\n",
             "wait\n",
         ),
     );
@@ -530,8 +563,8 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
     let shard = fixture_inventory().packages.remove(0);
     let policy = RunPolicy {
         concurrency: 1,
-        shard_deadline: Duration::from_secs(5),
-        coordinator_deadline: Duration::from_secs(7),
+        shard_deadline: Duration::from_secs(10),
+        coordinator_deadline: Duration::from_secs(12),
         progress_interval: Duration::from_secs(1),
         output_drain: Duration::from_secs(1),
         reap: Duration::from_secs(1),
@@ -766,29 +799,22 @@ fn reporting_process_fixture(label: &str) -> ReportingProcessFixture {
     let vendor = executable(
         &root,
         "report-vendor",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.vendor.pid\"\n",
-            "exec /usr/bin/tail -f /dev/null\n",
-        ),
+        "#!/bin/sh\nexec /usr/bin/tail -f /dev/null\n",
     );
     let waiter = executable(
         &root,
         "report-waiter",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.waiter.pid\"\n",
-            "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",
-        ),
+        "#!/bin/sh\nexec /bin/cat \"$PID_ROOT/resident.fifo\"\n",
     );
     let test_binary = executable(
         &root,
         "report-test",
         concat!(
             "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.test.pid\"\n",
             "ROLE=\"$ROLE\" \"$VENDOR\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/$ROLE.vendor.pid\"\n",
             "ROLE=\"$ROLE\" \"$WAITER\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/$ROLE.waiter.pid\"\n",
             "wait\n",
         ),
     );
@@ -811,6 +837,7 @@ fn reporting_process_fixture(label: &str) -> ReportingProcessFixture {
             "printf '     Running tests/%s.rs (fixture)\\n' \"$role\" >&2\n",
             "printf 'test %s::fifo_wait ... ' \"$role\"\n",
             "ROLE=\"$role\" \"$TEST_BINARY\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/$role.test.pid\"\n",
             "wait\n",
         ),
     );

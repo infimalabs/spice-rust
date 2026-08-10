@@ -6,6 +6,8 @@ use gate::{
 };
 use serde::Deserialize;
 
+mod support;
+
 const TRACKED_POLICY: &str = include_str!("../../spice-rust.toml");
 const TRACKED_BASELINE: &str = include_str!("../../baseline.toml");
 const TRACKED_FILE_LOC_LIMIT: u64 = 1_000;
@@ -13,7 +15,8 @@ const TRACKED_FILE_LOC_RATCHET: u64 = 1_500;
 
 #[test]
 fn tracked_inputs_load_one_operational_current_contract() {
-    let root = workspace_root();
+    let repository = support::contract_repository("tracked-inputs");
+    let root = repository.root.clone();
     let contract = Contract::load(&root).expect("tracked current gate inputs load");
 
     the_measured_policy_is_current(&contract);
@@ -45,8 +48,9 @@ fn tracked_inputs_load_one_operational_current_contract() {
     let run = contract
         .adjudicate(&root)
         .expect("an operational contract reaches a complete verdict");
-    // This adjudicates the live workspace against captured HEAD, so a refusal
-    // names the changed Rust file and exact introduced over-limit line.
+    // This adjudicates the current tracked contract against one owned committed
+    // source, so the test is equally operational inside an immutable selected
+    // tree that is intentionally not itself a Git repository.
     assert_eq!(
         run.receipt().standing(),
         Standing::Clean,

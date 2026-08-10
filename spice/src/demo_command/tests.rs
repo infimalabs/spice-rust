@@ -466,6 +466,20 @@ fn a_disappearing_known_sqlite_sidecar_is_a_benign_readiness_change() {
 }
 
 #[test]
+fn a_disappearing_atomic_publication_stage_is_a_benign_readiness_change() {
+    let scratch = Scratch::new("transient-atomic-publication");
+    let journal = scratch.child("spicejournal.sqlite3");
+    let temporary = scratch.child(".spice-atomic-123-456.tmp");
+    fs::write(&temporary, []).expect("the atomic staging file is discovered");
+    let error =
+        notify::Error::io(io::Error::from(io::ErrorKind::NotFound)).add_path(temporary.clone());
+
+    fs::remove_file(&temporary).expect("the staging file disappears before inspection");
+
+    assert_eq!(readiness_change(Err(error), &journal), Ok(()));
+}
+
+#[test]
 fn persistent_and_unrelated_readiness_scan_failures_are_preserved() {
     let scratch = Scratch::new("readiness-errors");
     let journal = scratch.child("spicejournal.sqlite3");
@@ -498,6 +512,15 @@ fn persistent_and_unrelated_readiness_scan_failures_are_preserved() {
     )
     .expect_err("an unrelated missing path remains a readiness failure");
     assert!(unrelated_missing.contains(&unrelated_path.display().to_string()));
+
+    let malformed_atomic_path = scratch.child(".spice-atomic-not-a-sequence.tmp");
+    let malformed_atomic_missing = readiness_change(
+        Err(notify::Error::io(io::Error::from(io::ErrorKind::NotFound))
+            .add_path(malformed_atomic_path.clone())),
+        &journal,
+    )
+    .expect_err("an unrelated lookalike remains a readiness failure");
+    assert!(malformed_atomic_missing.contains(&malformed_atomic_path.display().to_string()));
 }
 
 /// A readiness scan that fails refuses under its own name.

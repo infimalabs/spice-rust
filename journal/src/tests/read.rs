@@ -19,7 +19,7 @@ fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
 
     let journal = authority_fixture();
     let mut second = task_head();
-    second.incepted = "1kKRRsDQ".parse().expect("second task stamp");
+    second.born = "1kKRRsDQ".parse().expect("second task stamp");
     second.title = "Second journal task".to_owned();
     insert_head(
         &journal.connection,
@@ -44,7 +44,7 @@ fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
         .expect("coherent board read");
     let handles = heads
         .into_iter()
-        .map(|heads| heads.into_bodies().0.incepted.to_string())
+        .map(|heads| heads.into_bodies().0.born.to_string())
         .collect::<Vec<_>>();
 
     assert_eq!(cursor, Seq::new(2));
@@ -80,7 +80,7 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
 
     let mismatched_key = authority_fixture();
     let mut wrong_task = task_head();
-    wrong_task.incepted = "1kKRRsDQ".parse().expect("alternate task stamp");
+    wrong_task.born = "1kKRRsDQ".parse().expect("alternate task stamp");
     mismatched_key
         .connection
         .execute(

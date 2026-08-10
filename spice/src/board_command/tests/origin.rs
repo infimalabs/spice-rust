@@ -163,7 +163,7 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
     ));
     let causal = task_origin(
         &parent
-            .incepted()
+            .born()
             .expect("parent handle carries an inception stamp"),
     )
     .expect("parent origin");
@@ -175,7 +175,7 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
     assert_eq!(
         at(&current, &child).statement.body.dependencies,
         [dependency
-            .incepted()
+            .born()
             .expect("dependency handle carries an inception stamp")],
         "causal provenance was inferred from a scheduling edge"
     );

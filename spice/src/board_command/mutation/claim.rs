@@ -133,8 +133,8 @@ pub(in crate::board_command) fn commit_claim(
         possession,
     } = plan;
     let task = selected.handle().clone();
-    let incepted = selected.incepted().clone();
-    let origin = match task_origin(&incepted) {
+    let born = selected.born().clone();
+    let origin = match task_origin(&born) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -156,7 +156,7 @@ pub(in crate::board_command) fn commit_claim(
         &mut write,
         command,
         &selected,
-        &incepted,
+        &born,
         grant.lane,
         grant.occupant,
         grant.at,
@@ -306,7 +306,7 @@ fn claim_selection<'a>(
                     "task next has no selected task witness",
                 )
             })?;
-        if witnessed != selected.incepted() {
+        if witnessed != selected.born() {
             return Err(refusal(
                 "board::witness-moved",
                 Some(format!(
@@ -334,7 +334,7 @@ fn claim_selection<'a>(
     let entry = snapshot
         .entries
         .iter()
-        .find(|entry| entry.incepted() == task)
+        .find(|entry| entry.born() == task)
         .ok_or_else(|| {
             refusal(
                 "task::unknown",

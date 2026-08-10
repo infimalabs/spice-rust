@@ -467,7 +467,13 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     let lane = test_uuid(5);
     let occupant = test_uuid(6);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane_in_worktree(
+        &bus,
+        epoch,
+        lane,
+        occupant,
+        paths.worktree.to_str().expect("UTF-8 fixture worktree"),
+    );
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
     let publisher = source.message_publisher();
     let (record, bag) = reminder_capture(lane, occupant);

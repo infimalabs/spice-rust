@@ -237,8 +237,8 @@ pub(super) fn add_project_with_acceptance(
     flow: Option<&str>,
     acceptance: &[&str],
 ) -> TaskHandle {
-    let incepted = stamp(task);
-    let task = TaskHandle::for_project(project, &incepted);
+    let born = stamp(task);
+    let task = TaskHandle::for_project(project, &born);
     let origin = "fixture:board-command"
         .parse()
         .expect("fixture origin is valid");
@@ -247,7 +247,7 @@ pub(super) fn add_project_with_acceptance(
         epoch,
         actor,
         CommandKind::TaskAdd,
-        vec![Witness::Absence { task: incepted }],
+        vec![Witness::Absence { task: born }],
         &TaskAdd {
             title: title.to_owned(),
             project: Some(project.to_owned()),

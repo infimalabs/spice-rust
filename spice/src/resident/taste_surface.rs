@@ -23,7 +23,7 @@ pub(super) struct Candidate {
     content: Digest,
     bag: Digest,
     trigger: String,
-    driver: String,
+    vendor: String,
     source: String,
     locus: TranscriptLocus,
     text: String,
@@ -285,7 +285,7 @@ fn judged_proposal(
             content: decided.candidate.content.clone(),
             bag: decided.candidate.bag.clone(),
             trigger: decided.candidate.trigger.clone(),
-            driver: decided.candidate.driver.clone(),
+            vendor: decided.candidate.vendor.clone(),
             source: decided.candidate.source.clone(),
             locus: decided.candidate.locus,
             attempts: decided.judgment.attempts.clone(),
@@ -409,7 +409,7 @@ fn candidates(
                 content,
                 bag: bag_identity.clone(),
                 trigger: hit.trigger().to_owned(),
-                driver: hit.message().to_owned(),
+                vendor: hit.message().to_owned(),
                 source: hit.context().to_owned(),
                 locus: TranscriptLocus {
                     member: hit.locus().member,
@@ -457,10 +457,10 @@ fn adjudicate_candidates(
 
 fn judge_prompts(candidate: &Candidate) -> Vec<crate::judge::Prompt> {
     let subject = format!(
-        "taste={}; trigger={}; driver={}; authored_source={}",
+        "taste={}; trigger={}; vendor={}; authored_source={}",
         serde_json::to_string(&candidate.taste).expect("taste text encodes"),
         serde_json::to_string(&candidate.trigger).expect("trigger text encodes"),
-        serde_json::to_string(&candidate.driver).expect("driver text encodes"),
+        serde_json::to_string(&candidate.vendor).expect("vendor text encodes"),
         serde_json::to_string(&candidate.source).expect("source text encodes"),
     );
     let mut prompts = vec![
@@ -479,7 +479,7 @@ fn judge_prompts(candidate: &Candidate) -> Vec<crate::judge::Prompt> {
         crate::judge::Prompt::new(
             2,
             format!(
-                "Classify the same proposition: the source demonstrates the behavior selected by the taste trigger and warrants its driver. Mentions without demonstrated behavior are false.\n{subject}\nOutput one token only: YES for true, NO for false.\n"
+                "Classify the same proposition: the source demonstrates the behavior selected by the taste trigger and warrants its vendor. Mentions without demonstrated behavior are false.\n{subject}\nOutput one token only: YES for true, NO for false.\n"
             ),
         ),
     ];

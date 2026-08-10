@@ -40,6 +40,7 @@ impl ConfigKeyDeclaration {
 
 /// The current packaged configuration-key registry in canonical resolver order.
 pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
+    ConfigKeyDeclaration::new("commands.<name>", TRACKED),
     ConfigKeyDeclaration::new("tasks.stems", TRACKED),
     ConfigKeyDeclaration::new("tasks.hidden_stems", TRACKED),
     ConfigKeyDeclaration::new("tasks.project_min_depth", TRACKED),

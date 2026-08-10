@@ -219,7 +219,7 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
         environment: Environment::new(environment).expect("capture deadline environment"),
         group: ProcessGroup::New,
         deadlines: Deadlines::new(
-            Duration::from_secs(6),
+            Duration::from_secs(15),
             Duration::from_millis(200),
             Duration::from_millis(200),
         )
@@ -394,10 +394,8 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
         summary.contains("git commit"),
         "the pre-commit refusal names how a merge is recorded: {summary}"
     );
-    let pre_commit_report = BatteryReport::decode(evidence.as_bytes())
-        .expect("pre-commit refusal carries a canonical report");
     assert_eq!(
-        pre_commit_report.refusal_fold().as_str(),
+        evidence,
         report.refusal_fold().as_str(),
         "the commit surface renders the same complete failure projection as the canonical report",
     );

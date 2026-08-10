@@ -167,7 +167,7 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
         .body
         .task;
     assert_ne!(rehomed, task);
-    assert_eq!(rehomed.incepted(), task.incepted());
+    assert_eq!(rehomed.born(), task.born());
     let ArtifactAnswer::Listed { artifacts, .. } = fixture
         .reply::<ArtifactAnswer>(&[
             "task".to_owned(),
@@ -206,12 +206,12 @@ fn task_artifact_refuses_malformed_project_policy_before_state_access() {
     else {
         panic!("malformed project policy did not refuse")
     };
-    assert_eq!(refusal.reason(), "artifact::configuration-refused");
+    assert_eq!(refusal.reason(), "cli::mount-registry-refused");
     assert_eq!(
         refusal
             .diagnostic()
             .and_then(wire::RefusalDiagnostic::expected),
-        Some("one admitted tracked task-project policy and machine-local configuration")
+        Some("one valid tracked command mount registry")
     );
     let observed = refusal
         .diagnostic()
@@ -232,6 +232,8 @@ fn task_artifact_refuses_opaque_binary_without_panicking_or_publishing() {
             "Opaque artifact evidence".to_owned(),
             "--project".to_owned(),
             "rim.artifact".to_owned(),
+            "--origin".to_owned(),
+            "fixture:task-artifact-cli".to_owned(),
         ])
         .body
         .task;
@@ -429,14 +431,14 @@ fn assert_backup_restore(
     second: artifact::Artifact,
 ) {
     fixture.reply::<JournalBackup>(&["backup".to_owned(), fixture.bundle.display().to_string()]);
-    let incepted = task
-        .incepted()
+    let born = task
+        .born()
         .expect("fixture handle carries its inception stamp");
     assert!(
         fixture
             .bundle
             .join(format!(
-                "artifacts/tasks/{incepted}/objects/{}/payload",
+                "artifacts/tasks/{born}/objects/{}/payload",
                 first.digest
             ))
             .is_file(),

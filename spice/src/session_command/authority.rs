@@ -8,16 +8,16 @@ use spice::repository::Repository;
 use wire::{Actor, ResidencyHead};
 
 use super::model::{
-    AuthorityFoldView, AuthorityUnknown, BriefingAuthorities, DecisionPriorityView, HeldClaimView,
-    HeldWorkView, OutstandingAskView,
+    AuthorityFoldView, AuthorityUnknown, DecisionPriorityView, HeldClaimView, HeldWorkView,
+    OutstandingAskView, RecallAuthorities,
 };
 use super::{Environment, source};
 
 pub(crate) fn observe(
     sources: &[source::ResolvedSource],
     environment: &Environment,
-) -> BriefingAuthorities {
-    let mut briefing = BriefingAuthorities {
+) -> RecallAuthorities {
+    let mut briefing = RecallAuthorities {
         fold: AuthorityFoldView {
             mode: "bounded-read-only".to_owned(),
             probes: vec![
@@ -65,7 +65,7 @@ struct ObservedAuthorities {
     peer_claims: Option<Result<usize, AuthorityReadError>>,
 }
 
-fn observe_current_authorities(thread: Option<&str>, briefing: &mut BriefingAuthorities) {
+fn observe_current_authorities(thread: Option<&str>, briefing: &mut RecallAuthorities) {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => {
@@ -206,7 +206,7 @@ fn read_authorities(
 }
 
 fn apply_observed(
-    briefing: &mut BriefingAuthorities,
+    briefing: &mut RecallAuthorities,
     thread: Option<&str>,
     observed: ObservedAuthorities,
 ) {
@@ -295,18 +295,13 @@ fn apply_observed(
     }
 }
 
-fn unavailable_probes(briefing: &mut BriefingAuthorities, detail: &str) {
+fn unavailable_probes(briefing: &mut RecallAuthorities, detail: &str) {
     unavailable_probe(briefing, "steering", "pending-thread-lane", detail);
     unavailable_probe(briefing, "board", "exact-actor-claim", detail);
     unavailable_probe(briefing, "board", "active-peer-count", detail);
 }
 
-fn unavailable_probe(
-    briefing: &mut BriefingAuthorities,
-    authority: &str,
-    probe: &str,
-    detail: &str,
-) {
+fn unavailable_probe(briefing: &mut RecallAuthorities, authority: &str, probe: &str, detail: &str) {
     briefing.unknowns.push(AuthorityUnknown {
         authority: authority.to_owned(),
         probe: probe.to_owned(),
@@ -341,7 +336,7 @@ fn lane_for_thread<'a>(
 fn exact_thread(
     sources: &[source::ResolvedSource],
     environment: &Environment,
-    briefing: &mut BriefingAuthorities,
+    briefing: &mut RecallAuthorities,
 ) -> Option<String> {
     let mut threads = sources
         .iter()
@@ -380,7 +375,7 @@ fn exact_thread(
 }
 
 fn unknown(
-    briefing: &mut BriefingAuthorities,
+    briefing: &mut RecallAuthorities,
     authority: &str,
     probe: &str,
     error: &(dyn fmt::Display + '_),

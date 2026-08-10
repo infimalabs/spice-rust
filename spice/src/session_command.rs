@@ -51,8 +51,8 @@ impl Environment {
     ) -> Self {
         vendors.sort_by_key(|row| {
             (
-                row.vendor.session_study().ambient_precedence(),
-                row.vendor.session_study().identity(),
+                row.vendor.session_gate().ambient_precedence(),
+                row.vendor.session_gate().identity(),
             )
         });
         Self {

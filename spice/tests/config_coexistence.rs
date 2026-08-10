@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::config::{Document, Inputs, descriptors, locations, resolve};
 use wire::ConfigSource;
@@ -53,19 +54,44 @@ fn roots_the_predecessor_refuses(document: &str) -> Vec<String> {
         .collect()
 }
 
+struct RepositoryFixture(PathBuf);
+
+impl RepositoryFixture {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "spice-config-coexistence-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir_all(root.join(".git")).expect("create fixture repository");
+        let root = fs::canonicalize(root).expect("canonicalize fixture repository");
+        for name in ["spice.toml", "spice-rust.toml"] {
+            fs::copy(workspace().join(name), root.join(name))
+                .unwrap_or_else(|error| panic!("copy fixture {name}: {error}"));
+        }
+        Self(root)
+    }
+}
+
+impl Drop for RepositoryFixture {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).expect("remove coexistence fixture");
+    }
+}
+
 #[test]
 fn rust_and_python_tracked_configuration_paths_are_distinct() {
-    let root = workspace();
-    let repository = spice::repository::Repository::discover(&root).expect("workspace discovers");
+    let fixture = RepositoryFixture::new();
+    let root = &fixture.0;
+    let repository = spice::repository::Repository::discover(root).expect("fixture discovers");
     let rust = locations(&repository);
+    let python = root.join("spice.toml");
 
     assert_eq!(rust.tracked(), root.join("spice-rust.toml"));
-    assert_ne!(rust.tracked(), python_configuration());
+    assert_ne!(rust.tracked(), python);
     assert!(rust.tracked().is_file(), "Rust tracked policy is present");
-    assert!(
-        python_configuration().is_file(),
-        "Python tracked policy is present"
-    );
+    assert!(python.is_file(), "Python tracked policy is present");
 }
 
 #[test]

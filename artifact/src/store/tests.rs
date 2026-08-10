@@ -321,10 +321,10 @@ fn prune_requires_completed_status_and_honors_the_age_bound() {
         )
         .expect("bounded plan");
     assert_eq!(plan.operations.len(), 1);
-    assert_eq!(plan.operations[0].incepted, completed);
+    assert_eq!(plan.operations[0].born, completed);
     assert_eq!(plan.operations[0].handle, handle(&completed));
     assert_eq!(plan.skipped.len(), 1);
-    assert_eq!(plan.skipped[0].incepted, pending);
+    assert_eq!(plan.skipped[0].born, pending);
     assert_eq!(plan.skipped[0].handle, Some(handle(&pending)));
     assert_eq!(plan.skipped[0].status, "pending");
 }

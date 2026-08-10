@@ -19,7 +19,7 @@ impl Vendor {
             .expect("compiled extension declarations are validated by the test gate")
             .session_vendors()
             .into_iter()
-            .find(|vendor| vendor.session_study().dialect() == dialect)
+            .find(|vendor| vendor.session_gate().dialect() == dialect)
             .expect("every compiled transcript dialect has one study declaration");
         Self::declared(vendor)
     }
@@ -30,7 +30,7 @@ impl Vendor {
 
     fn identity(self) -> &'static str {
         self.0
-            .map_or("unknown", |vendor| vendor.session_study().identity())
+            .map_or("unknown", |vendor| vendor.session_gate().identity())
     }
 }
 
@@ -384,7 +384,7 @@ pub(crate) struct AuthorityUnknown {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct BriefingAuthorities {
+pub(crate) struct RecallAuthorities {
     pub(crate) fold: AuthorityFoldView,
     pub(crate) priority: DecisionPriorityView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -419,7 +419,7 @@ pub(crate) enum Report {
         horizon_basis: String,
         requested_compactions: usize,
         selected_compactions: usize,
-        authorities: Box<BriefingAuthorities>,
+        authorities: Box<RecallAuthorities>,
         window: RecallWindow,
         pruning: PruningView,
         residues: Vec<Residue>,

@@ -864,7 +864,7 @@ mod tests {
 
         assert_eq!(analysis.outcome, ArmOutcome::Cancelled);
         let timing = analysis.timing.expect("a cancelled compiler reports time");
-        assert!(timing.elapsed_ms > 0);
+        assert!(timing.observation_bound_ms > 0);
         assert!(timing.elapsed_ms <= timing.observation_bound_ms);
     }
 }

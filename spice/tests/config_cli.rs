@@ -294,7 +294,7 @@ fn local_symlinks_are_refused_without_following_or_replacing_them() {
 
     refusal(
         fixture.invoke(&["--json", "config", "lock.worker.shards", "2"]),
-        "config::source-not-regular",
+        "cli::mount-registry-refused",
     );
     assert_eq!(
         fs::read(&target).expect("read symlink target"),
@@ -344,7 +344,7 @@ fn linked_and_replaced_local_parents_never_receive_config_or_lock_artifacts() {
     symlink(&outside, linked.local().parent().expect("local parent")).expect("link local parent");
     refusal(
         linked.invoke(&["--json", "config", "lock.worker.shards", "2"]),
-        "config::parent-refused",
+        "cli::mount-registry-refused",
     );
     assert!(
         fs::read_dir(&outside)
@@ -373,7 +373,7 @@ fn linked_and_replaced_local_parents_never_receive_config_or_lock_artifacts() {
             "2",
             &format!("--apply={digest}"),
         ]),
-        "config::parent-refused",
+        "cli::mount-registry-refused",
     );
     assert!(
         fs::read_dir(&outside)

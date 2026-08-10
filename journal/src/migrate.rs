@@ -8,6 +8,7 @@ use crate::SCHEMA_VERSION;
 
 mod claim_index;
 mod identity_stamp;
+mod public_vocabulary;
 mod release_notes;
 mod residency_lineage;
 mod steering_identity;
@@ -468,6 +469,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (5, MigrationStep::Rust(migrate_schema_5)),
     (6, MigrationStep::Sql(MIGRATE_6_TO_7_SQL)),
     (7, MigrationStep::Rust(claim_index::migrate)),
+    (8, MigrationStep::Rust(public_vocabulary::migrate)),
 ];
 
 /// Schema 6 to 7: bounded current steering authority and missed-evidence index.
@@ -674,8 +676,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 8, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 9, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 8;
+PRAGMA user_version = 9;
 "#;

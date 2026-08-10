@@ -28,6 +28,7 @@ static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
+    executable: PathBuf,
     tracked_bytes: Vec<u8>,
     exclude_bytes: Vec<u8>,
 }
@@ -41,6 +42,9 @@ impl Fixture {
             std::process::id()
         ));
         fs::create_dir_all(root.join(".git/info")).expect("create repository metadata");
+        let executable = root.join("fixture-spice");
+        fs::hard_link(env!("CARGO_BIN_EXE_spice"), &executable)
+            .expect("retain one fixture-scoped link to the Spice executable");
         fs::create_dir_all(root.join(".git/.spice-rs/data"))
             .expect("create Spice state sentinel directory");
         let exclude_bytes = b"# operator exclusions\n/cache/\n".to_vec();
@@ -52,13 +56,14 @@ impl Fixture {
         .expect("write Spice state sentinel");
         fs::write(
             root.join(".git/.spice-rs/config.toml"),
-            b"[operator]\nmode = 'native'\n",
+            b"[listen]\nwindow = \"45s\"\n",
         )
         .expect("write Spice local configuration sentinel");
-        let tracked_bytes = b"[tasks]\nmax_parallel = 7\n\n[policy]\nowner = \"spice\"\n".to_vec();
+        let tracked_bytes = b"[lane]\nlease = \"17m\"\n\n[policy]\nenv_names = []\n".to_vec();
         fs::write(root.join("spice-rust.toml"), &tracked_bytes).expect("write tracked intent");
         Self {
             root,
+            executable,
             tracked_bytes,
             exclude_bytes,
         }
@@ -77,7 +82,7 @@ impl Fixture {
     }
 
     fn command(&self, arguments: &[&str]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        let mut command = Command::new(&self.executable);
         command
             .args(arguments)
             .current_dir(&self.root)
@@ -159,7 +164,7 @@ impl Fixture {
         );
         assert_eq!(
             fs::read(authority.join("config.toml")).unwrap(),
-            b"[operator]\nmode = 'native'\n"
+            b"[listen]\nwindow = \"45s\"\n"
         );
         let mut entries = fs::read_dir(authority)
             .unwrap()
@@ -348,7 +353,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(applied.completed(), operation_count);
     assert_eq!(
         fs::read(fixture.installed_binary()).unwrap(),
-        fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
+        fs::read(&fixture.executable).unwrap()
     );
     assert!(fixture.record().is_file());
     fixture.assert_state_unchanged();
@@ -540,7 +545,7 @@ fn apply_pause_released_before_receiver_setup_is_observed() {
     assert_eq!(applied.completed(), operation_count);
     assert_eq!(
         fs::read(fixture.installed_binary()).unwrap(),
-        fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
+        fs::read(&fixture.executable).unwrap()
     );
     assert!(fixture.record().is_file());
     fixture.assert_state_unchanged();
