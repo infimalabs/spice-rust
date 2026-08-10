@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::envelope::{Actor, WireVersion};
 use crate::ident::CanonicalUuid;
-use crate::reply::{Fault, FaultClass, Refusal};
+use crate::reply::{Fault, FaultClass, Refusal, RefusalDiagnostic};
 
 /// Authenticated same-origin bootstrap for one embedded operator canvas.
 ///
@@ -122,13 +122,12 @@ impl Hello {
     /// [`Rejected::Epoch`] when the addressed generation is not the resident's.
     pub fn admit(&self, resident_epoch: CanonicalUuid) -> Result<(), Rejected> {
         if !self.wire.is_current() {
-            return Err(Rejected::Wire(Refusal {
-                reason: "hello::wire-mismatch".to_owned(),
-                witness: None,
-                expected: Some(WireVersion::CURRENT.to_string()),
-                observed: Some(self.wire.to_string()),
-                remedy: "reconnect with a client built from this resident's wire crate".to_owned(),
-            }));
+            return Err(Rejected::Wire(Refusal::bare(RefusalDiagnostic::new(
+                "hello::wire-mismatch",
+                None,
+                Some(WireVersion::CURRENT.to_string()),
+                Some(self.wire.to_string()),
+            ))));
         }
         if self.epoch != resident_epoch {
             return Err(Rejected::Epoch(Fault {

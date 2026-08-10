@@ -437,13 +437,15 @@ pub fn decision_witnesses(
     answer: wire::Answer,
 ) -> Result<Vec<Witness>, Refusal> {
     if !matches!(answer, wire::Answer::Granted | wire::Answer::Denied) {
-        return Err(Refusal {
-            reason: "consent::ruling-invalid".to_owned(),
-            witness: Some(pending.request.to_string()),
-            expected: Some("granted or denied".to_owned()),
-            observed: Some(format!("{answer:?}").to_lowercase()),
-            remedy: "choose allow or deny for the queued request".to_owned(),
-        });
+        return Err(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "consent::ruling-invalid",
+                Some(pending.request.to_string()),
+                Some("granted or denied".to_owned()),
+                Some(format!("{answer:?}").to_lowercase()),
+            )
+            .with_detail("choose allow or deny for the queued request"),
+        ));
     }
     let mut witnesses = vec![
         Witness::Consent {

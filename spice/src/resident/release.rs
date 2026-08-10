@@ -69,18 +69,19 @@ fn prepare_release_publish(
         || publish.manifest != *release.manifest()
         || notes != release.notes()
     {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "release::plan-moved".to_owned(),
-            witness: Some("publication-plan".to_owned()),
-            expected: Some(format!(
-                "{}:{}:{}",
-                release.key(),
-                release.manifest(),
-                release.notes()
-            )),
-            observed: Some(format!("{}:{}:{}", publish.key, publish.manifest, notes)),
-            remedy: "preview the current sealed manifest and apply its exact key".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::plan-moved".to_owned(),
+                Some("publication-plan".to_owned()),
+                Some(format!(
+                    "{}:{}:{}",
+                    release.key(),
+                    release.manifest(),
+                    release.notes()
+                )),
+                Some(format!("{}:{}:{}", publish.key, publish.manifest, notes)),
+            ),
+        )));
     }
     let snapshot = bus
         .fact_snapshot()
@@ -88,17 +89,18 @@ fn prepare_release_publish(
     let state = crate::release_command::observe(&snapshot, &release)
         .map_err(|error| release_refusal("release::evidence-refused", &error.to_string()))?;
     if !release_witnesses_match(command.expected(), &release, state) {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "release::witness-moved".to_owned(),
-            witness: Some("observation-and-seals".to_owned()),
-            expected: Some(format!(
-                "one {} observation at {} and both detached receipts",
-                release.key(),
-                state.observation()
-            )),
-            observed: Some(format!("{:?}", command.expected())),
-            remedy: "re-read the current release plan and retry its exact witnesses".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::witness-moved".to_owned(),
+                Some("observation-and-seals".to_owned()),
+                Some(format!(
+                    "one {} observation at {} and both detached receipts",
+                    release.key(),
+                    state.observation()
+                )),
+                Some(format!("{:?}", command.expected())),
+            ),
+        )));
     }
     Ok(PreparedReleasePublish {
         release,
@@ -109,13 +111,12 @@ fn prepare_release_publish(
 
 fn current_notes(publish: &ReleasePublish) -> Result<&wire::Digest, Outcome<CommandAnswer>> {
     publish.notes.digest().ok_or_else(|| {
-        Outcome::Refusal(Refusal {
-            reason: "release::notes-identity-absent".to_owned(),
-            witness: Some("publication-plan".to_owned()),
-            expected: Some("the exact curated release-note digest".to_owned()),
-            observed: Some("historical schema-4 absence".to_owned()),
-            remedy: "preview the current sealed release and apply its exact plan".to_owned(),
-        })
+        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "release::notes-identity-absent".to_owned(),
+            Some("publication-plan".to_owned()),
+            Some("the exact curated release-note digest".to_owned()),
+            Some("historical schema-4 absence".to_owned()),
+        )))
     })
 }
 
@@ -223,14 +224,12 @@ fn release_witnesses_match(
 }
 
 fn release_refusal(reason: &str, observed: &str) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("sealed-release".to_owned()),
-        expected: Some("one current complete two-target proof and manifest chain".to_owned()),
-        observed: Some(observed.to_owned()),
-        remedy: "restore and recognize the exact current sealed release before publishing"
-            .to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        reason.to_owned(),
+        Some("sealed-release".to_owned()),
+        Some("one current complete two-target proof and manifest chain".to_owned()),
+        Some(observed.to_owned()),
+    )))
 }
 
 pub(super) fn dispatch_up_change(
@@ -242,13 +241,12 @@ pub(super) fn dispatch_up_change(
     change: &wire::intent::UpChange,
 ) -> Outcome<CommandAnswer> {
     if !matches!(change.state, ResidentState::Dark) {
-        return Outcome::Refusal(Refusal {
-            reason: "down::target-not-dark".to_owned(),
-            witness: Some("transition".to_owned()),
-            expected: Some("dark".to_owned()),
-            observed: Some(format!("{:?}", change.state).to_lowercase()),
-            remedy: "request Dark and let the resident drive every bounded edge".to_owned(),
-        });
+        return Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "down::target-not-dark".to_owned(),
+            Some("transition".to_owned()),
+            Some("dark".to_owned()),
+            Some(format!("{:?}", change.state).to_lowercase()),
+        )));
     }
     let head = match bus.residency_head() {
         Ok(Some(head)) => head,
@@ -281,18 +279,17 @@ pub(super) fn dispatch_up_change(
         )
     });
     if !transition_matches {
-        return Outcome::Refusal(Refusal {
-            reason: "resident::transition-moved".to_owned(),
-            witness: Some("transition".to_owned()),
-            expected: Some(format!("{:?}->dark", from).to_lowercase()),
-            observed: command.expected().iter().find_map(|witness| match witness {
+        return Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "resident::transition-moved".to_owned(),
+            Some("transition".to_owned()),
+            Some(format!("{:?}->dark", from).to_lowercase()),
+            command.expected().iter().find_map(|witness| match witness {
                 Witness::Transition { from, to } => {
                     Some(format!("{from:?}->{to:?}").to_lowercase())
                 }
                 _ => None,
             }),
-            remedy: "read the current resident state and retry the exact transition".to_owned(),
-        });
+        )));
     }
     match drive_shutdown(bus, paths, epoch, seats) {
         Outcome::Reply(reply) => Outcome::Reply(Reply {
@@ -334,13 +331,14 @@ pub(super) fn commit(bus: &Bus, write: JournalWrite) -> CommandResult<JournalCom
         .map_err(|error| store_fault("bus::commit-failed", &error.to_string()))?
     {
         CommitOutcome::Committed(committed) => Ok(committed),
-        CommitOutcome::Refused(refusal) => Err(Outcome::Refusal(Refusal {
-            reason: refusal.reason().to_owned(),
-            witness: Some("journal-guard".to_owned()),
-            expected: None,
-            observed: None,
-            remedy: "read current resident discovery and retry against its epoch".to_owned(),
-        })),
+        CommitOutcome::Refused(refusal) => Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                refusal.reason().to_owned(),
+                Some("journal-guard".to_owned()),
+                None,
+                None,
+            ),
+        ))),
         CommitOutcome::Fault(fault) => Err(store_fault("journal::commit-failed", fault.detail())),
     }
 }
@@ -464,9 +462,11 @@ mod tests {
         let Err(Outcome::Refusal(refusal)) = current_notes(&publish) else {
             panic!("historical note absence must refuse before stage admission")
         };
-        assert_eq!(refusal.reason, "release::notes-identity-absent");
+        assert_eq!(refusal.reason(), "release::notes-identity-absent");
         assert_eq!(
-            refusal.observed.as_deref(),
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed),
             Some("historical schema-4 absence")
         );
     }

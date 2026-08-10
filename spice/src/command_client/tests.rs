@@ -1004,13 +1004,12 @@ fn remote_outcomes_cannot_echo_the_discovery_capability() {
         capability,
         epoch: uuid(9),
     };
-    let refusal = Refusal {
-        reason: "hello::fixture".to_owned(),
-        witness: None,
-        expected: None,
-        observed: Some(capability.to_string()),
-        remedy: "use current discovery".to_owned(),
-    };
+    let refusal = Refusal::bare(wire::RefusalDiagnostic::new(
+        "hello::fixture".to_owned(),
+        None,
+        None,
+        Some(capability.to_string()),
+    ));
     let opening = wire::encode(&refusal).expect("fixture refusal encodes");
     let Err(Outcome::Fault(fault)) = decode_opening(&opening, &discovery) else {
         panic!("opening capability echo must fault");

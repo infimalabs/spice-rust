@@ -771,13 +771,18 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
         let Outcome::Refusal(refusal) = value_outcome(&output) else {
             panic!("{name} session must refuse")
         };
-        assert_eq!(refusal.reason, "lane::session-missing");
+        assert_eq!(refusal.reason(), "lane::session-missing");
         // Both cases refuse under the one reason the proof deadline raises, so
         // only the observation separates a record the decoder typed and found
         // sessionless from bytes it could not read as a record at all. It also
         // holds the two announce lines apart: either drifting into the other's
         // shape earns the other's observation and reds this case.
-        assert_eq!(refusal.observed.as_deref(), Some(observed));
+        assert_eq!(
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed),
+            Some(observed)
+        );
         // The refusal returns to the operator without waiting for the vendor's
         // TERM trap, so the stop is observed rather than read at the return.
         let stop = wait_for_vendor_stop(&fixture.cleanup, &vendor_pid, &stopped);

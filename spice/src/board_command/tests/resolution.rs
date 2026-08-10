@@ -86,8 +86,8 @@ fn assert_lane_resolution(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat], lane_
     let operator = board(bus, epoch, Actor::Operator);
     assert!(matches!(
         actor_seat(&operator),
-        Err(Outcome::Refusal(Refusal { ref reason, .. }))
-            if reason == "claim::operator-lane-ambiguous"
+        Err(Outcome::Refusal(ref refusal))
+            if refusal.reason() == "claim::operator-lane-ambiguous"
     ));
     let lane_board = board(bus, epoch, lane_one.clone());
     assert_eq!(
@@ -359,8 +359,8 @@ fn an_unclean_review_needs_follow_up_tracking_and_clean_does_not() {
     assert!(
         matches!(
             untracked,
-            Outcome::Refusal(Refusal { ref reason, .. })
-                if reason == "review::followup-required"
+            Outcome::Refusal(ref refusal)
+                if refusal.reason() == "review::followup-required"
         ),
         "a finding landed with nothing tracking it: {untracked:?}",
     );
@@ -539,8 +539,8 @@ fn doc_leaf_owns_classification_and_normal_form_reasons() {
     assert!(
         matches!(
             classification,
-            Outcome::Refusal(Refusal { ref reason, .. })
-                if reason == "doc::classification-refused"
+            Outcome::Refusal(ref refusal)
+                if refusal.reason() == "doc::classification-refused"
         ),
         "doc leaf lost its classification reason: {classification:?}",
     );
@@ -1093,7 +1093,7 @@ fn assert_stale_document_refused(bus: &Bus, epoch: CanonicalUuid, initial_board:
     );
     assert!(matches!(
         stale,
-        Outcome::Refusal(Refusal { ref reason, .. }) if reason == "doc::barrier-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "doc::barrier-moved"
     ));
 }
 
@@ -1150,7 +1150,7 @@ fn titled<'a>(board: &'a BoardAnswer, title: &str) -> &'a BoardTask {
 
 fn assert_refusal(outcome: Outcome<CommandAnswer>, reason: &str) {
     assert!(
-        matches!(outcome, Outcome::Refusal(Refusal { reason: ref found, .. }) if found == reason),
+        matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == reason),
         "expected refusal {reason}, got {outcome:?}",
     );
 }

@@ -45,7 +45,7 @@ fn listen_for(argv: &[&str]) -> CommandResult<SocketAddr> {
 fn listen_refusal_for(argv: &[&str]) -> String {
     match listen_for(argv) {
         Ok(listen) => panic!("{argv:?} must not bind {listen}"),
-        Err(Outcome::Refusal(refusal)) => refusal.reason,
+        Err(Outcome::Refusal(refusal)) => refusal.reason().to_owned(),
         Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
     }
 }
@@ -68,7 +68,7 @@ fn access_refusal(argv: &[&str]) -> Refusal {
 }
 
 fn access_refusal_for(argv: &[&str]) -> String {
-    access_refusal(argv).reason
+    access_refusal(argv).reason().to_owned()
 }
 
 /// The surface listens exactly where the operator requested or at one stable default.
@@ -148,9 +148,12 @@ fn remote_listening_requires_explicit_consent_and_a_url_safe_token() {
         "--auth-token",
         "too-short-token",
     ]);
-    assert_eq!(invalid.reason, "resident::auth-token-invalid");
+    assert_eq!(invalid.reason(), "resident::auth-token-invalid");
     assert_eq!(
-        invalid.observed, None,
+        invalid
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        None,
         "a refused credential is never echoed"
     );
     assert!(
@@ -248,8 +251,11 @@ fn contended_resident_names_the_holder_while_its_record_is_rewritten() {
             let Err(Outcome::Refusal(refusal)) = ResidentLock::acquire(&paths) else {
                 panic!("the resident contender did not refuse");
             };
-            assert_eq!(refusal.reason, "resident::already-up");
-            observed = refusal.observed;
+            assert_eq!(refusal.reason(), "resident::already-up");
+            observed = refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
+                .map(str::to_owned);
             Ok(())
         })
         .expect("replacement holder lands");

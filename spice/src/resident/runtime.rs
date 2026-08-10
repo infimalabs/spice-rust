@@ -161,14 +161,16 @@ impl ResidentLock {
                     .map(|holder| holder.trim().to_owned())
                     .filter(|holder| !holder.is_empty())
                     .unwrap_or_else(|| "holder metadata unavailable".to_owned());
-                Err(Outcome::Refusal(Refusal {
-                    reason: "resident::already-up".to_owned(),
-                    witness: Some("resident-lock".to_owned()),
-                    expected: Some("unheld".to_owned()),
-                    observed: Some(observed),
-                    remedy: "address the named holder or use spice down for its current epoch"
-                        .to_owned(),
-                }))
+                Err(Outcome::Refusal(Refusal::repairable(
+                    wire::SpiceCommand::new("down", std::iter::empty::<&str>())
+                        .expect("the static resident shutdown command is valid"),
+                    wire::RefusalDiagnostic::new(
+                        "resident::already-up".to_owned(),
+                        Some("resident-lock".to_owned()),
+                        Some("unheld".to_owned()),
+                        Some(observed),
+                    ),
+                )))
             }
         }
     }
@@ -347,26 +349,25 @@ const fn is_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
 }
 
-fn access_refusal(reason: &str, observed: Option<&str>, remedy: &str) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("requested-canvas-access".to_owned()),
-        expected: Some("loopback, or an explicitly consented authenticated bind".to_owned()),
-        observed: observed.map(str::to_owned),
-        remedy: remedy.to_owned(),
-    })
+fn access_refusal(reason: &str, observed: Option<&str>, detail: &str) -> Outcome<()> {
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("requested-canvas-access".to_owned()),
+            Some("loopback, or an explicitly consented authenticated bind".to_owned()),
+            observed.map(str::to_owned),
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("requested-listen-address".to_owned()),
-        expected: Some(expected.to_owned()),
-        observed: Some(observed.to_owned()),
-        remedy: format!(
-            "name an address this machine can listen on, or omit the flag for {DEFAULT_LISTEN}"
-        ),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        reason.to_owned(),
+        Some("requested-listen-address".to_owned()),
+        Some(expected.to_owned()),
+        Some(observed.to_owned()),
+    )))
 }
 
 pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
@@ -460,29 +461,29 @@ fn up_from_with(
 
 fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
     match error {
-        journal::OpenError::Migration(migration) => Outcome::Refusal(Refusal {
-            reason: "journal::schema-refused".to_owned(),
-            witness: None,
-            expected: Some(format!("Rust journal schema {}", journal::SCHEMA_VERSION,)),
-            observed: Some(migration.to_string()),
-            remedy: concat!(
+        journal::OpenError::Migration(migration) => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "journal::schema-refused".to_owned(),
+                None,
+                Some(format!("Rust journal schema {}", journal::SCHEMA_VERSION,)),
+                Some(migration.to_string()),
+            )
+            .with_detail(concat!(
                 "finish or replace the unfinalized or incompatible Rust authority ",
                 "before starting the resident"
-            )
-            .to_owned(),
-        }),
+            )),
+        )),
         error => store_fault("journal::open-failed", &error.to_string()),
     }
 }
 
 fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: "resident::configuration-refused".to_owned(),
-        witness: Some("effective-configuration".to_owned()),
-        expected: Some("one admitted effective repository configuration".to_owned()),
-        observed: Some(error.diagnostic()),
-        remedy: "repair tracked or local configuration before starting the resident".to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "resident::configuration-refused".to_owned(),
+        Some("effective-configuration".to_owned()),
+        Some("one admitted effective repository configuration".to_owned()),
+        Some(error.diagnostic()),
+    )))
 }
 
 pub(super) fn settle_surface(

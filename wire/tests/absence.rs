@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use syn::punctuated::Punctuated;
 use syn::{Meta, Token};
 use wire::intent::PendingDirective;
-use wire::{AnyFact, CursorHead, LaneResidency, Packed, Refusal, WorkflowHead, body};
+use wire::{AnyFact, CursorHead, LaneResidency, Packed, RefusalDiagnostic, WorkflowHead, body};
 
 const WORKFLOW: &str = r#"{
   "flow": ["todo", "review"],
@@ -68,9 +68,8 @@ const PACKED: &str = r#"{
   "horizon": 48213
 }"#;
 
-const REFUSAL: &str = r#"{
-  "reason": "claim::not-held",
-  "remedy": "reclaim the task"
+const REFUSAL_DIAGNOSTIC: &str = r#"{
+  "reason": "claim::not-held"
 }"#;
 
 const DIRECTIVE: &str = r#"{
@@ -92,7 +91,10 @@ fn absent_head_fields_are_omitted_and_null_is_refused() {
 #[test]
 fn absent_non_head_fields_are_omitted_and_null_is_refused() {
     assert_canonical_absence::<Packed<serde_json::Value>>(PACKED, &["overflow"]);
-    assert_canonical_absence::<Refusal>(REFUSAL, &["witness", "expected", "observed"]);
+    assert_canonical_absence::<RefusalDiagnostic>(
+        REFUSAL_DIAGNOSTIC,
+        &["witness", "expected", "observed", "detail"],
+    );
     assert_canonical_absence::<PendingDirective>(DIRECTIVE, &["preview", "control"]);
 }
 

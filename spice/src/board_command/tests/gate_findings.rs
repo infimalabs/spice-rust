@@ -197,8 +197,8 @@ fn gate_findings_refuse_changed_report_before_board_work() {
 
     assert!(matches!(
         outcome,
-        Outcome::Refusal(Refusal { ref reason, .. })
-            if reason == "gate::finding-report-digest-mismatch"
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "gate::finding-report-digest-mismatch"
     ));
     assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
     clean(&root, bus);
@@ -220,8 +220,8 @@ fn gate_findings_refuse_invalid_focused_report_before_board_work() {
 
     assert!(matches!(
         outcome,
-        Outcome::Refusal(Refusal { ref reason, .. })
-            if reason == "gate::finding-report-invalid"
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "gate::finding-report-invalid"
     ));
     assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
     clean(&root, bus);
@@ -254,8 +254,8 @@ fn gate_findings_refuse_fold_state_disagreement_before_board_work() {
 
     assert!(matches!(
         outcome,
-        Outcome::Refusal(Refusal { ref reason, .. })
-            if reason == "gate::finding-report-fold-mismatch"
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "gate::finding-report-fold-mismatch"
     ));
     assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
     clean(&root, bus);

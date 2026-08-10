@@ -244,14 +244,16 @@ fn optional_uuid_operand(
         .transpose()
 }
 
-fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("steering-operand".to_owned()),
-        expected: None,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("steering-operand".to_owned()),
+            None,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {

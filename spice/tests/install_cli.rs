@@ -756,7 +756,7 @@ fn assert_refusal(bytes: &[u8], reason: &str) {
     let Outcome::Refusal(refusal) = outcome else {
         panic!("install must refuse: {outcome:?}");
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
 }
 
 fn alternate_digest(digest: &str) -> String {

@@ -910,8 +910,8 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
     assert!(
         matches!(
             declined,
-            Outcome::Refusal(Refusal { ref reason, .. })
-                if reason == "claim::capture-ineligible"
+            Outcome::Refusal(ref refusal)
+                if refusal.reason() == "claim::capture-ineligible"
         ),
         "capture took a held claim: {declined:?}",
     );

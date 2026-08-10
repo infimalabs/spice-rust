@@ -629,7 +629,7 @@ fn assert_coexistence_steering(
         let Outcome::Refusal(refusal) = value_outcome(&crossed) else {
             panic!("foreign acknowledgment must refuse")
         };
-        assert_eq!(refusal.reason, "steer::transcript-evidence-absent");
+        assert_eq!(refusal.reason(), "steer::transcript-evidence-absent");
 
         let after = reply_body::<wire::intent::InboxAnswer>(&agent_shell_command(
             fixture,
