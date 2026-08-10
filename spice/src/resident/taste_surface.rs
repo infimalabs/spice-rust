@@ -659,11 +659,15 @@ fn prepare_judgment(
     bag: &taste::Bag,
     record: &lane::capture::CaptureRecord,
 ) -> CommandResult<Option<PreparedJudgment>> {
-    let candidates = candidates(bag, record)?;
-    if candidates.is_empty() {
+    if !bag.tastes().iter().any(taste::Taste::enabled) || !has_authored_prose(record) {
         return Ok(None);
     }
     let observed = current_residency(bus, epoch)?;
+    let context = applicability_context(observed.body(), record)?;
+    let candidates = candidates(bag, &context, record)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
     require_current_occupant(observed.body(), record.lane, record.occupant)?;
     let snapshot = bus
         .fact_snapshot()
