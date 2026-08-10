@@ -53,6 +53,7 @@ impl Drop for SeededBuildLaneApp {
 
 struct Fixture {
     scratch: PathBuf,
+    executable: PathBuf,
     ambient_bin: PathBuf,
     ambient_spice: PathBuf,
     invocation_marker: PathBuf,
@@ -66,6 +67,9 @@ impl Fixture {
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
         ));
         fs::create_dir(&scratch).expect("create exclusive demo process fixture");
+        let executable = scratch.join("native-spice");
+        fs::hard_link(env!("CARGO_BIN_EXE_spice"), &executable)
+            .expect("pin native demo executable");
         let ambient_bin = scratch.join("ambient-bin");
         fs::create_dir(&ambient_bin).expect("create ambient command directory");
         let ambient_spice = ambient_bin.join("spice");
@@ -87,6 +91,7 @@ impl Fixture {
         fs::set_permissions(&ambient_spice, permissions).expect("make ambient sentinel executable");
         Self {
             scratch,
+            executable,
             ambient_bin,
             ambient_spice,
             invocation_marker,
@@ -108,7 +113,7 @@ impl Fixture {
     ) -> std::process::Output {
         let _app_lock = BUILD_LANE_APP.lock().expect("build lane app fixture lock");
         let _app = SeededBuildLaneApp::new();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        let mut command = Command::new(&self.executable);
         command
             .args(arguments)
             .current_dir(&self.scratch)
@@ -121,7 +126,7 @@ impl Fixture {
     }
 
     fn invoke_at(&self, root: &Path, arguments: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_spice"))
+        Command::new(&self.executable)
             .args(arguments)
             .current_dir(root)
             .env("PATH", &self.ambient_bin)
@@ -440,7 +445,7 @@ fn seed_only_process_is_anchored_recoverable_and_ambient_inert() {
         reply
             .body
             .launch_command
-            .contains(env!("CARGO_BIN_EXE_spice"))
+            .contains(&fixture.executable.display().to_string())
     );
     assert!(reply.body.launch_command.contains(" demo --reuse "));
     assert!(reply.body.remove_command.starts_with("rm -rf -- "));

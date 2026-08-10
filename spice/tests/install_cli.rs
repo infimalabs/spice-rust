@@ -42,6 +42,9 @@ impl Fixture {
             std::process::id()
         ));
         fs::create_dir_all(root.join(".git/info")).expect("create repository metadata");
+        let executable = root.join("fixture-spice");
+        fs::hard_link(env!("CARGO_BIN_EXE_spice"), &executable)
+            .expect("retain one fixture-scoped link to the Spice executable");
         fs::create_dir_all(root.join(".git/.spice-rs/data"))
             .expect("create Spice state sentinel directory");
         let exclude_bytes = b"# operator exclusions\n/cache/\n".to_vec();
@@ -89,7 +92,7 @@ impl Fixture {
     }
 
     fn command(&self, arguments: &[&str]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        let mut command = Command::new(&self.executable);
         command
             .args(arguments)
             .current_dir(&self.root)

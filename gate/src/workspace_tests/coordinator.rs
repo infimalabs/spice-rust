@@ -531,7 +531,7 @@ where
             .map_err(|error| WorkspaceTestError::new(error.to_string()))?,
         cwd: root.to_owned(),
         environment,
-        group: ProcessGroup::New,
+        group: crate::measure::bounded_process_group(),
         deadlines: Deadlines::new(runtime, OUTPUT_DRAIN_DEADLINE, REAP_DEADLINE)
             .map_err(|error| WorkspaceTestError::new(error.to_string()))?,
         wait: WaitPolicy::new(owner, cancellation, RestartDisposition::Never)

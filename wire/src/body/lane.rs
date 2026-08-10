@@ -320,7 +320,7 @@ pub struct LaneImported {
     pub from_worktree: String,
     /// Fresh linked worktree receiving the seat.
     pub worktree: String,
-    /// Driver dialect retained by the transfer.
+    /// Vendor dialect retained by the transfer.
     pub vendor: Name,
     /// Exact resumable identity proved before the transfer.
     pub identity: String,

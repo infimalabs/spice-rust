@@ -870,7 +870,7 @@ fn malformed_names_shards_and_configuration_refuse_without_running_a_child() {
         let Outcome::Refusal(invalid) = invalid else {
             panic!("invalid config must refuse: {invalid:?}");
         };
-        assert_eq!(invalid.reason(), "lock::configuration-refused");
+        assert_eq!(invalid.reason(), "cli::mount-registry-refused");
         assert!(!fixture.root.join("outside.lock").exists());
     }
 }

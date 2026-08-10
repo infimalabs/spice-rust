@@ -53,7 +53,10 @@ const CLAIM_DECLARATION: &str = include_str!("../src/claim.rs");
 const LAPSE_SUITE: [&str; 2] = [include_str!("lapse.rs"), LAPSE_DECLARATION];
 
 /// Where a claim assertion may live.
-const CLAIM_SUITE: [&str; 1] = [include_str!("coordination.rs")];
+const CLAIM_SUITE: [&str; 2] = [
+    include_str!("coordination.rs"),
+    include_str!("coordination/late.rs"),
+];
 
 /// The test that asserts each `Refusal`.
 ///

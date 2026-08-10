@@ -14,8 +14,8 @@ use std::process::Command;
 use ::gate::{
     ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
     FocusedArmReport, GateId, HygieneConfiguration, KillRun, RepositoryExecutionEvent, RimCapture,
-    Selector, VerifierCompilerContract, VerifierCompilerEvidence, admit_verifier_compiler_receipt,
-    encode_verifier_compiler_receipt,
+    RustAnalysisWorkspace, Selector, VerifierCompilerContract, VerifierCompilerEvidence,
+    admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
 };
 use wire::Digest;
 
@@ -216,8 +216,33 @@ pub fn verifier_compiler_receipt(
     cargo_jobs: usize,
     authority: &[u8],
 ) -> Result<Vec<u8>, RunError> {
+    verifier_compiler_preparation(selector, cargo_jobs, authority)
+        .map(|preparation| preparation.into_parts().0)
+}
+
+/// Compiler receipt plus the stable native workspace it successfully checked.
+pub struct VerifierCompilerPreparation {
+    receipt: Vec<u8>,
+    reusable_workspace: Option<RustAnalysisWorkspace>,
+}
+
+impl VerifierCompilerPreparation {
+    /// Consume the preparation into its encoded receipt and native workspace.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<u8>, Option<RustAnalysisWorkspace>) {
+        (self.receipt, self.reusable_workspace)
+    }
+}
+
+/// Compile every reusable verifier stage and retain its native test workspace.
+pub fn verifier_compiler_preparation(
+    selector: Selector,
+    cargo_jobs: usize,
+    authority: &[u8],
+) -> Result<VerifierCompilerPreparation, RunError> {
     let mut battery = prepare(selector)?;
     let mut evidence = Vec::new();
+    let mut reusable_workspace = None;
     for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
         let Some(contract) = battery.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
         else {
@@ -244,14 +269,23 @@ pub fn verifier_compiler_receipt(
                 )
             })?);
         }
-        evidence.push(
-            compiler
-                .complete(&processes)
-                .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))?,
-        );
+        let completed = compiler
+            .complete(&processes)
+            .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))?;
+        if let Some(workspace) = completed
+            .reusable_rust_workspace()
+            .map_err(|error| RunError::fault("gate::verifier-workspace-unavailable", error))?
+        {
+            reusable_workspace = Some(workspace);
+        }
+        evidence.push(completed);
     }
-    encode_verifier_compiler_receipt(&evidence, authority)
-        .map_err(|error| RunError::fault("gate::verifier-receipt-unavailable", error))
+    let receipt = encode_verifier_compiler_receipt(&evidence, authority)
+        .map_err(|error| RunError::fault("gate::verifier-receipt-unavailable", error))?;
+    Ok(VerifierCompilerPreparation {
+        receipt,
+        reusable_workspace,
+    })
 }
 
 /// Execute a traced battery using only a fresh, exact compiler receipt.
