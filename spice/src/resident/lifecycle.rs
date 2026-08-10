@@ -469,17 +469,18 @@ fn unit_outcome(outcome: Outcome<wire::intent::CommandAnswer>) -> Outcome<()> {
     }
 }
 
+const RETRYABLE_START_REFUSALS: [&str; 4] = [
+    "lifecycle::wake-capacity-moved",
+    "lifecycle::snapshot-moved",
+    "lifecycle::held-claim-head-moved",
+    "lifecycle::held-claim-lease-moved",
+];
+
 fn pending_start_failure_is_terminal(failure: &Outcome<()>) -> bool {
     matches!(
         failure,
         Outcome::Refusal(refusal)
-            if !matches!(
-                refusal.reason(),
-                "lifecycle::wake-capacity-moved"
-                    | "lifecycle::snapshot-moved"
-                    | "lifecycle::held-claim-head-moved"
-                    | "lifecycle::held-claim-lease-moved"
-            )
+            if !RETRYABLE_START_REFUSALS.contains(&refusal.reason())
     )
 }
 
