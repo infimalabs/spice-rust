@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io;
 use std::path::Path;
 
-use flate2::read::GzDecoder;
 use listen::{
     Decoded, Dialect, Event, ProseRole, RecordContext, RecordDecodeError, ResidueKind,
     SourcedEvent, Span, ToolMoment, ToolOutcome, ToolResult, TurnMoment,
@@ -17,6 +15,11 @@ use super::model::{
     TurnRecord, Vendor,
 };
 use super::source::ResolvedSource;
+
+mod horizon;
+
+use horizon::read_records;
+pub(crate) use horizon::recent_compaction_horizon;
 
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 const UNPARSEABLE_INTENT: &str = "unparseable compaction summary intent";
@@ -39,6 +42,11 @@ struct Marker {
     summary: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompactionHorizon {
+    pub(crate) start: Option<String>,
+}
+
 #[derive(Debug)]
 struct PendingTool {
     turn: usize,
@@ -52,11 +60,18 @@ enum DecodedRow {
 }
 
 pub(crate) fn load(sources: &[ResolvedSource]) -> Result<Dataset, Refusal> {
+    load_since(sources, None)
+}
+
+pub(crate) fn load_since(
+    sources: &[ResolvedSource],
+    start: Option<&str>,
+) -> Result<Dataset, Refusal> {
     let mut dataset = Dataset::default();
     let mut markers = Vec::new();
     for source in sources {
         let source_name = source.path.display().to_string();
-        let (records, mut residues, vendor) = read_records(source)?;
+        let (records, mut residues, vendor) = read_records(source, start)?;
         dataset.sources.push(SourceView {
             name: source.path.file_name().map_or_else(
                 || source_name.clone(),
@@ -74,61 +89,6 @@ pub(crate) fn load(sources: &[ResolvedSource]) -> Result<Dataset, Refusal> {
     account_compactions(&mut dataset);
     sort_dataset(&mut dataset);
     Ok(dataset)
-}
-
-fn read_records(
-    source: &ResolvedSource,
-) -> Result<(Vec<TypedRecord>, Vec<Residue>, Vendor), Refusal> {
-    let mut reader = transcript_reader(source)?;
-    let mut dialect = vendor_dialect(source.vendor);
-    let mut rows = Vec::new();
-    let mut residues = Vec::new();
-    let mut buffer = Vec::new();
-    let mut line = 0_u64;
-    loop {
-        buffer.clear();
-        let read = match reader.read_until(b'\n', &mut buffer) {
-            Ok(read) => read,
-            Err(error) => {
-                residues.push(read_residue(&source.path, line.saturating_add(1), &error));
-                break;
-            }
-        };
-        if read == 0 {
-            break;
-        }
-        line = line.saturating_add(1);
-        while matches!(buffer.last(), Some(b'\n' | b'\r')) {
-            buffer.pop();
-        }
-        if buffer.is_empty() {
-            continue;
-        }
-        let (observed, row) = decode_row(source, line, &buffer, dialect)?;
-        dialect = Some(observed);
-        match row {
-            DecodedRow::Typed(row) => rows.push(row),
-            DecodedRow::Residue(residue) => residues.push(residue),
-            DecodedRow::Ignored => {}
-        }
-    }
-    let vendor = dialect.map_or(source.vendor, dialect_vendor);
-    Ok((rows, residues, vendor))
-}
-
-fn transcript_reader(source: &ResolvedSource) -> Result<Box<dyn BufRead>, Refusal> {
-    let file = File::open(&source.path).map_err(|error| {
-        refusal(
-            "session::transcript-unreadable",
-            Some(format!("{}: {error}", source.path.display())),
-            "restore read access to the transcript and retry",
-        )
-    })?;
-    if source.path.to_string_lossy().ends_with(".gz") {
-        Ok(Box::new(BufReader::new(GzDecoder::new(file))))
-    } else {
-        Ok(Box::new(BufReader::new(file)))
-    }
 }
 
 fn decode_row(

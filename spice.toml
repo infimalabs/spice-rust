@@ -134,6 +134,7 @@ env_names = [
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_NATIVE_SHELL",
+    "SPICE_PROOF",
     "TMPDIR",
 ]
 
