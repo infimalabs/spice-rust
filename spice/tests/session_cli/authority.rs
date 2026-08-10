@@ -11,6 +11,8 @@ use wire::{
 
 use super::{Scratch, codex_rows, reply_forms_in, strings, write_jsonl};
 
+const SESSION_PROJECT: &str = "spice.session";
+
 fn fake_repository(root: &Path) {
     fs::create_dir(root.join(".git")).expect("fixture git directory is created");
     fs::write(
@@ -126,7 +128,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
     let seated = write
         .fact(body::UpSeated { epoch }, FactCause::Root)
         .expect("seating fact builds");
-    let lanes = briefing_residencies(lane, occupant, epoch, peer_lane, peer_occupant, thread);
+    let lanes = briefing_lanes(lane, occupant, peer_lane, peer_occupant, epoch, thread);
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
@@ -139,7 +141,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         origin.clone(),
         held.clone(),
         "Compose Rust briefings",
-        "spice.session",
+        SESSION_PROJECT,
         "todo",
     );
     task_added(
@@ -147,7 +149,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         origin.clone(),
         peer.clone(),
         "Peer active claim",
-        "spice.session",
+        SESSION_PROJECT,
         "todo",
     );
     write
@@ -173,7 +175,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         lane,
         occupant,
         epoch,
-        "spice.session",
+        SESSION_PROJECT,
         instant(1),
     );
     mint_claim(
@@ -183,17 +185,17 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         peer_lane,
         peer_occupant,
         epoch,
-        "spice.session",
+        SESSION_PROJECT,
         instant(2),
     );
 }
 
-fn briefing_residencies(
+fn briefing_lanes(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    epoch: CanonicalUuid,
     peer_lane: CanonicalUuid,
     peer_occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
     thread: &str,
 ) -> Vec<LaneResidency> {
     vec![

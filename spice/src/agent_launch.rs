@@ -6,17 +6,14 @@ use std::fmt;
 use std::path::PathBuf;
 
 use sill::{Environment, SpecError};
-use wire::{CanonicalUuid, Name, SpiceVariable};
+use wire::{CanonicalUuid, Name};
 
 use crate::config::Root;
 
 /// Child variable understood by Claude Code's auto-compaction boundary.
 pub const CLAUDE_AUTO_COMPACT_WINDOW: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
 /// Child variable binding every supervised Rust shell to its durable lane.
-///
-/// The wire vocabulary is target-neutral, so canvas builds share the exact
-/// spelling without depending on the native-only hook module.
-pub const SPICE_RS_LANE: &str = SpiceVariable::Lane.as_str();
+pub const SPICE_RS_LANE: &str = wire::SpiceVariable::Lane.as_str();
 /// Claude's native commit attribution trailer.
 pub const CLAUDE_ATTRIBUTION_TRAILER: &str = "Co-Authored-By";
 
@@ -237,7 +234,7 @@ mod tests {
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c7";
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
     const FIXTURE_VENDOR: crate::extension::Vendor =
-        crate::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration);
+        crate::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
     const FIXTURE_DECLARATIONS: &[crate::extension::Declaration] =
         &[crate::extension::Declaration {
             namespace: crate::extension::Namespace::Vendor,

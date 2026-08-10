@@ -53,49 +53,8 @@ pub(crate) fn observe(
     let thread = exact_thread(sources, environment, &mut briefing);
     briefing.held_work.thread.clone_from(&thread);
 
-    let current = match std::env::current_dir() {
-        Ok(current) => current,
-        Err(error) => {
-            unknown(&mut briefing, "repository", "current-directory", &error);
-            return briefing;
-        }
-    };
-    let repository = match Repository::discover(&current) {
-        Ok(repository) => repository,
-        Err(error) => {
-            unknown(&mut briefing, "repository", "discover", &error);
-            return briefing;
-        }
-    };
-    let state = match repository.admit_state() {
-        Ok(state) => state,
-        Err(error) => {
-            unknown(&mut briefing, "repository", "admit-state", &error);
-            return briefing;
-        }
-    };
-    let config = match spice::config::load_repository(&repository, &[]) {
-        Ok(config) => config,
-        Err(error) => {
-            unknown(&mut briefing, "configuration", "load-repository", &error);
-            return briefing;
-        }
-    };
-    let projects = config.root().tasks().project_policy();
-    let reader = match JournalReader::open(state.journal()) {
-        Ok(reader) => reader,
-        Err(error) => {
-            unknown(&mut briefing, "journal", "open-read-only", &error);
-            return briefing;
-        }
-    };
-
-    let observed = match reader.read_with(|read| read_authorities(read, &projects)) {
-        Ok(observed) => observed,
-        Err(error) => {
-            unknown(&mut briefing, "journal", "read-snapshot", &error);
-            return briefing;
-        }
+    let Some(observed) = observe_current_authorities(&mut briefing) else {
+        return briefing;
     };
 
     let Some(thread) = thread else {
@@ -158,6 +117,52 @@ struct ObservedAuthorities {
     residency: ResidencyHead,
     ledger: steer::Ledger,
     entries: Vec<Entry>,
+}
+
+fn observe_current_authorities(briefing: &mut BriefingAuthorities) -> Option<ObservedAuthorities> {
+    let current = match std::env::current_dir() {
+        Ok(current) => current,
+        Err(error) => {
+            unknown(briefing, "repository", "current-directory", &error);
+            return None;
+        }
+    };
+    let repository = match Repository::discover(&current) {
+        Ok(repository) => repository,
+        Err(error) => {
+            unknown(briefing, "repository", "discover", &error);
+            return None;
+        }
+    };
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => {
+            unknown(briefing, "repository", "admit-state", &error);
+            return None;
+        }
+    };
+    let config = match spice::config::load_repository(&repository, &[]) {
+        Ok(config) => config,
+        Err(error) => {
+            unknown(briefing, "configuration", "load-repository", &error);
+            return None;
+        }
+    };
+    let reader = match JournalReader::open(state.journal()) {
+        Ok(reader) => reader,
+        Err(error) => {
+            unknown(briefing, "journal", "open-read-only", &error);
+            return None;
+        }
+    };
+    let projects = config.root().tasks().project_policy();
+    match reader.read_with(|read| read_authorities(read, &projects)) {
+        Ok(observed) => Some(observed),
+        Err(error) => {
+            unknown(briefing, "journal", "read-snapshot", &error);
+            None
+        }
+    }
 }
 
 #[derive(Debug)]

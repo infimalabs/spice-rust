@@ -238,7 +238,7 @@ mod phase_tests {
     fn open_turn(source: &str, minute: i64, last_minute: i64, family: &str) -> TurnRecord {
         let record = TurnRecord {
             source: source.to_owned(),
-            vendor: Vendor::Claude,
+            vendor: Vendor::inferred(listen::Dialect::Claude),
             turn_id: Some(format!("{source}-{minute}")),
             start_ts: at(minute),
             end_ts: None,

@@ -318,6 +318,33 @@ esac
         )
     }
 
+    fn assert_baseline_precedes_mutants(log: &Path) {
+        let calls = fs::read_to_string(log).expect("tool calls");
+        let lines: Vec<&str> = calls.lines().collect();
+        let baseline = lines
+            .iter()
+            .position(|line| line.starts_with("test --locked"))
+            .expect("baseline call");
+        let first_mutant = lines
+            .iter()
+            .position(|line| line.contains("--re"))
+            .expect("mutant call");
+        assert!(baseline < first_mutant, "a mutant ran before the baseline");
+        assert_eq!(
+            lines.iter().filter(|line| line.contains("--list")).count(),
+            2,
+            "inventory must be re-read after baseline"
+        );
+    }
+
+    fn assert_source_untouched(source: &Fixture) {
+        assert_eq!(
+            fs::read_to_string(source.path("src/lib.rs")).expect("caller source"),
+            "original\n",
+            "the tool was handed only private snapshots"
+        );
+    }
+
     #[test]
     fn current_inventory_is_stable_pinned_and_baselined_before_scoring() {
         let (source, tool, log) = fixture(
@@ -391,27 +418,8 @@ esac
             report
         );
 
-        assert_eq!(
-            fs::read_to_string(source.path("src/lib.rs")).expect("caller source"),
-            "original\n",
-            "the tool was handed only private snapshots"
-        );
-        let calls = fs::read_to_string(log).expect("tool calls");
-        let lines: Vec<&str> = calls.lines().collect();
-        let baseline = lines
-            .iter()
-            .position(|line| line.starts_with("test --locked"))
-            .expect("baseline call");
-        let first_mutant = lines
-            .iter()
-            .position(|line| line.contains("--re"))
-            .expect("mutant call");
-        assert!(baseline < first_mutant, "a mutant ran before the baseline");
-        assert_eq!(
-            lines.iter().filter(|line| line.contains("--list")).count(),
-            2,
-            "inventory must be re-read after baseline"
-        );
+        assert_source_untouched(&source);
+        assert_baseline_precedes_mutants(&log);
     }
 
     fn assert_graph_projection(run: &KillRun, floor: SurvivorRate) {

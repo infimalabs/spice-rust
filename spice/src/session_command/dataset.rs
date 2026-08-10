@@ -188,25 +188,14 @@ fn typed_row(
     Ok(DecodedRow::Typed(TypedRecord {
         source: source.path.display().to_string(),
         line,
-        vendor: dialect_vendor(dialect),
+        vendor: if source.vendor.is_unknown() {
+            Vendor::inferred(dialect)
+        } else {
+            source.vendor
+        },
         context,
         events: sourced,
     }))
-}
-
-fn vendor_dialect(vendor: Vendor) -> Option<Dialect> {
-    match vendor {
-        Vendor::Codex => Some(Dialect::Codex),
-        Vendor::Claude => Some(Dialect::Claude),
-        Vendor::Unknown => None,
-    }
-}
-
-fn dialect_vendor(dialect: Dialect) -> Vendor {
-    match dialect {
-        Dialect::Codex => Vendor::Codex,
-        Dialect::Claude => Vendor::Claude,
-    }
 }
 
 fn record_refusal(path: &Path, line: u64, error: &RecordDecodeError) -> Refusal {

@@ -1,23 +1,45 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::message_shape::MessageShape;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum Vendor {
-    Codex,
-    Claude,
-    Unknown,
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Vendor(Option<&'static spice::extension::Vendor>);
 
 impl Vendor {
-    pub(crate) fn from_vendor(vendor: &spice::extension::Vendor) -> Self {
-        match vendor.dialect() {
-            listen::Dialect::Codex => Self::Codex,
-            listen::Dialect::Claude => Self::Claude,
-        }
+    pub(crate) const UNKNOWN: Self = Self(None);
+
+    pub(crate) const fn declared(vendor: &'static spice::extension::Vendor) -> Self {
+        Self(Some(vendor))
+    }
+
+    pub(crate) fn inferred(dialect: listen::Dialect) -> Self {
+        let vendor = spice::extension::registry()
+            .expect("compiled extension declarations are validated by the test gate")
+            .session_vendors()
+            .into_iter()
+            .find(|vendor| vendor.session_study().dialect() == dialect)
+            .expect("every compiled transcript dialect has one study declaration");
+        Self::declared(vendor)
+    }
+
+    pub(crate) const fn is_unknown(self) -> bool {
+        self.0.is_none()
+    }
+
+    fn identity(self) -> &'static str {
+        self.0
+            .map_or("unknown", |vendor| vendor.session_study().identity())
+    }
+}
+
+impl Serialize for Vendor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.identity())
     }
 }
 
@@ -395,7 +417,7 @@ pub(crate) enum Report {
         horizon_basis: String,
         requested_compactions: usize,
         selected_compactions: usize,
-        authorities: BriefingAuthorities,
+        authorities: Box<BriefingAuthorities>,
         window: RecallWindow,
         pruning: PruningView,
         residues: Vec<Residue>,
