@@ -28,14 +28,9 @@ use std::path::Path;
 use std::process::Stdio;
 use std::process::{Command, ExitStatus};
 #[cfg(unix)]
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(unix)]
 use std::thread::{self, JoinHandle};
-#[cfg(unix)]
-use std::time::{Duration, Instant};
-
-#[cfg(unix)]
-const RELAY_SETTLE: Duration = Duration::from_millis(50);
 
 /// Writes a lane's rendered direction to the stream, reporting whether anything
 /// was waiting.
@@ -96,7 +91,11 @@ where
 {
     let (stdout_read, stdout_write) = UnixStream::pair()?;
     let (stderr_read, stderr_write) = UnixStream::pair()?;
-    let stops = [stdout_read.try_clone()?, stderr_read.try_clone()?];
+    // `shutdown(Write)` is shared by every duplicate of one socket endpoint.
+    // Retaining these parent clones therefore gives the immediate-child wait a
+    // structural way to revoke descendant writers without closing the read
+    // endpoints or discarding bytes the child already committed.
+    let stops = [stdout_write.try_clone()?, stderr_write.try_clone()?];
     let mut child = Command::new(program)
         .args(arguments)
         .stdout(Stdio::from(OwnedFd::from(stdout_write)))
@@ -108,7 +107,7 @@ where
         spawn_relay(stderr_read, RelayTarget { stderr: true }, sender),
     ];
     let status = child.wait();
-    let relayed = finish_relays(&receiver, &stops, relays);
+    let relayed = close_descendant_writers(&stops).and_then(|()| finish_relays(&receiver, relays));
     match (status, relayed) {
         (Err(error), _) | (Ok(_), Err(error)) => Err(error),
         (Ok(status), Ok(())) => Ok(status),
@@ -149,28 +148,19 @@ fn relay(mut source: UnixStream, target: RelayTarget) -> io::Result<()> {
 }
 
 #[cfg(unix)]
+fn close_descendant_writers(stops: &[UnixStream; 2]) -> io::Result<()> {
+    for stop in stops {
+        stop.shutdown(Shutdown::Write)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
 fn finish_relays(
     receiver: &Receiver<io::Result<()>>,
-    stops: &[UnixStream; 2],
     relays: [JoinHandle<()>; 2],
 ) -> io::Result<()> {
-    let deadline = Instant::now() + RELAY_SETTLE;
     let mut results = std::vec::Vec::with_capacity(2);
-    while results.len() < 2 {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        match receiver.recv_timeout(remaining) {
-            Ok(result) => results.push(result),
-            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
-        }
-    }
-    if results.len() < 2 {
-        for stop in stops {
-            let _ = stop.shutdown(Shutdown::Read);
-        }
-    }
     while results.len() < 2 {
         results.push(receiver.recv().map_err(|_| relay_panic())?);
     }
