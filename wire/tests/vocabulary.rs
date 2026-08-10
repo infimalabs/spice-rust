@@ -459,9 +459,9 @@ fn producer_assignment_follows_the_specified_enumeration() {
         );
     }
 
-    // The taste plane splits the way `claim` and `steer` already do. The judge
-    // rules on curation; the resident is what recognizes a taste firing on
-    // authored prose and raises the reminder. Naming the exception here keeps
+    // The taste plane splits the way `claim` and `steer` already do. The direct
+    // disabled path remains resident recognition; historical and live
+    // adjudication facts belong to the judge. Naming the exception here keeps
     // the domain rule below meaning "every other taste fact is the judge's"
     // rather than quietly widening to whoever arrives next.
     let recognized = [FactKind::SteerDeadLettered, FactKind::TasteReminded];

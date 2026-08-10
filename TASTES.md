@@ -9,20 +9,30 @@ action the author can take immediately; and remains worth hearing when a
 harmless mention fires it. Guidance that depends on one task, one subsystem, or
 a long exception list belongs in that task or its review instead.
 
-One runtime law is executable, and selection is the whole decision. A
-configured bag hit in authored prose emits one `[TASTE]` ordinary directive to
-the lane that wrote the prose, carrying the taste's message unchanged. Nothing
-separates use from mention first. The same taste and normalized prose fire at
-most once per authored content and compaction epoch, and prose already carrying
-the reserved `[TASTE]` marker is classified as the runtime's own echo before
-matching, so a quoted reminder never fires again. From there it is ordinary
-steering: acknowledged, declined, resent, and expiring like any other
-directive. A decline is the operator's judgment recorded after the
-interruption, not a gate placed before it.
+One runtime law has two explicitly configured modes. With `judge.enabled`
+absent or false, selection is the whole decision: a configured bag hit in
+authored prose emits one `[TASTE]` ordinary directive to the lane that wrote the
+prose, carrying the taste's message unchanged. With `judge.enabled = true`, the
+resident asks the one bounded judge process several equivalent framings in a
+deterministically shuffled order. Exactly one normalized YES confirms the
+candidate and opens the same ordinary directive; exactly one normalized NO
+clears it without interruption. Malformed replies retry only to the declared
+bound, while absence, timeout, process error, or exhausted ambiguity abandons
+the candidate and emits nothing.
+
+Both judgments are durable `taste::judged` evidence carrying the exact source,
+bag identity, trigger, driver, transcript locus, compaction epoch, and ordered
+attempt provenance. That evidence makes replay and restart idempotent; only its
+confirmed variant is a steering publication. The same taste and normalized
+prose can be decided at most once for one bag and compaction epoch, and prose
+already carrying the reserved `[TASTE]` marker is classified as the runtime's
+own echo before matching, so a quoted reminder never becomes a candidate.
+Confirmed and direct reminders are ordinary steering: acknowledged, declined,
+resent, and expiring like any other directive.
 
 Historical `taste::confirmed` and `taste::cleared` facts predate that law. They
-remain decodable and visible as curation evidence; no current command mints
-another one.
+remain decodable and visible as curation evidence; current resident decisions
+use the provenance-complete `taste::judged` fact instead.
 
 The active set is the tracked `[taste]` configuration. `TASTES.md` owns the
 curation law and the rationale for the installed seeds; it does not form a
@@ -51,9 +61,10 @@ A taste must satisfy all of these rules:
 - Prefer the general failure over one narrow symptom. If one message needs
   several unrelated bags, merge the bags; if one bag needs several unrelated
   messages, split the taste.
-- Treat false positives as a design cost paid in interruptions. A mention fires
-  the same reminder a violation does, so a harmless candidate must still be
-  cheap to decline and useful to reconsider; otherwise the taste is too
+- Treat false positives as a design cost. The direct mode pays in
+  interruptions; adjudicated mode pays in bounded judge calls and may still
+  confirm a poor candidate. A harmless candidate must therefore stay cheap to
+  clear or decline and useful to reconsider; otherwise the taste is too
   contextual.
 - Prove selection on both a use and a mention. Each fixture must select the
   candidate, because the bag cannot tell them apart and the authoring rules are
@@ -80,8 +91,9 @@ filing is refused. A proposal does not change the tracked set. Admission or
 retirement requires the authoring checks, the paired confirm-and-clear
 fixtures, and an operator commit of the exact entry.
 
-Every fire preserves its locus. The curation view is derived from the journal
-at one snapshot: recent reminders per taste and per driver, how each was
+Every direct fire and adjudicated decision preserves its locus. The curation
+view is derived from the journal at one snapshot: recent reminders per taste
+and per driver, confirmed and cleared provenance, how live reminders were
 answered, and how often one unchanged identity returned across compaction
 epochs. It shows those fires and their ages rather than presenting an all-time
 count as current truth, and it persists no counter of its own. A lineage that

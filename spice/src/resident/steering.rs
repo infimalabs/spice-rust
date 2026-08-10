@@ -894,6 +894,17 @@ fn directive_creation(
             wire::FactKind::TasteReminded => steering_body::<wire::body::TasteReminded>(envelope)
                 .filter(|body| body.directive == directive)
                 .map(|_| envelope),
+            wire::FactKind::TasteJudged => steering_body::<wire::body::TasteJudged>(envelope)
+                .filter(|body| {
+                    matches!(
+                        &body.decision,
+                        wire::body::TasteDecision::Confirmed {
+                            directive: published,
+                            ..
+                        } if *published == directive
+                    )
+                })
+                .map(|_| envelope),
             _ => None,
         })
         .expect("a reduced directive has one creating fact")

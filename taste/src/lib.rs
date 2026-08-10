@@ -1,13 +1,9 @@
 //! Configured prose candidates and live reminder identity.
 //!
-//! One law is executable: a configured bag hit in authored prose becomes one
-//! reminder directive. Adjudication is not an arm of it. The historical
-//! `taste::confirmed` and `taste::cleared` facts stay decodable as curation
-//! evidence, but this crate offers no door that mints another one:
-//!
-//! ```compile_fail
-//! let _ = taste::judge;
-//! ```
+//! This crate selects candidates and mints their stable content and bag
+//! identities. It deliberately owns no process: resident recognition decides
+//! whether an optional adjudicator sits between a hit and ordinary steering,
+//! while a disabled adjudicator preserves the direct deterministic path.
 
 #![forbid(unsafe_code)]
 
@@ -15,7 +11,7 @@ mod bag;
 mod config;
 
 pub use bag::{
-    Bag, BagError, Hit, REMINDER_MARKER, Span, Taste, Trigger, TriggerError, is_reminder_echo,
-    normalize_prose, reminder_identity, reminder_text,
+    Bag, BagError, Hit, REMINDER_MARKER, Span, Taste, Trigger, TriggerError, bag_identity,
+    is_reminder_echo, normalize_prose, reminder_identity, reminder_text,
 };
 pub use config::{Config, ConfigError, configured};
