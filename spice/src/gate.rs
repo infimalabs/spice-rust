@@ -13,7 +13,7 @@ use std::process::Command;
 
 use ::gate::{
     ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
-    GateId, HygieneConfiguration, RepositoryExecutionEvent, RimCapture, Selector,
+    FocusedArmReport, GateId, HygieneConfiguration, RepositoryExecutionEvent, RimCapture, Selector,
     VerifierCompilerContract, VerifierCompilerEvidence,
 };
 
@@ -149,6 +149,19 @@ pub fn run_arm(selector: Selector, gate_id: GateId) -> Result<BatteryArmResult, 
     let mut capture = capture(selector, Some(gate_id), None)?;
     capture
         .execute_arm(gate_id)
+        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+}
+
+/// Execute one named canonical gate arm and retain its verifiable input context.
+///
+/// # Errors
+///
+/// Returns the same acquisition and arm refusal as [`run_arm`], without
+/// executing sibling battery arms.
+pub fn run_arm_report(selector: Selector, gate_id: GateId) -> Result<FocusedArmReport, RunError> {
+    let mut capture = capture(selector, Some(gate_id), None)?;
+    capture
+        .execute_arm_report(gate_id)
         .map_err(|error| RunError::refusal("gate::battery-refused", error))
 }
 

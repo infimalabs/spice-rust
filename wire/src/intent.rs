@@ -41,9 +41,9 @@ mod task;
 pub use task::{
     ClaimCarry, ClaimRenew, ClaimWin, DocApply, EffortAggregateAnswer, EffortAnswer,
     EffortAvailability, EffortIdentity, EffortPhaseAnswer, EffortRead, EffortSegmentAnswer,
-    EffortUnavailable, EffortUnavailableCode, EffortUsage, GateFindingWork, GateFindings,
-    ReviewFollowup, TaskAdd, TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit,
-    TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview,
+    EffortUnavailable, EffortUnavailableCode, EffortUsage, GateFindings, ReviewFollowup, TaskAdd,
+    TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd,
+    TaskPhase, TaskRef, TaskReview,
 };
 
 /// Append one durable directive to a lane.
