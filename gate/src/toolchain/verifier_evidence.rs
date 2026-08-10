@@ -19,8 +19,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use sill::{
     Acquisition, Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
-    Possession, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy,
-    WaitPolicy,
+    Possession, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 use wire::{Digest, Domain};
 
@@ -314,7 +313,7 @@ impl VerifierCompilerContract {
             argv: Argv::new(program, arguments.iter().cloned()).map_err(io::Error::other)?,
             cwd: self.selection_root.clone(),
             environment: process_environment,
-            group: ProcessGroup::New,
+            group: crate::measure::bounded_process_group(),
             deadlines,
             wait,
             output: Output::new(
@@ -840,11 +839,18 @@ fn frame(into: &mut Vec<u8>, bytes: &[u8]) {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::process::{Command, Stdio};
 
     use super::*;
+    use sill::ProcessGroup;
 
     const AUTHORITY: &[u8] = b"one-time verifier authority fixture";
+    const CONTAINMENT_ROOT: &str = "GATE_VERIFIER_CONTAINMENT_ROOT";
+    const COMPILER_PID: &str = "GATE_VERIFIER_COMPILER_PID";
+    const DESCENDANT_PID: &str = "GATE_VERIFIER_DESCENDANT_PID";
 
     fn source(label: &[u8]) -> Digest {
         Digest::compute(Domain::GateTree, label)
@@ -942,6 +948,167 @@ mod tests {
                 &contract.tools,
             ));
         }
+    }
+
+    #[test]
+    fn ordinary_verifier_compilers_own_their_process_group() {
+        assert_eq!(crate::measure::bounded_process_group(), ProcessGroup::New);
+    }
+
+    #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the recursive process-boundary fixture passes its private root through one exact environment"
+    )]
+    fn pre_commit_deadline_contains_verifier_compiler_descendants() {
+        if let Some(root) = env::var_os(CONTAINMENT_ROOT) {
+            run_contained_verifier_fixture(Path::new(&root));
+            return;
+        }
+
+        let root = crate::toolchain::exclusive_scratch_root("gate-verifier-containment");
+        let compiler = root.join("fake-cargo");
+        let compiler_pid = root.join("compiler.pid");
+        let descendant_pid = root.join("descendant.pid");
+        fs::write(
+            &compiler,
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$$\" > \"$GATE_VERIFIER_COMPILER_PID\"\n",
+                "/bin/sleep 30 &\n",
+                "child=$!\n",
+                "printf '%s\\n' \"$child\" > \"$GATE_VERIFIER_DESCENDANT_PID\"\n",
+                "wait\n",
+            ),
+        )
+        .expect("write fake verifier compiler");
+        let mut permissions = fs::metadata(&compiler)
+            .expect("fake compiler metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&compiler, permissions).expect("make fake compiler executable");
+
+        let mut environment = env::vars_os()
+            .filter(|(name, _)| name != OsStr::new(CONTAINMENT_ROOT))
+            .collect::<Vec<_>>();
+        environment.push((
+            OsString::from(CONTAINMENT_ROOT),
+            root.as_os_str().to_owned(),
+        ));
+        let spec = Spec {
+            argv: Argv::new(
+                env::current_exe().expect("resolve gate test executable"),
+                [
+                    OsString::from("pre_commit_deadline_contains_verifier_compiler_descendants"),
+                    OsString::from("--nocapture"),
+                    OsString::from("--test-threads=1"),
+                ],
+            )
+            .expect("declare contained verifier fixture"),
+            cwd: root.clone(),
+            environment: Environment::new(environment).expect("capture fixture environment"),
+            group: ProcessGroup::New,
+            deadlines: Deadlines::new(
+                Duration::from_secs(2),
+                Duration::from_millis(100),
+                Duration::from_millis(100),
+            )
+            .expect("declare fixture deadlines"),
+            wait: WaitPolicy::new(
+                "pre-commit verifier containment fixture",
+                Cancellation::Never,
+                RestartDisposition::Never,
+            )
+            .expect("declare fixture wait policy"),
+            output: Output::new(
+                StdinPolicy::Null,
+                StreamPolicy::Capture { limit: 1024 * 1024 },
+                StreamPolicy::Capture { limit: 1024 * 1024 },
+            ),
+            redaction: Redaction::None,
+            grace: Duration::from_millis(100),
+        };
+        let outcome = sill::spawn(spec)
+            .expect("launch contained verifier fixture")
+            .wait()
+            .expect("terminate and reap contained verifier fixture");
+        assert!(
+            matches!(outcome.completion(), Completion::TimedOut(_)),
+            "fixture did not reach its outer worker deadline: {:?}",
+            outcome.completion()
+        );
+        assert_process_gone(&compiler_pid, "verifier compiler");
+        assert_process_gone(&descendant_pid, "verifier compiler descendant");
+        fs::remove_dir_all(root).expect("remove verifier containment fixture");
+    }
+
+    fn run_contained_verifier_fixture(root: &Path) {
+        let _containment =
+            crate::measure::inherit_process_group().expect("enter commit-gate containment");
+        assert_eq!(
+            crate::measure::bounded_process_group(),
+            ProcessGroup::Inherit
+        );
+        let contract = VerifierCompilerContract::new(
+            GateId::RustTypecheck,
+            source(b"contained verifier selected tree"),
+            root.to_path_buf(),
+            root.to_path_buf(),
+            vec![tool(
+                "cargo",
+                root.join("fake-cargo")
+                    .to_str()
+                    .expect("fixture path is UTF-8"),
+            )],
+            vec![
+                (
+                    OsString::from(COMPILER_PID),
+                    root.join("compiler.pid").into_os_string(),
+                ),
+                (
+                    OsString::from(DESCENDANT_PID),
+                    root.join("descendant.pid").into_os_string(),
+                ),
+            ],
+        )
+        .expect("declare contained verifier contract");
+        let run = contract
+            .run(VerifierCompilerStage::NativeClippy)
+            .expect("run fake verifier compiler");
+        panic!(
+            "outer worker deadline did not contain fake verifier compiler: completion={:?}",
+            run.completion
+        );
+    }
+
+    fn assert_process_gone(path: &Path, label: &str) {
+        let pid = fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read {label} pid {}: {error}", path.display()))
+            .trim()
+            .parse::<u32>()
+            .unwrap_or_else(|error| panic!("parse {label} pid {}: {error}", path.display()));
+        for _ in 0..100 {
+            if !process_exists(pid) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Do not leave the escaped regression fixture behind after a failure.
+        let _ = Command::new("/bin/kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        panic!("outer worker deadline leaked {label} {pid}");
+    }
+
+    fn process_exists(pid: u32) -> bool {
+        Command::new("/bin/kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 
     #[test]
