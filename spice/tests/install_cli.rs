@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use spice::install::{InstallPreview, InstallReceipt, InstallStatus};
+use spice::install::{Asset, InstallPreview, InstallReceipt, InstallStatus};
 use wire::Outcome;
 
 /// How long a paused install is given to reach its mutation rendezvous.
@@ -348,7 +348,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(preview.digest().as_str(), text_digest);
     assert_eq!(preview.digest(), &preview.plan().digest().unwrap());
     let operation_count = preview.plan().operations().len();
-    assert_eq!(operation_count, 8);
+    assert_eq!(operation_count, 7);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     assert!(fixture.root.join(".git/.spice-rs").is_dir());
@@ -393,6 +393,76 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
         fs::read(&fixture.executable).unwrap()
     );
     assert!(fixture.record().is_file());
+    fixture.assert_state_unchanged();
+}
+
+#[test]
+fn foreign_exclusions_survive_preview_apply_refresh_and_unapply() {
+    let mut exclusions = concat!(
+        "# operator exclusions\n",
+        "/cache/\n",
+        "# BEGIN spice-rust coexistence\n",
+        "/.spice/rust/\n",
+        "/.agents/skills/spice-rust/\n",
+        "# END spice-rust coexistence\n",
+        "# BEGIN Spice managed assets\n",
+        "/.spice/\n",
+        "/.agents/skills/spice/\n",
+        "# END Spice managed assets\n",
+        "# BEGIN Spice managed assets\n",
+        "foreign malformed duplicate\n",
+    )
+    .as_bytes()
+    .to_vec();
+    exclusions.push(0xff);
+
+    let mut fixture = Fixture::new("foreign-exclusions");
+    fixture.exclude_bytes.clone_from(&exclusions);
+    let exclude = fixture.root.join(".git/info/exclude");
+    fs::write(&exclude, &exclusions).expect("install foreign exclusions");
+
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let repeated: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    assert_eq!(preview, repeated);
+    assert!(
+        preview
+            .plan()
+            .operations()
+            .iter()
+            .all(|operation| operation.asset() != Asset::Exclusions)
+    );
+    assert!(preview.plan().operations().iter().all(|operation| {
+        !operation.path().starts_with(".spice-rs")
+            && !operation.path().starts_with(".agents/skills/spice")
+    }));
+    assert_eq!(fs::read(&exclude).unwrap(), exclusions);
+
+    let applied: InstallReceipt = reply_body(fixture.invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", preview.digest()),
+    ]));
+    assert_eq!(applied.status(), InstallStatus::Complete);
+    assert_eq!(fs::read(&exclude).unwrap(), exclusions);
+
+    fs::write(
+        &fixture.executable,
+        b"refreshed fixture install executable\n",
+    )
+    .expect("rebuild fixture executable");
+    let refresh: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    assert_ne!(refresh.digest(), preview.digest());
+    let refreshed: InstallReceipt = reply_body(fixture.invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", refresh.digest()),
+    ]));
+    assert_eq!(refreshed.status(), InstallStatus::Complete);
+    assert_eq!(fs::read(&exclude).unwrap(), exclusions);
+
+    let unapplied: InstallReceipt = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
+    assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
+    assert_eq!(fs::read(&exclude).unwrap(), exclusions);
     fixture.assert_state_unchanged();
 }
 
@@ -527,11 +597,18 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
 #[test]
 fn apply_destination_replacement_at_publication_preserves_both_images() {
     let fixture = Fixture::new("apply-target-race");
+    let destination = fixture
+        .root
+        .join(".git/.spice-install/git-hooks/pre-commit");
+    let parked = fixture
+        .root
+        .join(".git/.spice-install/git-hooks/pre-commit.parked");
+    let prior = b"operator-owned pre-commit\n";
+    fs::create_dir_all(destination.parent().unwrap()).expect("create prior hook parent");
+    fs::write(&destination, prior).expect("write prior hook");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    let destination = fixture.root.join(".git/info/exclude");
-    let parked = fixture.root.join(".git/info/exclude.parked");
-    let racer = b"racer-owned exclusions\n";
+    let racer = b"racer-owned pre-commit\n";
     let paused = fixture.spawn_paused(
         &["--json", "install", &format!("--apply={digest}")],
         "publish",
@@ -539,15 +616,15 @@ fn apply_destination_replacement_at_publication_preserves_both_images() {
         Release::Withheld,
     );
 
-    fs::rename(&destination, &parked).expect("park planned exclusion destination");
-    fs::write(&destination, racer).expect("replace planned exclusion destination");
+    fs::rename(&destination, &parked).expect("park planned hook destination");
+    fs::write(&destination, racer).expect("replace planned hook destination");
     let refused = paused.resume();
 
     assert_eq!(refused.code, Some(2));
     assert!(refused.out.is_empty());
     assert_refusal(&refused.err, "install::parent-changed");
     assert_eq!(fs::read(&destination).unwrap(), racer);
-    assert_eq!(fs::read(&parked).unwrap(), fixture.exclude_bytes);
+    assert_eq!(fs::read(&parked).unwrap(), prior);
     fixture.assert_state_unchanged();
 }
 
@@ -563,7 +640,9 @@ fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
     let fixture = Fixture::new("apply-abandoned-pause");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    let destination = fixture.root.join(".git/info/exclude");
+    let destination = fixture
+        .root
+        .join(".git/.spice-install/git-hooks/pre-commit");
     let paused = fixture.spawn_paused(
         &["--json", "install", &format!("--apply={digest}")],
         "publish",
@@ -588,11 +667,11 @@ fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
              test rendezvous timed out",
             fs::canonicalize(&fixture.root)
                 .expect("canonicalize install fixture")
-                .join(".git/info/exclude")
+                .join(".git/.spice-install/git-hooks/pre-commit")
                 .display()
         ),
     );
-    assert_eq!(fs::read(&destination).unwrap(), fixture.exclude_bytes);
+    assert!(!destination.exists());
     fixture.assert_state_unchanged();
 }
 
@@ -617,7 +696,9 @@ fn apply_pause_released_before_receiver_setup_is_observed() {
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let operation_count = preview.plan().operations().len();
     let digest = preview.digest();
-    let destination = fixture.root.join(".git/info/exclude");
+    let destination = fixture
+        .root
+        .join(".git/.spice-install/git-hooks/pre-commit");
     let paused = fixture.spawn_paused(
         &["--json", "install", &format!("--apply={digest}")],
         "publish",
@@ -704,15 +785,21 @@ fn unapply_destination_replacement_at_removal_preserves_both_images() {
 #[test]
 fn unapply_destination_replacement_at_restore_preserves_both_images() {
     let fixture = Fixture::new("unapply-restore-race");
+    let destination = fixture
+        .root
+        .join(".git/.spice-install/git-hooks/pre-commit");
+    fs::create_dir_all(destination.parent().unwrap()).expect("create prior hook parent");
+    fs::write(&destination, b"operator-owned pre-commit\n").expect("write prior hook");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
     fixture
         .invoke(&["--json", "install", &format!("--apply={digest}")])
         .assert_success();
-    let destination = fixture.root.join(".git/info/exclude");
-    let parked = fixture.root.join(".git/info/exclude.parked");
+    let parked = fixture
+        .root
+        .join(".git/.spice-install/git-hooks/pre-commit.parked");
     let installed = fs::read(&destination).unwrap();
-    let racer = b"racer-owned exclusions\n";
+    let racer = b"racer-owned pre-commit\n";
     let paused = fixture.spawn_paused(
         &["--json", "install", "--unapply"],
         "publish",
@@ -720,8 +807,8 @@ fn unapply_destination_replacement_at_restore_preserves_both_images() {
         Release::Withheld,
     );
 
-    fs::rename(&destination, &parked).expect("park installed exclusions");
-    fs::write(&destination, racer).expect("replace installed exclusions");
+    fs::rename(&destination, &parked).expect("park installed hook");
+    fs::write(&destination, racer).expect("replace installed hook");
     let refused = paused.resume();
 
     assert_eq!(refused.code, Some(2));

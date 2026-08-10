@@ -22,8 +22,6 @@ pub enum InstallError {
     PathShape(PathBuf),
     PathOutsideRoot(PathBuf),
     ParentChanged(PathBuf),
-    ExclusionsNotUtf8,
-    DivergentExclusions,
     BinaryNotRegular(PathBuf),
     BinaryEmpty(PathBuf),
     BinaryContextChanged,
@@ -89,10 +87,6 @@ impl fmt::Display for InstallError {
                 "install destination parent generation changed after planning: {}",
                 path.display()
             ),
-            Self::ExclusionsNotUtf8 => formatter.write_str("Git exclusions are not UTF-8"),
-            Self::DivergentExclusions => {
-                formatter.write_str("Git exclusions carry a divergent Spice managed block")
-            }
             Self::BinaryNotRegular(path) => {
                 write!(
                     formatter,

@@ -113,12 +113,14 @@ path and the untouched Python path in ordinary and linked worktrees.
 
 Rust publishes executable, skill, and hooks under `.spice-install`, while its
 receipt is below `.spice-rs`. `spice/src/install.rs#const RECORD_PATH` and
-`spice/src/install.rs#const EXCLUDE_BLOCK` pin those names. A same-version Rust
-receipt left at the former `.spice/install.json` location is not an alternate
-input: the new binary never inspects a path now owned by Python. An operator
-must reverse that old installation with its owning old installed binary before
-applying the renamed build. This is an explicit one-time namespace cutover, not
-an implicit bridge or fallback.
+`spice/src/install.rs#const GIT_PRE_COMMIT_PATH` pin those common-Git
+namespaces. Rust therefore owns no worktree exclusion stanza and never reads or
+writes `info/exclude`. A same-version Rust receipt left at the former
+`.spice/install.json` location is not an alternate input: the new binary never
+inspects a path now owned by Python. An operator must reverse that old
+installation with its owning old installed binary before applying the renamed
+build. This is an explicit one-time namespace cutover, not an implicit bridge
+or fallback.
 
 ## The executable routing defect and closure
 
