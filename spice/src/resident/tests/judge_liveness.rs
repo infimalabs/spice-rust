@@ -14,80 +14,18 @@ const PROOF_BOUND: Duration = Duration::from_secs(5);
 
 #[test]
 fn real_judge_does_not_block_the_current_thread_resident_surface() {
-    let root = fixture("real-judge-liveness");
-    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
-    fs::create_dir_all(&paths.data).expect("resident data directory");
-    stage_canvas_app(&root);
-    let repository = Repository::discover(&root).expect("fixture repository resolves");
-    let StartupSurface { mut config, trust } =
-        load_startup_surface(&repository).expect("startup surface loads");
-    config.taste = taste::Bag::new(vec![
-        taste::Taste::new(
-            "polling".parse().expect("taste name"),
-            ["polling"],
-            "Wait for an event.",
-        )
-        .expect("taste row"),
-    ])
-    .expect("taste bag");
-    config.judge_enabled = true;
-    config.lane = toml::from_str(
-        r#"
-deaths = 1
-hold = "0s"
-"#,
-    )
-    .expect("immediate fixture hold policy");
-
-    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
-    let bus = Bus::start(journal).expect("fixture bus starts");
-    let epoch = uuid(1);
-    commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
-
-    let taste_lane = uuid(10);
-    let taste_occupant = uuid(11);
-    let failure_lane = uuid(20);
-    let failure_occupant = uuid(21);
-    let exit_lane = uuid(30);
-    let exit_occupant = uuid(31);
-    let mut seats = Seats::new();
-    seats
-        .seat(
-            taste_lane,
-            taste_occupant,
-            process_spec("exec /usr/bin/tail -f /dev/null"),
-        )
-        .expect("taste occupant starts");
-    seats
-        .seat(
-            failure_lane,
-            failure_occupant,
-            process_spec("exec /usr/bin/tail -f /dev/null"),
-        )
-        .expect("failure occupant starts");
-    seats
-        .seat(exit_lane, exit_occupant, process_spec("exit 17"))
-        .expect("exit occupant starts");
-    seed_lane(&bus, epoch, taste_lane, taste_occupant, uuid(12), &root);
-    seed_lane(&bus, epoch, failure_lane, failure_occupant, uuid(22), &root);
-    seed_lane(&bus, epoch, exit_lane, exit_occupant, uuid(32), &root);
-
-    let resident_lock = ResidentLock::acquire(&paths).expect("resident lock acquired");
-    resident_lock
-        .set_epoch(epoch)
-        .expect("resident epoch publishes");
-    let judge = JudgeFixture::new(&root);
-    let mut adjudication = taste_surface::start_process_adjudication(
-        judge.script.to_string_lossy().into_owned(),
-        Duration::from_secs(30),
-    )
-    .expect("process adjudication starts");
+    let mut setup = prepare_liveness();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("current-thread resident runtime");
 
     let judge_pid = runtime.block_on(async {
+        let bus = &setup.bus;
+        let paths = &setup.paths;
+        let config = &setup.config;
+        let epoch = setup.epoch;
+        let lanes = setup.lanes;
         let timer_commits = bus.reader().subscribe();
         let proof_commits = bus.reader().subscribe();
         let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())
@@ -96,13 +34,13 @@ hold = "0s"
         let mut progress = Vec::new();
         let mut endpoint = Vec::new();
         let started = start_surface(
-            &bus,
-            &paths,
+            bus,
+            paths,
             epoch,
-            current_residency(&bus, epoch)
+            current_residency(bus, epoch)
                 .expect("current residency")
                 .body(),
-            &config,
+            config,
             SurfaceLaunch {
                 binding: CanvasBinding::local(EPHEMERAL_LOOPBACK),
                 open: false,
@@ -133,36 +71,36 @@ hold = "0s"
             exits,
         } = capture::channels();
         let command_surface = command_surface::Surface::new(
-            &bus,
-            &repository,
-            &paths,
+            bus,
+            &setup.repository,
+            paths,
             epoch,
             lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
             lane_recovery::Runtime::new(reporter.clone()),
-            &config,
+            config,
         );
-        let (submitter, completions) = adjudication.parts();
-        let entered_path = judge.entered.clone();
+        let (submitter, completions) = setup.adjudication.parts();
+        let entered_path = setup.judge.entered.clone();
         let entered = tokio::task::spawn_blocking(move || {
             fs::read_to_string(entered_path).expect("judge entry FIFO reports its process")
         });
         let exercise = exercise_live_surface(
-            &bus,
-            &paths,
+            bus,
+            paths,
             reporter,
             proof_commits,
             entered,
-            taste_lane,
-            taste_occupant,
-            failure_lane,
-            failure_occupant,
-            exit_lane,
-            exit_occupant,
+            lanes.taste_lane,
+            lanes.taste_occupant,
+            lanes.failure_lane,
+            lanes.failure_occupant,
+            lanes.exit_lane,
+            lanes.exit_occupant,
         );
         let drive = drive_surface(
-            &bus,
+            bus,
             epoch,
-            &mut seats,
+            &mut setup.seats,
             &command_surface,
             control,
             publication,
@@ -184,25 +122,176 @@ hold = "0s"
         judge_pid
     });
 
-    assert!(seats.is_empty(), "Down drains every supervised occupant");
+    finish_liveness(setup, &judge_pid);
+}
+
+#[derive(Clone, Copy)]
+struct LivenessLanes {
+    taste_lane: CanonicalUuid,
+    taste_occupant: CanonicalUuid,
+    failure_lane: CanonicalUuid,
+    failure_occupant: CanonicalUuid,
+    exit_lane: CanonicalUuid,
+    exit_occupant: CanonicalUuid,
+}
+
+struct LivenessSetup {
+    root: PathBuf,
+    paths: RuntimePaths,
+    repository: Repository,
+    config: SurfaceConfig,
+    bus: Bus,
+    epoch: CanonicalUuid,
+    lanes: LivenessLanes,
+    seats: Seats,
+    resident_lock: ResidentLock,
+    judge: JudgeFixture,
+    adjudication: taste_surface::AdjudicationRuntime,
+}
+
+fn prepare_liveness() -> LivenessSetup {
+    let root = fixture("real-judge-liveness");
+    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
+    fs::create_dir_all(&paths.data).expect("resident data directory");
+    stage_canvas_app(&root);
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let StartupSurface { mut config, trust } =
+        load_startup_surface(&repository).expect("startup surface loads");
+    config.taste = taste::Bag::new(vec![
+        taste::Taste::new(
+            "polling".parse().expect("taste name"),
+            ["polling"],
+            "Wait for an event.",
+        )
+        .expect("taste row"),
+    ])
+    .expect("taste bag");
+    config.judge_enabled = true;
+    config.lane = toml::from_str(
+        r#"
+deaths = 1
+hold = "0s"
+"#,
+    )
+    .expect("immediate fixture hold policy");
+
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = uuid(1);
+    commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
+    let lanes = LivenessLanes {
+        taste_lane: uuid(10),
+        taste_occupant: uuid(11),
+        failure_lane: uuid(20),
+        failure_occupant: uuid(21),
+        exit_lane: uuid(30),
+        exit_occupant: uuid(31),
+    };
+    let seats = start_liveness_lanes(&bus, epoch, lanes, &root);
+    let resident_lock = ResidentLock::acquire(&paths).expect("resident lock acquired");
+    resident_lock
+        .set_epoch(epoch)
+        .expect("resident epoch publishes");
+    let judge = JudgeFixture::new(&root);
+    let adjudication = taste_surface::start_process_adjudication(
+        judge.script.to_string_lossy().into_owned(),
+        Duration::from_secs(30),
+    )
+    .expect("process adjudication starts");
+
+    LivenessSetup {
+        root,
+        paths,
+        repository,
+        config,
+        bus,
+        epoch,
+        lanes,
+        seats,
+        resident_lock,
+        judge,
+        adjudication,
+    }
+}
+
+fn start_liveness_lanes(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lanes: LivenessLanes,
+    root: &Path,
+) -> Seats {
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            lanes.taste_lane,
+            lanes.taste_occupant,
+            process_spec("exec /usr/bin/tail -f /dev/null"),
+        )
+        .expect("taste occupant starts");
+    seats
+        .seat(
+            lanes.failure_lane,
+            lanes.failure_occupant,
+            process_spec("exec /usr/bin/tail -f /dev/null"),
+        )
+        .expect("failure occupant starts");
+    seats
+        .seat(
+            lanes.exit_lane,
+            lanes.exit_occupant,
+            process_spec("exit 17"),
+        )
+        .expect("exit occupant starts");
+    seed_lane(
+        bus,
+        epoch,
+        lanes.taste_lane,
+        lanes.taste_occupant,
+        uuid(12),
+        root,
+    );
+    seed_lane(
+        bus,
+        epoch,
+        lanes.failure_lane,
+        lanes.failure_occupant,
+        uuid(22),
+        root,
+    );
+    seed_lane(
+        bus,
+        epoch,
+        lanes.exit_lane,
+        lanes.exit_occupant,
+        uuid(32),
+        root,
+    );
+    seats
+}
+
+fn finish_liveness(setup: LivenessSetup, judge_pid: &str) {
+    assert!(
+        setup.seats.is_empty(),
+        "Down drains every supervised occupant"
+    );
     assert_eq!(
-        adjudication.pending_len(),
+        setup.adjudication.pending_len(),
         2,
         "the later capture reached the submitter while the first judge stayed open"
     );
     let cancellation_started = std::time::Instant::now();
-    drop(adjudication);
+    drop(setup.adjudication);
     assert!(
         cancellation_started.elapsed() < Duration::from_secs(2),
         "resident shutdown must cancel the judge instead of waiting for its runtime deadline"
     );
     assert_process_gone(judge_pid.trim());
 
-    drop(judge);
-    drop(resident_lock);
-    bus.verify().expect("resident authority verifies");
-    bus.shutdown().expect("fixture bus stops");
-    fs::remove_dir_all(root).expect("fixture cleanup");
+    drop(setup.judge);
+    drop(setup.resident_lock);
+    setup.bus.verify().expect("resident authority verifies");
+    setup.bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(setup.root).expect("fixture cleanup");
 }
 
 #[allow(
