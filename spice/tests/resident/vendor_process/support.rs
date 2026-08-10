@@ -145,7 +145,7 @@ pub(super) fn operator(fixture: &Fixture, arguments: &[&str], json: bool) -> Out
 
 fn operator_with(fixture: &Fixture, executable: &Path, arguments: &[&str], json: bool) -> Output {
     let mut process = Command::new(executable);
-    process.env_remove(spice::agent_launch::SPICE_LANE);
+    process.env_remove(spice::agent_launch::SPICE_RS_LANE);
     if json {
         process.arg("--json");
     }
@@ -164,7 +164,7 @@ pub(super) fn lane_with(
     json: bool,
 ) -> Output {
     let mut process = Command::new(executable);
-    process.env(spice::agent_launch::SPICE_LANE, lane.to_string());
+    process.env(spice::agent_launch::SPICE_RS_LANE, lane.to_string());
     if json {
         process.arg("--json");
     }
@@ -184,7 +184,7 @@ pub(super) fn operator_with_path(
 ) -> Output {
     let mut process = Command::new(executable);
     process
-        .env_remove(spice::agent_launch::SPICE_LANE)
+        .env_remove(spice::agent_launch::SPICE_RS_LANE)
         .env("PATH", path);
     if json {
         process.arg("--json");
@@ -206,7 +206,7 @@ pub(super) fn lane_command(
 ) -> Output {
     let mut process = Command::new(executable);
     process
-        .env(spice::agent_launch::SPICE_LANE, lane.to_string())
+        .env(spice::agent_launch::SPICE_RS_LANE, lane.to_string())
         .env("PATH", path);
     if json {
         process.arg("--json");
@@ -493,7 +493,10 @@ fn assert_environment(
             .into_string()
             .expect("fixture launch PATH is UTF-8"),
     );
-    expected.insert(spice::agent_launch::SPICE_LANE.to_owned(), lane.to_string());
+    expected.insert(
+        spice::agent_launch::SPICE_RS_LANE.to_owned(),
+        lane.to_string(),
+    );
     if dialect == Dialect::Claude {
         expected.insert(
             spice::agent_launch::CLAUDE_AUTO_COMPACT_WINDOW.to_owned(),

@@ -589,7 +589,7 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
         concat!(
             "#!/bin/sh\n",
             "printf 'executed=<%s>:<%s>:<%s>\\n' \"$SHELL\" ",
-            "\"${SPICE_HOOKS-unset}\" \"${SPICE_NATIVE_SHELL-unset}\"\n",
+            "\"${SPICE_RS_HOOKS-unset}\" \"${SPICE_RS_NATIVE_SHELL-unset}\"\n",
             "printf 'hidden descendant stderr\\n' >&2\n",
         ),
     )

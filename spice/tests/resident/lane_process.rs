@@ -16,9 +16,9 @@ fn invoke_args(
     lane_context: Option<wire::CanonicalUuid>,
 ) -> Output {
     let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
-    process.env_remove("SPICE_LANE"); // env-policy: allow
+    process.env_remove(steer::hook::LANE);
     if let Some(lane) = lane_context {
-        process.env("SPICE_LANE", lane.to_string()); // env-policy: allow
+        process.env(steer::hook::LANE, lane.to_string());
     }
     if json {
         process.arg("--json");
