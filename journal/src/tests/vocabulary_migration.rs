@@ -29,7 +29,8 @@ fn schema_eight_vocabulary_moves_forward_once_across_every_authority_carrier() {
     );
     assert_eq!(
         journal.schema_version().expect("schema version"),
-        SCHEMA_VERSION
+        SCHEMA_VERSION,
+        "the vocabulary rewrite continues through the source-locus boundary"
     );
 
     let head_bytes: Vec<u8> = journal
