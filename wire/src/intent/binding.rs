@@ -13,7 +13,7 @@ use super::{
     RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox,
     SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends,
     TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer,
-    TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
+    TasteProposalAdd, TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -33,6 +33,8 @@ pub enum BodyShape {
     TaskAdd,
     /// [`TaskOopsAdd`], the strict body for the server-owned `.oops` route.
     TaskOopsAdd,
+    /// [`TasteProposalAdd`], the strict body for the hidden taste-proposal route.
+    TasteProposalAdd,
     /// [`GateFindings`]
     GateFindings,
     /// [`TaskEdit`]
@@ -318,6 +320,7 @@ impl CommandKind {
             | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
+            | Self::TasteProposalAdd
             | Self::GateFindings
             | Self::TaskEdit
             | Self::TaskDelete
@@ -377,6 +380,7 @@ impl CommandKind {
             Self::EffortRead => Binding::of(B::EffortRead, A::Effort),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
+            Self::TasteProposalAdd => Binding::of(B::TasteProposalAdd, A::Task),
             Self::GateFindings => Binding::of(B::GateFindings, A::Text),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
@@ -455,6 +459,8 @@ pub enum Intent {
     TaskAdd(TaskAdd),
     /// [`BodyShape::TaskOopsAdd`]
     TaskOopsAdd(TaskOopsAdd),
+    /// [`BodyShape::TasteProposalAdd`]
+    TasteProposalAdd(TasteProposalAdd),
     /// [`BodyShape::GateFindings`]
     GateFindings(GateFindings),
     /// [`BodyShape::TaskEdit`]
@@ -539,6 +545,7 @@ impl Intent {
             | Self::EffortRead(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
+            | Self::TasteProposalAdd(_)
             | Self::GateFindings(_)
             | Self::TaskEdit(_)
             | Self::TaskDelete(_)
@@ -586,6 +593,7 @@ impl Intent {
             Self::EffortRead(_) => BodyShape::EffortRead,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
+            Self::TasteProposalAdd(_) => BodyShape::TasteProposalAdd,
             Self::GateFindings(_) => BodyShape::GateFindings,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskDelete(_) => BodyShape::TaskDelete,
@@ -658,6 +666,7 @@ impl BodyShape {
                 | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
+                | Self::TasteProposalAdd
                 | Self::GateFindings
                 | Self::TaskEdit
                 | Self::TaskDelete
@@ -686,6 +695,7 @@ impl BodyShape {
                 | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
+                | Self::TasteProposalAdd
                 | Self::GateFindings
                 | Self::TaskEdit
                 | Self::TaskDelete
@@ -708,6 +718,7 @@ impl BodyShape {
             Self::EffortRead => Intent::EffortRead(crate::decode(bytes)?),
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
+            Self::TasteProposalAdd => Intent::TasteProposalAdd(crate::decode(bytes)?),
             Self::GateFindings => Intent::GateFindings(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),

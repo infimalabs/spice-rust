@@ -415,30 +415,55 @@ async fn dispatch_action(
             message,
             attachments,
         } => {
-            let body = SteerSend {
-                lane,
-                message,
-                attachments,
-            };
-            let expected = vec![Witness::Residency {
-                lane,
-                occupant,
-                epoch,
-            }];
-            send_typed(
+            send_steer(
                 principal,
                 writer,
                 pending,
-                PendingKind::Steer { lane },
-                CommandKind::SteerSend,
-                expected,
-                body,
+                lane,
+                occupant,
+                epoch,
+                message,
+                attachments,
             )
             .await
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn send_steer(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    message: String,
+    attachments: Vec<DirectiveAttachment>,
+) -> Result<(), String> {
+    let body = SteerSend {
+        lane,
+        message,
+        attachments,
+    };
+    let expected = vec![Witness::Residency {
+        lane,
+        occupant,
+        epoch,
+    }];
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::Steer { lane },
+        CommandKind::SteerSend,
+        expected,
+        body,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn send_lane_seat(
     principal: &Principal,
     writer: &mut SocketWriter,

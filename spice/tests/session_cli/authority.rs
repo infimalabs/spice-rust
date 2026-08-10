@@ -242,6 +242,10 @@ fn briefing_lanes(
     ]
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "claim fixture states every durable identity and residency carrier"
+)]
 fn mint_claim(
     journal: &mut Journal,
     task: TaskStamp,
