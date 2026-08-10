@@ -25,6 +25,8 @@ use wire::{Digest, Domain, Outcome, Refusal, ReplyPosition};
 const REFUSAL_EXIT: i32 = 2;
 const FAULT_EXIT: i32 = 1;
 const PROCESS_PATH: &str = concat!("PA", "TH");
+const COMMIT_WORKER_STARTUP_ALLOWANCE: Duration = Duration::from_secs(6);
+const COMMIT_WORKER_CONTAINMENT_RUNTIME: Duration = Duration::from_secs(2);
 
 #[test]
 fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_180_seconds() {
@@ -153,45 +155,44 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     let tool_pid = scratch.path().join("tool.pid");
     executable(
         &programs.join("cargo"),
-        &format!(
-            concat!(
-                "#!/bin/sh\n",
-                "if [ \"$*\" = \"--version\" ]; then\n",
-                "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
-                "  exit 0\n",
-                "fi\n",
-                "case \"$1\" in\n",
-                "  metadata)\n",
-                "    root=$(/bin/pwd -P)\n",
-                "    printf '%s\\n' ",
-                "'{{\"packages\":[{{\"id\":\"gate-fixture-id\",\"name\":\"gate-fixture\",",
-                "\"manifest_path\":\"'\"$root\"'/Cargo.toml\",\"dependencies\":[],",
-                "\"targets\":[{{\"name\":\"gate_fixture\",\"kind\":[\"lib\"],",
-                "\"test\":true,\"src_path\":\"'\"$root\"'/src/lib.rs\"}}]}}],",
-                "\"workspace_members\":[\"gate-fixture-id\"]}}'\n",
-                "    exit 0\n",
-                "    ;;\n",
-                "  test)\n",
-                "    /bin/sleep 30 & child=$!\n",
-                "    printf '%s\\n' \"$child\" > '{}'\n",
-                "    wait\n",
-                "    ;;\n",
-                "  fmt) exit 0 ;;\n",
-                "  check|clippy) exit 0 ;;\n",
-                "  *) exit 0 ;;\n",
-                "esac\n",
-            ),
-            tool_pid.display(),
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$*\" = \"--version\" ]; then\n",
+            "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
+            "  exit 0\n",
+            "fi\n",
+            "case \"$1\" in\n",
+            "  metadata)\n",
+            "    root=$(/bin/pwd -P)\n",
+            "    printf '%s\\n' ",
+            "'{\"packages\":[{\"id\":\"gate-fixture-id\",\"name\":\"gate-fixture\",",
+            "\"manifest_path\":\"'\"$root\"'/Cargo.toml\",\"dependencies\":[],",
+            "\"targets\":[{\"name\":\"gate_fixture\",\"kind\":[\"lib\"],",
+            "\"test\":true,\"src_path\":\"'\"$root\"'/src/lib.rs\"}]}],",
+            "\"workspace_members\":[\"gate-fixture-id\"]}'\n",
+            "    exit 0\n",
+            "    ;;\n",
+            "  test) exit 0 ;;\n",
+            "  fmt) exit 0 ;;\n",
+            "  check) printf '%s\\n' 'unexpected stale cargo check arm' >&2; exit 97 ;;\n",
+            "  *) exit 0 ;;\n",
+            "esac\n",
         ),
     );
     executable(
         &programs.join("rustfmt"),
-        concat!(
-            "#!/bin/sh\n",
-            "if [ \"$*\" = \"--version\" ]; then\n",
-            "  printf '%s\\n' 'rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)'\n",
-            "fi\n",
-            "exit 0\n",
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)'\n",
+                "  exit 0\n",
+                "fi\n",
+                "/bin/sleep 30 & child=$!\n",
+                "printf '%s\\n' \"$child\" > '{}'\n",
+                "wait\n",
+            ),
+            tool_pid.display(),
         ),
     );
     let progress = scratch.path().join("progress.jsonl");
@@ -205,24 +206,12 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
         .wait()
         .expect("terminate and reap hidden commit worker group");
 
-    assert!(
-        matches!(waited.completion(), Completion::TimedOut(_)),
-        "worker completed unexpectedly: completion={:?} stdout={} stderr={}",
-        waited.completion(),
-        waited
-            .stdout()
-            .map(|output| String::from_utf8_lossy(output.bytes()))
-            .unwrap_or_default(),
-        waited
-            .stderr()
-            .map(|output| String::from_utf8_lossy(output.bytes()))
-            .unwrap_or_default(),
-    );
+    assert!(matches!(waited.completion(), Completion::TimedOut(_)));
     let pid = fs::read_to_string(&tool_pid)
-        .expect("the active Cargo tool published its descendant")
+        .expect("the active gate tool published its descendant")
         .trim()
         .parse::<u32>()
-        .expect("tool descendant pid is numeric");
+        .expect("gate-tool descendant pid is numeric");
     for _ in 0..100 {
         if !process_exists(pid) {
             break;
@@ -235,8 +224,8 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     );
     let progress = fs::read_to_string(progress).expect("read worker phase evidence");
     assert!(
-        progress.contains("\"phase\":\"test-selection\""),
-        "deadline phase evidence omitted the active test-selection phase: {progress}"
+        progress.contains("\"phase\":\"family\",\"family\":\"toolchain\""),
+        "deadline phase evidence omitted the active toolchain family: {progress}"
     );
 }
 
@@ -265,7 +254,7 @@ fn deadline_worker_spec(root: &Path, programs: &Path, progress: &Path, terminal:
         environment: Environment::new(environment).expect("capture deadline environment"),
         group: ProcessGroup::New,
         deadlines: Deadlines::new(
-            Duration::from_secs(6),
+            COMMIT_WORKER_STARTUP_ALLOWANCE + COMMIT_WORKER_CONTAINMENT_RUNTIME,
             Duration::from_millis(200),
             Duration::from_millis(200),
         )

@@ -880,6 +880,7 @@ fn expires() -> Instant {
 fn sent(key: &str) -> SteerSent {
     SteerSent {
         directive: directive(key),
+        fanout: None,
         key: key.to_owned(),
         lane: lane(),
         text: "hold the line".to_owned(),

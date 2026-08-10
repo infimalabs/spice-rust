@@ -55,29 +55,80 @@ fn selected_test_environment_cannot_inherit_the_parent_git_repository() {
         Environment::new(entries).expect("declare inherited hook environment"),
     )
     .expect("selected test environment admits after isolation");
-    let value = |name: &str| {
-        environment
-            .entries()
-            .iter()
-            .find_map(|(key, value)| (key == OsStr::new(name)).then_some(value))
-    };
-
     assert_eq!(
-        value("PATH"),
+        environment_value(&environment, "PATH"),
         Some(&OsString::from("/fixture/bin")),
         "ordinary process environment survives repository isolation"
     );
     assert_eq!(
-        value(CARGO_TARGET_DIR),
+        environment_value(&environment, CARGO_TARGET_DIR),
         Some(&OsString::from("/fixture/target")),
         "configured Cargo cache authority survives repository isolation"
     );
     for variable in GIT_LOCAL_ENVIRONMENT {
         assert!(
-            value(variable).is_none(),
+            environment_value(&environment, variable).is_none(),
             "selected tests retained parent repository variable {variable}"
         );
     }
+}
+
+#[test]
+fn selected_tree_execution_rewrites_external_cargo_outputs_to_writable_root() {
+    let inventory = Inventory {
+        target_directory: PathBuf::from("/selected/target"),
+        build_directory: PathBuf::from("/machine/cargo-build/hash"),
+        packages: vec![quick_package()],
+    };
+    let environment = inventory
+        .execution_environment(
+            Environment::new([(OsString::from("PATH"), OsString::from("/fixture/bin"))])
+                .expect("selected test environment admits"),
+            Path::new("/selected"),
+            Path::new("/worktree"),
+            false,
+        )
+        .expect("selected test output roots admit");
+
+    assert_eq!(
+        environment_value(&environment, CARGO_TARGET_DIR),
+        Some(&OsString::from("/worktree/target")),
+        "ordinary selected-tree tests compile into the writable worktree target"
+    );
+    assert_eq!(
+        environment_value(&environment, CARGO_BUILD_BUILD_DIR),
+        Some(&OsString::from("/worktree/target/cargo-build")),
+        "machine-level build-dir paths are not embedded into selected-tree test binaries"
+    );
+}
+
+#[test]
+fn reusable_workspace_execution_preserves_prepared_cargo_outputs() {
+    let inventory = Inventory {
+        target_directory: PathBuf::from("/worktree/target"),
+        build_directory: PathBuf::from("/worktree/target/spice-gate-native-build"),
+        packages: vec![quick_package()],
+    };
+    let environment = inventory
+        .execution_environment(
+            Environment::new([(OsString::from("PATH"), OsString::from("/fixture/bin"))])
+                .expect("reusable test environment admits"),
+            Path::new("/selected"),
+            Path::new("/worktree"),
+            true,
+        )
+        .expect("reusable output roots admit");
+
+    assert_eq!(
+        environment_value(&environment, CARGO_TARGET_DIR),
+        Some(&OsString::from("/worktree/target")),
+        "reusable test execution keeps the analysis target root"
+    );
+    assert_eq!(
+        environment_value(&environment, CARGO_BUILD_BUILD_DIR),
+        Some(&OsString::from("/worktree/target/spice-gate-native-build")),
+        "reusable test execution keeps the analysis build root"
+    );
 }
 
 #[test]
@@ -750,6 +801,13 @@ fn quick_package() -> PackageInventory {
             declared_path_sources: Vec::new(),
         }],
     }
+}
+
+fn environment_value<'a>(environment: &'a Environment, name: &str) -> Option<&'a OsString> {
+    environment
+        .entries()
+        .iter()
+        .find_map(|(key, value)| (key == OsStr::new(name)).then_some(value))
 }
 
 fn fixture_inventory() -> Inventory {

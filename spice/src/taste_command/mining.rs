@@ -50,6 +50,7 @@ enum ProposalStanding {
 struct Correction {
     seq: Seq,
     directive: CanonicalUuid,
+    fanout: Option<CanonicalUuid>,
     key: String,
     excerpt: String,
     tokens: BTreeSet<String>,
@@ -328,6 +329,7 @@ fn corrections(
         rows.push(Correction {
             seq: *seq,
             directive,
+            fanout: published.fanout,
             key,
             excerpt,
             tokens,
@@ -429,7 +431,7 @@ fn cluster(corrections: &[Correction], threshold: usize) -> Vec<Candidate> {
     let mut independent = corrections.to_vec();
     independent.sort_by_key(|row| row.seq);
     let mut seen = BTreeSet::new();
-    independent.retain(|row| seen.insert(locus_identity(row)));
+    independent.retain(|row| seen.insert(occurrence_identity(row)));
 
     let mut by_theme = BTreeMap::<(String, String), Vec<Correction>>::new();
     for correction in independent {
@@ -454,7 +456,7 @@ fn cluster(corrections: &[Correction], threshold: usize) -> Vec<Candidate> {
             continue;
         }
         rows.sort_by_key(|row| row.seq);
-        let loci = rows.iter().map(locus_identity).collect::<Vec<_>>();
+        let loci = rows.iter().map(occurrence_identity).collect::<Vec<_>>();
         groups.entry(loci).or_insert((theme, rows));
     }
     let mut candidates = groups
@@ -472,7 +474,10 @@ fn candidate(corrections: Vec<Correction>, theme: (String, String)) -> Candidate
     let oldest = corrections.first().expect("candidate has corrections");
     let fingerprint = format!("{}\0{}", theme.0, theme.1);
     let finding = Digest::compute(Domain::TasteProse, fingerprint.as_bytes());
-    let mut loci = corrections.iter().map(locus_identity).collect::<Vec<_>>();
+    let mut loci = corrections
+        .iter()
+        .map(occurrence_identity)
+        .collect::<Vec<_>>();
     loci.sort();
     let occurrence_seed = format!("{}\0{}", finding, loci.join("\0"));
     let occurrence = Digest::compute(Domain::BoardTaskIdentity, occurrence_seed.as_bytes());
@@ -510,13 +515,17 @@ fn frequent_tokens(corrections: &[Correction]) -> Vec<String> {
         .collect()
 }
 
-fn locus_identity(correction: &Correction) -> String {
-    let source = correction.locus.source.map_or_else(
-        || format!("lane:{}", correction.lane),
-        |source| format!("source:{source}"),
-    );
+fn occurrence_identity(correction: &Correction) -> String {
+    if let Some(fanout) = correction.fanout {
+        return format!("fanout:{fanout}");
+    }
+    let source = correction
+        .locus
+        .source
+        .map_or_else(|| "absent".to_owned(), |source| source.to_string());
     format!(
-        "{source}:{}:{}:{}:{}:{}:{}",
+        "pre-fanout:lane:{}:source:{source}:{}:{}:{}:{}:{}:{}",
+        correction.lane,
         correction.locus.member,
         correction.locus.offset,
         correction.locus.length,
@@ -670,9 +679,13 @@ fn description(
         predecessor.map_or("none", TaskHandle::as_str),
     );
     for correction in &candidate.corrections {
+        let fanout = correction
+            .fanout
+            .map_or_else(|| "pre-fanout".to_owned(), |fanout| fanout.to_string());
         description.push_str(&format!(
-            "- directive {} key {} ({}) at {}: {:?}",
+            "- directive {} fanout {} key {} ({}) at {}: {:?}",
             correction.directive,
+            fanout,
             correction.key,
             correction.disposition,
             locus_text(&correction.locus),

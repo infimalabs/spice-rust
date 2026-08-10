@@ -29,7 +29,18 @@ pub(super) fn keyboard_submit(
     Callback::from(move |event: KeyboardEvent| {
         if event.key() == "Enter" && (event.meta_key() || event.ctrl_key()) {
             event.prevent_default();
-            if submit_draft(lane, target, &lane_key, &sender, &drafts, &submissions) {
+            let Ok(fanout) = random_uuid() else {
+                return;
+            };
+            if submit_draft(
+                fanout,
+                lane,
+                target,
+                &lane_key,
+                &sender,
+                &drafts,
+                &submissions,
+            ) {
                 focus_after_render(primary_textarea_id(&lane_key));
             }
         }

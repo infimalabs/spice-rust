@@ -38,8 +38,7 @@ impl SeededBuildLaneApp {
             })?;
             return Ok(Self(None));
         }
-        with_writable_stage_parent(&stage, || staged_app::try_seed(worktree))
-            .map_err(|error| format!("demo_cli fixture app generation failed: {error}"))?;
+        staged_app::seed(worktree);
         Ok(Self(Some(stage)))
     }
 }
@@ -47,35 +46,8 @@ impl SeededBuildLaneApp {
 impl Drop for SeededBuildLaneApp {
     fn drop(&mut self) {
         if let Some(stage) = self.0.take() {
-            with_writable_stage_parent(&stage, || fs::remove_dir_all(&stage))
-                .expect("remove generated build lane app fixture");
+            fs::remove_dir_all(stage).expect("remove generated build lane app fixture");
         }
-    }
-}
-
-fn with_writable_stage_parent<T>(
-    stage: &Path,
-    operation: impl FnOnce() -> std::io::Result<T>,
-) -> std::io::Result<T> {
-    let parent = stage
-        .parent()
-        .ok_or_else(|| std::io::Error::other("lane app stage has no parent"))?;
-    let original = fs::metadata(parent)?.permissions();
-    let mut writable = original.clone();
-    writable.set_mode(original.mode() | 0o200);
-    let changed = writable.mode() != original.mode();
-    if changed {
-        fs::set_permissions(parent, writable)?;
-    }
-    let result = operation();
-    let restored = if changed {
-        fs::set_permissions(parent, original)
-    } else {
-        Ok(())
-    };
-    match (result, restored) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
     }
 }
 
@@ -235,6 +207,57 @@ fn build_lane_stage_is_byte_identical_or_still_absent_after_the_precondition_gua
         stage_snapshot(&stage),
         before,
         "the suite must preserve an existing real stage and restore an absent one to absence"
+    );
+}
+
+#[test]
+fn build_lane_fixture_can_seed_a_read_only_selected_tree_root() {
+    let fixture = Fixture::new();
+    let root = fixture.root("read-only-selected-source");
+    fs::create_dir(&root).expect("create selected-source fixture root");
+    let dist = root.join("dist");
+    fs::create_dir(&dist).expect("create selected-source dist crate directory");
+    for directory in [&root, &dist] {
+        let mut permissions = fs::metadata(directory)
+            .expect("read selected-source fixture permissions")
+            .permissions();
+        permissions.set_mode(0o500);
+        fs::set_permissions(directory, permissions)
+            .expect("make selected-source fixture read-only");
+    }
+
+    staged_app::seed(&root);
+
+    let app = canvas::AppSource::resolve(&root).expect("seeded selected source app resolves");
+    let generation = app
+        .current_generation()
+        .expect("selected source generation resolves");
+    for asset in canvas::APP.assets() {
+        generation.served(*asset).unwrap_or_else(|error| {
+            panic!("selected source seed omitted {}: {error}", asset.file())
+        });
+    }
+}
+
+#[test]
+fn build_lane_fixture_refuses_a_symlink_escape_without_writing_the_external_tree() {
+    let fixture = Fixture::new();
+    let root = fixture.root("symlinked-selected-source");
+    let external = fixture.root("external-selected-source");
+    fs::create_dir(&root).expect("create symlinked selected-source root");
+    fs::create_dir(&external).expect("create external selected-source root");
+    std::os::unix::fs::symlink(&external, root.join("dist"))
+        .expect("link selected-source dist directory outside its root");
+
+    let refused = std::panic::catch_unwind(|| staged_app::seed(&root));
+
+    assert!(
+        refused.is_err(),
+        "symlinked fixture root unexpectedly seeded"
+    );
+    assert!(
+        !external.join(".spice-rs").exists(),
+        "refused fixture seed wrote through its symlink boundary"
     );
 }
 

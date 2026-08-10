@@ -155,6 +155,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
     );
     let steering = body::SteerSent {
         directive: uuid(0xaf),
+        fanout: None,
         key: "1kAsk001".to_owned(),
         lane,
         text: "Address this exact steering ask".to_owned(),
@@ -171,6 +172,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
     let steering_origin = origin.clone();
     write.steering_head(steering_fact, move |created| SteeringHead {
         directive: steering.directive,
+        fanout: steering.fanout,
         key: steering.key,
         lane: steering.lane,
         text: steering.text,
@@ -224,6 +226,7 @@ fn seed_retired_peer_steering(path: &Path) {
     );
     let body = body::SteerSent {
         directive,
+        fanout: None,
         key: "1kRetire".to_owned(),
         lane,
         text: "unrelated retired steering".to_owned(),
@@ -237,6 +240,7 @@ fn seed_retired_peer_steering(path: &Path) {
     let head_origin = origin.clone();
     sent.steering_head(fact, move |created| SteeringHead {
         directive: body.directive,
+        fanout: body.fanout,
         key: body.key,
         lane: body.lane,
         text: body.text,

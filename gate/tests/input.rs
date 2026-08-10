@@ -8,6 +8,8 @@ use serde::Deserialize;
 
 mod support;
 
+use support::contract_repository;
+
 const TRACKED_POLICY: &str = include_str!("../../spice-rust.toml");
 const TRACKED_BASELINE: &str = include_str!("../../baseline.toml");
 const TRACKED_FILE_LOC_LIMIT: u64 = 1_000;
@@ -15,9 +17,9 @@ const TRACKED_FILE_LOC_RATCHET: u64 = 1_500;
 
 #[test]
 fn tracked_inputs_load_one_operational_current_contract() {
-    let repository = support::contract_repository("tracked-inputs");
-    let root = repository.root.clone();
-    let contract = Contract::load(&root).expect("tracked current gate inputs load");
+    let repository = contract_repository("input-current-contract");
+    let root = &repository.root;
+    let contract = Contract::load(root).expect("tracked current gate inputs load");
 
     the_measured_policy_is_current(&contract);
     assert_eq!(contract.kill().tool().identity(), PINNED_CARGO_MUTANTS);
@@ -46,19 +48,20 @@ fn tracked_inputs_load_one_operational_current_contract() {
     );
 
     let run = contract
-        .adjudicate(&root)
+        .adjudicate(root)
         .expect("an operational contract reaches a complete verdict");
-    // This adjudicates the current tracked contract against one owned committed
-    // source, so the test is equally operational inside an immutable selected
-    // tree that is intentionally not itself a Git repository.
+    // This adjudicates an owned repository against its captured HEAD, so the
+    // result is independent of whether Cargo compiled the test from the live
+    // worktree or from an immutable selected source without Git metadata.
     assert_eq!(
         run.receipt().standing(),
         Standing::Clean,
         "{}",
-        gate::report::refusal_detail(&root, &contract, &run.report())
+        gate::report::refusal_detail(root, &contract, &run.report())
     );
     assert!(run.measurements().is_empty());
     assert!(run.receipt().long_lines().is_empty());
+    repository.remove();
 }
 
 /// Native long-line admission, durable mutation state, and the Camp profile.

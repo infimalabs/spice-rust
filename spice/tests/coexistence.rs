@@ -419,6 +419,7 @@ fn repository_lookalikes_cannot_replace_or_stage_inbox_and_ack_authority() {
             directive: "018f82d4-6f59-7d06-92e3-bce913116399"
                 .parse()
                 .expect("fixture directive"),
+            fanout: None,
             key: "1kJK6M0V".to_owned(),
             lane,
             text: "authoritative rendered direction".to_owned(),

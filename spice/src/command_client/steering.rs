@@ -39,6 +39,7 @@ pub(crate) fn execute_steering(
                     epoch: inbox.epoch,
                 }],
                 &wire::intent::SteerSend {
+                    fanout: CanonicalUuid::new(uuid::Uuid::new_v4()),
                     lane,
                     message: message.to_owned(),
                     attachments: Vec::new(),
