@@ -672,6 +672,8 @@ fn selection_report(
     .map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
+/// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
+/// module declaration establishes; ordinary directory proximity is not reach.
 fn target_reaches_source(
     target: &TargetIdentity,
     source: &Path,

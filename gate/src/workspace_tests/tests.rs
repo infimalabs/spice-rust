@@ -252,6 +252,8 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
     );
 }
 
+/// A nested file named by `#[path]` belongs to that integration target without
+/// making its same-directory peers part of the selection.
 #[test]
 fn staged_path_module_selects_only_its_declaring_integration_target() {
     let root = fixture_root("workspace-path-module-selection");
