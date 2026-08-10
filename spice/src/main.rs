@@ -187,7 +187,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
-        ["gate", "pre-commit"] => deliver(&gate_command::pre_commit(), form),
+        ["gate", "pre-commit"] => deliver_commit_gate(&gate_command::pre_commit(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
         ["install"] => match install_command::run(leaf) {
             install_command::Answer::Plan(outcome) => deliver(&outcome, form),
@@ -770,6 +770,24 @@ fn deliver<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
             rendering.speak();
             terminate(outcome);
         }
+        Err(error) => {
+            let fault: Outcome<()> = Outcome::Fault(render_fault(error));
+            render::render(&fault, Form::Text)
+                .expect("the text rendering of a fault encodes nothing")
+                .speak();
+            terminate(&fault);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_commit_gate<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
+    match render::render_commit_gate(outcome, form) {
+        Ok(Some(rendering)) => {
+            rendering.speak();
+            terminate(outcome);
+        }
+        Ok(None) => terminate(outcome),
         Err(error) => {
             let fault: Outcome<()> = Outcome::Fault(render_fault(error));
             render::render(&fault, Form::Text)
