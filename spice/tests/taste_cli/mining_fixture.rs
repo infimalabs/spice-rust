@@ -148,7 +148,7 @@ fn assert_later_mining_result(
         fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap(),
         tracked_before
     );
-    restarted.stop(&fixture);
+    restarted.stop(fixture);
 }
 
 fn mined_proposals(fixture: &Fixture) -> Vec<wire::body::TaskAdded> {
