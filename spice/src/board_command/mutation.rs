@@ -9,6 +9,8 @@ pub(super) use claim::{
     ClaimPlan, Possession, claim_git_boundary, claim_grant, claim_plan, commit_claim,
 };
 pub(super) use gate_findings::gate_findings;
+#[cfg(test)]
+pub(super) use gate_findings::{FindingRow, gate_findings_folded};
 
 /// One actor-filtered board snapshot whose cursor and entries were validated together.
 pub(super) struct ValidatedSnapshot {

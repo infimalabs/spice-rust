@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
 use super::family_evidence::metric_terminal;
-use super::{ArmEvidence, BatteryArmResult, BatteryReport, BatteryState};
+use super::{ArmEvidence, BatteryArmResult, BatteryReport, BatteryState, FocusedArmReport};
 use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricKey, MetricMeasurement};
 
 /// One stable work item projected from a non-admitting battery result.
@@ -77,6 +77,22 @@ impl BatteryReport {
             .iter()
             .flat_map(project_result)
             .collect::<Vec<_>>()
+    }
+}
+
+impl BatteryArmResult {
+    /// Project every non-admitting typed result from this arm into stable work.
+    #[must_use]
+    pub fn findings(&self) -> Vec<GateFinding> {
+        project_result(self)
+    }
+}
+
+impl FocusedArmReport {
+    /// Project the exact findings carried by this focused report.
+    #[must_use]
+    pub fn findings(&self) -> Vec<GateFinding> {
+        self.result().findings()
     }
 }
 
