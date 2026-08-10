@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use spice::install::{Asset, InstallPreview, InstallReceipt, InstallStatus};
-use wire::Outcome;
+use wire::{Outcome, Refusal};
 
 /// How long a paused install is given to reach its mutation rendezvous.
 ///
@@ -463,6 +463,70 @@ fn foreign_exclusions_survive_preview_apply_refresh_and_unapply() {
     let unapplied: InstallReceipt = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
     assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
     assert_eq!(fs::read(&exclude).unwrap(), exclusions);
+    fixture.assert_state_unchanged();
+}
+
+#[test]
+fn retired_state_refusal_names_ownership_recovery_and_changes_nothing() {
+    let fixture = Fixture::new("retired-state-refusal");
+    let retired = fixture.root.join(".git/.spice-rust");
+    fs::create_dir(&retired).expect("create retired Rust state root");
+    let evidence = retired.join("evidence");
+    fs::write(&evidence, b"retired Rust evidence\n").expect("write retired Rust evidence");
+    let canonical = fs::canonicalize(&retired).expect("canonicalize retired Rust state root");
+    let inspection = shell_words::join([
+        "ls".to_owned(),
+        "-ld".to_owned(),
+        "--".to_owned(),
+        canonical.to_string_lossy().into_owned(),
+    ]);
+
+    let text = fixture.invoke(&["install"]);
+    assert_eq!(text.code, Some(2));
+    assert!(text.out.is_empty());
+    let text = String::from_utf8(text.err).expect("text refusal is UTF-8");
+    for signal in [
+        "install::state-refused",
+        "retired state root belongs to release=release-one",
+        canonical.to_string_lossy().as_ref(),
+        inspection.as_str(),
+        "operator-chosen path",
+    ] {
+        assert!(
+            text.contains(signal),
+            "text refusal omitted {signal:?}: {text}"
+        );
+    }
+
+    let json = fixture.invoke(&["--json", "install"]);
+    assert_eq!(json.code, Some(2));
+    assert!(json.out.is_empty());
+    let outcome: Outcome<()> = wire::decode(&json.err).expect("JSON refusal decodes");
+    let Outcome::Refusal(Refusal::Bare { diagnostic }) = outcome else {
+        panic!("retired state must be one bare refusal: {outcome:?}");
+    };
+    assert_eq!(diagnostic.reason(), "install::state-refused");
+    assert_eq!(diagnostic.witness(), Some("install-state"));
+    assert_eq!(
+        diagnostic.expected(),
+        Some("unlinked current-release Rust state under .spice-rs")
+    );
+    let observed = diagnostic.observed().expect("refusal carries observation");
+    assert!(observed.contains("release=release-one"), "{observed}");
+    assert!(
+        observed.contains(canonical.to_string_lossy().as_ref()),
+        "{observed}"
+    );
+    let detail = diagnostic
+        .detail()
+        .expect("refusal carries recovery detail");
+    assert!(detail.starts_with(observed), "{detail}");
+    assert!(detail.contains(&inspection), "{detail}");
+    assert!(detail.contains("operator-chosen path"), "{detail}");
+
+    assert_eq!(fs::read(&evidence).unwrap(), b"retired Rust evidence\n");
+    assert!(!fixture.installed_binary().exists());
+    assert!(!fixture.record().exists());
     fixture.assert_state_unchanged();
 }
 
