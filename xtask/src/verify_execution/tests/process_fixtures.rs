@@ -289,6 +289,27 @@ fn read_pids(path: &std::path::Path) -> Vec<u32> {
 }
 
 #[cfg(unix)]
+fn assert_processes_gone(path: &std::path::Path, label: &str) {
+    let pids = read_pids(path);
+    let started = Instant::now();
+    loop {
+        let live = pids
+            .iter()
+            .copied()
+            .filter(|pid| process_exists(*pid))
+            .collect::<Vec<_>>();
+        if live.is_empty() {
+            return;
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "{label} processes {live:?} remained after the bounded post-reap observation"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(unix)]
 fn process_exists(pid: u32) -> bool {
     Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "pid="])

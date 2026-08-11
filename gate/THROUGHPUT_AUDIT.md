@@ -108,6 +108,58 @@ limit. The stable-source queue-bound case stayed below that limit, and its
 immediate repeat met the sub-120-second target with lower aggregate CPU than
 the earlier persistent-output runs.
 
+## 2026-08-11 isolated fleet saturation
+
+Task `PERFORM-1kLbsp1T` measured one canonical full verifier beside cold,
+agent-equivalent Rust builds on the same 12-core, 24 GiB host. Each peer ran
+`cargo test --locked -p wire --no-run` with `CARGO_BUILD_JOBS=12` and distinct
+`CARGO_TARGET_DIR` and `CARGO_BUILD_BUILD_DIR` roots. `wire` retained proc-macro,
+C, Rust, and linker work without multiplying the repository's approximately
+30 GiB warm output footprint. One excluded cold warmup completed in 7.89
+seconds and occupied 342,896 KiB. Each reported run used fresh peer roots and one
+250 ms descendant-tree sampler; the disk column is the measurement-root delta.
+
+| Agent-equivalent scale | Cold peer wall range | Initial verifier budget (workers/jobs/peers/workspace lanes) | Wall and result | Verifier progress | Peak processes / Cargo / rustc / linkers | Peak sampled RSS | Disk delta |
+| ---: | ---: | --- | --- | --- | --- | ---: | ---: |
+| 4 | 12.07–13.44 s | 3 / 4 / 0 / 4 | 217.69 s; cleanup fixture refusal | 9/13 actions; 16/32 shards | 109 / 8 / 51 / 6 | 4,513,760 KiB | 1,028,784 KiB |
+| 8 | 18.42–36.59 s | 1 / 4 / 2 / 1 | 298.63 s; hard-supervisor interruption | 9/13 actions; 2/32 shards | 121 / 8 / 63 / 27 | 6,606,144 KiB | 2,401,396 KiB |
+| 10 | 37.52–39.22 s | 3 / 4 / 0 / 4 | 238.87 s; cleanup fixture refusal | 9/13 actions; 16/32 shards | 191 / 10 / 99 / 20 | 10,644,288 KiB | 3,118,964 KiB |
+| 8, focused comparison | 24.54–30.51 s | 3 / 4 / 0 / 4; unchanged after setup | 299.33 s; hard-supervisor interruption | 12/13 actions; 32/32 shards | 181 / 9 / 85 / 57 | 9,474,976 KiB | 2,436,264 KiB |
+
+Four agents are the first observed saturation point for this deliberately cold,
+isolated mix. Independent Cargo jobservers granted up to 12 jobs apiece, so the
+host saw 51 `rustc` processes at four agents and 99 at ten. Required output-root
+isolation made duplicate compilation and disk growth roughly linear, but
+neither the 108 GiB available disk nor 24 GiB memory capacity was exhausted.
+Linker and overall process peaks increased sharply, yet the direct failures
+were the verifier's scheduling and cleanup observations: four and ten exposed
+an immediate PID-absence assertion while recently killed descendants were
+still observable, and eight captured two peers at startup, retained one
+workspace lane after every peer had exited, and reached the outer supervisor
+after only two shards. The inconsistent initial peer counts of 0, 2, and 0 also
+prove that one instantaneous process-list sample is not a stable fleet census.
+
+The narrow repair leaves every command, action, target, isolated output root,
+180-second test-phase deadline, and 300-second hard envelope intact. Cleanup
+fixtures now allow the same bounded 500 ms post-reap observation already used
+by adjacent process tests. The full verifier observes peer pressure again after
+its serialized workspace-test prebuild and publishes that budget before Canvas
+and shards start. Two or more peers that remain at that boundary use the single
+degraded scheduling shape: one outer worker and one workspace lane, with the
+Cargo job grant still divided from the observed CPU/participant count. A failed
+observation fails all three dimensions closed to one. No alternate resolver or
+unbounded retry is used.
+
+The focused eight-agent comparison's startup probe observed zero peers rather
+than the baseline's two. It completed every shard instead of two and reached 12
+actions instead of nine, but the changed observation means the run does not
+isolate that progress from peer-census variance. It still crossed the unchanged
+outer envelope after documentation while doctests were running. On this host
+the cold isolated workload therefore has no GO at 4, 8, or 10 concurrent
+agents. The measured efficient ceiling is below four; this matrix did not
+identify the highest admitted lower count. Warm ordinary work may behave
+better, but these samples do not establish a higher ceiling.
+
 ## Verify battery
 
 “No catch found” means SPICE transcript forensics found no instance in this
