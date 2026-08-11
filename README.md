@@ -88,13 +88,12 @@ operator-authorized switch gives the Rust appliance the bare `spice` name and
 the repository's single hook path. Retirement remains separate; the switch
 does not stop predecessor processes or delete predecessor state.
 
-The activation command refuses unless all three hooks are executable. The
-pre-commit hook runs the canonical verifier, which performs
-formatting, Clippy, native and browser-target builds, deterministic app
-verification, workspace tests, doctests, the machine-readable
-contract-landing check. The checked gate manifest maps each of the 25 retired
-standard policy checks to one compiled gate arm, and workspace tests exercise
-the exact mapping and production executor.
+Activation refuses unless all three hooks are executable. Pre-commit runs the
+staged selector: known paths execute affected Cargo targets and policy arms;
+unknown or authority paths select every target and all 27 arms. It is not
+completion evidence. `cargo xtask verify` remains the full 13-action graph over
+formatting, Clippy, native/WASM/Canvas builds, browser and workspace tests,
+doctests, the complete battery, and contract landing.
 
 Verification uses an explicit dependency graph. The warm compiler-evidence
 chain remains serial through native Clippy, Wasm Clippy, the Wasm workspace

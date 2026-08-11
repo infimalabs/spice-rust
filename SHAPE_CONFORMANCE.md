@@ -1,29 +1,26 @@
 # Rust self-hosting shape conformance
 
-Task: `SELF_HO-1kLc5XkF`
+Tasks: `SELF_HO-1kLc5XkF`, `SELF_HO-1kLbzBGX`
 
-This governed source audit compares product shape revision
-`0c5bab269cbb1c4ca60edccf01444edf2b7b91cc` with Rust revision
-`cc25c7b8b52ec9f722c51aea71660768f6d0eb6e`, before this record and its
-topology regression. It does not authorize copying predecessor code.
+This governed audit compares shape `0c5bab269cbb1c4ca60edccf01444edf2b7b91cc`
+with Rust `cc25c7b8b52ec9f722c51aea71660768f6d0eb6e`. The final decision also
+includes later reviewed repairs; it does not authorize copying predecessor code.
 
 ## Decision
 
-**NO-GO for declaring the Rust appliance fully qualified for self-hosting.**
-The semantic port is broad and the strict verifier is green, but three live
-correctness paths remain:
+**GO for Rust self-hosting under the bounded fleet contract.** The pinned
+audit's three correctness blockers are closed and reviewed:
 
-1. `STATE-1kLg3Pyn`: production gates read typed state but do not publish latch
-   and peer-claim movement at the accepted-run boundary.
-2. `SESSION-1kLg3XMy`: recovery may treat a transcript thread as the live
-   caller when projecting steering and held work.
-3. `COMPATI-1kLcFlbD`: the installed Canvas has a repeated, unreproduced
-   undecodable-payload failure.
+1. `STATE-1kLg3Pyn` publishes only accepted runs; `STATE-1kLkPtDG` makes
+   historical sources read-only and carries sealed-index renames.
+2. `SESSION-1kLg3XMy` binds authority only to an admitted live vendor identity.
+3. `COMPATI-1kLcFlbD` versions Canvas separately from durable Wire and passes
+   the installed load path with strict frame decoding intact.
 
-The parent `SELF_HO-1kLbzBGX` depends on these repairs, this audit, and the
-existing verifier, fleet, development-loop, locality, ratchet, and remediation
-evidence. Rust is suitable for controlled development and evidence collection;
-the final self-hosting declaration waits.
+Four agents are the isolated heavy mix's first saturation point; the 4/8/10
+samples received no throughput GO. Targeted work is safe at four. With four to
+ten active agents, admit one full verifier and keep peers on exact tests, source
+review, or non-Cargo work until pressure clears.
 
 ## Authority and method
 
@@ -81,12 +78,12 @@ missing live behavior with an owner.
 | One collect-all gate roster | `gate/src/battery/manifest.toml`, `gate/src/battery.rs` | **Match:** 27 canonical arms publish one result vector. |
 | Passed, failed, and N/A remain distinct | `gate/src/verdict.rs`, `gate/src/metrics/evidence.rs` | **Match:** unavailable evidence never becomes success. |
 | Base, flex, latch, actor, jitter share one rule | `gate/src/state/bound.rs`, `gate/src/metrics/state_binding.rs`, `gate/src/core/acquire.rs` | **Stronger:** `BoundDecision` drives evidence and pending state. |
-| Peer claims redirect flex debt | `gate/src/state/transaction.rs`, `gate/src/battery/authorities.rs` | **Gap:** types exist; production publication does not. `STATE-1kLg3Pyn`. |
+| Peer claims redirect flex debt | `gate/src/state/transaction.rs`, `gate/src/battery/authorities.rs`, `gate/src/battery/state_run.rs` | **Stronger:** accepted production runs publish one stale-detecting transaction; partial runs preserve unrelated claims and staged renames carry lineage. `STATE-1kLg3Pyn`, `STATE-1kLkPtDG`. |
 | Studies select jurisdiction; filing is explicit | `spice/src/gate_command.rs`, `spice/src/board_command/mutation/gate_findings.rs` | **Match:** filing is explicit and idempotent. |
 | Pre-commit is bounded | `gate/src/change_selection.rs`, `spice/src/change_gate.rs`, `gate/src/workspace_tests/selection.rs` | **Deviation:** exact staged paths select policy/test evidence; unknown authority escalates exhaustively. Tests and `SELECTI-1kLc3tXp` validate locality. |
 | One run reads stable selected content | `gate/src/tree.rs`, `gate/src/battery/repository_executor.rs`, `spice/src/change_gate.rs` | **Deviation:** an immutable staged tree and digest replace GOV-36's selector/content split; tree/change-gate tests prove stability and fail closed on movement. |
 | Missing and empty magic baselines differ | `gate/src/metrics/acquire.rs::magic_state`, `gate/src/battery/tests/magic.rs` | **Match:** never-baselined files are N/A; explicit empty baselines find debt. Treating a new file as empty is **obsolete**. |
-| Durable gate state moves only on acceptance | `gate/src/state/transaction.rs`, `gate/src/battery/authorities.rs` | **Gap:** transaction tests pass, but production reads `StateLedger` without finishing/publishing. `STATE-1kLg3Pyn`. |
+| Durable gate state moves only on acceptance | `gate/src/state/transaction.rs`, `gate/src/battery/authorities.rs`, `gate/src/battery/state_run.rs` | **Stronger:** focused, selected, and full production paths publish only after total acceptance; rejection and historical revision runs are byte-preserving. `STATE-1kLg3Pyn`, `STATE-1kLkPtDG`. |
 | Install plan is read-only and apply digest-pinned | `spice/src/install.rs`, `spice/src/install/progress.rs` | **Stronger:** apply re-plans and binds destination parent/generation. |
 | Install interruption resumes and reversal is exact | `spice/src/install/record.rs`, `spice/src/install/progress.rs`, `spice/src/install/files.rs`, safety tests | **Match:** repeated apply/unapply converges; drift becomes residue. |
 | Install and authority switch coincide | `INSTALL.md`, `spice/src/install.rs`, `spice/tests/coexistence.rs` | **Deviation:** common-Git assets install beside the predecessor; only operator authorization changes command/hook authority. Tests prove both boundaries. |
@@ -94,7 +91,7 @@ missing live behavior with an owner.
 | Restore authenticates before authority changes | `journal/src/restore.rs`, `spice/src/restore_command.rs` | **Stronger:** owned bytes, manifest/digest/schema/replay checks, exact plan digest, and replacement rollback. |
 | Demo failure is reproducible | `spice/src/demo_command/recovery.rs` | **Match:** preserved root plus shell-safe retry/removal. |
 | Briefing takes intent from steering and evidence from transcript | `spice/src/session_command/authority.rs`, `spice/src/session_command/dataset.rs`, `spice/src/session_command/project.rs` | **Match:** asks and held work precede transcript detail; unread probes stay unknown. |
-| Current identity comes only from live environment | `spice/src/session_command/authority.rs::exact_thread` | **Gap:** transcript sources currently win before live vendor identities. `SESSION-1kLg3XMy`. |
+| Current identity comes only from live environment | `spice/src/session_command/authority.rs` | **Stronger:** transcript inputs select evidence only; the preferred live vendor binds authority, while absent, malformed, unknown, or ambiguous live identity remains unknown. `SESSION-1kLg3XMy`. |
 
 The journal beside Git is an intentional addition, not a competing board:
 immutable journal facts make receipts, claims, topology, steering, and review
@@ -105,32 +102,31 @@ landings, and journal resolution tests prove restart survival.
 Shape GOV-20 retires a healed latch even if a run fails, while GOV-24 defers
 writes until the whole run passes. The Python implementation buffered and
 discarded retirement on failure. Rust governs the contradiction as an
-accepted-run transaction: rejection cannot mutate durable quality state. The
-gap is production wiring, not the discarded contradictory sentence.
+accepted-run transaction: rejection cannot mutate durable quality state.
+`STATE-1kLg3Pyn` and `STATE-1kLkPtDG` completed that production wiring without
+adopting the discarded contradictory sentence.
 
 ## Risk ledger and exit
 
-| Risk | Owner and consequence |
+| Risk | Disposition and consequence |
 | --- | --- |
-| Gate state is not published | `STATE-1kLg3Pyn`; **blocking**, because later runs read stale quality state. |
-| Transcript can impersonate current authority | `SESSION-1kLg3XMy`; **blocking**, because live work can attach to the wrong session. |
-| Installed Canvas rejects a payload | `COMPATI-1kLcFlbD`; **blocking**, because the operator path is not clean. |
-| Local selection and full studies await review | `SELECTI-1kLc3tXp`; evidence risk despite green implementation. |
-| Ratchet provenance and remediation await review | `SELECTI-1kLc51jD`, `REMEDIA-1kLc40qB`; state repair must retain their locality contracts. |
-| Development and fleet evidence await review | `DEVELOP-1kLbrBsW`, `PERFORM-1kLbsp1T`, `PERFORM-1kLbfC2X`; qualification risk. |
+| Gate state lineage | Resolved: `STATE-1kLg3Pyn`, `STATE-1kLkPtDG`; rejected/historical runs do not publish. |
+| Live session authority | Resolved: `SESSION-1kLg3XMy`; transcript identity cannot impersonate the caller. |
+| Canvas compatibility | Resolved: `COMPATI-1kLcFlbD`; installed loading is versioned and clean. |
+| Local selector authority | Resolved: `SELECTI-1kLc3tXp`, `SELECTI-1kLjN3Xn`; unknown/authority paths escalate and renames retain both owners. |
+| Remediation lineage | Resolved: `SELECTI-1kLc51jD`, `REMEDIA-1kLc40qB`, `REMEDIA-1kLjncwv`; recovery requires forward movement in one repository. |
+| Fleet operation | Reviewed: `DEVELOP-1kLbrBsW`, `PERFORM-1kLbsp1T`, `PERFORM-1kLhqWQL`, `PERFORM-1kLbfC2X`; cold full verification is serialized. |
+| Exhaustive gate latency/notice | Non-blocking: `PERFORM-1kLkymYs`, `PERFORM-1kLkzMFd`; execution is bounded but needs less duplication and an early notice. |
 | Teams exceed six | Governed, non-blocking deviation with seven-member regression. |
 | New magic files have no delta | Governed, non-blocking GOV-35 match; applicability stays explicit. |
 
-At the pinned Rust revision, `cargo xtask verify-action selection` and all 13
-actions of `cargo xtask verify` passed. This audit's final checks belong in its
-task completion evidence.
+The dependency chain proves the 13-action verifier, selected/package feedback,
+installed entry and Canvas load, digest-bound authority switch, exact rollback,
+authenticated restore, and cleanup from Rust authority alone. Coexistence is
+only reversible preparation before the operator-authorized switch.
 
-The parent may declare GO only when all repair tasks complete review; every
-evidence dependency settles; the unchanged verifier passes clean at the final
-revision; installed entry, authority switch, rollback, journal restore, and
-Canvas load work without a predecessor checkout; and fleet evidence supports
-the four-agent default with loud degradation at eight to ten.
-
-Until then: **NO-GO, recoverable, with no unowned shape gap.** Every live gap
-has a public task, and every retained deviation has rationale and executable
-validation.
+Final decision: **GO, recoverable, with no unowned correctness gap.** Retained
+deviations have rationale and executable validation. The operating boundary is
+one heavy full verifier at a time under fleet pressure; violation fails closed
+and never authorizes fewer checks, raised limits, shared mutable outputs, or
+unbounded cleanup.

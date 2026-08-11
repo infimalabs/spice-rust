@@ -116,7 +116,7 @@ Use that boundary in this order:
    or the owning proof/staging command for release surfaces.
 5. Stage the intended change and run `cargo xtask verify-action selection` (the
    installed hook repeats it silently). Inspect its typed selection if it
-   escalates; do not weaken the exhaustive fallback.
+   escalates; do not weaken the exhaustive escalation.
 6. Once, immediately before commit or handoff, run `cargo xtask verify`. Do not
    substitute targeted/package checks, the battery action, a study, or a prior
    worktree's result.
