@@ -1,5 +1,6 @@
 #![cfg(unix)]
 
+use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -128,14 +129,9 @@ fn assert_full_verifier_action_trace(
         "unexpected browser action: {browser:?}"
     );
     assert!(browser.contains("--spice-prebuilt-app"));
+    let expected_binary = expected_resident_binary(repository);
     assert!(
-        browser.contains(&format!(
-            "binary={}/target/debug/spice\n",
-            repository
-                .canonicalize()
-                .expect("canonical browser repository")
-                .display()
-        )),
+        browser.contains(&format!("binary={}\n", expected_binary.display())),
         "browser action did not consume the prerequisite resident binary: {browser}"
     );
     let compiler_actions =
@@ -167,6 +163,24 @@ fn assert_full_verifier_action_trace(
         "battery repeated the canvas Trunk analysis: {}",
         fs::read_to_string(&programs.trunk_log).unwrap_or_default()
     );
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the process fixture mirrors Cargo's test-binary target directory environment"
+)]
+fn expected_resident_binary(repository: &Path) -> PathBuf {
+    let repository = repository
+        .canonicalize()
+        .expect("canonical browser repository");
+    let target = match env::var_os("CARGO_TARGET_DIR") {
+        Some(target) if Path::new(&target).is_absolute() => PathBuf::from(target),
+        Some(target) => repository.join(target),
+        None => repository.join("target"),
+    };
+    target
+        .join("debug")
+        .join(format!("spice{}", env::consts::EXE_SUFFIX))
 }
 
 fn install_full_verifier_programs(fixture: &Fixture) -> FullVerifierPrograms {
@@ -234,16 +248,16 @@ fn install_full_verifier_programs(fixture: &Fixture) -> FullVerifierPrograms {
     }
 }
 
-fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path, repository: &Path) {
+fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path, _repository: &Path) {
     let metadata = serde_json::json!({
         "packages": [{
             "id": "verify-process-fixture-id",
             "name": "verify-process-fixture",
-            "manifest_path": repository.join("Cargo.toml").display().to_string(),
+            "manifest_path": "Cargo.toml",
             "targets": [{
                 "name": "verify_process_fixture",
                 "kind": ["lib"],
-                "src_path": repository.join("src/lib.rs").display().to_string(),
+                "src_path": "src/lib.rs",
                 "test": true,
             }],
         }],
@@ -289,7 +303,7 @@ fn assert_workspace_test_execution(
             .expect("read verifier Cargo actions")
             .lines()
             .filter(|line| *line != "--version")
-            .take(8)
+            .take(9)
             .collect::<Vec<_>>(),
         [
             "clippy --locked --workspace --all-targets -- -D warnings",
@@ -297,6 +311,7 @@ fn assert_workspace_test_execution(
             "check --locked --workspace --target wasm32-unknown-unknown",
             app_action.as_str(),
             "build --locked -p spice --bin spice",
+            "test --locked --workspace --all-targets --no-run",
             "test --locked --package verify-process-fixture-id --lib",
             "doc --locked --workspace --lib --bins --no-deps",
             "test --locked --workspace --doc",

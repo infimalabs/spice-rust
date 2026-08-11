@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 use std::panic::{self, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
@@ -26,11 +26,16 @@ use super::{
 
 /// The explicit full-verifier dependency graph, indexed by report ordinal.
 ///
-/// The compiler-evidence chain is serial and retains its warm build root. Once
-/// the prebuilt app and native resident exist, Canvas performs no Cargo work
-/// and may overlap the sharded workspace tests. Documentation follows the test
-/// coordinator, the evidence-consuming battery waits for both branches, and
-/// entry-point audit and landing remain barriers.
+/// The compiler-evidence chain is serial and retains its warm build root.
+/// Workspace tests reuse that root only after the Canvas app and resident build
+/// have finished, so a Rust-test branch cannot mask a compiler failure or force
+/// the selected Cargo root to publish tests while another Cargo build stage is
+/// still active. Browser verification then overlaps the Rust-test branch while
+/// performing no Cargo work of its own. Documentation follows the workspace
+/// tests so the reusable native Cargo root is not forced into competing
+/// documentation and test publication work. The evidence-consuming battery waits
+/// for both documentation and workspace-test branches, and entry-point audit and
+/// landing remain barriers.
 const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[],
     &[0],
@@ -43,24 +48,38 @@ const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[6],
     &[8],
     &[9],
-    &[2, 4, 5, 6, 7, 10],
+    &[2, 4, 5, 6, 7, 8, 10],
     &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 ];
 
 /// Three is the fleet-safe ceiling for independently ready outer actions.
 const MAX_CONCURRENT_ACTIONS: usize = 3;
-/// Stop launching and cancel owned process groups at three minutes. The two
-/// remaining minutes cover an already-running in-process terminal action plus
-/// Sill's bounded grace, drain, and reap windows; five minutes is never usable
-/// work time, and reaching the fourth minute is exceptional cleanup headroom.
-const FULL_VERIFIER_RUNTIME: Duration = Duration::from_secs(3 * 60);
+/// The full verifier prebuilds test binaries once in the native compiler output
+/// root before parallel shard execution, so every coordinator lane can reuse the
+/// same selected-root cache without minting another cold target directory.
+///
+/// Standalone workspace verification may use the whole coordinator cap. The full
+/// verifier has another latency-sensitive branch alive at the same time: Canvas
+/// runs two browser shards whose resident RPCs keep their own client deadlines.
+/// Leaving two lanes to the Rust-test branch preserves branch overlap without
+/// turning the verifier into its own peer-contention source.
+const MAX_FULL_VERIFIER_WORKSPACE_LANES: usize = 2;
+const _: () = assert!(MAX_FULL_VERIFIER_WORKSPACE_LANES <= super::WORKSPACE_TEST_CONCURRENCY_CAP);
+/// Stop launching and cancel owned process groups after 180 seconds of actual
+/// test-phase runtime. Compiler setup can be cold once; it is still serialized
+/// for low contention, but it does not consume the test runtime budget.
+const FULL_VERIFIER_TEST_RUNTIME: Duration = Duration::from_secs(3 * 60);
+/// Give the child-owned scheduler enough room to report and reap after the
+/// test-phase deadline while remaining well inside the five-minute wall guard.
+const FULL_VERIFIER_SUPERVISOR_RUNTIME: Duration = Duration::from_secs(255);
 const FULL_VERIFIER_HARD_RUNTIME: Duration = Duration::from_secs(5 * 60);
-const FULL_VERIFIER_LABEL: &str = "full verifier five-minute deadline (three-minute work cutoff)";
+const FULL_VERIFIER_LABEL: &str =
+    "full verifier five-minute envelope (three-minute test-phase cutoff)";
 const FULL_VERIFIER_CHILD_COMMAND: &str = "__verify-system";
-/// The outer child gets longer than one inner action's complete cancellation
-/// path: two seconds of grace, ten to reap, and thirty to drain. A remaining
-/// in-process worker is then killed with the child process boundary.
-const FULL_VERIFIER_TERMINATION_GRACE: Duration = Duration::from_secs(75);
+/// Hard-supervisor cleanup is a last resort after the child-owned soft deadline.
+const FULL_VERIFIER_TERMINATION_GRACE: Duration = Duration::from_secs(1);
+const FULL_VERIFIER_REAP_DEADLINE: Duration = Duration::from_secs(1);
+const FULL_VERIFIER_OUTPUT_DRAIN: Duration = Duration::from_secs(1);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const SCHEDULER_POLL: Duration = Duration::from_millis(50);
 const PROCESS_RUNTIME: Duration = Duration::from_secs(30 * 60);
@@ -87,9 +106,9 @@ const ACTION_PROCESS_BOUNDS: ProcessBounds = ProcessBounds {
     output_limit: OUTPUT_LIMIT,
 };
 const FULL_VERIFIER_PROCESS_BOUNDS: ProcessBounds = ProcessBounds {
-    runtime: FULL_VERIFIER_RUNTIME,
-    output_drain: OUTPUT_DRAIN,
-    reap: REAP_DEADLINE,
+    runtime: FULL_VERIFIER_SUPERVISOR_RUNTIME,
+    output_drain: FULL_VERIFIER_OUTPUT_DRAIN,
+    reap: FULL_VERIFIER_REAP_DEADLINE,
     grace: FULL_VERIFIER_TERMINATION_GRACE,
     output_limit: FULL_VERIFIER_OUTPUT_LIMIT,
 };
@@ -100,6 +119,8 @@ const _: () = assert!(
         + FULL_VERIFIER_PROCESS_BOUNDS.output_drain.as_secs()
         < FULL_VERIFIER_HARD_RUNTIME.as_secs()
 );
+const _: () =
+    assert!(FULL_VERIFIER_PROCESS_BOUNDS.runtime.as_secs() > FULL_VERIFIER_TEST_RUNTIME.as_secs());
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Budget {
@@ -132,10 +153,11 @@ impl Budget {
         let participants = active + workers;
         let cargo_jobs = (cpus / participants.max(1)).max(1);
         let sibling_reserve = cargo_jobs.saturating_mul(workers.saturating_sub(1));
-        let workspace_job_cap = cargo_jobs.saturating_sub(1).max(1);
+        let workspace_job_cap = cargo_jobs.max(1);
         let workspace_workers = cpu_slots
             .saturating_sub(sibling_reserve)
             .min(workspace_job_cap)
+            .min(MAX_FULL_VERIFIER_WORKSPACE_LANES)
             .clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP);
         Self {
             workers,
@@ -150,7 +172,9 @@ impl Budget {
         Self {
             workers,
             cargo_jobs,
-            workspace_workers: cargo_jobs.clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP),
+            workspace_workers: cargo_jobs
+                .min(MAX_FULL_VERIFIER_WORKSPACE_LANES)
+                .clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP),
             active_cargo_jobs: Some(active_cargo_jobs),
         }
     }
@@ -210,10 +234,15 @@ pub(super) fn verify_supervised(output: &mut impl Write) -> Result<(), VerifyErr
         label: FULL_VERIFIER_LABEL,
         source,
     })?;
+    let cwd = std::env::current_dir().map_err(|source| VerifyError::Launch {
+        label: FULL_VERIFIER_LABEL,
+        source,
+    })?;
     let run = run_bounded_process(
         FULL_VERIFIER_LABEL,
         executable,
         [OsString::from(FULL_VERIFIER_CHILD_COMMAND)],
+        &cwd,
         &cancellation,
         None,
         &[],
@@ -294,7 +323,7 @@ fn verify_with_control<R: Runner>(
         budget,
         cancellation,
         interrupted,
-        FULL_VERIFIER_RUNTIME,
+        FULL_VERIFIER_TEST_RUNTIME,
     )
 }
 
@@ -314,7 +343,7 @@ fn verify_with_deadline<R: Runner>(
         output,
         concat!(
             "[verify] scheduler workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={} action_count={} deadline_ms={}"
+            "active_peer_cargo_jobs={} workspace_workers={} action_count={} deadline_scope=test-phase deadline_ms={}"
         ),
         budget.workers,
         budget.cargo_jobs,
@@ -382,11 +411,13 @@ fn schedule_graph<R: Runner>(
     let mut failure_seen = false;
     let mut output_fault = None;
     let mut deadline_exceeded = false;
-    let verifier_started = Instant::now();
+    let mut test_phase_started = None;
 
     thread::scope(|scope| {
         loop {
-            if !failure_seen && verifier_started.elapsed() >= runtime {
+            if !failure_seen
+                && test_phase_started.is_some_and(|started: Instant| started.elapsed() >= runtime)
+            {
                 deadline_exceeded = true;
                 failure_seen = true;
                 cancellation.cancel();
@@ -403,6 +434,7 @@ fn schedule_graph<R: Runner>(
                     &mut running,
                     &mut failure_seen,
                     &mut output_fault,
+                    &mut test_phase_started,
                 );
             } else if cancellation.is_cancelled() {
                 failure_seen = true;
@@ -450,6 +482,7 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
     running: &mut usize,
     failure_seen: &mut bool,
     output_fault: &mut Option<io::Error>,
+    test_phase_started: &mut Option<Instant>,
 ) {
     for index in ready_nodes(nodes) {
         if *running >= budget.workers {
@@ -463,6 +496,9 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
             break;
         }
         let started = Instant::now();
+        if test_phase_started.is_none() && starts_test_phase_deadline(action) {
+            *test_phase_started = Some(started);
+        }
         match spawn_action(scope, runner, action, index, budget, cancellation, sender) {
             Ok(()) => {
                 nodes[index] = NodeState::Running {
@@ -487,6 +523,10 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
             }
         }
     }
+}
+
+fn starts_test_phase_deadline(action: Action) -> bool {
+    matches!(action, Action::Browser | Action::WorkspaceTests)
 }
 
 fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
@@ -1093,10 +1133,37 @@ where
     S: Into<OsString>,
     P: Into<OsString>,
 {
+    let cwd = std::env::current_dir().map_err(RunError::Launch)?;
+    run_process_at(
+        label,
+        program,
+        arguments,
+        &cwd,
+        cancellation,
+        cargo_jobs,
+        overrides,
+    )
+}
+
+pub(super) fn run_process_at<I, S, P>(
+    label: &str,
+    program: P,
+    arguments: I,
+    cwd: &Path,
+    cancellation: &CancellationToken,
+    cargo_jobs: usize,
+    overrides: &[(&str, &OsStr)],
+) -> Result<CommandRun, RunError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    P: Into<OsString>,
+{
     run_bounded_process(
         label,
         program,
         arguments,
+        cwd,
         cancellation,
         Some(cargo_jobs),
         overrides,
@@ -1104,10 +1171,15 @@ where
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the process boundary keeps cwd, cancellation, environment, and bounds explicit"
+)]
 fn run_bounded_process<I, S, P>(
     label: &str,
     program: P,
     arguments: I,
+    cwd: &Path,
     cancellation: &CancellationToken,
     cargo_jobs: Option<usize>,
     overrides: &[(&str, &OsStr)],
@@ -1163,7 +1235,7 @@ where
                 error.to_string(),
             ))
         })?,
-        cwd: std::env::current_dir().map_err(RunError::Launch)?,
+        cwd: cwd.to_owned(),
         environment,
         group: ProcessGroup::New,
         deadlines,

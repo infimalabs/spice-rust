@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 
-import { chooseCanvasView } from "./canvas-fixture.mjs";
+import {
+  chooseCanvasView,
+  waitForPageFunction as waitForPage,
+} from "./canvas-fixture.mjs";
+
+const NOTE_RESPONSE_MS = 10_000;
+
+function absentHandleWithKnownStamp(handle, tasks) {
+  const separator = handle.indexOf("-");
+  assert.ok(separator > 0, `canonical task handle has a stem: ${handle}`);
+  const stamp = handle.slice(separator + 1);
+  const absent = ["SPICE", "CANVAS", "GATE", "TASK", "BOARD"]
+    .map((stem) => `${stem}-${stamp}`)
+    .find((candidate) => candidate !== handle && !tasks.includes(candidate));
+  assert.ok(absent, "an absent canonical task handle is available");
+  return absent;
+}
 
 /// Exercise accepted, malformed, and absent task-note submissions through the UI.
 export async function assertTaskNotes(page, task) {
@@ -23,12 +39,26 @@ export async function assertTaskNotes(page, task) {
   const tasks = await page.locator("#note-tasks option").evaluateAll(
     (options) => options.map((option) => option.value),
   );
-  const absent = ["SPICE-aBcD", "SPICE-zYxW"].find((candidate) => !tasks.includes(candidate));
-  assert.ok(absent, "an absent canonical task handle is available");
+  const absent = absentHandleWithKnownStamp(task, tasks);
   await page.getByLabel("Task").fill(absent);
   await page.getByLabel("Observation").fill("this task does not exist");
   await addNote.click();
   await refusal.waitFor({ state: "detached" });
   await chooseCanvasView(page, "Chronology");
-  await page.locator(".event.refusal").waitFor({ timeout: 10_000 });
+  await waitForPage(
+    page,
+    "absent task note refusal is recorded",
+    NOTE_RESPONSE_MS,
+    () => [...document.querySelectorAll(".event.refusal strong")]
+      .some((title) => title.textContent === "task::unknown"),
+    undefined,
+    {
+      observed: () => page.evaluate(() =>
+        [...document.querySelectorAll(".event")].map((event) => ({
+          className: event.className,
+          title: event.querySelector("strong")?.textContent,
+          detail: event.querySelector("p")?.textContent,
+        }))),
+    },
+  );
 }

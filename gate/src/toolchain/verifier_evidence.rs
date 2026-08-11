@@ -42,6 +42,7 @@ use receipt::VerifierCompilerReceiptSet;
 
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
+const RUST_BUILD_DIRECTORY: &str = "spice-gate-native-build";
 const PROCESS_RUNTIME: Duration = Duration::from_secs(30 * 60);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(30);
 const REAP_DEADLINE: Duration = Duration::from_secs(10);
@@ -222,6 +223,24 @@ impl VerifierCompilerContract {
     #[must_use]
     pub const fn gate_id(&self) -> GateId {
         self.gate_id
+    }
+
+    /// Selected source and Cargo output roots this native Rust compiler contract
+    /// has populated and later workspace tests may reuse serially.
+    #[must_use]
+    pub fn reusable_workspace(&self) -> Option<super::RustAnalysisWorkspace> {
+        (self.gate_id == GateId::RustTypecheck).then(|| {
+            let environment = compiler_environment(&self.environment, &self.repository);
+            let target = environment_path(&environment, CARGO_TARGET_DIR)
+                .unwrap_or_else(|| self.repository.join("target"));
+            let build = environment_path(&environment, CARGO_BUILD_BUILD_DIR)
+                .unwrap_or_else(|| target.join(RUST_BUILD_DIRECTORY));
+            super::RustAnalysisWorkspace {
+                source: self.selection_root.clone(),
+                cargo_target: target,
+                cargo_build: build,
+            }
+        })
     }
 
     /// Exact compiler stages required to prove this arm.
@@ -828,8 +847,26 @@ fn compiler_environment(
             repository.join("target").into_os_string(),
         ));
     }
+    let target = environment_path(&environment, CARGO_TARGET_DIR)
+        .unwrap_or_else(|| repository.join("target"));
+    if !environment
+        .iter()
+        .any(|(name, _)| name == OsStr::new(CARGO_BUILD_BUILD_DIR))
+    {
+        environment.push((
+            OsString::from(CARGO_BUILD_BUILD_DIR),
+            target.join(RUST_BUILD_DIRECTORY).into_os_string(),
+        ));
+    }
     environment.sort();
     environment
+}
+
+fn environment_path(environment: &[(OsString, OsString)], name: &str) -> Option<PathBuf> {
+    environment
+        .iter()
+        .find(|(candidate, _)| candidate == OsStr::new(name))
+        .map(|(_, value)| PathBuf::from(value))
 }
 
 fn frame(into: &mut Vec<u8>, bytes: &[u8]) {

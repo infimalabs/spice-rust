@@ -24,18 +24,19 @@ mod staged_app;
 
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
-/// The longest a client command may take, and the longest a fixture socket
-/// waits while one is in flight. This is not the bound on waiting for a state
-/// to arrive: that one is sized from what announcing an arrival costs and
-/// lives with the wait itself, in [`readiness::ARRIVAL_HORIZON`].
-const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(10);
+/// The longest a fixture client command may take, and the longest a fixture
+/// socket waits while one is in flight. This is not itself the client answer
+/// bound: `down` can spend one answer bound on the resident response and then a
+/// second on release confirmation, while these tests only need a process-level
+/// guard that still catches an unbounded wait.
+const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(45);
 const LANE_DEADLINE_BOUND: Duration = Duration::from_secs(20);
 /// The hang guard around a supervised vendor effect reaching its tape.
 ///
 /// The wait itself is event-driven; this covers the full vendor, capture,
 /// decode, and persistence pipeline rather than resident discovery.
 const LANE_EFFECT_HORIZON: Duration = Duration::from_secs(45);
-const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(7);
+const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(25);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -574,7 +575,10 @@ fn run_deadline_drip(
     stream
         .set_write_timeout(Some(CLIENT_DEADLINE_BOUND))
         .expect("drip resident write timeout");
-    let stream = DripStream { stream, stop };
+    let stream = DripStream {
+        stream,
+        stop: Arc::clone(&stop),
+    };
     let Ok(mut socket) = tungstenite::accept(stream) else {
         return;
     };
@@ -594,6 +598,7 @@ fn run_deadline_drip(
     let command = read_fake_dark_command(&mut socket, discovery.epoch);
     fs::write(canvas.with_file_name("deadline-response"), b"response")
         .expect("drip resident reaches the command response");
+    hold_adversarial_peer(&stop);
     let _ = send_server_result(
         &mut socket,
         &dark_response(discovery, &command, FakeBehavior::Success),

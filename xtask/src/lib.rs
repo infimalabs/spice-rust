@@ -408,6 +408,7 @@ struct SystemState {
     battery: Option<spice::gate::PreparedBattery<'static>>,
     compiler_contracts: Vec<gate::VerifierCompilerContract>,
     compiler_processes: Vec<gate::VerifierCompilerProcessEvidence>,
+    native_workspace: Option<gate::RustAnalysisWorkspace>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -424,6 +425,7 @@ impl SystemRunner {
             battery: Some(battery),
             compiler_contracts: Vec::new(),
             compiler_processes: Vec::new(),
+            native_workspace: None,
         }))
     }
 
@@ -432,6 +434,7 @@ impl SystemRunner {
             battery: None,
             compiler_contracts: Vec::new(),
             compiler_processes: Vec::new(),
+            native_workspace: None,
         })
     }
 
@@ -507,6 +510,10 @@ impl SystemRunner {
             .map_err(RunError::Launch)?;
         let cancelled = run.cancelled();
         let timed_out = run.timed_out();
+        let reusable_workspace = (stage == gate::VerifierCompilerStage::NativeClippy
+            && run.success())
+        .then(|| contract.reusable_workspace())
+        .flatten();
         let output = ProcessOutput {
             status: Status {
                 success: run.success(),
@@ -515,8 +522,12 @@ impl SystemRunner {
             stdout: run.stdout().to_vec(),
             stderr: run.stderr().to_vec(),
         };
+        let mut state = self.state()?;
         if let Some(evidence) = run.into_evidence() {
-            self.state()?.compiler_processes.push(evidence);
+            state.compiler_processes.push(evidence);
+        }
+        if let Some(workspace) = reusable_workspace {
+            state.native_workspace = Some(workspace);
         }
         Ok(if cancelled {
             CommandRun::Cancelled(output)
@@ -646,27 +657,38 @@ impl Runner for SystemRunner {
     fn workspace_tests(
         &self,
         cancellation: &CancellationToken,
-        _cargo_jobs: usize,
+        cargo_jobs: usize,
         workspace_workers: usize,
     ) -> Result<CommandRun, RunError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let executable = std::env::current_exe().map_err(RunError::Launch)?;
-            verify_execution::run_process(
-                WORKSPACE_TEST_LABEL,
-                executable,
-                [
-                    "__workspace-tests".to_owned(),
-                    workspace_workers.to_string(),
-                ],
-                cancellation,
-                1,
-                &[],
-            )
+            if let Some(workspace) = self.state()?.native_workspace.clone() {
+                let workspace_cargo_jobs = cargo_jobs.min(workspace_workers);
+                return verify_execution::run_process_at(
+                    WORKSPACE_TEST_LABEL,
+                    executable,
+                    [
+                        "__workspace-tests-shared".to_owned(),
+                        workspace_workers.to_string(),
+                    ],
+                    workspace.source(),
+                    cancellation,
+                    workspace_cargo_jobs,
+                    &[
+                        ("CARGO_TARGET_DIR", workspace.cargo_target().as_os_str()),
+                        ("CARGO_BUILD_BUILD_DIR", workspace.cargo_build().as_os_str()),
+                    ],
+                );
+            }
+            let _ = (executable, cancellation, cargo_jobs, workspace_workers);
+            Err(RunError::Cleanup(
+                "full verifier workspace tests have no reusable native compiler workspace".into(),
+            ))
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = (cancellation, workspace_workers);
+            let _ = (cancellation, cargo_jobs, workspace_workers);
             Err(RunError::Launch(io::Error::other(
                 "workspace tests are unavailable on wasm32",
             )))

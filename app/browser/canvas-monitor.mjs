@@ -7,7 +7,14 @@ export function monitorPage(page) {
   let expectedNetworkInterruption = false;
   page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.toString()));
   page.on("console", (message) => {
-    if (message.type() === "error") pageErrors.push(`console: ${message.text()}`);
+    if (message.type() !== "error") return;
+    if (
+      expectedNetworkInterruption
+      && /^Failed to load resource: net::ERR_CONNECTION_REFUSED$/.test(message.text())
+    ) {
+      return;
+    }
+    pageErrors.push(`console: ${message.text()}`);
   });
   page.on("requestfailed", (request) => {
     if (!expectedNetworkInterruption) {

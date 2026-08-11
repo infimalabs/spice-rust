@@ -5,6 +5,7 @@ use super::*;
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RunPolicy {
     pub(super) concurrency: usize,
+    pub(super) shared_outputs: bool,
     pub(super) shard_deadline: Duration,
     pub(super) coordinator_deadline: Duration,
     pub(super) progress_interval: Duration,
@@ -24,6 +25,7 @@ impl RunPolicy {
         }
         Ok(Self {
             concurrency,
+            shared_outputs: false,
             shard_deadline: SHARD_DEADLINE,
             coordinator_deadline: COORDINATOR_DEADLINE,
             progress_interval: PROGRESS_INTERVAL,
@@ -37,11 +39,17 @@ impl RunPolicy {
         self.concurrency = self.concurrency.min(if shards == 0 { 1 } else { shards });
         self
     }
+
+    pub(super) const fn with_shared_outputs(mut self) -> Self {
+        self.shared_outputs = true;
+        self
+    }
 }
 
 struct ActiveShard {
     package: String,
     targets: String,
+    output_lane: usize,
     started: Instant,
     observer: Arc<LastTest>,
     thread: thread::JoinHandle<()>,
@@ -49,6 +57,7 @@ struct ActiveShard {
 
 pub(super) struct Coordinator<'a, W> {
     pending: VecDeque<(usize, PackageInventory)>,
+    available_lanes: VecDeque<usize>,
     active: BTreeMap<usize, ActiveShard>,
     results: Vec<ShardResult>,
     root: PathBuf,
@@ -86,8 +95,10 @@ impl<'a, W: Write> Coordinator<'a, W> {
     ) -> Self {
         let total = shards.len();
         let (sender, receiver) = mpsc::channel();
+        let available_lanes = (0..policy.concurrency).collect();
         Self {
             pending: shards.into_iter().enumerate().collect(),
+            available_lanes,
             active: BTreeMap::new(),
             results: Vec::new(),
             root,
@@ -139,24 +150,38 @@ impl<'a, W: Write> Coordinator<'a, W> {
             let Some((index, shard)) = self.pending.pop_front() else {
                 break;
             };
+            let Some(output_lane) = self.available_lanes.pop_front() else {
+                self.pending.push_front((index, shard));
+                break;
+            };
             let targets = target_list(&shard);
             writeln!(
                 self.output,
-                "[rust-test] stage=start shard={}/{} package={:?} targets={:?}",
+                concat!(
+                    "[rust-test] stage=start shard={}/{} package={:?} ",
+                    "targets={:?} output_lane={}"
+                ),
                 index + 1,
                 self.total,
                 shard.name,
-                targets
+                targets,
+                output_lane + 1
             )
             .map_err(output_error)?;
             self.output.flush().map_err(output_error)?;
-            self.launch(index, shard, targets);
+            self.launch(index, shard, targets, output_lane);
         }
         self.peak_concurrency = self.peak_concurrency.max(self.active.len());
         Ok(())
     }
 
-    fn launch(&mut self, index: usize, shard: PackageInventory, targets: String) {
+    fn launch(
+        &mut self,
+        index: usize,
+        shard: PackageInventory,
+        targets: String,
+        output_lane: usize,
+    ) {
         let sender = self.sender.clone();
         let root = self.root.clone();
         let environment = self.environment.clone();
@@ -181,6 +206,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
                     cancellation,
                     policy,
                     worker_observer,
+                    output_lane,
                 )
             }))
             .unwrap_or_else(|_| {
@@ -200,6 +226,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
             ActiveShard {
                 package,
                 targets,
+                output_lane,
                 started,
                 observer,
                 thread: handle,
@@ -234,6 +261,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
                 active.package
             ));
         }
+        self.available_lanes.push_back(active.output_lane);
         self.emit_terminal(&result)?;
         if !result.success && self.failure.is_none() {
             self.fail(format!(
@@ -293,13 +321,14 @@ impl<'a, W: Write> Coordinator<'a, W> {
                 self.output,
                 concat!(
                     "[rust-test] stage=progress shard={}/{} package={:?} targets={:?} ",
-                    "elapsed_ms={} last_test={:?}"
+                    "elapsed_ms={} output_lane={} last_test={:?}"
                 ),
                 index + 1,
                 self.total,
                 active.package,
                 active.targets,
                 active.started.elapsed().as_millis(),
+                active.output_lane + 1,
                 active.observer.last(),
             )
             .map_err(output_error)?;
@@ -420,11 +449,17 @@ fn run_shard(
     cancellation: CancellationToken,
     policy: RunPolicy,
     observer: Arc<LastTest>,
+    output_lane: usize,
 ) -> ShardResult {
     let started = Instant::now();
     let targets = target_list(&shard);
     let owner = format!("workspace test package {}", shard.name);
-    let spec = isolate_shard_outputs(environment, index).and_then(|environment| {
+    let environment = if policy.shared_outputs || policy.concurrency == 1 {
+        Ok(environment)
+    } else {
+        isolate_shard_outputs(environment, output_lane)
+    };
+    let spec = environment.and_then(|environment| {
         shard_spec(
             &cargo,
             &shard,
@@ -459,20 +494,21 @@ fn run_shard(
     )
 }
 
-/// Give one concurrent shard sole ownership of every Cargo output publication.
+/// Give one concurrent worker lane sole ownership of every Cargo output publication.
 ///
 /// # Errors
 ///
 /// Returns an environment error if the rewritten target authority is invalid.
 pub(super) fn isolate_shard_outputs(
     environment: Environment,
-    index: usize,
+    output_lane: usize,
 ) -> Result<Environment, WorkspaceTestError> {
     // Cargo 1.97 publishes executables beneath `build.build-dir` and holds one
     // lock for that entire root. Isolating only `target-dir` therefore neither
     // closes a `CARGO_BIN_EXE_*` replacement race nor permits parallel builds.
-    // Stable shard suffixes on both authorities provide exclusive publications
-    // and retain warm output for the same shard across repeated gate attempts.
+    // Stable lane suffixes on both authorities provide exclusive publications
+    // for concurrent shards and retain warm output for later shards in the same
+    // lane across repeated gate attempts.
     let mut entries = environment
         .entries()
         .iter()
@@ -482,7 +518,7 @@ pub(super) fn isolate_shard_outputs(
         if let Some(root) = entries.get(OsStr::new(variable)).cloned() {
             let isolated = PathBuf::from(root)
                 .join("spice-workspace-test-shards")
-                .join(format!("shard-{}", index + 1));
+                .join(format!("shard-{}", output_lane + 1));
             entries.insert(OsString::from(variable), isolated.into_os_string());
         }
     }

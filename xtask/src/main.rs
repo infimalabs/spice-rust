@@ -1,3 +1,5 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write as _};
@@ -62,6 +64,17 @@ fn main() -> ExitCode {
                     .next()
                     .expect("one workspace-test concurrency was admitted"),
                 &mut output,
+                false,
+            )
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if value == OsStr::new("__workspace-tests-shared") && arguments.len() == 1 => {
+            workspace_tests(
+                arguments
+                    .next()
+                    .expect("one workspace-test concurrency was admitted"),
+                &mut output,
+                true,
             )
         }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
@@ -441,15 +454,34 @@ fn ambient_environment() -> Result<sill::Environment, sill::SpecError> {
 fn workspace_tests(
     concurrency: OsString,
     output: &mut impl io::Write,
+    shared_outputs: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let concurrency = concurrency
         .to_str()
         .ok_or("workspace-test concurrency is not UTF-8")?
         .parse::<usize>()?;
-    let environment = ambient_environment()?;
+    let environment = workspace_test_environment(shared_outputs)?;
     xtask::run_workspace_tests(environment, concurrency, output)
         .map(|_execution| ())
         .map_err(Into::into)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn workspace_test_environment(shared_outputs: bool) -> Result<sill::Environment, sill::SpecError> {
+    let environment = ambient_environment()?;
+    if !shared_outputs {
+        return Ok(environment);
+    }
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    entries.insert(
+        OsString::from("SPICE_WORKSPACE_TEST_SHARED_OUTPUTS"),
+        OsString::from("1"),
+    );
+    sill::Environment::new(entries)
 }
 
 fn release_environment() -> xtask::ReleaseEnvironment {

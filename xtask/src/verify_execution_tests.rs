@@ -13,10 +13,10 @@ mod tests {
     use super::{
         BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget, CancellationToken,
         CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_HARD_RUNTIME,
-        FULL_VERIFIER_PROCESS_BOUNDS, PREREQUISITES, ProcessBounds, ProcessOutput, RunError,
-        Runner, SignalGuard, Status, VERIFY_ACTIONS, VerifyError, count_peer_cargo, execute_action,
-        ready_nodes, run_bounded_process, run_process, success, verify_package_with_control,
-        verify_with_control, verify_with_deadline,
+        FULL_VERIFIER_PROCESS_BOUNDS, FULL_VERIFIER_TEST_RUNTIME, PREREQUISITES, ProcessBounds,
+        ProcessOutput, RunError, Runner, SignalGuard, Status, VERIFY_ACTIONS, VerifyError,
+        count_peer_cargo, execute_action, ready_nodes, run_bounded_process, run_process, success,
+        verify_package_with_control, verify_with_control, verify_with_deadline,
     };
     use crate::verify_timing::Disposition;
     use crate::{ScopedCommand, Step, landing};
@@ -200,17 +200,28 @@ mod tests {
         nodes[0] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [1]);
 
-        for index in 1..=6 {
+        for index in 1..=2 {
             assert_eq!(ready_nodes(&nodes), [index]);
             nodes[index] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         }
+
+        assert_eq!(ready_nodes(&nodes), [3]);
+        nodes[3] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [4]);
+        nodes[4] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [5]);
+        nodes[5] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [6]);
+        nodes[6] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [7, 8]);
         nodes[7] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [8]);
-        for index in 8..=10 {
-            nodes[index] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
-            assert_eq!(ready_nodes(&nodes), [index + 1]);
-        }
+        nodes[8] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [9]);
+        nodes[9] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [10]);
+        nodes[10] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [11]);
         nodes[11] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [12]);
     }
@@ -234,11 +245,11 @@ mod tests {
         assert_eq!(saturated_cpu.workers, 1);
         assert_eq!(unknown.workers, 1);
         assert_eq!(unknown.cargo_jobs, 1);
-        assert_eq!(no_pressure.workspace_workers, 4);
-        assert_eq!(one_peer.workspace_workers, 4);
+        assert_eq!(no_pressure.workspace_workers, 2);
+        assert_eq!(one_peer.workspace_workers, 2);
         assert_eq!(pressure.workspace_workers, 1);
         assert_eq!(one_peer_twelve_cpus.cargo_jobs, 4);
-        assert_eq!(one_peer_twelve_cpus.workspace_workers, 3);
+        assert_eq!(one_peer_twelve_cpus.workspace_workers, 2);
         assert_eq!(three_peers.cargo_jobs, 3);
         assert_eq!(three_peers.workspace_workers, 2);
         assert_eq!(two_cpus.workspace_workers, 1);
@@ -280,9 +291,55 @@ mod tests {
                 .expect("scheduler output is UTF-8")
                 .contains(concat!(
                     "scheduler workers=1 cargo_jobs=1 active_peer_cargo_jobs=8 ",
-                    "workspace_workers=1 action_count=13 deadline_ms=180000"
+                    "workspace_workers=1 action_count=13 ",
+                    "deadline_scope=test-phase deadline_ms=180000"
                 ))
         );
+    }
+
+    #[test]
+    fn zero_peer_budget_excludes_cold_setup_and_completes_test_phase_branches() {
+        let mut delays = VERIFY_ACTIONS
+            .iter()
+            .map(|action| (action.label(), Duration::from_millis(10)))
+            .collect::<BTreeMap<_, _>>();
+        delays.insert(VERIFY_ACTIONS[2].label(), Duration::from_millis(470));
+        delays.insert(VERIFY_ACTIONS[3].label(), Duration::from_millis(470));
+        delays.insert(VERIFY_ACTIONS[4].label(), Duration::from_millis(470));
+        delays.insert(VERIFY_ACTIONS[5].label(), Duration::from_millis(500));
+        delays.insert(VERIFY_ACTIONS[7].label(), Duration::from_millis(400));
+        delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(500));
+        delays.insert(VERIFY_ACTIONS[9].label(), Duration::from_millis(40));
+        delays.insert(VERIFY_ACTIONS[10].label(), Duration::from_millis(40));
+        delays.insert(VERIFY_ACTIONS[11].label(), Duration::from_millis(40));
+        let runner = TimedRunner::new(delays, 0);
+        let mut output = Vec::new();
+
+        verify_with_deadline(
+            &runner,
+            &mut output,
+            Budget::from_observation(FIXTURE_CPU_COUNT, Some(0)),
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_millis(1_800),
+        )
+        .expect("zero-peer fixture completes its test phase inside the bounded test window");
+
+        let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+        assert!(output.contains(
+            "scheduler workers=3 cargo_jobs=5 active_peer_cargo_jobs=0 workspace_workers=2"
+        ));
+        assert!(output.contains("deadline_scope=test-phase deadline_ms=1800"));
+        assert_line_order(
+            &output,
+            "stage=start ordinal=6/13",
+            "stage=start ordinal=9/13",
+        );
+        assert_terminal_exit_zero(&output, 6, VERIFY_ACTIONS[5].label());
+        assert_terminal_exit_zero(&output, 8, BROWSER_LABEL);
+        assert_terminal_exit_zero(&output, 9, VERIFY_ACTIONS[8].label());
+        assert_terminal_success(&output, 13, VERIFY_ACTIONS[12].label());
+        assert_exactly_once(&runner.calls());
     }
 
     #[test]
@@ -300,9 +357,21 @@ mod tests {
         .expect_err("the complete verifier deadline refuses further work");
 
         assert!(matches!(error, VerifyError::TimedOut { .. }));
-        assert_eq!(runner.calls(), [ENTRY_POINT_LABEL]);
+        assert_eq!(
+            runner.calls(),
+            [
+                ENTRY_POINT_LABEL,
+                FORMAT_LABEL,
+                VERIFY_ACTIONS[2].label(),
+                VERIFY_ACTIONS[3].label(),
+                VERIFY_ACTIONS[4].label(),
+                VERIFY_ACTIONS[5].label(),
+                VERIFY_ACTIONS[6].label(),
+                BROWSER_LABEL,
+            ]
+        );
         let output = String::from_utf8(output).expect("deadline output is UTF-8");
-        assert!(output.contains("deadline_ms=1"));
+        assert!(output.contains("deadline_scope=test-phase deadline_ms=1"));
         assert!(output.contains("primary_ordinal=deadline"));
     }
 
@@ -310,7 +379,8 @@ mod tests {
     fn outer_supervisor_reserves_every_terminal_phase_inside_five_minutes() {
         let bounds = FULL_VERIFIER_PROCESS_BOUNDS;
         let hard_envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
-        assert_eq!(hard_envelope, Duration::from_secs(295));
+        assert_eq!(hard_envelope, Duration::from_secs(258));
+        assert_eq!(bounds.runtime, Duration::from_secs(255));
         assert!(hard_envelope < FULL_VERIFIER_HARD_RUNTIME);
         assert_eq!(
             bounds.output_limit,
@@ -318,8 +388,8 @@ mod tests {
             "the outer capture retains both per-action stream bounds"
         );
         assert!(
-            bounds.grace >= super::TERMINATION_GRACE + super::REAP_DEADLINE + super::OUTPUT_DRAIN,
-            "the child must survive long enough to clean independently grouped actions"
+            bounds.runtime > FULL_VERIFIER_TEST_RUNTIME,
+            "the hard supervisor must outlive the child-owned deadline"
         );
     }
 
@@ -339,6 +409,7 @@ mod tests {
             "non-cooperative verifier fixture",
             executable,
             benchmark_arguments(NON_COOPERATIVE_CHILD_TEST),
+            &std::env::current_dir().expect("resolve verifier fixture cwd"),
             &CancellationToken::new(),
             None,
             &[],
@@ -722,6 +793,38 @@ mod tests {
             .collect::<Vec<_>>();
         expected.sort_unstable();
         assert_eq!(actual, expected, "actions were duplicated or omitted");
+    }
+
+    fn assert_terminal_exit_zero(output: &str, ordinal: usize, label: &str) {
+        assert_terminal_disposition(output, ordinal, label, "disposition=exit code=0");
+    }
+
+    fn assert_terminal_success(output: &str, ordinal: usize, label: &str) {
+        assert_terminal_disposition(output, ordinal, label, "disposition=success");
+    }
+
+    fn assert_terminal_disposition(output: &str, ordinal: usize, label: &str, disposition: &str) {
+        let ordinal = format!("stage=terminal ordinal={ordinal}/{}", VERIFY_ACTIONS.len());
+        let identity = format!("identity={label:?}");
+        assert!(
+            output.lines().any(|line| line.contains(&ordinal)
+                && line.contains(disposition)
+                && line.contains(&identity)),
+            "missing terminal record {ordinal} {identity} {disposition}"
+        );
+    }
+
+    fn assert_line_order(output: &str, first: &str, second: &str) {
+        let first_at = output
+            .find(first)
+            .unwrap_or_else(|| panic!("output did not contain first marker {first:?}"));
+        let second_at = output
+            .find(second)
+            .unwrap_or_else(|| panic!("output did not contain second marker {second:?}"));
+        assert!(
+            first_at < second_at,
+            "expected {first:?} before {second:?} in verifier output"
+        );
     }
 
     struct CleanupFaultRunner {

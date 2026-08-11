@@ -51,6 +51,7 @@ export { monitorPage } from "./canvas-monitor.mjs";
 export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
 
 const execute = promisify(execFile);
+const SHUTDOWN_COMMAND_MS = 25_000;
 
 /// Steering root that causes the isolated Canvas authority fixture to exist.
 const CANVAS_SEED_STEERING_ORIGIN = "ack:1kLMtWnl";
@@ -119,6 +120,7 @@ export async function startResident(fixture) {
   });
   try {
     const discovery = await waitForDiscovery(child, canvas);
+    await waitForResidentReady(fixture, child);
     return { child, discovery };
   } catch (error) {
     let residue;
@@ -136,6 +138,36 @@ export async function startResident(fixture) {
       cause: error,
     });
   }
+}
+
+async function waitForResidentReady(fixture, child, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
+  let lastOutcome = null;
+  while (Date.now() < deadline && !childExited(child)) {
+    const outcome = await invoke(fixture, ["journal"]);
+    if (outcome.kind === "reply") return;
+    lastOutcome = outcome;
+    if (!isStartupTransient(outcome)) {
+      throw new Error(`resident readiness command returned ${JSON.stringify(outcome)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `resident did not answer readiness command before startup bound: `
+      + `status=${child.exitCode ?? child.signalCode ?? "running"} `
+      + `last=${JSON.stringify(lastOutcome)}`,
+  );
+}
+
+function isStartupTransient(outcome) {
+  return outcome.kind === "fault"
+    && outcome.class === "environment"
+    && [
+      "canvas::deadline-elapsed",
+      "canvas::publisher-replaced",
+      "canvas::publisher-gone",
+      "canvas::discovery-unavailable",
+    ].includes(outcome.reason);
 }
 
 function decodeOutcome(stdout, stderr = "") {
@@ -261,7 +293,7 @@ export async function configureFixture(
     "budget = 2",
     "",
     "[lane]",
-    'lease = "30s"',
+    'lease = "5s"',
     'vendor = "claude"',
     "",
     "[tasks]",
@@ -379,6 +411,16 @@ export async function addLinkedWorktree(fixture, linkedRoot, name) {
 // accounting what the successor declared, so this waits for the extent to grow
 // past the reply rather than treating the reply as the event.
 export async function importLaneAndFold(fixture, lane, worktree) {
+  const pending = await reply(fixture, ["inbox", lane]);
+  for (const directive of pending.body.lanes[0].pending) {
+    await reply(fixture, ["steer", "cancel", directive.directive]);
+  }
+  const quiet = await reply(fixture, ["inbox", lane]);
+  assert.deepEqual(
+    quiet.body.lanes[0].pending,
+    [],
+    "pending direction cannot automatically reoccupy the lane before import",
+  );
   await reply(fixture, ["lane", "drain", lane]);
   await reply(fixture, ["lane", "import", lane, worktree]);
   const imported = await journalExtent(fixture);
@@ -605,7 +647,7 @@ export async function stopResident(fixture, resident) {
   const exited = !childExited(resident.child)
     ? once(resident.child, "exit")
     : Promise.resolve();
-  await execute(binary, ["--json", "down"], { cwd: fixture, timeout: 10_000 });
+  await execute(binary, ["--json", "down"], { cwd: fixture, timeout: SHUTDOWN_COMMAND_MS });
   await exited;
 }
 
