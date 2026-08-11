@@ -103,12 +103,14 @@ chain while the selected-root Cargo cache is still warm. Browser verification
 then consumes that exact resident through `SPICE_CANVAS_BINARY`, so it performs
 no Cargo build while the Rust test branch runs. Deterministic workspace tests
 wait until those Cargo build stages are finished, prebuild all test binaries
-once in the native compiler output root, and then run package shards in
-parallel against that same selected-root cache. Documentation and doctests
-follow the workspace tests so the native Cargo root is not forced into
-competing test and documentation publication work; the canonical battery waits
-for workspace tests, doctests, browser coverage, and compiler evidence before
-contract landing crosses the final barrier.
+once in the native compiler output root at an explicit supervised setup
+boundary, and then start the Canvas and package-shard actions together against
+that same selected-root cache. Documentation and doctests follow the workspace
+tests so the native Cargo root is not forced into competing test and
+documentation publication work. The canonical battery consumes its completed
+browser, workspace-test, and compiler evidence alongside that documentation
+tail; contract landing still waits for every action before crossing the final
+barrier.
 
 The outer scheduler has a hard ceiling of three actions. It counts peer Cargo
 processes, reduces that ceiling from three to two to one as peer pressure
@@ -119,23 +121,28 @@ budget divided across the peer and local participants; an unavailable peer
 probe fails closed to one worker, one Cargo job, and one test shard. After
 reserving every possible concurrent outer sibling's Cargo grant, the scheduler
 gives the workspace-test coordinator the remaining logical-CPU slots. In the
-full verifier that branch is capped at two lanes so Canvas keeps deterministic
-headroom for its resident RPC deadlines while both downstream branches overlap.
-Full-verifier lanes share the selected root and Cargo output roots only after
-the one prebuild has published the test binaries they execute. Concurrent
-standalone coordinator callers still receive separate Cargo output lanes and
-retain the coordinator's four-lane ceiling; later shards recycle the lane whose
-prior process group already exited, so package or target count cannot create an
-unbounded process, CPU, or compiler-cache fan-out.
+full verifier that branch may use the coordinator's four-lane ceiling when no
+peer Cargo process exists, is capped at two lanes with one peer, and collapses
+to one lane with two or more peers. That preserves zero-peer throughput while
+retaining deterministic Canvas and fleet headroom as peer pressure rises.
+Full-verifier lanes share the selected root and completed Cargo build cache only
+after the one prebuild has published the test binaries they execute. Each lane
+keeps a separate target-publication path so concurrent same-package shards
+cannot replace one another's final binaries. Concurrent standalone coordinator
+callers still receive separate Cargo output lanes and retain the coordinator's
+four-lane ceiling; later shards recycle the lane whose prior process group
+already exited, so package or target count cannot create an unbounded process,
+CPU, or compiler-cache fan-out.
 
 The complete verifier runs inside one supervised child process. Its test-phase
-timer starts when Canvas or the workspace-test coordinator first launches; cold
-compiler setup is serialized for low contention and does not consume the actual
-test budget. At 180 seconds of test-phase runtime the child-owned scheduler
+timer starts only after the shared workspace-test prebuild has completed, when
+Canvas and the workspace-test coordinator launch; cold compiler setup is
+serialized for low contention and does not consume the actual test budget. At
+180 seconds of test-phase runtime the child-owned scheduler
 stops new work and cancels and reaps every independently grouped action. The
-parent supervisor waits until 255 seconds before treating the verifier child
+parent supervisor waits until 296 seconds before treating the verifier child
 itself as non-cooperative, then reserves one second each for final termination,
-reap, and output drain. The resulting worst case is 258 seconds, so entry-point
+reap, and output drain. The resulting worst case is 299 seconds, so entry-point
 audit, battery, landing, sibling termination, reap, and output recovery all
 remain inside the hard five-minute wall envelope.
 
@@ -164,11 +171,18 @@ cargo xtask verify
 
 The command discovers the repository from the current directory and runs the
 one canonical verifier; there is no wrapper or second suite. Its workspace Rust
-tests are split into deterministic chunks of at most 8 targets, ordered
-heaviest first so cold compiler work starts immediately, and run in no more
-than the scheduler-granted workers. The full verifier grants two workspace
-lanes over the native selected root; the coordinator's reusable safety ceiling
-remains four owned process groups. Every shard prints its package, target
+tests are packed deterministically by source weight across the minimum
+per-package shard count, keeping every shard at no more than 8 targets while
+spreading larger integration targets across lanes. Batches of at least 3 targets
+start largest-first, with equal sizes favoring the package that has the larger
+complete target inventory so its final batch cannot pin the tail. One- and
+two-target tail batches retain stable metadata order because their measured Cargo
+startup cost dominates cardinality. Execution uses no more than the
+scheduler-granted workers. Subject to the logical-CPU reservation, the full
+verifier grants up to four workspace lanes over the native selected root with no
+Cargo peers, up to two with one peer, and one with two or more peers; the
+coordinator's reusable safety ceiling remains four owned process groups. Every
+shard prints its package, target
 inventory, and output lane before launch, reports progress every 30 seconds,
 and has a hard 180-second deadline that terminates and reaps the complete
 process group.

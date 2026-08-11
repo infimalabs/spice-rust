@@ -1,6 +1,7 @@
 //! Deterministic, bounded execution of every workspace Rust test target.
 //! Inventory and selection stay here; shard execution lives in `coordinator`.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -31,8 +32,13 @@ use coordinator::{
 use coordinator::{LastTest, isolate_shard_outputs, target_arguments};
 
 /// Keep each post-prebuild Cargo invocation small enough for the full verifier's
-/// two-lane workspace branch to make steady progress under the test-phase cap.
+/// bounded workspace branch to make steady progress under the test-phase cap.
+/// Targets are source-weight balanced across the minimum shard count so one
+/// cluster of larger integration targets cannot pin the coordinator tail.
 const TARGETS_PER_SHARD: usize = 8;
+/// Below three targets, observed Cargo startup and publication time outweighs
+/// target cardinality, so these tail batches retain stable metadata order.
+const CARGO_STARTUP_DOMINATED_TARGET_LIMIT: usize = 2;
 /// No individual test shard may cross the operator's three-minute ceiling.
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
 /// The aggregate coordinator may outlive one shard while bounded siblings finish.
@@ -212,11 +218,66 @@ pub fn run_at(
     concurrency: usize,
     output: &mut impl Write,
 ) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
-    let (environment, policy) = policy_from_environment(environment, concurrency)?;
-    let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
-    let environment = inventory.execution_environment(environment, root, root, true)?;
+    run_at_with_prebuild(root, environment, concurrency, output, true)
+}
+
+/// Prebuild every canonical workspace test target into one shared Cargo build cache.
+///
+/// The full verifier calls this setup boundary after its serial compiler chain and
+/// before starting the bounded test-phase clock. [`run_prebuilt_shared_at`] then
+/// reuses that completed build cache without repeating setup inside that clock.
+///
+/// # Errors
+///
+/// Returns metadata, environment, launch, supervision, timeout, or compiler failures.
+pub fn prebuild_shared_at(
+    root: &Path,
+    environment: Environment,
+    output: &mut impl Write,
+) -> Result<(), WorkspaceTestError> {
+    let (_, environment, policy) =
+        prepare_execution(root, environment, WORKSPACE_TEST_CONCURRENCY_CAP)?;
+    if !policy.shared_outputs {
+        return Err(WorkspaceTestError::new(
+            "shared workspace-test prebuild requires shared Cargo output authority",
+        ));
+    }
+    prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)
+}
+
+/// Run every canonical workspace test target from a completed shared-output prebuild.
+///
+/// This entry point is reserved for the full verifier's supervised child.
+/// Standalone shared-output execution continues through [`run_at`], which
+/// performs its own mandatory prebuild before any lane shares the build cache.
+///
+/// # Errors
+///
+/// Returns metadata, partition, launch, supervision, timeout, or test failures.
+pub fn run_prebuilt_shared_at(
+    root: &Path,
+    environment: Environment,
+    concurrency: usize,
+    output: &mut impl Write,
+) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
+    run_at_with_prebuild(root, environment, concurrency, output, false)
+}
+
+fn run_at_with_prebuild(
+    root: &Path,
+    environment: Environment,
+    concurrency: usize,
+    output: &mut impl Write,
+    prebuild: bool,
+) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
+    let (inventory, environment, policy) = prepare_execution(root, environment, concurrency)?;
+    if !prebuild && !policy.shared_outputs {
+        return Err(WorkspaceTestError::new(
+            "prebuilt workspace-test execution requires shared Cargo output authority",
+        ));
+    }
     let execution = WorkspaceTestExecution::from_inventory(&inventory);
-    if policy.shared_outputs {
+    if prebuild && policy.shared_outputs {
         prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)?;
     }
     let shards = partition(&inventory);
@@ -232,6 +293,17 @@ pub fn run_at(
     )
     .run()?;
     Ok(execution)
+}
+
+fn prepare_execution(
+    root: &Path,
+    environment: Environment,
+    concurrency: usize,
+) -> Result<(Inventory, Environment, RunPolicy), WorkspaceTestError> {
+    let (environment, policy) = policy_from_environment(environment, concurrency)?;
+    let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
+    let environment = inventory.execution_environment(environment, root, root, true)?;
+    Ok((inventory, environment, policy))
 }
 
 fn policy_from_environment(
@@ -454,6 +526,7 @@ struct TargetIdentity {
     name: String,
     source: PathBuf,
     declared_path_sources: Vec<PathBuf>,
+    source_bytes: u64,
 }
 
 impl TargetIdentity {
@@ -701,12 +774,14 @@ fn package_inventory(
                 )));
             }
             let declared_path_sources = declared_path_sources(&source)?;
+            let source_bytes = target_source_bytes(&source, &declared_path_sources)?;
             Ok(TargetIdentity {
                 package: package.id.clone(),
                 kind: target.kind.join("+"),
                 name: target.name,
                 source,
                 declared_path_sources,
+                source_bytes,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -827,30 +902,97 @@ fn target_is_library(target: &TargetIdentity) -> bool {
 }
 
 fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
+    let package_target_counts = inventory
+        .packages
+        .iter()
+        .map(|package| (package.id.clone(), package.targets.len()))
+        .collect::<BTreeMap<_, _>>();
     let mut shards = inventory
         .packages
         .iter()
-        .flat_map(|package| {
-            package
-                .targets
-                .chunks(TARGETS_PER_SHARD)
-                .map(|targets| PackageInventory {
-                    id: package.id.clone(),
-                    name: package.name.clone(),
-                    root: package.root.clone(),
-                    targets: targets.to_vec(),
-                })
-        })
+        .flat_map(partition_package)
         .collect::<Vec<_>>();
     shards.sort_by(|left, right| {
-        right
-            .targets
-            .len()
-            .cmp(&left.targets.len())
+        let left_startup_dominated = left.targets.len() <= CARGO_STARTUP_DOMINATED_TARGET_LIMIT;
+        let right_startup_dominated = right.targets.len() <= CARGO_STARTUP_DOMINATED_TARGET_LIMIT;
+        let left_package_targets = package_target_counts[&left.id];
+        let right_package_targets = package_target_counts[&right.id];
+        left_startup_dominated
+            .cmp(&right_startup_dominated)
+            .then_with(|| {
+                if left_startup_dominated {
+                    Ordering::Equal
+                } else {
+                    right
+                        .targets
+                        .len()
+                        .cmp(&left.targets.len())
+                        .then_with(|| right_package_targets.cmp(&left_package_targets))
+                }
+            })
             .then_with(|| left.id.cmp(&right.id))
             .then_with(|| left.targets.cmp(&right.targets))
     });
     shards
+}
+
+fn partition_package(package: &PackageInventory) -> Vec<PackageInventory> {
+    let shard_count = package.targets.len().div_ceil(TARGETS_PER_SHARD);
+    let mut weighted_targets = package
+        .targets
+        .iter()
+        .map(|target| (target.source_bytes, target))
+        .collect::<Vec<_>>();
+    weighted_targets.sort_by(|(left_weight, left), (right_weight, right)| {
+        right_weight.cmp(left_weight).then_with(|| left.cmp(right))
+    });
+    let mut targets_by_shard = vec![Vec::new(); shard_count];
+    let mut weights_by_shard = vec![0_u64; shard_count];
+    for (weight, target) in weighted_targets {
+        let index = (0..shard_count)
+            .filter(|index| targets_by_shard[*index].len() < TARGETS_PER_SHARD)
+            .min_by_key(|index| {
+                (
+                    weights_by_shard[*index],
+                    targets_by_shard[*index].len(),
+                    *index,
+                )
+            })
+            .expect("minimum shard count retains target capacity");
+        targets_by_shard[index].push(target.clone());
+        weights_by_shard[index] = weights_by_shard[index].saturating_add(weight);
+    }
+    for targets in &mut targets_by_shard {
+        targets.sort();
+    }
+    targets_by_shard
+        .into_iter()
+        .map(|targets| PackageInventory {
+            id: package.id.clone(),
+            name: package.name.clone(),
+            root: package.root.clone(),
+            targets,
+        })
+        .collect()
+}
+
+fn target_source_bytes(
+    source: &Path,
+    declared_path_sources: &[PathBuf],
+) -> Result<u64, WorkspaceTestError> {
+    std::iter::once(source)
+        .chain(declared_path_sources.iter().map(PathBuf::as_path))
+        .try_fold(0_u64, |total, path| {
+            fs::metadata(path)
+                .map(|metadata| total.saturating_add(metadata.len()))
+                .map_err(|error| {
+                    WorkspaceTestError::new(format!(
+                        "workspace test target source {} metadata failed: {error}",
+                        path.display()
+                    ))
+                })
+        })
+        .map(|bytes| bytes.max(1))
 }
 
 fn validate_partition(

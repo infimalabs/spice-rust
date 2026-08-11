@@ -454,7 +454,9 @@ fn run_shard(
     let started = Instant::now();
     let targets = target_list(&shard);
     let owner = format!("workspace test package {}", shard.name);
-    let environment = if policy.shared_outputs || policy.concurrency == 1 {
+    let environment = if policy.shared_outputs && policy.concurrency > 1 {
+        isolate_shared_target_output(environment, output_lane)
+    } else if policy.concurrency == 1 {
         Ok(environment)
     } else {
         isolate_shard_outputs(environment, output_lane)
@@ -503,12 +505,10 @@ pub(super) fn isolate_shard_outputs(
     environment: Environment,
     output_lane: usize,
 ) -> Result<Environment, WorkspaceTestError> {
-    // Cargo 1.97 publishes executables beneath `build.build-dir` and holds one
-    // lock for that entire root. Isolating only `target-dir` therefore neither
-    // closes a `CARGO_BIN_EXE_*` replacement race nor permits parallel builds.
-    // Stable lane suffixes on both authorities provide exclusive publications
-    // for concurrent shards and retain warm output for later shards in the same
-    // lane across repeated gate attempts.
+    // Without a completed shared prebuild, Cargo 1.97's build intermediates and
+    // final target publications both need lane ownership. Stable suffixes on
+    // both authorities permit independent compilers and retain warm output for
+    // later shards in the same lane across repeated gate attempts.
     let mut entries = environment
         .entries()
         .iter()
@@ -521,6 +521,29 @@ pub(super) fn isolate_shard_outputs(
                 .join(format!("shard-{}", output_lane + 1));
             entries.insert(OsString::from(variable), isolated.into_os_string());
         }
+    }
+    Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
+}
+
+/// Give one shared-build worker lane sole ownership of final Cargo publications.
+///
+/// Cargo's `build.build-dir` remains shared so every lane consumes the completed
+/// prebuild. `target-dir` is lane-local because `CARGO_BIN_EXE_*` paths published
+/// there must remain present while sibling Cargo processes run their tests.
+fn isolate_shared_target_output(
+    environment: Environment,
+    output_lane: usize,
+) -> Result<Environment, WorkspaceTestError> {
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    if let Some(root) = entries.get(OsStr::new(CARGO_TARGET_DIR)).cloned() {
+        let isolated = PathBuf::from(root)
+            .join("spice-workspace-test-shards")
+            .join(format!("shard-{}", output_lane + 1));
+        entries.insert(OsString::from(CARGO_TARGET_DIR), isolated.into_os_string());
     }
     Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }

@@ -8,236 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 
+mod environment;
+mod partition;
 mod selection;
-
-#[test]
-fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
-    let production = RunPolicy::production(1).expect("one scheduler grant admits");
-    assert_eq!(production.shard_deadline, Duration::from_secs(180));
-    assert_eq!(production.coordinator_deadline, Duration::from_secs(255));
-    for concurrency in 1..=WORKSPACE_TEST_CONCURRENCY_CAP {
-        assert_eq!(
-            RunPolicy::production(concurrency)
-                .expect("every bounded scheduler grant admits")
-                .concurrency,
-            concurrency
-        );
-    }
-    assert_eq!(
-        RunPolicy::production(WORKSPACE_TEST_CONCURRENCY_CAP)
-            .expect("bounded scheduler grant admits")
-            .for_shards(2)
-            .concurrency,
-        2,
-        "the coordinator never creates more workers than actual shards"
-    );
-    for concurrency in [0, WORKSPACE_TEST_CONCURRENCY_CAP + 1] {
-        let error = RunPolicy::production(concurrency)
-            .expect_err("out-of-contract scheduler grant refuses")
-            .to_string();
-        assert!(error.contains("must be between 1 and 4"), "{error}");
-    }
-}
-
-#[test]
-fn selected_test_environment_cannot_inherit_the_parent_git_repository() {
-    let mut entries = BTreeMap::from([
-        (OsString::from("PATH"), OsString::from("/fixture/bin")),
-        (
-            OsString::from(CARGO_TARGET_DIR),
-            OsString::from("/fixture/target"),
-        ),
-    ]);
-    for variable in GIT_LOCAL_ENVIRONMENT {
-        entries.insert(
-            OsString::from(variable),
-            OsString::from("parent-repository"),
-        );
-    }
-    let environment = without_parent_repository(
-        Environment::new(entries).expect("declare inherited hook environment"),
-    )
-    .expect("selected test environment admits after isolation");
-    assert_eq!(
-        environment_value(&environment, "PATH"),
-        Some(&OsString::from("/fixture/bin")),
-        "ordinary process environment survives repository isolation"
-    );
-    assert_eq!(
-        environment_value(&environment, CARGO_TARGET_DIR),
-        Some(&OsString::from("/fixture/target")),
-        "configured Cargo cache authority survives repository isolation"
-    );
-    for variable in GIT_LOCAL_ENVIRONMENT {
-        assert!(
-            environment_value(&environment, variable).is_none(),
-            "selected tests retained parent repository variable {variable}"
-        );
-    }
-}
-
-#[test]
-fn selected_tree_execution_rewrites_external_cargo_outputs_to_writable_root() {
-    let inventory = Inventory {
-        target_directory: PathBuf::from("/selected/target"),
-        build_directory: PathBuf::from("/machine/cargo-build/hash"),
-        packages: vec![quick_package()],
-    };
-    let environment = inventory
-        .execution_environment(
-            Environment::new([(OsString::from("PATH"), OsString::from("/fixture/bin"))])
-                .expect("selected test environment admits"),
-            Path::new("/selected"),
-            Path::new("/worktree"),
-            false,
-        )
-        .expect("selected test output roots admit");
-
-    assert_eq!(
-        environment_value(&environment, CARGO_TARGET_DIR),
-        Some(&OsString::from("/worktree/target")),
-        "ordinary selected-tree tests compile into the writable worktree target"
-    );
-    assert_eq!(
-        environment_value(&environment, CARGO_BUILD_BUILD_DIR),
-        Some(&OsString::from("/worktree/target/cargo-build")),
-        "machine-level build-dir paths are not embedded into selected-tree test binaries"
-    );
-}
-
-#[test]
-fn reusable_workspace_execution_preserves_prepared_cargo_outputs() {
-    let inventory = Inventory {
-        target_directory: PathBuf::from("/worktree/target"),
-        build_directory: PathBuf::from("/worktree/target/spice-gate-native-build"),
-        packages: vec![quick_package()],
-    };
-    let environment = inventory
-        .execution_environment(
-            Environment::new([(OsString::from("PATH"), OsString::from("/fixture/bin"))])
-                .expect("reusable test environment admits"),
-            Path::new("/selected"),
-            Path::new("/worktree"),
-            true,
-        )
-        .expect("reusable output roots admit");
-
-    assert_eq!(
-        environment_value(&environment, CARGO_TARGET_DIR),
-        Some(&OsString::from("/worktree/target")),
-        "reusable test execution keeps the analysis target root"
-    );
-    assert_eq!(
-        environment_value(&environment, CARGO_BUILD_BUILD_DIR),
-        Some(&OsString::from("/worktree/target/spice-gate-native-build")),
-        "reusable test execution keeps the analysis build root"
-    );
-}
-
-#[test]
-fn selected_test_environment_names_the_separate_writable_fixture_root() {
-    let environment = fixture_inventory()
-        .execution_environment(
-            Environment::new(Vec::<(OsString, OsString)>::new())
-                .expect("empty fixture environment"),
-            Path::new("/workspace"),
-            Path::new("/writable"),
-            false,
-        )
-        .expect("selected test environment admits");
-
-    assert_eq!(
-        environment_value(&environment, TEST_WRITABLE_ROOT),
-        Some(&OsString::from("/writable")),
-        "fixtures receive writable authority without changing the selected source root"
-    );
-}
-
-#[test]
-fn partition_validation_names_omitted_and_duplicated_packages_and_targets() {
-    let inventory = fixture_inventory();
-    let exact = partition(&inventory);
-    validate_partition(&inventory, &exact).expect("exact partition passes");
-
-    let mut omitted = exact.clone();
-    omitted[0].targets.pop();
-    assert!(
-        validate_partition(&inventory, &omitted)
-            .expect_err("omitted target refuses")
-            .to_string()
-            .contains("observed 0")
-    );
-
-    let mut duplicated = exact.clone();
-    let duplicate = duplicated[0].targets[0].clone();
-    duplicated[0].targets.push(duplicate);
-    assert!(
-        validate_partition(&inventory, &duplicated)
-            .expect_err("duplicated target refuses")
-            .to_string()
-            .contains("observed 2")
-    );
-
-    let mut package_missing = exact;
-    package_missing.pop();
-    let error = validate_partition(&inventory, &package_missing)
-        .expect_err("omitted package refuses")
-        .to_string();
-    assert!(error.contains("package"));
-    assert!(error.contains("observed 0"));
-
-    let mut wrong_owner = partition(&inventory);
-    wrong_owner[0].targets[0].package = wrong_owner[1].id.clone();
-    assert!(
-        validate_partition(&inventory, &wrong_owner)
-            .expect_err("a target assigned to another package refuses")
-            .to_string()
-            .contains("target")
-    );
-}
-
-#[test]
-fn partition_splits_large_packages_in_stable_target_order() {
-    let mut inventory = fixture_inventory();
-    inventory.packages[0].targets = (0..TARGETS_PER_SHARD + 1)
-        .map(|index| TargetIdentity {
-            package: "fixture-a-id".to_owned(),
-            kind: "test".to_owned(),
-            name: format!("target-{index:02}"),
-            source: PathBuf::from(format!("/workspace/tests/target-{index:02}.rs")),
-            declared_path_sources: Vec::new(),
-        })
-        .collect();
-
-    let shards = partition(&inventory);
-
-    assert_eq!(shards.len(), 3);
-    assert_eq!(shards[0].targets.len(), TARGETS_PER_SHARD);
-    assert_eq!(shards[1].targets.len(), 1);
-    assert_eq!(shards[2].name, "fixture-b");
-    validate_partition(&inventory, &shards).expect("split partition remains exact");
-}
-
-#[test]
-fn partition_starts_larger_shards_before_metadata_order() {
-    let mut inventory = fixture_inventory();
-    inventory.packages[1].targets = (0..3)
-        .map(|index| TargetIdentity {
-            package: "fixture-b-id".to_owned(),
-            kind: "test".to_owned(),
-            name: format!("target-{index}"),
-            source: PathBuf::from(format!("/workspace/fixture-b/tests/target-{index}.rs")),
-            declared_path_sources: Vec::new(),
-        })
-        .collect();
-
-    let shards = partition(&inventory);
-
-    assert_eq!(shards[0].name, "fixture-b");
-    assert_eq!(shards[0].targets.len(), 3);
-    assert_eq!(shards[1].name, "fixture-a");
-    validate_partition(&inventory, &shards).expect("heavy-first partition remains exact");
-}
 
 #[test]
 fn every_lane_output_authority_is_isolated_by_one_stable_suffix() {
@@ -345,7 +118,7 @@ fn sequential_shards_reuse_the_base_output_authority() {
 }
 
 #[test]
-fn shared_output_policy_reuses_the_base_output_authority_for_parallel_lanes() {
+fn shared_output_policy_isolates_publications_but_reuses_the_build_cache() {
     let root = fixture_root("workspace-shared-output-lanes");
     fs::create_dir_all(&root).expect("shared output fixture root creates");
     let log = root.join("targets.log");
@@ -404,8 +177,16 @@ fn shared_output_policy_reuses_the_base_output_authority_for_parallel_lanes() {
     assert_eq!(
         targets,
         [
-            "/workspace/target /workspace/build".to_owned(),
-            "/workspace/target /workspace/build".to_owned(),
+            concat!(
+                "/workspace/target/spice-workspace-test-shards/shard-1 ",
+                "/workspace/build"
+            )
+            .to_owned(),
+            concat!(
+                "/workspace/target/spice-workspace-test-shards/shard-2 ",
+                "/workspace/build"
+            )
+            .to_owned(),
         ]
     );
     fs::remove_dir_all(root).expect("shared output fixture removes");
@@ -436,7 +217,19 @@ fn cargo_target_arguments_preserve_library_binary_and_integration_semantics() {
 
 #[test]
 fn metadata_inventory_keeps_library_binary_and_integration_targets() {
-    let root = Path::new("/workspace");
+    let root = fixture_root("workspace-metadata-inventory");
+    fs::create_dir_all(root.join("src")).expect("metadata source root creates");
+    fs::create_dir_all(root.join("tests")).expect("metadata test root creates");
+    fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("metadata manifest fixture writes");
+    fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n")
+        .expect("metadata library source writes");
+    fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("metadata binary source writes");
+    fs::write(
+        root.join("tests/resident.rs"),
+        "#[test]\nfn resident() {}\n",
+    )
+    .expect("metadata integration source writes");
+    let root = fs::canonicalize(root).expect("metadata fixture root canonicalizes");
     let inventory = inventory_from_metadata(
         Metadata {
             workspace_members: vec!["fixture-id".to_owned()],
@@ -447,14 +240,14 @@ fn metadata_inventory_keeps_library_binary_and_integration_targets() {
                 name: "fixture".to_owned(),
                 manifest_path: root.join("Cargo.toml"),
                 targets: vec![
-                    target("fixture", &["lib"], true),
-                    target("fixture", &["bin"], true),
-                    target("resident", &["test"], true),
-                    target("build-script-build", &["custom-build"], false),
+                    target(&root, "fixture", &["lib"], true),
+                    target(&root, "fixture", &["bin"], true),
+                    target(&root, "resident", &["test"], true),
+                    target(&root, "build-script-build", &["custom-build"], false),
                 ],
             }],
         },
-        root,
+        &root,
     )
     .expect("fixture metadata admits");
 
@@ -466,6 +259,43 @@ fn metadata_inventory_keeps_library_binary_and_integration_targets() {
             .collect::<Vec<_>>(),
         ["bin:fixture", "lib:fixture", "test:resident"]
     );
+    fs::remove_dir_all(root).expect("metadata fixture removes");
+}
+
+#[test]
+fn metadata_inventory_refuses_a_target_without_readable_source_weight() {
+    let root = fixture_root("workspace-missing-target-source");
+    fs::create_dir_all(&root).expect("missing-source fixture root creates");
+    fs::write(root.join("Cargo.toml"), "[workspace]\n")
+        .expect("missing-source manifest fixture writes");
+    let root = fs::canonicalize(root).expect("missing-source fixture root canonicalizes");
+    let missing = root.join("tests/missing.rs");
+
+    let error = inventory_from_metadata(
+        Metadata {
+            workspace_members: vec!["fixture-id".to_owned()],
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+            packages: vec![MetadataPackage {
+                id: "fixture-id".to_owned(),
+                name: "fixture".to_owned(),
+                manifest_path: root.join("Cargo.toml"),
+                targets: vec![MetadataTarget {
+                    name: "missing".to_owned(),
+                    kind: vec!["test".to_owned()],
+                    test: true,
+                    src_path: missing.clone(),
+                }],
+            }],
+        },
+        &root,
+    )
+    .expect_err("missing target source refuses inventory")
+    .to_string();
+
+    assert!(error.contains(&missing.display().to_string()), "{error}");
+    assert!(error.contains("metadata failed"), "{error}");
+    fs::remove_dir_all(root).expect("missing-source fixture removes");
 }
 
 #[test]
@@ -1016,6 +846,7 @@ fn quick_package() -> PackageInventory {
             name: "quick".to_owned(),
             source: PathBuf::from("/workspace/quick/tests/quick.rs"),
             declared_path_sources: Vec::new(),
+            source_bytes: 1,
         }],
     }
 }
@@ -1042,6 +873,7 @@ fn fixture_inventory() -> Inventory {
                     name: "fixture-a".to_owned(),
                     source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
                     declared_path_sources: Vec::new(),
+                    source_bytes: 1,
                 }],
             },
             PackageInventory {
@@ -1054,23 +886,24 @@ fn fixture_inventory() -> Inventory {
                     name: "fixture-b".to_owned(),
                     source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
                     declared_path_sources: Vec::new(),
+                    source_bytes: 1,
                 }],
             },
         ],
     }
 }
 
-fn target(name: &str, kind: &[&str], test: bool) -> MetadataTarget {
+fn target(root: &Path, name: &str, kind: &[&str], test: bool) -> MetadataTarget {
     let source = match kind.first().copied() {
-        Some("lib") => "/workspace/src/lib.rs".to_owned(),
-        Some("bin") => "/workspace/src/main.rs".to_owned(),
-        _ => format!("/workspace/tests/{name}.rs"),
+        Some("lib") => root.join("src/lib.rs"),
+        Some("bin") => root.join("src/main.rs"),
+        _ => root.join(format!("tests/{name}.rs")),
     };
     MetadataTarget {
         name: name.to_owned(),
         kind: kind.iter().map(|kind| (*kind).to_owned()).collect(),
         test,
-        src_path: PathBuf::from(source),
+        src_path: source,
     }
 }
 
@@ -1081,6 +914,7 @@ fn target_identity(kind: &str, name: &str) -> TargetIdentity {
         name: name.to_owned(),
         source: PathBuf::from(format!("/workspace/{kind}/{name}.rs")),
         declared_path_sources: Vec::new(),
+        source_bytes: 1,
     }
 }
 
