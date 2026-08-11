@@ -122,7 +122,8 @@ impl ExitOutcome {
 const HELD_STATE_ANSWER: Duration = Duration::from_secs(3);
 
 /// Bound for an answer that first launches a process or publishes durable
-/// objects, both of which contend with every other lane on the host.
+/// objects, or waits for resident quiescence, all of which contend with every
+/// other lane on the host.
 const CONTENDED_ANSWER: Duration = Duration::from_secs(20);
 
 /// How long the native client blocks for one command's answer.
@@ -136,9 +137,10 @@ const CONTENDED_ANSWER: Duration = Duration::from_secs(20);
 #[must_use]
 pub const fn answer_bound(kind: CommandKind) -> Duration {
     match kind {
-        CommandKind::LaneSeat | CommandKind::LaneState | CommandKind::ReleasePublish => {
-            CONTENDED_ANSWER
-        }
+        CommandKind::LaneSeat
+        | CommandKind::LaneState
+        | CommandKind::ReleasePublish
+        | CommandKind::UpChange => CONTENDED_ANSWER,
         CommandKind::BoardRead
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
@@ -186,8 +188,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::CanaryRecognize
         | CommandKind::VendorRecognize
         | CommandKind::CommitRecognize
-        | CommandKind::ProofRecognize
-        | CommandKind::UpChange => HELD_STATE_ANSWER,
+        | CommandKind::ProofRecognize => HELD_STATE_ANSWER,
     }
 }
 

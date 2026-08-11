@@ -29,6 +29,13 @@ fn admit_tracked_sources(root: &Path) -> Result<(), String> {
 }
 
 fn tracked_app_sources(root: &Path) -> Result<BTreeSet<String>, String> {
+    if !root.join(".git").exists() {
+        return filesystem_app_sources(root);
+    }
+    git_tracked_app_sources(root)
+}
+
+fn git_tracked_app_sources(root: &Path) -> Result<BTreeSet<String>, String> {
     let output = Command::new("git")
         .args(["-C"])
         .arg(root)
@@ -49,6 +56,41 @@ fn tracked_app_sources(root: &Path) -> Result<BTreeSet<String>, String> {
         .filter(|path| path.ends_with(".rs"))
         .map(str::to_owned)
         .collect())
+}
+
+fn filesystem_app_sources(root: &Path) -> Result<BTreeSet<String>, String> {
+    let mut sources = BTreeSet::new();
+    collect_filesystem_app_sources(root, &root.join("app/src"), &mut sources)?;
+    Ok(sources)
+}
+
+fn collect_filesystem_app_sources(
+    root: &Path,
+    directory: &Path,
+    sources: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("{} could not be read: {error}", directory.display()))?
+    {
+        let entry = entry.map_err(|error| {
+            format!(
+                "{} has an unreadable directory entry: {error}",
+                directory.display()
+            )
+        })?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("{} could not be inspected: {error}", path.display()))?;
+        if file_type.is_dir() {
+            collect_filesystem_app_sources(root, &path, sources)?;
+        } else if file_type.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+        {
+            sources.insert(repository_spelling(root, &path)?);
+        }
+    }
+    Ok(())
 }
 
 fn external_module_graph(root: &Path) -> Result<BTreeSet<String>, String> {

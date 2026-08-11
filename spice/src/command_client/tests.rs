@@ -307,11 +307,12 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
 /// Every other command keeps the bound an answer composed from held state
 /// needs, so an unanswering peer is still detected as promptly as before.
 #[test]
-fn the_answer_bound_registry_widens_exactly_the_contended_commands() {
+fn the_answer_bound_registry_widens_exactly_the_non_held_state_commands() {
     let contended = [
         CommandKind::LaneSeat,
         CommandKind::LaneState,
         CommandKind::ReleasePublish,
+        CommandKind::UpChange,
     ];
     for kind in CommandKind::ALL {
         assert_eq!(

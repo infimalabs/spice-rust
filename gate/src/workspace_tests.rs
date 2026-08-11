@@ -31,8 +31,8 @@ use coordinator::{
 use coordinator::{LastTest, isolate_shard_outputs, target_arguments};
 
 const TARGETS_PER_SHARD: usize = 24;
-const SHARD_DEADLINE: Duration = Duration::from_secs(180);
-const COORDINATOR_DEADLINE: Duration = Duration::from_secs(180);
+const SHARD_DEADLINE: Duration = Duration::from_secs(255);
+const COORDINATOR_DEADLINE: Duration = Duration::from_secs(255);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const METADATA_DEADLINE: Duration = Duration::from_secs(30);
 const OUTPUT_DRAIN_DEADLINE: Duration = Duration::from_secs(5);
@@ -45,6 +45,7 @@ const RECORD_QUEUE_CAPACITY: usize = 4_096;
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
 const TEST_WRITABLE_ROOT: &str = "SPICE_WORKSPACE_TEST_WRITABLE_ROOT"; // env-policy: allow
+const SHARED_OUTPUTS_ENV: &str = "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS"; // env-policy: allow
 const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -207,10 +208,13 @@ pub fn run_at(
     concurrency: usize,
     output: &mut impl Write,
 ) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
-    let policy = RunPolicy::production(concurrency)?;
+    let (environment, policy) = policy_from_environment(environment, concurrency)?;
     let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
     let environment = inventory.execution_environment(environment, root, root, true)?;
     let execution = WorkspaceTestExecution::from_inventory(&inventory);
+    if policy.shared_outputs {
+        prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)?;
+    }
     let shards = partition(&inventory);
     validate_partition(&inventory, &shards)?;
     let policy = policy.for_shards(shards.len());
@@ -224,6 +228,93 @@ pub fn run_at(
     )
     .run()?;
     Ok(execution)
+}
+
+fn policy_from_environment(
+    environment: Environment,
+    concurrency: usize,
+) -> Result<(Environment, RunPolicy), WorkspaceTestError> {
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    let shared_outputs = entries
+        .remove(OsStr::new(SHARED_OUTPUTS_ENV))
+        .is_some_and(|value| value == OsStr::new("1"));
+    let policy = if shared_outputs {
+        RunPolicy::production(concurrency)?.with_shared_outputs()
+    } else {
+        RunPolicy::production(concurrency)?
+    };
+    let environment =
+        Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))?;
+    Ok((environment, policy))
+}
+
+fn prebuild_all_tests(
+    root: &Path,
+    environment: &Environment,
+    cargo: &OsStr,
+    output: &mut impl Write,
+) -> Result<(), WorkspaceTestError> {
+    let command = "cargo test --locked --workspace --all-targets --no-run";
+    writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    let started = Instant::now();
+    let spec = process_spec(
+        cargo,
+        [
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "--no-run",
+        ],
+        root,
+        environment.clone(),
+        SHARD_DEADLINE,
+        Cancellation::Never,
+        "workspace-test prebuild",
+    )?;
+    let outcome = sill::spawn(spec)
+        .map_err(|error| WorkspaceTestError::new(format!("prebuild launch failed: {error}")))?
+        .wait()
+        .map_err(|error| WorkspaceTestError::new(format!("prebuild wait failed: {error}")))?;
+    let capture_failed = !outcome.outputs_drained()
+        || outcome
+            .stdout()
+            .is_some_and(|captured| captured.truncated())
+        || outcome
+            .stderr()
+            .is_some_and(|captured| captured.truncated());
+    let disposition = match outcome.completion() {
+        Completion::Exited(status) if status.success() && !capture_failed => "success".to_owned(),
+        Completion::Exited(status) if capture_failed => {
+            format!(
+                "capture-failed after {}",
+                completion_name(outcome.completion())
+            )
+        }
+        completion => completion_name(completion),
+    };
+    writeln!(
+        output,
+        "[rust-test] stage=prebuild-terminal elapsed_ms={} disposition={}",
+        started.elapsed().as_millis(),
+        disposition,
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    match outcome.completion() {
+        Completion::Exited(status) if status.success() && !capture_failed => Ok(()),
+        completion => Err(WorkspaceTestError::new(format!(
+            "workspace test prebuild ended as {}: stdout-tail={:?}; stderr-tail={:?}",
+            completion_name(completion),
+            captured_excerpt(outcome.stdout()),
+            captured_excerpt(outcome.stderr()),
+        ))),
+    }
 }
 
 /// Select and run only test targets reached by staged Rust sources according to
@@ -732,7 +823,7 @@ fn target_is_library(target: &TargetIdentity) -> bool {
 }
 
 fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
-    inventory
+    let mut shards = inventory
         .packages
         .iter()
         .flat_map(|package| {
@@ -746,7 +837,16 @@ fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
                     targets: targets.to_vec(),
                 })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    shards.sort_by(|left, right| {
+        right
+            .targets
+            .len()
+            .cmp(&left.targets.len())
+            .then_with(|| left.id.cmp(&right.id))
+            .then_with(|| left.targets.cmp(&right.targets))
+    });
+    shards
 }
 
 fn validate_partition(

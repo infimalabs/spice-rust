@@ -12,6 +12,9 @@ mod selection;
 
 #[test]
 fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
+    let production = RunPolicy::production(1).expect("one scheduler grant admits");
+    assert_eq!(production.shard_deadline, Duration::from_secs(255));
+    assert_eq!(production.coordinator_deadline, Duration::from_secs(255));
     for concurrency in 1..=WORKSPACE_TEST_CONCURRENCY_CAP {
         assert_eq!(
             RunPolicy::production(concurrency)
@@ -216,7 +219,28 @@ fn partition_splits_large_packages_in_stable_target_order() {
 }
 
 #[test]
-fn every_shard_output_authority_is_isolated_by_one_stable_suffix() {
+fn partition_starts_larger_shards_before_metadata_order() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[1].targets = (0..3)
+        .map(|index| TargetIdentity {
+            package: "fixture-b-id".to_owned(),
+            kind: "test".to_owned(),
+            name: format!("target-{index}"),
+            source: PathBuf::from(format!("/workspace/fixture-b/tests/target-{index}.rs")),
+            declared_path_sources: Vec::new(),
+        })
+        .collect();
+
+    let shards = partition(&inventory);
+
+    assert_eq!(shards[0].name, "fixture-b");
+    assert_eq!(shards[0].targets.len(), 3);
+    assert_eq!(shards[1].name, "fixture-a");
+    validate_partition(&inventory, &shards).expect("heavy-first partition remains exact");
+}
+
+#[test]
+fn every_lane_output_authority_is_isolated_by_one_stable_suffix() {
     let environment = Environment::new([
         (
             OsString::from(CARGO_TARGET_DIR),
@@ -250,6 +274,141 @@ fn every_shard_output_authority_is_isolated_by_one_stable_suffix() {
         )),
         "build publications and their lock belong to the same shard"
     );
+}
+
+#[test]
+fn sequential_shards_reuse_the_base_output_authority() {
+    let root = fixture_root("workspace-lane-reuse");
+    fs::create_dir_all(&root).expect("lane reuse fixture root creates");
+    let log = root.join("targets.log");
+    let cargo = executable(
+        &root,
+        "cargo",
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' \"$CARGO_TARGET_DIR\" >> \"$PID_ROOT/targets.log\"\n",
+            "printf 'test lane::done ... ok\\n'\n",
+        ),
+    );
+    let environment = Environment::new([
+        (OsString::from("PID_ROOT"), root.clone().into_os_string()),
+        (
+            OsString::from(CARGO_TARGET_DIR),
+            OsString::from("/workspace/target"),
+        ),
+        (
+            OsString::from(CARGO_BUILD_BUILD_DIR),
+            OsString::from("/workspace/build"),
+        ),
+        (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+    ])
+    .expect("lane reuse environment admits");
+    let policy = RunPolicy {
+        concurrency: 1,
+        shared_outputs: false,
+        shard_deadline: Duration::from_secs(5),
+        coordinator_deadline: Duration::from_secs(10),
+        progress_interval: Duration::from_secs(1),
+        output_drain: Duration::from_secs(1),
+        reap: Duration::from_secs(1),
+        grace: Duration::from_millis(50),
+    };
+    let mut output = Vec::new();
+
+    Coordinator::new(
+        vec![quick_package(), quick_package(), quick_package()],
+        root.clone(),
+        environment,
+        cargo.into_os_string(),
+        policy,
+        &mut output,
+    )
+    .run()
+    .expect("sequential lane reuse succeeds");
+
+    let targets = fs::read_to_string(&log).expect("lane target log reads");
+    assert_eq!(
+        targets.lines().collect::<Vec<_>>(),
+        [
+            "/workspace/target",
+            "/workspace/target",
+            "/workspace/target",
+        ]
+    );
+    let output = String::from_utf8(output).expect("lane output is UTF-8");
+    let lane_starts = output
+        .lines()
+        .filter(|line| line.contains("stage=start") && line.contains("output_lane=1"))
+        .count();
+    assert_eq!(lane_starts, 3);
+    fs::remove_dir_all(root).expect("lane reuse fixture removes");
+}
+
+#[test]
+fn shared_output_policy_reuses_the_base_output_authority_for_parallel_lanes() {
+    let root = fixture_root("workspace-shared-output-lanes");
+    fs::create_dir_all(&root).expect("shared output fixture root creates");
+    let log = root.join("targets.log");
+    let cargo = executable(
+        &root,
+        "cargo",
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s %s\\n' \"$CARGO_TARGET_DIR\" \"$CARGO_BUILD_BUILD_DIR\" >> ",
+            "\"$PID_ROOT/targets.log\"\n",
+            "printf 'test lane::done ... ok\\n'\n",
+        ),
+    );
+    let environment = Environment::new([
+        (OsString::from("PID_ROOT"), root.clone().into_os_string()),
+        (
+            OsString::from(CARGO_TARGET_DIR),
+            OsString::from("/workspace/target"),
+        ),
+        (
+            OsString::from(CARGO_BUILD_BUILD_DIR),
+            OsString::from("/workspace/build"),
+        ),
+        (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+    ])
+    .expect("shared output environment admits");
+    let policy = RunPolicy {
+        concurrency: 2,
+        shared_outputs: true,
+        shard_deadline: Duration::from_secs(5),
+        coordinator_deadline: Duration::from_secs(10),
+        progress_interval: Duration::from_secs(1),
+        output_drain: Duration::from_secs(1),
+        reap: Duration::from_secs(1),
+        grace: Duration::from_millis(50),
+    };
+    let mut output = Vec::new();
+
+    Coordinator::new(
+        vec![quick_package(), quick_package()],
+        root.clone(),
+        environment,
+        cargo.into_os_string(),
+        policy,
+        &mut output,
+    )
+    .run()
+    .expect("parallel shared output lane reuse succeeds");
+
+    let mut targets = fs::read_to_string(&log)
+        .expect("shared target log reads")
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    targets.sort();
+    assert_eq!(
+        targets,
+        [
+            "/workspace/target /workspace/build".to_owned(),
+            "/workspace/target /workspace/build".to_owned(),
+        ]
+    );
+    fs::remove_dir_all(root).expect("shared output fixture removes");
 }
 
 #[test]
@@ -507,6 +666,7 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
     let shard = fixture_inventory().packages.remove(0);
     let policy = RunPolicy {
         concurrency: 1,
+        shared_outputs: false,
         shard_deadline: Duration::from_secs(5),
         coordinator_deadline: Duration::from_secs(7),
         progress_interval: Duration::from_secs(1),
@@ -614,6 +774,7 @@ fn reporting_failure_case(point: ReportPoint, failure: ReportFailure) {
     let mut output = FailingOutput::new(point.marker(), failure, ready.clone());
     let policy = RunPolicy {
         concurrency: 2,
+        shared_outputs: false,
         shard_deadline: Duration::from_secs(15),
         coordinator_deadline: Duration::from_secs(17),
         progress_interval: Duration::from_millis(40),

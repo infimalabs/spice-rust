@@ -1174,6 +1174,10 @@ async fn drive_surface(
         &mut lifecycle,
     )?;
     let residency = current_residency(bus, epoch)?;
+    // Discovery is a serving contract, not just a bound-socket record. This
+    // resident runs on a current-thread runtime, so give the spawned server task
+    // one turn before clients can observe the discovery file.
+    tokio::task::yield_now().await;
     publication.publish(bus, command_surface.paths, residency.body(), diagnostic)?;
     let mut tool_previews = CallPreviews::default();
     loop {

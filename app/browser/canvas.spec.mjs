@@ -51,7 +51,6 @@ import {
   routeCanvasSocket,
 } from "./half-open-socket.mjs";
 import {
-  addLinkedWorktree,
   assertGenerationOnline,
   assertOfflineObserved,
   assertResidentLossObserved,
@@ -62,7 +61,6 @@ import {
   chooseCanvasView,
   configureFixture,
   declareVendorModel,
-  importLaneAndFold,
   journalExtent,
   monitorPage,
   reply,
@@ -99,6 +97,12 @@ function reportedWaitSite(failure) {
   const site = failure.message.split("\n").find((line) => line.startsWith("  site: "));
   assert.ok(site, "the call-site self-check reports the frame that armed it");
   return site;
+}
+
+function taskStamp(handle) {
+  const separator = handle.indexOf("-");
+  assert.ok(separator > 0, `task handle carries a stamp: ${handle}`);
+  return handle.slice(separator + 1);
 }
 
 async function assertDistinctWaitCallSites(page) {
@@ -207,6 +211,16 @@ async function seedProvenEffort(page, fixture, lane, claims) {
       `the allocator answered with a task handle: ${JSON.stringify(won.body)}`,
     );
     priced.push(won.body);
+    // Fixture pools can contain older plan-only rows that outrank the task just
+    // added above. Accept the exact claimed row before closing it so this
+    // effort seeding measures completed work rather than allocator ordering.
+    await replyAsLane(fixture, lane, [
+      "task",
+      "modify",
+      won.body.task,
+      "--acceptance",
+      "the fixture can close the allocator-selected phase",
+    ]);
     // `task done` names no handle: it closes the claim the actor holds, which is
     // the one just won above. It is the terminal for whichever phase that claim
     // opened -- `TaskDone` and `TaskPhased` together -- so a review phase closes
@@ -223,19 +237,81 @@ async function seedProvenEffort(page, fixture, lane, claims) {
   return priced;
 }
 
+async function cancelPendingDirectives(fixture, lane) {
+  const inbox = await reply(fixture, ["inbox", lane]);
+  for (const directive of inbox.body.lanes[0].pending) {
+    await reply(fixture, ["steer", "cancel", directive.directive]);
+  }
+  const quiet = await reply(fixture, ["inbox", lane]);
+  assert.deepEqual(
+    quiet.body.lanes[0].pending,
+    [],
+    "pending direction cannot choose the restart trigger under test",
+  );
+}
+
+async function waitForRestartedOccupant(fixture, lane, ancestor) {
+  const deadline = Date.now() + 20_000;
+  let snapshot;
+  while (Date.now() < deadline) {
+    snapshot = await reply(fixture, ["lane"]);
+    const row = snapshot.body.lanes.find((candidate) => candidate.lane === lane);
+    if (row?.occupant && row.occupant !== ancestor) return row;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `lane ${lane} did not restart from ${ancestor}: ${JSON.stringify(snapshot?.body.lanes)}`,
+  );
+}
+
+async function readEffortSurface(effort) {
+  return effort.evaluate((pane) => {
+    const table = (name) => pane.querySelector(`[data-effort-table="${name}"]`);
+    const headings = (name) =>
+      [...(table(name)?.querySelectorAll("thead th") ?? [])].map((cell) => cell.textContent);
+    const counters = (name) => table(name)?.querySelectorAll("[data-effort-counter]").length ?? 0;
+    const rows = (name) => [...(table(name)?.querySelectorAll("tbody tr") ?? [])];
+    return {
+      provenHeadings: headings("proven"),
+      withheldHeadings: headings("withheld"),
+      provenCounters: counters("proven"),
+      withheldCounters: counters("withheld"),
+      proven: rows("proven").map((row) => ({
+        identity: row.dataset.effortIdentity,
+        phase: row.querySelector(".tag")?.textContent ?? "",
+        magnitude: row.dataset.effortMagnitude,
+        continuation: row.dataset.effortContinuation,
+      })),
+      withheld: rows("withheld").map((row) => ({
+        task: row.querySelector("td")?.textContent ?? "",
+        reasons: [...row.querySelectorAll("[data-effort-reason]")].map(
+          (tag) => tag.dataset.effortReason,
+        ),
+        counters: row.querySelectorAll("[data-effort-counter]").length,
+      })),
+      aggregates: rows("aggregates").map((row) => ({
+        identity: row.dataset.effortIdentity,
+        measure: row.dataset.effortMeasure,
+        phase: row.querySelector(".tag")?.textContent ?? "",
+        count: Number(row.querySelector('[data-effort-counter="count"]')?.textContent),
+      })),
+    };
+  });
+}
+
 // Span one claimed phase across two launch identities.
 //
 // A phase is sized from the occupants that spent it, and `one_identity` refuses
 // to price one whose occupants disagree about what was launched. Reaching that
-// disagreement needs the identity to move without the phase ending, which is why
-// the claim is carried rather than freed: `lane import` records `ClaimCarried`,
-// and `one_identity` reads the successors it must agree with off exactly those
-// carries, so a replacement that records none is priced as one occupant.
+// disagreement needs the identity to move without the phase ending. The current
+// lifecycle does that through held-claim automatic wake: after the root config
+// rewrite is committed, draining the host lane makes the resident relaunch it
+// and record `ClaimCarried` onto the successor occupant.
 //
 // The session generation is deliberately left where it is. What separates the
 // two occupants here is the configured identity alone, which `declareVendorModel`
 // moves and each launch re-resolves from the worktree it starts in.
-async function seedMixedLaunchEffort(page, fixture, linkedRoot, lane) {
+async function seedMixedLaunchEffort(page, fixture, lane) {
   const rest = await driveTeam(page);
   // The proven seeding above drains the eligible pool deliberately, so this one
   // restocks it. Restocking is safe here and not there: it runs after every
@@ -252,25 +328,27 @@ async function seedMixedLaunchEffort(page, fixture, linkedRoot, lane) {
   ]);
   const won = await replyAsLane(fixture, lane, ["task", "next"]);
   assert.ok(won.body.task, `a phase to span identities: ${JSON.stringify(won.body)}`);
+  await replyAsLane(fixture, lane, [
+    "task",
+    "modify",
+    won.body.task,
+    "--acceptance",
+    "the fixture can close the allocator-selected mixed-launch phase",
+  ]);
   const seated = await reply(fixture, ["lane"]);
   const seat = seated.body.lanes.find((row) => row.lane === lane);
   assert.ok(seat, `the lane to span identities is seated: ${JSON.stringify(seated.body.lanes)}`);
+  assert.ok(seat.occupant, `the lane starts occupied: ${JSON.stringify(seat)}`);
+  await cancelPendingDirectives(fixture, lane);
   await declareVendorModel(fixture, "canvas-successor-model");
-  const successor = await addLinkedWorktree(fixture, linkedRoot, "lane-successor");
-  await importLaneAndFold(fixture, lane, successor);
+  await reply(fixture, ["lane", "drain", lane]);
+  await waitForRestartedOccupant(fixture, lane, seat.occupant);
   await replyAsLane(fixture, lane, [
     "task",
     "done",
     "--validation",
     "the browser regression crossed this phase over a rewritten launch identity",
   ]);
-  // Put the seat back where the rest of the suite measures it. A lane is bound
-  // to a worktree, and later proof finds teams by the worktree they sit in
-  // (`assertPerTeamWatchbands` reads `worktrees[0]`), so a borrowed lane left
-  // elsewhere fails a control that has nothing to do with effort. Returning it
-  // is free of the identity this seeding moved: the claim closed above, so the
-  // occupant this records carries none.
-  await importLaneAndFold(fixture, lane, seat.worktree);
   await rest();
   return won.body.task;
 }
@@ -282,7 +360,7 @@ async function seedMixedLaunchEffort(page, fixture, linkedRoot, lane) {
 /// `missing-end` and `claim-freed`. `seedProvenEffort` adds the other side, so
 /// both tables stand at once and each control below has a leg that would notice
 /// if the surface simply stopped rendering.
-async function assertTaskEffortSurface(page, fixture, linkedRoot, seeded) {
+async function assertTaskEffortSurface(page, fixture, seeded) {
   // Enough turns for the `todo` work the fixture already carries to drain far
   // enough that a phase this lane completed outranks what is left, which is the
   // only axis of the grouping key this fixture can move: one `[vendor.claude]`
@@ -290,7 +368,7 @@ async function assertTaskEffortSurface(page, fixture, linkedRoot, seeded) {
   // every priced phase here necessarily wears one launch identity.
   const claims = 4;
   const priced = await seedProvenEffort(page, fixture, seeded.lane, claims);
-  const mixed = await seedMixedLaunchEffort(page, fixture, linkedRoot, seeded.lane);
+  const mixed = await seedMixedLaunchEffort(page, fixture, seeded.lane);
   await chooseCanvasView(page, "Magnitude");
   const effort = page.locator('[data-pane="effort"]');
   await effort.waitFor();
@@ -326,38 +404,15 @@ async function assertTaskEffortSurface(page, fixture, linkedRoot, seeded) {
   // One snapshot rather than a read per assertion: any fact invalidates the
   // effort read, so separate round trips can straddle a refresh and compare a
   // heading from one render against a row from the next.
-  const surface = await effort.evaluate((pane) => {
-    const table = (name) => pane.querySelector(`[data-effort-table="${name}"]`);
-    const headings = (name) =>
-      [...(table(name)?.querySelectorAll("thead th") ?? [])].map((cell) => cell.textContent);
-    const counters = (name) => table(name)?.querySelectorAll("[data-effort-counter]").length ?? 0;
-    const rows = (name) => [...(table(name)?.querySelectorAll("tbody tr") ?? [])];
-    return {
-      provenHeadings: headings("proven"),
-      withheldHeadings: headings("withheld"),
-      provenCounters: counters("proven"),
-      withheldCounters: counters("withheld"),
-      proven: rows("proven").map((row) => ({
-        identity: row.dataset.effortIdentity,
-        phase: row.querySelector(".tag")?.textContent ?? "",
-        magnitude: row.dataset.effortMagnitude,
-        continuation: row.dataset.effortContinuation,
-      })),
-      withheld: rows("withheld").map((row) => ({
-        task: row.querySelector("td")?.textContent ?? "",
-        reasons: [...row.querySelectorAll("[data-effort-reason]")].map(
-          (tag) => tag.dataset.effortReason,
-        ),
-        counters: row.querySelectorAll("[data-effort-counter]").length,
-      })),
-      aggregates: rows("aggregates").map((row) => ({
-        identity: row.dataset.effortIdentity,
-        measure: row.dataset.effortMeasure,
-        phase: row.querySelector(".tag")?.textContent ?? "",
-        count: Number(row.querySelector('[data-effort-counter="count"]')?.textContent),
-      })),
-    };
-  });
+  const mixedTask = taskStamp(mixed);
+  let surface = await readEffortSurface(effort);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const spanned = surface.withheld.find((row) => row.task === mixedTask);
+    if (spanned?.reasons.length === 1 && spanned.reasons[0] === "mixed-launch") break;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    surface = await readEffortSurface(effort);
+  }
   // Written before the first assertion, so a run that fails one control still
   // reports the whole surface the rest of them would have been judged against.
   process.stderr.write(
@@ -460,7 +515,7 @@ at all, but rendered ${JSON.stringify(withheldHeadings)}`,
   // at all: `one_identity` is the only refusal the spanned launch earns, so a
   // row that also carried `missing-end` or `broken-carry` would mean the claim
   // did not survive the hand-off it was seeded to survive.
-  const spanned = surface.withheld.find((row) => row.task === mixed);
+  const spanned = surface.withheld.find((row) => row.task === mixedTask);
   assert.ok(
     spanned,
     `the phase carried across two launch identities is withheld, but the withheld \
@@ -889,7 +944,7 @@ try {
       await run.scenario("authority-task-flow", async () => {
         await assertTaskNotes(lightPage, seeded.task);
         await assertPackedHistory(lightPage, fixture, await journalExtent(fixture));
-        await assertTaskEffortSurface(lightPage, fixture, linkedRoot, seeded);
+        await assertTaskEffortSurface(lightPage, fixture, seeded);
         lightMonitor.assertClean();
         await light.close();
       });
@@ -956,8 +1011,6 @@ try {
         await dark.close();
       });
       await run.scenario("resident-restart", async () => {
-        const liveTeam = await reply(fixture, ["lane"]);
-        for (const agent of liveTeam.body.lanes) await reply(fixture, ["lane", "drain", agent.lane]);
         const firstEpoch = resident.discovery.epoch;
         const firstCapability = resident.discovery.capability;
         lightMonitor.expectNetworkInterruption(true);

@@ -93,12 +93,16 @@ the exact mapping and production executor.
 
 Verification uses an explicit dependency graph. The warm compiler-evidence
 chain remains serial through native Clippy, Wasm Clippy, the Wasm workspace
-check, the prebuilt Canvas app, and one native resident build. Browser
-verification consumes that exact resident through `SPICE_CANVAS_BINARY`, so it
-performs no Cargo build while deterministic workspace tests run. The browser
-and workspace branches then fork. Documentation and doctests follow the
-workspace tests and may continue while the browser branch runs; the canonical
-battery waits for both branches and consumes the compiler evidence before
+check, and the prebuilt Canvas app. The native resident build follows that
+chain while the selected-root Cargo cache is still warm. Browser verification
+then consumes that exact resident through `SPICE_CANVAS_BINARY`, so it performs
+no Cargo build while the Rust test branch runs. Deterministic workspace tests
+wait until those Cargo build stages are finished, prebuild all test binaries
+once in the native compiler output root, and then run package shards in
+parallel against that same selected-root cache. Documentation and doctests
+follow the workspace tests so the native Cargo root is not forced into
+competing test and documentation publication work; the canonical battery waits
+for workspace tests, doctests, browser coverage, and compiler evidence before
 contract landing crosses the final barrier.
 
 The outer scheduler has a hard ceiling of three actions. It counts peer Cargo
@@ -109,19 +113,26 @@ saturate that budget. The scheduler sets `CARGO_BUILD_JOBS` to the logical-CPU
 budget divided across the peer and local participants; an unavailable peer
 probe fails closed to one worker, one Cargo job, and one test shard. After
 reserving every possible concurrent outer sibling's Cargo grant, the scheduler
-gives the workspace-test coordinator the remaining logical-CPU slots, capped
-at four, and fixes each shard to one Cargo job. Package or target count
-therefore cannot create an unbounded process or CPU fan-out.
+gives the workspace-test coordinator the remaining logical-CPU slots. In the
+full verifier that branch is capped at two lanes so Canvas keeps deterministic
+headroom for its resident RPC deadlines while both downstream branches overlap.
+Full-verifier lanes share the selected root and Cargo output roots only after
+the one prebuild has published the test binaries they execute. Concurrent
+standalone coordinator callers still receive separate Cargo output lanes and
+retain the coordinator's four-lane ceiling; later shards recycle the lane whose
+prior process group already exited, so package or target count cannot create an
+unbounded process, CPU, or compiler-cache fan-out.
 
-The complete verifier runs inside one supervised child process. At three
-minutes the supervisor sends termination; the child's signal bridge stops new
-work and cancels and reaps every independently grouped action. The supervisor
-allows 75 seconds for that orderly cleanup before killing any non-cooperative
-in-process remainder, then reserves ten seconds to reap and 30 seconds to drain
-output. The resulting worst case is 295 seconds, so entry-point audit, battery,
-landing, sibling termination, reap, and output drain all remain inside the hard
-five-minute wall envelope. Reaching the fourth minute is exceptional recovery
-headroom, never a routine budget.
+The complete verifier runs inside one supervised child process. Its test-phase
+timer starts when Canvas or the workspace-test coordinator first launches; cold
+compiler setup is serialized for low contention and does not consume the actual
+test budget. At 180 seconds of test-phase runtime the child-owned scheduler
+stops new work and cancels and reaps every independently grouped action. The
+parent supervisor waits until 255 seconds before treating the verifier child
+itself as non-cooperative, then reserves one second each for final termination,
+reap, and output drain. The resulting worst case is 258 seconds, so entry-point
+audit, battery, landing, sibling termination, reap, and output recovery all
+remain inside the hard five-minute wall envelope.
 
 Every external action runs in a new process group under bounded output,
 runtime, termination, and reap deadlines. The first failure or an operator
@@ -148,11 +159,14 @@ cargo xtask verify
 
 The command discovers the repository from the current directory and runs the
 one canonical verifier; there is no wrapper or second suite. Its workspace Rust
-tests are metadata-sorted into deterministic chunks of at most 12 targets and
-run in no more than the scheduler-granted workers, with an absolute ceiling of
-four owned process groups. Every shard prints its package and target inventory
-before launch, reports progress every 30 seconds, and has a hard 180-second
-deadline that terminates and reaps the complete process group.
+tests are split into deterministic chunks of at most 24 targets, ordered
+heaviest first so cold compiler work starts immediately, and run in no more
+than the scheduler-granted workers. The full verifier grants one serial
+workspace lane over the native selected root; the coordinator's reusable safety
+ceiling remains four owned process groups. Every shard prints its package,
+target inventory, and output
+lane before launch, reports progress every 30 seconds, and has a hard
+255-second deadline that terminates and reaps the complete process group.
 
 `cargo xtask verify-action battery` is the visible public partial surface for
 the canonical gate action. It does not share the full verifier's retained
