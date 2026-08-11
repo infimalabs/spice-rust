@@ -116,7 +116,7 @@ Use that boundary in this order:
    or the owning proof/staging command for release surfaces.
 5. Stage the intended change and run `cargo xtask verify-action selection` (the
    installed hook repeats it silently). Inspect its typed selection if it
-   escalates; do not weaken the exhaustive fallback.
+   escalates; do not weaken the exhaustive escalation.
 6. Once, immediately before commit or handoff, run `cargo xtask verify`. Do not
    substitute targeted/package checks, the battery action, a study, or a prior
    worktree's result.
@@ -154,11 +154,12 @@ Canvas action took 89.9–116.7 seconds in those runs. Independent Cargo
 jobservers, duplicate isolated compilation, and linear cache growth are the
 cause; memory and disk capacity were not exhausted.
 
-Consequently, prefer scoped checks while peers are compiling and avoid starting
-multiple full verifiers together. Do not raise `CARGO_BUILD_JOBS`; the verifier
-owns its local grant. When four or more agents are active, serialize heavy full
-verification on the host and let other lanes perform source review, exact tests,
-or non-Cargo work until pressure clears.
+Consequently, prefer scoped checks while peers are compiling. Admission is not
+keyed to a fixed agent count: inspect current Cargo pressure, avoid starting a
+competing full verifier while heavy work is live, and let other lanes perform
+source review, exact tests, or non-Cargo work until pressure clears. Do not
+raise `CARGO_BUILD_JOBS`; the verifier owns its local grant, re-observes peers
+after prebuild, and fails closed when capacity cannot be read.
 
 ## Disk budget and safe cleanup
 
