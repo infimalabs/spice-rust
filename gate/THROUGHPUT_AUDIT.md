@@ -2,16 +2,25 @@
 
 Task: `THROUGH-1kKR1m2q`
 
-This is an evidence report and a removal/deferral proposal. It changes no gate.
-The governing operator direction is steering `1kKR1gmK`: focus on speed and
-throughput now, identify overzealous checks, and harden and polish after cutover.
+This is a historical evidence report and removal/deferral proposal. It changes
+no gate. The governing operator direction at the time was steering `1kKR1gmK`:
+focus on speed and throughput, identify overzealous checks, and harden and
+polish after cutover. The later load warning `1kKRGGHk` specifically called out
+repetitive work in high-volume hooks.
 
-That cutover is not happening: this port and the Python predecessor both run
-indefinitely, and no step retires either. The measurements below stand, but
-every "defer to post-cutover" row names a date that will not arrive — read those
-as deferred with no scheduled return, and requiring a fresh reason to restore.
-The later load warning `1kKRGGHk` specifically called out repetitive work in
-high-volume hooks.
+## Current disposition (2026-08-11)
+
+The measurements remain useful; the cutover recommendations are superseded and
+authorize no present removal. The current local hook selects one deterministic
+affected battery, while authority or unknown paths select all 27 canonical
+arms. Full verification executes those 27 arms once and retains one compact,
+source-bound success summary. `README.md`, `DEVELOPMENT.md`, and
+`SHAPE_CONFORMANCE.md` own those current paths.
+
+Installation is reversible coexistence preparation. Only an exact,
+operator-authorized authority-switch plan changes the bare command and all
+three common hooks. Retiring the predecessor is a separate decision; indefinite
+dual execution is not a qualified runtime mode.
 
 ## Measurement method
 
@@ -319,14 +328,15 @@ failure was `spice/src/board_command/client.rs` at 1,504 lines against a 1,485
 line active flex limit. This audit neither edits nor stages that file; a peer's
 shared-tree growth therefore blocked this documentation-only lane.
 
-For the speed-first cutover, defer both arms and freeze their ledgers. After
-cutover, restore them only with changed-path jurisdiction, no cross-actor
+The historical speed-first proposal was to defer both arms and freeze their
+ledgers, then restore them only with changed-path jurisdiction, no cross-actor
 publication block, and parser tests proving that append-only tail work cannot
-inflate an unrelated routine.
+inflate an unrelated routine. That proposal is retained as evidence, not as a
+current instruction.
 
-## Recommended cutover battery
+## Historical cutover proposal (superseded)
 
-The immediate pre-commit contract should be intentionally small:
+The proposed pre-commit contract at the time was intentionally small:
 
 - Retire the blocking battery from pre-commit for cutover. None of its 27 arms
   has both a demonstrated functional-defect catch and a cost/jurisdiction
