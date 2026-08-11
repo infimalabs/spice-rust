@@ -427,6 +427,30 @@ enum BatteryRun {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(serde::Serialize)]
+struct BatteryAdmission<'a> {
+    version: u64,
+    source: &'a wire::Digest,
+    report: wire::Digest,
+    report_bytes: u64,
+    arms: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_battery_admission(report: &gate::BatteryReport) -> Result<Vec<u8>, String> {
+    let canonical = report.encode().map_err(|error| error.to_string())?;
+    let report_bytes = u64::try_from(canonical.len()).map_err(|error| error.to_string())?;
+    wire::encode(&BatteryAdmission {
+        version: report.version(),
+        source: report.context().source(),
+        report: wire::Digest::compute(wire::Domain::GateBatteryReport, &canonical),
+        report_bytes,
+        arms: report.results().len(),
+    })
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 struct SystemState {
     battery: Option<spice::gate::PreparedBattery<'static>>,
     compiler_contracts: Vec<gate::VerifierCompilerContract>,
@@ -787,7 +811,7 @@ impl Runner for SystemRunner {
             if cancellation.is_cancelled() {
                 Ok(BatteryRun::Cancelled)
             } else if report.admits() {
-                match report.encode() {
+                match encode_battery_admission(&report) {
                     Ok(document) => Ok(BatteryRun::Admitted(document)),
                     Err(error) => Ok(BatteryRun::Error(error.to_string())),
                 }

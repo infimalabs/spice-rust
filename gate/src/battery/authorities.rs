@@ -192,6 +192,35 @@ impl<'trace> BatteryCapture<'trace> {
         )
     }
 
+    /// Capture a complete battery into an existing state transaction while
+    /// exposing production execution events.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the observer and shared state accompany six independent capture authorities"
+    )]
+    pub fn capture_in_state_traced(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        state_run: BatteryStateRun,
+        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            None,
+            Some(trace),
+            Some(state_run),
+        )
+    }
+
     /// Capture one canonical arm while exposing production analysis events.
     ///
     /// # Errors
