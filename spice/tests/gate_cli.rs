@@ -85,6 +85,16 @@ fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_1
         git_stdout(repository.path(), &["diff", "--cached", "--name-only"]).is_empty(),
         "the successful commit left staged bytes behind"
     );
+    let state = gate::CurrentState::load(gate::current_state_path(&repository.path().join(".git")))
+        .expect("accepted ordinary gate published current state");
+    assert_eq!(state.before().version(), gate::state::STATE_LEDGER_VERSION);
+    assert!(
+        repository
+            .path()
+            .join(".git/.spice-rs/data/gate-state.json")
+            .is_file(),
+        "ordinary change-gate acceptance is the publication boundary"
+    );
 }
 
 #[test]
@@ -503,7 +513,7 @@ fn ordinary_gate_uses_only_the_captured_index_and_one_selected_commit() {
 }
 
 #[test]
-fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_state() {
+fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_mutation() {
     let repository = GateRepository::new();
     repository.write_camp_lines(100);
     repository.add("gate/src/camp.rs");
@@ -554,9 +564,19 @@ fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_state() {
         fs::read(repository.path().join("src/lib.rs")).expect("reread source"),
         selected_source
     );
+    let current =
+        gate::CurrentState::load(gate::current_state_path(&repository.path().join(".git")))
+            .expect("accepted receipt published canonical gate state");
+    assert_eq!(
+        current.before().version(),
+        gate::state::STATE_LEDGER_VERSION
+    );
     assert!(
-        !repository.path().join(".git/.spice-rs").exists(),
-        "gate leaves never opened a journal or resident state"
+        repository
+            .path()
+            .join(".git/.spice-rs/data/gate-state.json")
+            .is_file(),
+        "the accepted battery publishes only its Git-common quality state"
     );
     assert!(
         !repository.path().join(".spice-gate-mutants").exists(),

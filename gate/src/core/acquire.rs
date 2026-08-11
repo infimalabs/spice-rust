@@ -43,7 +43,9 @@ use crate::metrics::{
     resolve_metric_rule,
 };
 use crate::policy::PolicyContext;
-use crate::state::{ActorInputs, BoundDecision, BoundError, LatchEntry, PeerClaim, owning_claim};
+use crate::state::{
+    ActorInputs, BoundDecision, BoundError, LatchEntry, LatchObservation, PeerClaim, owning_claim,
+};
 use crate::tree::SelectedTree;
 
 /// The one program both Git-declared arms observe through.
@@ -88,8 +90,9 @@ pub enum ClaimCapture {
 /// The active bound claims ride with the actor because a claim is peer-held
 /// only relative to someone: with no actor there is no peer to be outranked by,
 /// which is exactly the point at which the predecessor resolves no claims at
-/// all. The gate holds no clock, so the caller reads the ledger under its own
-/// run clock and hands over what was still active in that moment.
+/// all. Production capture replaces this caller observation with the active
+/// claims from its fixed-clock [`crate::BatteryStateRun`]; direct acquisition
+/// tests may still provide the typed observation explicitly.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ActorCapture {
     /// One actor is acting in this worktree.
@@ -192,9 +195,9 @@ impl<'a> CoreSource<'a> {
     ///
     /// `latches` are the durable breaches the caller read from the ledger it
     /// publishes as this run's state authority, handed over for the same reason
-    /// its bound claims are: the gate holds no clock and opens no transaction
-    /// here, so it decides against the reading the report already names rather
-    /// than taking a second one of its own.
+    /// its bound claims are: the enclosing battery state transaction supplies
+    /// the one run-start reading the report names, rather than allowing this
+    /// family to take a second one of its own.
     ///
     /// # Errors
     ///
@@ -358,9 +361,18 @@ pub fn acquire_core(
     source: &CoreSource<'_>,
     contract: &Contract,
 ) -> Result<CoreInputs, CoreInputError> {
+    acquire_core_with_observations(source, contract).map(|(inputs, _)| inputs)
+}
+
+/// Acquire the complete core family and retain its exact state observations.
+pub(crate) fn acquire_core_with_observations(
+    source: &CoreSource<'_>,
+    contract: &Contract,
+) -> Result<(CoreInputs, Vec<LatchObservation>), CoreInputError> {
     let configuration = ConfigurationInventorySource::capture(source)?;
     let mut arms = Vec::with_capacity(core_declarations().len());
     let mut bounds = Vec::new();
+    let mut observations = Vec::new();
     for declaration in core_declarations() {
         let predecessor = declaration.predecessor();
         let provenance = CoreProvenance::new(
@@ -378,10 +390,11 @@ pub fn acquire_core(
                 contract,
                 Some(&configuration),
                 &mut bounds,
+                &mut observations,
             )?,
         )?);
     }
-    CoreInputs::new(arms).map(|inputs| inputs.with_bounds(bounds))
+    CoreInputs::new(arms).map(|inputs| (inputs.with_bounds(bounds), observations))
 }
 
 /// Acquire exactly one core arm and the elastic bounds that arm decided.
@@ -389,7 +402,7 @@ pub(crate) fn acquire_core_arm(
     source: &CoreSource<'_>,
     contract: &Contract,
     gate_id: GateId,
-) -> Result<(CoreArmInput, Vec<BoundDecision>), CoreInputError> {
+) -> Result<(CoreArmInput, Vec<BoundDecision>, Vec<LatchObservation>), CoreInputError> {
     let declaration = core_declarations()
         .iter()
         .find(|declaration| declaration.id() == gate_id)
@@ -407,15 +420,17 @@ pub(crate) fn acquire_core_arm(
         predecessor.observation(),
     )?;
     let mut bounds = Vec::new();
+    let mut observations = Vec::new();
     let observation = observe(
         declaration,
         source,
         contract,
         configuration.as_ref(),
         &mut bounds,
+        &mut observations,
     )?;
     CoreArmInput::new(gate_id, source.digest.clone(), provenance, observation)
-        .map(|input| (input, bounds))
+        .map(|input| (input, bounds, observations))
 }
 
 fn observe(
@@ -424,6 +439,7 @@ fn observe(
     contract: &Contract,
     configuration: Option<&ConfigurationInventorySource>,
     bounds: &mut Vec<BoundDecision>,
+    observations: &mut Vec<LatchObservation>,
 ) -> Result<CoreObservation, CoreInputError> {
     Ok(match declaration.id() {
         GateId::MergeIntegrity => source.git.merge_integrity.clone().ok_or_else(|| {
@@ -435,7 +451,7 @@ fn observe(
             CoreInputError::new("staging acquisition omitted its Git observation")
         })?,
         GateId::ConfigKeyValidity => return config_keys(contract),
-        GateId::RepoDocs => return repo_docs(source, contract, bounds),
+        GateId::RepoDocs => return repo_docs(source, contract, bounds, observations),
         GateId::ConfigFalseDisable => {
             return configuration
                 .ok_or_else(|| {
@@ -458,6 +474,7 @@ fn repo_docs(
     source: &CoreSource<'_>,
     contract: &Contract,
     bounds: &mut Vec<BoundDecision>,
+    observations: &mut Vec<LatchObservation>,
 ) -> Result<CoreObservation, CoreInputError> {
     let mut measurements = Vec::new();
     for entry in source.jurisdiction.measurable() {
@@ -483,7 +500,7 @@ fn repo_docs(
                 "measure selected repository document {path:?}: {error}"
             ))
         })?;
-        let (measurement, decision) = document_measurement(
+        let (measurement, decision, observation) = document_measurement(
             &source.actor,
             contract,
             &source.latches,
@@ -492,6 +509,7 @@ fn repo_docs(
         )?;
         measurements.push(measurement);
         bounds.push(decision);
+        observations.push(observation);
     }
     RepoDocsEvidence::new(measurements)
         .map(CoreEvidence::RepoDocs)
@@ -527,7 +545,7 @@ fn document_measurement(
     latches: &[LatchEntry],
     path: &str,
     characters: u64,
-) -> Result<(DocMeasurement, BoundDecision), CoreInputError> {
+) -> Result<(DocMeasurement, BoundDecision, LatchObservation), CoreInputError> {
     let rule = resolve_metric_rule(
         contract.rule_policy(),
         MetricId::RepositoryDocumentCharacters,
@@ -556,18 +574,21 @@ fn document_measurement(
             "actor provenance for repository document {path:?}: {error}"
         ))
     })?;
-    let decision = binding.decide(latched, &actor_inputs).map_err(|error| {
-        CoreInputError::new(format!(
-            "resolve active repository-document bound for {path:?}: {error}"
-        ))
-    })?;
+    let (decision, observation) =
+        binding
+            .observe_decision(latched, &actor_inputs)
+            .map_err(|error| {
+                CoreInputError::new(format!(
+                    "resolve active repository-document bound for {path:?}: {error}"
+                ))
+            })?;
     let measurement = if decision.unlimited() {
         DocMeasurement::unlimited(path, characters)?
     } else {
         let peer_claim = decision.over_limit() && actor.peer_holds(path);
         DocMeasurement::new(path, characters, decision.active_limit(), peer_claim)?
     };
-    Ok((measurement, decision))
+    Ok((measurement, decision, observation))
 }
 
 fn plan_phase(claim: &ClaimCapture) -> CoreObservation {

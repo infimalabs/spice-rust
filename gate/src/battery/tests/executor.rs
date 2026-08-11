@@ -6,6 +6,8 @@ use std::os::unix::fs::PermissionsExt as _;
 
 #[path = "executor/evidence.rs"]
 mod evidence;
+#[path = "executor/state_publication.rs"]
+mod state_publication;
 
 use evidence::{
     assert_every_family_projected_its_own_evidence, assert_the_git_arms_kept_the_capture,
@@ -590,12 +592,11 @@ fn a_capture_without_an_acting_actor_is_refused() {
 
 /// One capture reads the ledger twice and both readings must be the same read.
 ///
-/// The caller filters expiry under its own run clock because the gate has none,
-/// and filtering can only drop claims. A bound claim the ledger does not hold
-/// is therefore not a filtered reading of it, and letting it through would
-/// publish a state authority saying a peer holds `app/main.py` beside a
-/// repository-document measurement resolved from a claim that authority never
-/// contained.
+/// The production state run filters expiry under its fixed clock. A caller
+/// claim that surviving ledger does not hold is therefore a contradictory
+/// observation, and letting it through would publish a state authority saying
+/// a peer holds `app/main.py` beside a measurement resolved from a claim that
+/// authority never contained.
 #[test]
 fn a_bound_claim_the_state_authority_does_not_hold_is_refused() {
     let fixture = Fixture::new();
@@ -666,12 +667,16 @@ fn live_ledger(repository: &Path) -> crate::StateLedger {
 /// cannot tell a capture that read the repository from one that read nothing.
 /// This gives the ledger something to say first.
 fn seed_one_claim(repository: &Path, actor: &str) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("fixture clock follows the Unix epoch")
+        .as_secs_f64();
     let (_, common_git) = crate::tree::git_directories(repository)
         .expect("the repository names both Git directories");
     let mut state =
         CurrentState::load(crate::current_state_path(&common_git)).expect("load the shared ledger");
     state
-        .begin_run(&crate::RenameMap::default(), ["app/main.py"], 100.0)
+        .begin_run(&crate::RenameMap::default(), ["app/main.py"], now)
         .expect("begin one seeding run");
     state
         .reconcile([])

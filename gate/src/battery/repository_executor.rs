@@ -7,12 +7,12 @@ use wire::Digest;
 
 use super::{
     ArmEvidence, ArmExecution, ArmFamily, BatteryContext, BatteryError, BatteryExecutor,
-    BatteryInputs, CompiledArm, inline_evidence,
+    BatteryInputs, BatteryStateRun, CompiledArm, inline_evidence,
 };
 use crate::GateId;
 use crate::core::{
-    ActorCapture, CORE_GATE_IDS, ClaimCapture, CoreSource, acquire_core, acquire_core_arm,
-    evaluate_core, evaluate_core_arm,
+    ActorCapture, CORE_GATE_IDS, ClaimCapture, CoreSource, acquire_core_arm, evaluate_core,
+    evaluate_core_arm,
 };
 use crate::hygiene::{
     HYGIENE_ARMS, HygieneConfiguration, HygieneSource, acquire_hygiene, acquire_hygiene_arm,
@@ -22,7 +22,7 @@ use crate::metrics::{
     BaselineCapture, MetricSource, STRUCTURAL_ARMS, acquire_metric_arm_with_bounds,
     acquire_metrics_with_bounds,
 };
-use crate::state::{BoundDecision, LatchEntry};
+use crate::state::{BoundDecision, LatchEntry, LatchObservation};
 use crate::toolchain::{
     RimCapture, TASTE_EXTENSIONS, TOOLCHAIN_ARMS, ToolchainSource, VerifierCompilerContract,
     VerifierCompilerEvidence, acquire_toolchain_arm, acquire_toolchain_observed,
@@ -123,9 +123,9 @@ impl<'trace> RepositoryExecutor<'trace> {
     ///
     /// `latches` is the durable breach inventory the core family decides its
     /// elastic bounds against: a latched path is held to its base limit rather
-    /// than the varied one. The ledger it comes from is read by the caller,
-    /// which publishes that same ledger as the run's state authority, so the
-    /// bounds this capture decides and the state its report names are one read.
+    /// than the varied one. The enclosing [`BatteryStateRun`] supplies the
+    /// fixed-clock ledger, so the bounds this capture decides and the state its
+    /// report names are one read.
     ///
     /// Every arm and family invocation is emitted to `trace` when one is given,
     /// which observes execution without gaining any authority over it.
@@ -152,7 +152,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
-        latches: &[LatchEntry],
+        state_run: &BatteryStateRun,
         selected: Option<GateId>,
         mut trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     ) -> Result<Self, BatteryError> {
@@ -163,6 +163,8 @@ impl<'trace> RepositoryExecutor<'trace> {
         let contract = Contract::load(tree.root()).map_err(|error| {
             BatteryError::new(format!("cannot load captured battery contract: {error}"))
         })?;
+        let (state, actor) = state_run.bind(tree.paths(), &actor)?;
+        let latches = state.latches();
         // One capture, taken once: the digest every arm is labelled with, the
         // requested core acquisition and the bounds it decided, and the
         // committed baselines every delta or merge-authorship decision reads
@@ -171,7 +173,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         // exact rim changes cover every-change arms such as local-paths, whose
         // inputs may be extensionless. Both are retained together because a
         // second capture could name a different commit than this report does.
-        let (source, core, mut bounds, baselines) = {
+        let (source, core, mut bounds, mut observations, baselines) = {
             let captured = match selected {
                 Some(gate_id) => CoreSource::capture_arm(
                     &tree,
@@ -186,59 +188,51 @@ impl<'trace> RepositoryExecutor<'trace> {
             .map_err(|error| {
                 BatteryError::new(format!("cannot identify battery source: {error}"))
             })?;
-            let (core, bounds) = match selected {
+            let (core, bounds, observations) = match selected {
                 None => {
                     record_capture_analyses(&mut trace, ArmFamily::Core, CORE_GATE_IDS);
-                    let (evidence, bounds) = core_family(&captured, &contract);
-                    (Some(evidence), bounds)
+                    let (evidence, bounds, observations) = core_family(&captured, &contract);
+                    (Some(evidence), bounds, observations)
                 }
                 Some(gate_id) if CORE_GATE_IDS.contains(&gate_id) => {
                     record_capture_analyses(&mut trace, ArmFamily::Core, [gate_id]);
-                    let (evidence, bounds) = core_arm(&captured, &contract, gate_id);
-                    (Some(evidence), bounds)
+                    let (evidence, bounds, observations) = core_arm(&captured, &contract, gate_id);
+                    (Some(evidence), bounds, observations)
                 }
-                Some(_) => (None, Vec::new()),
+                Some(_) => (None, Vec::new(), Vec::new()),
             };
-            let classes = contract.rule_policy().document().file_classes();
-            let mut selected = classes.magic().to_vec();
-            selected.extend(classes.file_shape().iter().cloned());
-            selected.extend(classes.complexity().iter().cloned());
-            selected.extend(environment_baseline_suffixes());
-            selected.extend(
-                TASTE_EXTENSIONS
-                    .iter()
-                    .map(|extension| format!(".{extension}")),
-            );
-            selected.sort();
-            selected.dedup();
-            let baselines = BaselineCapture::capture_with_paths(
-                &repository,
-                &selected,
-                rim.changes(),
-                captured.clean_merge_tree(),
-            );
-            (captured.digest().clone(), core, bounds, baselines)
+            let baselines =
+                capture_baselines(&repository, &contract, &rim, captured.clean_merge_tree());
+            (
+                captured.digest().clone(),
+                core,
+                bounds,
+                observations,
+                baselines,
+            )
         };
-        let (metrics, metric_bounds) = match selected {
+        let (metrics, metric_bounds, metric_observations) = match selected {
             None => {
                 record_capture_analyses(
                     &mut trace,
                     ArmFamily::Metrics,
                     STRUCTURAL_ARMS.map(|arm| arm.id()),
                 );
-                let (evidence, bounds) =
+                let (evidence, bounds, observations) =
                     metrics_family(&tree, &contract, &baselines, &actor, latches);
-                (Some(evidence), bounds)
+                (Some(evidence), bounds, observations)
             }
             Some(gate_id) if STRUCTURAL_ARMS.iter().any(|arm| arm.id() == gate_id) => {
                 record_capture_analyses(&mut trace, ArmFamily::Metrics, [gate_id]);
-                let (evidence, bounds) =
+                let (evidence, bounds, observations) =
                     metrics_arm(&tree, &contract, &baselines, &actor, latches, gate_id);
-                (Some(evidence), bounds)
+                (Some(evidence), bounds, observations)
             }
-            Some(_) => (None, Vec::new()),
+            Some(_) => (None, Vec::new(), Vec::new()),
         };
         bounds.extend(metric_bounds);
+        observations.extend(metric_observations);
+        state_run.observe(&observations, &bounds)?;
         Ok(Self {
             tree,
             contract,
@@ -539,6 +533,27 @@ impl BatteryExecutor for RepositoryExecutor<'_> {
     }
 }
 
+fn capture_baselines(
+    repository: &Path,
+    contract: &Contract,
+    rim: &RimCapture,
+    clean_merge_tree: Option<(&str, &str, &str)>,
+) -> BaselineCapture {
+    let classes = contract.rule_policy().document().file_classes();
+    let mut suffixes = classes.magic().to_vec();
+    suffixes.extend(classes.file_shape().iter().cloned());
+    suffixes.extend(classes.complexity().iter().cloned());
+    suffixes.extend(environment_baseline_suffixes());
+    suffixes.extend(
+        TASTE_EXTENSIONS
+            .iter()
+            .map(|extension| format!(".{extension}")),
+    );
+    suffixes.sort();
+    suffixes.dedup();
+    BaselineCapture::capture_with_paths(repository, &suffixes, rim.changes(), clean_merge_tree)
+}
+
 /// Acquire the complete structural family and retain every bound it decided.
 ///
 /// This happens before [`BatteryInputs`] freezes the run context. The evidence
@@ -550,19 +565,23 @@ fn metrics_family(
     baselines: &BaselineCapture,
     actor: &ActorCapture,
     latches: &[LatchEntry],
-) -> (Result<Vec<ArmEvidence>, String>, Vec<BoundDecision>) {
+) -> (
+    Result<Vec<ArmEvidence>, String>,
+    Vec<BoundDecision>,
+    Vec<LatchObservation>,
+) {
     let source = match MetricSource::capture(tree, contract, baselines, actor, latches) {
         Ok(source) => source,
-        Err(error) => return (Err(error.to_string()), Vec::new()),
+        Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
     };
-    let (evidence, bounds) = acquire_metrics_with_bounds(&source).into_parts();
+    let (evidence, bounds, observations) = acquire_metrics_with_bounds(&source).into_parts();
     let arms = evidence.map_err(|error| error.to_string()).map(|reports| {
         reports
             .into_iter()
             .map(|report| ArmEvidence::Metrics { report })
             .collect()
     });
-    (arms, bounds)
+    (arms, bounds, observations)
 }
 
 /// Acquire one structural arm and retain only the bounds it decided.
@@ -573,16 +592,21 @@ fn metrics_arm(
     actor: &ActorCapture,
     latches: &[LatchEntry],
     gate_id: GateId,
-) -> (Result<Vec<ArmEvidence>, String>, Vec<BoundDecision>) {
+) -> (
+    Result<Vec<ArmEvidence>, String>,
+    Vec<BoundDecision>,
+    Vec<LatchObservation>,
+) {
     let source = match MetricSource::capture(tree, contract, baselines, actor, latches) {
         Ok(source) => source,
-        Err(error) => return (Err(error.to_string()), Vec::new()),
+        Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
     };
-    let (evidence, bounds) = acquire_metric_arm_with_bounds(&source, gate_id).into_parts();
+    let (evidence, bounds, observations) =
+        acquire_metric_arm_with_bounds(&source, gate_id).into_parts();
     let arm = evidence
         .map(|report| vec![ArmEvidence::Metrics { report }])
         .map_err(|error| error.to_string());
-    (arm, bounds)
+    (arm, bounds, observations)
 }
 
 /// Acquire and judge the complete core family from one captured source.
@@ -600,10 +624,15 @@ fn metrics_arm(
 fn core_family(
     source: &CoreSource<'_>,
     contract: &Contract,
-) -> (Result<Vec<ArmEvidence>, String>, Vec<BoundDecision>) {
-    let inputs = match acquire_core(source, contract) {
-        Ok(inputs) => inputs,
-        Err(error) => return (Err(error.to_string()), Vec::new()),
+) -> (
+    Result<Vec<ArmEvidence>, String>,
+    Vec<BoundDecision>,
+    Vec<LatchObservation>,
+) {
+    let (inputs, observations) = match crate::core::acquire_core_with_observations(source, contract)
+    {
+        Ok(acquisition) => acquisition,
+        Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
     };
     let bounds = inputs.bounds().to_vec();
     let arms = evaluate_core(&inputs)
@@ -612,7 +641,7 @@ fn core_family(
         .cloned()
         .map(|report| ArmEvidence::Core { report })
         .collect();
-    (Ok(arms), bounds)
+    (Ok(arms), bounds, observations)
 }
 
 /// Acquire and judge exactly one core arm from the capture made for it.
@@ -620,13 +649,17 @@ fn core_arm(
     source: &CoreSource<'_>,
     contract: &Contract,
     gate_id: GateId,
-) -> (Result<Vec<ArmEvidence>, String>, Vec<BoundDecision>) {
-    let (input, bounds) = match acquire_core_arm(source, contract, gate_id) {
+) -> (
+    Result<Vec<ArmEvidence>, String>,
+    Vec<BoundDecision>,
+    Vec<LatchObservation>,
+) {
+    let (input, bounds, observations) = match acquire_core_arm(source, contract, gate_id) {
         Ok(acquisition) => acquisition,
-        Err(error) => return (Err(error.to_string()), Vec::new()),
+        Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
     };
     let report = evaluate_core_arm(&input);
-    (Ok(vec![ArmEvidence::Core { report }]), bounds)
+    (Ok(vec![ArmEvidence::Core { report }]), bounds, observations)
 }
 
 fn record_capture_analyses(

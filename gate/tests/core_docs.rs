@@ -167,7 +167,14 @@ fn assert_claimed_document(
         RepoDocLimit::AtMost { characters: 14_850 },
         "the acting actor's cap is unchanged by who holds the claim"
     );
-    assert_eq!(arm.standing(), CoreStanding::Failed);
+    assert_eq!(
+        arm.standing(),
+        if peer_claim {
+            CoreStanding::Passed
+        } else {
+            CoreStanding::Failed
+        }
+    );
     assert_eq!(
         bounded.peer_claim(),
         peer_claim,

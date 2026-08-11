@@ -302,7 +302,9 @@ impl FocusedArmReport {
         )
     }
 
-    pub(super) fn into_result(self) -> BatteryArmResult {
+    /// Consume the focused context wrapper and return its arm result.
+    #[must_use]
+    pub fn into_result(self) -> BatteryArmResult {
         self.result
     }
 }

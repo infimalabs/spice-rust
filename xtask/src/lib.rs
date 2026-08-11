@@ -402,6 +402,9 @@ trait Runner: Sync {
         )
     }
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError>;
+    fn accept_battery_state(&self) -> Result<(), String> {
+        Ok(())
+    }
     fn landing(&self) -> Result<landing::Report, landing::Error>;
 }
 
@@ -799,6 +802,25 @@ impl Runner for SystemRunner {
                 "the canonical native Rust gate battery is unavailable on wasm32",
             )))
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn accept_battery_state(&self) -> Result<(), String> {
+        let state = self.state().map_err(|error| match error {
+            RunError::Launch(error) => error.to_string(),
+            RunError::Cleanup(detail) => detail,
+        })?;
+        state
+            .battery
+            .as_ref()
+            .ok_or_else(|| "full verifier battery capture is unavailable".to_owned())?
+            .accept_state()
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn accept_battery_state(&self) -> Result<(), String> {
+        Ok(())
     }
 
     fn landing(&self) -> Result<landing::Report, landing::Error> {

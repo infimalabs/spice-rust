@@ -44,6 +44,7 @@ mod tests {
         landing: Option<Result<landing::Report, landing::Error>>,
         calls: Vec<&'static str>,
         scoped_calls: Vec<(ScopedCommand, String)>,
+        state_accepts: usize,
     }
 
     struct FakeRunner {
@@ -61,6 +62,10 @@ mod tests {
 
         fn scoped_calls(&self) -> Vec<(ScopedCommand, String)> {
             self.state().scoped_calls.clone()
+        }
+
+        fn state_accepts(&self) -> usize {
+            self.state().state_accepts
         }
 
         fn set_entry_point(&self, outcome: Result<String, String>) {
@@ -163,6 +168,11 @@ mod tests {
                 .map_err(RunError::Cleanup)
         }
 
+        fn accept_battery_state(&self) -> Result<(), String> {
+            self.state().state_accepts += 1;
+            Ok(())
+        }
+
         fn landing(&self) -> Result<landing::Report, landing::Error> {
             let mut state = self.state();
             state.calls.push(landing::LABEL);
@@ -205,6 +215,7 @@ mod tests {
         verify_with(&runner, &mut output).expect("verification succeeds");
 
         assert_exact_calls(&runner, &labels());
+        assert_eq!(runner.state_accepts(), 1);
         let output = String::from_utf8(output).expect("labels are UTF-8");
         let report =
             serde_json::to_string(&landing::fixture_report(true)).expect("fixture report encodes");
@@ -606,6 +617,7 @@ mod tests {
         let error = verify_with(&runner, &mut output).expect_err("a stale guard surfaces");
 
         assert!(matches!(error, VerifyError::EntryPoint(_)));
+        assert_eq!(runner.state_accepts(), 0);
         assert_eq!(
             error.to_string(),
             "[verify] published guard is not this build's"
@@ -627,6 +639,7 @@ mod tests {
         let error = verify_with(&runner, &mut output).expect_err("clippy failure surfaces");
 
         assert!(matches!(error, VerifyError::Exit { code: Some(9), .. }));
+        assert_eq!(runner.state_accepts(), 0);
         let calls = runner.calls();
         assert!(calls.contains(&VERIFY_ACTIONS[2].label()));
         assert!(!calls.contains(&VERIFY_ACTIONS[3].label()));
@@ -642,6 +655,7 @@ mod tests {
         let error = verify_with(&runner, &mut output).expect_err("launch refusal surfaces");
 
         assert!(matches!(error, VerifyError::Launch { .. }));
+        assert_eq!(runner.state_accepts(), 0);
         let calls = runner.calls();
         assert!(calls.contains(&ENTRY_POINT_LABEL));
         assert!(calls.contains(&FORMAT_LABEL));
@@ -662,6 +676,7 @@ mod tests {
 
         assert!(matches!(error, VerifyError::LandingRefused));
         assert_exact_calls(&runner, &labels());
+        assert_eq!(runner.state_accepts(), 0);
         assert!(
             String::from_utf8(output)
                 .expect("landing output is UTF-8")
@@ -678,6 +693,7 @@ mod tests {
         let error = verify_with(&runner, &mut output).expect_err("battery refusal surfaces");
 
         assert!(matches!(error, VerifyError::BatteryRefused));
+        assert_eq!(runner.state_accepts(), 0);
         let calls = runner.calls();
         assert!(calls.contains(&BATTERY_LABEL));
         assert!(!calls.contains(&landing::LABEL));
@@ -700,6 +716,7 @@ mod tests {
         let error = verify_with(&runner, &mut output).expect_err("battery action failure surfaces");
 
         assert!(matches!(error, VerifyError::Battery(_)));
+        assert_eq!(runner.state_accepts(), 0);
         let output = String::from_utf8(output).expect("fixture output is UTF-8");
         assert!(output.contains("disposition=error family=in-process:gate-battery"));
         assert!(output.contains("primary_ordinal=12 interrupted=false cleanup_faults=0"));
@@ -716,6 +733,7 @@ mod tests {
             verify_with(&runner, &mut output).expect_err("diagnostic write refusal surfaces");
 
         assert!(matches!(error, VerifyError::Output(_)));
+        assert_eq!(runner.state_accepts(), 0);
         assert_eq!(
             error.to_string(),
             "[verify] output failed: fixture diagnostic output refusal"
@@ -797,6 +815,7 @@ mod tests {
                 landing: Some(Ok(landing::fixture_report(true))),
                 calls: Vec::new(),
                 scoped_calls: Vec::new(),
+                state_accepts: 0,
             }),
         }
     }

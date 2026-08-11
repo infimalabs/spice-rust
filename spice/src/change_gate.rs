@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use gate::{
-    ChangeSelectionMode, ChangeSelectionReport, FocusedArmReport, GateId, Selector,
+    ChangeSelectionMode, ChangeSelectionReport, FocusedArmReport, GateId, Selector, StateRunScope,
     TestSelectionReport, WORKSPACE_TEST_CONCURRENCY_CAP, WorkspaceTestRoots,
 };
 use serde::{Deserialize, Serialize};
@@ -338,7 +338,17 @@ pub fn run(progress: &mut (impl Write + Send)) -> Result<ChangeGateReport, Chang
         ));
     }
 
-    ChangeGateReport::new(selection, tests, policy)
+    let report = ChangeGateReport::new(selection, tests, policy)?;
+    if report.admits() {
+        let scope = match report.selection().mode() {
+            ChangeSelectionMode::Local => StateRunScope::Partial,
+            ChangeSelectionMode::Exhaustive => StateRunScope::Exhaustive,
+        };
+        anchor.accept_state(scope).map_err(ChangeGateError::gate)?;
+    } else {
+        anchor.reject_state().map_err(ChangeGateError::gate)?;
+    }
+    Ok(report)
 }
 
 fn run_policy(
@@ -347,6 +357,7 @@ fn run_policy(
     source: &wire::Digest,
     progress: &mut impl Write,
 ) -> Result<Vec<FocusedArmReport>, ChangeGateError> {
+    let state_run = anchor.state_run();
     let mut policy = Vec::with_capacity(gate_ids.len());
     for gate_id in gate_ids {
         writeln!(progress, "[change-gate-policy] gate={}", gate_id.as_str()).map_err(|error| {
@@ -358,7 +369,8 @@ fn run_policy(
         let report = if *gate_id == GateId::Staging {
             anchor.execute().map_err(ChangeGateError::gate)?
         } else {
-            crate::gate::run_arm_report(Selector::staged(), *gate_id)
+            crate::gate::prepare_arm_in_state(Selector::staged(), *gate_id, state_run.clone())
+                .and_then(|mut prepared| prepared.execute())
                 .map_err(ChangeGateError::gate)?
         };
         if report.context().source() != source {

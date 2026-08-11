@@ -114,10 +114,10 @@ diagnostic = "exceed the character cap"
 
 [[cases]]
 gate = "repo-docs"
-kind = "peer-fail"
+kind = "peer-redirect"
 source = "spice/studies/repodocs.py::repo_truth_doc_findings"
 observation = "selected doctrine documents, decoded character counts, active caps and peer claims"
-expected = "failed"
+expected = "passed"
 diagnostic = "peer-held bound claims"
 
 [[cases]]
