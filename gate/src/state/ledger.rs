@@ -276,7 +276,7 @@ impl RenameMap {
         Ok(Self { paths })
     }
 
-    pub(super) fn destination<'a>(&'a self, path: &'a str) -> &'a str {
+    pub(crate) fn destination<'a>(&'a self, path: &'a str) -> &'a str {
         self.paths.get(path).map_or(path, String::as_str)
     }
 }

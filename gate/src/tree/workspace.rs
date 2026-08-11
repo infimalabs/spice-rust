@@ -9,6 +9,7 @@ use sill::{Acquisition, LockFile, Possession};
 
 use super::{SelectedTree, TreeError, create_private_workspace, make_removable, private_directory};
 use crate::held_root::{self, HeldRootRemoval};
+use crate::state::RenameMap;
 
 /// How gate tree selection names itself in a refusal, and names its locks.
 const WORKSPACE_LABEL: &str = "gate tree workspace";
@@ -76,12 +77,20 @@ impl BuildRoot {
     /// Taking the possession is what stops this build root's own [`Drop`] from
     /// removing a workspace the caller is about to be handed: a build root that
     /// has been finished no longer possesses anything to remove.
-    pub(super) fn finish(&mut self, repository: &Path, paths: Vec<String>) -> SelectedTree {
+    pub(super) fn finish(
+        &mut self,
+        repository: &Path,
+        paths: Vec<String>,
+        renames: RenameMap,
+        publishes_state: bool,
+    ) -> SelectedTree {
         SelectedTree {
             workspace: self.workspace.clone(),
             root: self.root.clone(),
             repository: repository.to_path_buf(),
             paths,
+            renames,
+            publishes_state,
             possession: self.possession.take(),
         }
     }
