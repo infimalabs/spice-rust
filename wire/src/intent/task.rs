@@ -111,6 +111,34 @@ pub struct GateFindings {
     pub report: Digest,
     /// Canonical focused report JSON admitted by Gate before folding.
     pub evidence: String,
+    /// Typed repository and selected-source authority for the report.
+    pub source: GateFindingSource,
+}
+
+/// Kind of immutable Git source measured by one focused finding report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GateFindingSourceKind {
+    /// The exact repository index captured by the report.
+    StagedIndex,
+    /// One committed revision captured by the report.
+    Revision,
+}
+
+/// Typed authority and lineage evidence for one focused finding report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateFindingSource {
+    /// Stable Git-common repository authority observed by the command rim.
+    pub repository: Digest,
+    /// Exact staged-index or revision selection observed by the command rim.
+    pub selection: Digest,
+    /// Gate tree identity retained by the canonical focused report.
+    pub tree: Digest,
+    /// Canonical commit anchoring the staged index or selected revision.
+    pub anchor: String,
+    /// Whether the selected source was the staged index or one revision.
+    pub kind: GateFindingSourceKind,
 }
 
 /// Replace an unsettled task statement.

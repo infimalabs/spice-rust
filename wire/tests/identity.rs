@@ -105,6 +105,8 @@ const fn position(domain: Domain) -> usize {
         | Domain::GateBatteryReport
         | Domain::GateFocusedReport
         | Domain::GateFinding
+        | Domain::GateRepositoryAuthority
+        | Domain::GateSelection
         | Domain::GateBatteryReceipt
         | Domain::GateConfiguration
         | Domain::TasteProse
@@ -174,9 +176,11 @@ const fn late_position(domain: Domain) -> usize {
         Domain::GateFinding => 44,
         Domain::GateBatteryReceipt => 45,
         Domain::GateConfiguration => 46,
-        Domain::TasteProse => 47,
-        Domain::TasteBag => 48,
-        Domain::MediaContent => 49,
+        Domain::GateRepositoryAuthority => 47,
+        Domain::GateSelection => 48,
+        Domain::TasteProse => 49,
+        Domain::TasteBag => 50,
+        Domain::MediaContent => 51,
         _ => panic!("domain position partition is closed"),
     }
 }
@@ -193,7 +197,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 50] = [
+const DOMAINS: [Domain; 52] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -241,6 +245,8 @@ const DOMAINS: [Domain; 50] = [
     Domain::GateFinding,
     Domain::GateBatteryReceipt,
     Domain::GateConfiguration,
+    Domain::GateRepositoryAuthority,
+    Domain::GateSelection,
     Domain::TasteProse,
     Domain::TasteBag,
     Domain::MediaContent,
@@ -342,6 +348,8 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.gate.finding.v1",
             "spice.gate.battery-receipt.v1",
             "spice.gate.configuration.v1",
+            "spice.gate.repository-authority.v1",
+            "spice.gate.selection.v1",
             "spice.taste.prose.v1",
             "spice.taste.bag.v1",
             "spice.media.content.v1",

@@ -8,6 +8,11 @@ const GATE_FINDING_TAG: &str = "gate-finding";
 const GATE_FINDING_TAG_PREFIX: &str = "gate-finding:";
 const GATE_INSTRUMENT_TAG_PREFIX: &str = "gate-instrument:";
 const GATE_SEVERITY_TAG_PREFIX: &str = "gate-severity:";
+const GATE_REPOSITORY_TAG_PREFIX: &str = "gate-repository:";
+const GATE_SELECTION_TAG_PREFIX: &str = "gate-selection:";
+const GATE_SOURCE_TREE_TAG_PREFIX: &str = "gate-source-tree:";
+const GATE_SOURCE_ANCHOR_TAG_PREFIX: &str = "gate-source-anchor:";
+const GATE_SOURCE_KIND_TAG_PREFIX: &str = "gate-source-kind:";
 const GATE_FINDING_DEFER_UNTIL: &str = "2099-12-31T23:59:59.999Z";
 
 #[derive(Clone)]
@@ -82,6 +87,7 @@ pub(in crate::board_command) fn gate_findings(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     dispatch: &GateFindings,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -89,6 +95,15 @@ pub(in crate::board_command) fn gate_findings(
         Ok(report) => report,
         Err(outcome) => return outcome,
     };
+    let Some(repository) = repository else {
+        return protocol_fault(
+            "gate::finding-repository-unavailable",
+            "gate finding filing requires the resident repository authority",
+        );
+    };
+    if let Err(error) = validate_focused_source(repository, dispatch, &report) {
+        return error;
+    }
     let instrument = report.gate_id();
     let admits = report.admits();
     let findings = report
@@ -97,7 +112,7 @@ pub(in crate::board_command) fn gate_findings(
         .map(FindingRow::from)
         .collect::<Vec<_>>();
     gate_findings_folded(
-        bus, command, dispatch, &findings, instrument, admits, projects, allocation,
+        bus, command, dispatch, &findings, instrument, admits, repository, projects, allocation,
     )
 }
 
@@ -109,6 +124,7 @@ pub(in crate::board_command) fn gate_findings_folded(
     findings: &[FindingRow],
     instrument: gate::GateId,
     admits: bool,
+    repository: &Repository,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -116,7 +132,7 @@ pub(in crate::board_command) fn gate_findings_folded(
         return outcome;
     }
     let prepared = match prepare_finding_fold(
-        bus, command, dispatch, findings, instrument, projects, allocation,
+        bus, command, dispatch, findings, instrument, repository, projects, allocation,
     ) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
@@ -133,6 +149,7 @@ struct PreparedFindingFold {
     origin: wire::Origin,
     plans: Vec<GateFindingPlan>,
     instrument: gate::GateId,
+    source: wire::intent::GateFindingSource,
     instrument_tasks: std::collections::BTreeSet<wire::TaskStamp>,
     created: usize,
     updated: usize,
@@ -167,12 +184,14 @@ fn validate_finding_fold(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_finding_fold(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     dispatch: &GateFindings,
     findings: &[FindingRow],
     instrument: gate::GateId,
+    repository: &Repository,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<PreparedFindingFold, Outcome<CommandAnswer>> {
@@ -197,6 +216,8 @@ fn prepare_finding_fold(
         &snapshot,
         at,
         instrument,
+        repository,
+        &dispatch.source,
         &dispatch.report,
         command.actor(),
     )?;
@@ -247,6 +268,7 @@ fn prepare_finding_fold(
         origin,
         plans,
         instrument,
+        source: dispatch.source.clone(),
         instrument_tasks,
         created,
         updated,
@@ -312,6 +334,7 @@ fn commit_finding_fold(
                 prepared.until,
                 &dispatch.report,
                 instrument,
+                &prepared.source,
             ),
             GateFindingAction::Recovered {
                 task,
@@ -383,6 +406,45 @@ fn focused_report(
     })
 }
 
+fn validate_focused_source(
+    repository: &Repository,
+    dispatch: &GateFindings,
+    report: &gate::FocusedArmReport,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if report.context().source() != &dispatch.source.tree {
+        return Err(refusal(
+            "gate::finding-source-mismatch",
+            Some(format!(
+                "report={} dispatch={}",
+                report.context().source(),
+                dispatch.source.tree
+            )),
+            "dispatch the typed source envelope captured with this focused report",
+        ));
+    }
+    let expected_scope = match dispatch.source.kind {
+        wire::intent::GateFindingSourceKind::StagedIndex => "staged-index",
+        wire::intent::GateFindingSourceKind::Revision => "revision",
+    };
+    if report.context().scope().name() != expected_scope {
+        return Err(refusal(
+            "gate::finding-source-kind-mismatch",
+            Some(format!(
+                "report={} dispatch={expected_scope}",
+                report.context().scope().name()
+            )),
+            "retain the typed selector kind captured with this focused report",
+        ));
+    }
+    spice::gate::validate_gate_finding_source(repository, &dispatch.source).map_err(|error| {
+        refusal(
+            error.reason(),
+            Some(error.detail().to_owned()),
+            "rerun the focused instrument against the current resident repository source",
+        )
+    })
+}
+
 fn unique_gate_finding_identities(findings: &[FindingRow]) -> Result<(), Digest> {
     let mut seen = std::collections::BTreeSet::new();
     for finding in findings {
@@ -419,12 +481,15 @@ fn gate_findings_origin(
     resolve_creation_origin(None, actor, snapshot, Some(intrinsic))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_gate_findings(
     bus: &Bus,
     findings: &[FindingRow],
     snapshot: &ValidatedSnapshot,
     at: Instant,
     instrument: gate::GateId,
+    repository: &Repository,
+    source: &wire::intent::GateFindingSource,
     report: &Digest,
     actor: &Actor,
 ) -> Result<Vec<GateFindingPlan>, Outcome<CommandAnswer>> {
@@ -458,12 +523,15 @@ fn plan_gate_findings(
             .max_by_key(|entry| entry.statement().revision)
             .map(|entry| entry.handle().clone());
         let action = if let Some(entry) = open.first() {
+            let prior = gate_finding_task_source(entry)?;
+            require_gate_finding_source_relation(repository, &prior, source, false)?;
             let statement = desired_gate_finding_statement(
                 entry,
                 finding,
                 predecessor.as_ref(),
                 report,
                 instrument,
+                source,
             );
             let heads = gate_finding_heads(snapshot, entry)?;
             if statement == *entry.statement() {
@@ -497,6 +565,8 @@ fn plan_gate_findings(
         if current.contains(&identity) {
             continue;
         }
+        let prior = gate_finding_task_source(entry)?;
+        require_gate_finding_source_relation(repository, &prior, source, true)?;
         let authority = gate_finding_recovery_authority(bus, entry, actor, at)?;
         let heads = gate_finding_heads(snapshot, entry)?;
         let action = if let Some((claim, source, transition)) = authority {
@@ -558,6 +628,84 @@ fn gate_finding_task_identity(entry: &Entry) -> Result<Digest, Outcome<CommandAn
             "keep exactly one canonical gate-finding identity tag on system-filed work",
         )
     })
+}
+
+fn gate_finding_task_source(
+    entry: &Entry,
+) -> Result<wire::intent::GateFindingSource, Outcome<CommandAnswer>> {
+    let repository = gate_finding_source_tag(entry, GATE_REPOSITORY_TAG_PREFIX, "repository")?
+        .parse::<Digest>()
+        .map_err(|error| gate_finding_source_refusal(entry, "repository", &error.to_string()))?;
+    let selection = gate_finding_source_tag(entry, GATE_SELECTION_TAG_PREFIX, "selection")?
+        .parse::<Digest>()
+        .map_err(|error| gate_finding_source_refusal(entry, "selection", &error.to_string()))?;
+    let tree = gate_finding_source_tag(entry, GATE_SOURCE_TREE_TAG_PREFIX, "tree")?
+        .parse::<Digest>()
+        .map_err(|error| gate_finding_source_refusal(entry, "tree", &error.to_string()))?;
+    let anchor = gate_finding_source_tag(entry, GATE_SOURCE_ANCHOR_TAG_PREFIX, "anchor")?;
+    let kind = match gate_finding_source_tag(entry, GATE_SOURCE_KIND_TAG_PREFIX, "kind")? {
+        "staged-index" => wire::intent::GateFindingSourceKind::StagedIndex,
+        "revision" => wire::intent::GateFindingSourceKind::Revision,
+        observed => {
+            return Err(gate_finding_source_refusal(
+                entry,
+                "kind",
+                &format!("unrecognized value {observed:?}"),
+            ));
+        }
+    };
+    Ok(wire::intent::GateFindingSource {
+        repository,
+        selection,
+        tree,
+        anchor: anchor.to_owned(),
+        kind,
+    })
+}
+
+fn gate_finding_source_tag<'a>(
+    entry: &'a Entry,
+    prefix: &str,
+    label: &str,
+) -> Result<&'a str, Outcome<CommandAnswer>> {
+    let values = entry
+        .statement()
+        .tags
+        .iter()
+        .filter_map(|tag| tag.strip_prefix(prefix))
+        .collect::<Vec<_>>();
+    let [value] = values.as_slice() else {
+        return Err(gate_finding_source_refusal(
+            entry,
+            label,
+            &format!("found {} canonical tags; expected one", values.len()),
+        ));
+    };
+    Ok(value)
+}
+
+fn gate_finding_source_refusal(entry: &Entry, field: &str, detail: &str) -> Outcome<CommandAnswer> {
+    refusal(
+        "gate::finding-source-migration-required",
+        Some(format!("{} source {field}: {detail}", entry.handle())),
+        "recreate legacy repair work from a current typed focused report before reconciliation",
+    )
+}
+
+fn require_gate_finding_source_relation(
+    repository: &Repository,
+    prior: &wire::intent::GateFindingSource,
+    candidate: &wire::intent::GateFindingSource,
+    recovery: bool,
+) -> Result<(), Outcome<CommandAnswer>> {
+    spice::gate::require_gate_finding_source_forward(repository, prior, candidate, recovery)
+        .map_err(|error| {
+            refusal(
+                error.reason(),
+                Some(error.detail().to_owned()),
+                "rerun the exact instrument from the repair repository at a current descendant source",
+            )
+        })
 }
 
 fn gate_finding_task(entry: &Entry) -> bool {
@@ -687,11 +835,12 @@ fn write_gate_finding_task(
     until: Instant,
     report: &Digest,
     instrument: gate::GateId,
+    source: &wire::intent::GateFindingSource,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let flow = phases(Some("todo,review"))?;
     let phase = flow[0].clone();
-    let description = gate_finding_description(finding, predecessor, report, instrument);
-    let tags = gate_finding_tags(&[], finding, instrument);
+    let description = gate_finding_description(finding, predecessor, report, instrument, source);
+    let tags = gate_finding_tags(&[], finding, instrument, source);
     let added = write
         .fact(
             body::TaskAdded {
@@ -753,17 +902,23 @@ fn gate_finding_description(
     predecessor: Option<&TaskHandle>,
     report: &Digest,
     instrument: gate::GateId,
+    source: &wire::intent::GateFindingSource,
 ) -> String {
     let mut description = format!(
         concat!(
             "{}\n\nGate report: {report}\nFinding identity: {}\n",
-            "Instrument: {instrument}\nAffected authority: {}\nSeverity: {}\nLocus: {}"
+            "Instrument: {instrument}\nAffected authority: {}\nSeverity: {}\nLocus: {}\n",
+            "Repository authority: {}\nSelected tree: {}\nSource anchor: {}\nSource kind: {}"
         ),
         finding.description,
         finding.identity,
         finding.authority,
         finding.severity,
         finding.locus,
+        source.repository,
+        source.tree,
+        source.anchor,
+        gate_finding_source_kind(source.kind),
         report = report,
         instrument = instrument,
     );
@@ -779,6 +934,7 @@ fn desired_gate_finding_statement(
     predecessor: Option<&TaskHandle>,
     report: &Digest,
     instrument: gate::GateId,
+    source: &wire::intent::GateFindingSource,
 ) -> TaskHead {
     TaskHead {
         title: finding.title.clone(),
@@ -787,9 +943,10 @@ fn desired_gate_finding_statement(
             predecessor,
             report,
             instrument,
+            source,
         )),
         acceptance: finding.acceptance.clone(),
-        tags: gate_finding_tags(&entry.statement().tags, finding, instrument),
+        tags: gate_finding_tags(&entry.statement().tags, finding, instrument, source),
         ..entry.statement().clone()
     }
 }
@@ -798,12 +955,21 @@ fn gate_finding_tags(
     existing: &[String],
     finding: &FindingRow,
     instrument: gate::GateId,
+    source: &wire::intent::GateFindingSource,
 ) -> Vec<String> {
     let mut tags = vec![
         GATE_FINDING_TAG.to_owned(),
         gate_finding_tag(&finding.identity),
         gate_instrument_tag(instrument),
         format!("{GATE_SEVERITY_TAG_PREFIX}{}", finding.severity),
+        format!("{GATE_REPOSITORY_TAG_PREFIX}{}", source.repository),
+        format!("{GATE_SELECTION_TAG_PREFIX}{}", source.selection),
+        format!("{GATE_SOURCE_TREE_TAG_PREFIX}{}", source.tree),
+        format!("{GATE_SOURCE_ANCHOR_TAG_PREFIX}{}", source.anchor),
+        format!(
+            "{GATE_SOURCE_KIND_TAG_PREFIX}{}",
+            gate_finding_source_kind(source.kind)
+        ),
     ];
     tags.extend(
         existing
@@ -813,10 +979,22 @@ fn gate_finding_tags(
                     && !tag.starts_with(GATE_FINDING_TAG_PREFIX)
                     && !tag.starts_with(GATE_INSTRUMENT_TAG_PREFIX)
                     && !tag.starts_with(GATE_SEVERITY_TAG_PREFIX)
+                    && !tag.starts_with(GATE_REPOSITORY_TAG_PREFIX)
+                    && !tag.starts_with(GATE_SELECTION_TAG_PREFIX)
+                    && !tag.starts_with(GATE_SOURCE_TREE_TAG_PREFIX)
+                    && !tag.starts_with(GATE_SOURCE_ANCHOR_TAG_PREFIX)
+                    && !tag.starts_with(GATE_SOURCE_KIND_TAG_PREFIX)
             })
             .cloned(),
     );
     tags
+}
+
+const fn gate_finding_source_kind(kind: wire::intent::GateFindingSourceKind) -> &'static str {
+    match kind {
+        wire::intent::GateFindingSourceKind::StagedIndex => "staged-index",
+        wire::intent::GateFindingSourceKind::Revision => "revision",
+    }
 }
 
 fn write_gate_finding_update(

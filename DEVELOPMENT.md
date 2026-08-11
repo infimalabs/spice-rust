@@ -86,11 +86,15 @@ severity, affected gate declaration, locus, and evidence into deferred
 `gate.findings` tasks. A later report from the same instrument updates changed
 evidence in place and reuses byte-identical evidence without a revision. An
 exact rerun marks absent identities recoverable, but advances only the repair
-task actively claimed by the reporting lane. Recovery finishes `todo` and
-enters `review`; a reviewer claims that phase and repeats the exact report to
-close it. Wake and claim additional recovered tasks, then settle them one at a
-time.
-Findings from another instrument are outside that reconciliation boundary.
+task actively claimed by the reporting lane. Every filed task retains typed
+repository, selection, tree, commit-anchor, and selector-kind evidence. Refresh
+and recovery recapture that authority from the resident repository: another
+repository, moved selection, unrelated history, older revision, or revision at
+the staged finding's same anchor cannot reconcile the task. Recovery finishes
+`todo` and enters `review`; a reviewer claims that phase and repeats the exact
+instrument against a same-authority descendant source to close it. Wake and
+claim additional recovered tasks, then settle them one at a time. Findings from
+another instrument are outside that reconciliation boundary.
 Recurrence after completion creates a successor linked to the prior repair,
 preserving an append-only and recoverable history rather than reopening or
 overwriting it.

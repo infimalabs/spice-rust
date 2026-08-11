@@ -25,6 +25,13 @@ const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 
+mod finding_source;
+
+pub use finding_source::{
+    GateFindingAnchor, capture_gate_finding_anchor, require_gate_finding_source_forward,
+    validate_gate_finding_source,
+};
+
 /// One staged battery capture retained across the full verifier's actions.
 ///
 /// Keeping this capture alive is what makes every compiler token and the later
