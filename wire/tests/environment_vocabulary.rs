@@ -51,20 +51,21 @@ struct EnvironmentPolicy {
 /// proof runner by `option_env!` and has always been reported, and
 /// `SPICE_APP_SOURCE_IDENTITY` is the same construction one target over.
 const FOREIGN_TRACKED_NAMES: &[&str] = &[
-    "GIT_CONFIG_COUNT",                   // env-policy: allow
-    "GIT_CONFIG_SYSTEM",                  // env-policy: allow
-    "GIT_DIR",                            // env-policy: allow
-    "GIT_EDITOR",                         // env-policy: allow
-    "GIT_INDEX_FILE",                     // env-policy: allow
-    "GIT_WORK_TREE",                      // env-policy: allow
-    "SPICE_CANVAS_BINARY",                // env-policy: allow
-    "SPICE_HOOKS",                        // env-policy: allow
-    "SPICE_INBOX",                        // env-policy: allow
-    "SPICE_LANE",                         // env-policy: allow
-    "SPICE_NATIVE_SHELL",                 // env-policy: allow
-    "SPICE_PROOF",                        // env-policy: allow
-    "SPICE_WORKSPACE_TEST_WRITABLE_ROOT", // env-policy: allow
-    "TMPDIR",                             // env-policy: allow
+    "GIT_CONFIG_COUNT",                    // env-policy: allow
+    "GIT_CONFIG_SYSTEM",                   // env-policy: allow
+    "GIT_DIR",                             // env-policy: allow
+    "GIT_EDITOR",                          // env-policy: allow
+    "GIT_INDEX_FILE",                      // env-policy: allow
+    "GIT_WORK_TREE",                       // env-policy: allow
+    "SPICE_CANVAS_BINARY",                 // env-policy: allow
+    "SPICE_HOOKS",                         // env-policy: allow
+    "SPICE_INBOX",                         // env-policy: allow
+    "SPICE_LANE",                          // env-policy: allow
+    "SPICE_NATIVE_SHELL",                  // env-policy: allow
+    "SPICE_PROOF",                         // env-policy: allow
+    "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS", // env-policy: allow
+    "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",  // env-policy: allow
+    "TMPDIR",                              // env-policy: allow
 ];
 
 /// The tracked vocabulary is Doctor's rows plus the names Spice does not own.

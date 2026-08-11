@@ -113,7 +113,7 @@ pre_commit = [
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the names Spice owns, so these thirteen are the
+# again. Doctor reports only the names Spice owns, so these fifteen are the
 # difference wire pins between this manifest and SpiceVariable.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
@@ -146,6 +146,9 @@ env_names = [
     "SPICE_RS_INBOX",
     "SPICE_RS_LANE",
     "SPICE_RS_NATIVE_SHELL",
+    # Selected-tree tests receive these workspace-test fixture authorities.
+    "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",
+    "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",
     "TMPDIR",
 ]
 
