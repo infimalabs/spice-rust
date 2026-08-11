@@ -208,7 +208,7 @@ fails closed by selecting every workspace test target and all 27 policy arms.
 surface. It does not share the full verifier's retained compiler evidence and
 neither action is a completion verifier. The native `spice gate pre-commit`
 command executes the same selected-change report in one isolated worker process
-with a 150-second work allowance and cleanup reserves inside its fixed
+with a 164-second work allowance and cleanup reserves inside its fixed
 180-second envelope. A clean worker is silent; a refusal names only selected
 failures plus a private canonical report path. The supervisor owns the worker's
 complete process group, including Cargo, rustc, Trunk, parsers, and descendants.

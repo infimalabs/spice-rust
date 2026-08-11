@@ -628,6 +628,9 @@ fn selected_changes(repository: &Path, selector: &Selector) -> Result<Vec<String
         Selector::Staged => [
             "diff",
             "--cached",
+            // Report renames as deletion plus addition so both ownership and
+            // policy classes survive independently of user Git configuration.
+            "--no-renames",
             "--name-only",
             "-z",
             "--diff-filter=ACMRD",
@@ -756,62 +759,5 @@ impl fmt::Display for RunError {
 impl std::error::Error for RunError {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn verifier_cargo_budget_binds_once_and_refuses_drift() {
-        let mut environment = vec![
-            (OsString::from("Z_FIXTURE"), OsString::from("last")),
-            (OsString::from(CARGO_BUILD_JOBS), OsString::from("99")),
-            (OsString::from("A_FIXTURE"), OsString::from("first")),
-        ];
-        let mut bound = None;
-
-        bind_cargo_jobs(&mut environment, &mut bound, 0).expect("zero normalizes to one job");
-        assert_eq!(bound, Some(1));
-        assert_eq!(
-            environment
-                .iter()
-                .filter(|(name, _)| name == CARGO_BUILD_JOBS)
-                .count(),
-            1
-        );
-        assert_eq!(
-            environment
-                .iter()
-                .find(|(name, _)| name == CARGO_BUILD_JOBS)
-                .map(|(_, value)| value),
-            Some(&OsString::from("1"))
-        );
-        assert!(environment.windows(2).all(|pair| pair[0] < pair[1]));
-
-        let exact = environment.clone();
-        bind_cargo_jobs(&mut environment, &mut bound, 1).expect("same budget is idempotent");
-        assert_eq!(environment, exact);
-
-        let error = bind_cargo_jobs(&mut environment, &mut bound, 2)
-            .expect_err("a later budget cannot change the evidence environment");
-        assert_eq!(error.reason(), "gate::verifier-budget-refused");
-        assert_eq!(environment, exact);
-    }
-
-    #[test]
-    fn verifier_compiler_failure_names_both_bounded_output_streams() {
-        let detail = verifier_compiler_failure_detail(
-            ::gate::VerifierCompilerStage::NativeClippy,
-            "exited",
-            Some(101),
-            b"compiler stdout witness",
-            b"compiler stderr witness",
-        );
-
-        assert_eq!(
-            detail,
-            concat!(
-                "stage=NativeClippy; completion=exited; code=Some(101); ",
-                "stdout=compiler stdout witness; stderr=compiler stderr witness"
-            )
-        );
-    }
-}
+#[path = "gate_tests.rs"]
+mod tests;

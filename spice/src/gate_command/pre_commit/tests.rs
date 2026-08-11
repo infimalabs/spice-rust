@@ -10,8 +10,8 @@ use std::time::Instant;
 fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
     let bounds = ProcessBounds::production();
     let envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
-    assert_eq!(envelope, Duration::from_secs(165));
-    assert_eq!(HARD_DEADLINE - envelope, Duration::from_secs(15));
+    assert_eq!(envelope, Duration::from_secs(179));
+    assert_eq!(HARD_DEADLINE - envelope, Duration::from_secs(1));
     assert!(envelope < HARD_DEADLINE);
 }
 
