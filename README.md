@@ -207,8 +207,8 @@ exits nonzero with its last exact gate phase and explicitly incomplete findings.
 The supervisor owns the worker's complete process group, including Cargo,
 rustc, Trunk, parsers, and their descendants.
 
-For fast feedback while changing one Cargo package, scope the formatter,
-Clippy, all-target tests, and doctests to that package:
+For fast feedback while changing one Cargo package, scope Clippy, all-target
+tests, and doctests to that package:
 
 ```sh
 cargo xtask verify --package gate
@@ -216,7 +216,12 @@ cargo xtask verify --package gate
 
 The scoped command identifies every full-verifier action and compiled gate arm
 it skips. It is feedback only; run the zero-argument command before completing
-or handing off work.
+or handing off work. Formatting remains a workspace check; run
+`cargo fmt --all -- --check` at the package checkpoint.
+
+[DEVELOPMENT.md](DEVELOPMENT.md) maps the crate ownership seams, generated
+surfaces, complete test portfolio, validation tiers, measured concurrency
+limits, and safe disk-cleanup rules used by development agents.
 
 ## Cargo build cache
 
