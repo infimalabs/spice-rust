@@ -19,10 +19,18 @@ pub(crate) fn observe(
 ) -> RecallAuthorities {
     let mut recall = empty_recall_authorities();
 
-    let thread = exact_thread(sources, environment, &mut recall);
+    let thread = live_thread(environment, &mut recall);
     recall.held_work.thread.clone_from(&thread);
+    observe_transcript_threads(sources, thread.as_deref(), &mut recall);
 
-    observe_current_authorities(thread.as_deref(), &mut recall);
+    if let Some(thread) = thread.as_deref() {
+        observe_current_authorities(thread, &mut recall);
+    } else {
+        unavailable_probes(
+            &mut recall,
+            "no admitted live vendor thread identity is available",
+        );
+    }
     recall
 }
 
@@ -31,7 +39,8 @@ fn empty_recall_authorities() -> RecallAuthorities {
         fold: AuthorityFoldView {
             mode: "bounded-read-only".to_owned(),
             probes: vec![
-                "transcript-thread".to_owned(),
+                "live-vendor-thread".to_owned(),
+                "selected-transcript-threads".to_owned(),
                 "repository-state".to_owned(),
                 "configuration".to_owned(),
                 "journal-residency-head".to_owned(),
@@ -69,7 +78,7 @@ struct ObservedAuthorities {
     peer_claims: Option<Result<usize, AuthorityReadError>>,
 }
 
-fn observe_current_authorities(thread: Option<&str>, recall: &mut RecallAuthorities) {
+fn observe_current_authorities(thread: &str, recall: &mut RecallAuthorities) {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => {
@@ -149,7 +158,7 @@ impl Error for AuthorityReadError {}
 
 fn read_authorities(
     read: &JournalRead<'_>,
-    thread: Option<&str>,
+    thread: &str,
     projects: Option<&board::ProjectPolicy>,
 ) -> Result<ObservedAuthorities, std::convert::Infallible> {
     let residency = read
@@ -159,13 +168,11 @@ fn read_authorities(
             head.map(journal::JournalHead::into_body)
                 .ok_or(AuthorityReadError::ResidencyMissing)
         });
-    let lane = thread.and_then(|thread| {
-        residency
-            .as_ref()
-            .ok()
-            .and_then(|residency| lane_for_thread(residency, thread))
-            .cloned()
-    });
+    let lane = residency
+        .as_ref()
+        .ok()
+        .and_then(|residency| lane_for_thread(residency, thread))
+        .cloned();
     let Some(lane) = lane else {
         return Ok(ObservedAuthorities {
             lane: None,
@@ -209,11 +216,7 @@ fn read_authorities(
     })
 }
 
-fn apply_observed(
-    recall: &mut RecallAuthorities,
-    thread: Option<&str>,
-    observed: ObservedAuthorities,
-) {
+fn apply_observed(recall: &mut RecallAuthorities, thread: &str, observed: ObservedAuthorities) {
     if let Some(error) = observed.residency_error {
         unknown(recall, "journal", "residency-head", &error);
         unavailable_probe(
@@ -237,20 +240,24 @@ fn apply_observed(
         return;
     }
     let Some(lane) = observed.lane else {
-        if let Some(thread) = thread {
-            unavailable_probe(
-                recall,
-                "steering",
-                "thread-lane",
-                &format!("no current lane session matches thread {thread}"),
-            );
-            unavailable_probe(
-                recall,
-                "board",
-                "thread-actor",
-                &format!("no current lane session matches thread {thread}"),
-            );
-        }
+        unavailable_probe(
+            recall,
+            "steering",
+            "thread-lane",
+            &format!("no current lane session matches live thread {thread}"),
+        );
+        unavailable_probe(
+            recall,
+            "board",
+            "thread-actor",
+            &format!("no current lane session matches live thread {thread}"),
+        );
+        unavailable_probe(
+            recall,
+            "board",
+            "active-peer-count",
+            &format!("no current lane session matches live thread {thread}"),
+        );
         return;
     };
     recall.held_work.lane = Some(lane.lane.to_string());
@@ -337,44 +344,80 @@ fn lane_for_thread<'a>(
     })
 }
 
-fn exact_thread(
+fn live_thread(environment: &Environment, recall: &mut RecallAuthorities) -> Option<String> {
+    let Some(vendor) = environment
+        .vendors
+        .iter()
+        .find(|vendor| vendor.identity.is_some())
+    else {
+        unavailable_probe(
+            recall,
+            "environment",
+            "live-thread-identity",
+            "no live vendor thread identity is present; transcript selectors are evidence, not current-actor credentials",
+        );
+        return None;
+    };
+    let raw = vendor
+        .identity
+        .as_deref()
+        .expect("the selected vendor environment carries an identity")
+        .to_string_lossy();
+    match source::canonical_thread(&raw) {
+        Some(thread) => Some(thread),
+        None => {
+            unavailable_probe(
+                recall,
+                "environment",
+                "live-thread-identity",
+                &format!(
+                    "{} contains malformed live vendor identity {raw:?}; transcript selectors cannot replace it",
+                    vendor.vendor.thread_id_environment()
+                ),
+            );
+            None
+        }
+    }
+}
+
+fn observe_transcript_threads(
     sources: &[source::ResolvedSource],
-    environment: &Environment,
+    live_thread: Option<&str>,
     recall: &mut RecallAuthorities,
-) -> Option<String> {
-    let mut threads = sources
+) {
+    let selected = sources
         .iter()
         .filter_map(|source| source.thread.clone())
         .collect::<BTreeSet<_>>();
-    if threads.is_empty() {
-        threads.extend(environment.vendors.iter().filter_map(|vendor| {
-            vendor
-                .identity
-                .as_ref()
-                .and_then(|identity| source::canonical_thread(&identity.to_string_lossy()))
-        }));
+    if selected.len() > 1 {
+        unavailable_probe(
+            recall,
+            "transcript",
+            "selected-thread-identity",
+            &format!(
+                "more than one transcript thread is selected as evidence: {}; current authority remains bound only to the live vendor identity",
+                selected.iter().cloned().collect::<Vec<_>>().join(",")
+            ),
+        );
     }
-    match threads.len() {
-        1 => threads.into_iter().next(),
-        0 => {
-            recall.unknowns.push(AuthorityUnknown {
-                authority: "transcript".to_owned(),
-                probe: "exact-thread".to_owned(),
-                detail: "no ambient or resolved transcript thread identity is available".to_owned(),
-            });
-            None
-        }
-        _ => {
-            recall.unknowns.push(AuthorityUnknown {
-                authority: "transcript".to_owned(),
-                probe: "exact-thread".to_owned(),
-                detail: format!(
-                    "more than one transcript thread is in scope: {}",
-                    threads.into_iter().collect::<Vec<_>>().join(",")
-                ),
-            });
-            None
-        }
+    let Some(live_thread) = live_thread else {
+        return;
+    };
+    let foreign = selected
+        .iter()
+        .filter(|thread| thread.as_str() != live_thread)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !foreign.is_empty() {
+        unavailable_probe(
+            recall,
+            "transcript",
+            "live-thread-mismatch",
+            &format!(
+                "selected transcript thread evidence {} differs from live thread {live_thread}; transcript evidence is preserved, but steering and held-work authority remain bound to the live thread",
+                foreign.join(",")
+            ),
+        );
     }
 }
 
