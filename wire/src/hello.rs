@@ -6,6 +6,33 @@ use crate::envelope::{Actor, WireVersion};
 use crate::ident::CanonicalUuid;
 use crate::reply::{Fault, FaultClass, Refusal, RefusalDiagnostic};
 
+/// The browser/resident protocol version, independent of durable journal wire.
+///
+/// A Canvas page can remain alive while an installed resident is replaced. Its
+/// request and reply DTOs therefore need a pre-socket clock whose lifetime is
+/// the browser application, rather than borrowing [`WireVersion`] from durable
+/// facts that must remain readable across upgrades.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CanvasVersion(pub u32);
+
+impl CanvasVersion {
+    /// The one Canvas protocol this build speaks.
+    pub const CURRENT: Self = Self(1);
+
+    /// True when this is the Canvas protocol this build speaks.
+    #[must_use]
+    pub const fn is_current(self) -> bool {
+        self.0 == Self::CURRENT.0
+    }
+}
+
+impl std::fmt::Display for CanvasVersion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
 /// Authenticated same-origin bootstrap for one embedded operator canvas.
 ///
 /// The browser obtains this current generation document from the origin that
@@ -17,6 +44,8 @@ use crate::reply::{Fault, FaultClass, Refusal, RefusalDiagnostic};
 pub struct CanvasBootstrap {
     /// Current HTTP origin the asking browser used and no other endpoint.
     pub endpoint: String,
+    /// Browser/resident protocol the served app must speak.
+    pub canvas: CanvasVersion,
     /// Operator capability for the immediately following opening.
     pub capability: CanonicalUuid,
     /// Resident generation the endpoint and capability address.

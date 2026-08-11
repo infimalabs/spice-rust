@@ -1,17 +1,17 @@
 //! The browser's end of the socket: one current opening and one frame door.
 //!
-//! The app has no independent schema clock. It is compiled from the same wire
-//! crate as the resident that serves it, so an opening carries
-//! [`WireVersion::CURRENT`] and every inbound frame is admitted against it.
-//! Nothing here decides authority; admission only decides whether bytes are
-//! allowed to reach browser state.
+//! The app carries a browser/resident protocol clock independent of durable
+//! [`WireVersion`]. A page can survive an installed resident replacement, so
+//! discovery admits its Canvas clock before any command payload is allowed to
+//! reach browser state. Nothing here decides authority; admission only decides
+//! whether bytes may cross that door.
 
 use std::fmt;
 
 use serde::de::DeserializeOwned;
 use wire::{
-    Accepted, Body, CanonicalUuid, Envelope, Fact, Fault, FaultClass, Hello, Response, StreamFrame,
-    WireVersion,
+    Accepted, Body, CanonicalUuid, CanvasVersion, Envelope, Fact, Fault, FaultClass, Hello,
+    Response, StreamFrame, WireVersion,
 };
 
 /// Reasons this door names when it turns a frame away.
@@ -23,6 +23,8 @@ mod reason {
     pub const UNDECODABLE: &str = "frame::undecodable";
     /// The frame carried a version this build does not speak.
     pub const WIRE: &str = "frame::wire-mismatch";
+    /// The frame belongs to another browser/resident protocol.
+    pub const CANVAS: &str = "frame::canvas-mismatch";
     /// The frame answered a generation this session does not address.
     pub const EPOCH: &str = "frame::epoch-mismatch";
     /// The discovery file now presents a different capability.
@@ -117,6 +119,21 @@ fn admit_wire(observed: WireVersion) -> Result<(), Fault> {
     })
 }
 
+/// Admit a browser/resident protocol without weakening DTO decoding.
+fn admit_canvas(observed: CanvasVersion) -> Result<(), Fault> {
+    if observed.is_current() {
+        return Ok(());
+    }
+    Err(Fault {
+        class: FaultClass::Protocol,
+        reason: reason::CANVAS.to_owned(),
+        detail: format!(
+            "frame carried canvas protocol {observed}; this build speaks {}",
+            CanvasVersion::CURRENT
+        ),
+    })
+}
+
 /// One capability-scoped connection to one resident generation.
 ///
 /// A session is the smallest thing that can be stale. Each `spice up` replaces
@@ -170,6 +187,16 @@ impl Session {
             capability: self.capability,
             epoch: self.epoch,
         }
+    }
+
+    /// Admit the Canvas protocol advertised by bootstrap discovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns a protocol fault when the resident asks this browser build to
+    /// cross a Canvas DTO generation it does not speak.
+    pub fn admit_canvas(observed: CanvasVersion) -> Result<(), Fault> {
+        admit_canvas(observed)
     }
 
     /// Admit a capability offered by a later discovery read.

@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use wire::intent::{EffortAnswer, EffortRead};
 use wire::manifest::ReleaseTarget;
 use wire::{
-    Actor, CanonicalUuid, CanvasBootstrap, Command, Envelope, Fact, FactKind, Fault, FaultClass,
-    Hello, Instant, Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, RefusalDiagnostic,
-    Rejected, ReleaseNotes, Reply, ReplyPosition, Response, Seq, SeqRange, SpiceCommand,
-    TaskHandle, Version, WireVersion, Witness, body,
+    Actor, CanonicalUuid, Command, Envelope, Fact, FactKind, Fault, FaultClass, Hello, Instant,
+    Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, RefusalDiagnostic, Rejected,
+    ReleaseNotes, Reply, ReplyPosition, Response, Seq, SeqRange, SpiceCommand, TaskHandle, Version,
+    WireVersion, Witness, body,
 };
 
 /// Body of the `task::done` command this fixture pins.
@@ -75,17 +75,6 @@ const HELLO: &str = r#"{
   "wire": 1,
   "capability": "018f82d4-6f59-7d06-92e3-bce9131163c6",
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3"
-}"#;
-
-const CANVAS_BOOTSTRAP: &str = r#"{
-  "endpoint": "http://127.0.0.1:48123",
-  "capability": "018f82d4-6f59-7d06-92e3-bce9131163c6",
-  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
-  "speech": {
-    "backend": "system",
-    "voice": "Zoe (Premium)",
-    "words_per_minute": 175
-  }
 }"#;
 
 const COMMAND: &str = r#"{
@@ -489,54 +478,6 @@ fn hello_matches_the_specified_document() {
             .admit(uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"))
             .is_ok()
     );
-}
-
-#[test]
-fn canvas_bootstrap_has_one_strict_current_generation_shape() {
-    let bootstrap: CanvasBootstrap = round_trip(CANVAS_BOOTSTRAP);
-
-    assert_eq!(bootstrap.endpoint, "http://127.0.0.1:48123");
-    assert_eq!(
-        bootstrap.capability,
-        uuid("018f82d4-6f59-7d06-92e3-bce9131163c6")
-    );
-    assert_eq!(
-        bootstrap.epoch,
-        uuid("018f82d4-6f59-7d06-92e3-bce9131163c3")
-    );
-    assert_eq!(
-        bootstrap.speech,
-        wire::SpeechPlayback::System {
-            voice: "Zoe (Premium)".to_owned(),
-            words_per_minute: 175,
-        }
-    );
-
-    for field in ["endpoint", "capability", "epoch", "speech"] {
-        let mut value: serde_json::Value =
-            serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
-        value
-            .as_object_mut()
-            .expect("bootstrap is an object")
-            .remove(field);
-        assert!(
-            wire::decode::<CanvasBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
-                .is_err(),
-            "bootstrap without {field} was admitted"
-        );
-    }
-
-    for malformed in [
-        r#"{"backend":"unknown"}"#,
-        r#"{"backend":"disabled","voice":"Zoe"}"#,
-        r#"{"backend":"system","words_per_minute":175}"#,
-        r#"{"backend":"external","content_type":"audio/wav","words_per_minute":175}"#,
-    ] {
-        assert!(
-            wire::decode::<wire::SpeechPlayback>(malformed.as_bytes()).is_err(),
-            "malformed speech playback was admitted: {malformed}"
-        );
-    }
 }
 
 #[test]

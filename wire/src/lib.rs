@@ -80,7 +80,9 @@ pub use head::{
     TapeLocus, TaskHead, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
     WitnessClass, WitnessHead, WorkflowHead,
 };
-pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
+pub use hello::{
+    Accepted, CanvasBootstrap, CanvasVersion, Hello, Rejected, SpeechPlayback, SpeechRequest,
+};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
 pub use media::{Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
