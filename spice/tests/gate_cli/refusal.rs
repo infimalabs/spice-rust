@@ -126,7 +126,7 @@ fn assert_oversized_json_refusal(
     let admitted = change_report
         .policy()
         .iter()
-        .find(|result| result.admits())
+        .find(|result| result.state().admits())
         .expect("the oversized fixture retains at least one admitting arm");
     assert!(
         !evidence.contains(&format!("gate={} state=", admitted.gate_id())),
@@ -253,8 +253,13 @@ fn assert_concise_pre_commit_refusal(refusal: &Refusal) -> (usize, ChangeGateRep
     );
     assert!(
         evidence.len() < report_bytes.len(),
-        "many admitted metrics must remain in the artifact instead of bloating the refusal: refusal={} report={}",
+        "admitted policy summaries must remain in the artifact instead of bloating the refusal: refusal={} report={}",
         evidence.len(),
+        report_bytes.len(),
+    );
+    assert!(
+        report_bytes.len() < COMPACT_CHANGE_REPORT_MAX_BYTES,
+        "focused report artifact leaked raw battery evidence: {} bytes",
         report_bytes.len(),
     );
     (
@@ -298,32 +303,31 @@ fn assert_refusing_results_are_focused(evidence: &str, report: &ChangeGateReport
     let admitted = report
         .policy()
         .iter()
-        .filter(|result| result.admits())
+        .filter(|result| result.state().admits())
         .count();
     let refusing = report.policy().len() - admitted;
     assert!(
         admitted > refusing,
         "the concise-refusal fixture needs many more passing arms than refusals; admitted={admitted} refusing={refusing}"
     );
-    for report in report.policy() {
-        let result = report.result();
-        let arm = format!("gate={} state=", report.gate_id());
-        if report.admits() {
+    for result in report.policy().iter() {
+        let arm = format!("gate={} state=", result.gate_id());
+        if result.state().admits() {
             assert!(
                 !evidence.contains(&arm),
                 "passing arm {} leaked into the terminal refusal",
-                report.gate_id()
+                result.gate_id()
             );
         } else {
             assert!(
                 evidence.contains(&arm),
                 "failing arm {} is absent from the terminal refusal",
-                report.gate_id()
+                result.gate_id()
             );
             assert!(
                 evidence.contains(&format!("reason={}", result.reason())),
                 "typed summary for {} is absent from the terminal refusal",
-                report.gate_id()
+                result.gate_id()
             );
         }
     }

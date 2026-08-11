@@ -286,6 +286,21 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError>
     })
 }
 
+/// Capture a traced complete battery into an existing state transaction.
+pub fn prepare_in_state_traced<'trace>(
+    selector: Selector,
+    state_run: ::gate::BatteryStateRun,
+    trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+) -> Result<PreparedBattery<'trace>, RunError> {
+    let verifier_environment = verifier_environment();
+    capture_inner(selector, None, Some(trace), Some(state_run)).map(|capture| PreparedBattery {
+        capture,
+        verifier_environment,
+        cargo_jobs: None,
+        verifier_receipt_admitted: false,
+    })
+}
+
 /// Capture one selected source for exactly one canonical battery arm.
 ///
 /// # Errors
@@ -591,8 +606,11 @@ fn capture_inner<'trace>(
             BatteryCapture::capture_traced(root, &selector, claim, actor, rim, hygiene, trace)
         }
         (None, None, None) => BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene),
-        (_, Some(_), Some(_)) | (None, None, Some(_)) => {
-            unreachable!("shared state is currently used only by untraced focused captures")
+        (None, Some(trace), Some(state_run)) => BatteryCapture::capture_in_state_traced(
+            root, &selector, claim, actor, rim, hygiene, state_run, trace,
+        ),
+        (None, None, Some(_)) | (Some(_), Some(_), Some(_)) => {
+            unreachable!("only complete shared-state captures are traced")
         }
     }
     .map_err(|error| {

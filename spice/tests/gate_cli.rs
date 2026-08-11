@@ -31,6 +31,7 @@ const FAULT_EXIT: i32 = 1;
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const COMMIT_WORKER_STARTUP_ALLOWANCE: Duration = Duration::from_secs(6);
 const COMMIT_WORKER_CONTAINMENT_RUNTIME: Duration = Duration::from_secs(2);
+const COMPACT_CHANGE_REPORT_MAX_BYTES: usize = 128 * 1_024;
 
 #[test]
 fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_180_seconds() {
@@ -148,11 +149,56 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sou
     );
     let change_report = ChangeGateReport::decode(document)
         .expect("unknown terminal is an exhaustive change-gate report");
+    assert!(
+        document.len() < COMPACT_CHANGE_REPORT_MAX_BYTES,
+        "complete policy summary leaked raw battery evidence: {} bytes",
+        document.len(),
+    );
     assert_eq!(
         change_report.selection().mode(),
         gate::ChangeSelectionMode::Exhaustive,
     );
     assert_eq!(change_report.selection().gate_ids(), gate::GateId::BATTERY);
+    assert_eq!(change_report.policy().len(), gate::GateId::BATTERY.len());
+    assert_eq!(
+        change_report
+            .policy()
+            .iter()
+            .map(spice::change_gate::PolicyArmSummary::gate_id)
+            .collect::<Vec<_>>(),
+        gate::GateId::BATTERY,
+    );
+    let marker = b"\"results\":[{\"position\":0";
+    let position = document
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .expect("complete policy summary retains the first canonical position");
+    let mut tampered = document.to_vec();
+    tampered[position + marker.len() - 1] = b'9';
+    let error = ChangeGateReport::decode(&tampered)
+        .expect_err("a reordered compact policy result fails closed");
+    assert_eq!(error.reason(), "gate::change-gate-policy-incomplete");
+    let marker = b"\"authority\":\"";
+    let position = document
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .expect("complete policy summary retains its authority digest");
+    let mut tampered = document.to_vec();
+    let digit = &mut tampered[position + marker.len()];
+    *digit = if *digit == b'0' { b'1' } else { b'0' };
+    let error = ChangeGateReport::decode(&tampered)
+        .expect_err("a policy arm detached from the complete authority fails closed");
+    assert_eq!(
+        error.reason(),
+        "gate::change-gate-exhaustive-policy-invalid"
+    );
+    assert!(
+        unknown
+            .progress
+            .contains("[change-gate-policy-terminal] mode=exhaustive arms=27 elapsed_ms="),
+        "exhaustive selection did not publish one complete 27-arm terminal: {}",
+        unknown.progress,
+    );
     let terminal_report = change_report.tests();
     let progress_report = selection_report(&unknown.progress);
     assert_eq!(terminal_report, &progress_report);
