@@ -109,32 +109,13 @@ fn pre_commit_report(
 ) -> Outcome<BatteryReport> {
     match result {
         Ok(report) if report.admits() => direct(report),
-        Ok(report) => {
-            let evidence = match canonical_battery_evidence(&report) {
-                Ok(evidence) => evidence,
-                Err(fault) => return Outcome::Fault(fault),
-            };
-            Outcome::Refusal(Refusal::evidence(
-                "gate::battery-regressed",
-                evidence,
-                "repair the typed failing results; never launch a predecessor gate. A merge is recorded by plain git commit like any other commit: the gate measures each file against the parent that carries it, so what refuses here is what this merge itself wrote",
-            ))
-        }
+        Ok(report) => Outcome::Refusal(Refusal::evidence(
+            "gate::battery-regressed",
+            report.refusal_fold().to_string(),
+            "repair the typed failing results; never launch a predecessor gate. A merge is recorded by plain git commit like any other commit: the gate measures each file against the parent that carries it, so what refuses here is what this merge itself wrote",
+        )),
         Err(error) => battery_failure(error),
     }
-}
-
-fn canonical_battery_evidence(report: &BatteryReport) -> Result<String, Fault> {
-    let bytes = report.encode().map_err(|error| Fault {
-        class: FaultClass::Protocol,
-        reason: "gate::battery-report-unencodable".to_owned(),
-        detail: error.to_string(),
-    })?;
-    String::from_utf8(bytes).map_err(|error| Fault {
-        class: FaultClass::Protocol,
-        reason: "gate::battery-report-non-utf8".to_owned(),
-        detail: error.to_string(),
-    })
 }
 
 /// Audit the compiled shared bound without changing a tracked floor.

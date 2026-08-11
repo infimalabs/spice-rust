@@ -350,6 +350,14 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     // observation/enforcement paths; only the explicit `gate findings` leaf
     // enters board dispatch.
     let repository = GateRepository::new();
+    repository.write_markdown_case_mismatches(512);
+    repository.add("docs");
+    git(
+        repository.path(),
+        &["commit", "-qm", "Plant oversized canonical gate evidence"],
+    );
+    repository.write_source(2_000);
+    repository.add("src/lib.rs");
     let tripwires = Scratch::new("tripwires");
     let marker = tripwires.path().join("invoked");
     for program in ["python", "python3", "taskwarrior", "task"] {
@@ -377,9 +385,29 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
         tripwires.path().join("rustc"),
     )
     .expect("make Cargo's exact Rust compiler available inside the process tripwire path");
+    for program in ["cc", "xcrun"] {
+        let executable = Path::new("/usr/bin").join(program);
+        if executable.exists() {
+            std::os::unix::fs::symlink(&executable, tripwires.path().join(program)).unwrap_or_else(
+                |error| panic!("make {program} available to the selected target: {error}"),
+            );
+        }
+    }
 
     let gate = invoke_with_path(&["gate"], repository.path(), Some(tripwires.path()));
     let report = report_body(&gate);
+    let canonical = report.encode().expect("canonical battery report encodes");
+    assert!(
+        canonical.len() > gate::BATTERY_REFUSAL_FOLD_MAX_BYTES,
+        "fixture must expose the former full-report refusal flood: {} bytes",
+        canonical.len(),
+    );
+    let fold = report.refusal_fold();
+    assert_eq!(fold, report.refusal_fold(), "the refusal fold is stable");
+    assert!(
+        fold.as_bytes().len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES,
+        "the projected refusal bypassed its 64 KiB ceiling",
+    );
     let pre_commit = invoke_with_path(
         &["--json", "gate", "pre-commit"],
         repository.path(),
@@ -392,6 +420,11 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     let Outcome::Refusal(refusal) = outcome else {
         panic!("non-admitting tripwire vector must refuse: {outcome:?}");
     };
+    assert_eq!(
+        refusal.reason(),
+        "gate::battery-regressed",
+        "the fixture must reach the battery refusal mapper: {refusal:?}",
+    );
     // An operator reaching this refusal mid-merge needs to know that a merge is
     // recorded like anything else, because the alternative they otherwise reach
     // for is bypassing the hook. The remedy names that command rather than the
@@ -407,13 +440,66 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
         summary.contains("git commit"),
         "the pre-commit refusal names how a merge is recorded: {summary}"
     );
-    let pre_commit_report = BatteryReport::decode(evidence.as_bytes()).unwrap_or_else(|error| {
-        panic!("pre-commit refusal carries a canonical report: {error}; evidence={evidence:?}")
-    });
     assert_eq!(
-        pre_commit_report.refusal_fold().as_str(),
-        report.refusal_fold().as_str(),
-        "the commit surface renders the same complete failure fold as the canonical report",
+        evidence,
+        fold.as_str(),
+        "the commit surface carries the bounded projection of the canonical report",
+    );
+    assert!(
+        evidence.contains("gate=file-shape state=failed"),
+        "{evidence}"
+    );
+    assert!(
+        evidence.contains("full-evidence: cargo xtask gate file-shape"),
+        "{evidence}",
+    );
+    assert!(
+        evidence.contains("metric=file.lines")
+            && evidence.contains("value=2001")
+            && evidence.contains("base_limit=")
+            && evidence.contains("active_limit="),
+        "the refusal lost the concrete measurement and allowed bound: {evidence}",
+    );
+    assert!(
+        evidence.contains("omitted_arms=")
+            && evidence.contains("omitted_findings=")
+            && !evidence.contains("omitted_findings=0"),
+        "the bounded refusal lost truncation and omission accounting: {evidence}",
+    );
+    let admitted = report
+        .results()
+        .iter()
+        .find(|result| result.state().admits())
+        .expect("the oversized fixture retains at least one admitting arm");
+    assert!(
+        !evidence.contains(&format!(
+            "arm position={} gate={} state=",
+            admitted.position(),
+            admitted.gate_id(),
+        )),
+        "passing-arm evidence leaked into the refusal: {evidence}",
+    );
+    assert!(
+        pre_commit.err.len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES * 2 + 2_048,
+        "typed JSON refusal is not structurally bounded: {} bytes",
+        pre_commit.err.len(),
+    );
+    let pre_commit_text = invoke_with_path(
+        &["gate", "pre-commit"],
+        repository.path(),
+        Some(tripwires.path()),
+    );
+    assert_eq!(pre_commit_text.code, Some(REFUSAL_EXIT));
+    assert!(pre_commit_text.out.is_empty());
+    let text = std::str::from_utf8(&pre_commit_text.err).expect("text refusal is UTF-8");
+    assert!(
+        text.starts_with(evidence.trim_end_matches('\n')),
+        "text and JSON forms diverged: {text}",
+    );
+    assert!(
+        pre_commit_text.err.len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES + 1_024,
+        "text refusal is not structurally bounded: {} bytes",
+        pre_commit_text.err.len(),
     );
     let receipt = receipt_body(&invoke_with_path(
         &["gate", "receipt"],
@@ -853,6 +939,19 @@ impl GateRepository {
             source.push('\n');
         }
         fs::write(self.path().join("src/lib.rs"), source).expect("write fixture source");
+    }
+
+    fn write_markdown_case_mismatches(&self, count: usize) {
+        fs::create_dir_all(self.path().join("docs")).expect("create fixture docs directory");
+        fs::write(self.path().join("docs/target.md"), "# Exact target\n")
+            .expect("write exact Markdown target");
+        for index in 0..count {
+            fs::write(
+                self.path().join(format!("docs/case-{index}.md")),
+                format!("[{index}](Target.md)\n"),
+            )
+            .expect("write Markdown mismatch fixture");
+        }
     }
 
     fn write_selected_test(&self, marker: &Path) {
