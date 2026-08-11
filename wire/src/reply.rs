@@ -725,11 +725,12 @@ pub enum Refusal {
         /// Complete invocation-contract statement.
         contract: String,
     },
-    /// A gate refused with authoritative evidence that must precede its summary.
+    /// A gate refused with operator-facing evidence that precedes its summary.
     Evidence {
         /// Stable machine reason.
         reason: String,
-        /// Complete gate evidence.
+        /// Immediate diagnostic evidence. A bounded projection may name an
+        /// artifact path that retains complete authoritative detail.
         evidence: String,
         /// Human summary following the evidence.
         summary: String,
