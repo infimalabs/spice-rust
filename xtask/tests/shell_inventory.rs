@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,30 +20,14 @@ const PORTED_SHELL: [&str; 4] = [
 #[test]
 fn every_tracked_shell_file_has_one_checked_disposition() {
     let root = workspace_root();
-    let output = Command::new("git")
-        .args(["ls-files", "-z", "--", "*.sh"])
-        .current_dir(&root)
-        .output()
-        .expect("Git lists tracked shell files");
-    assert!(
-        output.status.success(),
-        "git ls-files failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let tracked = output
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .map(|path| String::from_utf8(path.to_vec()).expect("tracked shell path is UTF-8"))
-        .filter(|path| root.join(path).is_file())
-        .collect::<BTreeSet<_>>();
+    let tracked = shell_files(&root);
     let expected = LIVE_SHELL_GLUE
         .into_iter()
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
     assert_eq!(
         tracked, expected,
-        "the shell inventory must change with the Git index"
+        "the shell inventory must change with the selected source tree"
     );
 
     let inventory = fs::read_to_string(root.join("SHELL.md")).expect("read shell inventory");
@@ -71,6 +56,60 @@ fn every_tracked_shell_file_has_one_checked_disposition() {
             !root.join(path).exists(),
             "ported shell path still exists: {path}"
         );
+    }
+}
+
+fn shell_files(root: &Path) -> BTreeSet<String> {
+    if root.join(".git").exists() {
+        git_shell_files(root)
+    } else {
+        let mut tracked = BTreeSet::new();
+        collect_shell_files(root, root, &mut tracked);
+        tracked
+    }
+}
+
+fn git_shell_files(root: &Path) -> BTreeSet<String> {
+    let output = Command::new("git")
+        .args(["ls-files", "-z", "--", "*.sh"])
+        .current_dir(root)
+        .output()
+        .expect("Git lists tracked shell files");
+    assert!(
+        output.status.success(),
+        "git ls-files failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8(path.to_vec()).expect("tracked shell path is UTF-8"))
+        .filter(|path| root.join(path).is_file())
+        .collect()
+}
+
+fn collect_shell_files(root: &Path, directory: &Path, tracked: &mut BTreeSet<String>) {
+    for entry in fs::read_dir(directory).expect("selected source directory reads") {
+        let entry = entry.expect("selected source entry reads");
+        let path = entry.path();
+        let name = entry.file_name();
+        if path.is_dir() {
+            if name != OsStr::new(".git")
+                && name != OsStr::new("node_modules")
+                && name != OsStr::new("target")
+            {
+                collect_shell_files(root, &path, tracked);
+            }
+        } else if path.extension() == Some(OsStr::new("sh")) {
+            let relative = path
+                .strip_prefix(root)
+                .expect("walked path stays below root")
+                .to_str()
+                .expect("shell path is UTF-8")
+                .to_owned();
+            tracked.insert(relative);
+        }
     }
 }
 
