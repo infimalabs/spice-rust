@@ -11,6 +11,7 @@ use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricKey, Me
 pub struct GateFinding {
     identity: Digest,
     gate: String,
+    authority: String,
     state: String,
     severity: String,
     locus: String,
@@ -30,6 +31,12 @@ impl GateFinding {
     #[must_use]
     pub fn gate(&self) -> &str {
         &self.gate
+    }
+
+    /// Canonical declaration whose authority produced the evidence.
+    #[must_use]
+    pub fn authority(&self) -> &str {
+        &self.authority
     }
 
     /// Terminal state that made the finding non-admitting.
@@ -136,20 +143,21 @@ fn project_result(result: &BatteryArmResult) -> Vec<GateFinding> {
 fn arm_finding(result: &BatteryArmResult) -> GateFinding {
     let state = result.state().as_str().to_owned();
     let gate = result.gate_id().to_string();
+    let authority = result.declaration().to_owned();
     let locus = format!("gate={gate}");
     let title = format!("Gate finding: {gate} {state}");
     let description = format!(
         concat!(
             "Gate finding identity: {identity}\n",
             "Gate: {gate}\n",
-            "Declaration: {declaration}\n",
+            "Affected authority: {authority}\n",
             "State: {state}\n",
             "Locus: {locus}\n",
             "Reason: {reason}"
         ),
         identity = finding_identity(result, FindingScope::Arm),
         gate = gate.as_str(),
-        declaration = result.declaration(),
+        authority = authority.as_str(),
         state = state.as_str(),
         locus = locus.as_str(),
         reason = result.reason()
@@ -160,6 +168,7 @@ fn arm_finding(result: &BatteryArmResult) -> GateFinding {
         severity: severity(result.state()).to_owned(),
         identity,
         gate,
+        authority,
         state,
         locus,
         title,
@@ -171,6 +180,7 @@ fn metric_finding(result: &BatteryArmResult, metric: &MetricEvidence) -> GateFin
     let terminal = metric_terminal(metric);
     let state = terminal.as_str().to_owned();
     let gate = result.gate_id().to_string();
+    let authority = result.declaration().to_owned();
     let metric_name = metric.metric().as_str().to_owned();
     let key = metric_key(metric.key());
     let locus = format!("gate={gate} metric={metric_name} key={key}");
@@ -186,7 +196,7 @@ fn metric_finding(result: &BatteryArmResult, metric: &MetricEvidence) -> GateFin
         concat!(
             "Gate finding identity: {identity}\n",
             "Gate: {gate}\n",
-            "Declaration: {declaration}\n",
+            "Affected authority: {authority}\n",
             "Metric: {metric_name}\n",
             "State: {state}\n",
             "Locus: {locus}\n",
@@ -194,7 +204,7 @@ fn metric_finding(result: &BatteryArmResult, metric: &MetricEvidence) -> GateFin
         ),
         identity = identity,
         gate = gate.as_str(),
-        declaration = result.declaration(),
+        authority = authority.as_str(),
         metric_name = metric_name.as_str(),
         state = state.as_str(),
         locus = locus.as_str(),
@@ -206,6 +216,7 @@ fn metric_finding(result: &BatteryArmResult, metric: &MetricEvidence) -> GateFin
         severity: severity(terminal).to_owned(),
         identity,
         gate,
+        authority,
         state,
         locus,
         title,

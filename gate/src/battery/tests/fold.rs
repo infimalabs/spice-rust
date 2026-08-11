@@ -166,6 +166,12 @@ fn gate_findings_project_every_non_admitting_metric_key_once() {
         .map(|finding| finding.identity().clone())
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(identities.len(), findings.len());
+    assert!(findings.iter().all(|finding| {
+        !finding.authority().is_empty()
+            && finding
+                .description()
+                .contains(&format!("Affected authority: {}", finding.authority()))
+    }));
     assert!(findings.iter().any(|finding| {
         finding.locus().contains("metric=file.lines")
             && finding.description().contains("Value: 201")

@@ -79,6 +79,22 @@ stable checkpoint. The four surfaces have distinct jobs:
 | Full verifier | Immediately before handoff or task completion, after package/seam checks are clean. | `cargo xtask verify`. Runs the unchanged 13-action repository completion graph; no targeted or package result substitutes for it. |
 | Study | You are explicitly investigating suite architecture, mutation reach, or redundant coverage. These can be expensive and are not ordinary edit feedback. | `cargo xtask gate suite-seam`, `cargo xtask gate mutation-coverage`, or `cargo xtask gate test-subsumption`. Keep their exhaustive inventories out of the commit common path. |
 
+When an explicit study needs durable repair work, run
+`spice gate findings INSTRUMENT` (or add `--at REV` for one committed source).
+The command publishes the canonical focused report, stable finding identity,
+severity, affected gate declaration, locus, and evidence into deferred
+`gate.findings` tasks. A later report from the same instrument updates changed
+evidence in place and reuses byte-identical evidence without a revision. An
+exact rerun marks absent identities recoverable, but advances only the repair
+task actively claimed by the reporting lane. Recovery finishes `todo` and
+enters `review`; a reviewer claims that phase and repeats the exact report to
+close it. Wake and claim additional recovered tasks, then settle them one at a
+time.
+Findings from another instrument are outside that reconciliation boundary.
+Recurrence after completion creates a successor linked to the prior repair,
+preserving an append-only and recoverable history rather than reopening or
+overwriting it.
+
 Use that boundary in this order:
 
 1. Inspect `git status --short`, identify the owning crate and boundary, and
