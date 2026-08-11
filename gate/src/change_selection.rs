@@ -471,10 +471,15 @@ fn exhaustive_authority(path: &str) -> bool {
             | "gate/src/test_evidence.rs"
             | "gate/src/workspace_tests.rs"
             | "spice/src/change_gate.rs"
+            | "spice/src/cli.rs"
+            | "spice/src/cli/contracts.rs"
+            | "spice/src/cli/mounts.rs"
+            | "spice/src/cli/syntax.rs"
             | "spice/src/gate.rs"
             | "spice/src/gate_command.rs"
             | "spice/src/install/git-hooks/pre-commit"
             | "spice/src/lib.rs"
+            | "spice/src/main.rs"
             | "xtask/src/lib.rs"
             | "xtask/src/main.rs"
     ) || path.starts_with("gate/src/workspace_tests/")
@@ -646,11 +651,16 @@ mod tests {
             "gate/src/workspace_tests/selection.rs",
             "gate/src/workspace_tests/source_reach.rs",
             "spice/src/change_gate.rs",
+            "spice/src/cli.rs",
+            "spice/src/cli/contracts.rs",
+            "spice/src/cli/mounts.rs",
+            "spice/src/cli/syntax.rs",
             "spice/src/gate.rs",
             "spice/src/gate_command.rs",
             "spice/src/gate_command/pre_commit.rs",
             "spice/src/install/git-hooks/pre-commit",
             "spice/src/lib.rs",
+            "spice/src/main.rs",
             "xtask/src/lib.rs",
             "xtask/src/main.rs",
         ] {
