@@ -68,6 +68,154 @@ where
     S: Into<OsString>,
     P: Into<OsString>,
 {
+    let spec = bounded_process_spec(
+        label,
+        program,
+        arguments,
+        cwd,
+        cancellation,
+        cargo_jobs,
+        overrides,
+        bounds,
+    )?;
+    let outcome = sill::spawn(spec)
+        .map_err(RunError::Launch)?
+        .wait()
+        .map_err(|error| RunError::Cleanup(error.to_string()))?;
+    command_run_from_outcome(label, &outcome)
+}
+
+#[derive(Debug)]
+enum StreamingRunError {
+    Process(RunError),
+    Output(io::Error),
+}
+
+#[derive(Debug)]
+struct LiveProgressObserver {
+    records: mpsc::SyncSender<Vec<u8>>,
+}
+
+impl RecordObserver for LiveProgressObserver {
+    fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
+        if is_live_progress_record(record.bytes()) {
+            self.records
+                .send(record.bytes().to_vec())
+                .map_err(|error| ObserveError::new(error.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the streaming process boundary retains the ordinary rim plus its explicit sink"
+)]
+fn run_bounded_process_streaming<I, S, P>(
+    label: &str,
+    program: P,
+    arguments: I,
+    cwd: &Path,
+    cancellation: &CancellationToken,
+    cargo_jobs: Option<usize>,
+    overrides: &[(&str, &OsStr)],
+    bounds: ProcessBounds,
+    output: &mut impl Write,
+) -> Result<CommandRun, StreamingRunError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    P: Into<OsString>,
+{
+    let spec = bounded_process_spec(
+        label,
+        program,
+        arguments,
+        cwd,
+        cancellation,
+        cargo_jobs,
+        overrides,
+        bounds,
+    )
+    .map_err(StreamingRunError::Process)?;
+    let (records, received) = mpsc::sync_channel(FULL_VERIFIER_LIVE_QUEUE_CAPACITY);
+    let observation = Observation::new(
+        OutputStream::Stdout,
+        FULL_VERIFIER_LIVE_FRAME_LIMIT,
+        FULL_VERIFIER_LIVE_QUEUE_CAPACITY,
+        Arc::new(LiveProgressObserver { records }),
+    )
+    .map_err(|error| {
+        StreamingRunError::Process(RunError::Launch(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            error.to_string(),
+        )))
+    })?;
+    let mut running = sill::spawn_observed(spec, observation)
+        .map_err(RunError::Launch)
+        .map_err(StreamingRunError::Process)?;
+
+    let outcome = loop {
+        if let Err(error) = drain_live_progress(&received, output) {
+            cancellation.cancel();
+            drop(received);
+            let _cleanup = running.wait();
+            return Err(StreamingRunError::Output(error));
+        }
+        if cancellation.is_cancelled() || running.runtime_remaining().is_zero() {
+            break running
+                .wait()
+                .map_err(|error| RunError::Cleanup(error.to_string()))
+                .map_err(StreamingRunError::Process)?;
+        }
+        let observation = FULL_VERIFIER_LIVE_POLL.min(running.runtime_remaining());
+        match running
+            .wait_for(observation)
+            .map_err(|error| RunError::Cleanup(error.to_string()))
+            .map_err(StreamingRunError::Process)?
+        {
+            WaitStep::Exited(outcome) => break outcome,
+            WaitStep::Running(next) => running = *next,
+        }
+    };
+    drain_live_progress(&received, output).map_err(StreamingRunError::Output)?;
+    command_run_from_outcome(label, &outcome).map_err(StreamingRunError::Process)
+}
+
+fn drain_live_progress(
+    records: &mpsc::Receiver<Vec<u8>>,
+    output: &mut impl Write,
+) -> io::Result<()> {
+    let mut wrote = false;
+    while let Ok(record) = records.try_recv() {
+        output.write_all(&record)?;
+        wrote = true;
+    }
+    if wrote {
+        output.flush()?;
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the process specification binds every authority at one construction point"
+)]
+fn bounded_process_spec<I, S, P>(
+    label: &str,
+    program: P,
+    arguments: I,
+    cwd: &Path,
+    cancellation: &CancellationToken,
+    cargo_jobs: Option<usize>,
+    overrides: &[(&str, &OsStr)],
+    bounds: ProcessBounds,
+) -> Result<Spec, RunError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    P: Into<OsString>,
+{
     let mut environment = ambient_environment()?
         .entries()
         .iter()
@@ -106,7 +254,7 @@ where
             error.to_string(),
         ))
     })?;
-    let spec = Spec {
+    Ok(Spec {
         argv: Argv::new(program, arguments).map_err(|error| {
             RunError::Launch(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -129,11 +277,18 @@ where
         ),
         redaction: Redaction::None,
         grace: bounds.grace,
-    };
-    let outcome = sill::spawn(spec)
-        .map_err(RunError::Launch)?
-        .wait()
-        .map_err(|error| RunError::Cleanup(error.to_string()))?;
+    })
+}
+
+fn command_run_from_outcome(
+    label: &str,
+    outcome: &sill::WaitOutcome,
+) -> Result<CommandRun, RunError> {
+    if let Some(failure) = outcome.observation_failure() {
+        return Err(RunError::Cleanup(format!(
+            "{label} live output observation failed: {failure}"
+        )));
+    }
     if !outcome.outputs_drained() {
         return Err(RunError::Cleanup(format!(
             "{label} output did not drain before cleanup"

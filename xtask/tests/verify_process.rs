@@ -2,10 +2,14 @@
 
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use gate::metrics::{EvidenceState, MetricId, MetricKey};
 use gate::{ArmEvidence, BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryArmResult, BatteryReport, GateId};
@@ -110,6 +114,112 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
 
     assert_bounded_refusal(&output, &refused_result);
     assert_eq!(selected_result.gate_id(), GateId::EnvNameLedger);
+}
+
+#[test]
+fn verifier_streams_progress_before_exit_and_emits_every_final_byte_once() {
+    let fixture = Fixture::new();
+    let programs = install_full_verifier_programs(&fixture);
+    let entered = fixture.root.join("streaming-rustfmt-entered");
+    let release = fixture.root.join("streaming-rustfmt-release");
+    fs::remove_file(programs.directory.join("rustfmt"))
+        .expect("remove the real rustfmt fixture symlink");
+    executable(
+        &programs.directory.join("rustfmt"),
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)'\n",
+                "  exit 0\n",
+                "fi\n",
+                "printf 'entered\\n' > '{}'\n",
+                "attempt=0\n",
+                "while [ ! -e '{}' ]; do\n",
+                "  if [ \"$attempt\" -ge 500 ]; then exit 95; fi\n",
+                "  attempt=$((attempt + 1))\n",
+                "  /bin/sleep 0.01\n",
+                "done\n",
+                "printf 'fixture-action-output\\n'\n",
+                "exit 0\n",
+            ),
+            entered.display(),
+            release.display(),
+        ),
+    );
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("verify")
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, &programs.directory)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("launch verifier with observable output pipes");
+    let stdout = child.stdout.take().expect("verifier stdout is piped");
+    let stderr = child.stderr.take().expect("verifier stderr is piped");
+    let (first_record, observed_first_record) = mpsc::sync_channel(1);
+    let stdout_reader = thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut first = Vec::new();
+        reader
+            .read_until(b'\n', &mut first)
+            .expect("read first live verifier record");
+        first_record
+            .send(first.clone())
+            .expect("publish first live verifier record");
+        let mut complete = first;
+        reader
+            .read_to_end(&mut complete)
+            .expect("drain complete verifier stdout");
+        complete
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut complete = Vec::new();
+        BufReader::new(stderr)
+            .read_to_end(&mut complete)
+            .expect("drain complete verifier stderr");
+        complete
+    });
+
+    let first = observed_first_record
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the scheduler record is visible before the held action exits");
+    wait_for_file(&entered);
+    let was_running = child
+        .try_wait()
+        .expect("observe held verifier process")
+        .is_none();
+    fs::write(&release, b"release\n").expect("release the held formatter action");
+    let status = child.wait().expect("wait for streamed verifier completion");
+    let stdout = stdout_reader.join().expect("stdout reader joins");
+    let stderr = stderr_reader.join().expect("stderr reader joins");
+    let first = String::from_utf8(first).expect("first verifier record is UTF-8");
+    let stdout = String::from_utf8(stdout).expect("complete verifier output is UTF-8");
+
+    assert!(
+        first.starts_with("[verify] scheduler workers="),
+        "unexpected first live record: {first:?}"
+    );
+    assert!(
+        was_running,
+        "the first record was buffered until process exit"
+    );
+    assert!(
+        status.success(),
+        "streamed verifier failed: stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&stderr)
+    );
+    assert_eq!(stdout.matches("[verify] scheduler workers=").count(), 1);
+    assert_eq!(stdout.matches("fixture-action-output").count(), 1);
+    assert_eq!(
+        stdout
+            .lines()
+            .filter(|line| line.contains("stage=terminal ordinal=13/13"))
+            .count(),
+        1,
+        "contract landing is absent or duplicated: {stdout}"
+    );
 }
 
 struct FullVerifierPrograms {
@@ -952,6 +1062,18 @@ fn install_real_rustfmt(programs: &Path) {
     );
     std::os::unix::fs::symlink(rustfmt, programs.join("rustfmt"))
         .expect("install the real rustfmt in the verifier fixture rim");
+}
+
+fn wait_for_file(path: &Path) {
+    let started = Instant::now();
+    while !path.is_file() {
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "fixture did not publish {}",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn git(root: &Path, arguments: &[&str]) {

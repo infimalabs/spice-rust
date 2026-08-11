@@ -12,9 +12,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use sill::{
-    Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment,
-    Output as SillOutput, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy,
-    StreamPolicy, WaitPolicy,
+    Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Observation,
+    ObserveError, ObservedRecord, Output as SillOutput, OutputStream, ProcessGroup, RecordObserver,
+    Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy, WaitStep,
 };
 
 use super::verify_timing::{self, Conclusion, Disposition, Stage};
@@ -89,6 +89,14 @@ const REAP_DEADLINE: Duration = Duration::from_secs(10);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 const OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
 const FULL_VERIFIER_OUTPUT_LIMIT: usize = OUTPUT_LIMIT * VERIFY_ACTIONS.len() * 2;
+/// Match the existing outer capture exactly: observation must not introduce a
+/// tighter admitted-output ceiling than the complete supervised stream.
+const FULL_VERIFIER_LIVE_FRAME_LIMIT: usize = FULL_VERIFIER_OUTPUT_LIMIT;
+/// Only short scheduler records enter this queue. The complete child stream
+/// remains independently captured by Sill under `FULL_VERIFIER_OUTPUT_LIMIT`.
+const FULL_VERIFIER_LIVE_QUEUE_CAPACITY: usize = VERIFY_ACTIONS.len() * 2;
+const FULL_VERIFIER_LIVE_RECORD_LIMIT: usize = 8 * 1024;
+const FULL_VERIFIER_LIVE_POLL: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Copy)]
 struct ProcessBounds {
@@ -248,7 +256,7 @@ pub(super) fn verify_supervised(output: &mut impl Write) -> Result<(), VerifyErr
         label: FULL_VERIFIER_LABEL,
         source,
     })?;
-    let run = run_bounded_process(
+    let run = run_bounded_process_streaming(
         FULL_VERIFIER_LABEL,
         executable,
         [OsString::from(FULL_VERIFIER_CHILD_COMMAND)],
@@ -257,7 +265,16 @@ pub(super) fn verify_supervised(output: &mut impl Write) -> Result<(), VerifyErr
         None,
         &[],
         FULL_VERIFIER_PROCESS_BOUNDS,
+        output,
     );
+    let run = match run {
+        Ok(run) => Ok(run),
+        Err(StreamingRunError::Process(error)) => Err(error),
+        Err(StreamingRunError::Output(error)) => {
+            drop(signal_guard);
+            return Err(VerifyError::Output(error));
+        }
+    };
     let result = render_supervised_verifier(run, output, interrupted.load(Ordering::Acquire));
     drop(signal_guard);
     result
@@ -281,23 +298,17 @@ fn render_supervised_verifier(
     let child = match run {
         CommandRun::Exited(child) => child,
         CommandRun::Cancelled(child) => {
-            output
-                .write_all(&child.stdout)
-                .map_err(VerifyError::Output)?;
+            write_deferred_supervisor_output(output, &child.stdout)?;
             return Err(VerifyError::Interrupted);
         }
         CommandRun::TimedOut(child) => {
-            output
-                .write_all(&child.stdout)
-                .map_err(VerifyError::Output)?;
+            write_deferred_supervisor_output(output, &child.stdout)?;
             return Err(VerifyError::TimedOut {
                 label: FULL_VERIFIER_LABEL.to_owned(),
             });
         }
     };
-    output
-        .write_all(&child.stdout)
-        .map_err(VerifyError::Output)?;
+    write_deferred_supervisor_output(output, &child.stdout)?;
     if interrupted {
         return Err(VerifyError::Interrupted);
     }
@@ -308,6 +319,22 @@ fn render_supervised_verifier(
         code: child.status.code,
         detail: String::from_utf8_lossy(&child.stderr).trim_end().to_owned(),
     })
+}
+
+fn write_deferred_supervisor_output(
+    output: &mut impl Write,
+    captured: &[u8],
+) -> Result<(), VerifyError> {
+    for record in captured.split_inclusive(|byte| *byte == b'\n') {
+        if !is_live_progress_record(record) {
+            output.write_all(record).map_err(VerifyError::Output)?;
+        }
+    }
+    output.flush().map_err(VerifyError::Output)
+}
+
+fn is_live_progress_record(record: &[u8]) -> bool {
+    record.len() <= FULL_VERIFIER_LIVE_RECORD_LIMIT && record.starts_with(b"[verify] ")
 }
 
 pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> {
