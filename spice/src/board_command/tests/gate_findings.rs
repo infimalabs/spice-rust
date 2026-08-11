@@ -1,8 +1,7 @@
 use super::*;
 
-use std::ffi::OsString;
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+mod focused;
+use focused::*;
 
 // GOV-09 and GOV-45..GOV-51 are exercised here through CASES 104 and 250..256:
 // explicit request only, exact finding-to-task filing, stable identity reuse,
@@ -21,7 +20,7 @@ fn gate_findings_empty_dispatch_creates_no_board_work() {
         format!(
             concat!(
                 "gate findings instrument=file-shape state=clean report={} ",
-                "findings=0 created=0 reused=0"
+                "findings=0 created=0 updated=0 reused=0 advanced=0 cleared=0 recovery_pending=0"
             ),
             report
         )
@@ -38,7 +37,7 @@ fn gate_findings_file_exact_deferred_tasks() {
     let report = dispatch.body.report.clone();
     let answer = assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &dispatch));
 
-    assert!(text(answer).contains("findings=2 created=2 reused=0"));
+    assert!(text(answer).contains("findings=2 created=2 updated=0 reused=0 advanced=0 cleared=0"));
     let board = gate_board(&bus, epoch, Actor::Operator);
     let tasks = gate_tasks(&board);
     assert_eq!(tasks.len(), dispatch.findings.len());
@@ -64,6 +63,12 @@ fn gate_findings_file_exact_deferred_tasks() {
         );
         let tag = finding_tag(finding);
         assert!(task.statement.body.tags.contains(&tag));
+        assert!(
+            task.statement
+                .body
+                .tags
+                .contains(&"gate-instrument:file-shape".to_owned())
+        );
         assert_eq!(task.statement.body.acceptance, finding.acceptance);
         let description = task
             .statement
@@ -75,6 +80,7 @@ fn gate_findings_file_exact_deferred_tasks() {
             finding.description.as_str(),
             &format!("Finding identity: {}", finding.identity),
             &format!("Severity: {}", finding.severity),
+            &format!("Affected authority: {}", finding.authority),
             &format!("Locus: {}", finding.locus),
             &format!("Gate report: {report}"),
         ] {
@@ -88,7 +94,7 @@ fn gate_findings_file_exact_deferred_tasks() {
 }
 
 #[test]
-fn gate_findings_reuse_one_open_task_by_identity() {
+fn gate_findings_refresh_one_open_task_by_identity() {
     // GOV-46 and GOV-47 / CASES 251 and 252.
     let (root, bus, epoch, _) = fixture("gate-findings-reuse", 1);
     let first_dispatch = focused_dispatch(&root, "first-report", &["repeat"]);
@@ -117,10 +123,304 @@ fn gate_findings_reuse_one_open_task_by_identity() {
         &second_dispatch,
     ));
 
-    assert!(text(answer).contains("findings=1 created=0 reused=1"));
+    assert!(text(answer).contains("findings=1 created=0 updated=1 reused=0 advanced=0 cleared=0"));
     let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].statement.body.handle, first);
+    let description = tasks[0]
+        .statement
+        .body
+        .description
+        .as_deref()
+        .expect("refreshed evidence description");
+    assert!(description.contains(&second_dispatch.body.report.to_string()));
+    assert!(!description.contains(&first_dispatch.body.report.to_string()));
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_reuse_byte_identical_open_evidence_without_a_revision() {
+    let (root, bus, epoch, _) = fixture("gate-findings-idempotent", 1);
+    let dispatch = focused_dispatch(&root, "same-report", &["same"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &dispatch));
+    let first = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0].clone();
+
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &dispatch));
+
+    assert!(text(answer).contains("findings=1 created=0 updated=0 reused=1 advanced=0 cleared=0"));
+    let second = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0].clone();
+    assert_eq!(second.statement, first.statement);
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_forward_migrate_legacy_open_task_on_redispatch() {
+    let (root, bus, epoch, _) = fixture("gate-findings-forward-migration", 1);
+    let first = focused_dispatch(&root, "legacy-first", &["legacy"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &first));
+    let task = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
+        .statement
+        .body
+        .handle
+        .clone();
+    revise_gate_task(&bus, &task, |statement| {
+        statement
+            .tags
+            .retain(|tag| !tag.starts_with("gate-instrument:"));
+    });
+    let second = focused_dispatch(&root, "legacy-second", &["legacy"]);
+
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &second));
+
+    assert!(text(answer).contains("findings=1 created=0 updated=1 reused=0 advanced=0 cleared=0"));
+    let board = gate_board(&bus, epoch, Actor::Operator);
+    let migrated = task_heads(&board, &task).expect("migrated gate repair task");
+    assert!(
+        migrated
+            .statement
+            .body
+            .tags
+            .contains(&"gate-instrument:file-shape".to_owned())
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_refuse_ambiguous_legacy_task_instead_of_hiding_it() {
+    let (root, bus, epoch, _) = fixture("gate-findings-migration-refusal", 1);
+    let first = focused_dispatch(&root, "legacy-malformed", &["legacy"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &first));
+    let task = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
+        .statement
+        .body
+        .handle
+        .clone();
+    revise_gate_task(&bus, &task, |statement| {
+        statement
+            .tags
+            .retain(|tag| !tag.starts_with("gate-instrument:"));
+        statement.description = Some("legacy evidence without its owning Gate line".to_owned());
+    });
+    let clean_report = focused_dispatch(&root, "legacy-clean", &[]);
+
+    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &clean_report);
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "gate::finding-migration-required"
+    ));
+    let board = gate_board(&bus, epoch, Actor::Operator);
+    let still_open = task_heads(&board, &task).expect("refused legacy task remains visible");
+    assert_eq!(still_open.workflow.body.status, "pending");
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_clean_exact_instrument_retest_closes_open_repair() {
+    let (root, bus, epoch, seats) = fixture("gate-findings-clear", 1);
+    let finding = focused_dispatch(&root, "finding-report", &["recovered"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
+    let task = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
+        .statement
+        .body
+        .handle
+        .clone();
+    let clean_report = focused_dispatch(&root, "clean-report", &[]);
+    let lane = claim_gate_task(&bus, epoch, &seats[0], &task);
+
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, lane, &clean_report));
+
+    assert!(text(answer).contains(
+        "findings=0 created=0 updated=0 reused=0 advanced=1 cleared=0 recovery_pending=0"
+    ));
+    let review_board = gate_board(&bus, epoch, Actor::Operator);
+    let review = task_heads(&review_board, &task).expect("recovery entered review");
+    assert_eq!(review.workflow.body.status, "pending");
+    assert_eq!(review.workflow.body.phase.as_str(), "review");
+    assert_eq!(
+        review.claim.as_ref().map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Freed)
+    );
+
+    let lane = claim_gate_task(&bus, epoch, &seats[0], &task);
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, lane, &clean_report));
+    assert!(text(answer).contains(
+        "findings=0 created=0 updated=0 reused=0 advanced=0 cleared=1 recovery_pending=0"
+    ));
+    let board = gate_board(&bus, epoch, Actor::Operator);
+    let closed = task_heads(&board, &task).expect("recovered repair task remains auditable");
+    assert_eq!(closed.workflow.body.status, "completed");
+    assert!(closed.workflow.body.completion.is_some());
+    assert_eq!(closed.workflow.body.deferral, None);
+    assert_eq!(
+        closed.claim.as_ref().map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Freed)
+    );
+    let validation = task_done_validation(&bus, &task);
+    assert!(validation.contains(&clean_report.body.report.to_string()));
+    assert!(validation.contains(&finding.findings[0].identity.to_string()));
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_verified_recovery_waits_for_exact_repair_claim() {
+    let (root, bus, epoch, _) = fixture("gate-findings-recovery-pending", 1);
+    let finding = focused_dispatch(&root, "pending-finding", &["pending"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
+    let clean_report = focused_dispatch(&root, "pending-clean", &[]);
+
+    let answer = assert_committed(issue_gate_findings(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &clean_report,
+    ));
+
+    assert!(text(answer).contains("cleared=0 recovery_pending=1"));
+    let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].workflow.body.status, "pending");
+    assert!(tasks[0].workflow.body.completion.is_none());
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_recovery_cannot_mutate_another_lanes_claim() {
+    let (root, bus, epoch, seats) = fixture("gate-findings-foreign-claim", 2);
+    let finding = focused_dispatch(&root, "foreign-finding", &["foreign"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
+    let task = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
+        .statement
+        .body
+        .handle
+        .clone();
+    let owner = claim_gate_task(&bus, epoch, &seats[0], &task);
+    let observer = Actor::Lane(seats[1].lane);
+    let clean_report = focused_dispatch(&root, "foreign-clean", &[]);
+
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, observer, &clean_report));
+
+    assert!(text(answer).contains("cleared=0 recovery_pending=1"));
+    let board = gate_board(&bus, epoch, Actor::Operator);
+    let still_owned = task_heads(&board, &task).expect("foreign repair remains claimed");
+    assert_eq!(still_owned.workflow.body.status, "pending");
+    assert_eq!(
+        still_owned.claim.as_ref().map(|claim| &claim.body.actor),
+        Some(&owner)
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_partial_retest_updates_present_and_closes_absent_identity() {
+    let (root, bus, epoch, seats) = fixture("gate-findings-partial", 1);
+    let first = focused_dispatch(&root, "partial-first", &["held", "recovered"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &first));
+    let second = focused_dispatch(&root, "partial-second", &["held"]);
+    let recovered = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))
+        .into_iter()
+        .find(|task| {
+            task.statement
+                .body
+                .tags
+                .contains(&finding_tag(&first.findings[1]))
+        })
+        .expect("recovered repair task")
+        .statement
+        .body
+        .handle;
+    let lane = claim_gate_task(&bus, epoch, &seats[0], &recovered);
+
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, lane, &second));
+    assert!(text(answer).contains("findings=1 created=0 updated=1 reused=0 advanced=1 cleared=0"));
+
+    let lane = claim_gate_task(&bus, epoch, &seats[0], &recovered);
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, lane, &second));
+    assert!(text(answer).contains("findings=1 created=0 updated=0 reused=1 advanced=0 cleared=1"));
+    let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
+    assert_eq!(tasks.len(), 2);
+    let open = tasks
+        .iter()
+        .filter(|task| task.workflow.body.status == "pending")
+        .collect::<Vec<_>>();
+    let closed = tasks
+        .iter()
+        .filter(|task| task.workflow.body.status == "completed")
+        .collect::<Vec<_>>();
+    assert_eq!(open.len(), 1);
+    assert_eq!(closed.len(), 1);
+    assert!(
+        open[0]
+            .statement
+            .body
+            .tags
+            .contains(&finding_tag(&second.findings[0]))
+    );
+    assert!(
+        closed[0]
+            .statement
+            .body
+            .tags
+            .contains(&finding_tag(&first.findings[1]))
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_recovery_never_crosses_instrument_authority() {
+    let (root, bus, epoch, seats) = fixture("gate-findings-instrument-scope", 1);
+    let complexity = finding("complexity-standing");
+    assert_committed(issue_folded_gate_findings(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "complexity-report",
+        std::slice::from_ref(&complexity),
+        gate::GateId::Complexity,
+        false,
+    ));
+    let file_shape = focused_dispatch(&root, "file-standing", &["file-standing"]);
+    assert_committed(issue_gate_findings(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &file_shape,
+    ));
+
+    let clean_file_shape = focused_dispatch(&root, "file-clean", &[]);
+    let file_task = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))
+        .into_iter()
+        .find(|task| {
+            task.statement
+                .body
+                .tags
+                .contains(&finding_tag(&file_shape.findings[0]))
+        })
+        .expect("file-shape repair task")
+        .statement
+        .body
+        .handle;
+    let lane = claim_gate_task(&bus, epoch, &seats[0], &file_task);
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, lane, &clean_file_shape));
+    assert!(text(answer).contains("advanced=1 cleared=0"));
+
+    let lane = claim_gate_task(&bus, epoch, &seats[0], &file_task);
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, lane, &clean_file_shape));
+    assert!(text(answer).contains("advanced=0 cleared=1"));
+    let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
+    let complexity_task = tasks
+        .iter()
+        .find(|task| task.statement.body.tags.contains(&finding_tag(&complexity)))
+        .expect("complexity repair remains visible");
+    assert_eq!(complexity_task.workflow.body.status, "pending");
+    assert!(
+        complexity_task
+            .statement
+            .body
+            .tags
+            .contains(&"gate-instrument:complexity".to_owned())
+    );
     clean(&root, bus);
 }
 
@@ -155,7 +455,7 @@ fn gate_findings_recur_after_completion_with_predecessor_note() {
         &new_dispatch,
     ));
 
-    assert!(text(answer).contains("findings=1 created=1 reused=0"));
+    assert!(text(answer).contains("findings=1 created=1 updated=0 reused=0 advanced=0 cleared=0"));
     let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
     assert_eq!(tasks.len(), 2);
     let successor = tasks
@@ -294,131 +594,6 @@ fn gate_findings_refuse_fold_state_disagreement_before_board_work() {
     clean(&root, bus);
 }
 
-#[derive(Clone)]
-struct FocusedDispatch {
-    body: GateFindings,
-    findings: Vec<FindingRow>,
-}
-
-fn focused_dispatch(root: &Path, marker: &str, finding_names: &[&str]) -> FocusedDispatch {
-    let report = focused_file_shape_report(root, marker, finding_names);
-    let findings = report
-        .findings()
-        .into_iter()
-        .map(FindingRow::from)
-        .collect::<Vec<_>>();
-    assert_eq!(findings.len(), finding_names.len());
-    assert_eq!(report.admits(), findings.is_empty());
-    let (report_digest, evidence) = crate::gate_command::focused_report_evidence(&report)
-        .unwrap_or_else(|outcome| {
-            panic!("focused report did not cross the CLI evidence encoder: {outcome:?}")
-        });
-    assert_eq!(
-        gate::FocusedArmReport::decode(evidence.as_bytes())
-            .expect("CLI evidence is a canonical focused report"),
-        report
-    );
-    FocusedDispatch {
-        body: GateFindings {
-            report: report_digest,
-            evidence,
-        },
-        findings,
-    }
-}
-
-fn focused_file_shape_report(
-    root: &Path,
-    marker: &str,
-    finding_names: &[&str],
-) -> gate::FocusedArmReport {
-    static NEXT_REPORT: AtomicU64 = AtomicU64::new(1);
-    let repository = root.join(format!(
-        "focused-report-{}",
-        NEXT_REPORT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(repository.join("src")).expect("focused repository directories exist");
-    gate_git(&repository, &["init", "-q"]);
-    gate_git(
-        &repository,
-        &["config", "user.email", "gate-findings@example.invalid"],
-    );
-    gate_git(
-        &repository,
-        &["config", "user.name", "Gate Findings Fixture"],
-    );
-
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("spice crate has a workspace parent");
-    for document in ["spice-rust.toml", "baseline.toml"] {
-        fs::copy(workspace.join(document), repository.join(document))
-            .unwrap_or_else(|error| panic!("copy focused fixture {document}: {error}"));
-    }
-    fs::write(repository.join("src/base.rs"), "pub fn base() {}\n")
-        .expect("write focused fixture baseline source");
-    gate_git(&repository, &["add", "--all"]);
-    gate_git(&repository, &["commit", "-qm", "focused report baseline"]);
-
-    let marker_path = "src/report_marker.rs";
-    fs::write(
-        repository.join(marker_path),
-        format!("pub const REPORT_MARKER: &str = {marker:?};\n"),
-    )
-    .expect("write focused report marker");
-    let mut changes = vec![marker_path.to_owned()];
-    let oversized = "//\n".repeat(2_000);
-    for name in finding_names {
-        let path = format!("src/{name}.rs");
-        fs::write(repository.join(&path), &oversized)
-            .unwrap_or_else(|error| panic!("write focused finding {path}: {error}"));
-        changes.push(path);
-    }
-    changes.sort();
-    gate_git(&repository, &["add", "--all"]);
-
-    let rim = gate::RimCapture::new(
-        repository.clone(),
-        Some(OsString::from("/usr/bin:/bin")),
-        changes,
-    )
-    .expect("focused fixture rim is absolute");
-    let actor = gate::ActorCapture::Acting {
-        actor: "gate-findings-fixture".to_owned(),
-        bound_claims: Vec::new(),
-    };
-    let mut capture = gate::BatteryCapture::capture_arm(
-        &repository,
-        &gate::Selector::staged(),
-        gate::ClaimCapture::Idle,
-        actor,
-        rim,
-        gate::HygieneConfiguration::current(),
-        gate::GateId::FileShape,
-    )
-    .expect("capture production focused file-shape report");
-    let report = capture
-        .execute_arm_report(gate::GateId::FileShape)
-        .expect("execute production focused file-shape report");
-    assert_eq!(report.gate_id(), gate::GateId::FileShape);
-    report
-}
-
-fn gate_git(root: &Path, arguments: &[&str]) {
-    let output = Command::new("/usr/bin/git")
-        .args(arguments)
-        .current_dir(root)
-        .env_clear()
-        .env("HOME", root)
-        .output()
-        .unwrap_or_else(|error| panic!("run focused fixture Git {arguments:?}: {error}"));
-    assert!(
-        output.status.success(),
-        "focused fixture Git {arguments:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 fn issue_gate_findings(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -443,6 +618,52 @@ fn issue_gate_findings_raw(
         &board::NextConfig::default(),
     )
     .expect("gate finding dispatch is handled")
+}
+
+fn issue_gate_board_command<B: serde::Serialize>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    kind: CommandKind,
+    expected: Vec<Witness>,
+    body: &B,
+) -> Outcome<CommandAnswer> {
+    let command = fixture_command(epoch, actor, kind, expected, body);
+    dispatch_with_repository(
+        bus,
+        &command,
+        None,
+        &gate_projects(),
+        &board::NextConfig::default(),
+    )
+    .expect("gate board command is handled")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn issue_folded_gate_findings(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    marker: &str,
+    findings: &[FindingRow],
+    instrument: gate::GateId,
+    admits: bool,
+) -> Outcome<CommandAnswer> {
+    let body = GateFindings {
+        report: digest(marker),
+        evidence: "{}".to_owned(),
+    };
+    let command = fixture_command(epoch, actor, CommandKind::GateFindings, Vec::new(), &body);
+    gate_findings_folded(
+        bus,
+        &command,
+        &body,
+        findings,
+        instrument,
+        admits,
+        &gate_projects(),
+        &board::NextConfig::default(),
+    )
 }
 
 fn gate_board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswer {
@@ -497,6 +718,7 @@ fn finding(name: &str) -> FindingRow {
     FindingRow {
         identity: digest(name),
         severity: "high".to_owned(),
+        authority: "file shape declaration fixture".to_owned(),
         locus: format!("gate=file-shape metric=file.lines key=path=\"src/{name}.rs\""),
         title: format!("Gate finding {name}"),
         description: format!("Finding {name} exceeded its bound"),
@@ -517,6 +739,111 @@ fn text(answer: CommandAnswer) -> String {
         panic!("expected text answer: {answer:?}");
     };
     text
+}
+
+fn task_done_validation(bus: &Bus, task: &TaskHandle) -> String {
+    let born = task
+        .born()
+        .expect("gate finding handle carries its inception stamp");
+    let snapshot = bus
+        .fact_snapshot()
+        .expect("gate finding completion facts read");
+    let fact = snapshot
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact.kind() == wire::FactKind::TaskDone
+                && fact
+                    .fact
+                    .body()
+                    .get("task")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(born.as_str())
+        })
+        .expect("recovered task carries a typed completion fact");
+    assert!(
+        fact.fact.body().get("source").is_some(),
+        "live recovery completion must carry its proven transcript boundary"
+    );
+    fact.fact
+        .body()
+        .get("validation")
+        .and_then(serde_json::Value::as_str)
+        .expect("recovered task carries typed completion validation")
+        .to_owned()
+}
+
+fn revise_gate_task(bus: &Bus, task: &TaskHandle, revise: impl FnOnce(&mut TaskHead)) {
+    let snapshot = bus.task_snapshot().expect("gate task statement reads");
+    let current = snapshot
+        .tasks()
+        .iter()
+        .find(|heads| {
+            task.born()
+                .is_ok_and(|born| heads.statement().body().born == born)
+        })
+        .expect("gate task exists before legacy revision");
+    let born = current.statement().body().born.clone();
+    let mut statement = current.statement().body().clone();
+    revise(&mut statement);
+    let at = Instant::new(jiff::Timestamp::now()).expect("legacy revision instant");
+    let origin = format!("task:{task}").parse().expect("gate task origin");
+    let revision = u32::try_from(statement.revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::CommandDoor);
+    let edited = write
+        .fact(
+            body::TaskEdited {
+                task: born,
+                revision,
+            },
+            FactCause::Root,
+        )
+        .expect("legacy fixture edit builds");
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
+    assert!(matches!(
+        bus.commit(write).expect("legacy fixture edit commits"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+fn claim_gate_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) -> Actor {
+    let deferred = gate_board(bus, epoch, Actor::Operator);
+    let heads = task_heads(&deferred, task).expect("deferred gate repair task");
+    if heads.workflow.body.deferral.is_some() {
+        assert_committed(issue_gate_board_command(
+            bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskWake,
+            vec![workflow_witness(heads), deferral_witness(heads)],
+            &TaskRef { task: task.clone() },
+        ));
+    }
+
+    let lane = Actor::Lane(seat.lane);
+    let ready = gate_board(bus, epoch, lane.clone());
+    let heads = task_heads(&ready, task).expect("woken gate repair task");
+    let rule: Name = "capture".parse().expect("capture possession rule");
+    assert_committed(issue_gate_board_command(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility { rule: rule.clone() },
+            residency(&ready, seat),
+        ],
+        &ClaimWin { rule },
+    ));
+    lane
 }
 
 fn complete(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {

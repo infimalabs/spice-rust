@@ -1,14 +1,20 @@
 use super::*;
 
+mod migration;
+use migration::{current_open_instrument_tasks, open_instrument_findings, open_instrument_tasks};
+
 const GATE_FINDINGS_PROJECT: &str = "gate.findings";
 const GATE_FINDING_TAG: &str = "gate-finding";
 const GATE_FINDING_TAG_PREFIX: &str = "gate-finding:";
+const GATE_INSTRUMENT_TAG_PREFIX: &str = "gate-instrument:";
+const GATE_SEVERITY_TAG_PREFIX: &str = "gate-severity:";
 const GATE_FINDING_DEFER_UNTIL: &str = "2099-12-31T23:59:59.999Z";
 
 #[derive(Clone)]
 pub(in crate::board_command) struct FindingRow {
     pub(in crate::board_command) identity: Digest,
     pub(in crate::board_command) severity: String,
+    pub(in crate::board_command) authority: String,
     pub(in crate::board_command) locus: String,
     pub(in crate::board_command) title: String,
     pub(in crate::board_command) description: String,
@@ -20,6 +26,7 @@ impl From<gate::GateFinding> for FindingRow {
         Self {
             identity: finding.identity().clone(),
             severity: finding.severity().to_owned(),
+            authority: finding.authority().to_owned(),
             locus: finding.locus().to_owned(),
             title: finding.title().to_owned(),
             description: finding.description().to_owned(),
@@ -39,12 +46,36 @@ struct GateFindingPlan {
 enum GateFindingAction {
     Reused {
         task: wire::TaskStamp,
+        heads: GateFindingHeads,
+    },
+    Updated {
+        task: wire::TaskStamp,
+        heads: GateFindingHeads,
+        statement: TaskHead,
     },
     Created {
         task: wire::TaskStamp,
         finding: FindingRow,
         predecessor: Option<TaskHandle>,
     },
+    Recovered {
+        task: wire::TaskStamp,
+        heads: GateFindingHeads,
+        transition: board::Transition,
+        claim: ClaimHead,
+        source: body::SourceBoundary,
+    },
+    RecoveryPending {
+        task: wire::TaskStamp,
+        heads: GateFindingHeads,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct GateFindingHeads {
+    statement: Seq,
+    workflow: Seq,
+    claim: Option<Seq>,
 }
 
 pub(in crate::board_command) fn gate_findings(
@@ -84,11 +115,12 @@ pub(in crate::board_command) fn gate_findings_folded(
     if let Err(outcome) = validate_finding_fold(findings, admits) {
         return outcome;
     }
-    let prepared =
-        match prepare_finding_fold(bus, command, dispatch, findings, projects, allocation) {
-            Ok(prepared) => prepared,
-            Err(outcome) => return outcome,
-        };
+    let prepared = match prepare_finding_fold(
+        bus, command, dispatch, findings, instrument, projects, allocation,
+    ) {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
     commit_finding_fold(
         bus, command, dispatch, findings, instrument, admits, prepared,
     )
@@ -100,8 +132,14 @@ struct PreparedFindingFold {
     until: Instant,
     origin: wire::Origin,
     plans: Vec<GateFindingPlan>,
+    instrument: gate::GateId,
+    instrument_tasks: std::collections::BTreeSet<wire::TaskStamp>,
     created: usize,
+    updated: usize,
     reused: usize,
+    cleared: usize,
+    advanced: usize,
+    recovery_pending: usize,
 }
 
 fn validate_finding_fold(
@@ -134,6 +172,7 @@ fn prepare_finding_fold(
     command: &wire::AdmittedCommand,
     dispatch: &GateFindings,
     findings: &[FindingRow],
+    instrument: gate::GateId,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<PreparedFindingFold, Outcome<CommandAnswer>> {
@@ -151,20 +190,70 @@ fn prepare_finding_fold(
     let at = current_instant()?;
     let until = gate_finding_defer_until()?;
     let origin = gate_findings_origin(command.actor(), &snapshot, &dispatch.report)?;
-    let plans = plan_gate_findings(findings, &snapshot, at)?;
+    let instrument_tasks = open_instrument_tasks(&snapshot.entries, instrument)?;
+    let plans = plan_gate_findings(
+        bus,
+        findings,
+        &snapshot,
+        at,
+        instrument,
+        &dispatch.report,
+        command.actor(),
+    )?;
     let created = plans
         .iter()
         .filter(|plan| matches!(plan.action, GateFindingAction::Created { .. }))
         .count();
-    let reused = plans.len().saturating_sub(created);
+    let updated = plans
+        .iter()
+        .filter(|plan| matches!(plan.action, GateFindingAction::Updated { .. }))
+        .count();
+    let reused = plans
+        .iter()
+        .filter(|plan| matches!(plan.action, GateFindingAction::Reused { .. }))
+        .count();
+    let cleared = plans
+        .iter()
+        .filter(|plan| {
+            matches!(
+                plan.action,
+                GateFindingAction::Recovered {
+                    ref transition,
+                    ..
+                } if matches!(transition.kind(), board::TransitionKind::Complete { .. })
+            )
+        })
+        .count();
+    let advanced = plans
+        .iter()
+        .filter(|plan| {
+            matches!(
+                plan.action,
+                GateFindingAction::Recovered {
+                    ref transition,
+                    ..
+                } if matches!(transition.kind(), board::TransitionKind::Advance { .. })
+            )
+        })
+        .count();
+    let recovery_pending = plans
+        .iter()
+        .filter(|plan| matches!(plan.action, GateFindingAction::RecoveryPending { .. }))
+        .count();
     Ok(PreparedFindingFold {
         project,
         at,
         until,
         origin,
         plans,
+        instrument,
+        instrument_tasks,
         created,
+        updated,
         reused,
+        cleared,
+        advanced,
+        recovery_pending,
     })
 }
 
@@ -184,13 +273,18 @@ fn commit_finding_fold(
         prepared.at,
         Producer::CommandDoor,
     );
-    guard_gate_finding_plan(&mut write, prepared.plans.clone());
+    guard_gate_finding_plan(
+        &mut write,
+        prepared.plans.clone(),
+        prepared.instrument,
+        prepared.instrument_tasks.clone(),
+    );
     let filed = match write.fact(
         body::GateFindingsFiled {
             report: dispatch.report.clone(),
             findings: findings.len() as u32,
             created: prepared.created as u32,
-            reused: prepared.reused as u32,
+            reused: prepared.updated.saturating_add(prepared.reused) as u32,
         },
         FactCause::Root,
     ) {
@@ -198,12 +292,16 @@ fn commit_finding_fold(
         Err(error) => return store_fault("gate::findings-build", &error.to_string()),
     };
     for plan in &prepared.plans {
-        if let GateFindingAction::Created {
-            task,
-            finding,
-            predecessor,
-        } = &plan.action
-            && let Err(outcome) = write_gate_finding_task(
+        let result = match &plan.action {
+            GateFindingAction::Reused { .. } => Ok(()),
+            GateFindingAction::Updated {
+                task, statement, ..
+            } => write_gate_finding_update(&mut write, filed, task, statement),
+            GateFindingAction::Created {
+                task,
+                finding,
+                predecessor,
+            } => write_gate_finding_task(
                 &mut write,
                 filed,
                 &prepared.project,
@@ -213,19 +311,46 @@ fn commit_finding_fold(
                 &prepared.origin,
                 prepared.until,
                 &dispatch.report,
-            )
-        {
+                instrument,
+            ),
+            GateFindingAction::Recovered {
+                task,
+                transition,
+                claim,
+                source,
+                ..
+            } => write_gate_finding_recovery(
+                &mut write,
+                filed,
+                task,
+                transition,
+                claim,
+                source,
+                &dispatch.report,
+                instrument,
+                &plan.identity,
+            ),
+            GateFindingAction::RecoveryPending { .. } => Ok(()),
+        };
+        if let Err(outcome) = result {
             return outcome;
         }
     }
     let text = format!(
-        "gate findings instrument={} state={} report={} findings={} created={} reused={}",
+        concat!(
+            "gate findings instrument={} state={} report={} findings={} created={} ",
+            "updated={} reused={} advanced={} cleared={} recovery_pending={}"
+        ),
         instrument,
         if admits { "clean" } else { "findings" },
         dispatch.report,
         findings.len(),
         prepared.created,
-        prepared.reused
+        prepared.updated,
+        prepared.reused,
+        prepared.advanced,
+        prepared.cleared,
+        prepared.recovery_pending
     );
     let answer = CommandAnswer::Text(TextAnswer { text });
     if let Err(error) = write.command_result(
@@ -295,11 +420,20 @@ fn gate_findings_origin(
 }
 
 fn plan_gate_findings(
+    bus: &Bus,
     findings: &[FindingRow],
     snapshot: &ValidatedSnapshot,
     at: Instant,
+    instrument: gate::GateId,
+    report: &Digest,
+    actor: &Actor,
 ) -> Result<Vec<GateFindingPlan>, Outcome<CommandAnswer>> {
-    let mut planned = Vec::with_capacity(findings.len());
+    let open_instrument = open_instrument_findings(snapshot, instrument)?;
+    let current = findings
+        .iter()
+        .map(|finding| finding.identity.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut planned = Vec::with_capacity(findings.len().saturating_add(open_instrument.len()));
     let mut minted = std::collections::BTreeSet::new();
     for (index, finding) in findings.iter().enumerate() {
         let tag = gate_finding_tag(&finding.identity);
@@ -316,18 +450,36 @@ fn plan_gate_findings(
                 "settle duplicate open gate finding tasks before redispatching",
             ));
         }
+        let predecessor = matches
+            .iter()
+            .filter(|entry| {
+                entry.workflow().status == "completed" || entry.workflow().completion.is_some()
+            })
+            .max_by_key(|entry| entry.statement().revision)
+            .map(|entry| entry.handle().clone());
         let action = if let Some(entry) = open.first() {
-            GateFindingAction::Reused {
-                task: entry.born().clone(),
+            let statement = desired_gate_finding_statement(
+                entry,
+                finding,
+                predecessor.as_ref(),
+                report,
+                instrument,
+            );
+            let heads = gate_finding_heads(snapshot, entry)?;
+            if statement == *entry.statement() {
+                GateFindingAction::Reused {
+                    task: entry.born().clone(),
+                    heads,
+                }
+            } else {
+                require_gate_finding_mutation_owner(entry, actor)?;
+                GateFindingAction::Updated {
+                    task: entry.born().clone(),
+                    heads,
+                    statement,
+                }
             }
         } else {
-            let predecessor = matches
-                .iter()
-                .filter(|entry| {
-                    entry.workflow().status == "completed" || entry.workflow().completion.is_some()
-                })
-                .max_by_key(|entry| entry.statement().revision)
-                .map(|entry| entry.handle().clone());
             let task = mint_gate_finding_stamp(snapshot, &mut minted, at, index);
             GateFindingAction::Created {
                 task,
@@ -341,6 +493,32 @@ fn plan_gate_findings(
             action,
         });
     }
+    for (identity, entry) in open_instrument {
+        if current.contains(&identity) {
+            continue;
+        }
+        let authority = gate_finding_recovery_authority(bus, entry, actor, at)?;
+        let heads = gate_finding_heads(snapshot, entry)?;
+        let action = if let Some((claim, source, transition)) = authority {
+            GateFindingAction::Recovered {
+                task: entry.born().clone(),
+                heads,
+                transition,
+                claim,
+                source,
+            }
+        } else {
+            GateFindingAction::RecoveryPending {
+                task: entry.born().clone(),
+                heads,
+            }
+        };
+        planned.push(GateFindingPlan {
+            tag: gate_finding_tag(&identity),
+            identity,
+            action,
+        });
+    }
     Ok(planned)
 }
 
@@ -349,13 +527,124 @@ fn matching_gate_finding_tasks<'a>(snapshot: &'a ValidatedSnapshot, tag: &str) -
         .entries
         .iter()
         .filter(|entry| {
-            entry
-                .statement()
-                .tags
-                .iter()
-                .any(|candidate| candidate == tag)
+            gate_finding_task(entry)
+                && entry
+                    .statement()
+                    .tags
+                    .iter()
+                    .any(|candidate| candidate == tag)
         })
         .collect()
+}
+
+fn gate_finding_task_identity(entry: &Entry) -> Result<Digest, Outcome<CommandAnswer>> {
+    let identities = entry
+        .statement()
+        .tags
+        .iter()
+        .filter_map(|tag| tag.strip_prefix(GATE_FINDING_TAG_PREFIX))
+        .collect::<Vec<_>>();
+    let [identity] = identities.as_slice() else {
+        return Err(refusal(
+            "gate::finding-task-malformed",
+            Some(entry.handle().to_string()),
+            "keep exactly one canonical gate-finding identity tag on system-filed work",
+        ));
+    };
+    identity.parse::<Digest>().map_err(|error| {
+        refusal(
+            "gate::finding-task-malformed",
+            Some(format!("{}: {error}", entry.handle())),
+            "keep exactly one canonical gate-finding identity tag on system-filed work",
+        )
+    })
+}
+
+fn gate_finding_task(entry: &Entry) -> bool {
+    entry.statement().project == GATE_FINDINGS_PROJECT
+        && entry
+            .statement()
+            .tags
+            .iter()
+            .any(|tag| tag == GATE_FINDING_TAG)
+}
+
+fn require_gate_finding_mutation_owner(
+    entry: &Entry,
+    actor: &Actor,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if let Some(claim) = entry.claim()
+        && claim.disposition == ClaimDisposition::Active
+        && &claim.actor != actor
+    {
+        return Err(refusal(
+            "gate::finding-owned",
+            Some(format!("{} held by {}", entry.handle(), claim.actor)),
+            "rerun the exact focused instrument through the lane that owns this repair task",
+        ));
+    }
+    Ok(())
+}
+
+fn gate_finding_recovery_authority(
+    bus: &Bus,
+    entry: &Entry,
+    actor: &Actor,
+    at: Instant,
+) -> Result<Option<(ClaimHead, body::SourceBoundary, board::Transition)>, Outcome<CommandAnswer>> {
+    let Ok(active) = board::Active::admit(entry, actor, at) else {
+        return Ok(None);
+    };
+    let source = bus.source_boundary(&active.lane()).map_err(|error| {
+        store_fault(
+            "gate::finding-recovery-boundary-unreadable",
+            &error.to_string(),
+        )
+    })?;
+    let claim = entry
+        .claim()
+        .expect("active recovery authority carries a claim")
+        .clone();
+    let current = entry
+        .workflow()
+        .flow
+        .iter()
+        .position(|phase| phase == &entry.workflow().phase)
+        .expect("validated gate finding workflow contains its current phase");
+    let transition = match entry.workflow().flow.get(current + 1) {
+        Some(next) => board::Transition::advance(entry, &active, next.clone()),
+        None => board::Transition::complete(entry, &active, at),
+    }
+    .map_err(|error| {
+        refusal(
+            "gate::finding-recovery-phase-refused",
+            Some(format!("{}: {error}", entry.handle())),
+            "recover only the current claimed phase of this repair task",
+        )
+    })?;
+    Ok(Some((claim, source, transition)))
+}
+
+fn gate_finding_heads(
+    snapshot: &ValidatedSnapshot,
+    entry: &Entry,
+) -> Result<GateFindingHeads, Outcome<CommandAnswer>> {
+    let heads = snapshot
+        .answer
+        .tasks
+        .iter()
+        .find(|task| task.statement.body.born == *entry.born())
+        .ok_or_else(|| {
+            protocol_fault(
+                "gate::finding-snapshot-incoherent",
+                "validated board snapshot lost a gate finding task",
+            )
+        })?;
+    Ok(GateFindingHeads {
+        statement: heads.statement.position,
+        workflow: heads.workflow.position,
+        claim: heads.claim.as_ref().map(|claim| claim.position),
+    })
 }
 
 fn gate_finding_task_open(entry: &Entry) -> bool {
@@ -397,15 +686,12 @@ fn write_gate_finding_task(
     origin: &wire::Origin,
     until: Instant,
     report: &Digest,
+    instrument: gate::GateId,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let flow = phases(Some("todo,review"))?;
     let phase = flow[0].clone();
-    let description = gate_finding_description(finding, predecessor, report);
-    let tags = vec![
-        GATE_FINDING_TAG.to_owned(),
-        gate_finding_tag(&finding.identity),
-        format!("gate-severity:{}", finding.severity),
-    ];
+    let description = gate_finding_description(finding, predecessor, report, instrument);
+    let tags = gate_finding_tags(&[], finding, instrument);
     let added = write
         .fact(
             body::TaskAdded {
@@ -466,10 +752,20 @@ fn gate_finding_description(
     finding: &FindingRow,
     predecessor: Option<&TaskHandle>,
     report: &Digest,
+    instrument: gate::GateId,
 ) -> String {
     let mut description = format!(
-        "{}\n\nGate report: {report}\nFinding identity: {}\nSeverity: {}\nLocus: {}",
-        finding.description, finding.identity, finding.severity, finding.locus
+        concat!(
+            "{}\n\nGate report: {report}\nFinding identity: {}\n",
+            "Instrument: {instrument}\nAffected authority: {}\nSeverity: {}\nLocus: {}"
+        ),
+        finding.description,
+        finding.identity,
+        finding.authority,
+        finding.severity,
+        finding.locus,
+        report = report,
+        instrument = instrument,
     );
     if let Some(predecessor) = predecessor {
         description.push_str(&format!("\nPrevious completed task: {predecessor}"));
@@ -477,14 +773,164 @@ fn gate_finding_description(
     description
 }
 
-fn guard_gate_finding_plan(write: &mut JournalWrite, plans: Vec<GateFindingPlan>) {
+fn desired_gate_finding_statement(
+    entry: &Entry,
+    finding: &FindingRow,
+    predecessor: Option<&TaskHandle>,
+    report: &Digest,
+    instrument: gate::GateId,
+) -> TaskHead {
+    TaskHead {
+        title: finding.title.clone(),
+        description: Some(gate_finding_description(
+            finding,
+            predecessor,
+            report,
+            instrument,
+        )),
+        acceptance: finding.acceptance.clone(),
+        tags: gate_finding_tags(&entry.statement().tags, finding, instrument),
+        ..entry.statement().clone()
+    }
+}
+
+fn gate_finding_tags(
+    existing: &[String],
+    finding: &FindingRow,
+    instrument: gate::GateId,
+) -> Vec<String> {
+    let mut tags = vec![
+        GATE_FINDING_TAG.to_owned(),
+        gate_finding_tag(&finding.identity),
+        gate_instrument_tag(instrument),
+        format!("{GATE_SEVERITY_TAG_PREFIX}{}", finding.severity),
+    ];
+    tags.extend(
+        existing
+            .iter()
+            .filter(|tag| {
+                tag.as_str() != GATE_FINDING_TAG
+                    && !tag.starts_with(GATE_FINDING_TAG_PREFIX)
+                    && !tag.starts_with(GATE_INSTRUMENT_TAG_PREFIX)
+                    && !tag.starts_with(GATE_SEVERITY_TAG_PREFIX)
+            })
+            .cloned(),
+    );
+    tags
+}
+
+fn write_gate_finding_update(
+    write: &mut JournalWrite,
+    cause: PendingFact,
+    task: &wire::TaskStamp,
+    statement: &TaskHead,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let revision = u32::try_from(statement.revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    let edited = write
+        .fact(
+            body::TaskEdited {
+                task: task.clone(),
+                revision,
+            },
+            FactCause::Pending(cause),
+        )
+        .map_err(|error| store_fault("gate::finding-update-build", &error.to_string()))?;
+    let statement = statement.clone();
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_gate_finding_recovery(
+    write: &mut JournalWrite,
+    cause: PendingFact,
+    task: &wire::TaskStamp,
+    transition: &board::Transition,
+    claim: &ClaimHead,
+    source: &body::SourceBoundary,
+    report: &Digest,
+    instrument: gate::GateId,
+    identity: &Digest,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let validation =
+        format!("Focused {instrument} report {report} no longer projects gate finding {identity}.");
+    let done = write
+        .fact(
+            body::TaskDone {
+                task: task.clone(),
+                validation,
+                git: None,
+                source: source.clone(),
+            },
+            FactCause::Pending(cause),
+        )
+        .map_err(|error| store_fault("gate::finding-recovery-build", &error.to_string()))?;
+    let workflow_fact = match transition.kind() {
+        board::TransitionKind::Advance { to, .. } => write
+            .fact(
+                body::TaskPhased {
+                    task: task.clone(),
+                    phase: to.clone(),
+                },
+                FactCause::Pending(done),
+            )
+            .map_err(|error| store_fault("gate::finding-phase-build", &error.to_string()))?,
+        board::TransitionKind::Complete { .. } => done,
+    };
+    let workflow = transition.next().clone();
+    write.workflow_head(task.clone(), workflow_fact, move |_| workflow);
+    let mut claim = claim.clone();
+    claim.disposition = ClaimDisposition::Freed;
+    write.claim_head(task.clone(), done, move |fact| ClaimHead { fact, ..claim });
+    Ok(())
+}
+
+fn guard_gate_finding_plan(
+    write: &mut JournalWrite,
+    plans: Vec<GateFindingPlan>,
+    instrument: gate::GateId,
+    instrument_tasks: std::collections::BTreeSet<wire::TaskStamp>,
+) {
     write.guard(JournalGuard::new(move |read| {
         let heads = read.task_heads()?;
+        if current_open_instrument_tasks(&heads, instrument)? != instrument_tasks {
+            return Err(GuardError::refused(
+                "gate::finding-instrument-moved".to_owned(),
+            ));
+        }
         for plan in &plans {
             match &plan.action {
-                GateFindingAction::Reused { task } => {
-                    let open = current_open_gate_finding_tasks(&heads, &plan.tag);
-                    if open.len() != 1 || &open[0] != task {
+                GateFindingAction::Reused {
+                    task,
+                    heads: observed,
+                }
+                | GateFindingAction::Updated {
+                    task,
+                    heads: observed,
+                    ..
+                }
+                | GateFindingAction::Recovered {
+                    task,
+                    heads: observed,
+                    ..
+                }
+                | GateFindingAction::RecoveryPending {
+                    task,
+                    heads: observed,
+                } => {
+                    let current = heads
+                        .iter()
+                        .find(|candidate| candidate.statement().body().born == *task);
+                    if current.is_none_or(|current| {
+                        current.statement().position() != observed.statement
+                            || current.workflow().position() != observed.workflow
+                            || current.claim().map(journal::JournalHead::position) != observed.claim
+                    }) {
                         return Err(GuardError::refused(format!(
                             "gate::finding-moved:{}",
                             plan.identity
@@ -531,4 +977,8 @@ fn current_open_gate_finding_tasks(
 
 fn gate_finding_tag(identity: &Digest) -> String {
     format!("{GATE_FINDING_TAG_PREFIX}{identity}")
+}
+
+fn gate_instrument_tag(instrument: gate::GateId) -> String {
+    format!("{GATE_INSTRUMENT_TAG_PREFIX}{instrument}")
 }
