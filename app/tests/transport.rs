@@ -175,6 +175,14 @@ fn the_opening_a_session_offers_is_the_one_a_resident_admits() {
 }
 
 #[test]
+fn a_foreign_canvas_protocol_is_stopped_at_discovery() {
+    let fault = Session::admit_canvas(wire::CanvasVersion(2))
+        .expect_err("a stale browser application does not cross current Canvas DTOs");
+    assert_eq!(fault.reason, "frame::canvas-mismatch");
+    assert!(fault.detail.contains('2'), "{}", fault.detail);
+}
+
+#[test]
 fn an_opening_against_a_replaced_generation_is_rejected_by_the_resident() {
     let hello = session().hello();
 

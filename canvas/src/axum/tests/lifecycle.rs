@@ -33,6 +33,7 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     let discovery: wire::CanvasBootstrap =
         wire::decode(&response[split..]).expect("bootstrap decodes");
     assert_eq!(discovery.endpoint, format!("http://{address}"));
+    assert_eq!(discovery.canvas, wire::CanvasVersion::CURRENT);
     assert_eq!(discovery.capability, operator());
     assert_eq!(discovery.epoch, epoch());
     assert_eq!(
