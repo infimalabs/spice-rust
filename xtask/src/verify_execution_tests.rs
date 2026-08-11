@@ -17,6 +17,7 @@ mod tests {
         ProcessOutput, RunError, Runner, SignalGuard, Status, VERIFY_ACTIONS, VerifyError,
         count_peer_cargo, execute_action, ready_nodes, run_bounded_process, run_process, success,
         verify_package_with_control, verify_with_control, verify_with_deadline,
+        verify_with_deadline_and_rebalance,
     };
     use crate::verify_timing::Disposition;
     use crate::{ScopedCommand, Step, landing};
@@ -365,6 +366,75 @@ mod tests {
     }
 
     #[test]
+    fn transient_peer_pressure_is_rebalanced_after_workspace_test_setup() {
+        let runner = TimedRunner::uniform(Duration::from_millis(2))
+            .with_prebuild_delay(Duration::from_millis(2));
+        let mut output = Vec::new();
+        let initial = Budget::from_observation(12, Some(3));
+        let recovered = Budget::from_observation(12, Some(0));
+
+        verify_with_deadline_and_rebalance(
+            &runner,
+            &mut output,
+            initial,
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_secs(1),
+            |_| recovered,
+        )
+        .expect("the post-setup observation restores capacity after transient peers exit");
+
+        let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+        assert!(output.contains(
+            "scheduler workers=1 cargo_jobs=3 active_peer_cargo_jobs=3 workspace_workers=1"
+        ));
+        assert!(output.contains(concat!(
+            "scheduler-rebalanced trigger=workspace-test-setup workers=3 cargo_jobs=4 ",
+            "active_peer_cargo_jobs=0 workspace_workers=4"
+        )));
+        assert_line_order(
+            &output,
+            "stage=setup-terminal",
+            "scheduler-rebalanced trigger=workspace-test-setup",
+        );
+        assert_line_order(
+            &output,
+            "scheduler-rebalanced trigger=workspace-test-setup",
+            "stage=start ordinal=8/13",
+        );
+        assert!(runner.peak.load(Ordering::Acquire) >= 2);
+        assert_exactly_once(&runner.calls());
+    }
+
+    #[test]
+    fn unreadable_post_setup_pressure_uses_the_single_worker_degraded_mode() {
+        let runner = TimedRunner::uniform(Duration::from_millis(2))
+            .with_prebuild_delay(Duration::from_millis(2));
+        let mut output = Vec::new();
+        let initial = Budget::from_observation(12, Some(0));
+        let degraded = Budget::from_observation(12, None);
+
+        verify_with_deadline_and_rebalance(
+            &runner,
+            &mut output,
+            initial,
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_secs(1),
+            |_| degraded,
+        )
+        .expect("the fail-closed post-setup budget still completes every action");
+
+        let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+        assert!(output.contains(concat!(
+            "scheduler-rebalanced trigger=workspace-test-setup workers=1 cargo_jobs=1 ",
+            "active_peer_cargo_jobs=unknown workspace_workers=1"
+        )));
+        assert_eq!(runner.peak.load(Ordering::Acquire), 1);
+        assert_exactly_once(&runner.calls());
+    }
+
+    #[test]
     fn end_to_end_deadline_cancels_the_graph_before_another_action_starts() {
         let runner = TimedRunner::uniform(Duration::from_millis(10));
         let mut output = Vec::new();
@@ -698,13 +768,7 @@ mod tests {
         controller.join().expect("interrupt controller joins");
         assert!(matches!(error, VerifyError::Interrupted));
 
-        let pids = read_pids(&fixture.pid_file);
-        for pid in pids {
-            assert!(
-                !process_exists(pid),
-                "cancelled verifier child {pid} leaked"
-            );
-        }
+        assert_processes_gone(&fixture.pid_file, "cancelled verifier child");
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains("disposition=cancelled"));
         assert!(output.contains("primary_ordinal=operator interrupted=true"));
@@ -726,10 +790,7 @@ mod tests {
         .expect_err("browser refusal cancels its running sibling");
         assert!(matches!(error, VerifyError::BrowserIncomplete));
 
-        let pids = read_pids(&fixture.pid_file);
-        for pid in pids {
-            assert!(!process_exists(pid), "failed verifier sibling {pid} leaked");
-        }
+        assert_processes_gone(&fixture.pid_file, "failed verifier sibling");
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains("disposition=cancelled"));
         assert!(output.contains("primary_ordinal=8 interrupted=false"));
@@ -800,9 +861,7 @@ mod tests {
             .join()
             .expect("scoped interrupt controller joins");
         assert!(matches!(error, VerifyError::Cancelled { .. }));
-        for pid in read_pids(&fixture.pid_file) {
-            assert!(!process_exists(pid), "scoped verifier child {pid} leaked");
-        }
+        assert_processes_gone(&fixture.pid_file, "scoped verifier child");
         fs::remove_file(&fixture.pid_file).expect("remove scoped fixture pid file");
     }
 

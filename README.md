@@ -118,13 +118,19 @@ rises, and sets the local worker count no higher than the logical CPUs left
 after those peers. One worker remains the progress floor when peers already
 saturate that budget. The scheduler sets `CARGO_BUILD_JOBS` to the logical-CPU
 budget divided across the peer and local participants; an unavailable peer
-probe fails closed to one worker, one Cargo job, and one test shard. After
+probe fails closed to one worker, one Cargo job, and one test shard. After the
+serialized workspace-test prebuild, it observes peer Cargo pressure once more
+and publishes the resulting budget before launching Canvas and test shards.
+This lets a transient cold-build burst release capacity at the stable cache
+boundary while applying the same constraints to peers that remain. After
 reserving every possible concurrent outer sibling's Cargo grant, the scheduler
 gives the workspace-test coordinator the remaining logical-CPU slots. In the
 full verifier that branch may use the coordinator's four-lane ceiling when no
 peer Cargo process exists, is capped at two lanes with one peer, and collapses
-to one lane with two or more peers. That preserves zero-peer throughput while
-retaining deterministic Canvas and fleet headroom as peer pressure rises.
+to one lane with two or more peers. An unreadable observation uses the same
+single deterministic degraded mode: one outer worker, one Cargo job, and one
+workspace lane. That preserves zero-peer throughput while retaining
+deterministic Canvas and fleet headroom as peer pressure rises.
 Full-verifier lanes share the selected root and completed Cargo build cache only
 after the one prebuild has published the test binaries they execute. Each lane
 keeps a separate target-publication path so concurrent same-package shards

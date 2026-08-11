@@ -315,11 +315,20 @@ pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> 
     let interrupted = Arc::new(AtomicBool::new(false));
     let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))?;
     let runner = super::SystemRunner::prepare().map_err(VerifyError::Battery)?;
-    let result = verify_with_control(&runner, output, Budget::detect(), cancellation, interrupted);
+    let result = verify_with_deadline_and_rebalance(
+        &runner,
+        output,
+        Budget::detect(),
+        cancellation,
+        interrupted,
+        FULL_VERIFIER_TEST_RUNTIME,
+        |_| Budget::detect(),
+    );
     drop(signal_guard);
     result
 }
 
+#[cfg(test)]
 fn verify_with_control<R: Runner>(
     runner: &R,
     output: &mut impl Write,
@@ -337,6 +346,7 @@ fn verify_with_control<R: Runner>(
     )
 }
 
+#[cfg(test)]
 fn verify_with_deadline<R: Runner>(
     runner: &R,
     output: &mut impl Write,
@@ -344,6 +354,26 @@ fn verify_with_deadline<R: Runner>(
     cancellation: CancellationToken,
     interrupted: Arc<AtomicBool>,
     runtime: Duration,
+) -> Result<(), VerifyError> {
+    verify_with_deadline_and_rebalance(
+        runner,
+        output,
+        budget,
+        cancellation,
+        interrupted,
+        runtime,
+        |budget| budget,
+    )
+}
+
+fn verify_with_deadline_and_rebalance<R: Runner>(
+    runner: &R,
+    output: &mut impl Write,
+    budget: Budget,
+    cancellation: CancellationToken,
+    interrupted: Arc<AtomicBool>,
+    runtime: Duration,
+    rebalance: impl FnOnce(Budget) -> Budget,
 ) -> Result<(), VerifyError> {
     debug_assert_eq!(VERIFY_ACTIONS.len(), PREREQUISITES.len());
     let active = budget
@@ -370,7 +400,7 @@ fn verify_with_deadline<R: Runner>(
         prebuild_failure,
         output_fault,
         deadline_exceeded,
-    } = schedule_graph(runner, output, budget, &cancellation, runtime);
+    } = schedule_graph(runner, output, budget, &cancellation, runtime, rebalance);
     if let Some(error) = output_fault {
         return Err(VerifyError::Output(error));
     }
@@ -414,9 +444,10 @@ fn verify_with_deadline<R: Runner>(
 fn schedule_graph<R: Runner>(
     runner: &R,
     output: &mut impl Write,
-    budget: Budget,
+    mut budget: Budget,
     cancellation: &CancellationToken,
     runtime: Duration,
+    rebalance: impl FnOnce(Budget) -> Budget,
 ) -> GraphRun {
     let (sender, receiver) = mpsc::channel::<WorkerCompletion>();
     let mut nodes = (0..VERIFY_ACTIONS.len())
@@ -429,6 +460,7 @@ fn schedule_graph<R: Runner>(
     let mut test_phase_started = None;
     let mut workspace_tests_prebuilt = false;
     let mut prebuild_failure = None;
+    let mut rebalance = Some(rebalance);
 
     thread::scope(|scope| {
         loop {
@@ -463,6 +495,16 @@ fn schedule_graph<R: Runner>(
                 if !workspace_tests_prebuilt {
                     failure_seen = true;
                     cancellation.cancel();
+                } else if !failure_seen {
+                    let rebalance = rebalance
+                        .take()
+                        .expect("workspace-test setup rebalances exactly once");
+                    budget = rebalance(budget);
+                    if let Err(error) = write_rebalanced_budget(output, budget) {
+                        output_fault.get_or_insert(error);
+                        failure_seen = true;
+                        cancellation.cancel();
+                    }
                 }
             }
             if !failure_seen && !cancellation.is_cancelled() {
@@ -509,6 +551,21 @@ fn schedule_graph<R: Runner>(
         output_fault,
         deadline_exceeded,
     }
+}
+
+fn write_rebalanced_budget(output: &mut impl Write, budget: Budget) -> io::Result<()> {
+    let active = budget
+        .active_cargo_jobs
+        .map_or_else(|| "unknown".to_owned(), |count| count.to_string());
+    writeln!(
+        output,
+        concat!(
+            "[verify] scheduler-rebalanced trigger=workspace-test-setup workers={} cargo_jobs={} ",
+            "active_peer_cargo_jobs={} workspace_workers={}"
+        ),
+        budget.workers, budget.cargo_jobs, active, budget.workspace_workers,
+    )?;
+    output.flush()
 }
 
 fn workspace_test_prebuild_ready(nodes: &[NodeState]) -> bool {
