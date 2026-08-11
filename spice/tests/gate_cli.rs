@@ -19,6 +19,7 @@ use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction, Spec,
     StdinPolicy, StreamPolicy, WaitPolicy,
 };
+use spice::change_gate::ChangeGateReport;
 use spice::placeholder::PlaceholderReason;
 use wire::{Digest, Domain, Outcome, Refusal, ReplyPosition};
 
@@ -87,7 +88,7 @@ fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_1
 }
 
 #[test]
-fn commit_worker_executes_the_exact_staged_rust_target_and_refuses_unknown_sources() {
+fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sources() {
     let marker_scratch = Scratch::new("selected-test-marker");
     let marker = marker_scratch.path().join("executed");
     let repository = GateRepository::new();
@@ -99,7 +100,12 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_refuses_unknown_sourc
         panic!("known staged source produced no terminal record");
     };
     assert_eq!(*kind, b'R', "known staged source did not admit: {known:?}");
-    BatteryReport::decode(document).expect("known worker terminal is a battery report");
+    let gate_report =
+        ChangeGateReport::decode(document).expect("known worker terminal is a change-gate report");
+    assert_eq!(
+        gate_report.selection().mode(),
+        gate::ChangeSelectionMode::Local,
+    );
     assert_eq!(
         fs::read_to_string(&marker).expect("selected target wrote its execution marker"),
         "canonical selected target executed",
@@ -127,24 +133,24 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_refuses_unknown_sourc
         panic!("unknown staged source produced no terminal record");
     };
     assert_eq!(
-        *kind, b'S',
-        "unknown staged source did not refuse through selection: {unknown:?}"
+        *kind, b'R',
+        "unknown staged source did not escalate through selection: {unknown:?}"
     );
-    let terminal_report =
-        TestSelectionReport::decode(document).expect("unknown terminal is a selection report");
-    let progress_report = selection_report(&unknown.progress);
-    assert_eq!(terminal_report, progress_report);
-    assert!(!terminal_report.admits());
-    assert_eq!(terminal_report.changed_sources(), &["tools/outside.rs"]);
-    assert!(terminal_report.tests().is_empty());
-    assert!(terminal_report.edges().is_empty());
+    let change_report = ChangeGateReport::decode(document)
+        .expect("unknown terminal is an exhaustive change-gate report");
     assert_eq!(
-        terminal_report.coverage(),
-        &CoverageCompleteness::Unknown {
-            reason: "changed Rust source \"tools/outside.rs\" reaches no direct Cargo test target"
-                .to_owned(),
-        },
+        change_report.selection().mode(),
+        gate::ChangeSelectionMode::Exhaustive,
     );
+    assert_eq!(change_report.selection().gate_ids(), gate::GateId::BATTERY);
+    let terminal_report = change_report.tests();
+    let progress_report = selection_report(&unknown.progress);
+    assert_eq!(terminal_report, &progress_report);
+    assert!(terminal_report.admits());
+    assert_eq!(terminal_report.changed_sources(), &["tools/outside.rs"]);
+    assert_eq!(terminal_report.tests(), &["gate-fixture::lib:gate_fixture"]);
+    assert_eq!(terminal_report.edges().len(), 1);
+    assert_eq!(terminal_report.coverage(), &CoverageCompleteness::Complete);
 }
 
 #[test]
@@ -227,8 +233,8 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     );
     let progress = fs::read_to_string(progress).expect("read worker phase evidence");
     assert!(
-        progress.contains("\"phase\":\"family\",\"family\":\"toolchain\""),
-        "deadline phase evidence omitted the active toolchain family: {progress}"
+        progress.contains("[change-gate-policy] gate=formatters"),
+        "deadline phase evidence omitted the active selected formatter arm: {progress}"
     );
 }
 

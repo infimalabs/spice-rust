@@ -836,6 +836,50 @@ pub fn verify_battery_child(output: &mut impl Write) -> Result<bool, String> {
     }
 }
 
+/// Execute the ordinary fail-closed staged-change gate.
+///
+/// Progress is buffered so a clean hook remains silent. A refusal publishes
+/// the exact selection/test evidence or the compact focused-arm fold; the
+/// complete battery remains available through [`verify_battery_child`].
+///
+/// # Errors
+///
+/// Returns selection, test, policy, or refusal-output failures.
+pub fn verify_selection_child(output: &mut impl Write) -> Result<bool, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut progress = Vec::new();
+        let report = match spice::change_gate::run(&mut progress) {
+            Ok(report) => report,
+            Err(error) => {
+                output
+                    .write_all(&progress)
+                    .map_err(|fault| fault.to_string())?;
+                if error.is_fault() {
+                    return Err(error.to_string());
+                }
+                writeln!(output, "{}", error).map_err(|fault| fault.to_string())?;
+                return Ok(false);
+            }
+        };
+        if report.admits() {
+            return Ok(true);
+        }
+        output
+            .write_all(&progress)
+            .map_err(|error| error.to_string())?;
+        output
+            .write_all(report.refusal_fold().as_bytes())
+            .map_err(|error| error.to_string())?;
+        Ok(false)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = output;
+        Err("the ordinary native Rust change gate is unavailable on wasm32".to_owned())
+    }
+}
+
 /// Run one canonical gate arm against the staged worktree and emit its JSON row.
 ///
 /// # Errors

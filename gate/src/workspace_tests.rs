@@ -24,12 +24,14 @@ use syn::{Expr, Item, Lit, LitStr, Meta};
 use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 
 mod coordinator;
+mod selection;
 
 use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
 };
 #[cfg(test)]
 use coordinator::{LastTest, isolate_shard_outputs, target_arguments};
+use selection::{exhaustive_selection_report, package_inventory, selection_report};
 
 /// Keep each post-prebuild Cargo invocation small enough for the full verifier's
 /// bounded workspace branch to make steady progress under the test-phase cap.
@@ -393,15 +395,17 @@ fn prebuild_all_tests(
     }
 }
 
-/// Select and run only test targets reached by staged Rust sources according to
-/// canonical Cargo target roots. A reached library target expands to every
+/// Select and run only test targets reached by staged build sources according
+/// to canonical Cargo metadata. A reached library target expands to every
 /// test-enabled target in that package because those targets may link the
 /// library. A non-library target reaches only its root and exact `#[path]`
-/// module declarations.
+/// module declarations. Package manifests and build scripts reach their whole
+/// package; workspace/toolchain and gate-policy authorities reach the complete
+/// workspace because their effect cannot be narrowed further.
 ///
-/// Unknown or incomplete package reach returns a non-admitting typed report
-/// without launching a narrowed test set. A complete report is emitted only
-/// after every selected target succeeds through this same coordinator.
+/// Unknown or incomplete package reach escalates to every workspace test
+/// target rather than launching an unproven narrowed set. A complete report is
+/// emitted only after every selected target succeeds through this coordinator.
 ///
 /// # Errors
 ///
@@ -415,6 +419,54 @@ pub fn run_selected_at(
     concurrency: usize,
     output: &mut impl Write,
 ) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
+    run_selected_at_mode(
+        roots,
+        source,
+        changed_sources,
+        environment,
+        concurrency,
+        output,
+        false,
+    )
+}
+
+/// Run every workspace target for an explicitly exhaustive change selection.
+///
+/// Every changed path retains an edge to every target, including paths with no
+/// recognized build suffix. This is the test-side half of fail-closed
+/// change-gate escalation.
+///
+/// # Errors
+///
+/// Returns the same failures as [`run_selected_at`].
+pub fn run_exhaustive_selected_at(
+    roots: WorkspaceTestRoots<'_>,
+    source: wire::Digest,
+    changed_sources: &[String],
+    environment: Environment,
+    concurrency: usize,
+    output: &mut impl Write,
+) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
+    run_selected_at_mode(
+        roots,
+        source,
+        changed_sources,
+        environment,
+        concurrency,
+        output,
+        true,
+    )
+}
+
+fn run_selected_at_mode(
+    roots: WorkspaceTestRoots<'_>,
+    source: wire::Digest,
+    changed_sources: &[String],
+    environment: Environment,
+    concurrency: usize,
+    output: &mut impl Write,
+    exhaustive: bool,
+) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
     let policy = RunPolicy::production(concurrency)?;
     let root = roots
         .reusable
@@ -425,7 +477,11 @@ pub fn run_selected_at(
         None => environment,
     };
     let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
-    let report = selection_report(&inventory, root, source, changed_sources)?;
+    let report = if exhaustive {
+        exhaustive_selection_report(&inventory, source, changed_sources)?
+    } else {
+        selection_report(&inventory, root, source, changed_sources)?
+    };
     for edge in report.edges() {
         writeln!(
             output,
@@ -729,177 +785,7 @@ fn inventory_from_metadata(
     })
 }
 
-fn package_inventory(
-    package: MetadataPackage,
-    root: &Path,
-) -> Result<PackageInventory, WorkspaceTestError> {
-    let selected_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let manifest = if package.manifest_path.is_absolute() {
-        package.manifest_path.clone()
-    } else {
-        selected_root.join(&package.manifest_path)
-    };
-    let manifest = fs::canonicalize(&manifest).unwrap_or(manifest);
-    let package_root = manifest.parent().ok_or_else(|| {
-        WorkspaceTestError::new(format!(
-            "workspace package {:?} has no manifest parent",
-            package.name
-        ))
-    })?;
-    if !package_root.starts_with(&selected_root) {
-        return Err(WorkspaceTestError::new(format!(
-            "workspace package {:?} manifest {} escapes selected root {}",
-            package.name,
-            manifest.display(),
-            selected_root.display(),
-        )));
-    }
-    let mut targets = package
-        .targets
-        .into_iter()
-        .filter(|target| target.test)
-        .map(|target| {
-            let source = if target.src_path.is_absolute() {
-                target.src_path
-            } else {
-                selected_root.join(target.src_path)
-            };
-            let source = fs::canonicalize(&source).unwrap_or(source);
-            if !source.starts_with(&selected_root) {
-                return Err(WorkspaceTestError::new(format!(
-                    "workspace package {:?} target source {} escapes selected root {}",
-                    package.name,
-                    source.display(),
-                    selected_root.display(),
-                )));
-            }
-            let declared_path_sources = declared_path_sources(&source)?;
-            let source_bytes = target_source_bytes(&source, &declared_path_sources)?;
-            Ok(TargetIdentity {
-                package: package.id.clone(),
-                kind: target.kind.join("+"),
-                name: target.name,
-                source,
-                declared_path_sources,
-                source_bytes,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    targets.sort();
-    Ok(PackageInventory {
-        id: package.id,
-        name: package.name,
-        root: package_root.to_path_buf(),
-        targets,
-    })
-}
-
-fn selection_report(
-    inventory: &Inventory,
-    root: &Path,
-    source: wire::Digest,
-    changed_sources: &[String],
-) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    let selected_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut rust_sources = changed_sources
-        .iter()
-        .filter(|path| Path::new(path.as_str()).extension() == Some(OsStr::new("rs")))
-        .cloned()
-        .collect::<Vec<_>>();
-    rust_sources.sort();
-    rust_sources.dedup();
-    let mut mapped = 0usize;
-    let mut gaps = Vec::new();
-    let mut tests = BTreeSet::new();
-    let mut edges = BTreeSet::new();
-    for changed in &rust_sources {
-        let absolute = selected_root.join(changed);
-        let owner = inventory
-            .packages
-            .iter()
-            .filter(|package| absolute.starts_with(&package.root))
-            .max_by_key(|package| package.root.components().count());
-        match owner {
-            Some(package) => {
-                let direct_targets = package
-                    .targets
-                    .iter()
-                    .filter(|target| target_reaches_source(target, &absolute))
-                    .collect::<Vec<_>>();
-                if direct_targets.is_empty() {
-                    gaps.push(format!(
-                        "changed Rust source {changed:?} reaches no direct Cargo test target"
-                    ));
-                } else {
-                    let reaches_library = direct_targets
-                        .iter()
-                        .any(|target| target_is_library(target));
-                    let reached_targets = if reaches_library {
-                        package.targets.iter().collect::<Vec<_>>()
-                    } else {
-                        direct_targets
-                    };
-                    for target in reached_targets {
-                        let test = format!("{}::{}", package.name, target.display());
-                        tests.insert(test.clone());
-                        edges.insert(
-                            crate::TestSelectionEdge::new(changed.clone(), test)
-                                .map_err(|error| WorkspaceTestError::new(error.to_string()))?,
-                        );
-                    }
-                    mapped += 1;
-                }
-            }
-            None => gaps.push(format!(
-                "changed Rust source {changed:?} is outside every workspace package"
-            )),
-        }
-    }
-    let coverage = if gaps.is_empty() {
-        crate::CoverageCompleteness::Complete
-    } else if mapped == 0 {
-        crate::CoverageCompleteness::unknown(gaps.join("; "))
-            .map_err(|error| WorkspaceTestError::new(error.to_string()))?
-    } else {
-        crate::CoverageCompleteness::incomplete(gaps.join("; "))
-            .map_err(|error| WorkspaceTestError::new(error.to_string()))?
-    };
-    crate::TestEvidenceGraph::select_tests(
-        source,
-        rust_sources,
-        tests.into_iter().collect(),
-        edges.into_iter().collect(),
-        coverage,
-    )
-    .map_err(|error| WorkspaceTestError::new(error.to_string()))
-}
-
-/// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
-/// module declaration establishes; ordinary directory proximity is not reach.
-fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
-    if source == target.source {
-        return true;
-    }
-    let direct_root = target_is_library(target)
-        .then(|| target.source.parent())
-        .flatten();
-    direct_root.is_some_and(|root| source.starts_with(root))
-        || target
-            .declared_path_sources
-            .iter()
-            .any(|declared| declared == source)
-}
-
 include!("workspace_tests/source_reach.rs");
-
-fn target_is_library(target: &TargetIdentity) -> bool {
-    target.kind.split('+').any(|kind| {
-        matches!(
-            kind,
-            "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro"
-        )
-    })
-}
 
 fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
     let package_target_counts = inventory

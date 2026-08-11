@@ -12,7 +12,7 @@ use sill::Deadlines;
 const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <help|verify [--package PACKAGE]|verify-action battery|",
+    "usage: cargo xtask <help|verify [--package PACKAGE]|verify-action <selection|battery>|",
     "gate ARM|app|activate-hooks|",
     "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
@@ -27,8 +27,9 @@ fn help() -> String {
     format!(
         concat!(
             "{usage}\n\n",
-            "verify-action battery is the public partial gate-battery action; ",
-            "it is not a completion verifier.\n\n",
+            "verify-action selection is the ordinary staged-change gate; ",
+            "verify-action battery is its explicit complete policy surface. ",
+            "Neither is a completion verifier.\n\n",
             "gate ARM accepts:\n  {arms}"
         ),
         usage = USAGE,
@@ -128,11 +129,15 @@ fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandR
 }
 
 fn run_verify_action(action: &OsStr, output: &mut impl io::Write) -> ExitCode {
-    if action != OsStr::new("battery") {
+    let result = if action == OsStr::new("selection") {
+        xtask::verify_selection_child(output)
+    } else if action == OsStr::new("battery") {
+        xtask::verify_battery_child(output)
+    } else {
         eprintln!("{}", help());
         return ExitCode::from(USAGE_EXIT);
-    }
-    match xtask::verify_battery_child(output) {
+    };
+    match result {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(xtask::VERIFY_ACTION_REFUSAL_EXIT),
         Err(error) => {
@@ -560,10 +565,11 @@ mod tests {
     use super::help;
 
     #[test]
-    fn help_exposes_the_one_public_partial_battery_action() {
+    fn help_exposes_the_ordinary_selection_and_explicit_battery_actions() {
         let help = help();
+        assert!(help.contains("verify-action selection"));
         assert!(help.contains("verify-action battery"));
-        assert!(help.contains("not a completion verifier"));
+        assert!(help.contains("Neither is a completion verifier"));
     }
 
     #[test]

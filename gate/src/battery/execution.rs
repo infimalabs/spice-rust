@@ -185,10 +185,9 @@ impl BatteryArmResult {
 
 /// One canonical focused gate run with the immutable inputs needed to verify it.
 ///
-/// Like [`BatteryReport`], this type deliberately omits [`Deserialize`]. All
-/// retained bytes must cross [`Self::decode`], which validates the selected
-/// arm against the compiled manifest and its captured source before admitting
-/// the report.
+/// Direct deserialization validates the selected arm against the compiled
+/// manifest and its captured source. Standalone retained bytes additionally
+/// cross [`Self::decode`], which enforces their canonical encoding.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FocusedArmReport {
@@ -215,6 +214,16 @@ impl From<RawFocusedArmReport> for FocusedArmReport {
             context: raw.context,
             result: raw.result,
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for FocusedArmReport {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+
+        let report = Self::from(RawFocusedArmReport::deserialize(deserializer)?);
+        report.validate().map_err(D::Error::custom)?;
+        Ok(report)
     }
 }
 

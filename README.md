@@ -193,19 +193,22 @@ inventory, and output lane before launch, reports progress every 30 seconds,
 and has a hard 180-second deadline that terminates and reaps the complete
 process group.
 
-`cargo xtask verify-action battery` is the visible public partial surface for
-the canonical gate action. It does not share the full verifier's retained
-compiler evidence, is not a completion verifier, and has no legacy alias;
-ordinary callers use `cargo xtask verify`.
+`cargo xtask verify-action selection` is the ordinary staged-change gate used
+by the tracked pre-commit hook. It captures the index once, maps every changed
+path to canonical Cargo test targets and focused policy arms, and retains the
+path-to-check evidence in one typed report. Known backend, frontend,
+documentation, and configuration changes do not trigger an ambient
+whole-repository selector. A gate/toolchain authority or an unclassified path
+fails closed by selecting every workspace test target and all 27 policy arms.
 
-The configured commit command, `spice gate pre-commit`, runs that ordered
-battery in one isolated worker process. It stops work at 135 seconds and
-reserves termination, reap, and output-drain time inside a 150-second hard
-envelope, below the fixed 180-second extension limit. A clean worker is silent;
-a finding renders the complete refusal fold, while a deadline or lost worker
-exits nonzero with its last exact gate phase and explicitly incomplete findings.
-The supervisor owns the worker's complete process group, including Cargo,
-rustc, Trunk, parsers, and their descendants.
+`cargo xtask verify-action battery` remains the explicit complete policy
+surface. It does not share the full verifier's retained compiler evidence and
+neither action is a completion verifier. The native `spice gate pre-commit`
+command executes the same selected-change report in one isolated worker process
+with a 150-second work allowance and cleanup reserves inside its fixed
+180-second envelope. A clean worker is silent; a refusal names only selected
+failures plus a private canonical report path. The supervisor owns the worker's
+complete process group, including Cargo, rustc, Trunk, parsers, and descendants.
 
 For fast feedback while changing one Cargo package, scope Clippy, all-target
 tests, and doctests to that package:

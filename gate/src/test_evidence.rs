@@ -35,7 +35,7 @@ pub enum CoverageCompleteness {
     Unknown { reason: String },
 }
 
-/// One exact conservative source-to-test reach edge used for hook selection.
+/// One exact conservative build-source-to-test reach edge used for hook selection.
 ///
 /// The edge says canonical Cargo metadata proves that the named test target
 /// directly compiles the source through its declared target root. It does not
@@ -49,19 +49,19 @@ pub struct TestSelectionEdge {
 }
 
 impl TestSelectionEdge {
-    /// Bind one changed Rust source to one selected package-qualified test target.
+    /// Bind one changed build source to one selected package-qualified test target.
     pub fn new(
         source: impl Into<String>,
         test: impl Into<String>,
     ) -> Result<Self, TestEvidenceError> {
         let source = source.into();
         let test = test.into();
-        require_path("selected Rust source", &source)?;
+        require_path("selected build source", &source)?;
         require_text("selected test identity", &test)?;
         Ok(Self { source, test })
     }
 
-    /// Exact repository-relative changed Rust source.
+    /// Exact repository-relative changed build source.
     #[must_use]
     pub fn source(&self) -> &str {
         &self.source
@@ -103,12 +103,12 @@ impl TestSelectionReport {
         coverage: CoverageCompleteness,
     ) -> Result<Self, TestEvidenceError> {
         for path in &changed_sources {
-            require_path("changed Rust source", path)?;
+            require_path("changed build source", path)?;
         }
         changed_sources.sort();
         if let Some(path) = repeated(&changed_sources) {
             return Err(TestEvidenceError::new(format!(
-                "changed Rust source {path:?} is repeated"
+                "changed build source {path:?} is repeated"
             )));
         }
         for test in &tests {

@@ -491,7 +491,7 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
     assert!(!text.contains("spice dev"));
     if hook == "pre-commit" {
         assert_eq!(
-            text.matches("cargo --quiet xtask verify-action battery")
+            text.matches("cargo --quiet xtask verify-action selection")
                 .count(),
             1
         );
@@ -529,7 +529,7 @@ fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
     assert!(pre_commit_output.stderr.is_empty());
     assert_eq!(
         fs::read_to_string(cargo_log).unwrap(),
-        "verify-action battery\n"
+        "verify-action selection\n"
     );
 }
 
@@ -722,7 +722,7 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
                 "done\n",
                 "printf '%s\\n' \"$*\" >> '{}'\n",
                 "if [ \"$#\" -eq 2 ] && [ \"$1\" = verify-action ] && ",
-                "[ \"$2\" = battery ]; then\n",
+                "[ \"$2\" = selection ]; then\n",
                 "    exit 0\n",
                 "fi\n",
                 "if [ \"$#\" -eq 2 ] && [ \"$1\" = commit-msg ]; then\n",

@@ -78,18 +78,12 @@ fn assert_oversized_json_refusal(
     repository: &GateRepository,
     tripwires: &Scratch,
     report: &BatteryReport,
-) -> gate::BatteryRefusalFold {
+) -> String {
     let canonical = report.encode().expect("canonical battery report encodes");
     assert!(
         canonical.len() > gate::BATTERY_REFUSAL_FOLD_MAX_BYTES,
         "fixture must expose the former full-report refusal flood: {} bytes",
         canonical.len(),
-    );
-    let fold = report.refusal_fold();
-    assert_eq!(fold, report.refusal_fold(), "the refusal fold is stable");
-    assert!(
-        fold.as_bytes().len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES,
-        "the projected refusal bypassed its 64 KiB ceiling",
     );
     let pre_commit = invoke_with_path(
         &["--json", "gate", "pre-commit"],
@@ -105,8 +99,8 @@ fn assert_oversized_json_refusal(
     };
     assert_eq!(
         refusal.reason(),
-        "gate::battery-regressed",
-        "the fixture must reach the battery refusal mapper: {refusal:?}",
+        "gate::change-gate-regressed",
+        "the fixture must reach the selected-change refusal mapper: {refusal:?}",
     );
     let Refusal::Evidence {
         evidence, summary, ..
@@ -114,8 +108,9 @@ fn assert_oversized_json_refusal(
     else {
         panic!("pre-commit gate report must use evidence refusal: {refusal:?}")
     };
-    assert!(summary.contains("git commit"));
-    assert_concise_pre_commit_refusal(&refusal, report);
+    assert!(summary.contains("explicit full verifier"));
+    let (_, change_report) = assert_concise_pre_commit_refusal(&refusal);
+    let fold = change_report.refusal_fold();
     assert!(evidence.starts_with(fold.as_str()));
     assert!(
         evidence
@@ -124,31 +119,17 @@ fn assert_oversized_json_refusal(
         "the refusal does not name its absolute canonical report artifact: {evidence}",
     );
     assert!(evidence.contains("gate=file-shape state=failed"));
-    assert!(evidence.contains("full-evidence: cargo xtask gate file-shape"));
     assert!(
-        evidence.contains("metric=file.lines")
-            && evidence.contains("value=2001")
-            && evidence.contains("base_limit=")
-            && evidence.contains("active_limit="),
-        "the refusal lost the concrete measurement and allowed bound: {evidence}",
+        change_report.policy().len() < gate::GateId::BATTERY.len(),
+        "a known Rust change unexpectedly executed the complete battery",
     );
-    assert!(
-        evidence.contains("omitted_arms=")
-            && evidence.contains("omitted_findings=")
-            && !evidence.contains("omitted_findings=0"),
-        "the bounded refusal lost truncation and omission accounting: {evidence}",
-    );
-    let admitted = report
-        .results()
+    let admitted = change_report
+        .policy()
         .iter()
-        .find(|result| result.state().admits())
+        .find(|result| result.admits())
         .expect("the oversized fixture retains at least one admitting arm");
     assert!(
-        !evidence.contains(&format!(
-            "arm position={} gate={} state=",
-            admitted.position(),
-            admitted.gate_id(),
-        )),
+        !evidence.contains(&format!("gate={} state=", admitted.gate_id())),
         "passing-arm evidence leaked into the refusal: {evidence}",
     );
     assert!(
@@ -159,11 +140,7 @@ fn assert_oversized_json_refusal(
     fold
 }
 
-fn assert_oversized_text_refusal(
-    repository: &GateRepository,
-    tripwires: &Scratch,
-    fold: &gate::BatteryRefusalFold,
-) {
+fn assert_oversized_text_refusal(repository: &GateRepository, tripwires: &Scratch, fold: &str) {
     let pre_commit = invoke_with_path(
         &["gate", "pre-commit"],
         repository.path(),
@@ -173,8 +150,8 @@ fn assert_oversized_text_refusal(
     assert!(pre_commit.out.is_empty());
     let text = std::str::from_utf8(&pre_commit.err).expect("text refusal is UTF-8");
     let (report_path, _, report) = read_report_artifact(text);
-    assert_eq!(report.refusal_fold(), *fold);
-    assert!(text.starts_with(fold.as_str()));
+    assert_eq!(report.refusal_fold(), fold);
+    assert!(text.starts_with(fold));
     let encoded_path = serde_json::to_string(
         report_path
             .to_str()
@@ -225,7 +202,6 @@ fn pre_commit_refusal_publishes_one_failed_result_behind_a_private_report_path()
     let repository = GateRepository::new();
     repository.write_source(2_000);
     repository.add("src/lib.rs");
-    let report = report_body(&invoke(&["gate"], repository.path()));
     let pre_commit = invoke(&["--json", "gate", "pre-commit"], repository.path());
     assert_eq!(pre_commit.code, Some(REFUSAL_EXIT));
     assert!(pre_commit.out.is_empty());
@@ -234,30 +210,22 @@ fn pre_commit_refusal_publishes_one_failed_result_behind_a_private_report_path()
     let Outcome::Refusal(refusal) = outcome else {
         panic!("one typed regression must refuse: {outcome:?}");
     };
-    assert_eq!(refusal.reason(), "gate::battery-regressed");
+    assert_eq!(refusal.reason(), "gate::change-gate-regressed");
     assert_eq!(
-        assert_concise_pre_commit_refusal(&refusal, &report),
+        assert_concise_pre_commit_refusal(&refusal).0,
         1,
         "the focused artifact fixture must contain exactly one refusing result",
     );
 }
 
-fn assert_concise_pre_commit_refusal(refusal: &Refusal, ordinary_report: &BatteryReport) -> usize {
-    // An operator reaching this refusal mid-merge needs to know that a merge is
-    // recorded like anything else, because the alternative they otherwise reach
-    // for is bypassing the hook. The remedy names that command rather than the
-    // gate growing a second way to record one, and it is asserted here, on the
-    // shipped binary's own output, rather than beside the string that builds it.
+fn assert_concise_pre_commit_refusal(refusal: &Refusal) -> (usize, ChangeGateReport) {
     let Refusal::Evidence {
         evidence, summary, ..
     } = refusal
     else {
         panic!("pre-commit gate report must use evidence refusal: {refusal:?}")
     };
-    assert!(
-        summary.contains("git commit"),
-        "the pre-commit refusal names how a merge is recorded: {summary}"
-    );
+    assert!(summary.contains("explicit full verifier"));
     let (report_path, report_bytes, pre_commit_report) = read_report_artifact(evidence);
     let encoded_report_path = serde_json::to_string(
         report_path
@@ -274,11 +242,6 @@ fn assert_concise_pre_commit_refusal(refusal: &Refusal, ordinary_report: &Batter
         ),
         "the terminal refusal contains only the failure fold and audit path",
     );
-    assert_eq!(
-        pre_commit_report.refusal_fold().as_str(),
-        ordinary_report.refusal_fold().as_str(),
-        "the commit surface renders the same complete failure fold as the canonical report",
-    );
     assert!(
         evidence.len()
             <= BATTERY_REFUSAL_FOLD_MAX_BYTES
@@ -294,10 +257,13 @@ fn assert_concise_pre_commit_refusal(refusal: &Refusal, ordinary_report: &Batter
         evidence.len(),
         report_bytes.len(),
     );
-    assert_refusing_results_are_focused(evidence, &pre_commit_report)
+    (
+        assert_refusing_results_are_focused(evidence, &pre_commit_report),
+        pre_commit_report,
+    )
 }
 
-fn read_report_artifact(evidence: &str) -> (PathBuf, Vec<u8>, BatteryReport) {
+fn read_report_artifact(evidence: &str) -> (PathBuf, Vec<u8>, ChangeGateReport) {
     let report_path = evidence
         .lines()
         .find_map(|line| line.strip_prefix("full-report: "))
@@ -318,7 +284,7 @@ fn read_report_artifact(evidence: &str) -> (PathBuf, Vec<u8>, BatteryReport) {
         "the audit report is private",
     );
     let report_bytes = fs::read(&report_path).expect("read full report artifact");
-    let pre_commit_report = BatteryReport::decode(&report_bytes).unwrap_or_else(|error| {
+    let pre_commit_report = ChangeGateReport::decode(&report_bytes).unwrap_or_else(|error| {
         panic!(
             "pre-commit artifact carries a canonical report: {error}; path={}",
             report_path.display()
@@ -328,42 +294,36 @@ fn read_report_artifact(evidence: &str) -> (PathBuf, Vec<u8>, BatteryReport) {
     (report_path, report_bytes, pre_commit_report)
 }
 
-fn assert_refusing_results_are_focused(evidence: &str, report: &BatteryReport) -> usize {
+fn assert_refusing_results_are_focused(evidence: &str, report: &ChangeGateReport) -> usize {
     let admitted = report
-        .results()
+        .policy()
         .iter()
-        .filter(|result| result.state().admits())
+        .filter(|result| result.admits())
         .count();
-    let refusing = report.results().len() - admitted;
+    let refusing = report.policy().len() - admitted;
     assert!(
         admitted > refusing,
         "the concise-refusal fixture needs many more passing arms than refusals; admitted={admitted} refusing={refusing}"
     );
-    for result in report.results() {
-        let arm = format!(
-            "arm position={} gate={} state=",
-            result.position(),
-            result.gate_id()
-        );
-        if result.state().admits() {
+    for report in report.policy() {
+        let result = report.result();
+        let arm = format!("gate={} state=", report.gate_id());
+        if report.admits() {
             assert!(
                 !evidence.contains(&arm),
                 "passing arm {} leaked into the terminal refusal",
-                result.gate_id()
+                report.gate_id()
             );
         } else {
             assert!(
                 evidence.contains(&arm),
                 "failing arm {} is absent from the terminal refusal",
-                result.gate_id()
+                report.gate_id()
             );
             assert!(
-                evidence.contains(&format!(
-                    "  reason={}",
-                    serde_json::to_string(result.reason()).expect("JSON refusal reason")
-                )),
+                evidence.contains(&format!("reason={}", result.reason())),
                 "typed summary for {} is absent from the terminal refusal",
-                result.gate_id()
+                report.gate_id()
             );
         }
     }

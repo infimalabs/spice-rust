@@ -176,7 +176,85 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
 }
 
 #[test]
-fn rust_source_inside_a_package_but_outside_target_roots_refuses_narrowing() {
+fn package_manifest_and_build_script_select_every_test_target_in_their_package() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[0].targets.push(TargetIdentity {
+        package: "fixture-a-id".to_owned(),
+        kind: "test".to_owned(),
+        name: "behavior".to_owned(),
+        source: PathBuf::from("/workspace/fixture-a/tests/behavior.rs"),
+        declared_path_sources: Vec::new(),
+        source_bytes: 1,
+    });
+
+    for source in ["fixture-a/Cargo.toml", "fixture-a/build.rs"] {
+        let report = selection_report(
+            &inventory,
+            Path::new("/workspace"),
+            wire::Digest::compute(wire::Domain::GateTree, source.as_bytes()),
+            &[source.to_owned()],
+        )
+        .expect("package-wide build source selects tests");
+
+        assert!(report.admits());
+        assert_eq!(
+            report.tests(),
+            ["fixture-a::lib:fixture-a", "fixture-a::test:behavior"]
+        );
+        assert!(report.edges().iter().all(|edge| edge.source() == source));
+    }
+}
+
+#[test]
+fn workspace_and_gate_authorities_select_the_complete_test_inventory() {
+    let inventory = fixture_inventory();
+    for source in ["Cargo.lock", "spice-rust.toml"] {
+        let report = selection_report(
+            &inventory,
+            Path::new("/workspace"),
+            wire::Digest::compute(wire::Domain::GateTree, source.as_bytes()),
+            &[source.to_owned()],
+        )
+        .expect("workspace authority selects every test target");
+
+        assert!(report.admits());
+        assert_eq!(
+            report.tests(),
+            ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+        );
+        assert!(report.edges().iter().all(|edge| edge.source() == source));
+    }
+}
+
+#[test]
+fn explicit_exhaustive_mode_maps_even_unknown_non_build_paths_to_every_target() {
+    let source = wire::Digest::compute(wire::Domain::GateTree, b"exhaustive unknown path");
+    let report = exhaustive_selection_report(
+        &fixture_inventory(),
+        source.clone(),
+        &["assets/opaque.bin".to_owned()],
+    )
+    .expect("exhaustive selection maps every changed path");
+
+    assert!(report.admits());
+    assert_eq!(report.source(), &source);
+    assert_eq!(report.changed_sources(), ["assets/opaque.bin"]);
+    assert_eq!(
+        report.tests(),
+        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+    );
+    assert_eq!(report.edges().len(), 2);
+    assert!(
+        report
+            .edges()
+            .iter()
+            .all(|edge| edge.source() == "assets/opaque.bin")
+    );
+    assert_eq!(report.coverage(), &crate::CoverageCompleteness::Complete);
+}
+
+#[test]
+fn rust_source_inside_a_package_but_outside_target_roots_escalates_to_the_workspace() {
     let report = selection_report(
         &fixture_inventory(),
         Path::new("/workspace"),
@@ -185,17 +263,23 @@ fn rust_source_inside_a_package_but_outside_target_roots_refuses_narrowing() {
     )
     .expect("unreachable package source remains reportable");
 
-    assert!(!report.admits());
-    assert!(report.tests().is_empty());
-    assert!(report.edges().is_empty());
-    let crate::CoverageCompleteness::Unknown { reason } = report.coverage() else {
-        panic!("unreachable package source must remain unknown");
-    };
-    assert!(reason.contains("reaches no direct Cargo test target"));
+    assert!(report.admits());
+    assert_eq!(
+        report.tests(),
+        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+    );
+    assert_eq!(report.edges().len(), 2);
+    assert!(
+        report
+            .edges()
+            .iter()
+            .all(|edge| edge.source() == "fixture-a/tools/unreachable.rs")
+    );
+    assert_eq!(report.coverage(), &crate::CoverageCompleteness::Complete);
 }
 
 #[test]
-fn rust_source_outside_workspace_packages_refuses_narrowing_loudly() {
+fn rust_source_outside_workspace_packages_escalates_to_the_workspace() {
     let report = selection_report(
         &fixture_inventory(),
         Path::new("/workspace"),
@@ -204,20 +288,25 @@ fn rust_source_outside_workspace_packages_refuses_narrowing_loudly() {
     )
     .expect("unknown selection remains reportable");
 
-    assert!(!report.admits());
-    assert!(report.tests().is_empty());
-    assert!(report.edges().is_empty());
-    let crate::CoverageCompleteness::Unknown { reason } = report.coverage() else {
-        panic!("unmapped Rust source must remain unknown");
-    };
-    assert!(reason.contains("outside every workspace package"));
-    let document = String::from_utf8(report.encode().expect("encode refusal")).unwrap();
+    assert!(report.admits());
+    assert_eq!(
+        report.tests(),
+        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+    );
+    assert_eq!(report.edges().len(), 2);
+    assert!(
+        report
+            .edges()
+            .iter()
+            .all(|edge| edge.source() == "tools/outside.rs")
+    );
+    assert_eq!(report.coverage(), &crate::CoverageCompleteness::Complete);
+    let document = String::from_utf8(report.encode().expect("encode escalation")).unwrap();
     assert!(document.contains("tools/outside.rs"));
-    assert!(document.contains("outside every workspace package"));
 }
 
 #[test]
-fn partially_mapped_rust_sources_retain_edges_but_refuse_as_incomplete() {
+fn partially_mapped_rust_sources_retain_edges_and_escalate_unknown_reach() {
     let report = selection_report(
         &fixture_inventory(),
         Path::new("/workspace"),
@@ -229,12 +318,19 @@ fn partially_mapped_rust_sources_retain_edges_but_refuse_as_incomplete() {
     )
     .expect("incomplete selection remains reportable");
 
-    assert!(!report.admits());
-    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
-    assert_eq!(report.edges().len(), 1);
-    assert_eq!(report.edges()[0].source(), "fixture-a/src/behavior.rs");
-    let crate::CoverageCompleteness::Incomplete { reason } = report.coverage() else {
-        panic!("partially mapped Rust selection must remain incomplete");
-    };
-    assert!(reason.contains("tools/outside.rs"));
+    assert!(report.admits());
+    assert_eq!(
+        report.tests(),
+        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+    );
+    assert_eq!(report.edges().len(), 3);
+    assert_eq!(
+        report
+            .edges()
+            .iter()
+            .filter(|edge| edge.source() == "tools/outside.rs")
+            .count(),
+        2,
+    );
+    assert_eq!(report.coverage(), &crate::CoverageCompleteness::Complete);
 }
