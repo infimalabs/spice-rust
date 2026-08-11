@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use board::allocate::{Mint, mint};
 use journal::{FactCause, Journal, JournalWrite};
 use rusqlite::{Connection, params};
-use serde_json::json;
+use serde_json::{Value, json};
 use wire::{
     Actor, CanonicalUuid, Disposition, Instant, LaneResidency, Origin, Phase, Producer,
     ResidencyHead, ResidentState, SteeringHead, TaskStamp, WorkflowHead, body,
@@ -25,6 +25,27 @@ fn fake_repository(root: &Path) {
 
 fn authority_path(root: &Path) -> PathBuf {
     root.join(".git/.spice-rs/data/spicejournal.sqlite3")
+}
+
+fn seed_codex_transcripts(root: &Path, threads: &[String]) -> PathBuf {
+    let home = root.join("codex-home");
+    let sessions = home.join("sessions");
+    fs::create_dir_all(&sessions).expect("fixture Codex session root is created");
+    let state = Connection::open(home.join("state_5.sqlite")).expect("fixture Codex state opens");
+    state
+        .execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)", [])
+        .expect("fixture Codex thread index is created");
+    for thread in threads {
+        let transcript = sessions.join(format!("rollout-{thread}.jsonl"));
+        write_jsonl(&transcript, &codex_rows());
+        state
+            .execute(
+                "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
+                params![thread, transcript.to_string_lossy()],
+            )
+            .expect("fixture Codex thread is indexed");
+    }
+    home
 }
 
 fn uuid(tail: u8) -> CanonicalUuid {
@@ -390,6 +411,13 @@ fn claim_won_facts(path: &Path) -> i64 {
         .expect("claim fact count reads")
 }
 
+fn fact_count(path: &Path) -> i64 {
+    Connection::open(path)
+        .expect("fixture authority opens for total fact count")
+        .query_row("SELECT COUNT(*) FROM fact_envelopes", [], |row| row.get(0))
+        .expect("total fact count reads")
+}
+
 fn active_claims_for(path: &Path, actor: &Actor) -> i64 {
     Connection::open(path)
         .expect("fixture authority opens for active claim count")
@@ -399,6 +427,243 @@ fn active_claims_for(path: &Path, actor: &Actor) -> i64 {
             |row| row.get(0),
         )
         .expect("active claim count reads")
+}
+
+#[test]
+fn ambient_and_explicit_matching_threads_bind_authority_to_the_live_identity_read_only() {
+    let scratch = Scratch::new("authority-live-match");
+    fake_repository(scratch.path());
+    let live = uuid(0xaa).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &live);
+    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&live));
+    let environment = [
+        ("CODEX_THREAD_ID", live.clone()), // env-policy: allow
+        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+    ];
+    let before = fact_count(&authority);
+
+    let ambient = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&["session", "briefing", "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+    let explicit = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&["session", "briefing", &live, "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+
+    for recall in [&ambient, &explicit] {
+        assert_eq!(recall["sources"][0]["thread"], live);
+        assert_eq!(recall["authorities"]["held_work"]["thread"], live);
+        assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
+        assert_eq!(
+            recall["authorities"]["held_work"]["own_claim"]["title"],
+            "Compose Rust briefings"
+        );
+        assert!(
+            recall["authorities"].get("unknowns").is_none(),
+            "matching live and evidence identities are fully known"
+        );
+    }
+    assert_eq!(fact_count(&authority), before, "briefings append no facts");
+
+    scratch.remove();
+}
+
+#[test]
+fn explicit_foreign_transcript_preserves_evidence_without_impersonating_its_actor() {
+    let scratch = Scratch::new("authority-foreign-transcript");
+    fake_repository(scratch.path());
+    let live = uuid(0xaa).to_string().replace('-', "");
+    let foreign = uuid(0xbb).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &live);
+    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&foreign));
+    let environment = [
+        ("CODEX_THREAD_ID", live.clone()), // env-policy: allow
+        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+    ];
+    let before = fact_count(&authority);
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&["session", "briefing", &foreign, "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+
+    assert_eq!(recall["sources"][0]["thread"], foreign);
+    assert!(
+        recall["window"]["turns"]
+            .as_array()
+            .is_some_and(|turns| !turns.is_empty()),
+        "foreign transcript evidence remains in the bounded window"
+    );
+    assert_eq!(recall["authorities"]["held_work"]["thread"], live);
+    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
+    assert_eq!(
+        recall["authorities"]["held_work"]["own_claim"]["title"],
+        "Compose Rust briefings"
+    );
+    let mismatch = recall["authorities"]["unknowns"]
+        .as_array()
+        .expect("foreign evidence mismatch is explicit")
+        .iter()
+        .find(|row| row["probe"] == "live-thread-mismatch")
+        .expect("foreign evidence mismatch is reported");
+    let detail = mismatch["detail"].as_str().expect("mismatch has detail");
+    assert!(detail.contains(&foreign), "{detail}");
+    assert!(detail.contains(&live), "{detail}");
+    assert_eq!(fact_count(&authority), before, "briefing appends no facts");
+
+    scratch.remove();
+}
+
+#[test]
+fn ambiguous_multi_thread_evidence_does_not_make_current_authority_ambiguous() {
+    let scratch = Scratch::new("authority-multi-transcript");
+    fake_repository(scratch.path());
+    let live = uuid(0xaa).to_string().replace('-', "");
+    let foreign = uuid(0xbb).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &live);
+    let codex_home = seed_codex_transcripts(scratch.path(), &[live.clone(), foreign.clone()]);
+    let environment = [
+        ("CODEX_THREAD_ID", live.clone()), // env-policy: allow
+        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+    ];
+    let before = fact_count(&authority);
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&[
+            "session",
+            "briefing",
+            &live,
+            &foreign,
+            "--deadline-seconds",
+            "5",
+        ]),
+        &environment,
+        "recall",
+    );
+
+    assert_eq!(recall["sources"].as_array().map(Vec::len), Some(2));
+    assert_eq!(recall["authorities"]["held_work"]["thread"], live);
+    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
+    let unknowns = recall["authorities"]["unknowns"]
+        .as_array()
+        .expect("multi-thread evidence ambiguity is explicit");
+    assert!(
+        unknowns
+            .iter()
+            .any(|row| row["probe"] == "selected-thread-identity")
+    );
+    assert!(
+        unknowns
+            .iter()
+            .any(|row| row["probe"] == "live-thread-mismatch")
+    );
+    assert_eq!(fact_count(&authority), before, "briefing appends no facts");
+
+    scratch.remove();
+}
+
+#[test]
+fn malformed_live_identity_stays_unknown_instead_of_using_selected_transcript_identity() {
+    let scratch = Scratch::new("authority-malformed-live");
+    fake_repository(scratch.path());
+    let selected = uuid(0xaa).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &selected);
+    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
+    let environment = [
+        ("CODEX_THREAD_ID", "malformed-live-thread".to_owned()), // env-policy: allow
+        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+    ];
+    let before = fact_count(&authority);
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&["session", "briefing", &selected, "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+
+    assert_eq!(recall["sources"][0]["thread"], selected);
+    assert_eq!(recall["authorities"]["held_work"]["thread"], Value::Null);
+    assert_eq!(recall["authorities"]["held_work"]["lane"], Value::Null);
+    assert_eq!(recall["authorities"]["held_work"]["own_claim"], Value::Null);
+    assert_eq!(
+        recall["authorities"]["held_work"]["peer_claims"],
+        Value::Null
+    );
+    assert!(recall["authorities"].get("asks").is_none());
+    assert!(
+        recall["authorities"]["unknowns"]
+            .as_array()
+            .expect("malformed live identity is explicit")
+            .iter()
+            .any(|row| {
+                row["authority"] == "environment" && row["probe"] == "live-thread-identity"
+            })
+    );
+    assert_eq!(fact_count(&authority), before, "briefing appends no facts");
+
+    scratch.remove();
+}
+
+#[test]
+fn absent_live_identity_keeps_current_authority_unknown_during_historical_recovery() {
+    let scratch = Scratch::new("authority-no-live");
+    fake_repository(scratch.path());
+    let selected = uuid(0xaa).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &selected);
+    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
+    let environment = [("CODEX_HOME", codex_home.to_string_lossy().into_owned())];
+    let before = fact_count(&authority);
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&["session", "briefing", &selected, "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+
+    assert_eq!(recall["sources"][0]["thread"], selected);
+    assert!(
+        recall["window"]["turns"]
+            .as_array()
+            .is_some_and(|turns| !turns.is_empty()),
+        "historical transcript evidence remains in the bounded window"
+    );
+    assert_eq!(recall["authorities"]["held_work"]["thread"], Value::Null);
+    assert_eq!(recall["authorities"]["held_work"]["lane"], Value::Null);
+    assert_eq!(recall["authorities"]["held_work"]["own_claim"], Value::Null);
+    assert_eq!(
+        recall["authorities"]["held_work"]["peer_claims"],
+        Value::Null
+    );
+    assert!(recall["authorities"].get("asks").is_none());
+    let unknowns = recall["authorities"]["unknowns"]
+        .as_array()
+        .expect("missing live identity is explicit");
+    assert!(unknowns.iter().any(|row| {
+        row["authority"] == "environment" && row["probe"] == "live-thread-identity"
+    }));
+    assert!(
+        unknowns
+            .iter()
+            .any(|row| { row["authority"] == "board" && row["probe"] == "exact-actor-claim" })
+    );
+    assert_eq!(fact_count(&authority), before, "briefing appends no facts");
+
+    scratch.remove();
 }
 
 #[test]
@@ -432,8 +697,10 @@ fn recall_authority_probe_is_read_only_when_repository_state_is_absent() {
             .as_array()
             .expect("unknowns are explicit")
             .iter()
-            .any(|row| row["authority"] == "journal" && row["probe"] == "open-read-only"),
-        "missing journal authority is reported as unknown"
+            .any(|row| {
+                row["authority"] == "environment" && row["probe"] == "live-thread-identity"
+            }),
+        "missing live identity is reported before actor-bound journal probes"
     );
     assert!(
         !scratch.path().join(".git/.spice-rs").exists(),
