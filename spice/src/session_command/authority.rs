@@ -345,18 +345,71 @@ fn lane_for_thread<'a>(
 }
 
 fn live_thread(environment: &Environment, recall: &mut RecallAuthorities) -> Option<String> {
-    let Some(vendor) = environment
+    let populated = environment
         .vendors
         .iter()
-        .find(|vendor| vendor.identity.is_some())
-    else {
-        unavailable_probe(
-            recall,
-            "environment",
-            "live-thread-identity",
-            "no live vendor thread identity is present; transcript selectors are evidence, not current-actor credentials",
-        );
-        return None;
+        .filter(|vendor| vendor.identity.is_some())
+        .collect::<Vec<_>>();
+    let vendor = if let Some(preferred) = environment.preferred_vendor.as_deref() {
+        let preferred = preferred.to_string_lossy();
+        let Some(vendor) = environment
+            .vendors
+            .iter()
+            .find(|vendor| vendor.vendor.name() == preferred)
+        else {
+            unavailable_probe(
+                recall,
+                "environment",
+                "live-thread-identity",
+                &format!(
+                    "SPICE_AGENT_VENDOR names unknown vendor {preferred:?}; transcript selectors cannot replace the admitted live vendor identity"
+                ),
+            );
+            return None;
+        };
+        if vendor.identity.is_none() {
+            unavailable_probe(
+                recall,
+                "environment",
+                "live-thread-identity",
+                &format!(
+                    "SPICE_AGENT_VENDOR selects {} but {} is absent; another vendor identity cannot replace it",
+                    vendor.vendor.name(),
+                    vendor.vendor.thread_id_environment()
+                ),
+            );
+            return None;
+        }
+        vendor
+    } else {
+        match populated.as_slice() {
+            [vendor] => *vendor,
+            [] => {
+                unavailable_probe(
+                    recall,
+                    "environment",
+                    "live-thread-identity",
+                    "no live vendor thread identity is present; transcript selectors are evidence, not current-actor credentials",
+                );
+                return None;
+            }
+            vendors => {
+                unavailable_probe(
+                    recall,
+                    "environment",
+                    "live-thread-identity",
+                    &format!(
+                        "multiple live vendor identities are present without SPICE_AGENT_VENDOR: {}; current authority remains unknown",
+                        vendors
+                            .iter()
+                            .map(|vendor| vendor.vendor.thread_id_environment())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ),
+                );
+                return None;
+            }
+        }
     };
     let raw = vendor
         .identity

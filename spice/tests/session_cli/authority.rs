@@ -475,6 +475,126 @@ fn ambient_and_explicit_matching_threads_bind_authority_to_the_live_identity_rea
 }
 
 #[test]
+fn preferred_live_vendor_identity_wins_over_another_populated_vendor() {
+    let scratch = Scratch::new("authority-preferred-live-vendor");
+    fake_repository(scratch.path());
+    let live = uuid(0xaa).to_string().replace('-', "");
+    let stale = uuid(0xbb).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &live);
+    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&live));
+    let environment = [
+        ("CODEX_THREAD_ID", stale),                  // env-policy: allow
+        ("CLAUDE_CODE_SESSION_ID", live.clone()),    // env-policy: allow
+        ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
+        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+    ];
+    let before = fact_count(&authority);
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&["session", "briefing", &live, "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+
+    assert_eq!(recall["sources"][0]["thread"], live);
+    assert_eq!(recall["authorities"]["held_work"]["thread"], live);
+    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
+    assert_eq!(
+        recall["authorities"]["held_work"]["own_claim"]["title"],
+        "Compose Rust briefings"
+    );
+    assert_eq!(fact_count(&authority), before, "briefing appends no facts");
+
+    scratch.remove();
+}
+
+#[test]
+fn multiple_live_vendor_identities_without_preference_leave_authority_unknown() {
+    let scratch = Scratch::new("authority-ambiguous-live-vendors");
+    fake_repository(scratch.path());
+    let selected = uuid(0xaa).to_string().replace('-', "");
+    let other = uuid(0xbb).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &selected);
+    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
+    let environment = [
+        ("CODEX_THREAD_ID", other),                   // env-policy: allow
+        ("CLAUDE_CODE_SESSION_ID", selected.clone()), // env-policy: allow
+        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+    ];
+    let before = fact_count(&authority);
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&["session", "briefing", &selected, "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+
+    assert_eq!(recall["sources"][0]["thread"], selected);
+    assert_eq!(recall["authorities"]["held_work"]["thread"], Value::Null);
+    assert_eq!(recall["authorities"]["held_work"]["lane"], Value::Null);
+    assert_eq!(recall["authorities"]["held_work"]["own_claim"], Value::Null);
+    assert!(recall["authorities"].get("asks").is_none());
+    let unknown = recall["authorities"]["unknowns"]
+        .as_array()
+        .expect("ambiguous live environment is explicit")
+        .iter()
+        .find(|row| row["probe"] == "live-thread-identity")
+        .expect("live identity ambiguity is reported");
+    assert!(
+        unknown["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("multiple live vendor identities"))
+    );
+    assert_eq!(fact_count(&authority), before, "briefing appends no facts");
+
+    scratch.remove();
+}
+
+#[test]
+fn preferred_vendor_without_identity_does_not_fall_back_to_another_vendor() {
+    let scratch = Scratch::new("authority-missing-preferred-live-vendor");
+    fake_repository(scratch.path());
+    let selected = uuid(0xaa).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &selected);
+    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
+    let environment = [
+        ("CODEX_THREAD_ID", selected.clone()), // env-policy: allow
+        ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
+        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+    ];
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&["session", "briefing", &selected, "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+
+    assert_eq!(recall["sources"][0]["thread"], selected);
+    assert_eq!(recall["authorities"]["held_work"]["thread"], Value::Null);
+    assert!(recall["authorities"].get("asks").is_none());
+    assert!(
+        recall["authorities"]["unknowns"]
+            .as_array()
+            .expect("missing preferred identity is explicit")
+            .iter()
+            .any(|row| {
+                row["probe"] == "live-thread-identity"
+                    && row["detail"]
+                        .as_str()
+                        .is_some_and(|detail| detail.contains("CLAUDE_CODE_SESSION_ID is absent"))
+            })
+    );
+
+    scratch.remove();
+}
+
+#[test]
 fn explicit_foreign_transcript_preserves_evidence_without_impersonating_its_actor() {
     let scratch = Scratch::new("authority-foreign-transcript");
     fake_repository(scratch.path());
