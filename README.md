@@ -170,7 +170,7 @@ than the scheduler-granted workers. The full verifier grants two workspace
 lanes over the native selected root; the coordinator's reusable safety ceiling
 remains four owned process groups. Every shard prints its package, target
 inventory, and output lane before launch, reports progress every 30 seconds,
-and has a hard 255-second deadline that terminates and reaps the complete
+and has a hard 180-second deadline that terminates and reaps the complete
 process group.
 
 `cargo xtask verify-action battery` is the visible public partial surface for
