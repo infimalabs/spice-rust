@@ -14,6 +14,7 @@
 
 pub mod battery;
 pub mod camp;
+mod change_selection;
 pub mod config;
 pub mod core;
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,6 +61,10 @@ pub use battery::{BatteryCapture, RepositoryExecutionEvent};
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
     CampStanding, DistributionReport, LocusDistance, SharedBound,
+};
+pub use change_selection::{
+    CHANGE_SELECTION_REPORT_VERSION, ChangeSelectionEdge, ChangeSelectionError,
+    ChangeSelectionMode, ChangeSelectionReport, select_change_gates,
 };
 pub use config::{Config, WalkConfig};
 #[cfg(not(target_arch = "wasm32"))]
@@ -190,6 +195,7 @@ pub use verdict::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use workspace_tests::{
     WorkspaceTestError, WorkspaceTestExecution, WorkspaceTestRoots, prebuild_shared_at,
-    run as run_workspace_tests, run_at as run_workspace_tests_at, run_prebuilt_shared_at,
-    run_selected_at as run_selected_workspace_tests_at,
+    run as run_workspace_tests, run_at as run_workspace_tests_at,
+    run_exhaustive_selected_at as run_exhaustive_selected_workspace_tests_at,
+    run_prebuilt_shared_at, run_selected_at as run_selected_workspace_tests_at,
 };

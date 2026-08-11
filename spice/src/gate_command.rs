@@ -16,6 +16,7 @@ use wire::intent::{CommandAnswer, GateFindings};
 use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use crate::cli::Contract;
+use spice::change_gate::ChangeGateReport;
 use spice::repository::Repository;
 
 mod pre_commit;
@@ -94,8 +95,8 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
     direct(report)
 }
 
-/// Run the release-scoped native pre-commit battery without command recursion.
-pub(crate) fn pre_commit() -> Outcome<BatteryReport> {
+/// Run the release-scoped native staged-change gate without command recursion.
+pub(crate) fn pre_commit() -> Outcome<ChangeGateReport> {
     pre_commit::run()
 }
 
@@ -106,35 +107,47 @@ pub(crate) fn pre_commit_worker_entry(
 }
 
 fn pre_commit_report(
-    result: Result<BatteryReport, spice::gate::RunError>,
+    result: Result<ChangeGateReport, spice::change_gate::ChangeGateError>,
     artifact: &Path,
-) -> Outcome<BatteryReport> {
+) -> Outcome<ChangeGateReport> {
     match result {
         Ok(report) if report.admits() => direct(report),
         Ok(report) => {
-            let evidence = match battery_refusal_evidence(&report, artifact) {
+            let evidence = match change_gate_refusal_evidence(&report, artifact) {
                 Ok(evidence) => evidence,
                 Err(fault) => return Outcome::Fault(fault),
             };
             Outcome::Refusal(Refusal::evidence(
-                "gate::battery-regressed",
+                "gate::change-gate-regressed",
                 evidence,
-                "repair the typed failing results; never launch a predecessor gate. A merge is recorded by plain git commit like any other commit: the gate measures each file against the parent that carries it, so what refuses here is what this merge itself wrote",
+                "repair the selected failing tests or policy results; use the explicit full verifier when repository-wide evidence is required",
             ))
         }
-        Err(error) => battery_failure(error),
+        Err(error) if error.is_fault() => Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: error.reason().to_owned(),
+            detail: error.detail().to_owned(),
+        }),
+        Err(error) => Outcome::Refusal(Refusal::evidence(
+            error.reason(),
+            error.detail(),
+            "repair the named staged-source selection, selected test, or focused policy input",
+        )),
     }
 }
 
-fn battery_refusal_evidence(report: &BatteryReport, artifact: &Path) -> Result<String, Fault> {
+fn change_gate_refusal_evidence(
+    report: &ChangeGateReport,
+    artifact: &Path,
+) -> Result<String, Fault> {
     let bytes = report.encode().map_err(|error| Fault {
         class: FaultClass::Protocol,
-        reason: "gate::battery-report-unencodable".to_owned(),
+        reason: "gate::change-gate-report-unencodable".to_owned(),
         detail: error.to_string(),
     })?;
     let artifact = artifact.to_str().ok_or_else(|| Fault {
         class: FaultClass::Environment,
-        reason: "gate::battery-report-artifact-unavailable".to_owned(),
+        reason: "gate::change-gate-report-artifact-unavailable".to_owned(),
         detail: format!("report artifact path is not UTF-8: {artifact:?}"),
     })?;
     let mut file = std::fs::OpenOptions::new()
@@ -148,7 +161,7 @@ fn battery_refusal_evidence(report: &BatteryReport, artifact: &Path) -> Result<S
         .map_err(|error| report_artifact_fault(artifact, error))?;
     let artifact = serde_json::to_string(artifact).map_err(|error| Fault {
         class: FaultClass::Protocol,
-        reason: "gate::battery-report-artifact-unencodable".to_owned(),
+        reason: "gate::change-gate-report-artifact-unencodable".to_owned(),
         detail: error.to_string(),
     })?;
     Ok(format!(
@@ -160,7 +173,7 @@ fn battery_refusal_evidence(report: &BatteryReport, artifact: &Path) -> Result<S
 fn report_artifact_fault(artifact: &str, error: std::io::Error) -> Fault {
     Fault {
         class: FaultClass::Environment,
-        reason: "gate::battery-report-artifact-unavailable".to_owned(),
+        reason: "gate::change-gate-report-artifact-unavailable".to_owned(),
         detail: format!("cannot publish canonical report at {artifact}: {error}"),
     }
 }

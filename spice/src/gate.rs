@@ -37,6 +37,47 @@ pub struct PreparedBattery<'trace> {
     verifier_receipt_admitted: bool,
 }
 
+/// One retained staged capture selected for one canonical arm.
+///
+/// The ordinary change gate uses the always-on staging arm as its one source
+/// capture. That gives test selection, policy selection, and the first focused
+/// result one immutable root and digest without acquiring sibling families.
+pub struct PreparedArm<'trace> {
+    capture: BatteryCapture<'trace>,
+    gate_id: GateId,
+}
+
+impl PreparedArm<'_> {
+    /// Identity of the immutable selected source retained by this preparation.
+    #[must_use]
+    pub const fn source(&self) -> &Digest {
+        self.capture.source()
+    }
+
+    /// Private selected-tree root retained for this preparation's lifetime.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        self.capture.root()
+    }
+
+    /// Exact changed paths captured at the command rim for this source.
+    #[must_use]
+    pub fn changes(&self) -> &[String] {
+        self.capture.changes()
+    }
+
+    /// Execute the one canonical focused arm this capture selected.
+    ///
+    /// # Errors
+    ///
+    /// Returns the canonical focused-arm refusal without acquiring siblings.
+    pub fn execute(&mut self) -> Result<FocusedArmReport, RunError> {
+        self.capture
+            .execute_arm_report(self.gate_id)
+            .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    }
+}
+
 impl PreparedBattery<'_> {
     /// Identity of the immutable selected source retained by this preparation.
     #[must_use]
@@ -200,6 +241,15 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError>
         cargo_jobs: None,
         verifier_receipt_admitted: false,
     })
+}
+
+/// Capture one selected source for exactly one canonical battery arm.
+///
+/// # Errors
+///
+/// Returns the same rim and selected-arm capture failures as [`run_arm_report`].
+pub fn prepare_arm(selector: Selector, gate_id: GateId) -> Result<PreparedArm<'static>, RunError> {
+    capture(selector, Some(gate_id), None).map(|capture| PreparedArm { capture, gate_id })
 }
 
 /// Compile every reusable verifier stage and encode its source-bound receipt.
@@ -487,7 +537,7 @@ fn selected_changes(repository: &Path, selector: &Selector) -> Result<Vec<String
             "--cached",
             "--name-only",
             "-z",
-            "--diff-filter=ACMR",
+            "--diff-filter=ACMRD",
         ]
         .into_iter()
         .map(OsString::from)

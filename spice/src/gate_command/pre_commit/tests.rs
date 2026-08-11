@@ -1,7 +1,6 @@
 //! Focused regressions for the bounded pre-commit worker and supervisor.
 
 use super::*;
-use gate::CoverageCompleteness;
 use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt as _;
 use std::thread;
@@ -44,33 +43,29 @@ fn run_enters_supervision_with_only_private_worker_artifacts() {
 }
 
 #[test]
-fn verifier_compiler_refusal_renders_its_stage_and_output_evidence() {
+fn selected_test_refusal_renders_its_stage_and_output_evidence() {
     let evidence = concat!(
-        "stage=NativeClippy; completion=exited; code=Some(101); ",
-        "stdout=compiler stdout witness; stderr=compiler stderr witness"
+        "package \"spice\" ended as exit code=101 at binary \"gate_cli\", ",
+        "last test \"change selection fixture\""
     );
     let outcome = worker_failure(WorkerFailure {
-        reason: "gate::verifier-compiler-refused".to_owned(),
+        reason: "gate::change-gate-tests-refused".to_owned(),
         detail: evidence.to_owned(),
         fault: false,
     });
 
     let Outcome::Refusal(refusal) = &outcome else {
-        panic!("failed compiler preparation must refuse");
+        panic!("failed selected test execution must refuse");
     };
-    assert_eq!(
-        refusal.diagnostic().and_then(RefusalDiagnostic::observed),
-        Some(evidence)
-    );
+    assert_eq!(refusal.reason(), "gate::change-gate-tests-refused");
     let rendering = crate::render::render_commit_gate(&outcome, crate::render::Form::Text)
-        .expect("compiler refusal renders")
-        .expect("compiler refusal is visible");
-    let text = std::str::from_utf8(rendering.document()).expect("compiler refusal is UTF-8");
-    assert!(text.contains("stage=NativeClippy"), "{text}");
-    assert!(text.contains("completion=exited"), "{text}");
-    assert!(text.contains("code=Some(101)"), "{text}");
-    assert!(text.contains("stdout=compiler stdout witness"), "{text}");
-    assert!(text.contains("stderr=compiler stderr witness"), "{text}");
+        .expect("selected-test refusal renders")
+        .expect("selected-test refusal is visible");
+    let text = std::str::from_utf8(rendering.document()).expect("selected-test refusal is UTF-8");
+    assert!(text.contains("package \"spice\""), "{text}");
+    assert!(text.contains("exit code=101"), "{text}");
+    assert!(text.contains("binary \"gate_cli\""), "{text}");
+    assert!(text.contains("last test"), "{text}");
 }
 
 #[test]
@@ -96,38 +91,6 @@ fn worker_artifact_directory_is_private() {
     }
     assert!(!files.report.exists());
     files.cleanup().expect("remove private worker files");
-}
-
-#[test]
-fn unknown_staged_source_coverage_refuses_with_the_exact_selection_report() {
-    let report = gate::TestEvidenceGraph::select_tests(
-        wire::Digest::compute(wire::Domain::GateTree, b"unknown staged selection"),
-        vec!["tools/outside.rs".to_owned()],
-        Vec::new(),
-        Vec::new(),
-        CoverageCompleteness::unknown("changed Rust source is outside every workspace package")
-            .expect("unknown reason"),
-    )
-    .expect("unknown selection remains typed");
-
-    let outcome = selection_refusal(report.clone());
-    let Outcome::Refusal(refusal) = &outcome else {
-        panic!("unknown source-to-test coverage must refuse");
-    };
-    assert_eq!(refusal.reason(), "gate::test-selection-coverage-unknown");
-    let rendering = crate::render::render_commit_gate(&outcome, crate::render::Form::Text)
-        .expect("selection refusal renders")
-        .expect("a selection refusal is not silent");
-    assert_eq!(rendering.stream(), crate::render::Stream::Err);
-    let evidence = std::str::from_utf8(rendering.document())
-        .expect("selection evidence is UTF-8")
-        .lines()
-        .next()
-        .expect("selection evidence precedes its summary");
-    assert_eq!(
-        TestSelectionReport::decode(evidence.as_bytes()).expect("decode refusal evidence"),
-        report
-    );
 }
 
 #[test]

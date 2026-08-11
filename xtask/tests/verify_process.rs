@@ -678,12 +678,12 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
     assert!(
         stdout.contains(concat!(
             "cargo xtask <help|verify [--package PACKAGE]|",
-            "verify-action battery|gate ARM|"
+            "verify-action <selection|battery>|gate ARM|"
         )),
         "{}",
         streams(&output)
     );
-    assert!(stdout.contains("not a completion verifier"));
+    assert!(stdout.contains("Neither is a completion verifier"));
     for gate_id in GateId::BATTERY {
         assert!(
             stdout

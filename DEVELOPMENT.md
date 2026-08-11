@@ -57,7 +57,7 @@ coordinator with 120-second shard and 180-second coordinator bounds.
 | Doctests | Public API examples and compile-time documentation contracts. | `cargo test --locked -p PACKAGE --doc`. |
 | Parent-launched ignored fixtures | Process death, resource-limit mutation, hard-supervisor, and measured benchmark children. Their named parent tests own invocation and cleanup. | Run the parent test; do not blanket-run `--ignored`. |
 | Canvas browser guard | App build/resident/socket/browser behavior, shard inventory, timing, and descendant cleanup. | Full verifier; use `npm run test:canvas` only when working directly on its harness. |
-| Gate battery and landing | Tracked policy evidence and final contract admission. | Full verifier. `verify-action battery` is diagnostic partial evidence only. |
+| Change-local gate, battery, and landing | Staged path-to-test and path-to-policy evidence, the complete policy battery, and final contract admission. | `cargo xtask verify-action selection` for the staged common path; full verifier for completion. `verify-action battery` is explicit complete-policy evidence only. |
 
 Metadata selection is conservative target-root reachability, not line coverage.
 The long-running test-evidence authority currently declares its per-test
@@ -70,7 +70,16 @@ evidence where applicable, and a clean canonical verifier.
 ## Feedback and completion tiers
 
 Run the narrowest command that can falsify the current edit, then widen at a
-stable checkpoint:
+stable checkpoint. The four surfaces have distinct jobs:
+
+| Surface | Run it when | Command and boundary |
+| --- | --- | --- |
+| Targeted staged gate | The index is ready for a commit, or you need exact change-to-check evidence. This is the installed hook's ordinary path. | `cargo xtask verify-action selection`. Known paths select affected Cargo targets and focused canonical policy arms. Unknown paths and selector/toolchain authorities escalate to every target and all 27 arms. It is not completion evidence. |
+| Package validation | Work is moving within one crate and needs broader compile/test feedback than an exact test. Add downstream packages when a public seam changes. | `cargo xtask verify --package PACKAGE`. Runs entry-point audit, package Clippy, all targets, and doctests, while printing every full-only omission. |
+| Full verifier | Immediately before handoff or task completion, after package/seam checks are clean. | `cargo xtask verify`. Runs the unchanged 13-action repository completion graph; no targeted or package result substitutes for it. |
+| Study | You are explicitly investigating suite architecture, mutation reach, or redundant coverage. These can be expensive and are not ordinary edit feedback. | `cargo xtask gate suite-seam`, `cargo xtask gate mutation-coverage`, or `cargo xtask gate test-subsumption`. Keep their exhaustive inventories out of the commit common path. |
+
+Use that boundary in this order:
 
 1. Inspect `git status --short`, identify the owning crate and boundary, and
    check whether the path is tracked source or an owned generated surface.
@@ -85,9 +94,13 @@ stable checkpoint:
    the Canvas guard for browser/runtime behavior,
    `cargo test --locked -p gate --test dependency_lattice` for manifest edges,
    or the owning proof/staging command for release surfaces.
-5. Once, immediately before commit or handoff, run `cargo xtask verify`. Do not
-   substitute package checks, the battery action, or a prior worktree's result.
-6. Confirm no owned Cargo/rustc/process group remains, inspect the final diff,
+5. Stage the intended change and run `cargo xtask verify-action selection` (the
+   installed hook repeats it silently). Inspect its typed selection if it
+   escalates; do not weaken the exhaustive fallback.
+6. Once, immediately before commit or handoff, run `cargo xtask verify`. Do not
+   substitute targeted/package checks, the battery action, a study, or a prior
+   worktree's result.
+7. Confirm no owned Cargo/rustc/process group remains, inspect the final diff,
    and commit through the installed hooks.
 
 The strict verifier remains 13 actions, a 180-second test-phase cutoff, and a
@@ -103,6 +116,15 @@ The scoped `xtask` verifier took 22.89 seconds: 0.26 seconds Clippy, 21.15
 seconds all-target tests, and 0.28 seconds doctests. Merely listing all Rust
 targets took 16.20 seconds after a 15.13-second compile and enumerated 2,661
 tests; doctest listing took 3.31 seconds.
+
+The staged selector was measured on the same host with a representative
+two-file `gate` backend change. In a fresh shared clone with a new writable
+Cargo output it admitted in 79.28 seconds; an immediate repeat admitted in
+61.80 seconds. Both runs selected the affected `gate` targets and 10 focused
+policy arms, stayed silent on success, and did not run the full verifier or any
+study arm. These are cold-output and warm-repeat measurements of that backend
+case, not promises for a documentation-only change or an unknown-path
+exhaustive escalation.
 
 The isolated fleet matrix in `gate/THROUGHPUT_AUDIT.md` is the heavy-workflow
 limit: 4, 8, and 10 agent-equivalent runs peaked at 51, 63, and 99 concurrent
