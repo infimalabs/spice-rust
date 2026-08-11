@@ -126,6 +126,27 @@ seconds and occupied 342,896 KiB. Each reported run used fresh peer roots and on
 | 10 | 37.52–39.22 s | 3 / 4 / 0 / 4 | 238.87 s; cleanup fixture refusal | 9/13 actions; 16/32 shards | 191 / 10 / 99 / 20 | 10,644,288 KiB | 3,118,964 KiB |
 | 8, focused comparison | 24.54–30.51 s | 3 / 4 / 0 / 4; unchanged after setup | 299.33 s; hard-supervisor interruption | 12/13 actions; 32/32 shards | 181 / 9 / 85 / 57 | 9,474,976 KiB | 2,436,264 KiB |
 
+Follow-up task `PERFORM-1kLhqWQL` isolated the post-prebuild decision. It built
+the verifier executable at the exact pre-rebalance revision `9ebe5631` and the
+rebalance revision `dd52ab23`, then ran both executables from the same current
+worktree and warm selected-root cache. Each arm launched seven fresh isolated
+peer builds and withheld verifier launch until all seven Cargo processes were
+observable. Both verifier probes independently saw exactly one remaining peer
+and therefore started with the identical two-worker, four-job, two-lane budget.
+
+| Implementation | Cold peer wall range | Initial budget (workers/jobs/peers/lanes) | Post-prebuild pressure and budget | Wall and result | Verifier progress | Peak processes / Cargo / rustc / linkers | Peak sampled RSS | Disk delta |
+| --- | ---: | --- | --- | --- | --- | --- | ---: | ---: |
+| Pre-rebalance `9ebe5631` | 22.60–33.17 s | 2 / 4 / 1 / 2 | zero peers by boundary timing; no second probe, budget stayed 2 / 4 / 1 / 2 | 296.42 s; hard-supervisor interruption | 9/13 actions; 13/32 shards | 153 / 7 / 83 / 18 | 7,031,872 KiB | 2,422,540 KiB |
+| Rebalance `dd52ab23` | 22.90–32.96 s | 2 / 4 / 1 / 2 | published 0 peers and 3 / 4 / 0 / 4 | 289.28 s; success | 13/13 actions; 32/32 shards | 145 / 8 / 68 / 29 | 8,070,864 KiB | 2,455,452 KiB |
+
+The boundary was pressure-free in both arms independently of the second probe.
+The seven serialized prerequisite actions took 65.07 and 64.63 seconds before
+workspace-test setup began; setup completed at approximately 106.26 and 108.06
+seconds. Every peer had already exited by 33.17 and 32.96 seconds respectively.
+The arms therefore match at launch and at the stable cache boundary. The only
+production-path scheduling difference is that the rebalance arm observes and
+publishes the recovered capacity.
+
 Four agents are the first observed saturation point for this deliberately cold,
 isolated mix. Independent Cargo jobservers granted up to 12 jobs apiece, so the
 host saw 51 `rustc` processes at four agents and 99 at ten. Required output-root
@@ -150,15 +171,20 @@ Cargo job grant still divided from the observed CPU/participant count. A failed
 observation fails all three dimensions closed to one. No alternate resolver or
 unbounded retry is used.
 
-The focused eight-agent comparison's startup probe observed zero peers rather
-than the baseline's two. It completed every shard instead of two and reached 12
-actions instead of nine, but the changed observation means the run does not
-isolate that progress from peer-census variance. It still crossed the unchanged
-outer envelope after documentation while doctests were running. On this host
-the cold isolated workload therefore has no GO at 4, 8, or 10 concurrent
-agents. The measured efficient ceiling is below four; this matrix did not
-identify the highest admitted lower count. Warm ordinary work may behave
-better, but these samples do not establish a higher ceiling.
+The earlier focused eight-agent comparison remains non-causal because its
+startup probe observed zero peers rather than the baseline's two. The matched
+follow-up resolves that gap: with identical pressured startup budgets and
+pressure-free prebuild boundaries, the fixed budget was interrupted after 13
+shards while the rebalanced budget completed all 32 shards, all 13 actions, and
+contract landing. The 7.14-second observed wall difference understates the
+effect because the pre-rebalance arm did not complete. This is a material
+envelope-level improvement consistent with the deterministic scheduler tests,
+so no contradictory repeat was required and the production rebalance remains.
+
+The broader cold isolated workload still has no GO at the original 4, 8, or 10
+concurrent-agent matrix points. The measured efficient ceiling is below four;
+this matrix did not identify the highest admitted lower count. Warm ordinary
+work may behave better, but these samples do not establish a higher ceiling.
 
 ## Verify battery
 
