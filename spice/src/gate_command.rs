@@ -5,6 +5,7 @@
 //! all come from one captured Git source rather than from a moving checkout.
 
 use std::path::Path;
+use std::{io::Write as _, os::unix::fs::OpenOptionsExt as _};
 
 use gate::{
     BatteryReceipt, BatteryReport, CampReport, GateId, KillReport, ReportMutationMovement, Selector,
@@ -106,15 +107,61 @@ pub(crate) fn pre_commit_worker_entry(
 
 fn pre_commit_report(
     result: Result<BatteryReport, spice::gate::RunError>,
+    artifact: &Path,
 ) -> Outcome<BatteryReport> {
     match result {
         Ok(report) if report.admits() => direct(report),
-        Ok(report) => Outcome::Refusal(Refusal::evidence(
-            "gate::battery-regressed",
-            report.refusal_fold().to_string(),
-            "repair the typed failing results; never launch a predecessor gate. A merge is recorded by plain git commit like any other commit: the gate measures each file against the parent that carries it, so what refuses here is what this merge itself wrote",
-        )),
+        Ok(report) => {
+            let evidence = match battery_refusal_evidence(&report, artifact) {
+                Ok(evidence) => evidence,
+                Err(fault) => return Outcome::Fault(fault),
+            };
+            Outcome::Refusal(Refusal::evidence(
+                "gate::battery-regressed",
+                evidence,
+                "repair the typed failing results; never launch a predecessor gate. A merge is recorded by plain git commit like any other commit: the gate measures each file against the parent that carries it, so what refuses here is what this merge itself wrote",
+            ))
+        }
         Err(error) => battery_failure(error),
+    }
+}
+
+fn battery_refusal_evidence(report: &BatteryReport, artifact: &Path) -> Result<String, Fault> {
+    let bytes = report.encode().map_err(|error| Fault {
+        class: FaultClass::Protocol,
+        reason: "gate::battery-report-unencodable".to_owned(),
+        detail: error.to_string(),
+    })?;
+    let artifact = artifact.to_str().ok_or_else(|| Fault {
+        class: FaultClass::Environment,
+        reason: "gate::battery-report-artifact-unavailable".to_owned(),
+        detail: format!("report artifact path is not UTF-8: {artifact:?}"),
+    })?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(artifact)
+        .map_err(|error| report_artifact_fault(artifact, error))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| report_artifact_fault(artifact, error))?;
+    let artifact = serde_json::to_string(artifact).map_err(|error| Fault {
+        class: FaultClass::Protocol,
+        reason: "gate::battery-report-artifact-unencodable".to_owned(),
+        detail: error.to_string(),
+    })?;
+    Ok(format!(
+        "{}full-report: {artifact}\n",
+        report.refusal_fold().as_str()
+    ))
+}
+
+fn report_artifact_fault(artifact: &str, error: std::io::Error) -> Fault {
+    Fault {
+        class: FaultClass::Environment,
+        reason: "gate::battery-report-artifact-unavailable".to_owned(),
+        detail: format!("cannot publish canonical report at {artifact}: {error}"),
     }
 }
 

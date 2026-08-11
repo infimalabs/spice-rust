@@ -12,8 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use gate::{
-    BatteryReceipt, BatteryReport, BatteryState, CampReport, CampStanding, CoverageCompleteness,
-    TestSelectionReport,
+    BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryReceipt, BatteryReport, BatteryState, CampReport,
+    CampStanding, CoverageCompleteness, TestSelectionReport,
 };
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction, Spec,
@@ -21,6 +21,9 @@ use sill::{
 };
 use spice::placeholder::PlaceholderReason;
 use wire::{Digest, Domain, Outcome, Refusal, ReplyPosition};
+
+#[path = "gate_cli/refusal.rs"]
+mod refusal_artifact;
 
 const REFUSAL_EXIT: i32 = 2;
 const FAULT_EXIT: i32 = 1;
@@ -342,196 +345,6 @@ fn invoke_with_path(argv: &[&str], current: &Path, path: Option<&Path>) -> Spoke
         out: output.stdout,
         err: output.stderr,
     }
-}
-
-#[test]
-fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_processes() {
-    // GOV-45 / CASE 250: ordinary `gate` and `gate pre-commit` remain direct
-    // observation/enforcement paths; only the explicit `gate findings` leaf
-    // enters board dispatch.
-    let repository = GateRepository::new();
-    repository.write_markdown_case_mismatches(512);
-    repository.add("docs");
-    git(
-        repository.path(),
-        &["commit", "-qm", "Plant oversized canonical gate evidence"],
-    );
-    repository.write_source(2_000);
-    repository.add("src/lib.rs");
-    let tripwires = Scratch::new("tripwires");
-    let marker = tripwires.path().join("invoked");
-    for program in ["python", "python3", "taskwarrior", "task"] {
-        let executable = tripwires.path().join(program);
-        fs::write(
-            &executable,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' '{}' >> '{}'\nexit 97\n",
-                program,
-                marker.display()
-            ),
-        )
-        .expect("write process tripwire");
-        let mut permissions = fs::metadata(&executable)
-            .expect("read process tripwire mode")
-            .permissions();
-        use std::os::unix::fs::PermissionsExt as _;
-        permissions.set_mode(0o755);
-        fs::set_permissions(&executable, permissions).expect("make process tripwire executable");
-    }
-    std::os::unix::fs::symlink(env!("CARGO"), tripwires.path().join("cargo"))
-        .expect("make canonical test runner Cargo available inside the process tripwire path");
-    std::os::unix::fs::symlink(
-        Path::new(env!("CARGO")).with_file_name("rustc"),
-        tripwires.path().join("rustc"),
-    )
-    .expect("make Cargo's exact Rust compiler available inside the process tripwire path");
-    for program in ["cc", "xcrun"] {
-        let executable = Path::new("/usr/bin").join(program);
-        if executable.exists() {
-            std::os::unix::fs::symlink(&executable, tripwires.path().join(program)).unwrap_or_else(
-                |error| panic!("make {program} available to the selected target: {error}"),
-            );
-        }
-    }
-
-    let gate = invoke_with_path(&["gate"], repository.path(), Some(tripwires.path()));
-    let report = report_body(&gate);
-    let canonical = report.encode().expect("canonical battery report encodes");
-    assert!(
-        canonical.len() > gate::BATTERY_REFUSAL_FOLD_MAX_BYTES,
-        "fixture must expose the former full-report refusal flood: {} bytes",
-        canonical.len(),
-    );
-    let fold = report.refusal_fold();
-    assert_eq!(fold, report.refusal_fold(), "the refusal fold is stable");
-    assert!(
-        fold.as_bytes().len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES,
-        "the projected refusal bypassed its 64 KiB ceiling",
-    );
-    let pre_commit = invoke_with_path(
-        &["--json", "gate", "pre-commit"],
-        repository.path(),
-        Some(tripwires.path()),
-    );
-    assert_eq!(pre_commit.code, Some(REFUSAL_EXIT));
-    assert!(pre_commit.out.is_empty());
-    let outcome: Outcome<serde_json::Value> =
-        wire::decode(&pre_commit.err).expect("typed pre-commit refusal");
-    let Outcome::Refusal(refusal) = outcome else {
-        panic!("non-admitting tripwire vector must refuse: {outcome:?}");
-    };
-    assert_eq!(
-        refusal.reason(),
-        "gate::battery-regressed",
-        "the fixture must reach the battery refusal mapper: {refusal:?}",
-    );
-    // An operator reaching this refusal mid-merge needs to know that a merge is
-    // recorded like anything else, because the alternative they otherwise reach
-    // for is bypassing the hook. The remedy names that command rather than the
-    // gate growing a second way to record one, and it is asserted here, on the
-    // shipped binary's own output, rather than beside the string that builds it.
-    let Refusal::Evidence {
-        evidence, summary, ..
-    } = &refusal
-    else {
-        panic!("pre-commit gate report must use evidence refusal: {refusal:?}")
-    };
-    assert!(
-        summary.contains("git commit"),
-        "the pre-commit refusal names how a merge is recorded: {summary}"
-    );
-    assert_eq!(
-        evidence,
-        fold.as_str(),
-        "the commit surface carries the bounded projection of the canonical report",
-    );
-    assert!(
-        evidence.contains("gate=file-shape state=failed"),
-        "{evidence}"
-    );
-    assert!(
-        evidence.contains("full-evidence: cargo xtask gate file-shape"),
-        "{evidence}",
-    );
-    assert!(
-        evidence.contains("metric=file.lines")
-            && evidence.contains("value=2001")
-            && evidence.contains("base_limit=")
-            && evidence.contains("active_limit="),
-        "the refusal lost the concrete measurement and allowed bound: {evidence}",
-    );
-    assert!(
-        evidence.contains("omitted_arms=")
-            && evidence.contains("omitted_findings=")
-            && !evidence.contains("omitted_findings=0"),
-        "the bounded refusal lost truncation and omission accounting: {evidence}",
-    );
-    let admitted = report
-        .results()
-        .iter()
-        .find(|result| result.state().admits())
-        .expect("the oversized fixture retains at least one admitting arm");
-    assert!(
-        !evidence.contains(&format!(
-            "arm position={} gate={} state=",
-            admitted.position(),
-            admitted.gate_id(),
-        )),
-        "passing-arm evidence leaked into the refusal: {evidence}",
-    );
-    assert!(
-        pre_commit.err.len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES * 2 + 2_048,
-        "typed JSON refusal is not structurally bounded: {} bytes",
-        pre_commit.err.len(),
-    );
-    let pre_commit_text = invoke_with_path(
-        &["gate", "pre-commit"],
-        repository.path(),
-        Some(tripwires.path()),
-    );
-    assert_eq!(pre_commit_text.code, Some(REFUSAL_EXIT));
-    assert!(pre_commit_text.out.is_empty());
-    let text = std::str::from_utf8(&pre_commit_text.err).expect("text refusal is UTF-8");
-    assert!(
-        text.starts_with(evidence.trim_end_matches('\n')),
-        "text and JSON forms diverged: {text}",
-    );
-    assert!(
-        pre_commit_text.err.len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES + 1_024,
-        "text refusal is not structurally bounded: {} bytes",
-        pre_commit_text.err.len(),
-    );
-    let receipt = receipt_body(&invoke_with_path(
-        &["gate", "receipt"],
-        repository.path(),
-        Some(tripwires.path()),
-    ));
-
-    assert_eq!(receipt.tree(), report.context().source());
-    assert_eq!(
-        receipt.manifest(),
-        &Digest::compute(
-            Domain::GateBatteryManifest,
-            gate::CANONICAL_BATTERY_MANIFEST.as_bytes(),
-        )
-    );
-    assert_eq!(receipt.gate_set(), report.gate_set());
-    assert_equivalent_except_rust_elapsed(receipt.results(), report.results());
-    assert_eq!(gate::GateId::BATTERY.len(), 27);
-    assert_eq!(report.results().len(), 27);
-    assert_eq!(
-        report
-            .results()
-            .iter()
-            .map(|result| result.gate_id())
-            .collect::<Vec<_>>(),
-        gate::GateId::BATTERY
-    );
-    assert!(
-        !marker.exists(),
-        "a forbidden interpreter or Taskwarrior process crossed the Rust rim: {}",
-        marker.display()
-    );
 }
 
 fn reply<B>(spoken: &Spoken) -> B

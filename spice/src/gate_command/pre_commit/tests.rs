@@ -31,6 +31,7 @@ fn run_enters_supervision_with_only_private_worker_artifacts() {
                 0o600
             );
         }
+        assert!(!files.report.exists());
         phase.set(1);
         fault("gate::supervisor-fixture", "bounded supervisor entered")
     });
@@ -93,6 +94,7 @@ fn worker_artifact_directory_is_private() {
             0o600
         );
     }
+    assert!(!files.report.exists());
     files.cleanup().expect("remove private worker files");
 }
 

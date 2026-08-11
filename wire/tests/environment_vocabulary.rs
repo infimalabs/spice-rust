@@ -39,9 +39,9 @@ struct EnvironmentPolicy {
 /// `TMPDIR` at private writable scratch. The verifier passes Canvas its binary
 /// inside an isolated build root. The four predecessor Spice names are
 /// collision sentinels in the coexistence tests, not variables this port owns.
-/// The workspace-test coordinator also passes its writable fixture root while
-/// compiling tests from an immutable selected tree. Those references oblige
-/// the ledger to account all fourteen names. They are
+/// The workspace-test coordinator also passes its writable fixture root and
+/// shared-output authority while compiling tests from an immutable selected
+/// tree. Those references oblige the ledger to account all fifteen names. They are
 /// named here rather than added to [`SpiceVariable`], because Doctor reports
 /// the variables Spice owns and a row for one of these would claim ownership
 /// Spice does not have.

@@ -109,23 +109,31 @@ struct WorkerFiles {
     root: PathBuf,
     progress: PathBuf,
     terminal: PathBuf,
+    report: PathBuf,
     armed: bool,
 }
 
 impl WorkerFiles {
     fn create() -> io::Result<Self> {
-        let root = env::temp_dir().join(format!(
+        let temporary = fs::canonicalize(env::temp_dir())?;
+        let stem = format!(
             "spice-commit-gate-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4().simple(),
-        ));
+        );
+        let root = temporary.join(&stem);
         DirBuilder::new().mode(0o700).create(&root)?;
         let progress = root.join("progress.jsonl");
         let terminal = root.join("terminal.bin");
+        // The private worker directory is removed before the command returns.
+        // A refusing report is its sibling so the path printed to the operator
+        // remains readable after supervisor cleanup.
+        let report = temporary.join(format!("{stem}-report.json"));
         let files = Self {
             root,
             progress,
             terminal,
+            report,
             armed: true,
         };
         drop(create_private_file(&files.progress)?);
@@ -286,11 +294,11 @@ fn classify(files: &WorkerFiles, waited: &WaitOutcome) -> Outcome<BatteryReport>
                 captured(waited.stderr()),
             ),
         ),
-        Completion::Exited(_) => terminal(&files.terminal, &files.progress),
+        Completion::Exited(_) => terminal(&files.terminal, &files.progress, &files.report),
     }
 }
 
-fn terminal(path: &Path, progress: &Path) -> Outcome<BatteryReport> {
+fn terminal(path: &Path, progress: &Path, report_artifact: &Path) -> Outcome<BatteryReport> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -305,7 +313,7 @@ fn terminal(path: &Path, progress: &Path) -> Outcome<BatteryReport> {
     };
     match *kind {
         REPORT_RECORD => match BatteryReport::decode(document) {
-            Ok(report) => super::pre_commit_report(Ok(report)),
+            Ok(report) => super::pre_commit_report(Ok(report), report_artifact),
             Err(error) => worker_lost(
                 progress,
                 format!("worker published an invalid battery report: {error}"),
