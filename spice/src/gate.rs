@@ -14,8 +14,8 @@ use std::process::Command;
 use ::gate::{
     ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
     FocusedArmReport, GateId, HygieneConfiguration, KillRun, RepositoryExecutionEvent, RimCapture,
-    Selector, VerifierCompilerContract, VerifierCompilerEvidence, admit_verifier_compiler_receipt,
-    encode_verifier_compiler_receipt,
+    Selector, StateRunScope, VerifierCompilerContract, VerifierCompilerEvidence,
+    admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
 };
 use wire::Digest;
 
@@ -75,6 +75,27 @@ impl PreparedArm<'_> {
         self.capture
             .execute_arm_report(self.gate_id)
             .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    }
+
+    /// Shared state transaction for additional focused captures in this run.
+    #[must_use]
+    pub fn state_run(&self) -> ::gate::BatteryStateRun {
+        self.capture.state_run()
+    }
+
+    /// Publish all focused observations after the enclosing run accepts.
+    pub fn accept_state(&self, scope: StateRunScope) -> Result<(), RunError> {
+        self.capture
+            .accept_state(scope)
+            .map(|_| ())
+            .map_err(|error| RunError::refusal("gate::state-publication-refused", error))
+    }
+
+    /// Discard all focused observations after the enclosing run rejects.
+    pub fn reject_state(&self) -> Result<(), RunError> {
+        self.capture
+            .reject_state()
+            .map_err(|error| RunError::fault("gate::state-rejection-unavailable", error))
     }
 }
 
@@ -195,6 +216,21 @@ impl PreparedBattery<'_> {
         };
         result.map_err(|error| RunError::refusal("gate::battery-refused", error))
     }
+
+    /// Publish the exhaustive state transaction after the enclosing verifier accepts.
+    pub fn accept_state(&self) -> Result<(), RunError> {
+        self.capture
+            .accept_state(StateRunScope::Exhaustive)
+            .map(|_| ())
+            .map_err(|error| RunError::refusal("gate::state-publication-refused", error))
+    }
+
+    /// Discard the exhaustive state transaction after refusal or interruption.
+    pub fn reject_state(&self) -> Result<(), RunError> {
+        self.capture
+            .reject_state()
+            .map_err(|error| RunError::fault("gate::state-rejection-unavailable", error))
+    }
 }
 
 fn bind_cargo_jobs(
@@ -250,6 +286,15 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError>
 /// Returns the same rim and selected-arm capture failures as [`run_arm_report`].
 pub fn prepare_arm(selector: Selector, gate_id: GateId) -> Result<PreparedArm<'static>, RunError> {
     capture(selector, Some(gate_id), None).map(|capture| PreparedArm { capture, gate_id })
+}
+
+/// Capture one focused arm into an existing enclosing state transaction.
+pub fn prepare_arm_in_state(
+    selector: Selector,
+    gate_id: GateId,
+    state_run: ::gate::BatteryStateRun,
+) -> Result<PreparedArm<'static>, RunError> {
+    capture_in_state(selector, gate_id, state_run).map(|capture| PreparedArm { capture, gate_id })
 }
 
 /// Compile every reusable verifier stage and encode its source-bound receipt.
@@ -321,7 +366,13 @@ pub fn run_traced_with_verifier_receipt(
 ) -> Result<BatteryReport, RunError> {
     let mut prepared = prepare_traced(selector, trace)?;
     let evidence = prepared.admit_verifier_compiler_receipt(receipt, cargo_jobs, authority)?;
-    prepared.execute(&evidence)
+    let report = prepared.execute(&evidence)?;
+    if report.admits() {
+        prepared.accept_state()?;
+    } else {
+        prepared.reject_state()?;
+    }
+    Ok(report)
 }
 
 fn verifier_compiler_failure(
@@ -397,10 +448,14 @@ fn verifier_environment() -> Vec<(OsString, OsString)> {
 /// Returns the exact rim acquisition or battery refusal. No alternate command
 /// or predecessor implementation is attempted.
 pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
-    let mut capture = capture(selector, None, None)?;
-    capture
-        .execute()
-        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    let mut prepared = prepare(selector)?;
+    let report = prepared.execute(&[])?;
+    if report.admits() {
+        prepared.accept_state()?;
+    } else {
+        prepared.reject_state()?;
+    }
+    Ok(report)
 }
 
 /// Execute one named canonical gate arm over one selected source.
@@ -410,10 +465,7 @@ pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
 /// Returns the same acquisition and arm refusal as [`run`], without executing
 /// sibling battery arms.
 pub fn run_arm(selector: Selector, gate_id: GateId) -> Result<BatteryArmResult, RunError> {
-    let mut capture = capture(selector, Some(gate_id), None)?;
-    capture
-        .execute_arm(gate_id)
-        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    run_arm_report(selector, gate_id).map(FocusedArmReport::into_result)
 }
 
 /// Execute one named canonical gate arm and retain its verifiable input context.
@@ -423,10 +475,14 @@ pub fn run_arm(selector: Selector, gate_id: GateId) -> Result<BatteryArmResult, 
 /// Returns the same acquisition and arm refusal as [`run_arm`], without
 /// executing sibling battery arms.
 pub fn run_arm_report(selector: Selector, gate_id: GateId) -> Result<FocusedArmReport, RunError> {
-    let mut capture = capture(selector, Some(gate_id), None)?;
-    capture
-        .execute_arm_report(gate_id)
-        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    let mut prepared = prepare_arm(selector, gate_id)?;
+    let report = prepared.execute()?;
+    if report.admits() {
+        prepared.accept_state(StateRunScope::Partial)?;
+    } else {
+        prepared.reject_state()?;
+    }
+    Ok(report)
 }
 
 /// Execute the canonical battery and mint its current receipt.
@@ -435,10 +491,17 @@ pub fn run_arm_report(selector: Selector, gate_id: GateId) -> Result<FocusedArmR
 ///
 /// Returns the same acquisition and completeness refusals as [`run`].
 pub fn receipt(selector: Selector) -> Result<BatteryReceipt, RunError> {
-    let mut capture = capture(selector, None, None)?;
-    capture
+    let mut prepared = prepare(selector)?;
+    let receipt = prepared
+        .capture
         .execute_receipt()
-        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+        .map_err(|error| RunError::refusal("gate::battery-refused", error))?;
+    if receipt.run().admits() {
+        prepared.accept_state()?;
+    } else {
+        prepared.reject_state()?;
+    }
+    Ok(receipt)
 }
 
 /// Execute as [`run`] while exposing the gate-owned invocation trace.
@@ -453,13 +516,37 @@ pub fn run_traced(
     selector: Selector,
     trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<BatteryReport, RunError> {
-    prepare_traced(selector, trace)?.execute(&[])
+    let mut prepared = prepare_traced(selector, trace)?;
+    let report = prepared.execute(&[])?;
+    if report.admits() {
+        prepared.accept_state()?;
+    } else {
+        prepared.reject_state()?;
+    }
+    Ok(report)
+}
+
+fn capture_in_state(
+    selector: Selector,
+    gate_id: GateId,
+    state_run: ::gate::BatteryStateRun,
+) -> Result<BatteryCapture<'static>, RunError> {
+    capture_inner(selector, Some(gate_id), None, Some(state_run))
 }
 
 fn capture<'trace>(
     selector: Selector,
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+) -> Result<BatteryCapture<'trace>, RunError> {
+    capture_inner(selector, selected, trace, None)
+}
+
+fn capture_inner<'trace>(
+    selector: Selector,
+    selected: Option<GateId>,
+    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+    state_run: Option<::gate::BatteryStateRun>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
     let directory = env::current_dir()
         .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
@@ -475,25 +562,31 @@ fn capture<'trace>(
         .map_err(|error| RunError::refusal("gate::rim-refused", error))?;
     let actor = ActorCapture::Acting {
         actor,
-        // BatteryCapture reconciles this observation against the exact state
-        // authority it loads. The daemonless command rim holds no clock or
-        // mutation lease, so it asserts no still-active peer claim.
+        // BatteryStateRun supplies the fixed clock and active claims from the
+        // exact authority every focused capture shares. The command rim makes
+        // no competing claim observation of its own.
         bound_claims: Vec::new(),
     };
     let claim = ClaimCapture::Idle;
     let hygiene = HygieneConfiguration::current();
     let root = repository.worktree_root();
-    match (selected, trace) {
-        (Some(gate_id), Some(trace)) => BatteryCapture::capture_arm_traced(
+    match (selected, trace, state_run) {
+        (Some(gate_id), None, Some(state_run)) => BatteryCapture::capture_arm_in_state(
+            root, &selector, claim, actor, rim, hygiene, gate_id, state_run,
+        ),
+        (Some(gate_id), Some(trace), None) => BatteryCapture::capture_arm_traced(
             root, &selector, claim, actor, rim, hygiene, gate_id, trace,
         ),
-        (Some(gate_id), None) => {
+        (Some(gate_id), None, None) => {
             BatteryCapture::capture_arm(root, &selector, claim, actor, rim, hygiene, gate_id)
         }
-        (None, Some(trace)) => {
+        (None, Some(trace), None) => {
             BatteryCapture::capture_traced(root, &selector, claim, actor, rim, hygiene, trace)
         }
-        (None, None) => BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene),
+        (None, None, None) => BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene),
+        (_, Some(_), Some(_)) | (None, None, Some(_)) => {
+            unreachable!("shared state is currently used only by untraced focused captures")
+        }
     }
     .map_err(|error| {
         let detail = error.detail();

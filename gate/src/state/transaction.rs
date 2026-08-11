@@ -48,6 +48,16 @@ impl CurrentState {
         &self.before
     }
 
+    /// Current in-memory ledger after [`Self::begin_run`].
+    ///
+    /// Production acquisition reads this immediately after beginning the run;
+    /// later reconciliation may update it before the proposal is finished.
+    #[must_use]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn working_ledger(&self) -> Option<&StateLedger> {
+        self.run.as_ref().map(|_| &self.working)
+    }
+
     /// Begin one deterministic run, applying staged renames and pruning
     /// missing or expired state before any decisions are made.
     pub fn begin_run<I, P>(
@@ -151,6 +161,26 @@ impl CurrentState {
         &mut self,
         observations: impl IntoIterator<Item = LatchObservation>,
     ) -> Result<Vec<StateDecision>, StateError> {
+        self.reconcile_inner(observations, ReconciliationScope::Exhaustive)
+    }
+
+    /// Reconcile only the supplied observation inventory.
+    ///
+    /// Unlike [`Self::reconcile`], omitted live sticky keys are outside this
+    /// run's jurisdiction and remain unchanged. Run-start liveness, rename,
+    /// and expiry reconciliation still applies to the complete ledger.
+    pub fn reconcile_partial(
+        &mut self,
+        observations: impl IntoIterator<Item = LatchObservation>,
+    ) -> Result<Vec<StateDecision>, StateError> {
+        self.reconcile_inner(observations, ReconciliationScope::Partial)
+    }
+
+    fn reconcile_inner(
+        &mut self,
+        observations: impl IntoIterator<Item = LatchObservation>,
+        scope: ReconciliationScope,
+    ) -> Result<Vec<StateDecision>, StateError> {
         let run = self.run.as_ref().ok_or_else(|| {
             StateError::current(
                 StateErrorKind::Malformed,
@@ -181,7 +211,10 @@ impl CurrentState {
             }
         }
 
-        let mut updated = BTreeSet::new();
+        let mut updated = match scope {
+            ReconciliationScope::Exhaustive => BTreeSet::new(),
+            ReconciliationScope::Partial => prior.clone(),
+        };
         let mut decisions = Vec::with_capacity(observations.len());
         for observation in observations {
             if !run.live_paths.contains(observation.entry.key.repo_path()) {
@@ -195,7 +228,19 @@ impl CurrentState {
                     "include the path in the run inventory or omit its observation",
                 ));
             }
-            let latched = prior.contains(&observation.entry);
+            let durable_latched = prior.contains(&observation.entry);
+            let latched = observation.prior_latched.unwrap_or(durable_latched);
+            if durable_latched && !latched {
+                return Err(StateError::current(
+                    StateErrorKind::Malformed,
+                    &self.destination,
+                    format!(
+                        "observation for {:?} ignored its durable prior latch",
+                        observation.entry
+                    ),
+                    "judge each observation against the run ledger's durable latch inventory",
+                ));
+            }
             let bound = observation
                 .bound
                 .decide(
@@ -217,6 +262,8 @@ impl CurrentState {
                 LatchTransition::Latched | LatchTransition::Held
             ) {
                 updated.insert(observation.entry.clone());
+            } else {
+                updated.remove(&observation.entry);
             }
             decisions.push(StateDecision {
                 entry: observation.entry,
@@ -349,6 +396,12 @@ impl CurrentState {
             initially_absent: self.initially_absent,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReconciliationScope {
+    Exhaustive,
+    Partial,
 }
 
 /// Claim outcome for one requested path.

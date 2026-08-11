@@ -127,6 +127,21 @@ impl MetricStateBinding {
             .map_err(StateBindingError::Bound)
     }
 
+    /// Retain the exact transaction observation beside the decision used by
+    /// acquisition evidence.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn observe_decision(
+        &self,
+        latched: bool,
+        actor_inputs: &ActorInputs,
+    ) -> Result<(BoundDecision, LatchObservation), StateBindingError> {
+        let observation = self
+            .observation(actor_inputs.clone())?
+            .with_prior_latched(latched);
+        self.decide(latched, actor_inputs)
+            .map(|decision| (decision, observation))
+    }
+
     /// Convert a reconciled current-state decision into complete metric evidence.
     pub fn evidence(&self, decision: &StateDecision) -> Result<MetricEvidence, StateBindingError> {
         if decision.entry() != &self.entry {

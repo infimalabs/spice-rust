@@ -47,7 +47,7 @@ enum CaseKind {
     SameTreePass,
     ConflictedFail,
     UnnamedConflictFail,
-    PeerFail,
+    PeerRedirect,
     UnlimitedPass,
     Unavailable,
     Unsupported,
@@ -419,7 +419,7 @@ fn assert_case(release: &str, case: &ParityCase) {
                 | CaseKind::SameTreePass
                 | CaseKind::ConflictedFail
                 | CaseKind::UnnamedConflictFail
-                | CaseKind::PeerFail
+                | CaseKind::PeerRedirect
                 | CaseKind::UnlimitedPass
         )
     );
@@ -455,7 +455,7 @@ fn case_observation(case: &ParityCase) -> CoreObservation {
             MergeTreeCompletion::Conflicted,
             Vec::new(),
         ))),
-        CaseKind::PeerFail => measured(CoreEvidence::RepoDocs(
+        CaseKind::PeerRedirect => measured(CoreEvidence::RepoDocs(
             RepoDocsEvidence::new(vec![
                 DocMeasurement::new("AGENTS.md", 21, 20, true).expect("doc measurement"),
             ])

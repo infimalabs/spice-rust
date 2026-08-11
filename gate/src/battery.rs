@@ -15,6 +15,8 @@ mod receipt;
 mod refusal_fold;
 #[cfg(not(target_arch = "wasm32"))]
 mod repository_executor;
+#[cfg(not(target_arch = "wasm32"))]
+mod state_run;
 
 use std::error::Error;
 use std::fmt;
@@ -46,6 +48,8 @@ pub use receipt::{
 pub use refusal_fold::{BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryRefusalFold};
 #[cfg(not(target_arch = "wasm32"))]
 pub use repository_executor::RepositoryExecutionEvent;
+#[cfg(not(target_arch = "wasm32"))]
+pub use state_run::{BatteryStateRun, StateRunScope};
 
 /// One declaration family behind the common runner boundary.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

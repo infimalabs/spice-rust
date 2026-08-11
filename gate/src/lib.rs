@@ -1,10 +1,9 @@
 //! Hermetic repository enforcement.
 //!
-//! The gate reads a foreign repository and nothing else. It holds no journal
-//! and asks none: a receipt is a function of the selected tree and one current
-//! [`Contract`], including the exact compiled set, bounds, baseline, and probed
-//! tool identities. The same complete identities produce the same receipt on
-//! any machine and at any hour.
+//! The gate reads one selected repository and its Git-common quality-state
+//! ledger. A report remains a function of the selected tree, one current
+//! [`Contract`], and the exact run-start ledger; proposed state is published
+//! separately and atomically only after the enclosing run accepts.
 //!
 //! [`jurisdiction::Malady`] and [`ratchet::Malady`] are two closed sets under
 //! one noun, and they stay module-qualified rather than being flattened here.
@@ -57,7 +56,7 @@ pub use battery::{
     run_battery_arm, run_focused_arm, supported_pairs,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use battery::{BatteryCapture, RepositoryExecutionEvent};
+pub use battery::{BatteryCapture, BatteryStateRun, RepositoryExecutionEvent, StateRunScope};
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
     CampStanding, DistributionReport, LocusDistance, SharedBound,

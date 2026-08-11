@@ -438,6 +438,9 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
     if cancellation.is_cancelled() {
         return Err(VerifyError::Interrupted);
     }
+    runner
+        .accept_battery_state()
+        .map_err(VerifyError::Battery)?;
     Ok(())
 }
 

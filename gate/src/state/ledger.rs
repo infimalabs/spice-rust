@@ -289,6 +289,7 @@ pub struct LatchObservation {
     pub(super) measured: u64,
     pub(super) actor_inputs: ActorInputs,
     pub(super) variation_percent: u64,
+    pub(super) prior_latched: Option<bool>,
 }
 
 impl LatchObservation {
@@ -315,7 +316,20 @@ impl LatchObservation {
             measured,
             actor_inputs,
             variation_percent,
+            prior_latched: None,
         })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn with_prior_latched(mut self, prior_latched: bool) -> Self {
+        self.prior_latched = Some(prior_latched);
+        self
+    }
+
+    /// Sticky key this observation reconciles.
+    #[must_use]
+    pub const fn entry(&self) -> &LatchEntry {
+        &self.entry
     }
 }
 

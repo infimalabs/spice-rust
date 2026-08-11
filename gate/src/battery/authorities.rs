@@ -14,19 +14,18 @@ use wire::{Digest, Domain};
 use super::repository_executor::{RepositoryExecutor, VerifierContractAcquisition};
 use super::{
     BatteryArmResult, BatteryError, BatteryInputs, BatteryReceipt, BatteryReport, BatteryScope,
-    BatteryToolEvidence, ConfigurationEvidence, RepositoryExecutionEvent, run_battery,
+    BatteryStateRun, BatteryToolEvidence, ConfigurationEvidence, RepositoryExecutionEvent,
+    StateRunScope, run_battery,
 };
 use crate::core::{ActorCapture, ClaimCapture};
 use crate::hygiene::HygieneConfiguration;
 use crate::input::{Contract, POLICY_PATH};
 use crate::manifest::OriginLayer;
 use crate::policy::Policy as RulePolicy;
-use crate::state::{
-    ActorInputs, ActorResolution, BoundDecision, CurrentState, StateLedger, current_state_path,
-};
+use crate::state::{ActorInputs, ActorResolution, BoundDecision, StateLedger, StateReceipt};
 use crate::toolchain::RimCapture;
 use crate::toolchain::{VerifierCompilerContract, VerifierCompilerEvidence};
-use crate::tree::{Selector, git_directories};
+use crate::tree::Selector;
 
 /// Release whose grammar understood the tracked documents read here.
 const CURRENT_RELEASE: &str = "current";
@@ -77,6 +76,7 @@ pub struct BatteryCapture<'trace> {
     authorities: BatteryAuthorities,
     executor: RepositoryExecutor<'trace>,
     selected: Option<crate::GateId>,
+    state_run: BatteryStateRun,
 }
 
 impl BatteryCapture<'_> {
@@ -102,7 +102,9 @@ impl BatteryCapture<'_> {
         rim: RimCapture,
         hygiene: HygieneConfiguration,
     ) -> Result<Self, BatteryError> {
-        Self::capture_inner(repository, selector, claim, actor, rim, hygiene, None, None)
+        Self::capture_inner(
+            repository, selector, claim, actor, rim, hygiene, None, None, None,
+        )
     }
 
     /// Capture one repository for exactly one canonical arm.
@@ -128,6 +130,35 @@ impl BatteryCapture<'_> {
             hygiene,
             Some(gate_id),
             None,
+            None,
+        )
+    }
+
+    /// Capture one arm into an existing enclosing state transaction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the shared state run accompanies six independent capture authorities"
+    )]
+    pub fn capture_arm_in_state(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        gate_id: crate::GateId,
+        state_run: BatteryStateRun,
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            Some(gate_id),
+            None,
+            Some(state_run),
         )
     }
 }
@@ -157,6 +188,7 @@ impl<'trace> BatteryCapture<'trace> {
             hygiene,
             None,
             Some(trace),
+            None,
         )
     }
 
@@ -188,6 +220,7 @@ impl<'trace> BatteryCapture<'trace> {
             hygiene,
             Some(gate_id),
             Some(trace),
+            None,
         )
     }
 
@@ -204,6 +237,7 @@ impl<'trace> BatteryCapture<'trace> {
         hygiene: HygieneConfiguration,
         selected: Option<crate::GateId>,
         trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+        state_run: Option<BatteryStateRun>,
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
         // Read before the capture consumes the observation, and both before the
@@ -211,8 +245,10 @@ impl<'trace> BatteryCapture<'trace> {
         // refusal, and refusing it here costs no private tree.
         let resolved_actor = run_actor(&actor)?;
         let scope = selected_scope(selector, &repository)?;
-        let state = live_ledger(&repository)?;
-        reconcile_claims(&state, &actor)?;
+        let state_run = match state_run {
+            Some(state_run) => state_run,
+            None => BatteryStateRun::capture(&repository)?,
+        };
         let executor = RepositoryExecutor::capture(
             &repository,
             selector,
@@ -220,10 +256,11 @@ impl<'trace> BatteryCapture<'trace> {
             actor,
             rim,
             hygiene,
-            state.latches(),
+            &state_run,
             selected,
             trace,
         )?;
+        let state = state_run.ledger()?;
         let contract = executor.contract();
         let authorities = BatteryAuthorities {
             source: executor.source().clone(),
@@ -245,6 +282,7 @@ impl<'trace> BatteryCapture<'trace> {
             authorities,
             executor,
             selected,
+            state_run,
         })
     }
 
@@ -425,6 +463,22 @@ impl<'trace> BatteryCapture<'trace> {
     pub fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
         self.executor.execute_kill()
     }
+
+    /// Shared durable-state transaction this capture contributed to.
+    #[must_use]
+    pub fn state_run(&self) -> BatteryStateRun {
+        self.state_run.clone()
+    }
+
+    /// Publish this enclosing run's accumulated state after total acceptance.
+    pub fn accept_state(&self, scope: StateRunScope) -> Result<StateReceipt, BatteryError> {
+        self.state_run.accept(scope)
+    }
+
+    /// Reject this enclosing run without publishing any accumulated state.
+    pub fn reject_state(&self) -> Result<(), BatteryError> {
+        self.state_run.reject()
+    }
 }
 
 /// Resolve the one actor a battery run is attributed to.
@@ -461,49 +515,6 @@ fn selected_scope(selector: &Selector, repository: &Path) -> Result<BatteryScope
         ),
     };
     BatteryScope::new(name, provenance)
-}
-
-/// Load the durable ledger the live repository holds.
-///
-/// Read from the repository rather than the selected tree because the ledger is
-/// not tracked: it lives below Git's common directory so every linked worktree
-/// sees one authority, and a selection would never contain it.
-fn live_ledger(repository: &Path) -> Result<StateLedger, BatteryError> {
-    let (_, common_git) = git_directories(repository).map_err(|error| {
-        BatteryError::new(format!("cannot locate battery state authority: {error}"))
-    })?;
-    let state = CurrentState::load(current_state_path(&common_git))
-        .map_err(|error| BatteryError::new(format!("cannot load battery state: {error}")))?;
-    Ok(state.before().clone())
-}
-
-/// Refuse a capture whose two readings of one ledger cannot be the same read.
-///
-/// This capture reads the ledger itself and publishes it as the run's state
-/// authority, while the repository-document arm answers `peer_claim` from the
-/// bound claims the caller hands over. The caller supplies those because expiry
-/// needs a clock and the gate holds none, so it reads this same ledger and
-/// keeps what its run clock still calls active. A clock only drops claims, so
-/// every bound claim is still one the ledger holds verbatim; one that is not
-/// came from another repository or another moment, and the report would then
-/// publish a state authority that contradicts a measurement resolved against
-/// it. Refusing is the reconciliation: nothing here can tell which reading was
-/// the stale one, and inventing an order between them would pick for the caller.
-fn reconcile_claims(state: &StateLedger, actor: &ActorCapture) -> Result<(), BatteryError> {
-    let ActorCapture::Acting { bound_claims, .. } = actor else {
-        return Ok(());
-    };
-    for claim in bound_claims {
-        if !state.claims().contains(claim) {
-            return Err(BatteryError::new(format!(
-                "battery bound claim on {:?} held by {:?} is not one the state authority holds: \
-                 the run clock only drops claims, so these are two different readings",
-                claim.path(),
-                claim.actor()
-            )));
-        }
-    }
-    Ok(())
 }
 
 /// Digest every value the tracked configuration document resolved.

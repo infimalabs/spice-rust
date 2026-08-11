@@ -22,8 +22,11 @@ use crate::input::Contract;
 use crate::jurisdiction::{Entry, Jurisdiction, Shape};
 use crate::manifest::GateId;
 use crate::policy::PolicyContext;
-use crate::state::{BoundDecision, LatchEntry};
+use crate::state::{BoundDecision, LatchEntry, LatchObservation};
 use crate::tree::SelectedTree;
+
+mod bounds;
+use bounds::{bounded_row, routine_evidence};
 
 /// One immutable selected tree and the path inventory the arms read from it.
 ///
@@ -131,8 +134,13 @@ pub fn acquire_metrics(
 /// together is what makes that report evidence rather than a reconstruction.
 pub(crate) fn acquire_metrics_with_bounds(source: &MetricSource<'_>) -> MetricAcquisition {
     let mut bounds = Vec::new();
-    let evidence = acquire_metric_evidence(source, &mut bounds);
-    MetricAcquisition { evidence, bounds }
+    let mut observations = Vec::new();
+    let evidence = acquire_metric_evidence(source, &mut bounds, &mut observations);
+    MetricAcquisition {
+        evidence,
+        bounds,
+        observations,
+    }
 }
 
 /// Acquire exactly one structural arm and the bounds that arm decided.
@@ -141,18 +149,26 @@ pub(crate) fn acquire_metric_arm_with_bounds(
     gate_id: GateId,
 ) -> MetricArmAcquisition {
     let mut bounds = Vec::new();
+    let mut observations = Vec::new();
     let evidence = STRUCTURAL_ARMS
         .into_iter()
         .find(|declaration| declaration.id() == gate_id)
         .ok_or(EvidenceError::ForeignGate(gate_id).into())
-        .and_then(|declaration| acquire_arm_evidence(source, declaration, &mut bounds));
-    MetricArmAcquisition { evidence, bounds }
+        .and_then(|declaration| {
+            acquire_arm_evidence(source, declaration, &mut bounds, &mut observations)
+        });
+    MetricArmAcquisition {
+        evidence,
+        bounds,
+        observations,
+    }
 }
 
 /// Both products of one structural-family acquisition.
 pub(crate) struct MetricAcquisition {
     evidence: Result<Vec<StructuralArmEvidence>, MetricAcquisitionError>,
     bounds: Vec<BoundDecision>,
+    observations: Vec<LatchObservation>,
 }
 
 impl MetricAcquisition {
@@ -161,8 +177,9 @@ impl MetricAcquisition {
     ) -> (
         Result<Vec<StructuralArmEvidence>, MetricAcquisitionError>,
         Vec<BoundDecision>,
+        Vec<LatchObservation>,
     ) {
-        (self.evidence, self.bounds)
+        (self.evidence, self.bounds, self.observations)
     }
 }
 
@@ -170,6 +187,7 @@ impl MetricAcquisition {
 pub(crate) struct MetricArmAcquisition {
     evidence: Result<StructuralArmEvidence, MetricAcquisitionError>,
     bounds: Vec<BoundDecision>,
+    observations: Vec<LatchObservation>,
 }
 
 impl MetricArmAcquisition {
@@ -178,18 +196,25 @@ impl MetricArmAcquisition {
     ) -> (
         Result<StructuralArmEvidence, MetricAcquisitionError>,
         Vec<BoundDecision>,
+        Vec<LatchObservation>,
     ) {
-        (self.evidence, self.bounds)
+        (self.evidence, self.bounds, self.observations)
     }
 }
 
 fn acquire_metric_evidence(
     source: &MetricSource<'_>,
     bounds: &mut Vec<BoundDecision>,
+    observations: &mut Vec<LatchObservation>,
 ) -> Result<Vec<StructuralArmEvidence>, MetricAcquisitionError> {
     let mut arms = Vec::with_capacity(STRUCTURAL_ARMS.len());
     for declaration in STRUCTURAL_ARMS {
-        arms.push(acquire_arm_evidence(source, declaration, bounds)?);
+        arms.push(acquire_arm_evidence(
+            source,
+            declaration,
+            bounds,
+            observations,
+        )?);
     }
     Ok(arms)
 }
@@ -198,10 +223,11 @@ fn acquire_arm_evidence(
     source: &MetricSource<'_>,
     declaration: ArmDeclaration,
     bounds: &mut Vec<BoundDecision>,
+    observations: &mut Vec<LatchObservation>,
 ) -> Result<StructuralArmEvidence, MetricAcquisitionError> {
     let metrics = match declaration.id() {
-        GateId::Complexity => complexity_metrics(source, bounds)?,
-        GateId::FileShape => file_shape_metrics(source, declaration, bounds)?,
+        GateId::Complexity => complexity_metrics(source, bounds, observations)?,
+        GateId::FileShape => file_shape_metrics(source, declaration, bounds, observations)?,
         GateId::MagicNumbers => magic_metrics(source, declaration)?,
         GateId::MarkdownLinks => markdown_metrics(source)?,
         _ => unavailable(declaration, unreached_input(declaration.id()))?,
@@ -278,6 +304,7 @@ fn file_shape_metrics(
     source: &MetricSource<'_>,
     declaration: ArmDeclaration,
     bounds: &mut Vec<BoundDecision>,
+    observations: &mut Vec<LatchObservation>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     match source.baselines {
         BaselineCapture::Reached(_) => {}
@@ -304,7 +331,14 @@ fn file_shape_metrics(
             continue;
         }
         let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
-        metrics.extend(file_shape_rows(source, declaration, path, &key, bounds)?);
+        metrics.extend(file_shape_rows(
+            source,
+            declaration,
+            path,
+            &key,
+            bounds,
+            observations,
+        )?);
     }
     if metrics.is_empty() {
         return declared_rows(
@@ -337,6 +371,7 @@ fn file_shape_rows(
     path: &str,
     key: &MetricKey,
     bounds: &mut Vec<BoundDecision>,
+    observations: &mut Vec<LatchObservation>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let bytes = match std::fs::read(source.root().join(path)) {
         Ok(bytes) => bytes,
@@ -382,87 +417,14 @@ fn file_shape_rows(
         ),
         (MetricId::FileBytes, shape.bytes(), None),
     ] {
-        let (row, decision) = bounded_row(source, path, key, metric, value, committed)?;
+        let (row, observed) = bounded_row(source, path, key, metric, value, committed)?;
         rows.push(row);
-        if let Some(decision) = decision {
+        if let Some((decision, observation)) = observed {
             bounds.push(decision);
+            observations.push(observation);
         }
     }
     Ok(rows)
-}
-
-/// One measured quantity's row, judged against the limit it was decided under.
-///
-/// A bound that cannot be resolved, bound, or decided is this row's own
-/// unavailability rather than the family's refusal, matching what an unreadable
-/// file gets: the paths whose bounds did resolve still speak for the arm, and
-/// the arm still carries one explicit state per declared metric.
-fn bounded_row(
-    source: &MetricSource<'_>,
-    path: &str,
-    key: &MetricKey,
-    metric: MetricId,
-    value: u64,
-    committed: Option<u64>,
-) -> Result<(MetricEvidence, Option<BoundDecision>), MetricAcquisitionError> {
-    match bounded_evidence(source, path, key, metric, value, committed) {
-        Ok((evidence, decision)) => Ok((evidence, Some(decision))),
-        Err(reason) => {
-            MetricEvidence::new(metric, key.clone(), EvidenceState::Unavailable { reason })
-                .map(|evidence| (evidence, None))
-                .map_err(MetricAcquisitionError::Evidence)
-        }
-    }
-}
-
-/// Resolve one path's rule, decide its bound, and carry both on the value.
-///
-/// The decision travels on the measurement rather than being compared here, so
-/// an over-limit file fails through the latch binding every consumer already
-/// reads. A durable ledger latch is always held to base. A changed file-loc
-/// measurement whose committed predecessor was already above base is held to
-/// the same true limit: otherwise each edit could mint a fresh elastic slice
-/// and ratchet existing debt upward without ever crossing the elastic cap.
-fn bounded_evidence(
-    source: &MetricSource<'_>,
-    path: &str,
-    key: &MetricKey,
-    metric: MetricId,
-    value: u64,
-    committed: Option<u64>,
-) -> Result<(MetricEvidence, BoundDecision), String> {
-    let name = metric.as_str();
-    let rule = resolve_metric_rule(
-        source.contract.rule_policy(),
-        metric,
-        &PolicyContext::new().with_path(path),
-    )
-    .map_err(|error| format!("{name} bound did not resolve for {path:?}: {error}"))?;
-    let committed_over_base = committed.is_some_and(|committed| {
-        !rule.unlimited() && committed > rule.base_limit() && committed != value
-    });
-    let binding = MetricStateBinding::new(
-        metric,
-        key.clone(),
-        value,
-        ParserEvidence::Native {
-            parser: ParserId::Utf8FileShapeV1,
-        },
-        rule,
-    )
-    .map_err(|error| format!("{name} did not bind for {path:?}: {error}"))?;
-    let actor_inputs = source
-        .actor
-        .actor_inputs(path)
-        .map_err(|error| format!("actor provenance for selected source {path:?}: {error}"))?;
-    let latched = source.latches.contains(binding.entry()) || committed_over_base;
-    let decision = binding
-        .decide(latched, &actor_inputs)
-        .map_err(|error| format!("active {name} bound for {path:?}: {error}"))?;
-    let evidence = binding
-        .measured(&decision)
-        .map_err(|error| format!("{name} evidence for {path:?}: {error}"))?;
-    Ok((evidence, decision))
 }
 
 /// Measure inline Markdown link case against the tracked inventory.
@@ -676,6 +638,7 @@ fn magic_metrics(
 fn complexity_metrics(
     source: &MetricSource<'_>,
     bounds: &mut Vec<BoundDecision>,
+    observations: &mut Vec<LatchObservation>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let suffixes = source
         .contract
@@ -688,7 +651,7 @@ fn complexity_metrics(
         if !selects(path, suffixes) {
             continue;
         }
-        complexity_rows(source, path, &mut metrics, bounds)?;
+        complexity_rows(source, path, &mut metrics, bounds, observations)?;
     }
     if metrics.is_empty() {
         return not_applicable_complexity();
@@ -708,6 +671,7 @@ fn complexity_rows(
     path: &str,
     metrics: &mut Vec<MetricEvidence>,
     bounds: &mut Vec<BoundDecision>,
+    observations: &mut Vec<LatchObservation>,
 ) -> Result<(), MetricAcquisitionError> {
     if std::fs::read(source.root().join(path))
         .is_ok_and(|bytes| source.baselines.merge_inherits(path, &bytes))
@@ -723,11 +687,12 @@ fn complexity_rows(
             (MetricId::RoutineCcn, routine.ccn()),
             (MetricId::RoutineLength, routine.length()),
         ] {
-            let (evidence, decision) =
+            let (evidence, observed) =
                 routine_evidence(source, path, routine.function(), metric, value)?;
             metrics.push(evidence);
-            if let Some(decision) = decision {
+            if let Some((decision, observation)) = observed {
                 bounds.push(decision);
+                observations.push(observation);
             }
         }
     }
@@ -745,77 +710,6 @@ fn read_complexity(
         }
     })?;
     measure_complexity(path, &text).map_err(ParseError::into_evidence_state)
-}
-
-/// One routine's bounded measurement, decided against its own elastic limit.
-///
-/// The bound is taken through [`MetricStateBinding`], the same route the durable
-/// ledger reconciles a latch through, so the limit this arm judges against and
-/// the limit that ledger would latch are one computation. A binding, key, or
-/// bound failure becomes this routine's own state rather than the arm's, because
-/// one unresolvable routine is not evidence about the rest of the tree. A
-/// successful row returns the exact decision used to build it so the caller can
-/// publish that decision without repeating any input read or policy resolution.
-fn routine_evidence(
-    source: &MetricSource<'_>,
-    path: &str,
-    function: &str,
-    metric: MetricId,
-    value: u64,
-) -> Result<(MetricEvidence, Option<BoundDecision>), MetricAcquisitionError> {
-    let key = MetricKey::function(path, function).map_err(MetricAcquisitionError::Evidence)?;
-    match bound_routine(source, path, key.clone(), metric, value) {
-        Ok((evidence, decision)) => Ok((evidence, Some(decision))),
-        Err(reason) => MetricEvidence::new(metric, key, EvidenceState::Unavailable { reason })
-            .map(|evidence| (evidence, None))
-            .map_err(MetricAcquisitionError::Evidence),
-    }
-}
-
-/// Resolve, bind, and decide one routine's bound, returning its row and decision.
-fn bound_routine(
-    source: &MetricSource<'_>,
-    path: &str,
-    key: MetricKey,
-    metric: MetricId,
-    value: u64,
-) -> Result<(MetricEvidence, BoundDecision), String> {
-    let rule = resolve_metric_rule(
-        source.contract.rule_policy(),
-        metric,
-        &PolicyContext::new().with_path(path),
-    )
-    .map_err(|error| {
-        format!(
-            "{} bound did not resolve for {path:?}: {error}",
-            metric.as_str()
-        )
-    })?;
-    let binding = MetricStateBinding::new(
-        metric,
-        key,
-        value,
-        ParserEvidence::Native {
-            parser: ParserId::TreeSitterComplexityV1,
-        },
-        rule,
-    )
-    .map_err(|error| format!("{} did not bind for {path:?}: {error}", metric.as_str()))?;
-    let actor_inputs = source
-        .actor
-        .actor_inputs(path)
-        .map_err(|error| format!("actor provenance for {path:?}: {error}"))?;
-    let latched = source.latches.contains(binding.entry());
-    let decision = binding.decide(latched, &actor_inputs).map_err(|error| {
-        format!(
-            "{} bound did not decide for {path:?}: {error}",
-            metric.as_str()
-        )
-    })?;
-    let evidence = binding
-        .measured(&decision)
-        .map_err(|error| format!("{} evidence for {path:?}: {error}", metric.as_str()))?;
-    Ok((evidence, decision))
 }
 
 /// A file the parser refused speaks once per metric, on one shared key.

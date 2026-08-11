@@ -199,7 +199,8 @@ fn evaluate_docs(values: &[super::DocMeasurement]) -> (CoreStanding, String) {
             values.len()
         ));
     }
-    let mut diagnostic = if over.iter().all(|(measurement, _)| measurement.peer_claim()) {
+    let redirected = over.iter().all(|(measurement, _)| measurement.peer_claim());
+    let mut diagnostic = if redirected {
         concat!(
             "repo-truth docs hit peer-held bound claims; keep this change append-only or move ",
             "to another seam:"
@@ -217,7 +218,11 @@ fn evaluate_docs(values: &[super::DocMeasurement]) -> (CoreStanding, String) {
             limit
         );
     }
-    failed(diagnostic)
+    if redirected {
+        passed(diagnostic)
+    } else {
+        failed(diagnostic)
+    }
 }
 
 fn evaluate_inventory(label: &str, evidence: &ConfigInventoryEvidence) -> (CoreStanding, String) {

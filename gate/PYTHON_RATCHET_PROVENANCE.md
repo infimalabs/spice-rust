@@ -266,19 +266,16 @@ Therefore the proven promotion sequence is:
    either measure every new-file finding as new or explicitly escalate/refuse;
    it must not admit the path as not applicable.
 
-4. **Wire production state publication.**
-   Production loads `CurrentState` in
-   `gate/src/battery/authorities.rs:475`, but `begin_run`, `reconcile`,
-   `finish`, and `accept` are exercised only by tests and fixtures. Connect the
-   typed transaction to gate acceptance so proposed latch changes are durable
-   only after the complete selected gate succeeds.
+4. **Production state publication (implemented).**
+   `gate/src/battery/state_run.rs` now binds focused captures to one fixed-clock
+   `CurrentState`, accumulates their exact observations, and publishes through
+   the typed transaction only at the enclosing accepted boundary.
 
-5. **Make partial reconciliation explicit.**
-   `gate/src/state/transaction.rs:145-226` defines `reconcile` as a complete
-   observation inventory and prunes omitted latches. Passing only changed paths
-   would silently discard unrelated state. A local port must observe changed
-   keys plus all relevant prior latch keys, as Python does, or introduce a typed
-   partial-reconciliation operation whose preservation rules are explicit.
+5. **Partial reconciliation (implemented).**
+   `CurrentState::reconcile_partial` updates the supplied sticky keys while
+   preserving unrelated live entries; exhaustive reconciliation retains its
+   complete-inventory pruning contract. Production regressions cover both
+   preservation and accepted latch creation, hold, and healing.
 
 6. **Classify inherently global arms honestly.**
    Repository-document target inventory, reachability, and similar relational
