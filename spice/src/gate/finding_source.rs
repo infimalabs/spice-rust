@@ -121,9 +121,9 @@ pub fn validate_gate_finding_source(
 
 /// Require a candidate finding source to move forward from retained evidence.
 ///
-/// `recovery` additionally requires a different exact selection; replaying a
-/// clean report for the source that originally carried the finding cannot heal
-/// or close its repair task.
+/// `recovery` additionally requires a different selected tree; index metadata
+/// movement or an empty descendant commit cannot make unchanged source prove a
+/// repair or close its task.
 ///
 /// # Errors
 ///
@@ -152,14 +152,10 @@ pub fn require_gate_finding_source_forward(
         ));
     }
     require_commit_ancestor(repository, &prior.anchor, &candidate.anchor)?;
-    if recovery
-        && prior.anchor == candidate.anchor
-        && prior.selection == candidate.selection
-        && prior.tree == candidate.tree
-    {
+    if recovery && prior.tree == candidate.tree {
         return Err(RunError::refusal(
             "gate::finding-recovery-unproven",
-            "the clean report repeats the exact source that produced the standing finding",
+            "the clean report selects the same tree that produced the standing finding",
         ));
     }
     Ok(())
