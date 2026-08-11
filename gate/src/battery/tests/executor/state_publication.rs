@@ -231,15 +231,181 @@ fn exhaustive_acceptance_prunes_removed_latches_and_expired_claims() {
     assert!(pruned.claims().is_empty());
 }
 
+#[test]
+fn revision_acceptance_is_read_only_for_the_live_ledger() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    seed_path_state(&repository, &["src/lib.rs"], 10.0);
+    let (_, common_git) = crate::tree::git_directories(&repository).expect("fixture Git paths");
+    let destination = crate::current_state_path(&common_git);
+    let before = fs::read(&destination).expect("seeded current state bytes");
+
+    let historical = crate::BatteryStateRun::capture_at(&repository, 30_000.0)
+        .expect("capture historical state run");
+    let report = focused_for_selector(
+        &repository,
+        "historical-actor",
+        historical.clone(),
+        GateId::Staging,
+        &crate::Selector::revision("HEAD"),
+    );
+    assert!(report.admits(), "{}", report.result().reason());
+    historical
+        .accept(crate::StateRunScope::Exhaustive)
+        .expect("finish the read-only historical proposal");
+
+    assert_eq!(
+        fs::read(&destination).expect("state after historical acceptance"),
+        before,
+        "a revision study must not expire or prune live current state"
+    );
+}
+
+#[test]
+fn refused_revision_proposal_cannot_publish_live_state() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    stage_document(&repository, "app/notes.md", 32_000);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "oversized historical source"],
+    );
+    seed_path_state(&repository, &["src/lib.rs"], 10.0);
+    let (_, common_git) = crate::tree::git_directories(&repository).expect("fixture Git paths");
+    let destination = crate::current_state_path(&common_git);
+    let before = fs::read(&destination).expect("seeded current state bytes");
+
+    let historical = crate::BatteryStateRun::capture_at(&repository, 30_000.0)
+        .expect("capture refused historical state run");
+    let report = focused_for_selector(
+        &repository,
+        "historical-actor",
+        historical.clone(),
+        GateId::RepoDocs,
+        &crate::Selector::revision("HEAD"),
+    );
+    assert!(
+        !report.admits(),
+        "the oversized historical document must refuse"
+    );
+    historical
+        .accept(crate::StateRunScope::Partial)
+        .expect("discard even an explicitly accepted historical refusal");
+
+    assert_eq!(
+        fs::read(&destination).expect("state after refused historical proposal"),
+        before,
+        "a refused revision proposal must remain read-only even if accepted by mistake"
+    );
+}
+
+#[test]
+fn staged_rename_migrates_latches_and_claims_before_pruning() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    let old = "src/old.rs";
+    let new = "src/new.rs";
+    fs::write(repository.join(old), "pub fn renamed() {}\n").expect("write old source");
+    fixture_git(&repository, &["add", old]);
+    fixture_git(&repository, &["commit", "-q", "-m", "old source"]);
+    seed_path_state(&repository, &[old], 10.0);
+    fixture_git(&repository, &["mv", old, new]);
+
+    let renamed = crate::BatteryStateRun::capture_at(&repository, 20.0)
+        .expect("capture renamed production state run");
+    let report = focused_in_state(
+        &repository,
+        "rename-actor",
+        renamed.clone(),
+        GateId::Staging,
+    );
+    assert!(report.admits(), "{}", report.result().reason());
+    renamed
+        .accept(crate::StateRunScope::Partial)
+        .expect("publish renamed state");
+
+    let state = live_ledger(&repository);
+    assert_eq!(state.latches().len(), 1);
+    assert_eq!(state.latches()[0].key().repo_path(), new);
+    assert_eq!(state.claims().len(), 1);
+    assert_eq!(state.claims()[0].path(), new);
+}
+
+#[test]
+fn staged_rename_collision_refuses_before_state_can_publish() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    let old = "src/old.rs";
+    let new = "src/new.rs";
+    fs::write(repository.join(old), "pub fn old() {}\n").expect("write old source");
+    fs::write(repository.join(new), "pub fn replaced() {}\n").expect("write destination source");
+    fixture_git(&repository, &["add", old, new]);
+    fixture_git(&repository, &["commit", "-q", "-m", "two state paths"]);
+    seed_path_state(&repository, &[old, new], 10.0);
+    let (_, common_git) = crate::tree::git_directories(&repository).expect("fixture Git paths");
+    let destination = crate::current_state_path(&common_git);
+    let before = fs::read(&destination).expect("seeded collision bytes");
+    fs::remove_file(repository.join(new)).expect("remove prior destination");
+    fixture_git(&repository, &["add", "-u", "--", new]);
+    fixture_git(
+        &repository,
+        &[
+            "commit",
+            "-q",
+            "-m",
+            "remove destination without reconciling state",
+        ],
+    );
+    fixture_git(&repository, &["mv", old, new]);
+
+    let collision =
+        crate::BatteryStateRun::capture_at(&repository, 20.0).expect("capture collision state run");
+    let error = match crate::BatteryCapture::capture_arm_in_state(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting("collision-actor"),
+        crate::RimCapture::new(repository.clone(), None, [old.to_owned(), new.to_owned()])
+            .expect("collision rim"),
+        crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("fixture hygiene"),
+        GateId::Staging,
+        collision,
+    ) {
+        Ok(_) => panic!("two sticky keys may not collapse through one staged rename"),
+        Err(error) => error,
+    };
+    assert!(error.detail().contains("collides"), "{error}");
+    assert_eq!(
+        fs::read(&destination).expect("state after collision refusal"),
+        before
+    );
+}
+
 fn focused_in_state(
     repository: &Path,
     actor: &str,
     state_run: crate::BatteryStateRun,
     gate_id: GateId,
 ) -> crate::FocusedArmReport {
+    focused_for_selector(
+        repository,
+        actor,
+        state_run,
+        gate_id,
+        &crate::Selector::staged(),
+    )
+}
+
+fn focused_for_selector(
+    repository: &Path,
+    actor: &str,
+    state_run: crate::BatteryStateRun,
+    gate_id: GateId,
+    selector: &crate::Selector,
+) -> crate::FocusedArmReport {
     let mut capture = crate::BatteryCapture::capture_arm_in_state(
         repository,
-        &crate::Selector::staged(),
+        selector,
         crate::ClaimCapture::Idle,
         acting(actor),
         crate::RimCapture::new(repository, None, ["app/notes.md".to_owned()]).expect("fixture rim"),
@@ -251,6 +417,45 @@ fn focused_in_state(
     capture
         .execute_arm_report(gate_id)
         .expect("execute focused production path")
+}
+
+fn seed_path_state(repository: &Path, paths: &[&str], now: f64) {
+    let (_, common_git) = crate::tree::git_directories(repository).expect("fixture Git paths");
+    let destination = crate::current_state_path(&common_git);
+    let live_paths = crate::tree::tracked_paths(repository).expect("seed tracked paths");
+    let mut seed = CurrentState::load(&destination).expect("load path state seed");
+    seed.begin_run(&crate::RenameMap::default(), &live_paths, now)
+        .expect("begin path state seed");
+    seed.reconcile(paths.iter().map(|path| {
+        crate::LatchObservation::new(
+            crate::LatchEntry::new(
+                crate::LatchKind::FileLoc,
+                crate::StateKey::path(path).expect("seed path key"),
+            )
+            .expect("seed latch entry"),
+            crate::BoundRule::new("fixture", "file-loc", 10, 15, false, false).expect("seed bound"),
+            20,
+            ActorInputs::new(path)
+                .expect("seed actor inputs")
+                .with_active_actor("seed-actor"),
+            0,
+        )
+        .expect("seed observation")
+    }))
+    .expect("seed path latches");
+    for path in paths {
+        seed.claim(
+            [*path],
+            &ActorInputs::new(path)
+                .expect("seed claim inputs")
+                .with_active_actor("seed-actor"),
+        )
+        .expect("seed path claim");
+    }
+    seed.finish()
+        .expect("finish path state seed")
+        .accept()
+        .expect("publish path state seed");
 }
 
 fn stage_document(repository: &Path, path: &str, characters: usize) {

@@ -163,7 +163,8 @@ impl<'trace> RepositoryExecutor<'trace> {
         let contract = Contract::load(tree.root()).map_err(|error| {
             BatteryError::new(format!("cannot load captured battery contract: {error}"))
         })?;
-        let (state, actor) = state_run.bind(tree.paths(), &actor)?;
+        let (state, actor) =
+            state_run.bind(tree.paths(), tree.renames(), tree.publishes_state(), &actor)?;
         let latches = state.latches();
         // One capture, taken once: the digest every arm is labelled with, the
         // requested core acquisition and the bounds it decided, and the

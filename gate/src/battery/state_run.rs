@@ -38,6 +38,8 @@ struct StateRunInner {
     now: f64,
     judged: Option<StateLedger>,
     live_paths: Option<Vec<String>>,
+    renames: Option<RenameMap>,
+    publishes_state: Option<bool>,
     observations: Vec<(LatchObservation, BoundDecision)>,
 }
 
@@ -64,6 +66,8 @@ impl BatteryStateRun {
                 now,
                 judged: None,
                 live_paths: None,
+                renames: None,
+                publishes_state: None,
                 observations: Vec::new(),
             })),
         })
@@ -79,6 +83,8 @@ impl BatteryStateRun {
     pub(super) fn bind(
         &self,
         live_paths: &[String],
+        renames: &RenameMap,
+        publishes_state: bool,
         actor: &ActorCapture,
     ) -> Result<(StateLedger, ActorCapture), BatteryError> {
         let mut inner = self.lock()?;
@@ -92,6 +98,16 @@ impl BatteryStateRun {
                     "focused captures in one gate state run selected different live path inventories",
                 ));
             }
+            if inner.renames.as_ref() != Some(renames) {
+                return Err(BatteryError::new(
+                    "focused captures in one gate state run selected different rename lineages",
+                ));
+            }
+            if inner.publishes_state != Some(publishes_state) {
+                return Err(BatteryError::new(
+                    "focused captures in one gate state run selected different state publication authorities",
+                ));
+            }
             validate_bound_claims(judged, actor)?;
             return Ok((judged.clone(), actor_with_claims(actor, judged)));
         }
@@ -102,7 +118,7 @@ impl BatteryStateRun {
             .as_mut()
             .ok_or_else(|| BatteryError::new("battery state transaction is already terminal"))?;
         current
-            .begin_run(&RenameMap::default(), live_paths, now)
+            .begin_run(renames, live_paths, now)
             .map_err(|error| BatteryError::new(format!("cannot begin battery state: {error}")))?;
         let judged = current
             .working_ledger()
@@ -110,6 +126,8 @@ impl BatteryStateRun {
             .clone();
         validate_bound_claims(&judged, actor)?;
         inner.live_paths = Some(live_paths.to_vec());
+        inner.renames = Some(renames.clone());
+        inner.publishes_state = Some(publishes_state);
         inner.judged = Some(judged.clone());
         Ok((judged.clone(), actor_with_claims(actor, &judged)))
     }
@@ -147,7 +165,10 @@ impl BatteryStateRun {
             .ok_or_else(|| BatteryError::new("battery state run has not bound a selected source"))
     }
 
-    /// Atomically publish the complete accumulated proposal.
+    /// Finish the complete accumulated proposal, publishing only staged sources.
+    ///
+    /// Revision-selected proposals are deliberately reconciled to preserve the
+    /// same validation path, then rejected before the durable compare-and-swap.
     pub fn accept(&self, scope: StateRunScope) -> Result<StateReceipt, BatteryError> {
         let mut inner = self.lock()?;
         let mut current = inner
@@ -155,6 +176,9 @@ impl BatteryStateRun {
             .take()
             .ok_or_else(|| BatteryError::new("battery state transaction is already terminal"))?;
         let mut observed = std::mem::take(&mut inner.observations);
+        let publishes_state = inner.publishes_state.ok_or_else(|| {
+            BatteryError::new("battery state run has not bound a publication authority")
+        })?;
         drop(inner);
 
         observed.sort_by(|left, right| left.0.entry().cmp(right.0.entry()));
@@ -196,10 +220,16 @@ impl BatteryStateRun {
                 BatteryError::new(format!("cannot claim battery state: {error}"))
             })?;
         }
-        current
+        let pending = current
             .finish()
-            .and_then(|pending| pending.accept())
-            .map_err(|error| BatteryError::new(format!("cannot publish battery state: {error}")))
+            .map_err(|error| BatteryError::new(format!("cannot finish battery state: {error}")))?;
+        if publishes_state {
+            pending.accept().map_err(|error| {
+                BatteryError::new(format!("cannot publish battery state: {error}"))
+            })
+        } else {
+            Ok(pending.reject())
+        }
     }
 
     /// Make rejection terminal without touching durable bytes.

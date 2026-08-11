@@ -1,11 +1,12 @@
 //! Immutable Git tree selection for gate runs.
 //!
-//! A gate never measures the checkout. The bare selector captures one parsed
-//! index, while a revision selector resolves one immutable commit identity.
-//! Both sources pass through the same path, mode, object, and materialization
-//! checks before a private read-only root is returned to the caller, named
-//! together with the repository it was taken from so that an arm which must
-//! observe that repository cannot be pointed at a different one.
+//! A gate never measures the checkout. The staged selector captures one parsed
+//! index plus the exact `HEAD` tree that gives staged renames their lineage,
+//! while a revision selector resolves one immutable commit identity. Both
+//! sources pass through the same path, mode, object, and materialization checks
+//! before a private read-only root is returned to the caller, named together
+//! with the repository it was taken from so that an arm which must observe that
+//! repository cannot be pointed at a different one.
 //!
 //! Each materialization is a real directory of real bytes below the temporary
 //! directory, and a run that unwinds removes its own. A run that is *killed*
@@ -20,6 +21,13 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use sill::Possession;
+
+use crate::state::RenameMap;
+
+/// Stable gate-owned policy for deciding that a staged delete/add pair is a move.
+const STAGED_RENAME_SIMILARITY: f32 = 0.5;
+/// Zero is the plumbing API's explicit unlimited-candidate setting.
+const STAGED_RENAME_LIMIT: usize = 0;
 
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
@@ -39,7 +47,7 @@ use workspace::{reclaim_abandoned, workspace_lock};
 /// Which immutable Git source a gate should measure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selector {
-    /// The repository index as captured at selection time.
+    /// The repository index and its `HEAD` rename base as captured at selection time.
     Staged,
     /// The one commit named by this revision at selection time.
     Revision(String),
@@ -61,9 +69,10 @@ impl Selector {
     /// Materialize this source below a private immutable root.
     ///
     /// The returned root owns no checkout state and remains valid until the
-    /// [`SelectedTree`] is dropped. Index and reference sources are rechecked
-    /// after every selected object has been copied, so a moving source cannot
-    /// publish a partial or mixed tree.
+    /// [`SelectedTree`] is dropped. Index and reference sources, including the
+    /// staged index's `HEAD` rename base, are rechecked after every selected
+    /// object has been copied, so a moving source cannot publish a partial or
+    /// mixed tree or mismatched rename lineage.
     ///
     /// # Errors
     ///
@@ -81,14 +90,20 @@ impl Selector {
         let repo = open_repository(repository)?;
         let mut build = BuildRoot::create()?;
 
-        let (items, source) = match self {
+        let (items, source, renames, publishes_state) = match self {
             Self::Staged => {
                 let before = IndexSeal::capture(&repo)?;
+                let head = head_seal(&repo)?;
                 after_capture(&build.workspace);
+                let head_commit = head
+                    .as_ref()
+                    .map(|seal| seal.resolve(&repo, "HEAD", &build.workspace))
+                    .transpose()?;
                 let index = before.open(&repo, &build.workspace)?;
                 let items = index_items(&index)?;
                 materialize_items(&repo, &build.root, &items)?;
-                (items, SelectionSeal::Index(before))
+                let renames = staged_renames(&repo, head_commit, &index)?;
+                (items, SelectionSeal::Index { before, head }, renames, true)
             }
             Self::Revision(revision) => {
                 let before = RevisionSeal::capture(&repo, revision)?;
@@ -102,6 +117,8 @@ impl Selector {
                         before,
                         revision: revision.clone(),
                     },
+                    RenameMap::default(),
+                    false,
                 )
             }
         };
@@ -112,6 +129,8 @@ impl Selector {
         Ok(build.finish(
             repository,
             items.into_iter().map(|item| item.path).collect(),
+            renames,
+            publishes_state,
         ))
     }
 }
@@ -127,6 +146,8 @@ pub struct SelectedTree {
     root: PathBuf,
     repository: PathBuf,
     paths: Vec<String>,
+    renames: RenameMap,
+    publishes_state: bool,
     possession: Option<Possession>,
 }
 
@@ -153,6 +174,18 @@ impl SelectedTree {
     #[must_use]
     pub fn paths(&self) -> &[String] {
         &self.paths
+    }
+
+    /// Canonical old-to-new paths detected from this exact selected source.
+    #[must_use]
+    pub(crate) const fn renames(&self) -> &RenameMap {
+        &self.renames
+    }
+
+    /// Whether acceptance of this source may publish current gate state.
+    #[must_use]
+    pub(crate) const fn publishes_state(&self) -> bool {
+        self.publishes_state
     }
 }
 
@@ -207,7 +240,11 @@ pub(crate) fn tracked_paths(repository: &Path) -> Result<Vec<String>, TreeError>
 pub(crate) fn open_repository(path: &Path) -> Result<gix::Repository, TreeError> {
     let options = gix::open::Options::isolated()
         .strict_config(true)
-        .config_overrides(["gitoxide.objects.noReplace=true", "index.skipHash=false"]);
+        .config_overrides([
+            "gitoxide.objects.noReplace=true",
+            "index.skipHash=false",
+            "diff.algorithm=myers",
+        ]);
     gix::open_opts(path, options).map_err(|source| TreeError::Repository {
         path: path.to_path_buf(),
         evidence: source.to_string(),
@@ -228,7 +265,10 @@ struct Item {
 }
 
 enum SelectionSeal {
-    Index(IndexSeal),
+    Index {
+        before: IndexSeal,
+        head: Option<RevisionSeal>,
+    },
     Revision {
         before: RevisionSeal,
         revision: String,
@@ -238,7 +278,14 @@ enum SelectionSeal {
 impl SelectionSeal {
     fn verify(&self, repo: &gix::Repository) -> Result<(), TreeError> {
         match self {
-            Self::Index(before) => before.verify(repo)?,
+            Self::Index { before, head } => {
+                if &head_seal(repo)? != head {
+                    return Err(TreeError::RevisionChanged {
+                        revision: "HEAD".to_owned(),
+                    });
+                }
+                before.verify(repo)?;
+            }
             Self::Revision { before, revision } => {
                 if RevisionSeal::capture(repo, revision).ok().as_ref() != Some(before) {
                     return Err(TreeError::RevisionChanged {
@@ -249,6 +296,98 @@ impl SelectionSeal {
         }
         Ok(())
     }
+}
+
+fn head_seal(repo: &gix::Repository) -> Result<Option<RevisionSeal>, TreeError> {
+    let head = repo.head().map_err(|source| TreeError::Repository {
+        path: repo
+            .workdir()
+            .unwrap_or_else(|| repo.git_dir())
+            .to_path_buf(),
+        evidence: source.to_string(),
+    })?;
+    if head.id().is_none() {
+        return Ok(None);
+    }
+    RevisionSeal::capture(repo, "HEAD").map(Some)
+}
+
+fn staged_renames(
+    repo: &gix::Repository,
+    head_commit: Option<gix::ObjectId>,
+    index: &gix::index::State,
+) -> Result<RenameMap, TreeError> {
+    let Some(head_commit) = head_commit else {
+        return Ok(RenameMap::default());
+    };
+    let tree = commit_tree_id(repo, "HEAD", head_commit)?;
+    let tree_index = repo
+        .index_from_tree(&tree)
+        .map_err(|source| TreeError::Repository {
+            path: repository_path(repo),
+            evidence: format!("cannot expand sealed HEAD for rename detection: {source}"),
+        })?;
+    let mut resource_cache =
+        repo.diff_resource_cache_for_tree_diff()
+            .map_err(|source| TreeError::Repository {
+                path: repository_path(repo),
+                evidence: format!("cannot initialize staged rename detection: {source}"),
+            })?;
+    let mut pathspec = gix::pathspec::Search::from_specs(
+        std::iter::empty::<gix::pathspec::Pattern>(),
+        None,
+        repo.workdir().unwrap_or_else(|| repo.git_dir()),
+    )
+    .map_err(|source| TreeError::Repository {
+        path: repository_path(repo),
+        evidence: format!("cannot initialize the staged rename path matcher: {source}"),
+    })?;
+    let mut pairs = Vec::new();
+    gix_diff::index(
+        &tree_index,
+        index,
+        |change| {
+            if let gix_diff::index::ChangeRef::Rewrite {
+                source_location,
+                location,
+                copy: false,
+                ..
+            } = change
+            {
+                pairs.push((
+                    normalized_path(source_location.as_ref())?,
+                    normalized_path(location.as_ref())?,
+                ));
+            }
+            Ok::<_, TreeError>(std::ops::ControlFlow::Continue(()))
+        },
+        Some(gix_diff::index::RewriteOptions {
+            resource_cache: &mut resource_cache,
+            find: repo,
+            rewrites: gix_diff::Rewrites {
+                copies: None,
+                percentage: Some(STAGED_RENAME_SIMILARITY),
+                limit: STAGED_RENAME_LIMIT,
+                track_empty: false,
+            },
+        }),
+        &mut pathspec,
+        &mut |_, _, _, _| true,
+    )
+    .map_err(|source| TreeError::Repository {
+        path: repository_path(repo),
+        evidence: format!("cannot capture staged renames from the sealed index: {source}"),
+    })?;
+    RenameMap::new(pairs).map_err(|source| TreeError::Repository {
+        path: repository_path(repo),
+        evidence: format!("staged rename map is invalid: {source}"),
+    })
+}
+
+fn repository_path(repo: &gix::Repository) -> PathBuf {
+    repo.workdir()
+        .unwrap_or_else(|| repo.git_dir())
+        .to_path_buf()
 }
 
 fn index_items(index: &gix::index::File) -> Result<Vec<Item>, TreeError> {
@@ -351,6 +490,17 @@ fn revision_items(
     revision: &str,
     commit_id: gix::ObjectId,
 ) -> Result<Vec<Item>, TreeError> {
+    let tree_id = commit_tree_id(repo, revision, commit_id)?;
+    let mut items = Vec::new();
+    collect_tree(repo, tree_id, "", &mut items)?;
+    normalize_items(items)
+}
+
+fn commit_tree_id(
+    repo: &gix::Repository,
+    revision: &str,
+    commit_id: gix::ObjectId,
+) -> Result<gix::ObjectId, TreeError> {
     let commit = verified_object(repo, commit_id, revision)?;
     if commit.kind != gix::objs::Kind::Commit {
         return Err(TreeError::RevisionNotCommit {
@@ -364,18 +514,13 @@ fn revision_items(
             revision: revision.to_owned(),
             actual: source.actual.to_string(),
         })?;
-    let tree_id =
-        commit
-            .tree_id()
-            .map(gix::Id::detach)
-            .map_err(|source| TreeError::MalformedObject {
-                object: commit_id.to_string(),
-                evidence: source.to_string(),
-            })?;
-
-    let mut items = Vec::new();
-    collect_tree(repo, tree_id, "", &mut items)?;
-    normalize_items(items)
+    commit
+        .tree_id()
+        .map(gix::Id::detach)
+        .map_err(|source| TreeError::MalformedObject {
+            object: commit_id.to_string(),
+            evidence: source.to_string(),
+        })
 }
 
 fn collect_tree(

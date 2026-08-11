@@ -75,6 +75,82 @@ impl Drop for Repository {
 }
 
 #[test]
+fn staged_selection_carries_renames_from_its_captured_index() {
+    let repository = Repository::new("captured-renames");
+    repository.write("old.txt", b"selected\n");
+    repository.commit("old path");
+    repository.git(&["mv", "old.txt", "new.txt"]);
+
+    let selected = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the renamed index");
+
+    assert_eq!(selected.renames().destination("old.txt"), "new.txt");
+    assert!(selected.publishes_state());
+}
+
+#[test]
+fn staged_rename_similarity_is_fixed_independently_of_repository_config() {
+    let repository = Repository::new("captured-rename-similarity");
+    repository.write(
+        "old.txt",
+        b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n",
+    );
+    repository.commit("old path");
+    repository.git(&["config", "diff.renames", "false"]);
+    repository.git(&["config", "diff.renameLimit", "1"]);
+    repository.git(&["mv", "old.txt", "new.txt"]);
+    repository.write(
+        "new.txt",
+        b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n",
+    );
+    repository.git(&["add", "new.txt"]);
+
+    let selected = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the modified rename");
+
+    assert_eq!(selected.renames().destination("old.txt"), "new.txt");
+}
+
+#[test]
+fn revision_selection_is_read_only_for_current_gate_state() {
+    let repository = Repository::new("revision-state-authority");
+    repository.write("selected.txt", b"selected\n");
+    let revision = repository.commit("selected revision");
+
+    let selected = Selector::revision(revision)
+        .materialize(&repository.root)
+        .expect("materialize the revision");
+
+    assert!(!selected.publishes_state());
+}
+
+#[test]
+fn head_movement_refuses_rename_lineage_from_a_different_base() {
+    let repository = Repository::new("moving-rename-base");
+    repository.write("old.txt", b"first\n");
+    let first = repository.commit("first base");
+    repository.write("anchor.txt", b"second\n");
+    repository.commit("second base");
+    repository.git(&["mv", "old.txt", "new.txt"]);
+
+    let refused = Selector::staged()
+        .materialize_with(&repository.root, |_| {
+            repository.git(&["update-ref", "refs/heads/main", &first]);
+        })
+        .expect_err("a moved rename base must refuse the staged source");
+
+    assert!(
+        matches!(
+            refused,
+            TreeError::RevisionChanged { ref revision } if revision == "HEAD"
+        ),
+        "the sealed staged source refused with {refused:?}"
+    );
+}
+
+#[test]
 fn byte_identical_index_replacement_is_still_a_changed_source() {
     let repository = Repository::new("index-replacement");
     repository.write("selected.txt", b"selected\n");
