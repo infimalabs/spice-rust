@@ -13,7 +13,7 @@ mod selection;
 #[test]
 fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
     let production = RunPolicy::production(1).expect("one scheduler grant admits");
-    assert_eq!(production.shard_deadline, Duration::from_secs(255));
+    assert_eq!(production.shard_deadline, Duration::from_secs(180));
     assert_eq!(production.coordinator_deadline, Duration::from_secs(255));
     for concurrency in 1..=WORKSPACE_TEST_CONCURRENCY_CAP {
         assert_eq!(

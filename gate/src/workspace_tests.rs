@@ -33,7 +33,9 @@ use coordinator::{LastTest, isolate_shard_outputs, target_arguments};
 /// Keep each post-prebuild Cargo invocation small enough for the full verifier's
 /// two-lane workspace branch to make steady progress under the test-phase cap.
 const TARGETS_PER_SHARD: usize = 8;
-const SHARD_DEADLINE: Duration = Duration::from_secs(255);
+/// No individual test shard may cross the operator's three-minute ceiling.
+const SHARD_DEADLINE: Duration = Duration::from_secs(180);
+/// The aggregate coordinator may outlive one shard while bounded siblings finish.
 const COORDINATOR_DEADLINE: Duration = Duration::from_secs(255);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const METADATA_DEADLINE: Duration = Duration::from_secs(30);
