@@ -1,13 +1,20 @@
-# Installing Spice beside the predecessor
+# Preparing and transitioning Spice
 
-Spice and the Python predecessor are two systems on one machine, not two stages
-of one. Both are installed, both read this repository, and both run
-indefinitely: there is no date, release, or step at which one of them ends.
-Nothing here stops, drains, imports, or replaces the other, and neither is a
-precondition for the other.
+Spice installs beside the Python predecessor so the Rust appliance can be
+built, inspected, and exercised without changing live command, hook, process,
+or state authority. Installation is preparation, not an authority transfer: it
+does not stop, drain, import, or replace the other system, and neither system is
+a precondition for the other.
+
+One later, explicit operator decision transfers the bare `spice` command and
+this repository's Git hooks to the installed Rust appliance. That transition
+does not delete predecessor processes or state; retirement remains a separate
+destructive decision.
 
 Run the commands below from the worktree being installed. Paths stay explicit
-because this appliance is invoked by path, never by name.
+during preparation. Do not use the bare `spice` name for this appliance until
+the operator-authorized authority switch below has established its exact
+meaning.
 
 ## Before installing
 
@@ -54,10 +61,10 @@ single-command equivalent for preview because Cargo rebuilds before invoking
 the planner.
 
 The two hashes must match. The plan publishes the executable, the operator
-skill, and three Git hooks under the Git common directory's `.spice-install`,
-so this appliance never takes the `spice` name on `PATH`. The predecessor keeps
-that name, and its entrypoint is not moved, renamed, or shadowed by anything
-here; reach this system through `$SPICE_BIN`.
+skill, and three Git hooks under the Git common directory's `.spice-install`.
+Applying that plan alone does not change `PATH` or `core.hooksPath`: the
+predecessor keeps the bare `spice` name and current hooks throughout
+preparation, and this appliance is reached through `$SPICE_BIN`.
 
 The installer refuses with `install::state-refused` while a retired
 release-one `.spice-rust` tree exists under the common directory. That tree is
@@ -69,6 +76,56 @@ old installed binary before applying this build. The new binary never inspects,
 reads, or deletes that path now owned by Python, and does not treat it as an
 alternate receipt. After that one-time cutover, Rust state lives only in
 `.spice-rs`; installing requires no empty authority on either side.
+
+## Operator-authorized authority switch
+
+Stop here unless the operator has explicitly authorized the repository-wide
+transition. The switch has two postconditions: every effective
+`core.hooksPath` names the installed Rust hooks, and the first `spice` on the
+supervised search path is `$SPICE_BIN`.
+
+On this fleet, each linked worktree currently carries a worktree-scoped
+`.spice/hooks` selection. After authorization, move every declaring scope to
+the tracked Rust hooks so activation can preflight one consistent value, then
+let activation publish and select the installed common hook directory:
+
+```sh
+SPICE_REPO=/absolute/path/to/this/worktree
+SPICE_COMMON=$(git -C "$SPICE_REPO" rev-parse --path-format=absolute --git-common-dir)
+SPICE_BIN="$SPICE_COMMON/.spice-install/bin/spice"
+cd "$SPICE_REPO"
+git config --local core.hooksPath .githooks
+git worktree list --porcelain |
+awk '/^worktree / { sub(/^worktree /, ""); print }' |
+while IFS= read -r SPICE_WORKTREE; do
+  git -C "$SPICE_WORKTREE" config --worktree core.hooksPath .githooks
+done
+cargo xtask activate-hooks
+SPICE_HOOKS="$SPICE_COMMON/.spice-install/git-hooks"
+test "$(git config --local --get core.hooksPath)" = "$SPICE_HOOKS"
+git worktree list --porcelain |
+awk '/^worktree / { sub(/^worktree /, ""); print }' |
+while IFS= read -r SPICE_WORKTREE; do
+  test "$(git -C "$SPICE_WORKTREE" config --get core.hooksPath)" = "$SPICE_HOOKS"
+done
+```
+
+The supervising Rust launcher already puts the installed executable's
+directory first for every agent shell. Give the operator shell the same single
+meaning, and prove the bare name resolves to the installed appliance:
+
+```sh
+SPICE_BIN_DIR=${SPICE_BIN%/spice}
+export PATH="$SPICE_BIN_DIR:$PATH"
+hash -r
+test "$(command -v spice)" = "$SPICE_BIN"
+spice --json doctor
+```
+
+The generated installed skill can now use bare `spice recall`, `spice board`,
+`spice inbox`, and `spice ack` commands without crossing runtimes. It uses the
+Rust command tree directly; the transition creates no Python-shaped nested
+command forms.
 
 ## Hooks are a repository-wide choice
 
@@ -205,11 +262,12 @@ Read as an independence proof — this appliance needs no predecessor tool to
 install, seat lanes, steer them, or shut down — it is exactly the evidence
 coexistence rests on.
 
-## Retiring either system is not part of normal operation
+## Retirement is separate from the authority switch
 
-Nothing above retires anything, and no instruction in this repository retires
-either system. Should an operator decide to, that is a separate act carrying
-its own evidence. These are the states it destroys.
+Preparation retires nothing. The operator-authorized switch changes command
+and hook authority but does not stop a predecessor process or remove its state.
+Should an operator later decide to retire either system, that is a separate act
+carrying its own evidence. These are the states it destroys.
 
 Retiring the predecessor destroys every running predecessor lane and the
 process group behind it, and the `spice` entrypoint under `~/.local/bin`. If

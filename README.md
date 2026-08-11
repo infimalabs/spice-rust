@@ -3,14 +3,18 @@
 ## Install and start
 
 Spice is this repository's installed appliance. Preview and apply its
-digest-bound install plan, then activate the installed hooks once for the
-repository:
+digest-bound install plan without changing live command or hook authority:
 
 ```sh
 cargo run --locked -p spice -- install
 cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
-cargo xtask activate-hooks
 ```
+
+When the operator explicitly authorizes the authority switch, follow
+[INSTALL.md](INSTALL.md#operator-authorized-authority-switch). That step makes
+the installed Rust appliance the bare `spice` command, moves every linked
+worktree through one recognized hook selection, and activates the installed
+common hooks. Installation alone performs none of those mutations.
 
 The plan publishes the executable, operator skill, and the `pre-commit`,
 `commit-msg`, and `reference-transaction` hooks once under the Git common
@@ -78,10 +82,11 @@ From a VPN browser, replace `127.0.0.1` with the resident host's VPN address,
 keep the announced port and `#TOKEN`, and open that URL. Never put the token
 before `#`.
 
-This appliance installs beside the Python predecessor rather than replacing it,
-and both are meant to keep running. [INSTALL.md](INSTALL.md) is that runbook: it
-names the port the predecessor already holds, the hook path the two cannot
-share, and what a retirement would destroy if one were ever wanted.
+This appliance installs beside the Python predecessor for reversible
+preparation. Coexistence is not a permanent command-routing contract: the
+operator-authorized switch gives the Rust appliance the bare `spice` name and
+the repository's single hook path. Retirement remains separate; the switch
+does not stop predecessor processes or delete predecessor state.
 
 The activation command refuses unless all three hooks are executable. The
 pre-commit hook runs the canonical verifier, which performs
@@ -159,14 +164,14 @@ cargo xtask verify
 
 The command discovers the repository from the current directory and runs the
 one canonical verifier; there is no wrapper or second suite. Its workspace Rust
-tests are split into deterministic chunks of at most 24 targets, ordered
+tests are split into deterministic chunks of at most 8 targets, ordered
 heaviest first so cold compiler work starts immediately, and run in no more
-than the scheduler-granted workers. The full verifier grants one serial
-workspace lane over the native selected root; the coordinator's reusable safety
-ceiling remains four owned process groups. Every shard prints its package,
-target inventory, and output
-lane before launch, reports progress every 30 seconds, and has a hard
-255-second deadline that terminates and reaps the complete process group.
+than the scheduler-granted workers. The full verifier grants two workspace
+lanes over the native selected root; the coordinator's reusable safety ceiling
+remains four owned process groups. Every shard prints its package, target
+inventory, and output lane before launch, reports progress every 30 seconds,
+and has a hard 255-second deadline that terminates and reaps the complete
+process group.
 
 `cargo xtask verify-action battery` is the visible public partial surface for
 the canonical gate action. It does not share the full verifier's retained
