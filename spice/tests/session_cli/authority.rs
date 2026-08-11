@@ -143,7 +143,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         held.clone(),
         "Compose Rust briefings",
         SESSION_PROJECT,
-        "todo",
+        "review",
     );
     task_added(
         &mut write,
@@ -197,6 +197,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         occupant,
         epoch,
         SESSION_PROJECT,
+        "review",
         instant(1),
     );
     mint_claim(
@@ -207,6 +208,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         peer_occupant,
         epoch,
         SESSION_PROJECT,
+        "todo",
         instant(2),
     );
 }
@@ -345,6 +347,7 @@ fn mint_claim(
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
     project: &str,
+    phase: &str,
     at: Instant,
 ) {
     let mut write = JournalWrite::new(
@@ -360,7 +363,7 @@ fn mint_claim(
         Mint {
             task: &task,
             actor: &actor,
-            workflow: &workflow("todo"),
+            workflow: &workflow(phase),
             project,
             lane,
             occupant,
@@ -374,6 +377,28 @@ fn mint_claim(
     )
     .expect("claim mints");
     journal.apply(write).expect("claim commits");
+}
+
+fn claim_won_facts(path: &Path) -> i64 {
+    Connection::open(path)
+        .expect("fixture authority opens for claim fact count")
+        .query_row(
+            "SELECT COUNT(*) FROM fact_envelopes WHERE kind = 'claim::won'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("claim fact count reads")
+}
+
+fn active_claims_for(path: &Path, actor: &Actor) -> i64 {
+    Connection::open(path)
+        .expect("fixture authority opens for active claim count")
+        .query_row(
+            "SELECT COUNT(*) FROM claim_index WHERE actor = ?1 AND disposition = 'active'",
+            params![actor.to_string()],
+            |row| row.get(0),
+        )
+        .expect("active claim count reads")
 }
 
 #[test]
@@ -514,6 +539,75 @@ fn recall_authority_sources_asks_and_held_work_from_exact_state_authorities() {
     assert_eq!(
         pruned["authorities"]["priority"]["end_pruning_preserves"],
         json!(["outstanding-asks", "held-work"])
+    );
+
+    scratch.remove();
+}
+
+#[test]
+fn creator_and_claim_briefings_do_not_append_claim_facts_or_duplicate_the_actor_claim() {
+    let scratch = Scratch::new("authority-briefing-read-only");
+    fake_repository(scratch.path());
+    let creator_transcript = scratch.path().join("creator.jsonl");
+    let claim_transcript = scratch.path().join("claim.jsonl");
+    write_jsonl(&creator_transcript, &codex_rows());
+    write_jsonl(&claim_transcript, &codex_rows());
+    let thread = uuid(0xaa).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &thread);
+    let actor = Actor::Lane(uuid(0xaa));
+    let environment = [("CODEX_THREAD_ID", thread.clone())]; // env-policy: allow
+
+    let before_claim_facts = claim_won_facts(&authority);
+    assert_eq!(active_claims_for(&authority, &actor), 1);
+
+    let creator = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&[
+            "session",
+            "briefing",
+            &creator_transcript.to_string_lossy(),
+            "--deadline-seconds",
+            "5",
+        ]),
+        &environment,
+        "recall",
+    );
+    assert_eq!(
+        creator["authorities"]["held_work"]["own_claim"]["title"],
+        "Compose Rust briefings"
+    );
+    assert_eq!(
+        claim_won_facts(&authority),
+        before_claim_facts,
+        "creator briefing appended a claim fact"
+    );
+
+    let claim = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&[
+            "session",
+            "briefing",
+            &claim_transcript.to_string_lossy(),
+            "--deadline-seconds",
+            "5",
+        ]),
+        &environment,
+        "recall",
+    );
+    assert_eq!(
+        claim["authorities"]["held_work"]["own_claim"]["title"],
+        "Compose Rust briefings"
+    );
+    assert_eq!(
+        claim_won_facts(&authority),
+        before_claim_facts,
+        "claim briefing appended a claim fact"
+    );
+    assert_eq!(
+        active_claims_for(&authority, &actor),
+        1,
+        "the actor owns exactly one active claim after both briefings"
     );
 
     scratch.remove();

@@ -404,6 +404,245 @@ fn commit_planned_claim(bus: &Bus, command: &wire::AdmittedCommand, plan: ClaimP
     ))
 }
 
+/// `task next` preserves the one-active-claim invariant before it mints.
+///
+/// The allocator can still see unheld work after this actor wins the first
+/// task. Without the active-claim precondition after selection it would append
+/// another `ClaimWon` for the same actor, making every progress surface
+/// ambiguous.
+#[test]
+fn task_next_refuses_when_the_actor_already_holds_one_active_claim() {
+    let (root, bus, epoch, seats) = fixture("claim-one-active-plan", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    add(&bus, epoch, actor.clone(), "ACTIVE-1", "first", None);
+    add(&bus, epoch, actor.clone(), "ACTIVE-2", "second", None);
+
+    let answer = board(&bus, epoch, actor.clone());
+    let first = guard_winner(&answer, &actor);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&answer, &first, &seats[0]),
+        &next_rule(),
+    ));
+
+    let held = board(&bus, epoch, actor.clone());
+    let second = held
+        .tasks
+        .iter()
+        .map(|task| task.statement.body.handle.clone())
+        .find(|handle| *handle != first)
+        .expect("fixture keeps another task selectable");
+    assert!(at(&held, &first).claim.is_some(), "first task is held");
+    assert!(
+        at(&held, &second).claim.is_none(),
+        "second task is still free"
+    );
+    let refused = issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&held, &second, &seats[0]),
+        &next_rule(),
+    );
+    assert!(
+        matches!(
+            refused,
+            Outcome::Refusal(ref refusal) if refusal.reason() == "claim::active-exists"
+        ),
+        "a second claim for the same actor was not refused cleanly: {refused:?}"
+    );
+    let after = board(&bus, epoch, actor.clone());
+    assert!(at(&after, &second).claim.is_none());
+    clean(&root, bus);
+}
+
+/// The allocator commit guard rechecks one-active-claim on its atomic read.
+///
+/// This hand-built observation deliberately matches the current head set, so
+/// the ordinary head-set guard passes. The only remaining blocker is the
+/// current active claim for the same actor, observed inside the write guard
+/// immediately before a second claim would be minted.
+#[test]
+fn an_active_claim_in_the_commit_read_refuses_even_when_heads_match() {
+    let (root, bus, epoch, seats) = fixture("claim-one-active-guard", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    add(&bus, epoch, actor.clone(), "ACTIVE-guard1", "first", None);
+    add(&bus, epoch, actor.clone(), "ACTIVE-guard2", "second", None);
+
+    let answer = board(&bus, epoch, actor.clone());
+    let first = guard_winner(&answer, &actor);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&answer, &first, &seats[0]),
+        &next_rule(),
+    ));
+
+    let current = board(&bus, epoch, actor.clone());
+    let second = current
+        .tasks
+        .iter()
+        .map(|task| task.statement.body.handle.clone())
+        .find(|handle| *handle != first)
+        .expect("fixture keeps another task selectable");
+    let projects = guard_projects();
+    let observed = guard_observation(&current, &actor, second, &projects);
+    assert_eq!(
+        refusal_reason(commit_guarded(&bus, epoch, observed)),
+        format!("claim::active-exists: actor {actor} already holds active claim {first}")
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn capture_and_steal_refuse_when_the_actor_already_holds_an_active_claim() {
+    let (root, bus, epoch, seats) = fixture("claim-active-named-rules", 2);
+    let actor = Actor::Lane(seats[0].lane);
+    let rival = Actor::Lane(seats[1].lane);
+    let active = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "ACTIVE-rule1",
+        "Already held work",
+        Some("todo"),
+    );
+    let free = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "ACTIVE-rule2",
+        "Free capture target",
+        Some("todo"),
+    );
+    let stolen = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "ACTIVE-rule3",
+        "Held steal target",
+        Some("todo"),
+    );
+
+    capture_for(&bus, epoch, &seats[0], &active);
+    capture_for(&bus, epoch, &seats[1], &stolen);
+
+    let capture: Name = "capture".parse().expect("capture rule");
+    let steal: Name = "steal".parse().expect("steal rule");
+    for (task, rule) in [(&free, capture), (&stolen, steal)] {
+        let visible = board(&bus, epoch, actor.clone());
+        let heads = at(&visible, task);
+        let refused = issue(
+            &bus,
+            epoch,
+            actor.clone(),
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility { rule: rule.clone() },
+                residency(&visible, &seats[0]),
+            ],
+            &ClaimWin { rule },
+        );
+        assert!(
+            matches!(
+                refused,
+                Outcome::Refusal(ref refusal) if refusal.reason() == "claim::active-exists"
+            ),
+            "named claim rule appended or refused for the wrong reason: {refused:?}",
+        );
+    }
+    let after = board(&bus, epoch, actor);
+    assert!(at(&after, &free).claim.is_none());
+    assert_eq!(
+        at(&after, &stolen).claim.as_ref().unwrap().body.actor,
+        rival
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn task_status_and_progress_select_the_actor_claim_when_peers_are_active() {
+    let (root, bus, epoch, seats) = fixture("task-active-peer-progress", 2);
+    let actor = Actor::Lane(seats[0].lane);
+    let peer = Actor::Lane(seats[1].lane);
+    let held = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "CLI-progress01",
+        "Advance the held row",
+        Some("todo"),
+    );
+    let peer_held = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "CLI-progress02",
+        "Peer active row",
+        Some("todo"),
+    );
+
+    let actor_board = board(&bus, epoch, actor.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&actor_board, &held, &seats[0]),
+        &next_rule(),
+    ));
+    let peer_board = board(&bus, epoch, peer.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        peer,
+        CommandKind::ClaimWin,
+        claim_expected(&peer_board, &peer_held, &seats[1]),
+        &next_rule(),
+    ));
+
+    let answer = board(&bus, epoch, actor);
+    let status = task_status(&answer).expect("status reads");
+    assert!(status.lines().any(|line| line == format!("claim {held}")));
+    assert!(status.lines().any(|line| line == "active 2"), "{status}");
+    let actor_claims = answer
+        .tasks
+        .iter()
+        .filter(|task| {
+            task.claim.as_ref().is_some_and(|claim| {
+                claim.body.actor == answer.principal
+                    && claim.body.disposition == ClaimDisposition::Active
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actor_claims.len(),
+        1,
+        "actor claim is ambiguous: {answer:?}"
+    );
+    let heads = actor_claims[0];
+    assert_eq!(heads.statement.body.handle, held);
+    let witnesses = progress_witnesses(&answer, heads, seats[0].lane, seats[0].occupant, false)
+        .expect("progress witnesses are derived from the actor claim");
+    assert!(
+        witnesses.iter().any(|witness| matches!(
+            witness,
+            Witness::Claim { task, head: Some(_) } if *task == heads.statement.body.born
+        )),
+        "progress witnesses did not include the held claim: {witnesses:?}",
+    );
+    clean(&root, bus);
+}
+
 /// Reaches the head-set comparison in `read_guard.rs` through the claim path.
 ///
 /// The competing task is added through `dispatch`, the same door production

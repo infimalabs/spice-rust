@@ -47,6 +47,7 @@ pub(in crate::board_command) fn claim_plan(
     let possession = possession_rule(win)?;
     let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
     let selected = claim_selection(&snapshot, command, possession)?.clone();
+    refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
     let grant = claim_grant(bus, command, repository, &snapshot, possession)?;
     let next = projected_claim_next_action(
         &snapshot,
@@ -66,6 +67,31 @@ pub(in crate::board_command) fn claim_plan(
         next,
         possession,
     })
+}
+
+fn refuse_if_actor_already_claims(
+    entries: &[Entry],
+    actor: &Actor,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let mut active = entries.iter().filter(|entry| {
+        entry.claim().is_some_and(|claim| {
+            claim.actor == *actor && claim.disposition == ClaimDisposition::Active
+        })
+    });
+    let Some(first) = active.next() else {
+        return Ok(());
+    };
+    if active.next().is_some() {
+        return Err(protocol_fault(
+            "claim::active-ambiguous",
+            "one actor holds more than one active claim",
+        ));
+    }
+    Err(refusal(
+        "claim::active-exists",
+        Some(first.handle().to_string()),
+        "finish, review, unclaim, or reclaim the active task before claiming another",
+    ))
 }
 
 /// What a claim settles before the journal opens.
@@ -446,7 +472,7 @@ fn guard_claim(
     let expected = command.expected().to_vec();
     let heads = allocation_heads(&snapshot.answer);
     if capture {
-        guard_capture(write, expected, heads);
+        guard_capture(write, expected, heads, command.actor().clone());
     } else {
         guard_allocation(
             write,
