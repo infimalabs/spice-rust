@@ -478,7 +478,7 @@ fn workspace_test_environment(shared_outputs: bool) -> Result<sill::Environment,
         .cloned()
         .collect::<BTreeMap<OsString, OsString>>();
     entries.insert(
-        OsString::from("SPICE_WORKSPACE_TEST_SHARED_OUTPUTS"),
+        OsString::from("SPICE_WORKSPACE_TEST_SHARED_OUTPUTS"), // env-policy: not-an-env SPICE_WORKSPACE_TEST_SHARED_OUTPUTS
         OsString::from("1"),
     );
     sill::Environment::new(entries)
