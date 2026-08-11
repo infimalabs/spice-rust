@@ -255,7 +255,7 @@ async fn open_socket(
         web_sys::window()
             .ok_or_else(|| "browser window is unavailable".to_owned())?
             .location()
-            .replace("/")
+            .reload()
             .map_err(|_| "browser could not load the current Canvas application".to_owned())?;
         return Err(format!(
             "{}: {}; loading the current Canvas application",
