@@ -94,6 +94,32 @@ pub(super) fn unrelated_focused_revision(
     )
 }
 
+#[test]
+fn lineage_refuses_descendant_revision_with_the_same_tree_as_recovery() {
+    let (root, bus, _, _) = fixture("gate-findings-same-tree-recovery", 1);
+    let finding = focused_dispatch(&root, "same-tree-finding", &["same-tree"]);
+    commit_focused(&finding, "commit unchanged standing finding tree");
+    let clean_revision = spice::gate::capture_gate_finding_anchor(
+        &finding.repository,
+        &gate::Selector::revision("HEAD"),
+    )
+    .expect("capture the committed descendant")
+    .bind(finding.body.source.tree.clone());
+    assert_ne!(finding.body.source.anchor, clean_revision.anchor);
+    assert_eq!(finding.body.source.tree, clean_revision.tree);
+
+    let error = spice::gate::require_gate_finding_source_forward(
+        &finding.repository,
+        &finding.body.source,
+        &clean_revision,
+        true,
+    )
+    .expect_err("unchanged source cannot prove recovery through an empty descendant");
+
+    assert_eq!(error.reason(), "gate::finding-recovery-unproven");
+    clean(&root, bus);
+}
+
 fn focused_dispatch_for_selector(
     repository: Repository,
     selector: gate::Selector,
