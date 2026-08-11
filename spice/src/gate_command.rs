@@ -55,16 +55,32 @@ pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outco
         .map_or_else(Selector::staged, |revision| {
             Selector::revision(revision.clone())
         });
-    let report = match spice::gate::run_arm_report(selector, gate_id) {
+    let repository = match focused_repository(gate_id) {
+        Ok(repository) => repository,
+        Err(outcome) => return outcome,
+    };
+    let before = match spice::gate::capture_gate_finding_anchor(&repository, &selector) {
+        Ok(source) => source,
+        Err(error) => return focused_failure(error, gate_id),
+    };
+    let report = match spice::gate::run_arm_report(selector.clone(), gate_id) {
         Ok(report) => report,
         Err(error) => return focused_failure(error, gate_id),
     };
+    let after = match spice::gate::capture_gate_finding_anchor(&repository, &selector) {
+        Ok(source) => source,
+        Err(error) => return focused_failure(error, gate_id),
+    };
+    if before != after {
+        return Outcome::Refusal(Refusal::evidence(
+            "gate::finding-source-moved",
+            format!("before={before:?}; after={after:?}"),
+            "rerun the focused instrument after the Git source stops moving",
+        ));
+    }
+    let source = before.bind(report.context().source().clone());
     let (report_digest, evidence) = match focused_report_evidence(&report) {
         Ok(evidence) => evidence,
-        Err(outcome) => return outcome,
-    };
-    let repository = match current_repository() {
-        Ok(repository) => repository,
         Err(outcome) => return outcome,
     };
     crate::command_client::execute_typed(
@@ -75,6 +91,7 @@ pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outco
         &GateFindings {
             report: report_digest,
             evidence,
+            source,
         },
     )
 }
@@ -252,6 +269,10 @@ fn battery_failure<B>(error: spice::gate::RunError) -> Outcome<B> {
 }
 
 fn focused_failure<B>(error: spice::gate::RunError, gate_id: GateId) -> Outcome<B> {
+    focused_unavailable(error.reason(), error.detail(), gate_id)
+}
+
+fn focused_unavailable<B>(reason: &str, detail: &str, gate_id: GateId) -> Outcome<B> {
     Outcome::Refusal(Refusal::bare(
         wire::RefusalDiagnostic::new(
             "gate::instrument-cannot-run".to_owned(),
@@ -259,10 +280,23 @@ fn focused_failure<B>(error: spice::gate::RunError, gate_id: GateId) -> Outcome<
             Some(format!(
                 "registered gate instrument {gate_id} to complete one focused run"
             )),
-            Some(format!("{}: {}", error.reason(), error.detail())),
+            Some(format!("{reason}: {detail}")),
         )
         .with_detail("repair the named capture input, then rerun this registered instrument"),
     ))
+}
+
+fn focused_repository(gate_id: GateId) -> Result<Repository, Outcome<CommandAnswer>> {
+    let current = std::env::current_dir().map_err(|error| {
+        focused_unavailable(
+            "gate::working-directory-unavailable",
+            &error.to_string(),
+            gate_id,
+        )
+    })?;
+    Repository::discover(&current).map_err(|error| {
+        focused_unavailable("gate::repository-unresolved", &error.to_string(), gate_id)
+    })
 }
 
 fn direct<B>(body: B) -> Outcome<B> {
@@ -291,23 +325,6 @@ pub(crate) fn focused_report_evidence(
         })
     })?;
     Ok((digest, evidence))
-}
-
-fn current_repository() -> Result<Repository, Outcome<CommandAnswer>> {
-    let current = std::env::current_dir().map_err(|error| {
-        Outcome::Fault(Fault {
-            class: FaultClass::Environment,
-            reason: "gate::working-directory-unavailable".to_owned(),
-            detail: error.to_string(),
-        })
-    })?;
-    Repository::discover(&current).map_err(|error| {
-        Outcome::Fault(Fault {
-            class: FaultClass::Environment,
-            reason: "gate::repository-unresolved".to_owned(),
-            detail: error.to_string(),
-        })
-    })
 }
 
 /// One immutable selected tree and the current contract loaded from its bytes.

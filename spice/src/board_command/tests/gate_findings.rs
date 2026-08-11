@@ -69,6 +69,15 @@ fn gate_findings_file_exact_deferred_tasks() {
                 .tags
                 .contains(&"gate-instrument:file-shape".to_owned())
         );
+        for tag in [
+            format!("gate-repository:{}", dispatch.body.source.repository),
+            format!("gate-selection:{}", dispatch.body.source.selection),
+            format!("gate-source-tree:{}", dispatch.body.source.tree),
+            format!("gate-source-anchor:{}", dispatch.body.source.anchor),
+            "gate-source-kind:staged-index".to_owned(),
+        ] {
+            assert!(task.statement.body.tags.contains(&tag), "missing {tag}");
+        }
         assert_eq!(task.statement.body.acceptance, finding.acceptance);
         let description = task
             .statement
@@ -83,6 +92,10 @@ fn gate_findings_file_exact_deferred_tasks() {
             &format!("Affected authority: {}", finding.authority),
             &format!("Locus: {}", finding.locus),
             &format!("Gate report: {report}"),
+            &format!("Repository authority: {}", dispatch.body.source.repository),
+            &format!("Selected tree: {}", dispatch.body.source.tree),
+            &format!("Source anchor: {}", dispatch.body.source.anchor),
+            "Source kind: staged-index",
         ] {
             assert!(
                 description.contains(evidence),
@@ -213,6 +226,138 @@ fn gate_findings_refuse_ambiguous_legacy_task_instead_of_hiding_it() {
     let board = gate_board(&bus, epoch, Actor::Operator);
     let still_open = task_heads(&board, &task).expect("refused legacy task remains visible");
     assert_eq!(still_open.workflow.body.status, "pending");
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_refuse_legacy_task_without_typed_source_authority() {
+    let (root, bus, epoch, _) = fixture("gate-findings-source-migration", 1);
+    let first = focused_dispatch(&root, "source-legacy-first", &["source-legacy"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &first));
+    let task = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
+        .statement
+        .body
+        .handle
+        .clone();
+    revise_gate_task(&bus, &task, |statement| {
+        statement.tags.retain(|tag| {
+            !tag.starts_with("gate-repository:")
+                && !tag.starts_with("gate-selection:")
+                && !tag.starts_with("gate-source-tree:")
+                && !tag.starts_with("gate-source-anchor:")
+                && !tag.starts_with("gate-source-kind:")
+        });
+    });
+    let second = focused_dispatch(&root, "source-legacy-second", &["source-legacy"]);
+
+    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &second);
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "gate::finding-source-migration-required"
+    ));
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_refuse_clean_report_from_another_repository_authority() {
+    let (root, bus, epoch, _) = fixture("gate-findings-repository-boundary", 1);
+    let finding = focused_dispatch_in(
+        &root,
+        "finding-repository",
+        "repository-finding",
+        &["repository-bound"],
+    );
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
+    let clean_report = focused_dispatch_in(&root, "unrelated-repository", "repository-clean", &[]);
+
+    let outcome = issue_gate_findings_for_repository(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &clean_report,
+        &finding.repository,
+    );
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "gate::finding-repository-mismatch"
+    ));
+    let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].workflow.body.status, "pending");
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_refuse_pre_finding_revision_as_recovery() {
+    let (root, bus, epoch, _) = fixture("gate-findings-historical-recovery", 1);
+    let finding = focused_dispatch(&root, "historical-finding", &["historical"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
+    let clean_history = focused_revision_dispatch(&finding.repository, "HEAD");
+
+    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &clean_history);
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "gate::finding-source-regressed"
+    ));
+    let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].workflow.body.status, "pending");
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_refuse_present_evidence_from_unrelated_history() {
+    let (root, bus, epoch, _) = fixture("gate-findings-unrelated-history", 1);
+    let finding = focused_dispatch(&root, "related-finding", &["unrelated-history"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
+    let initial_revision = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
+        .statement
+        .body
+        .revision;
+    let unrelated = unrelated_focused_revision(&finding, &["unrelated-history"]);
+    assert_eq!(finding.findings[0].identity, unrelated.findings[0].identity);
+
+    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &unrelated);
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(ref refusal) if refusal.reason() == "gate::finding-source-regressed"
+    ));
+    let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].statement.body.revision, initial_revision);
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_accept_descendant_staged_recovery_through_review() {
+    let (root, bus, epoch, seats) = fixture("gate-findings-descendant-recovery", 1);
+    let finding = focused_dispatch(&root, "descendant-finding", &["descendant"]);
+    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
+    let task = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
+        .statement
+        .body
+        .handle
+        .clone();
+    commit_focused(&finding, "commit standing finding");
+    let clean_report = focused_dispatch(&root, "descendant-clean", &[]);
+    assert_ne!(finding.body.source.anchor, clean_report.body.source.anchor);
+    let lane = claim_gate_task(&bus, epoch, &seats[0], &task);
+
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, lane, &clean_report));
+    assert!(text(answer).contains("advanced=1 cleared=0"));
+    let lane = claim_gate_task(&bus, epoch, &seats[0], &task);
+    let answer = assert_committed(issue_gate_findings(&bus, epoch, lane, &clean_report));
+    assert!(text(answer).contains("advanced=0 cleared=1"));
+    let board = gate_board(&bus, epoch, Actor::Operator);
+    let closed = task_heads(&board, &task).expect("descendant recovery task remains auditable");
+    assert_eq!(closed.workflow.body.status, "completed");
     clean(&root, bus);
 }
 
@@ -370,6 +515,7 @@ fn gate_findings_partial_retest_updates_present_and_closes_absent_identity() {
 #[test]
 fn gate_findings_recovery_never_crosses_instrument_authority() {
     let (root, bus, epoch, seats) = fixture("gate-findings-instrument-scope", 1);
+    let file_shape = focused_dispatch(&root, "file-standing", &["file-standing"]);
     let complexity = finding("complexity-standing");
     assert_committed(issue_folded_gate_findings(
         &bus,
@@ -379,8 +525,9 @@ fn gate_findings_recovery_never_crosses_instrument_authority() {
         std::slice::from_ref(&complexity),
         gate::GateId::Complexity,
         false,
+        &file_shape.repository,
+        &file_shape.body.source,
     ));
-    let file_shape = focused_dispatch(&root, "file-standing", &["file-standing"]);
     assert_committed(issue_gate_findings(
         &bus,
         epoch,
@@ -518,6 +665,7 @@ fn gate_findings_use_the_active_claim_as_origin_when_present() {
 #[test]
 fn gate_findings_refuse_changed_report_before_board_work() {
     let (root, bus, epoch, _) = fixture("gate-findings-digest-mismatch", 1);
+    let source = focused_dispatch(&root, "digest-source", &[]);
     let outcome = issue_gate_findings_raw(
         &bus,
         epoch,
@@ -525,7 +673,9 @@ fn gate_findings_refuse_changed_report_before_board_work() {
         GateFindings {
             report: digest("different-report"),
             evidence: "{}".to_owned(),
+            source: source.body.source.clone(),
         },
+        &source.repository,
     );
 
     assert!(matches!(
@@ -540,6 +690,7 @@ fn gate_findings_refuse_changed_report_before_board_work() {
 #[test]
 fn gate_findings_refuse_invalid_focused_report_before_board_work() {
     let (root, bus, epoch, _) = fixture("gate-findings-report-invalid", 1);
+    let source = focused_dispatch(&root, "invalid-source", &[]);
     let evidence = "{}".to_owned();
     let outcome = issue_gate_findings_raw(
         &bus,
@@ -548,7 +699,9 @@ fn gate_findings_refuse_invalid_focused_report_before_board_work() {
         GateFindings {
             report: Digest::compute(Domain::GateFocusedReport, evidence.as_bytes()),
             evidence,
+            source: source.body.source.clone(),
         },
+        &source.repository,
     );
 
     assert!(matches!(
@@ -561,11 +714,45 @@ fn gate_findings_refuse_invalid_focused_report_before_board_work() {
 }
 
 #[test]
+fn gate_findings_refuse_a_source_envelope_for_another_report_tree() {
+    let (root, bus, epoch, _) = fixture("gate-findings-source-tree-mismatch", 1);
+    let mut dispatch = focused_dispatch(&root, "source-tree", &[]);
+    dispatch.body.source.tree = digest("another-selected-tree");
+
+    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &dispatch);
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(ref refusal) if refusal.reason() == "gate::finding-source-mismatch"
+    ));
+    assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_refuse_a_report_after_its_staged_selection_moves() {
+    let (root, bus, epoch, _) = fixture("gate-findings-source-moved", 1);
+    let stale = focused_dispatch(&root, "stale-selection", &["stale-selection"]);
+    let _current = focused_dispatch(&root, "current-selection", &[]);
+
+    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &stale);
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(ref refusal) if refusal.reason() == "gate::finding-source-moved"
+    ));
+    assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
+    clean(&root, bus);
+}
+
+#[test]
 fn gate_findings_refuse_fold_state_disagreement_before_board_work() {
     let (root, bus, epoch, _) = fixture("gate-findings-fold-mismatch", 1);
+    let source = focused_dispatch(&root, "fold-source", &[]);
     let body = GateFindings {
         report: digest("fold-mismatch"),
         evidence: "{}".to_owned(),
+        source: source.body.source.clone(),
     };
     let command = fixture_command(
         epoch,
@@ -581,6 +768,7 @@ fn gate_findings_refuse_fold_state_disagreement_before_board_work() {
         &[finding("injected")],
         gate::GateId::FileShape,
         true,
+        &source.repository,
         &gate_projects(),
         &board::NextConfig::default(),
     );
@@ -600,7 +788,17 @@ fn issue_gate_findings(
     actor: Actor,
     dispatch: &FocusedDispatch,
 ) -> Outcome<CommandAnswer> {
-    issue_gate_findings_raw(bus, epoch, actor, dispatch.body.clone())
+    issue_gate_findings_for_repository(bus, epoch, actor, dispatch, &dispatch.repository)
+}
+
+fn issue_gate_findings_for_repository(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    dispatch: &FocusedDispatch,
+    repository: &Repository,
+) -> Outcome<CommandAnswer> {
+    issue_gate_findings_raw(bus, epoch, actor, dispatch.body.clone(), repository)
 }
 
 fn issue_gate_findings_raw(
@@ -608,12 +806,13 @@ fn issue_gate_findings_raw(
     epoch: CanonicalUuid,
     actor: Actor,
     body: GateFindings,
+    repository: &Repository,
 ) -> Outcome<CommandAnswer> {
     let command = fixture_command(epoch, actor, CommandKind::GateFindings, Vec::new(), &body);
     dispatch_with_repository(
         bus,
         &command,
-        None,
+        Some(repository),
         &gate_projects(),
         &board::NextConfig::default(),
     )
@@ -648,10 +847,13 @@ fn issue_folded_gate_findings(
     findings: &[FindingRow],
     instrument: gate::GateId,
     admits: bool,
+    repository: &Repository,
+    source: &wire::intent::GateFindingSource,
 ) -> Outcome<CommandAnswer> {
     let body = GateFindings {
         report: digest(marker),
         evidence: "{}".to_owned(),
+        source: source.clone(),
     };
     let command = fixture_command(epoch, actor, CommandKind::GateFindings, Vec::new(), &body);
     gate_findings_folded(
@@ -661,6 +863,7 @@ fn issue_folded_gate_findings(
         findings,
         instrument,
         admits,
+        repository,
         &gate_projects(),
         &board::NextConfig::default(),
     )
