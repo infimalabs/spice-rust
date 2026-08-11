@@ -18,9 +18,10 @@ audit's three correctness blockers are closed and reviewed:
    the installed load path with strict frame decoding intact.
 
 Four agents are the isolated heavy mix's first saturation point; the 4/8/10
-samples received no throughput GO. Targeted work is safe at four. With four to
-ten active agents, admit one full verifier and keep peers on exact tests, source
-review, or non-Cargo work until pressure clears.
+samples received no throughput GO. Those are measurements, not admission
+thresholds. Runtime policy follows current peer Cargo pressure: re-observe after
+prebuild, reduce concurrency while pressure remains, and fail closed when it
+cannot be read. Agents defer competing full verifiers while heavy work is live.
 
 ## Authority and method
 
@@ -115,7 +116,7 @@ adopting the discarded contradictory sentence.
 | Canvas compatibility | Resolved: `COMPATI-1kLcFlbD`; installed loading is versioned and clean. |
 | Local selector authority | Resolved: `SELECTI-1kLc3tXp`, `SELECTI-1kLjN3Xn`; unknown/authority paths escalate and renames retain both owners. |
 | Remediation lineage | Resolved: `SELECTI-1kLc51jD`, `REMEDIA-1kLc40qB`, `REMEDIA-1kLjncwv`; recovery requires forward movement in one repository. |
-| Fleet operation | Reviewed: `DEVELOP-1kLbrBsW`, `PERFORM-1kLbsp1T`, `PERFORM-1kLhqWQL`, `PERFORM-1kLbfC2X`; cold full verification is serialized. |
+| Fleet operation | Reviewed: `DEVELOP-1kLbrBsW`, `PERFORM-1kLbsp1T`, `PERFORM-1kLhqWQL`, `PERFORM-1kLbfC2X`; scheduling follows observed peer pressure. |
 | Exhaustive gate latency/notice | Non-blocking: `PERFORM-1kLkymYs`, `PERFORM-1kLkzMFd`; execution is bounded but needs less duplication and an early notice. |
 | Teams exceed six | Governed, non-blocking deviation with seven-member regression. |
 | New magic files have no delta | Governed, non-blocking GOV-35 match; applicability stays explicit. |
@@ -126,7 +127,7 @@ authenticated restore, and cleanup from Rust authority alone. Coexistence is
 only reversible preparation before the operator-authorized switch.
 
 Final decision: **GO, recoverable, with no unowned correctness gap.** Retained
-deviations have rationale and executable validation. The operating boundary is
-one heavy full verifier at a time under fleet pressure; violation fails closed
-and never authorizes fewer checks, raised limits, shared mutable outputs, or
-unbounded cleanup.
+deviations have rationale and executable validation. Under observed fleet
+pressure, competing full verification waits and the running verifier reduces
+its live budget. Unreadable capacity fails closed and never authorizes fewer
+checks, raised limits, shared mutable outputs, or unbounded cleanup.
