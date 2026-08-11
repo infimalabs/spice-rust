@@ -150,6 +150,7 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
         name: "behavior".to_owned(),
         source: PathBuf::from("/workspace/fixture-a/tests/behavior.rs"),
         declared_path_sources: Vec::new(),
+        source_bytes: 1,
     });
 
     let report = selection_report(

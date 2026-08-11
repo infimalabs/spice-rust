@@ -1,7 +1,6 @@
 //! Repository-local build, verification, and release commands.
 
 use std::ffi::OsStr;
-use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,6 +20,7 @@ mod release;
 #[cfg(not(target_arch = "wasm32"))]
 mod test_evidence;
 mod verify_browser;
+mod verify_error;
 mod verify_execution;
 mod verify_timing;
 #[cfg(not(target_arch = "wasm32"))]
@@ -35,6 +35,8 @@ pub use build_cache::{
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh};
 use verify_browser::BrowserRun;
+use verify_error::valid_package_name;
+pub use verify_error::{GateArmError, VerifyError};
 #[cfg(test)]
 const BROWSER_RECEIPT: &[u8] = verify_browser::RECEIPT;
 // The install step drives `spice::install`, which the appliance itself gates
@@ -52,8 +54,10 @@ pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildErr
 pub use test_evidence::{TestEvidenceRunError, run as run_test_evidence};
 #[cfg(not(target_arch = "wasm32"))]
 pub use workspace_tests::{
-    WorkspaceTestError, WorkspaceTestExecution, run as run_workspace_tests,
+    WorkspaceTestError, WorkspaceTestExecution,
+    prebuild_shared_at as prebuild_shared_workspace_tests_at, run as run_workspace_tests,
     run_at as run_workspace_tests_at,
+    run_prebuilt_shared_at as run_prebuilt_shared_workspace_tests_at,
 };
 
 /// Apply the repository's native commit-message law to one Git message file.
@@ -210,6 +214,8 @@ const RESIDENT_BUILD_LABEL: &str = "cargo build --locked -p spice --bin spice (c
 const WORKSPACE_TEST_CONCURRENCY_CAP: usize = gate::WORKSPACE_TEST_CONCURRENCY_CAP;
 const WORKSPACE_TEST_LABEL: &str =
     "deterministic sharded cargo test --locked --workspace --all-targets";
+const WORKSPACE_TEST_PREBUILD_LABEL: &str =
+    "cargo test --locked --workspace --all-targets --no-run (workspace-test setup)";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {
@@ -369,6 +375,20 @@ trait Runner: Sync {
         cancellation: &CancellationToken,
         cargo_jobs: usize,
     ) -> Result<BrowserRun, RunError>;
+    fn workspace_test_prebuild(
+        &self,
+        _cancellation: &CancellationToken,
+        _cargo_jobs: usize,
+    ) -> Result<CommandRun, RunError> {
+        Ok(CommandRun::Exited(ProcessOutput {
+            status: Status {
+                success: true,
+                code: Some(0),
+            },
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }))
+    }
     fn workspace_tests(
         &self,
         cancellation: &CancellationToken,
@@ -669,7 +689,7 @@ impl Runner for SystemRunner {
                     WORKSPACE_TEST_LABEL,
                     executable,
                     [
-                        "__workspace-tests-shared".to_owned(),
+                        "__workspace-tests-prebuilt-shared".to_owned(),
                         workspace_workers.to_string(),
                     ],
                     workspace.source(),
@@ -691,6 +711,43 @@ impl Runner for SystemRunner {
             let _ = (cancellation, cargo_jobs, workspace_workers);
             Err(RunError::Launch(io::Error::other(
                 "workspace tests are unavailable on wasm32",
+            )))
+        }
+    }
+
+    fn workspace_test_prebuild(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+    ) -> Result<CommandRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let executable = std::env::current_exe().map_err(RunError::Launch)?;
+            if let Some(workspace) = self.state()?.native_workspace.clone() {
+                return verify_execution::run_process_at(
+                    WORKSPACE_TEST_PREBUILD_LABEL,
+                    executable,
+                    ["__workspace-tests-prebuild-shared"],
+                    workspace.source(),
+                    cancellation,
+                    cargo_jobs,
+                    &[
+                        ("CARGO_TARGET_DIR", workspace.cargo_target().as_os_str()),
+                        ("CARGO_BUILD_BUILD_DIR", workspace.cargo_build().as_os_str()),
+                    ],
+                );
+            }
+            let _ = (executable, cancellation, cargo_jobs);
+            Err(RunError::Cleanup(
+                "full verifier workspace-test prebuild has no reusable native compiler workspace"
+                    .into(),
+            ))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (cancellation, cargo_jobs);
+            Err(RunError::Launch(io::Error::other(
+                "workspace-test prebuild is unavailable on wasm32",
             )))
         }
     }
@@ -842,221 +899,6 @@ pub fn verify_child(output: &mut impl Write) -> Result<(), VerifyError> {
 /// failure.
 pub fn verify_package(package: &str, output: &mut impl Write) -> Result<(), VerifyError> {
     verify_execution::verify_package_system(package, output)
-}
-
-/// One selected gate-arm command failure.
-#[derive(Debug)]
-pub enum GateArmError {
-    #[cfg(not(target_arch = "wasm32"))]
-    Run(spice::gate::RunError),
-    Encode(serde_json::Error),
-    Output(io::Error),
-    Refused(gate::GateId),
-    Unavailable,
-}
-
-impl fmt::Display for GateArmError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Run(source) => write!(formatter, "[gate] acquisition failed: {source}"),
-            Self::Encode(source) => write!(formatter, "[gate] result encoding failed: {source}"),
-            Self::Output(source) => write!(formatter, "[gate] output failed: {source}"),
-            Self::Refused(gate_id) => {
-                write!(formatter, "[gate] {gate_id} refused publication")
-            }
-            Self::Unavailable => formatter.write_str("[gate] unavailable on wasm32"),
-        }
-    }
-}
-
-impl std::error::Error for GateArmError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Run(source) => Some(source),
-            Self::Encode(source) => Some(source),
-            Self::Output(source) => Some(source),
-            Self::Refused(_) | Self::Unavailable => None,
-        }
-    }
-}
-
-fn valid_package_name(package: &str) -> bool {
-    !package.is_empty()
-        && package
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
-/// A bounded verifier failure that identifies the first incomplete step.
-#[derive(Debug)]
-pub enum VerifyError {
-    Output(io::Error),
-    Encode(serde_json::Error),
-    Package(String),
-    EntryPoint(String),
-    Landing(String),
-    LandingRefused,
-    Battery(String),
-    BatteryRefused,
-    BrowserLaunch {
-        source: io::Error,
-    },
-    BrowserExit {
-        code: Option<i32>,
-    },
-    BrowserIncomplete,
-    Launch {
-        label: &'static str,
-        source: io::Error,
-    },
-    ScopedLaunch {
-        label: String,
-        source: io::Error,
-    },
-    Exit {
-        label: &'static str,
-        code: Option<i32>,
-    },
-    ScopedExit {
-        label: String,
-        code: Option<i32>,
-    },
-    Cleanup {
-        label: String,
-        detail: String,
-    },
-    Cancelled {
-        label: String,
-    },
-    TimedOut {
-        label: String,
-    },
-    WorkerPanic {
-        label: &'static str,
-        detail: String,
-    },
-    Supervised {
-        code: Option<i32>,
-        detail: String,
-    },
-    InterruptInstall(io::Error),
-    Interrupted,
-}
-
-impl From<io::Error> for VerifyError {
-    fn from(source: io::Error) -> Self {
-        Self::Output(source)
-    }
-}
-
-impl fmt::Display for VerifyError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Output(source) => write!(formatter, "[verify] output failed: {source}"),
-            Self::Encode(source) => write!(formatter, "[verify] landing output failed: {source}"),
-            Self::Package(package) => write!(
-                formatter,
-                "[verify] invalid package scope {package:?}: use one Cargo package name"
-            ),
-            Self::EntryPoint(detail) => write!(formatter, "[verify] {detail}"),
-            Self::Landing(detail) => {
-                write!(formatter, "[verify] landing acquisition failed: {detail}")
-            }
-            Self::LandingRefused => formatter.write_str("[verify] contract landing refused"),
-            Self::Battery(detail) => write!(formatter, "[verify] battery failed: {detail}"),
-            Self::BatteryRefused => formatter.write_str("[verify] battery refused publication"),
-            Self::BrowserLaunch { source } => {
-                write!(
-                    formatter,
-                    "[verify] failed to launch: {BROWSER_LABEL} ({source})"
-                )
-            }
-            Self::BrowserExit { code: Some(code) } => {
-                write!(formatter, "[verify] failed: {BROWSER_LABEL} (exit {code})")
-            }
-            Self::BrowserExit { code: None } => {
-                write!(
-                    formatter,
-                    "[verify] failed: {BROWSER_LABEL} (terminated by signal)"
-                )
-            }
-            Self::BrowserIncomplete => write!(
-                formatter,
-                "[verify] browser coverage did not complete: {BROWSER_LABEL} emitted no receipt"
-            ),
-            Self::Launch { label, source } => {
-                write!(formatter, "[verify] failed to launch: {label} ({source})")
-            }
-            Self::ScopedLaunch { label, source } => {
-                write!(formatter, "[verify] failed to launch: {label} ({source})")
-            }
-            Self::Exit {
-                label,
-                code: Some(code),
-            } => write!(formatter, "[verify] failed: {label} (exit {code})"),
-            Self::Exit { label, code: None } => {
-                write!(formatter, "[verify] failed: {label} (terminated by signal)")
-            }
-            Self::ScopedExit {
-                label,
-                code: Some(code),
-            } => write!(formatter, "[verify] failed: {label} (exit {code})"),
-            Self::ScopedExit { label, code: None } => {
-                write!(formatter, "[verify] failed: {label} (terminated by signal)")
-            }
-            Self::Cleanup { label, detail } => {
-                write!(formatter, "[verify] cleanup failed: {label} ({detail})")
-            }
-            Self::Cancelled { label } => write!(formatter, "[verify] cancelled: {label}"),
-            Self::TimedOut { label } => write!(formatter, "[verify] timed out: {label}"),
-            Self::WorkerPanic { label, detail } => {
-                write!(formatter, "[verify] action panicked: {label} ({detail})")
-            }
-            Self::Supervised { code, detail } if detail.is_empty() => match code {
-                Some(code) => write!(formatter, "[verify] inner verifier failed (exit {code})"),
-                None => formatter.write_str("[verify] inner verifier terminated by signal"),
-            },
-            Self::Supervised { detail, .. } => formatter.write_str(detail),
-            Self::InterruptInstall(source) => {
-                write!(
-                    formatter,
-                    "[verify] failed to install interrupt handling: {source}"
-                )
-            }
-            Self::Interrupted => formatter.write_str("[verify] interrupted by operator"),
-        }
-    }
-}
-
-impl std::error::Error for VerifyError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Output(source)
-            | Self::Launch { source, .. }
-            | Self::ScopedLaunch { source, .. }
-            | Self::BrowserLaunch { source }
-            | Self::InterruptInstall(source) => Some(source),
-            Self::Encode(source) => Some(source),
-            Self::Package(_)
-            | Self::EntryPoint(_)
-            | Self::Landing(_)
-            | Self::LandingRefused
-            | Self::Battery(_)
-            | Self::BatteryRefused
-            | Self::BrowserExit { .. }
-            | Self::BrowserIncomplete
-            | Self::Exit { .. }
-            | Self::ScopedExit { .. }
-            | Self::Cleanup { .. }
-            | Self::Cancelled { .. }
-            | Self::TimedOut { .. }
-            | Self::WorkerPanic { .. }
-            | Self::Supervised { .. }
-            | Self::Interrupted => None,
-        }
-    }
 }
 
 #[cfg(test)]

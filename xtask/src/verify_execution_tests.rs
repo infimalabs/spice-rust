@@ -37,6 +37,7 @@ mod tests {
 
     struct TimedRunner {
         delays: BTreeMap<&'static str, Duration>,
+        prebuild_delay: Duration,
         calls: Mutex<Vec<&'static str>>,
         active: AtomicUsize,
         peak: AtomicUsize,
@@ -74,11 +75,17 @@ mod tests {
         fn new(delays: BTreeMap<&'static str, Duration>, cpu_iterations: u64) -> Self {
             Self {
                 delays,
+                prebuild_delay: Duration::ZERO,
                 calls: Mutex::new(Vec::new()),
                 active: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
                 cpu_iterations,
             }
+        }
+
+        fn with_prebuild_delay(mut self, delay: Duration) -> Self {
+            self.prebuild_delay = delay;
+            self
         }
 
         fn perform(&self, label: &'static str, cancellation: Option<&CancellationToken>) -> bool {
@@ -153,6 +160,15 @@ mod tests {
             })
         }
 
+        fn workspace_test_prebuild(
+            &self,
+            cancellation: &CancellationToken,
+            _cargo_jobs: usize,
+        ) -> Result<CommandRun, RunError> {
+            thread::sleep(self.prebuild_delay);
+            Ok(timed_command(!cancellation.is_cancelled()))
+        }
+
         fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
             if self.perform(BATTERY_LABEL, Some(cancellation)) {
                 Ok(BatteryRun::Admitted(br#"{"admitted":true}"#.to_vec()))
@@ -217,19 +233,20 @@ mod tests {
         nodes[7] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [8]);
         nodes[8] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [9, 11]);
+        nodes[11] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [9]);
         nodes[9] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [10]);
         nodes[10] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
-        assert_eq!(ready_nodes(&nodes), [11]);
-        nodes[11] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [12]);
     }
 
     #[test]
-    fn peer_cargo_pressure_collapses_the_small_worker_budget() {
+    fn peer_cargo_pressure_collapses_outer_and_workspace_worker_budgets() {
         let no_pressure = Budget::from_observation(FIXTURE_CPU_COUNT, Some(0));
         let one_peer = Budget::from_observation(FIXTURE_CPU_COUNT, Some(1));
+        let two_peers = Budget::from_observation(FIXTURE_CPU_COUNT, Some(2));
         let pressure = Budget::from_observation(FIXTURE_CPU_COUNT, Some(8));
         let one_peer_twelve_cpus = Budget::from_observation(12, Some(1));
         let three_peers = Budget::from_observation(12, Some(3));
@@ -245,13 +262,14 @@ mod tests {
         assert_eq!(saturated_cpu.workers, 1);
         assert_eq!(unknown.workers, 1);
         assert_eq!(unknown.cargo_jobs, 1);
-        assert_eq!(no_pressure.workspace_workers, 2);
+        assert_eq!(no_pressure.workspace_workers, 4);
         assert_eq!(one_peer.workspace_workers, 2);
+        assert_eq!(two_peers.workspace_workers, 1);
         assert_eq!(pressure.workspace_workers, 1);
         assert_eq!(one_peer_twelve_cpus.cargo_jobs, 4);
         assert_eq!(one_peer_twelve_cpus.workspace_workers, 2);
         assert_eq!(three_peers.cargo_jobs, 3);
-        assert_eq!(three_peers.workspace_workers, 2);
+        assert_eq!(three_peers.workspace_workers, 1);
         assert_eq!(two_cpus.workspace_workers, 1);
         assert_eq!(one_free_cpu.workspace_workers, 1);
         assert_eq!(saturated_cpu.workspace_workers, 1);
@@ -312,7 +330,8 @@ mod tests {
         delays.insert(VERIFY_ACTIONS[9].label(), Duration::from_millis(40));
         delays.insert(VERIFY_ACTIONS[10].label(), Duration::from_millis(40));
         delays.insert(VERIFY_ACTIONS[11].label(), Duration::from_millis(40));
-        let runner = TimedRunner::new(delays, 0);
+        let prebuild_delay = Duration::from_millis(1_500);
+        let runner = TimedRunner::new(delays, 0).with_prebuild_delay(prebuild_delay);
         let mut output = Vec::new();
 
         verify_with_deadline(
@@ -327,14 +346,17 @@ mod tests {
 
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains(
-            "scheduler workers=3 cargo_jobs=5 active_peer_cargo_jobs=0 workspace_workers=2"
+            "scheduler workers=3 cargo_jobs=5 active_peer_cargo_jobs=0 workspace_workers=4"
         ));
         assert!(output.contains("deadline_scope=test-phase deadline_ms=1800"));
         assert_line_order(
             &output,
             "stage=start ordinal=6/13",
-            "stage=start ordinal=9/13",
+            "stage=setup identity=\"cargo test --locked --workspace --all-targets --no-run (workspace-test setup)\"",
         );
+        let setup_terminal = "stage=setup-terminal";
+        assert_line_order(&output, setup_terminal, "stage=start ordinal=8/13");
+        assert_line_order(&output, setup_terminal, "stage=start ordinal=9/13");
         assert_terminal_exit_zero(&output, 6, VERIFY_ACTIONS[5].label());
         assert_terminal_exit_zero(&output, 8, BROWSER_LABEL);
         assert_terminal_exit_zero(&output, 9, VERIFY_ACTIONS[8].label());
@@ -379,8 +401,8 @@ mod tests {
     fn outer_supervisor_reserves_every_terminal_phase_inside_five_minutes() {
         let bounds = FULL_VERIFIER_PROCESS_BOUNDS;
         let hard_envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
-        assert_eq!(hard_envelope, Duration::from_secs(258));
-        assert_eq!(bounds.runtime, Duration::from_secs(255));
+        assert_eq!(hard_envelope, Duration::from_secs(299));
+        assert_eq!(bounds.runtime, Duration::from_secs(296));
         assert!(hard_envelope < FULL_VERIFIER_HARD_RUNTIME);
         assert_eq!(
             bounds.output_limit,
@@ -827,397 +849,5 @@ mod tests {
         );
     }
 
-    struct CleanupFaultRunner {
-        sibling_started: AtomicBool,
-    }
-
-    struct WorkerPanicRunner;
-
-    impl Runner for WorkerPanicRunner {
-        fn entry_point(&self) -> Result<String, String> {
-            Ok(String::new())
-        }
-
-        fn format(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            panic!("fixture verifier worker panic")
-        }
-
-        fn run(
-            &self,
-            _step: Step,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            panic!("a successor crossed a panicked prerequisite")
-        }
-
-        fn run_scoped(
-            &self,
-            _step: ScopedCommand,
-            _package: &str,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            unreachable!("scoped route is not under test")
-        }
-
-        fn browser(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<BrowserRun, RunError> {
-            panic!("browser crossed a panicked prerequisite")
-        }
-
-        fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
-            while !cancellation.is_cancelled() {
-                thread::yield_now();
-            }
-            Ok(BatteryRun::Cancelled)
-        }
-
-        fn landing(&self) -> Result<landing::Report, landing::Error> {
-            panic!("landing crossed a panicked prerequisite")
-        }
-    }
-
-    impl Runner for CleanupFaultRunner {
-        fn entry_point(&self) -> Result<String, String> {
-            Ok(String::new())
-        }
-
-        fn format(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            Ok(timed_command(true))
-        }
-
-        fn run(
-            &self,
-            _step: Step,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            Ok(timed_command(true))
-        }
-
-        fn run_scoped(
-            &self,
-            _step: ScopedCommand,
-            _package: &str,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            unreachable!("scoped route is not under test")
-        }
-
-        fn browser(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<BrowserRun, RunError> {
-            while !self.sibling_started.load(Ordering::Acquire) {
-                thread::yield_now();
-            }
-            Ok(BrowserRun {
-                process: timed_command(true),
-                completed: false,
-            })
-        }
-
-        fn workspace_tests(
-            &self,
-            cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-            _workspace_workers: usize,
-        ) -> Result<CommandRun, RunError> {
-            self.sibling_started.store(true, Ordering::Release);
-            while !cancellation.is_cancelled() {
-                thread::yield_now();
-            }
-            Err(RunError::Cleanup("fixture sibling reap fault".to_owned()))
-        }
-
-        fn battery(&self, _cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
-            panic!("battery crossed a failed prerequisite")
-        }
-
-        fn landing(&self) -> Result<landing::Report, landing::Error> {
-            panic!("landing crossed a failed prerequisite")
-        }
-    }
-
-    #[cfg(unix)]
-    struct InterruptRunner {
-        pid_file: PathBuf,
-    }
-
-    #[cfg(unix)]
-    impl InterruptRunner {
-        fn new() -> Self {
-            Self {
-                pid_file: std::env::temp_dir().join(format!(
-                    "spice-verify-cancel-{}-{}",
-                    std::process::id(),
-                    NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
-                )),
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    impl Runner for InterruptRunner {
-        fn entry_point(&self) -> Result<String, String> {
-            Ok(String::new())
-        }
-
-        fn format(
-            &self,
-            cancellation: &CancellationToken,
-            cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            supervised_sleep(&self.pid_file, cancellation, cargo_jobs)
-        }
-
-        fn run(
-            &self,
-            _step: Step,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            panic!("a successor crossed interruption")
-        }
-
-        fn run_scoped(
-            &self,
-            _step: ScopedCommand,
-            _package: &str,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            unreachable!("scoped route is not under test")
-        }
-
-        fn browser(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<BrowserRun, RunError> {
-            panic!("browser crossed interruption")
-        }
-
-        fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
-            while !cancellation.is_cancelled() {
-                thread::sleep(Duration::from_millis(1));
-            }
-            Ok(BatteryRun::Cancelled)
-        }
-
-        fn landing(&self) -> Result<landing::Report, landing::Error> {
-            panic!("landing crossed interruption")
-        }
-    }
-
-    #[cfg(unix)]
-    struct ScopedInterruptRunner {
-        pid_file: PathBuf,
-    }
-
-    #[cfg(unix)]
-    impl ScopedInterruptRunner {
-        fn new() -> Self {
-            Self {
-                pid_file: std::env::temp_dir().join(format!(
-                    "spice-verify-scoped-cancel-{}-{}",
-                    std::process::id(),
-                    NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
-                )),
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    impl Runner for ScopedInterruptRunner {
-        fn entry_point(&self) -> Result<String, String> {
-            Ok(String::new())
-        }
-
-        fn format(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            unreachable!("full route is not under test")
-        }
-
-        fn run(
-            &self,
-            _step: Step,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            unreachable!("full route is not under test")
-        }
-
-        fn run_scoped(
-            &self,
-            _step: ScopedCommand,
-            _package: &str,
-            cancellation: &CancellationToken,
-            cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            supervised_sleep(&self.pid_file, cancellation, cargo_jobs)
-        }
-
-        fn browser(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<BrowserRun, RunError> {
-            unreachable!("full route is not under test")
-        }
-
-        fn battery(&self, _cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
-            unreachable!("full route is not under test")
-        }
-
-        fn landing(&self) -> Result<landing::Report, landing::Error> {
-            unreachable!("full route is not under test")
-        }
-    }
-
-    #[cfg(unix)]
-    struct FailureRunner {
-        pid_file: PathBuf,
-    }
-
-    #[cfg(unix)]
-    impl FailureRunner {
-        fn new() -> Self {
-            Self {
-                pid_file: std::env::temp_dir().join(format!(
-                    "spice-verify-failure-{}-{}",
-                    std::process::id(),
-                    NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
-                )),
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    impl Runner for FailureRunner {
-        fn entry_point(&self) -> Result<String, String> {
-            Ok(String::new())
-        }
-
-        fn format(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            Ok(timed_command(true))
-        }
-
-        fn run(
-            &self,
-            _step: Step,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            Ok(timed_command(true))
-        }
-
-        fn run_scoped(
-            &self,
-            _step: ScopedCommand,
-            _package: &str,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<CommandRun, RunError> {
-            unreachable!("scoped route is not under test")
-        }
-
-        fn browser(
-            &self,
-            _cancellation: &CancellationToken,
-            _cargo_jobs: usize,
-        ) -> Result<BrowserRun, RunError> {
-            wait_for_path(&self.pid_file);
-            Ok(BrowserRun {
-                process: timed_command(true),
-                completed: false,
-            })
-        }
-
-        fn workspace_tests(
-            &self,
-            cancellation: &CancellationToken,
-            cargo_jobs: usize,
-            _workspace_workers: usize,
-        ) -> Result<CommandRun, RunError> {
-            supervised_sleep(&self.pid_file, cancellation, cargo_jobs)
-        }
-
-        fn battery(&self, _cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
-            panic!("battery crossed the primary failure")
-        }
-
-        fn landing(&self) -> Result<landing::Report, landing::Error> {
-            panic!("landing crossed the primary failure")
-        }
-    }
-
-    #[cfg(unix)]
-    fn supervised_sleep(
-        pid_file: &std::path::Path,
-        cancellation: &CancellationToken,
-        cargo_jobs: usize,
-    ) -> Result<CommandRun, RunError> {
-        run_process(
-            FORMAT_LABEL,
-            "/bin/sh",
-            [
-                "-c",
-                "sleep 30 & printf '%s %s\\n' \"$$\" \"$!\" > \"$PID_FILE\"; wait",
-            ],
-            cancellation,
-            cargo_jobs,
-            &[("PID_FILE", pid_file.as_os_str())],
-        )
-    }
-
-    #[cfg(unix)]
-    fn wait_for_path(path: &std::path::Path) {
-        let started = Instant::now();
-        while !path.is_file() {
-            assert!(
-                started.elapsed() < Duration::from_secs(5),
-                "fixture did not start"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
-    }
-
-    #[cfg(unix)]
-    fn read_pids(path: &std::path::Path) -> Vec<u32> {
-        fs::read_to_string(path)
-            .expect("read verifier fixture pids")
-            .split_whitespace()
-            .map(|pid| pid.parse().expect("fixture pid is numeric"))
-            .collect()
-    }
-
-    #[cfg(unix)]
-    fn process_exists(pid: u32) -> bool {
-        Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "pid="])
-            .output()
-            .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
-    }
+    include!("verify_execution/tests/process_fixtures.rs");
 }

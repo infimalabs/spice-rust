@@ -16,6 +16,9 @@ const FORMAT_ACTION: &str =
 const WORKSPACE_TEST_ACTION: &str =
     "deterministic sharded cargo test --locked --workspace --all-targets";
 
+#[path = "verify_process/browser_refusal.rs"]
+mod browser_refusal;
+
 #[test]
 fn verifier_refuses_a_formatting_defect_reached_only_through_include() {
     let fixture = Fixture::new();
@@ -704,107 +707,6 @@ fn unknown_gate_arm_points_to_the_canonical_inventory() {
     assert!(
         String::from_utf8_lossy(&output.stderr)
             .contains("run `cargo xtask help` for accepted gate arms"),
-        "{}",
-        streams(&output)
-    );
-}
-
-#[test]
-fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
-    let fixture = Fixture::new();
-    let programs = fixture.root.join("programs");
-    fs::create_dir(&programs).expect("create process fixture directory");
-    install_unset_hooks_git(&programs);
-    install_real_rustfmt(&programs);
-    let cargo_log = fixture.root.join("cargo-actions");
-    executable(
-        &programs.join("cargo"),
-        &format!(
-            concat!(
-                "#!/bin/sh\n",
-                "printf '%s\\n' \"$*\" >> '{}'\n",
-                "if [ \"$*\" = \"--version\" ]; then\n",
-                "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
-                "fi\n",
-                "exit 0\n",
-            ),
-            cargo_log.display()
-        ),
-    );
-    executable(
-        &programs.join("trunk"),
-        concat!(
-            "#!/bin/sh\n",
-            "if [ \"$*\" = \"--version\" ]; then\n",
-            "  printf '%s\\n' 'trunk 0.21.14'\n",
-            "fi\n",
-            "exit 0\n",
-        ),
-    );
-    executable(&programs.join("npm"), "#!/bin/sh\nexit 0\n");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("verify")
-        .current_dir(&fixture.repository)
-        .env(PROCESS_PATH, &programs)
-        .output()
-        .expect("launch the real verifier process");
-
-    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("browser coverage did not complete"),
-        "{}",
-        streams(&output)
-    );
-    let cargo_actions = fs::read_to_string(cargo_log).expect("read verifier Cargo actions");
-    let cargo_actions = cargo_actions.lines().collect::<Vec<_>>();
-    let chain = cargo_actions
-        .iter()
-        .copied()
-        .filter(|action| *action != "--version")
-        .collect::<Vec<_>>();
-    let app_action = format!(
-        "xtask app --spice-verifier-publish-root {}",
-        fixture
-            .repository
-            .canonicalize()
-            .expect("canonical verifier repository")
-            .display()
-    );
-    assert_eq!(
-        chain.get(..5),
-        Some(
-            &[
-                "clippy --locked --workspace --all-targets -- -D warnings",
-                "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
-                "check --locked --workspace --target wasm32-unknown-unknown",
-                app_action.as_str(),
-                "build --locked -p spice --bin spice",
-            ][..]
-        )
-    );
-    assert!(
-        chain.iter().all(|action| [
-            "clippy --locked --workspace --all-targets -- -D warnings",
-            "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
-            "check --locked --workspace --target wasm32-unknown-unknown",
-            app_action.as_str(),
-            "build --locked -p spice --bin spice",
-            "metadata --locked --format-version 1 --no-deps",
-        ]
-        .contains(action)),
-        "unexpected Cargo action under browser refusal: {cargo_actions:?}",
-    );
-    let mut unique_chain = chain.clone();
-    unique_chain.sort_unstable();
-    unique_chain.dedup();
-    assert_eq!(
-        unique_chain.len(),
-        chain.len(),
-        "duplicate Cargo action: {chain:?}"
-    );
-    assert!(
-        !String::from_utf8_lossy(&output.stdout).contains("ordinal=13/13"),
         "{}",
         streams(&output)
     );

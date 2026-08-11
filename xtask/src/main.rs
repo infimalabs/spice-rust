@@ -58,24 +58,8 @@ fn main() -> ExitCode {
             xtask::verify_child(&mut output).map_err(Into::into)
         }
         #[cfg(not(target_arch = "wasm32"))]
-        Some(value) if value == OsStr::new("__workspace-tests") && arguments.len() == 1 => {
-            workspace_tests(
-                arguments
-                    .next()
-                    .expect("one workspace-test concurrency was admitted"),
-                &mut output,
-                false,
-            )
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        Some(value) if value == OsStr::new("__workspace-tests-shared") && arguments.len() == 1 => {
-            workspace_tests(
-                arguments
-                    .next()
-                    .expect("one workspace-test concurrency was admitted"),
-                &mut output,
-                true,
-            )
+        Some(value) if is_workspace_test_command(value) => {
+            run_workspace_test_command(value, arguments.collect(), &mut output)
         }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
             run_gate(arguments.next(), &mut output, &mut io::stderr().lock())
@@ -455,15 +439,60 @@ fn workspace_tests(
     concurrency: OsString,
     output: &mut impl io::Write,
     shared_outputs: bool,
+    prebuilt: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let concurrency = concurrency
         .to_str()
         .ok_or("workspace-test concurrency is not UTF-8")?
         .parse::<usize>()?;
     let environment = workspace_test_environment(shared_outputs)?;
-    xtask::run_workspace_tests(environment, concurrency, output)
-        .map(|_execution| ())
-        .map_err(Into::into)
+    let execution = if prebuilt {
+        let root = env::current_dir()?;
+        xtask::run_prebuilt_shared_workspace_tests_at(&root, environment, concurrency, output)
+    } else {
+        xtask::run_workspace_tests(environment, concurrency, output)
+    };
+    execution.map(|_execution| ()).map_err(Into::into)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_workspace_test_command(command: &OsStr) -> bool {
+    [
+        "__workspace-tests",
+        "__workspace-tests-shared",
+        "__workspace-tests-prebuilt-shared",
+        "__workspace-tests-prebuild-shared",
+    ]
+    .into_iter()
+    .any(|candidate| command == OsStr::new(candidate))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_workspace_test_command(
+    command: &OsStr,
+    arguments: Vec<OsString>,
+    output: &mut impl io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match (command.to_str(), arguments.as_slice()) {
+        (Some("__workspace-tests"), [concurrency]) => {
+            workspace_tests(concurrency.clone(), output, false, false)
+        }
+        (Some("__workspace-tests-shared"), [concurrency]) => {
+            workspace_tests(concurrency.clone(), output, true, false)
+        }
+        (Some("__workspace-tests-prebuilt-shared"), [concurrency]) => {
+            workspace_tests(concurrency.clone(), output, true, true)
+        }
+        (Some("__workspace-tests-prebuild-shared"), []) => workspace_tests_prebuild(output),
+        _ => Err("invalid internal workspace-test command arguments".into()),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn workspace_tests_prebuild(output: &mut impl io::Write) -> Result<(), Box<dyn std::error::Error>> {
+    let root = env::current_dir()?;
+    let environment = workspace_test_environment(true)?;
+    xtask::prebuild_shared_workspace_tests_at(&root, environment, output).map_err(Into::into)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

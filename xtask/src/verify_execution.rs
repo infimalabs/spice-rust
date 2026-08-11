@@ -21,7 +21,7 @@ use super::verify_timing::{self, Conclusion, Disposition, Stage};
 use super::{
     Action, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, CommandRun, ENTRY_POINT_LABEL,
     FORMAT_LABEL, ProcessOutput, RunError, Runner, SCOPED_COMMANDS, Status, VERIFY_ACTIONS,
-    VerifyError, valid_package_name,
+    VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, valid_package_name,
 };
 
 /// The explicit full-verifier dependency graph, indexed by report ordinal.
@@ -33,9 +33,9 @@ use super::{
 /// still active. Browser verification then overlaps the Rust-test branch while
 /// performing no Cargo work of its own. Documentation follows the workspace
 /// tests so the reusable native Cargo root is not forced into competing
-/// documentation and test publication work. The evidence-consuming battery waits
-/// for both documentation and workspace-test branches, and entry-point audit and
-/// landing remain barriers.
+/// documentation and test publication work. The evidence-consuming battery
+/// overlaps that documentation tail once browser and workspace tests have
+/// completed; contract landing remains the barrier over every action.
 const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[],
     &[0],
@@ -48,7 +48,7 @@ const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[6],
     &[8],
     &[9],
-    &[2, 4, 5, 6, 7, 8, 10],
+    &[2, 4, 5, 6, 7, 8],
     &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 ];
 
@@ -56,22 +56,23 @@ const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
 const MAX_CONCURRENT_ACTIONS: usize = 3;
 /// The full verifier prebuilds test binaries once in the native compiler output
 /// root before parallel shard execution, so every coordinator lane can reuse the
-/// same selected-root cache without minting another cold target directory.
+/// same selected-root build cache while retaining its own final-publication path.
 ///
-/// Standalone workspace verification may use the whole coordinator cap. The full
-/// verifier has another latency-sensitive branch alive at the same time: Canvas
-/// runs two browser shards whose resident RPCs keep their own client deadlines.
-/// Leaving two lanes to the Rust-test branch preserves branch overlap without
-/// turning the verifier into its own peer-contention source.
-const MAX_FULL_VERIFIER_WORKSPACE_LANES: usize = 2;
-const _: () = assert!(MAX_FULL_VERIFIER_WORKSPACE_LANES <= super::WORKSPACE_TEST_CONCURRENCY_CAP);
+/// Standalone workspace verification may use the whole coordinator cap. With no
+/// peer Cargo process, the full verifier may use that same cap so all deterministic
+/// shards can finish inside the fixed test-phase window. One peer caps the branch
+/// at two lanes; two or more peers collapse it to one so the verifier does not
+/// become a cross-lane contention source while Canvas is also live.
+const ONE_PEER_FULL_VERIFIER_WORKSPACE_LANES: usize = 2;
+const _: () =
+    assert!(ONE_PEER_FULL_VERIFIER_WORKSPACE_LANES <= super::WORKSPACE_TEST_CONCURRENCY_CAP);
 /// Stop launching and cancel owned process groups after 180 seconds of actual
 /// test-phase runtime. Compiler setup can be cold once; it is still serialized
 /// for low contention, but it does not consume the test runtime budget.
 const FULL_VERIFIER_TEST_RUNTIME: Duration = Duration::from_secs(3 * 60);
 /// Give the child-owned scheduler enough room to report and reap after the
 /// test-phase deadline while remaining well inside the five-minute wall guard.
-const FULL_VERIFIER_SUPERVISOR_RUNTIME: Duration = Duration::from_secs(255);
+const FULL_VERIFIER_SUPERVISOR_RUNTIME: Duration = Duration::from_secs(296);
 const FULL_VERIFIER_HARD_RUNTIME: Duration = Duration::from_secs(5 * 60);
 const FULL_VERIFIER_LABEL: &str =
     "full verifier five-minute envelope (three-minute test-phase cutoff)";
@@ -157,7 +158,7 @@ impl Budget {
         let workspace_workers = cpu_slots
             .saturating_sub(sibling_reserve)
             .min(workspace_job_cap)
-            .min(MAX_FULL_VERIFIER_WORKSPACE_LANES)
+            .min(workspace_lane_cap(active))
             .clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP);
         Self {
             workers,
@@ -173,10 +174,18 @@ impl Budget {
             workers,
             cargo_jobs,
             workspace_workers: cargo_jobs
-                .min(MAX_FULL_VERIFIER_WORKSPACE_LANES)
+                .min(workspace_lane_cap(active_cargo_jobs))
                 .clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP),
             active_cargo_jobs: Some(active_cargo_jobs),
         }
+    }
+}
+
+fn workspace_lane_cap(active_cargo_jobs: usize) -> usize {
+    match active_cargo_jobs {
+        0 => super::WORKSPACE_TEST_CONCURRENCY_CAP,
+        1 => ONE_PEER_FULL_VERIFIER_WORKSPACE_LANES,
+        _ => 1,
     }
 }
 
@@ -203,6 +212,7 @@ struct WorkerCompletion {
 
 struct GraphRun {
     nodes: Vec<NodeState>,
+    prebuild_failure: Option<VerifyError>,
     output_fault: Option<io::Error>,
     deadline_exceeded: bool,
 }
@@ -357,6 +367,7 @@ fn verify_with_deadline<R: Runner>(
 
     let GraphRun {
         mut nodes,
+        prebuild_failure,
         output_fault,
         deadline_exceeded,
     } = schedule_graph(runner, output, budget, &cancellation, runtime);
@@ -372,6 +383,10 @@ fn verify_with_deadline<R: Runner>(
     if interrupted.load(Ordering::Acquire) {
         write_failure_summary(output, "operator", &cleanup, true)?;
         return Err(VerifyError::Interrupted);
+    }
+    if let Some(primary) = prebuild_failure {
+        write_failure_summary(output, "9", &cleanup, false)?;
+        return Err(primary);
     }
     substantive.sort_by_key(|(index, _)| *index);
     cleanup.sort_by_key(|(index, _)| *index);
@@ -412,6 +427,8 @@ fn schedule_graph<R: Runner>(
     let mut output_fault = None;
     let mut deadline_exceeded = false;
     let mut test_phase_started = None;
+    let mut workspace_tests_prebuilt = false;
+    let mut prebuild_failure = None;
 
     thread::scope(|scope| {
         loop {
@@ -421,6 +438,32 @@ fn schedule_graph<R: Runner>(
                 deadline_exceeded = true;
                 failure_seen = true;
                 cancellation.cancel();
+            }
+            if !failure_seen
+                && !cancellation.is_cancelled()
+                && !workspace_tests_prebuilt
+                && workspace_test_prebuild_ready(&nodes)
+            {
+                let completion = execute_workspace_test_prebuild(runner, cancellation, budget);
+                workspace_tests_prebuilt = completion.result.is_ok();
+                if let Err(error) = render_workspace_test_prebuild(completion, output) {
+                    match error {
+                        VerifyError::Output(error) => {
+                            output_fault.get_or_insert(error);
+                            failure_seen = true;
+                            cancellation.cancel();
+                        }
+                        error => {
+                            prebuild_failure = Some(error);
+                            failure_seen = true;
+                            cancellation.cancel();
+                        }
+                    }
+                }
+                if !workspace_tests_prebuilt {
+                    failure_seen = true;
+                    cancellation.cancel();
+                }
             }
             if !failure_seen && !cancellation.is_cancelled() {
                 start_ready_actions(
@@ -462,9 +505,62 @@ fn schedule_graph<R: Runner>(
     });
     GraphRun {
         nodes,
+        prebuild_failure,
         output_fault,
         deadline_exceeded,
     }
+}
+
+fn workspace_test_prebuild_ready(nodes: &[NodeState]) -> bool {
+    matches!(
+        nodes.get(6),
+        Some(NodeState::Complete(ActionCompletion { result: Ok(()), .. }))
+    ) && matches!(nodes.get(7), Some(NodeState::Pending))
+        && matches!(nodes.get(8), Some(NodeState::Pending))
+}
+
+fn execute_workspace_test_prebuild<R: Runner>(
+    runner: &R,
+    cancellation: &CancellationToken,
+    budget: Budget,
+) -> ActionCompletion {
+    let started = Instant::now();
+    let mut completion = execute_process(
+        runner.workspace_test_prebuild(cancellation, budget.cargo_jobs),
+        WORKSPACE_TEST_PREBUILD_LABEL,
+        |source| VerifyError::Launch {
+            label: WORKSPACE_TEST_PREBUILD_LABEL,
+            source,
+        },
+        |code| VerifyError::Exit {
+            label: WORKSPACE_TEST_PREBUILD_LABEL,
+            code,
+        },
+    );
+    completion.elapsed = started.elapsed();
+    completion
+}
+
+fn render_workspace_test_prebuild(
+    completion: ActionCompletion,
+    output: &mut impl Write,
+) -> Result<(), VerifyError> {
+    writeln!(
+        output,
+        "[verify] stage=setup identity={WORKSPACE_TEST_PREBUILD_LABEL:?}"
+    )
+    .map_err(VerifyError::Output)?;
+    output
+        .write_all(&completion.output)
+        .map_err(VerifyError::Output)?;
+    writeln!(
+        output,
+        "[verify] stage=setup-terminal elapsed_ms={} disposition={} identity={WORKSPACE_TEST_PREBUILD_LABEL:?}",
+        completion.elapsed.as_millis(),
+        completion.disposition,
+    )
+    .map_err(VerifyError::Output)?;
+    completion.result
 }
 
 #[expect(
@@ -691,290 +787,7 @@ fn stage(index: usize, action: Action) -> Stage<'static> {
     }
 }
 
-fn execute_action<R: Runner>(
-    runner: &R,
-    action: Action,
-    cancellation: &CancellationToken,
-    budget: Budget,
-) -> ActionCompletion {
-    match action {
-        Action::EntryPoint => match runner.entry_point() {
-            Ok(report) => success(report.into_bytes(), Disposition::Success),
-            Err(detail) => failure(VerifyError::EntryPoint(detail), Disposition::Error),
-        },
-        Action::Format => execute_process(
-            runner.format(cancellation, budget.cargo_jobs),
-            FORMAT_LABEL,
-            |source| VerifyError::Launch {
-                label: FORMAT_LABEL,
-                source,
-            },
-            |code| VerifyError::Exit {
-                label: FORMAT_LABEL,
-                code,
-            },
-        ),
-        Action::Command(step) => execute_process(
-            runner.run(step, cancellation, budget.cargo_jobs),
-            step.label,
-            |source| VerifyError::Launch {
-                label: step.label,
-                source,
-            },
-            |code| VerifyError::Exit {
-                label: step.label,
-                code,
-            },
-        ),
-        Action::Browser => execute_browser(runner.browser(cancellation, budget.cargo_jobs)),
-        Action::WorkspaceTests => execute_process(
-            runner.workspace_tests(cancellation, budget.cargo_jobs, budget.workspace_workers),
-            super::WORKSPACE_TEST_LABEL,
-            |source| VerifyError::Launch {
-                label: super::WORKSPACE_TEST_LABEL,
-                source,
-            },
-            |code| VerifyError::Exit {
-                label: super::WORKSPACE_TEST_LABEL,
-                code,
-            },
-        ),
-        Action::Battery => execute_battery(runner.battery(cancellation)),
-        Action::Landing => match runner.landing() {
-            Err(source) => failure(VerifyError::Landing(source.to_string()), Disposition::Error),
-            Ok(report) => {
-                let mut document = Vec::new();
-                match serde_json::to_writer(&mut document, &report) {
-                    Ok(()) if report.admitted() => {
-                        document.push(b'\n');
-                        success(document, Disposition::Success)
-                    }
-                    Ok(()) => {
-                        document.push(b'\n');
-                        failure_with_bytes(
-                            VerifyError::LandingRefused,
-                            Disposition::Refused,
-                            document,
-                        )
-                    }
-                    Err(source) => failure(VerifyError::Encode(source), Disposition::RenderError),
-                }
-            }
-        },
-    }
-}
-
-fn execute_process(
-    run: Result<CommandRun, RunError>,
-    label: &str,
-    launch_error: impl FnOnce(io::Error) -> VerifyError,
-    exit_error: impl FnOnce(Option<i32>) -> VerifyError,
-) -> ActionCompletion {
-    match run {
-        Err(RunError::Launch(source)) => failure(launch_error(source), Disposition::LaunchError),
-        Err(RunError::Cleanup(detail)) => failure(
-            VerifyError::Cleanup {
-                label: label.to_owned(),
-                detail,
-            },
-            Disposition::CleanupError,
-        ),
-        Ok(CommandRun::Cancelled(output)) => failure_with_output(
-            VerifyError::Cancelled {
-                label: label.to_owned(),
-            },
-            Disposition::Cancelled,
-            output,
-        ),
-        Ok(CommandRun::TimedOut(output)) => failure_with_output(
-            VerifyError::TimedOut {
-                label: label.to_owned(),
-            },
-            Disposition::TimedOut,
-            output,
-        ),
-        Ok(CommandRun::Exited(output)) if output.status.success => success(
-            process_bytes(&output),
-            Disposition::from_status(output.status.code),
-        ),
-        Ok(CommandRun::Exited(output)) => {
-            let code = output.status.code;
-            failure_with_output(exit_error(code), Disposition::from_status(code), output)
-        }
-    }
-}
-
-fn panic_detail(payload: Box<dyn std::any::Any + Send>) -> String {
-    if let Some(detail) = payload.downcast_ref::<&str>() {
-        (*detail).to_owned()
-    } else if let Some(detail) = payload.downcast_ref::<String>() {
-        detail.clone()
-    } else {
-        "non-string panic payload".to_owned()
-    }
-}
-
-fn execute_browser(run: Result<BrowserRun, RunError>) -> ActionCompletion {
-    match run {
-        Err(RunError::Launch(source)) => failure(
-            VerifyError::BrowserLaunch { source },
-            Disposition::LaunchError,
-        ),
-        Err(RunError::Cleanup(detail)) => failure(
-            VerifyError::Cleanup {
-                label: BROWSER_LABEL.to_owned(),
-                detail,
-            },
-            Disposition::CleanupError,
-        ),
-        Ok(BrowserRun {
-            process: CommandRun::Cancelled(output),
-            ..
-        }) => failure_with_output(
-            VerifyError::Cancelled {
-                label: BROWSER_LABEL.to_owned(),
-            },
-            Disposition::Cancelled,
-            output,
-        ),
-        Ok(BrowserRun {
-            process: CommandRun::TimedOut(output),
-            ..
-        }) => failure_with_output(
-            VerifyError::TimedOut {
-                label: BROWSER_LABEL.to_owned(),
-            },
-            Disposition::TimedOut,
-            output,
-        ),
-        Ok(BrowserRun {
-            process: CommandRun::Exited(output),
-            completed: _,
-        }) if !output.status.success => {
-            let code = output.status.code;
-            failure_with_output(
-                VerifyError::BrowserExit { code },
-                Disposition::from_status(code),
-                output,
-            )
-        }
-        Ok(BrowserRun {
-            process: CommandRun::Exited(output),
-            completed: false,
-        }) => failure_with_output(
-            VerifyError::BrowserIncomplete,
-            Disposition::Incomplete,
-            output,
-        ),
-        Ok(BrowserRun {
-            process: CommandRun::Exited(output),
-            completed: true,
-        }) => success(
-            process_bytes(&output),
-            Disposition::from_status(output.status.code),
-        ),
-    }
-}
-
-fn execute_battery(run: Result<BatteryRun, RunError>) -> ActionCompletion {
-    match run {
-        Err(RunError::Launch(source)) => failure(
-            VerifyError::Battery(source.to_string()),
-            Disposition::LaunchError,
-        ),
-        Err(RunError::Cleanup(detail)) => failure(
-            VerifyError::Cleanup {
-                label: BATTERY_LABEL.to_owned(),
-                detail,
-            },
-            Disposition::CleanupError,
-        ),
-        Ok(BatteryRun::Admitted(document)) => {
-            let mut output = document;
-            output.push(b'\n');
-            success(output, Disposition::Success)
-        }
-        Ok(BatteryRun::Refused(diagnostic)) => failure_with_bytes(
-            VerifyError::BatteryRefused,
-            Disposition::Refused,
-            diagnostic,
-        ),
-        Ok(BatteryRun::Error(detail)) => failure(VerifyError::Battery(detail), Disposition::Error),
-        Ok(BatteryRun::Cancelled) => failure(
-            VerifyError::Cancelled {
-                label: BATTERY_LABEL.to_owned(),
-            },
-            Disposition::Cancelled,
-        ),
-    }
-}
-
-fn success(output: Vec<u8>, disposition: Disposition) -> ActionCompletion {
-    ActionCompletion {
-        elapsed: Duration::ZERO,
-        output,
-        disposition,
-        result: Ok(()),
-    }
-}
-
-fn failure(error: VerifyError, disposition: Disposition) -> ActionCompletion {
-    failure_with_bytes(error, disposition, Vec::new())
-}
-
-fn failure_with_output(
-    error: VerifyError,
-    disposition: Disposition,
-    output: ProcessOutput,
-) -> ActionCompletion {
-    failure_with_bytes(error, disposition, process_bytes(&output))
-}
-
-fn failure_with_bytes(
-    error: VerifyError,
-    disposition: Disposition,
-    output: Vec<u8>,
-) -> ActionCompletion {
-    ActionCompletion {
-        elapsed: Duration::ZERO,
-        output,
-        disposition,
-        result: Err(error),
-    }
-}
-
-fn process_bytes(output: &ProcessOutput) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(output.stdout.len() + output.stderr.len());
-    bytes.extend_from_slice(&output.stdout);
-    bytes.extend_from_slice(&output.stderr);
-    bytes
-}
-
-fn write_failure_summary(
-    output: &mut impl Write,
-    primary: &str,
-    cleanup: &[(usize, VerifyError)],
-    interrupted: bool,
-) -> Result<(), VerifyError> {
-    for (index, error) in cleanup {
-        writeln!(
-            output,
-            "[verify] scheduler=cleanup-fault ordinal={} identity={:?} detail={:?}",
-            index + 1,
-            VERIFY_ACTIONS[*index].label(),
-            error.to_string(),
-        )
-        .map_err(VerifyError::Output)?;
-    }
-    writeln!(
-        output,
-        "[verify] scheduler=failed primary_ordinal={} interrupted={} cleanup_faults={}",
-        primary,
-        interrupted,
-        cleanup.len(),
-    )
-    .map_err(VerifyError::Output)
-}
+include!("verify_execution/action.rs");
 
 pub(super) fn verify_package_system(
     package: &str,
@@ -1120,298 +933,7 @@ fn write_scope_inventory(package: &str, output: &mut impl Write) -> Result<(), V
         .map_err(VerifyError::Output)
 }
 
-pub(super) fn run_process<I, S, P>(
-    label: &str,
-    program: P,
-    arguments: I,
-    cancellation: &CancellationToken,
-    cargo_jobs: usize,
-    overrides: &[(&str, &OsStr)],
-) -> Result<CommandRun, RunError>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<OsString>,
-    P: Into<OsString>,
-{
-    let cwd = std::env::current_dir().map_err(RunError::Launch)?;
-    run_process_at(
-        label,
-        program,
-        arguments,
-        &cwd,
-        cancellation,
-        cargo_jobs,
-        overrides,
-    )
-}
-
-pub(super) fn run_process_at<I, S, P>(
-    label: &str,
-    program: P,
-    arguments: I,
-    cwd: &Path,
-    cancellation: &CancellationToken,
-    cargo_jobs: usize,
-    overrides: &[(&str, &OsStr)],
-) -> Result<CommandRun, RunError>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<OsString>,
-    P: Into<OsString>,
-{
-    run_bounded_process(
-        label,
-        program,
-        arguments,
-        cwd,
-        cancellation,
-        Some(cargo_jobs),
-        overrides,
-        ACTION_PROCESS_BOUNDS,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the process boundary keeps cwd, cancellation, environment, and bounds explicit"
-)]
-fn run_bounded_process<I, S, P>(
-    label: &str,
-    program: P,
-    arguments: I,
-    cwd: &Path,
-    cancellation: &CancellationToken,
-    cargo_jobs: Option<usize>,
-    overrides: &[(&str, &OsStr)],
-    bounds: ProcessBounds,
-) -> Result<CommandRun, RunError>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<OsString>,
-    P: Into<OsString>,
-{
-    let mut environment = ambient_environment()?
-        .entries()
-        .iter()
-        .cloned()
-        .collect::<BTreeMap<_, _>>();
-    if let Some(cargo_jobs) = cargo_jobs {
-        environment.insert(
-            OsString::from("CARGO_BUILD_JOBS"),
-            OsString::from(cargo_jobs.to_string()),
-        );
-    }
-    for (key, value) in overrides {
-        environment.insert(OsString::from(key), (*value).to_owned());
-    }
-    let environment = Environment::new(environment).map_err(|error| {
-        RunError::Launch(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            error.to_string(),
-        ))
-    })?;
-    let deadlines =
-        Deadlines::new(bounds.runtime, bounds.output_drain, bounds.reap).map_err(|error| {
-            RunError::Launch(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                error.to_string(),
-            ))
-        })?;
-    let wait = WaitPolicy::new(
-        format!("verifier action {label}"),
-        Cancellation::Token(cancellation.clone()),
-        RestartDisposition::Never,
-    )
-    .map_err(|error| {
-        RunError::Launch(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            error.to_string(),
-        ))
-    })?;
-    let spec = Spec {
-        argv: Argv::new(program, arguments).map_err(|error| {
-            RunError::Launch(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                error.to_string(),
-            ))
-        })?,
-        cwd: cwd.to_owned(),
-        environment,
-        group: ProcessGroup::New,
-        deadlines,
-        wait,
-        output: SillOutput::new(
-            StdinPolicy::Null,
-            StreamPolicy::Capture {
-                limit: bounds.output_limit,
-            },
-            StreamPolicy::Capture {
-                limit: bounds.output_limit,
-            },
-        ),
-        redaction: Redaction::None,
-        grace: bounds.grace,
-    };
-    let running = sill::spawn(spec).map_err(RunError::Launch)?;
-    let outcome = running
-        .wait()
-        .map_err(|error| RunError::Cleanup(error.to_string()))?;
-    if !outcome.outputs_drained() {
-        return Err(RunError::Cleanup(format!(
-            "{label} output did not drain before cleanup"
-        )));
-    }
-    let stdout = captured(label, "stdout", outcome.stdout())?;
-    let stderr = captured(label, "stderr", outcome.stderr())?;
-    let status = outcome.completion().status();
-    let output = ProcessOutput {
-        status: Status {
-            success: status.success(),
-            code: status.code(),
-        },
-        stdout,
-        stderr,
-    };
-    Ok(match outcome.completion() {
-        Completion::Exited(_) => CommandRun::Exited(output),
-        Completion::Cancelled(_) => CommandRun::Cancelled(output),
-        Completion::TimedOut(_) => CommandRun::TimedOut(output),
-    })
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the verifier's native process rim captures the exact child environment"
-)]
-fn ambient_environment() -> Result<Environment, RunError> {
-    Environment::new(std::env::vars_os()).map_err(|error| {
-        RunError::Launch(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            error.to_string(),
-        ))
-    })
-}
-
-fn captured(
-    label: &str,
-    stream: &str,
-    output: Option<&sill::CapturedOutput>,
-) -> Result<Vec<u8>, RunError> {
-    let output = output.ok_or_else(|| {
-        RunError::Cleanup(format!("{label} {stream} capture is unexpectedly absent"))
-    })?;
-    if output.truncated() || !output.complete() {
-        return Err(RunError::Cleanup(format!(
-            "{label} {stream} capture exceeded its bounded complete-output contract"
-        )));
-    }
-    Ok(output.bytes().to_vec())
-}
-
-fn active_peer_cargo_jobs() -> io::Result<usize> {
-    let output = Command::new("ps")
-        .args(["-Ao", "pid=,ppid=,comm="])
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "ps exited {:?} while counting peer Cargo jobs",
-            output.status.code()
-        )));
-    }
-    let listing = String::from_utf8(output.stdout).map_err(io::Error::other)?;
-    Ok(count_peer_cargo(&listing, std::process::id()))
-}
-
-fn count_peer_cargo(listing: &str, current: u32) -> usize {
-    let processes = listing
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            Some((
-                fields.next()?.parse::<u32>().ok()?,
-                fields.next()?.parse::<u32>().ok()?,
-                fields.next()?.to_owned(),
-            ))
-        })
-        .collect::<Vec<_>>();
-    let parents = processes
-        .iter()
-        .map(|(pid, parent, _)| (*pid, *parent))
-        .collect::<BTreeMap<_, _>>();
-    let mut ancestors = BTreeSet::new();
-    let mut cursor = current;
-    while let Some(parent) = parents.get(&cursor).copied() {
-        if parent == 0 || !ancestors.insert(parent) {
-            break;
-        }
-        cursor = parent;
-    }
-    processes
-        .iter()
-        .filter(|(pid, _, command)| {
-            !ancestors.contains(pid)
-                && PathBuf::from(command)
-                    .file_name()
-                    .is_some_and(|name| name == OsStr::new("cargo"))
-        })
-        .count()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-struct SignalGuard {
-    handle: signal_hook::iterator::Handle,
-    join: Option<thread::JoinHandle<()>>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl SignalGuard {
-    fn install(
-        cancellation: CancellationToken,
-        interrupted: Arc<AtomicBool>,
-    ) -> Result<Self, VerifyError> {
-        use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
-
-        let mut signals = signal_hook::iterator::Signals::new([SIGHUP, SIGINT, SIGTERM])
-            .map_err(VerifyError::InterruptInstall)?;
-        let handle = signals.handle();
-        let join = thread::Builder::new()
-            .name("verify-signal-bridge".to_owned())
-            .spawn(move || {
-                if signals.forever().next().is_some() {
-                    interrupted.store(true, Ordering::Release);
-                    cancellation.cancel();
-                }
-            })
-            .map_err(VerifyError::InterruptInstall)?;
-        Ok(Self {
-            handle,
-            join: Some(join),
-        })
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Drop for SignalGuard {
-    fn drop(&mut self) {
-        self.handle.close();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-struct SignalGuard;
-
-#[cfg(target_arch = "wasm32")]
-impl SignalGuard {
-    fn install(
-        _cancellation: CancellationToken,
-        _interrupted: Arc<AtomicBool>,
-    ) -> Result<Self, VerifyError> {
-        Ok(Self)
-    }
-}
+include!("verify_execution/process.rs");
 
 #[cfg(test)]
 include!("verify_execution_tests.rs");
