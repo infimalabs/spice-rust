@@ -20,9 +20,10 @@ const WORKER_ARGUMENT: &str = "__gate-pre-commit-worker";
 const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
-// Stable, isolated shard output roots keep broad-source selection within this
-// work allowance while preserving fifteen seconds for bounded cleanup.
-const WORK_RUNTIME: Duration = Duration::from_secs(150);
+// The measured exhaustive self-authority path needs more than 150 seconds on
+// this host. Preserve every five-second cleanup phase and one second of outer
+// envelope slack while admitting that fail-closed path.
+const WORK_RUNTIME: Duration = Duration::from_secs(164);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);

@@ -176,6 +176,30 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
 }
 
 #[test]
+fn old_and_new_cross_package_paths_select_both_package_owners() {
+    let report = selection_report(
+        &fixture_inventory(),
+        Path::new("/workspace"),
+        wire::Digest::compute(wire::Domain::GateTree, b"cross-package rename"),
+        &[
+            "fixture-a/src/behavior.rs".to_owned(),
+            "fixture-b/src/main.rs".to_owned(),
+        ],
+    )
+    .expect("both rename owners retain canonical test reach");
+
+    assert!(report.admits());
+    assert_eq!(
+        report.tests(),
+        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+    );
+    assert_eq!(report.edges().len(), 2);
+    for path in report.changed_sources() {
+        assert!(report.edges().iter().any(|edge| edge.source() == path));
+    }
+}
+
+#[test]
 fn package_manifest_and_build_script_select_every_test_target_in_their_package() {
     let mut inventory = fixture_inventory();
     inventory.packages[0].targets.push(TargetIdentity {

@@ -457,13 +457,28 @@ fn known_workspace_package_root(root: &str) -> bool {
 fn exhaustive_authority(path: &str) -> bool {
     matches!(
         path,
-        "spice-rust.toml"
+        ".cargo/config.toml"
+            | ".githooks/pre-commit"
+            | "spice-rust.toml"
             | "baseline.toml"
             | "rust-toolchain.toml"
             | "Cargo.lock"
             | "Cargo.toml"
             | "gate/src/battery/manifest.toml"
-    )
+            | "gate/src/change_selection.rs"
+            | "gate/src/lib.rs"
+            | "gate/src/manifest.rs"
+            | "gate/src/test_evidence.rs"
+            | "gate/src/workspace_tests.rs"
+            | "spice/src/change_gate.rs"
+            | "spice/src/gate.rs"
+            | "spice/src/gate_command.rs"
+            | "spice/src/install/git-hooks/pre-commit"
+            | "spice/src/lib.rs"
+            | "xtask/src/lib.rs"
+            | "xtask/src/main.rs"
+    ) || path.starts_with("gate/src/workspace_tests/")
+        || path.starts_with("spice/src/gate_command/pre_commit")
 }
 
 fn frontend_path(path: &str) -> bool {
@@ -609,6 +624,70 @@ mod tests {
                     .expect("decode selection"),
                 report,
             );
+        }
+    }
+
+    #[test]
+    fn selector_command_and_hook_authorities_escalate_to_every_battery_arm() {
+        for path in [
+            ".cargo/config.toml",
+            ".githooks/pre-commit",
+            "Cargo.lock",
+            "Cargo.toml",
+            "baseline.toml",
+            "rust-toolchain.toml",
+            "spice-rust.toml",
+            "gate/src/battery/manifest.toml",
+            "gate/src/change_selection.rs",
+            "gate/src/lib.rs",
+            "gate/src/manifest.rs",
+            "gate/src/test_evidence.rs",
+            "gate/src/workspace_tests.rs",
+            "gate/src/workspace_tests/selection.rs",
+            "gate/src/workspace_tests/source_reach.rs",
+            "spice/src/change_gate.rs",
+            "spice/src/gate.rs",
+            "spice/src/gate_command.rs",
+            "spice/src/gate_command/pre_commit.rs",
+            "spice/src/install/git-hooks/pre-commit",
+            "spice/src/lib.rs",
+            "xtask/src/lib.rs",
+            "xtask/src/main.rs",
+        ] {
+            let report = selection(&[path]);
+            assert_eq!(
+                report.mode(),
+                ChangeSelectionMode::Exhaustive,
+                "selector authority stayed local: {path}",
+            );
+            assert_eq!(report.gate_ids(), GateId::BATTERY);
+            assert_eq!(report.changed_sources(), [path]);
+            assert_eq!(report.edges().len(), GateId::BATTERY.len());
+        }
+    }
+
+    #[test]
+    fn old_and_new_cross_class_paths_retain_both_policy_families() {
+        let report = selection(&[
+            "README.fixture.md",
+            "app/browser/renamed.mjs",
+            "app/src/renamed.rs",
+            "wire/src/renamed.rs",
+        ]);
+
+        assert_eq!(report.mode(), ChangeSelectionMode::Local);
+        contains(
+            &report,
+            &[
+                GateId::RepoDocs,
+                GateId::Taste,
+                GateId::Formatters,
+                GateId::CanvasWebTypecheck,
+                GateId::JavascriptUnused,
+            ],
+        );
+        for path in report.changed_sources() {
+            assert!(report.edges().iter().any(|edge| edge.source() == path));
         }
     }
 
