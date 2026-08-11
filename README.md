@@ -152,6 +152,9 @@ reap, and output drain. The resulting worst case is 299 seconds, so entry-point
 audit, battery, landing, sibling termination, reap, and output recovery all
 remain inside the hard five-minute wall envelope.
 
+The parent flushes bounded `[verify]` records live and emits deferred bytes once
+without weakening timeout or cleanup.
+
 Every external action runs in a new process group under bounded output,
 runtime, termination, and reap deadlines. The first failure or an operator
 interrupt cancels and reaps every running sibling before verification returns;

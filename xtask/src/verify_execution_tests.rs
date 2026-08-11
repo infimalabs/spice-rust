@@ -14,10 +14,11 @@ mod tests {
         BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget, CancellationToken,
         CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_HARD_RUNTIME,
         FULL_VERIFIER_PROCESS_BOUNDS, FULL_VERIFIER_TEST_RUNTIME, PREREQUISITES, ProcessBounds,
-        ProcessOutput, RunError, Runner, SignalGuard, Status, VERIFY_ACTIONS, VerifyError,
-        count_peer_cargo, execute_action, ready_nodes, run_bounded_process, run_process, success,
-        verify_package_with_control, verify_with_control, verify_with_deadline,
-        verify_with_deadline_and_rebalance,
+        ProcessOutput, RunError, Runner, SignalGuard, Status, StreamingRunError, VERIFY_ACTIONS,
+        VerifyError, count_peer_cargo, execute_action, is_live_progress_record, ready_nodes,
+        run_bounded_process_streaming, run_process, success, verify_package_with_control,
+        verify_with_control, verify_with_deadline, verify_with_deadline_and_rebalance,
+        write_deferred_supervisor_output,
     };
     use crate::verify_timing::Disposition;
     use crate::{ScopedCommand, Step, landing};
@@ -43,6 +44,21 @@ mod tests {
         active: AtomicUsize,
         peak: AtomicUsize,
         cpu_iterations: u64,
+    }
+
+    struct RefusingOutput;
+
+    impl std::io::Write for RefusingOutput {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "fixture output sink closed",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     impl TimedRunner {
@@ -485,6 +501,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn live_progress_selection_is_narrow_and_deferred_output_is_byte_complete() {
+        let scheduler = b"[verify] scheduler workers=3\n";
+        let terminal = b"[verify] stage=terminal ordinal=13/13\n";
+        let action = b"compiler output\n";
+        let final_record = b"final action bytes";
+        assert!(is_live_progress_record(scheduler));
+        assert!(is_live_progress_record(terminal));
+        assert!(!is_live_progress_record(action));
+        assert!(!is_live_progress_record(
+            &[b"[verify] ".as_slice(), &vec![b'x'; 8 * 1024]].concat()
+        ));
+
+        let captured = [
+            scheduler.as_slice(),
+            action.as_slice(),
+            terminal.as_slice(),
+            final_record.as_slice(),
+        ]
+        .concat();
+        let mut deferred = Vec::new();
+        write_deferred_supervisor_output(&mut deferred, &captured)
+            .expect("deferred supervisor output writes");
+        assert_eq!(
+            deferred,
+            [action.as_slice(), final_record.as_slice()].concat()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn hard_supervisor_reaps_a_non_cooperative_in_process_verifier() {
@@ -497,7 +542,8 @@ mod tests {
         };
         let executable = std::env::current_exe().expect("resolve the xtask unit-test process");
         let started = Instant::now();
-        let run = run_bounded_process(
+        let mut live = Vec::new();
+        let run = run_bounded_process_streaming(
             "non-cooperative verifier fixture",
             executable,
             benchmark_arguments(NON_COOPERATIVE_CHILD_TEST),
@@ -506,6 +552,7 @@ mod tests {
             None,
             &[],
             bounds,
+            &mut live,
         )
         .expect("supervise the non-cooperative verifier fixture");
         let elapsed = started.elapsed();
@@ -515,6 +562,10 @@ mod tests {
         let stdout = String::from_utf8(output.stdout).expect("fixture stdout is UTF-8");
         let stderr = String::from_utf8(output.stderr).expect("fixture stderr is UTF-8");
         let transcript = format!("{stdout}{stderr}");
+        assert_eq!(
+            String::from_utf8(live).expect("live fixture output is UTF-8"),
+            "[verify] stage=progress ordinal=1/13 fixture=non-cooperative\n"
+        );
         let pid = transcript
             .lines()
             .find_map(|line| {
@@ -536,6 +587,105 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn streaming_outer_supervisor_preserves_interruption_and_group_cleanup() {
+        let bounds = ProcessBounds {
+            runtime: Duration::from_secs(10),
+            grace: Duration::from_millis(100),
+            output_drain: Duration::from_millis(100),
+            reap: Duration::from_millis(100),
+            output_limit: super::OUTPUT_LIMIT,
+        };
+        let pid_file = fixture_pid_file("streaming-supervisor-cancel");
+        let cancellation = CancellationToken::new();
+        let controller_token = cancellation.clone();
+        let controller_pid_file = pid_file.clone();
+        let controller = thread::spawn(move || {
+            wait_for_path(&controller_pid_file);
+            controller_token.cancel();
+        });
+        let mut live = Vec::new();
+        let started = Instant::now();
+        let run = run_bounded_process_streaming(
+            "streaming cancellation fixture",
+            "/bin/sh",
+            [
+                "-c",
+                concat!(
+                    "printf '[verify] stage=progress ordinal=1/13 fixture=cancelled\\n'; ",
+                    "sleep 30 & printf '%s %s\\n' \"$$\" \"$!\" > \"$PID_FILE\"; wait"
+                ),
+            ],
+            &std::env::current_dir().expect("resolve streaming fixture cwd"),
+            &cancellation,
+            None,
+            &[("PID_FILE", pid_file.as_os_str())],
+            bounds,
+            &mut live,
+        )
+        .expect("stream and cancel the verifier fixture");
+        controller
+            .join()
+            .expect("stream cancellation controller joins");
+        let CommandRun::Cancelled(output) = run else {
+            panic!("streaming fixture did not report cancellation: {run:?}");
+        };
+        let progress = "[verify] stage=progress ordinal=1/13 fixture=cancelled\n";
+        assert_eq!(
+            String::from_utf8(live).expect("live output is UTF-8"),
+            progress
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).expect("captured output is UTF-8"),
+            progress
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "streaming cancellation ignored its token"
+        );
+        assert_processes_gone(&pid_file, "streaming supervisor cancellation");
+        fs::remove_file(pid_file).expect("remove streaming cancellation pid file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_output_failure_cancels_and_reaps_the_supervised_group() {
+        let bounds = ProcessBounds {
+            runtime: Duration::from_secs(10),
+            grace: Duration::from_millis(100),
+            output_drain: Duration::from_millis(100),
+            reap: Duration::from_millis(100),
+            output_limit: super::OUTPUT_LIMIT,
+        };
+        let pid_file = fixture_pid_file("streaming-output-failure");
+        let error = run_bounded_process_streaming(
+            "streaming output failure fixture",
+            "/bin/sh",
+            [
+                "-c",
+                concat!(
+                    "sleep 30 & printf '%s %s\\n' \"$$\" \"$!\" > \"$PID_FILE\"; ",
+                    "printf '[verify] stage=progress ordinal=1/13 fixture=closed-output\\n'; wait"
+                ),
+            ],
+            &std::env::current_dir().expect("resolve output failure fixture cwd"),
+            &CancellationToken::new(),
+            None,
+            &[("PID_FILE", pid_file.as_os_str())],
+            bounds,
+            &mut RefusingOutput,
+        )
+        .expect_err("a closed live output sink refuses the supervisor");
+        assert!(matches!(
+            error,
+            StreamingRunError::Output(error)
+                if error.kind() == std::io::ErrorKind::BrokenPipe
+        ));
+        assert_processes_gone(&pid_file, "streaming output failure");
+        fs::remove_file(pid_file).expect("remove streaming output failure pid file");
+    }
+
+    #[cfg(unix)]
+    #[test]
     #[ignore = "launched exactly by the hard-supervisor parent test"]
     fn non_cooperative_in_process_verifier_fixture() {
         let cancellation = CancellationToken::new();
@@ -543,6 +693,7 @@ mod tests {
         let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))
             .expect("install fixture signal bridge");
         println!("{SUPERVISOR_PID_MARKER}{}", std::process::id());
+        println!("[verify] stage=progress ordinal=1/13 fixture=non-cooperative");
         std::io::stdout().flush().expect("flush fixture pid marker");
 
         let runner = TimedRunner::uniform(Duration::from_secs(60));
