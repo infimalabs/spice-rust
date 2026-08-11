@@ -226,6 +226,10 @@ or handing off work. Formatting remains a workspace check; run
 surfaces, complete test portfolio, validation tiers, measured concurrency
 limits, and safe disk-cleanup rules used by development agents.
 
+[SHAPE_CONFORMANCE.md](SHAPE_CONFORMANCE.md) governs the Rust port's matches,
+intentional deviations, open gaps, and current self-hosting GO decision against
+the authoritative product shape.
+
 ## Cargo build cache
 
 Cargo's configured `build_directory` may point every worktree at a shared

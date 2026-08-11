@@ -332,6 +332,33 @@ fn emptying_a_lineage_retires_the_task_subscription_it_left_behind() {
     fixture.retire();
 }
 
+/// Team membership is not capped by the Canvas's six-slot accent palette.
+///
+/// Colour is presentation continuity rather than identity: every member keeps
+/// its lane, occupant, worktree, and independent send address when colours
+/// repeat. The resident therefore admits a seventh member through the ordinary
+/// complete-arrangement law instead of turning a display palette into topology
+/// authority.
+#[test]
+fn a_lineage_may_hold_more_members_than_the_six_slot_accent_palette() {
+    let fixture = Arranged::seat("lineage-arrangement-seven-members", &[0, 1, 1, 1, 1, 1, 1]);
+    let target = fixture.teams[0];
+    let lanes = fixture.lanes.clone();
+
+    let answer = fixture.commit(13, vec![standing(target, &lanes)]);
+
+    assert_eq!(answer.lanes.len(), 7);
+    assert!(answer.lanes.iter().all(|row| row.lineage_id == target));
+    assert_eq!(
+        answer.lanes.iter().map(|row| row.lane).collect::<Vec<_>>(),
+        lanes,
+        "an unbounded team keeps every independently addressed lane",
+    );
+    assert_eq!(fixture.durable_subscriptions(), vec![target]);
+
+    fixture.retire();
+}
+
 /// An arrangement is admitted as a whole or not at all.
 ///
 /// Each case below is built to trip exactly one rule, because a fixture that
