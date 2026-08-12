@@ -19,7 +19,6 @@ pub(super) async fn bootstrap(
     // of a wildcard bind. It reached this surface somehow; that is the address.
     let discovery = wire::CanvasBootstrap {
         endpoint: format!("http://{host}"),
-        canvas: wire::CanvasVersion::CURRENT,
         capability,
         epoch: state.epoch,
         speech: state.speech.playback(),
@@ -35,6 +34,11 @@ pub(super) async fn bootstrap(
     response
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        wire::hello::CANVAS_VERSION_HEADER,
+        HeaderValue::from_str(&wire::CanvasVersion::CURRENT.to_string())
+            .expect("the numeric Canvas version is a valid header value"),
+    );
     install_browser_headers(&mut response);
     response
 }

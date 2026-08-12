@@ -6,6 +6,13 @@ use crate::envelope::{Actor, WireVersion};
 use crate::ident::CanonicalUuid;
 use crate::reply::{Fault, FaultClass, Refusal, RefusalDiagnostic};
 
+/// HTTP response header carrying the browser/resident protocol generation.
+///
+/// The clock sits outside [`CanvasBootstrap`] so adding it did not change the
+/// strict document an already-running Canvas application has to decode before
+/// it can decide whether to replace itself.
+pub const CANVAS_VERSION_HEADER: &str = "x-spice-canvas-version";
+
 /// The browser/resident protocol version, independent of durable journal wire.
 ///
 /// A Canvas page can remain alive while an installed resident is replaced. Its
@@ -33,6 +40,14 @@ impl std::fmt::Display for CanvasVersion {
     }
 }
 
+impl std::str::FromStr for CanvasVersion {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        value.parse().map(Self)
+    }
+}
+
 /// Authenticated same-origin bootstrap for one embedded operator canvas.
 ///
 /// The browser obtains this current generation document from the origin that
@@ -44,8 +59,6 @@ impl std::fmt::Display for CanvasVersion {
 pub struct CanvasBootstrap {
     /// Current HTTP origin the asking browser used and no other endpoint.
     pub endpoint: String,
-    /// Browser/resident protocol the served app must speak.
-    pub canvas: CanvasVersion,
     /// Operator capability for the immediately following opening.
     pub capability: CanonicalUuid,
     /// Resident generation the endpoint and capability address.

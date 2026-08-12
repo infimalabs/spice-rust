@@ -30,10 +30,20 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
             .windows(b"cache-control: no-store".len())
             .any(|window| window == b"cache-control: no-store")
     );
+    let expected_version = format!(
+        "{}: {}\r\n",
+        wire::hello::CANVAS_VERSION_HEADER,
+        wire::CanvasVersion::CURRENT
+    );
+    assert!(
+        response[..split]
+            .windows(expected_version.len())
+            .any(|window| window == expected_version.as_bytes()),
+        "bootstrap response omitted {expected_version:?}"
+    );
     let discovery: wire::CanvasBootstrap =
         wire::decode(&response[split..]).expect("bootstrap decodes");
     assert_eq!(discovery.endpoint, format!("http://{address}"));
-    assert_eq!(discovery.canvas, wire::CanvasVersion::CURRENT);
     assert_eq!(discovery.capability, operator());
     assert_eq!(discovery.epoch, epoch());
     assert_eq!(

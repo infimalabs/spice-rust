@@ -1,4 +1,4 @@
-//! The browser's end of the socket: one current opening and one frame door.
+//! The browser's transport boundary: one pre-socket clock and one frame door.
 //!
 //! The app carries a browser/resident protocol clock independent of durable
 //! [`WireVersion`]. A page can survive an installed resident replacement, so
@@ -14,7 +14,7 @@ use wire::{
     Response, StreamFrame, WireVersion,
 };
 
-/// Reasons this door names when it turns a frame away.
+/// Reasons the pre-socket and frame doors name when they turn input away.
 ///
 /// Both frame shapes draw from this one vocabulary. A second spelling for the
 /// same failure would let a caller handle one door and miss the other.
@@ -23,8 +23,8 @@ mod reason {
     pub const UNDECODABLE: &str = "frame::undecodable";
     /// The frame carried a version this build does not speak.
     pub const WIRE: &str = "frame::wire-mismatch";
-    /// The frame belongs to another browser/resident protocol.
-    pub const CANVAS: &str = "frame::canvas-mismatch";
+    /// Bootstrap metadata belongs to another browser/resident protocol.
+    pub const CANVAS: &str = "bootstrap::canvas-mismatch";
     /// The frame answered a generation this session does not address.
     pub const EPOCH: &str = "frame::epoch-mismatch";
     /// The discovery file now presents a different capability.
@@ -120,16 +120,26 @@ fn admit_wire(observed: WireVersion) -> Result<(), Fault> {
 }
 
 /// Admit a browser/resident protocol without weakening DTO decoding.
-fn admit_canvas(observed: CanvasVersion) -> Result<(), Fault> {
-    if observed.is_current() {
+fn admit_canvas(observed: Option<CanvasVersion>) -> Result<(), Fault> {
+    if observed.is_some_and(CanvasVersion::is_current) {
         return Ok(());
     }
     Err(Fault {
         class: FaultClass::Protocol,
         reason: reason::CANVAS.to_owned(),
-        detail: format!(
-            "frame carried canvas protocol {observed}; this build speaks {}",
-            CanvasVersion::CURRENT
+        detail: observed.map_or_else(
+            || {
+                format!(
+                    "bootstrap carried no canvas protocol; this build speaks {}",
+                    CanvasVersion::CURRENT
+                )
+            },
+            |observed| {
+                format!(
+                    "bootstrap carried canvas protocol {observed}; this build speaks {}",
+                    CanvasVersion::CURRENT
+                )
+            },
         ),
     })
 }
@@ -195,7 +205,7 @@ impl Session {
     ///
     /// Returns a protocol fault when the resident asks this browser build to
     /// cross a Canvas DTO generation it does not speak.
-    pub fn admit_canvas(observed: CanvasVersion) -> Result<(), Fault> {
+    pub fn admit_canvas(observed: Option<CanvasVersion>) -> Result<(), Fault> {
         admit_canvas(observed)
     }
 
