@@ -146,7 +146,7 @@ impl RunningResident {
             // A fixture resident asks the kernel for a free port: the fixed default
             // belongs to the operator's one resident, and concurrent fixtures on a
             // shared machine cannot all have it.
-            .args(["--json", "up", "--port", "0"])
+            .args(["--json", "up", "--foreground", "--port", "0"])
             .current_dir(&fixture.root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

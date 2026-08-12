@@ -109,6 +109,7 @@ pub struct StatePaths {
     locks: PathBuf,
     proof: PathBuf,
     resident: PathBuf,
+    resident_log: PathBuf,
     canvas: PathBuf,
     degraded: PathBuf,
     tape: PathBuf,
@@ -133,6 +134,7 @@ impl StatePaths {
             locks: runtime.join("locks"),
             proof: runtime.join("proof"),
             resident: runtime.join("resident"),
+            resident_log: runtime.join("resident.log"),
             canvas: runtime.join("canvas"),
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
@@ -207,6 +209,12 @@ impl StatePaths {
     #[must_use]
     pub fn resident(&self) -> &Path {
         &self.resident
+    }
+
+    /// Owner-only diagnostics from the detached Rust resident.
+    #[must_use]
+    pub fn resident_log(&self) -> &Path {
+        &self.resident_log
     }
 
     /// Owner-only canvas discovery file.
@@ -336,13 +344,14 @@ impl StatePaths {
     }
 
     /// Files whose shape this runtime admits before it does any work.
-    fn admitted_files(&self) -> [&Path; 6] {
+    fn admitted_files(&self) -> [&Path; 7] {
         [
             self.journal(),
             self.folds(),
             self.gate_state(),
             self.gate_state_lock(),
             self.resident(),
+            self.resident_log(),
             self.canvas(),
         ]
     }
@@ -354,13 +363,14 @@ impl StatePaths {
     /// an operator repairing a bad `config.toml` needs the runtime to reach the
     /// refusal that names it rather than stop at a shape check.
     #[must_use]
-    pub fn owned_files(&self) -> [&Path; 8] {
+    pub fn owned_files(&self) -> [&Path; 9] {
         let [
             journal,
             folds,
             gate_state,
             gate_state_lock,
             resident,
+            resident_log,
             canvas,
         ] = self.admitted_files();
         [
@@ -369,6 +379,7 @@ impl StatePaths {
             gate_state,
             gate_state_lock,
             resident,
+            resident_log,
             canvas,
             self.install_record(),
             self.local_configuration(),

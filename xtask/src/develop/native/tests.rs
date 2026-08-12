@@ -3,7 +3,7 @@ use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use super::*;
 
@@ -109,108 +109,6 @@ impl Drop for Fixture {
     }
 }
 
-/// A process that stays alive until the test drops it.
-fn standing_child() -> std::process::Child {
-    Command::new("sleep")
-        .arg("30")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("a standing child launches")
-}
-
-/// Readiness is the published endpoint answering, not the record existing.
-///
-/// The record is written before anything binds, so a readiness check that
-/// trusted it would pass here against a port nothing is listening on.
-#[test]
-fn a_published_endpoint_is_ready_only_once_it_answers() {
-    let fixture = Fixture::new("ready");
-    let repository = fixture.repository();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a scratch port binds");
-    let bound = listener.local_addr().expect("the scratch port is named");
-    let mut child = standing_child();
-
-    fixture.publish(&format!("http://127.0.0.1:{}", bound.port()));
-    let answered = ready(&repository, &mut child, Duration::from_secs(5));
-    let _ = child.kill();
-    let _ = child.wait();
-    assert_eq!(
-        answered.expect("a listening endpoint is ready"),
-        format!("http://127.0.0.1:{}", bound.port())
-    );
-
-    drop(listener);
-    let mut child = standing_child();
-    let closed = ready(&repository, &mut child, Duration::from_millis(300));
-    let _ = child.kill();
-    let _ = child.wait();
-    assert!(
-        matches!(closed, Err(RefreshError::ResidentUnready)),
-        "the same record was ready with nothing listening: {closed:?}"
-    );
-}
-
-/// A failed start reports the resident's own last diagnostic, not just a status.
-///
-/// `canvas::bind-failed` and its kin are written only to the resident's log, so
-/// a refresh that printed the exit status alone would name a number whose reason
-/// it never surfaced.
-#[test]
-fn a_failed_start_reports_the_residents_own_last_diagnostic() {
-    let fixture = Fixture::new("residentlog");
-    let repository = fixture.repository();
-    let log = workspace(&repository)
-        .expect("the scratch workspace is created")
-        .join(RESIDENT_LOG);
-
-    let mut empty = Vec::new();
-    report_resident_log(&repository, &mut empty);
-    assert!(
-        String::from_utf8_lossy(&empty).contains("recorded nothing"),
-        "an absent resident log was reported as a diagnostic: {}",
-        String::from_utf8_lossy(&empty)
-    );
-
-    fs::write(
-        &log,
-        "starting\nspice: canvas::bind-failed; listening on 127.0.0.1:8768 failed\n\n",
-    )
-    .expect("the scratch resident log is written");
-    let mut reported = Vec::new();
-    report_resident_log(&repository, &mut reported);
-    let reported = String::from_utf8_lossy(&reported).into_owned();
-    assert!(
-        reported.contains("canvas::bind-failed; listening on 127.0.0.1:8768 failed"),
-        "the resident's own diagnostic was not surfaced: {reported}"
-    );
-    assert!(
-        reported.contains(&log.display().to_string()),
-        "the report did not name the log it read: {reported}"
-    );
-}
-
-/// A resident that dies during startup is reported as an exit, not a timeout.
-#[test]
-fn a_resident_that_exits_before_readiness_is_reported_as_an_exit() {
-    let fixture = Fixture::new("exited");
-    let repository = fixture.repository();
-    let mut child = Command::new("sh")
-        .args(["-c", "exit 9"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("a failing child launches");
-
-    let exited = ready(&repository, &mut child, Duration::from_secs(5));
-    assert!(
-        matches!(exited, Err(RefreshError::ResidentExited(Some(9)))),
-        "an early resident exit was not reported with its status: {exited:?}"
-    );
-}
-
 /// A port nothing is bound to, taken by binding one and letting it go.
 ///
 /// Naming a fixed port would race every other lane on this machine, and the
@@ -223,6 +121,80 @@ fn unbound_port() -> u16 {
         .port();
     drop(listener);
     port
+}
+
+#[test]
+fn restart_consumes_the_daemon_launchers_typed_readiness_without_a_second_probe() {
+    let fixture = Fixture::new("restart-contract");
+    let repository = fixture.repository();
+    let epoch = "00000000-0000-4000-8000-000000000004"
+        .parse()
+        .expect("fixture epoch is canonical");
+    let endpoint = "http://127.0.0.1:43821";
+    let readiness = wire::Outcome::Reply(wire::Reply {
+        position: wire::ReplyPosition::Direct {},
+        body: wire::CanvasOpen {
+            endpoint: endpoint.to_owned(),
+            epoch,
+        },
+    });
+    let readiness = String::from_utf8(wire::encode(&readiness).expect("readiness encodes"))
+        .expect("readiness is UTF-8");
+    let executable = fixture.binary(
+        "spice-up-contract",
+        format!("#!/bin/sh\nprintf '%s\\n' '{readiness}'\n").as_bytes(),
+    );
+    let request = RefreshRequest {
+        restart: true,
+        ..RefreshRequest::default()
+    };
+    let mut output = Vec::new();
+
+    let restarted = restart(
+        &repository,
+        &executable,
+        (Some("127.0.0.1"), Some(43821)),
+        &request,
+        &mut output,
+    );
+
+    assert_eq!(
+        restarted.expect("typed launcher readiness is sufficient"),
+        Some(endpoint.to_owned())
+    );
+    assert!(
+        String::from_utf8_lossy(&output).contains("resident ready at http://127.0.0.1:43821"),
+        "refresh did not surface the admitted endpoint"
+    );
+}
+
+#[test]
+fn restart_surfaces_the_daemon_launchers_exact_refusal() {
+    let fixture = Fixture::new("restart-refusal");
+    let repository = fixture.repository();
+    let executable = fixture.binary(
+        "spice-up-refuses",
+        b"#!/bin/sh\necho 'spice: resident::already-up; pid=42' >&2\nexit 2\n",
+    );
+    let request = RefreshRequest {
+        restart: true,
+        ..RefreshRequest::default()
+    };
+    let mut output = Vec::new();
+
+    let restarted = restart(
+        &repository,
+        &executable,
+        (None, None),
+        &request,
+        &mut output,
+    );
+
+    assert!(
+        matches!(restarted, Err(RefreshError::ResidentStartRefused(ref refusal))
+            if refusal.contains("resident::already-up; pid=42")),
+        "refresh replaced the launcher's exact refusal: {restarted:?}"
+    );
 }
 
 /// A clean stop is not reported as a refusal.
@@ -316,7 +288,7 @@ fn a_refused_stop_with_a_live_endpoint_is_named_rather_than_waited_out() {
         "a refused stop over a live endpoint was not named: {stopped:?}"
     );
     assert!(
-        elapsed < SHUTDOWN_HORIZON,
+        elapsed < Duration::from_secs(1),
         "the refusal fell through to the shutdown horizon: {elapsed:?}"
     );
 }
@@ -530,8 +502,9 @@ fn an_untouched_install_refusal_restarts_the_resident_it_stopped() {
     );
     assert!(
         output.contains("restarting previous resident")
-            && output
-                .contains("previous resident did not come back: resident exited with status 3"),
+            && output.contains(
+                "previous resident did not come back: resident start refused: no diagnostic"
+            ),
         "the stopped resident was not restored: {output}"
     );
 }
@@ -627,7 +600,8 @@ fn a_failed_refresh_restarts_the_resident_it_stopped() {
         "a stopped resident was never restarted: {output}"
     );
     assert!(
-        output.contains("previous resident did not come back: resident exited with status 3"),
+        output
+            .contains("previous resident did not come back: resident start refused: no diagnostic"),
         "a resident that refused to come back was not reported: {output}"
     );
     assert_eq!(
