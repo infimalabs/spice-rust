@@ -41,10 +41,11 @@ projection of its impact. Expensive analyses without that seam remained
 explicit study/doctor work.
 
 Rust retains the correct pure, fail-closed selection model and has stronger
-baseline/state types. Its remaining mismatch is downstream: exact changed paths
-select policy arms, but selected structural metric arms still acquire the whole
-staged tree. Localizing acquisition must preserve prior latch healing and must
-not turn a partial observation set into a supposedly complete state inventory.
+baseline/state types. Exact changed paths select policy arms; a selected
+structural metric arm still acquires its measurable staged-tree inventory. That
+bounded scan is a potential cost optimization, not a correctness mismatch.
+Any localization must preserve prior latch healing and must not turn a partial
+observation set into a supposedly complete state inventory.
 
 ## Authoritative Python control flow
 
@@ -242,29 +243,28 @@ Therefore the proven promotion sequence is:
 | Typed state and claims | `gate/src/state` | Keep explicit bounds, latches, claims, and accept/reject publication semantics. |
 | Durable full-study repair | canonical battery reporting | Preserve repository-wide repair generation on full runs; local gate selection must not erase that confidence surface. |
 
-### Missing behavior to implement
+### Current Rust qualification status
 
-1. **Bind exact paths to structural acquisition.**
-   `spice/src/change_gate.rs:233-303` sends exact changes into selection, but
-   `gate/src/battery/repository_executor.rs:148-236` captures focused arms by
-   `GateId` alone. Its metric arm calls `MetricSource::capture`, and
-   `gate/src/metrics/acquire.rs:294,482,502,647,687` iterates the full
-   `source.measurable()` inventory. The policy plan is local; structural
-   acquisition is not. A local arm needs a digest-bound candidate-path set.
+1. **Exact paths bind selection; narrower structural acquisition is optional.**
+   `spice/src/change_gate.rs:233-303` sends exact changes into pure policy
+   selection. A selected structural arm still calls `MetricSource::capture`
+   over its measurable inventory. Because changed classes determine whether
+   that one current arm runs, and merge authorship plus partial reconciliation
+   preserve its jurisdiction, this is a bounded acquisition-cost optimization,
+   not an unowned correctness gap. A future digest-bound candidate set may make
+   the common path cheaper without creating another execution path.
 
-2. **Preserve a separate exhaustive study path.**
-   Narrowing the local arm must not narrow full battery/verify collection.
-   Global repair findings and audits still need the complete selected tree.
-   The existing throughput audit measured metric capture at 8.252 seconds and
-   a full report at roughly 23 MB (`gate/THROUGHPUT_AUDIT.md:38-46`), which is
-   direct evidence that reusing full acquisition in pre-commit is material.
+2. **The exhaustive path is implemented.**
+   Unknown and authority changes select all 27 canonical arms. Full verify runs
+   the same complete battery once, keeps repository-wide repair evidence, and
+   emits one compact source-bound summary rather than repeating the report.
 
-3. **Fail closed for new-file magic evidence.**
-   `gate/src/metrics/acquire.rs:873-937` currently returns
-   `EvidenceState::NotApplicable` when no committed baseline contains the file.
-   Python instead compares against an empty finding set. The Rust contract must
-   either measure every new-file finding as new or explicitly escalate/refuse;
-   it must not admit the path as not applicable.
+3. **New-file magic evidence follows the governed Rust rule.**
+   When no committed baseline contains a file, there is no delta to ratchet and
+   `gate/src/metrics/acquire.rs` returns explicit `EvidenceState::NotApplicable`,
+   never `Passed`. An explicit empty baseline still exposes new debt. Unknown
+   path classes separately escalate to the exhaustive battery. Treating every
+   absent baseline as Python's empty finding set is intentionally obsolete.
 
 4. **Production state publication (implemented).**
    `gate/src/battery/state_run.rs` now binds focused captures to one fixed-clock
@@ -277,11 +277,11 @@ Therefore the proven promotion sequence is:
    complete-inventory pruning contract. Production regressions cover both
    preservation and accepted latch creation, hold, and healing.
 
-6. **Classify inherently global arms honestly.**
+6. **Inherently global arms escalate explicitly.**
    Repository-document target inventory, reachability, and similar relational
-   policies may require a cached/global authority or explicit exhaustive
-   escalation. Do not label them local merely because their arm was selected by
-   one changed path.
+   policies use their repository authority after exhaustive selection.
+   Authority and unknown changes choose that same complete path; there is no
+   hidden local substitute.
 
 ### Do not copy
 
@@ -302,18 +302,17 @@ Therefore the proven promotion sequence is:
 
 ## Implementation contract
 
-A future implementation can be considered faithful only when all of these are
-true:
+The current Rust implementation remains faithful while all of these are true:
 
 1. The staging snapshot and exact normalized changed paths are captured once.
 2. Selection remains a pure mapping from that evidence to canonical arms.
-3. Local structural arms receive a digest-bound candidate set and do not walk
-   unrelated source classes.
+3. Changed classes select local structural arms deterministically; any future
+   candidate-set optimization preserves the same arm, evidence, and digest.
 4. Sticky checks add the finite prior-latch jurisdiction needed for correct
    hold/heal decisions.
 5. A partial run cannot prune state it did not observe.
-6. New files and unsupported classes fail closed by measurement, refusal, or
-   explicit exhaustive escalation.
+6. New files without a comparable baseline remain explicitly not applicable;
+   unsupported or unknown classes escalate to every canonical arm.
 7. Full battery/study execution retains repository-wide acquisition and durable
    global repair evidence.
 8. No proposed state becomes durable unless all selected policy and test arms

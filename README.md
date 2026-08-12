@@ -229,8 +229,8 @@ surfaces, complete test portfolio, validation tiers, measured concurrency
 limits, and safe disk-cleanup rules used by development agents.
 
 [SHAPE_CONFORMANCE.md](SHAPE_CONFORMANCE.md) governs the Rust port's matches,
-intentional deviations, open gaps, and current self-hosting GO decision against
-the authoritative product shape.
+intentional deviations, resolved risk dispositions, and current self-hosting GO
+decision against the authoritative product shape.
 
 ## Cargo build cache
 

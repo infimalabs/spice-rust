@@ -150,7 +150,36 @@ fn deadline_terminates_the_worker_group_and_names_its_last_phase() {
         .expect("deadline retains phase evidence");
     assert!(observed.contains("phase=family family=toolchain"));
     assert!(observed.contains("findings=incomplete"));
+    let rendered = crate::render::render_commit_gate(
+        &Outcome::<spice::change_gate::ChangeGateReport>::Refusal(refusal),
+        crate::render::Form::Text,
+    )
+    .expect("deadline refusal renders")
+    .expect("deadline refusal is visible");
+    assert!(
+        std::str::from_utf8(rendered.document())
+            .expect("deadline rendering is UTF-8")
+            .contains("phase=family family=toolchain")
+    );
     files.cleanup().expect("remove deadline worker files");
+}
+
+#[test]
+fn last_phase_prefers_later_selected_test_progress() {
+    let files = WorkerFiles::create().expect("create progress worker files");
+    fs::write(
+        &files.progress,
+        concat!(
+            "[change-gate-policy] gate=repo-docs\n",
+            "[rust-test] stage=progress shard=2/4 package=\"spice\" last_test=\"fixture\"\n",
+        ),
+    )
+    .expect("write ordered progress evidence");
+    assert_eq!(
+        last_phase(&files.progress),
+        "selected-tests stage=progress shard=2/4 package=\"spice\" last_test=\"fixture\""
+    );
+    files.cleanup().expect("remove progress worker files");
 }
 
 #[test]

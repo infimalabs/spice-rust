@@ -287,7 +287,7 @@ fn validate_policy_results(
                 ),
             ));
         }
-        if result.reason.trim().is_empty() || result.reason.contains(['\0', '\r', '\n']) {
+        if result.reason.trim().is_empty() || result.reason.contains(['\0', '\r']) {
             return Err(ChangeGateError::protocol(
                 "change-gate-policy-invalid",
                 format!("policy summary {} has an invalid reason", result.gate_id),
@@ -962,7 +962,7 @@ mod tests {
                         BatteryState::Passed
                     },
                     reason: if position == 0 {
-                        "synthetic refusal"
+                        "synthetic refusal\n  README.md: 21 characters (cap 20)"
                     } else {
                         "synthetic pass"
                     }
@@ -980,6 +980,10 @@ mod tests {
         };
         let report = ChangeGateReport::new(selection.clone(), tests.clone(), policy)
             .expect("complete refusing summary admits structurally");
+        assert_eq!(
+            report.policy().iter().next().expect("first arm").reason(),
+            "synthetic refusal\n  README.md: 21 characters (cap 20)"
+        );
         assert_eq!(report.refusal_fold(), "exact bounded finding\n");
 
         let missing = ChangePolicyReport::Exhaustive {

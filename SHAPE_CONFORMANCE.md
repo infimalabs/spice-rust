@@ -1,6 +1,6 @@
 # Rust self-hosting shape conformance
 
-Tasks: `SELF_HO-1kLc5XkF`, `SELF_HO-1kLbzBGX`
+Tasks: `SELF_HO-1kLc5XkF`, `SELF_HO-1kLbzBGX`, `SELF_HO-1kLlzjsY`
 
 This governed audit compares shape `0c5bab269cbb1c4ca60edccf01444edf2b7b91cc`
 with Rust `cc25c7b8b52ec9f722c51aea71660768f6d0eb6e`. The final decision also
@@ -94,18 +94,13 @@ missing live behavior with an owner.
 | Briefing takes intent from steering and evidence from transcript | `spice/src/session_command/authority.rs`, `spice/src/session_command/dataset.rs`, `spice/src/session_command/project.rs` | **Match:** asks and held work precede transcript detail; unread probes stay unknown. |
 | Current identity comes only from live environment | `spice/src/session_command/authority.rs` | **Stronger:** transcript inputs select evidence only; the preferred live vendor binds authority, while absent, malformed, unknown, or ambiguous live identity remains unknown. `SESSION-1kLg3XMy`. |
 
-The journal beside Git is an intentional addition, not a competing board:
-immutable journal facts make receipts, claims, topology, steering, and review
-atomic and replayable; Git attests source publication. `spice/src/task_git/tests.rs`
-proves baseline-first publication and trailers; `spice/src/release_history.rs` reads first-parent
-landings, and journal resolution tests prove restart survival.
+The journal is an atomic, replayable authority beside Git, which attests source
+publication. Task-Git, release-history, and resolution tests prove trailers,
+first-parent landings, and restart survival.
 
-Shape GOV-20 retires a healed latch even if a run fails, while GOV-24 defers
-writes until the whole run passes. The Python implementation buffered and
-discarded retirement on failure. Rust governs the contradiction as an
-accepted-run transaction: rejection cannot mutate durable quality state.
-`STATE-1kLg3Pyn` and `STATE-1kLkPtDG` completed that production wiring without
-adopting the discarded contradictory sentence.
+Rust resolves the GOV-20/GOV-24 latch conflict through an accepted-run
+transaction: rejection never mutates durable quality state. `STATE-1kLg3Pyn`
+and `STATE-1kLkPtDG` prove the production boundary.
 
 ## Risk ledger and exit
 
@@ -117,7 +112,7 @@ adopting the discarded contradictory sentence.
 | Local selector authority | Resolved: `SELECTI-1kLc3tXp`, `SELECTI-1kLjN3Xn`; unknown/authority paths escalate and renames retain both owners. |
 | Remediation lineage | Resolved: `SELECTI-1kLc51jD`, `REMEDIA-1kLc40qB`, `REMEDIA-1kLjncwv`; recovery requires forward movement in one repository. |
 | Fleet operation | Reviewed: `DEVELOP-1kLbrBsW`, `PERFORM-1kLbsp1T`, `PERFORM-1kLhqWQL`, `PERFORM-1kLbfC2X`; scheduling follows observed peer pressure. |
-| Exhaustive gate latency/notice | Non-blocking: `PERFORM-1kLkymYs`, `PERFORM-1kLkzMFd`; execution is bounded but needs less duplication and an early notice. |
+| Exhaustive gate latency/notice | Resolved: `PERFORM-1kLkymYs` runs all 27 arms once with a compact source-bound summary; `PERFORM-1kLkzMFd` closed optional notice without another RTK path. |
 | Teams exceed six | Governed, non-blocking deviation with seven-member regression. |
 | New magic files have no delta | Governed, non-blocking GOV-35 match; applicability stays explicit. |
 
@@ -131,3 +126,8 @@ deviations have rationale and executable validation. Under observed fleet
 pressure, competing full verification waits and the running verifier reduces
 its live budget. Unreadable capacity fails closed and never authorizes fewer
 checks, raised limits, shared mutable outputs, or unbounded cleanup.
+
+Compatibility has one current path: Canvas reloads the authenticated current
+document on version mismatch; gate findings migrate once or refuse with their
+migration owner; gate state admits one schema or names the owning release. None
+keeps a release-specific arm or silent fallback.

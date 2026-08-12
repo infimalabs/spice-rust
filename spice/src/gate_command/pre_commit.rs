@@ -368,7 +368,9 @@ fn deadline(progress: &Path) -> Outcome<spice::change_gate::ChangeGateReport> {
                 WORK_RUNTIME.as_secs(),
             )),
         )
-        .with_detail("repair or reduce the named gate phase, then retry the same plain git commit"),
+        .with_detail(format!(
+            "phase={phase}; repair or reduce this gate phase, then retry the same plain git commit"
+        )),
     ))
 }
 
@@ -407,6 +409,10 @@ fn last_phase(path: &Path) -> String {
                     line.strip_prefix("[change-gate-policy] gate=")
                         .filter(|gate| GateId::BATTERY.iter().any(|known| known.as_str() == *gate))
                         .map(|gate| format!("arm gate={gate}"))
+                })
+                .or_else(|| {
+                    line.strip_prefix("[rust-test] ")
+                        .map(|phase| format!("selected-tests {phase}"))
                 })
         })
         .last()
