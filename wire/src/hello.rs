@@ -19,6 +19,11 @@ pub const CANVAS_VERSION_HEADER: &str = "x-spice-canvas-version";
 /// request and reply DTOs therefore need a pre-socket clock whose lifetime is
 /// the browser application, rather than borrowing [`WireVersion`] from durable
 /// facts that must remain readable across upgrades.
+///
+/// A document loaded before this clock existed cannot observe it and therefore
+/// owns one manual reload at this boundary. Once a clock-aware document is
+/// loaded, every later generation change is decided by the mandatory bootstrap
+/// header before a socket opens or a strict DTO is decoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CanvasVersion(pub u32);

@@ -201,6 +201,75 @@ fn an_absent_canvas_protocol_replaces_the_current_document() {
 }
 
 #[test]
+fn a_pre_clock_lane_decoder_reproduces_the_topology_revision_failure() {
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PriorLaneAnswer {
+        epoch: CanonicalUuid,
+        state: wire::ResidentState,
+        lanes: Vec<wire::intent::LaneAnswerRow>,
+        subscriptions: Vec<wire::LineageSubscription>,
+    }
+
+    let prior = PriorLaneAnswer {
+        epoch: uuid(EPOCH),
+        state: wire::ResidentState::Seated,
+        lanes: Vec::new(),
+        subscriptions: Vec::new(),
+    };
+    let prior_bytes = support::response(
+        WireVersion::CURRENT,
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(41)),
+            body: prior,
+        }),
+    );
+    let decoded_prior: Response<PriorLaneAnswer> =
+        wire::decode(&prior_bytes).expect("the pre-clock four-field lane answer decodes");
+    let Outcome::Reply(prior_reply) = decoded_prior.outcome else {
+        panic!("the pre-clock fixture is a reply");
+    };
+    assert_eq!(prior_reply.body.epoch, uuid(EPOCH));
+    assert_eq!(prior_reply.body.state, wire::ResidentState::Seated);
+    assert!(prior_reply.body.lanes.is_empty());
+    assert!(prior_reply.body.subscriptions.is_empty());
+
+    let current_bytes = support::response(
+        WireVersion::CURRENT,
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(41)),
+            body: wire::intent::LaneAnswer {
+                epoch: uuid(EPOCH),
+                state: wire::ResidentState::Seated,
+                topology_revision: 7,
+                lanes: Vec::new(),
+                subscriptions: Vec::new(),
+            },
+        }),
+    );
+    let error = wire::decode::<Response<PriorLaneAnswer>>(&current_bytes)
+        .expect_err("the pre-clock strict decoder rejects the current lane answer");
+    assert!(
+        error.to_string().contains(
+            "unknown field `topology_revision`, expected one of `epoch`, `state`, `lanes`, `subscriptions`"
+        ),
+        "{error}"
+    );
+
+    let admitted = session()
+        .admit_frame::<wire::intent::LaneAnswer>(&current_bytes)
+        .expect("the current strict decoder admits the topology-bearing answer");
+    let Outcome::Reply(current_reply) = &admitted.get().outcome else {
+        panic!("the current fixture is a reply");
+    };
+    assert_eq!(current_reply.body.topology_revision, 7);
+}
+
+#[test]
 fn an_opening_against_a_replaced_generation_is_rejected_by_the_resident() {
     let hello = session().hello();
 

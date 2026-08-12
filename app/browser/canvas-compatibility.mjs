@@ -19,7 +19,23 @@ async function assertProtocolReplacement(browser, endpoint, mode) {
   let bootstraps = 0;
   let sockets = 0;
   const bootstrapAuth = [];
-  page.on("websocket", () => { sockets += 1; });
+  let admitTopologyFrame;
+  const topologyFrame = new Promise((resolve) => { admitTopologyFrame = resolve; });
+  page.on("websocket", (socket) => {
+    sockets += 1;
+    socket.on("framereceived", ({ payload }) => {
+      let frame;
+      try {
+        frame = JSON.parse(typeof payload === "string" ? payload : payload.toString("utf8"));
+      } catch {
+        return;
+      }
+      const body = frame?.outcome?.kind === "reply" ? frame.outcome.body : undefined;
+      if (Number.isSafeInteger(body?.topology_revision) && body.topology_revision >= 0) {
+        admitTopologyFrame(body.topology_revision);
+      }
+    });
+  });
   await page.route(/\/bootstrap(?:\?.*)?$/, async (route) => {
     const response = await route.fetch();
     const headers = response.headers();
@@ -56,9 +72,23 @@ async function assertProtocolReplacement(browser, endpoint, mode) {
     CONNECT_MS,
     () => /cursor \d+/.test(document.querySelector(".bar-meta")?.textContent ?? ""),
   );
+  let topologyDeadline;
+  const observedTopologyRevision = await Promise.race([
+    topologyFrame,
+    new Promise((_, reject) => {
+      topologyDeadline = setTimeout(
+        () => reject(new Error("the replacement document received no topology-bearing lane frame")),
+        CONNECT_MS,
+      );
+    }),
+  ]).finally(() => clearTimeout(topologyDeadline));
 
   assert.equal(bootstraps, 2, `one ${mode} header causes exactly one current-root reload`);
   assert.equal(sockets, 1, `the ${mode} header opens no socket before the reload`);
+  assert.ok(
+    Number.isSafeInteger(observedTopologyRevision),
+    "the replacement document admits the current topology-bearing lane answer",
+  );
   assert.equal(new URL(page.url()).pathname, "/", "the replacement loads the current app root");
   assert.equal(new URL(page.url()).hash, `#${auth}`, "the replacement retains Canvas authentication");
   assert.deepEqual(
