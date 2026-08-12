@@ -1,8 +1,8 @@
 //! One-command developer refresh of the repository-embedded Spice appliance.
 //!
-//! `cargo xtask install` builds the current tree, republishes
-//! `.spice-install/bin/spice` through the digest-bound installer, and restarts
-//! the resident on the endpoint it had already published.
+//! `cargo xtask install` builds the current browser app and native tree,
+//! republishes `.spice-install/bin/spice` through the digest-bound installer,
+//! and restarts the resident on the endpoint it had already published.
 //!
 //! The installer derives a refresh when a completed receipt names different
 //! executable bytes, so a rebuilt tree needs nothing withdrawn: the install step
@@ -59,15 +59,16 @@ pub struct RefreshReport {
 /// process, and installer machinery the refresh drives.
 pub fn refresh(
     request: &RefreshRequest,
+    environment: &crate::ReleaseEnvironment,
     output: &mut impl Write,
 ) -> Result<RefreshReport, RefreshError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        native::perform(request, output)
+        native::perform(request, environment, output)
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (request, output);
+        let _ = (request, environment, output);
         Err(RefreshError::Unavailable)
     }
 }
@@ -79,6 +80,8 @@ pub enum RefreshError {
     Repository(spice::repository::ResolveError),
     /// `cargo build` reported failure.
     Build,
+    /// The current browser app did not build and publish.
+    App(crate::AppBuildError),
     /// `cargo build` succeeded without naming a `spice` executable.
     BuildOutputSilent,
     /// The installer refused the refresh.
@@ -113,6 +116,7 @@ impl fmt::Display for RefreshError {
         match self {
             Self::Repository(error) => write!(formatter, "repository unresolved: {error}"),
             Self::Build => write!(formatter, "cargo build failed"),
+            Self::App(error) => write!(formatter, "canvas app build failed: {error}"),
             Self::BuildOutputSilent => {
                 write!(formatter, "cargo build named no spice executable")
             }
@@ -160,5 +164,11 @@ impl From<spice::install::InstallError> for RefreshError {
 impl From<std::io::Error> for RefreshError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+impl From<crate::AppBuildError> for RefreshError {
+    fn from(error: crate::AppBuildError) -> Self {
+        Self::App(error)
     }
 }

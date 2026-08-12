@@ -24,9 +24,12 @@ use super::{RefreshError, RefreshReport, RefreshRequest};
 /// Build the current tree, republish the appliance, and restart its resident.
 pub(super) fn perform(
     request: &RefreshRequest,
+    environment: &crate::ReleaseEnvironment,
     output: &mut impl Write,
 ) -> Result<RefreshReport, RefreshError> {
     let repository = Repository::discover(Path::new("."))?;
+    writeln!(output, "building canvas app")?;
+    crate::app(environment, output)?;
     let built = build(request.release, output)?;
     let installed = install::installed_binary(&repository);
     let rollback = park(&repository, &installed)?;

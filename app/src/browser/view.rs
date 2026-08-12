@@ -63,9 +63,14 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
         .and_then(CanvasRuntime::resume)
         .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
+    let topology_revision = (**render.surface)
+        .as_ref()
+        .and_then(CanvasRuntime::lanes)
+        .map(|lanes| lanes.topology_revision.to_string());
     html! {
         <div
             class="shell"
+            data-topology-revision={topology_revision}
             data-unsafe-intent={render.unsafe_intent.to_string()}
             data-submission-count={render.submissions.status.len().to_string()}
         >
