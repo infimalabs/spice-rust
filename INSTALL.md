@@ -203,6 +203,27 @@ authorities are in physically disjoint roots. Python owns
 
 ## Upgrade
 
+From any linked worktree, build once and use that same executable for preview
+and apply:
+
+```sh
+cargo build --locked -p spice
+target/debug/spice install
+target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
+```
+
+Do not `--unapply` first. A completed binary-bearing receipt may seed a refresh
+only while its recorded non-binary generated files still match disk; binary
+reconciliation names the exact observed executable as superseded. Preview then
+derives one current digest, and apply exchanges the assets in place. Receipt
+edits, non-binary drift, and interrupted directions still refuse before writes.
+
+Neither command changes `PATH` or `core.hooksPath`; activation remains the
+separate `cargo xtask activate-hooks` operation. Apply publishes common assets
+only for the exact preview digest. `cargo xtask install --no-resident` is the
+one-command build-and-apply shortcut; without that flag it also restores the
+resident lifecycle below.
+
 ```sh
 cargo xtask install --port PORT
 ```
@@ -217,13 +238,16 @@ anything.
 
 Rebuild, preview, and apply by hand as above when the plan itself is what you
 want to read; an apply is refused unless its digest matches the plan just
-previewed. Previewing a rebuilt executable against a complete install plans a
-refresh rather than a second installation: it keeps the reversal images that
-install recorded and exchanges each published file for its replacement in
-place, so a reversal after any number of refreshes still restores the tree the
-first install found rather than the build before this one. The proof is
-`refresh_publishes_the_rebuilt_executable_without_withdrawing_anything`, which
-reads the installed tree from another thread while the refresh runs:
+previewed. Previewing a rebuilt executable or changed embedded hook/skill
+against an intact complete install plans a refresh rather than a second
+installation: it keeps the reversal images that install recorded and exchanges
+each published file for its replacement in place, so a reversal after any
+number of refreshes still restores the tree the first install found rather than
+the build before this one. The proofs include
+`a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying`
+and `refresh_publishes_the_rebuilt_executable_without_withdrawing_anything`,
+the latter of which reads the installed tree from another thread while the
+refresh runs:
 
 ```sh
 cargo test --locked -p spice --lib install::tests::refresh

@@ -84,11 +84,13 @@ fn prepare_loaded(
         admit_digest(&plan, expected)?;
         return Ok((InstallRecord::new(plan)?, Some(loaded.generation), true));
     }
-    if record.status == InstallStatus::Complete && rebuilt_binary(&record.plan, spice_binary)? {
+    if record.status == InstallStatus::Complete
+        && current_build_differs(&record.plan, spice_binary)?
+    {
         // The refresh transaction: one record swap from the complete install to
-        // the plan that supersedes it, then in-place replacement of each
+        // the current build's complete plan, then in-place replacement of each
         // destination. A binary-only drift is admitted as the exact image this
-        // plan replaces; every other destination remains receipt-strict.
+        // plan replaces; every fixed asset remains receipt-strict.
         let binary_superseded = verify_refresh_progress(repository, &record)?;
         let plan = build_plan_over(
             repository,
@@ -179,6 +181,10 @@ pub(super) fn unapply_with_interruption(
     let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
     let mut record = loaded.record;
     let mut record_generation = loaded.generation;
+    // Reversal is an executable direction, not historical inspection. Finish
+    // it with the build that owns the live receipt; a newer build should derive
+    // and apply its refresh instead of withdrawing the appliance.
+    record.validate_for_repository(repository)?;
     match record.status {
         InstallStatus::Applying => return Err(InstallError::ApplyInProgress),
         InstallStatus::Uninstalled => {
@@ -249,7 +255,7 @@ pub(super) fn verify_progress(
     repository: &Repository,
     record: &InstallRecord,
 ) -> Result<(), InstallError> {
-    record.validate_for_repository(repository)?;
+    record.validate_loaded_for_repository(repository)?;
     for (index, operation) in record.plan.operations.iter().enumerate() {
         let (observed, parent) = observe_bound(
             operation.location.root(repository),
@@ -326,7 +332,7 @@ pub(super) fn verify_refresh_progress(
     repository: &Repository,
     record: &InstallRecord,
 ) -> Result<Option<GeneratedImage>, InstallError> {
-    record.validate_for_repository(repository)?;
+    record.validate_loaded_for_repository(repository)?;
     if record.status != InstallStatus::Complete {
         verify_progress(repository, record)?;
         return Ok(None);

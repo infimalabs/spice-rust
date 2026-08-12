@@ -63,17 +63,35 @@ impl InstallRecord {
     }
 
     pub(super) fn validate(&self) -> Result<(), InstallError> {
+        self.validate_with_content(self.status == InstallStatus::Uninstalled)
+    }
+
+    /// Validate state read from disk before deciding whether to refresh it.
+    ///
+    /// A complete appliance carrying a binary may be the intact output of a
+    /// previous build. Its fixed digests are admitted as history only until
+    /// progress verification proves every destination still matches. A
+    /// binary-less complete record has no installed build identity to anchor
+    /// that exception, while interrupted directions remain owned by the build
+    /// that started them.
+    fn validate_loaded(&self) -> Result<(), InstallError> {
+        let historical = self.status == InstallStatus::Uninstalled
+            || (self.status == InstallStatus::Complete
+                && super::binary_operation(&self.plan).is_some());
+        self.validate_with_content(historical)
+    }
+
+    fn validate_with_content(&self, historical: bool) -> Result<(), InstallError> {
         if self.version != RECORD_VERSION {
             return Err(InstallError::InvalidRecord(format!(
                 "install record version {} is not {RECORD_VERSION}",
                 self.version
             )));
         }
-        match self.status {
-            InstallStatus::Uninstalled => self.plan.validate_historical_receipt()?,
-            InstallStatus::Applying | InstallStatus::Complete | InstallStatus::Unapplying => {
-                self.plan.validate()?;
-            }
+        if historical {
+            self.plan.validate_historical_receipt()?;
+        } else {
+            self.plan.validate()?;
         }
         if self.repository != self.plan.repository {
             return Err(InstallError::InvalidRecord(
@@ -167,6 +185,15 @@ impl InstallRecord {
         self.plan.validate_repository_binding(repository)
     }
 
+    pub(super) fn validate_loaded_for_repository(
+        &self,
+        repository: &Repository,
+    ) -> Result<(), InstallError> {
+        self.validate_loaded()?;
+        self.repository.validate(repository)?;
+        self.plan.validate_repository_binding(repository)
+    }
+
     pub(super) fn receipt(&self) -> InstallReceipt {
         InstallReceipt {
             plan: self.plan.clone(),
@@ -200,7 +227,7 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
             owner,
         });
     }
-    record.validate_for_repository(repository)?;
+    record.validate_loaded_for_repository(repository)?;
     let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
     if canonical != bytes {
         return Err(InstallError::InvalidRecord(

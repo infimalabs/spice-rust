@@ -135,6 +135,33 @@ fn validate_generated_content(
     Ok(())
 }
 
+/// Whether one fixed generated asset belongs to another Spice build.
+///
+/// The binary is deliberately excluded: its selected bytes come from the
+/// caller rather than an embedded build asset, and [`super::rebuilt_binary`]
+/// compares that explicit input. A retired asset is rejected structurally
+/// before this predicate can participate in refresh selection.
+pub(super) fn fixed_content_differs_from_current_build(operation: &Operation) -> bool {
+    let expected = match operation.asset {
+        Asset::GitPreCommit => GeneratedImage::new(EXECUTABLE_MODE, GIT_PRE_COMMIT.as_bytes()),
+        Asset::GitCommitMessage => {
+            GeneratedImage::new(EXECUTABLE_MODE, GIT_COMMIT_MESSAGE.as_bytes())
+        }
+        Asset::GitReferenceTransaction => {
+            GeneratedImage::new(EXECUTABLE_MODE, GIT_REFERENCE_TRANSACTION.as_bytes())
+        }
+        Asset::HookEntry => {
+            GeneratedImage::new(EXECUTABLE_MODE, steer::hook::STAGES[0].bytes().as_bytes())
+        }
+        Asset::HookStatic => {
+            GeneratedImage::new(EXECUTABLE_MODE, steer::hook::STAGES[1].bytes().as_bytes())
+        }
+        Asset::Skill => GeneratedImage::new(DATA_MODE, SKILL.as_bytes()),
+        Asset::Exclusions | Asset::Binary => return false,
+    };
+    operation.generated != expected
+}
+
 fn validate_introduced_parents(
     operation: &Operation,
     introduced: &mut BTreeSet<(Location, String)>,
