@@ -273,7 +273,7 @@ fn run_install(arguments: Vec<OsString>) -> ExitCode {
         return ExitCode::from(USAGE_EXIT);
     };
     let mut output = io::stdout().lock();
-    match xtask::refresh(&request, &mut output) {
+    match xtask::refresh(&request, &release_environment(), &mut output) {
         Ok(_) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");

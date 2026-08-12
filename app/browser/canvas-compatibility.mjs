@@ -82,6 +82,13 @@ async function assertProtocolReplacement(browser, endpoint, mode) {
       );
     }),
   ]).finally(() => clearTimeout(topologyDeadline));
+  await waitForPageFunction(
+    page,
+    `the replacement document admits topology revision ${observedTopologyRevision}`,
+    CONNECT_MS,
+    (revision) => document.querySelector(".shell")?.dataset.topologyRevision === String(revision),
+    observedTopologyRevision,
+  );
 
   assert.equal(bootstraps, 2, `one ${mode} header causes exactly one current-root reload`);
   assert.equal(sockets, 1, `the ${mode} header opens no socket before the reload`);
