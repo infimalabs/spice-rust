@@ -40,11 +40,29 @@ impl std::fmt::Display for CanvasVersion {
     }
 }
 
+/// A Canvas protocol header that is not its one unsigned decimal spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanvasVersionParseError;
+
+impl std::fmt::Display for CanvasVersionParseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            "Canvas version must be a canonical unsigned decimal integer without padding",
+        )
+    }
+}
+
+impl std::error::Error for CanvasVersionParseError {}
+
 impl std::str::FromStr for CanvasVersion {
-    type Err = std::num::ParseIntError;
+    type Err = CanvasVersionParseError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        value.parse().map(Self)
+        let parsed = value.parse::<u32>().map_err(|_| CanvasVersionParseError)?;
+        if parsed.to_string() != value {
+            return Err(CanvasVersionParseError);
+        }
+        Ok(Self(parsed))
     }
 }
 

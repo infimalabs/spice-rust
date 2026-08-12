@@ -81,7 +81,7 @@ fn canvas_version_has_one_http_header_spelling() {
         CanvasVersion::CURRENT.to_string().parse(),
         Ok(CanvasVersion::CURRENT)
     );
-    for malformed in ["", "current", "-1", "1.0"] {
+    for malformed in ["", "current", "-1", "1.0", "+1", "01", " 1", "1 "] {
         assert!(
             malformed.parse::<CanvasVersion>().is_err(),
             "malformed Canvas version was admitted: {malformed:?}"
