@@ -145,6 +145,14 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     task.abort();
 }
 
+#[test]
+fn the_wasm_query_separator_is_only_admitted_when_empty() {
+    let serialized = format!("auth={REMOTE_TOKEN}&");
+    assert_eq!(query_secret(Some(&serialized)), Some(REMOTE_TOKEN));
+    let ambiguous = format!("auth={REMOTE_TOKEN}&other=value");
+    assert_eq!(query_secret(Some(&ambiguous)), None);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
     let app = TestApp::new();

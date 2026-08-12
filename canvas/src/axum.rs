@@ -343,9 +343,12 @@ impl Binding {
 }
 
 fn query_secret(query: Option<&str>) -> Option<&str> {
-    query?
-        .strip_prefix("auth=")
-        .filter(|secret| !secret.is_empty() && !secret.contains('&'))
+    let secret = query?.strip_prefix("auth=")?;
+    // `gloo_net` serializes the Wasm client's sole query parameter with one
+    // empty trailing separator. Admit that exact spelling without admitting a
+    // second parameter or broadening the credential grammar.
+    let secret = secret.strip_suffix('&').unwrap_or(secret);
+    (!secret.is_empty() && !secret.contains('&')).then_some(secret)
 }
 
 /// Which `Host` headers a bound listener answers to.
