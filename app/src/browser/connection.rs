@@ -240,18 +240,24 @@ async fn open_socket(
     speech: &UseStateHandle<wire::SpeechPlayback>,
     signal: &web_sys::AbortSignal,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
-    let discovery: wire::CanvasBootstrap = Request::get(&authenticated_path(
+    let response = Request::get(&authenticated_path(
         "/bootstrap",
         browser_auth_token()?.as_deref(),
     ))
     .abort_signal(Some(signal))
     .send()
     .await
-    .map_err(|error| format!("bootstrap request failed: {error}"))?
-    .json()
-    .await
-    .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
-    if let Err(fault) = Session::admit_canvas(discovery.canvas) {
+    .map_err(|error| format!("bootstrap request failed: {error}"))?;
+    let canvas = response
+        .headers()
+        .get(wire::hello::CANVAS_VERSION_HEADER)
+        .map(|value| {
+            value
+                .parse::<wire::CanvasVersion>()
+                .map_err(|error| format!("bootstrap Canvas version header was invalid: {error}"))
+        })
+        .transpose()?;
+    if let Err(fault) = Session::admit_canvas(canvas) {
         web_sys::window()
             .ok_or_else(|| "browser window is unavailable".to_owned())?
             .location()
@@ -262,6 +268,10 @@ async fn open_socket(
             fault.reason, fault.detail
         ));
     }
+    let discovery: wire::CanvasBootstrap = response
+        .json()
+        .await
+        .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
     speech.set(discovery.speech.clone());
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery

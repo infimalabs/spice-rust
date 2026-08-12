@@ -2,7 +2,6 @@ use wire::{CanonicalUuid, CanvasBootstrap, CanvasVersion};
 
 const CANVAS_BOOTSTRAP: &str = r#"{
   "endpoint": "http://127.0.0.1:48123",
-  "canvas": 1,
   "capability": "018f82d4-6f59-7d06-92e3-bce9131163c6",
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "speech": {
@@ -28,11 +27,10 @@ fn round_trip(document: &str) -> CanvasBootstrap {
 }
 
 #[test]
-fn canvas_bootstrap_has_one_strict_current_generation_shape() {
+fn canvas_bootstrap_has_one_strict_body_shape() {
     let bootstrap = round_trip(CANVAS_BOOTSTRAP);
 
     assert_eq!(bootstrap.endpoint, "http://127.0.0.1:48123");
-    assert_eq!(bootstrap.canvas, CanvasVersion::CURRENT);
     assert_eq!(
         bootstrap.capability,
         uuid("018f82d4-6f59-7d06-92e3-bce9131163c6")
@@ -49,7 +47,7 @@ fn canvas_bootstrap_has_one_strict_current_generation_shape() {
         }
     );
 
-    for field in ["endpoint", "canvas", "capability", "epoch", "speech"] {
+    for field in ["endpoint", "capability", "epoch", "speech"] {
         let mut value: serde_json::Value =
             serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
         value
@@ -74,4 +72,59 @@ fn canvas_bootstrap_has_one_strict_current_generation_shape() {
             "malformed speech playback was admitted: {malformed}"
         );
     }
+}
+
+#[test]
+fn canvas_version_has_one_http_header_spelling() {
+    assert_eq!(wire::hello::CANVAS_VERSION_HEADER, "x-spice-canvas-version");
+    assert_eq!(
+        CanvasVersion::CURRENT.to_string().parse(),
+        Ok(CanvasVersion::CURRENT)
+    );
+    for malformed in ["", "current", "-1", "1.0"] {
+        assert!(
+            malformed.parse::<CanvasVersion>().is_err(),
+            "malformed Canvas version was admitted: {malformed:?}"
+        );
+    }
+}
+
+#[test]
+fn strict_bootstrap_body_preserves_the_pre_version_shape() {
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PriorCanvasBootstrap {
+        endpoint: String,
+        capability: CanonicalUuid,
+        epoch: CanonicalUuid,
+        speech: wire::SpeechPlayback,
+    }
+
+    let current: CanvasBootstrap =
+        wire::decode(CANVAS_BOOTSTRAP.as_bytes()).expect("current bootstrap decodes");
+    let bytes = wire::encode(&current).expect("current bootstrap encodes");
+    let prior: PriorCanvasBootstrap =
+        wire::decode(&bytes).expect("the prior strict bootstrap shape reads the current body");
+    assert_eq!(prior.endpoint, current.endpoint);
+    assert_eq!(prior.capability, current.capability);
+    assert_eq!(prior.epoch, current.epoch);
+    assert_eq!(prior.speech, current.speech);
+
+    let mut five_field: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("current body is JSON");
+    five_field
+        .as_object_mut()
+        .expect("bootstrap is an object")
+        .insert("canvas".to_owned(), serde_json::json!(1));
+    let five_field = serde_json::to_vec(&five_field).expect("five-field fixture encodes");
+    let error = wire::decode::<PriorCanvasBootstrap>(&five_field)
+        .expect_err("the pre-version strict decoder reproduces the screenshot");
+    assert!(
+        error.to_string().contains("unknown field `canvas`"),
+        "{error}"
+    );
+    assert!(
+        wire::decode::<CanvasBootstrap>(&five_field).is_err(),
+        "the current strict body must not retain an alternate five-field path"
+    );
 }
