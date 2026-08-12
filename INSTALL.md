@@ -154,17 +154,21 @@ cargo xtask app
 "$SPICE_BIN" up
 ```
 
-The default `127.0.0.1:8767` avoids the predecessor serve resident's ports. It
-binds or refuses — there is no fallback resolver, by intent, because the
-operator's browser holds the URL. Name `--port PORT` to override it; `--port 0`
-takes any free port, at the cost of a URL that changes on every start.
+`up` launches this exact executable as a detached resident in its own process
+group and returns one endpoint-and-epoch reply only after discovery publication
+and an authenticated bootstrap probe. The default `127.0.0.1:8767` avoids the
+predecessor serve resident's ports. It binds or refuses — there is no fallback
+resolver. Name `--port PORT` to override it; `--port 0` takes any free port.
 
 `cargo xtask app` publishes one immutable generation into this worktree's
 ignored `dist/stage-app`, and the resident refuses to start without a complete
-one. The start announces the exact URL on standard output, after reading back
-the discovery file it just published and admitting it; `--open` has it open the
-default browser too. [README.md](README.md) carries the non-loopback bind and
-its bearer token.
+one. `--open` opens the default browser. Use `up --foreground` for an attached
+process whose caller owns signals, the streaming endpoint announcement, and its
+terminal outcome. Detached diagnostics append to the owner-only
+`$SPICE_COMMON/.spice-rs/resident.log`. A failed start returns its exact refusal;
+inspect that log for preceding runtime diagnostics, repair the named cause, and
+run `up` again. [README.md](README.md) carries the non-loopback bind and its
+one-shot bearer-token handoff.
 
 Discovery is a single file, `$SPICE_COMMON/.spice-rs/canvas`. A resident withdraws
 it on exit, `up` clears a stale one after taking the resident lock
@@ -226,13 +230,12 @@ cargo test --locked -p spice --lib install::tests::refresh
 ```
 
 The previous executable is copied to `target/spice-develop/spice.rollback`
-before anything moves and reinstalled if the install or the readiness wait
-fails; the reported failure is the one that forced the restore, not the
-restore. The restarted resident logs to `target/spice-develop/resident.log`,
-and readiness means it published a discovery it also answers on. A start that
-never got there reports that log's last line, because the refusal explaining it
-— `canvas::bind-failed` for a taken port — is written by the resident and
-nowhere else.
+before anything moves and reinstalled if installation or the sole daemon
+launcher fails; the reported failure is the one that forced the restore, not
+the restore. Upgrade consumes the same typed authenticated readiness reply as a
+direct `up` and adds no second discovery wait or connection probe. The restarted
+resident writes the same Git-common `.spice-rs/resident.log` as every detached
+start.
 
 `.spice-install` lives under the Git common directory, so an upgrade is
 repository-wide: every linked worktree sees the new executable at once, and no

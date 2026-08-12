@@ -96,6 +96,8 @@ pub enum RefreshError {
     ResidentStop,
     /// `down` refused while the endpoint was still answering.
     ResidentStopRefused(String),
+    /// The sole daemon launcher returned its exact startup refusal.
+    ResidentStartRefused(String),
     /// The resident exited before it was ready.
     ResidentExited(Option<i32>),
     /// The resident never published an endpoint it answers on.
@@ -126,6 +128,9 @@ impl fmt::Display for RefreshError {
                 formatter,
                 "down refused and the endpoint is still answering: {refusal}"
             ),
+            Self::ResidentStartRefused(refusal) => {
+                write!(formatter, "resident start refused: {refusal}")
+            }
             Self::ResidentExited(code) => match code {
                 Some(code) => write!(formatter, "resident exited with status {code}"),
                 None => write!(formatter, "resident exited on a signal"),

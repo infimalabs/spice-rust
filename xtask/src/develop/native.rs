@@ -10,8 +10,6 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
 
 use spice::install::{self, InstallError, InstallPreview};
 use spice::repository::Repository;
@@ -21,15 +19,6 @@ use wire::Digest;
 const WORKSPACE: &str = "target/spice-develop";
 /// Executable parked before a refresh so a failure can restore it.
 const ROLLBACK: &str = "spice.rollback";
-/// Where a restarted resident's own diagnostics land.
-const RESIDENT_LOG: &str = "resident.log";
-/// Longest wait for a restarted resident to publish its discovery.
-const READINESS_HORIZON: Duration = Duration::from_secs(30);
-/// Gap between discovery polls while waiting for readiness.
-const READINESS_INTERVAL: Duration = Duration::from_millis(100);
-/// Longest wait for a stopped resident to withdraw its discovery.
-const SHUTDOWN_HORIZON: Duration = Duration::from_secs(15);
-
 use super::{RefreshError, RefreshReport, RefreshRequest};
 
 /// Build the current tree, republish the appliance, and restart its resident.
@@ -376,12 +365,12 @@ fn stop(
         writeln!(output, "nothing answers the endpoint; continuing")?;
         return Ok(());
     }
-    let deadline = Instant::now() + SHUTDOWN_HORIZON;
-    while answering(repository) {
-        if Instant::now() >= deadline {
-            return Err(RefreshError::ResidentStop);
-        }
-        sleep(READINESS_INTERVAL);
+    // `spice down` does not return until discovery is withdrawn and the
+    // resident lock has been reacquired by its client-side release verifier.
+    // This one postcondition check catches a broken contract without creating a
+    // second wait mechanism in the upgrader.
+    if answering(repository) {
+        return Err(RefreshError::ResidentStop);
     }
     Ok(())
 }
@@ -421,9 +410,8 @@ fn restart(
     if !request.restart {
         return Ok(None);
     }
-    let log = fs::File::create(workspace(repository)?.join(RESIDENT_LOG))?;
     let mut command = Command::new(installed);
-    command.arg("up");
+    command.args(["--json", "up"]);
     let (host, port) = endpoint;
     if let Some(host) = host {
         command.args(["--host", host]);
@@ -431,74 +419,30 @@ fn restart(
     if let Some(port) = port {
         command.args(["--port", &port.to_string()]);
     }
-    let mut child = command
-        .current_dir(repository.worktree_root())
-        .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log)
-        .spawn()?;
-    match ready(repository, &mut child, READINESS_HORIZON) {
-        Ok(endpoint) => {
-            writeln!(output, "resident ready at {endpoint}")?;
-            Ok(Some(endpoint))
-        }
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            report_resident_log(repository, output);
-            Err(error)
-        }
+    let answer = command.current_dir(repository.worktree_root()).output()?;
+    if !answer.status.success() {
+        let refusal = refusal_text(&answer.stderr);
+        writeln!(
+            output,
+            "resident start refused ({}): {refusal}",
+            answer.status
+        )?;
+        return Err(RefreshError::ResidentStartRefused(refusal));
     }
-}
-
-/// Surface the resident's own diagnostic for a start that did not come up.
-///
-/// The refusal that explains the failure is written by the resident, into the
-/// log this command redirected it to; the refresh itself can only observe an
-/// exit status or a horizon. Reporting the status alone leaves the developer
-/// holding a number whose reason is one file away and unnamed.
-fn report_resident_log(repository: &Repository, output: &mut impl Write) {
-    let Ok(workspace) = workspace(repository) else {
-        return;
+    let ready =
+        wire::decode::<wire::Outcome<wire::CanvasOpen>>(&answer.stdout).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("resident readiness reply did not decode: {error}"),
+            )
+        })?;
+    let wire::Outcome::Reply(ready) = ready else {
+        return Err(RefreshError::ResidentStartRefused(format!(
+            "successful resident launcher returned {ready:?}"
+        )));
     };
-    let log = workspace.join(RESIDENT_LOG);
-    let last = fs::read_to_string(&log).ok().and_then(|text| {
-        text.lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .map(str::to_owned)
-    });
-    let _ = match last {
-        Some(line) => writeln!(output, "resident log {}: {line}", log.display()),
-        None => writeln!(output, "resident log {} recorded nothing", log.display()),
-    };
-}
-
-/// Wait for the resident to publish a discovery it also answers on.
-///
-/// A published discovery outlives the process that wrote it, so the record
-/// alone is not readiness: the endpoint it names has to accept a connection,
-/// and the resident has to still be running when it does.
-fn ready(
-    repository: &Repository,
-    child: &mut std::process::Child,
-    horizon: Duration,
-) -> Result<String, RefreshError> {
-    let deadline = Instant::now() + horizon;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Err(RefreshError::ResidentExited(status.code()));
-        }
-        if let Some(endpoint) = read_endpoint(repository)
-            && listening(&endpoint)
-        {
-            return Ok(endpoint);
-        }
-        if Instant::now() >= deadline {
-            return Err(RefreshError::ResidentUnready);
-        }
-        sleep(READINESS_INTERVAL);
-    }
+    writeln!(output, "resident ready at {}", ready.body.endpoint)?;
+    Ok(Some(ready.body.endpoint))
 }
 
 /// Whether a published endpoint accepts a connection right now.

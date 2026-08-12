@@ -107,7 +107,7 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
 export async function startResident(fixture) {
   const canvas = join(fixture, ".git/.spice-rs/canvas");
   await mkdir(dirname(canvas), { recursive: true });
-  const child = spawn(binary, ["--json", "up", "--port", "0"], {
+  const child = spawn(binary, ["--json", "up", "--foreground", "--port", "0"], {
     cwd: fixture,
     stdio: ["ignore", "pipe", "pipe"],
   });

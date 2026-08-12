@@ -28,6 +28,7 @@ fn is_simulated_lane(lane: &wire::LaneResidency) -> bool {
 
 mod capture;
 mod command_surface;
+mod daemon;
 mod effort_surface;
 mod lane_recovery;
 mod lane_surface;
@@ -51,6 +52,7 @@ use message_surface::{CallPreviews, CaptureSurfaces, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 
 mod runtime;
+pub(crate) use daemon::*;
 pub(super) use runtime::*;
 mod ingest_surface;
 use ingest_surface::*;

@@ -23,6 +23,12 @@ lane, resident, or repository as a real refusal; do not fall back to another
 runtime or infer work from this skill invocation.
 
 Start the shared installed appliance with `$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice up`.
+That command daemonizes and returns only after authenticated readiness, with the
+admitted endpoint in its reply. Use `up --foreground` only when the caller must
+own the attached process and its signals. Detached diagnostics are in the
+Git-common `.spice-rs/resident.log`; `spice down` drains and ends that resident.
+Bearer tokens cross to a detached child through a one-shot private handoff and
+must not be copied into process arguments, environment, discovery, or logs.
 
 ## Work loop
 

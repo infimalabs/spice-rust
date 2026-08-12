@@ -46,6 +46,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
                 open: false,
                 progress: &mut progress,
                 endpoint: &mut endpoint,
+                daemon: None,
             },
         )
         .await

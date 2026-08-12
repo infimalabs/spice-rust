@@ -401,7 +401,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["up"],
-        "up [--host HOST] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open]",
+        "up [--foreground] [--host HOST] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open]",
         Local,
         Resident,
         [JournalMigrated, TrustPended, UpSeated],

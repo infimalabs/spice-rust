@@ -43,27 +43,25 @@ cargo xtask app
 "$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice" up
 ```
 
-That resident serves the HTML, JavaScript, stylesheet, and WASM built in this
-worktree's ignored `dist/stage-app` generation store. `cargo xtask app`
-finalizes all four files away from the served path and atomically publishes one
-immutable generation, so rebuilding cannot mix a page's assets. The resident
-refuses to start when no complete generation is active. There is no separate
-command to open the app: the start above announces the exact URL on its
-standard output, and adding `--open` has the resident open the default browser
-too.
+That command starts this exact executable, detached in its own process group.
+It returns an endpoint-and-epoch reply after owner-only discovery and an
+authenticated `/bootstrap` agree on the resident generation. `--json` uses the
+typed envelope; `--open` opens the browser.
 
 ```
-canvas endpoint: http://127.0.0.1:8767
+{"endpoint":"http://127.0.0.1:8767","epoch":"..."}
 ```
 
-That URL is announced only after the resident reads back the discovery file it
-just published and admits it, so it has already passed the same ownership,
-loopback-origin, and generation checks a client applies. `127.0.0.1:8767` is
-the default; `--host` and `--port` bind a different address, and `--port 0`
-takes any free port. The default avoids the predecessor serve resident's ports;
-it binds or refuses with no fallback. The listener is IPv4 loopback unless
-`--host` names another address of this machine, so by default the app is
-reachable only from the host running it.
+`up --foreground` instead leaves the process, signals, streaming
+`canvas endpoint:` line, and terminal outcome attached. Detached diagnostics
+append to Git-common `.spice-rs/resident.log`. `spice down` drains and ends the
+resident after withdrawing discovery and releasing its lock. Startup failures
+return directly; a second `up` names the unchanged holder.
+
+The resident serves the immutable HTML, JavaScript, CSS, and WASM generation
+that `cargo xtask app` publishes under ignored `dist/stage-app`; it refuses an
+incomplete generation. `127.0.0.1:8767` is the no-fallback default. `--host` and
+`--port` override it, while `--port 0` takes a free port.
 
 A non-loopback listener requires explicit consent and a URL-safe bearer token:
 
@@ -73,14 +71,11 @@ A non-loopback listener requires explicit consent and a URL-safe bearer token:
   --auth-token correct-horse-battery-staple --open
 ```
 
-The announced and opened local URL ends in
-`#correct-horse-battery-staple`. The fragment stays outside the HTTP origin;
-the Canvas app presents it only on authenticated bootstrap and speech requests.
-Bootstrap returns the capability used for the socket. A wildcard bind
-intentionally announces loopback because it has no single routable address.
-From a VPN browser, replace `127.0.0.1` with the resident host's VPN address,
-keep the announced port and `#TOKEN`, and open that URL. Never put the token
-before `#`.
+Readiness uses that token, but the reply contains only endpoint and epoch. A
+one-shot private descriptor keeps it out of argv, environment, discovery, log
+URLs, and replies. `--open` appends it as a URL fragment, outside the HTTP
+origin. Wildcard binds publish loopback; for a VPN browser, replace
+`127.0.0.1` with the host's VPN address, keep the port, and append `#TOKEN`.
 
 This appliance installs beside the Python predecessor for reversible
 preparation. Coexistence is not a permanent command-routing contract: the
