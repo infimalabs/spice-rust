@@ -224,7 +224,9 @@ fn main() {
     deliver(&outcome, form);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 mod main_native_runtime;
+#[cfg(not(target_arch = "wasm32"))]
 use main_native_runtime::{
     deliver_mount_refusal, load_mounted_registry, mount_error_is_ignorable, mounted_registry,
     resident_up, run_mounted,
