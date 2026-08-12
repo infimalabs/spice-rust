@@ -320,12 +320,13 @@ fn an_uninstalled_prior_build_receipt_is_superseded_by_a_current_digest_bound_in
     }));
 }
 
-/// Only a terminal uninstalled receipt may carry another build's fixed bytes.
+/// A live receipt without an installed executable remains current-build bound.
 ///
 /// Each live status is produced through its real progress route before its
 /// recorded skill identity is changed. Planning must refuse at record admission
-/// and leave the partially applied, complete, or partially restored targets
-/// exactly as they were.
+/// and leave the partially applied, binary-less complete, or partially restored
+/// targets exactly as they were. The completed appliance exception is tested
+/// separately with the installed binary that anchors its prior build.
 #[test]
 fn every_nonterminal_receipt_remains_bound_to_current_build_assets() {
     for status in [
@@ -488,6 +489,141 @@ fn refresh_publishes_the_rebuilt_executable_without_withdrawing_anything() {
         observed.samples,
         observed.binary_images.len()
     );
+}
+
+/// An intact completed appliance is the authority for its own old fixed bytes.
+///
+/// The installed binary makes this a build-bearing receipt. A linked worktree
+/// can therefore preview the current build over it without first withdrawing
+/// anything, while reversal through the new build remains refused: upgrade is
+/// the one current path.
+#[test]
+fn a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying() {
+    let scratch = Scratch::new("refresh-prior-fixed");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"one installed build\n");
+    let installed = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &installed.digest().unwrap()).unwrap();
+    let historical = [
+        (Asset::GitPreCommit, EXECUTABLE_MODE),
+        (Asset::GitCommitMessage, EXECUTABLE_MODE),
+        (Asset::GitReferenceTransaction, EXECUTABLE_MODE),
+        (Asset::HookEntry, EXECUTABLE_MODE),
+        (Asset::HookStatic, EXECUTABLE_MODE),
+        (Asset::Skill, DATA_MODE),
+    ]
+    .map(|(asset, mode)| {
+        let bytes = format!("prior build generated {asset:?}\n");
+        let generated =
+            install_completed_historical_asset(&repository, asset, mode, bytes.as_bytes());
+        (asset, generated)
+    });
+    fs::write(&binary, b"current selected build\n").unwrap();
+    set_test_mode(&binary, EXECUTABLE_MODE);
+    let prior_record = fs::read(record_path(&repository).unwrap()).unwrap();
+    let prior_images = images(&repository, &installed);
+
+    let linked = scratch.join("linked");
+    let linked_git = repository
+        .common_dir()
+        .join("worktrees/refresh-prior-fixed");
+    fs::create_dir(&linked).unwrap();
+    fs::create_dir_all(&linked_git).unwrap();
+    fs::write(
+        linked.join(".git"),
+        format!("gitdir: {}\n", linked_git.display()),
+    )
+    .unwrap();
+    fs::write(linked_git.join("commondir"), "../..\n").unwrap();
+    let linked_repository = Repository::discover(&linked).unwrap();
+
+    let reversal = unapply(&linked_repository)
+        .expect_err("another build must refresh rather than reverse the live receipt");
+    assert!(
+        matches!(reversal, InstallError::InvalidRecord(_)),
+        "cross-build reversal refused for the wrong reason: {reversal}"
+    );
+    assert_eq!(
+        fs::read(record_path(&repository).unwrap()).unwrap(),
+        prior_record
+    );
+    assert_eq!(images(&repository, &installed), prior_images);
+
+    let refreshed = plan(&linked_repository, Some(&binary))
+        .expect("an intact prior build derives one current refresh");
+    for (asset, generated) in &historical {
+        let operation = refreshed
+            .operations()
+            .iter()
+            .find(|operation| operation.asset() == *asset)
+            .expect("the refresh owns every fixed generated asset");
+        assert_eq!(operation.superseded(), Some(generated));
+        assert_ne!(operation.generated(), generated);
+    }
+    assert_eq!(
+        fs::read(record_path(&repository).unwrap()).unwrap(),
+        prior_record
+    );
+    assert_eq!(images(&repository, &installed), prior_images);
+
+    let digest = refreshed.digest().unwrap();
+    let receipt = apply(&linked_repository, Some(&binary), &digest)
+        .expect("the exact cross-build refresh applies");
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    for (asset, _) in historical {
+        let operation = refreshed
+            .operations()
+            .iter()
+            .find(|operation| operation.asset() == asset)
+            .expect("the current plan keeps every fixed generated asset");
+        let expected = materialize_generated(operation, Some(&binary)).unwrap();
+        assert_eq!(
+            fs::read(operation.destination(&repository)).unwrap(),
+            expected.bytes()
+        );
+    }
+    assert_eq!(
+        fs::read(installed_binary(&repository)).unwrap(),
+        b"current selected build\n"
+    );
+    assert_eq!(
+        installed_binary(&repository),
+        installed_binary(&linked_repository)
+    );
+    assert_eq!(
+        plan(&repository, Some(&binary)).unwrap().digest().unwrap(),
+        digest
+    );
+}
+
+/// Historical admission does not turn a rewritten receipt into authority.
+/// The on-disk skill still belongs to the original receipt, so changing only
+/// its recorded digest is detected as drift before a refresh plan can exist.
+#[test]
+fn a_rewritten_complete_receipt_cannot_invent_a_prior_build_asset() {
+    let scratch = Scratch::new("refresh-prior-tamper");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"installed build\n");
+    let installed = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &installed.digest().unwrap()).unwrap();
+    let before = images(&repository, &installed);
+
+    rewrite_recorded_asset(
+        &repository,
+        Asset::Skill,
+        DATA_MODE,
+        b"receipt-only invented skill\n",
+    );
+    let rewritten_record = fs::read(record_path(&repository).unwrap()).unwrap();
+    let error = plan(&repository, Some(&binary))
+        .expect_err("a receipt-only build rewrite must not authorize refresh");
+
+    assert!(matches!(error, InstallError::Drift { path, .. } if path == SKILL_PATH));
+    assert_eq!(
+        fs::read(record_path(&repository).unwrap()).unwrap(),
+        rewritten_record
+    );
+    assert_eq!(images(&repository, &installed), before);
 }
 
 /// A rebuilt executable is explicit authority to replace one exact drifted
@@ -901,6 +1037,49 @@ fn rewrite_recorded_asset(repository: &Repository, asset: Asset, mode: u32, byte
         wire::encode(&record).expect("changed record encodes canonically"),
     )
     .expect("changed build receipt installs");
+}
+
+/// Replace one completed receipt asset and its installed image coherently.
+///
+/// This is the state a previous build really leaves, unlike
+/// [`rewrite_recorded_asset`], which deliberately changes only the claim.
+fn install_completed_historical_asset(
+    repository: &Repository,
+    asset: Asset,
+    mode: u32,
+    bytes: &[u8],
+) -> GeneratedImage {
+    let mut record = read_record(repository)
+        .expect("current record reads before the simulated build boundary")
+        .expect("an install record exists")
+        .record;
+    assert_eq!(record.status, InstallStatus::Complete);
+    assert!(
+        binary_operation(&record.plan).is_some(),
+        "only an installed executable anchors prior-build fixed assets"
+    );
+    let index = record
+        .plan
+        .operations
+        .iter()
+        .position(|operation| operation.asset == asset)
+        .expect("the canonical plan carries the historical asset");
+    let destination = record.plan.operations[index].destination(repository);
+    fs::write(&destination, bytes).expect("historical installed asset writes");
+    set_test_mode(&destination, mode);
+    let observed = observe(&destination)
+        .expect("historical installed asset reads")
+        .expect("historical installed asset exists");
+    let historical = observed.generated();
+    record.plan.operations[index].generated = historical.clone();
+    record.installed[index] = Some(observed.generation);
+    record.plan_digest = record.plan.digest().expect("historical plan has a digest");
+    fs::write(
+        record_path(repository).expect("record path resolves"),
+        wire::encode(&record).expect("historical record encodes canonically"),
+    )
+    .expect("historical build receipt installs");
+    historical
 }
 
 fn run(path: &Path) -> Vec<u8> {
