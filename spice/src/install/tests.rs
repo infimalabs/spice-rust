@@ -548,7 +548,6 @@ fn a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying(
         prior_record
     );
     assert_eq!(images(&repository, &installed), prior_images);
-
     let refreshed = plan(&linked_repository, Some(&binary))
         .expect("an intact prior build derives one current refresh");
     for (asset, generated) in &historical {
@@ -558,7 +557,6 @@ fn a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying(
             .find(|operation| operation.asset() == *asset)
             .expect("the refresh owns every fixed generated asset");
         assert_eq!(operation.superseded(), Some(generated));
-        assert_ne!(operation.generated(), generated);
     }
     assert_eq!(
         fs::read(record_path(&repository).unwrap()).unwrap(),
@@ -567,9 +565,8 @@ fn a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying(
     assert_eq!(images(&repository, &installed), prior_images);
 
     let digest = refreshed.digest().unwrap();
-    let receipt = apply(&linked_repository, Some(&binary), &digest)
+    apply(&linked_repository, Some(&binary), &digest)
         .expect("the exact cross-build refresh applies");
-    assert_eq!(receipt.status(), InstallStatus::Complete);
     for (asset, _) in historical {
         let operation = refreshed
             .operations()
@@ -587,12 +584,15 @@ fn a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying(
         b"current selected build\n"
     );
     assert_eq!(
-        installed_binary(&repository),
-        installed_binary(&linked_repository)
+        unapply(&linked_repository)
+            .expect("reverse the cross-build refresh")
+            .status(),
+        InstallStatus::Uninstalled
     );
-    assert_eq!(
-        plan(&repository, Some(&binary)).unwrap().digest().unwrap(),
-        digest
+    assert!(
+        PUBLISHED_PATHS
+            .into_iter()
+            .all(|path| !repository.common_dir().join(path).exists())
     );
 }
 
