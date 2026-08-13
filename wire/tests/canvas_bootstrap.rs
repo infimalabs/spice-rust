@@ -78,6 +78,11 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
 fn canvas_version_has_one_http_header_spelling() {
     assert_eq!(wire::hello::CANVAS_VERSION_HEADER, "x-spice-canvas-version");
     assert_eq!(
+        CanvasVersion::CURRENT,
+        CanvasVersion(2),
+        "generation 2 replaces the zero-capacity Mosaic runtime"
+    );
+    assert_eq!(
         CanvasVersion::CURRENT.to_string().parse(),
         Ok(CanvasVersion::CURRENT)
     );
