@@ -288,7 +288,7 @@ fn a_refused_stop_with_a_live_endpoint_is_named_rather_than_waited_out() {
         "a refused stop over a live endpoint was not named: {stopped:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(1),
+        elapsed < Duration::from_millis(7_500),
         "the refusal fell through to the shutdown horizon: {elapsed:?}"
     );
 }

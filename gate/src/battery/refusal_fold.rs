@@ -282,7 +282,10 @@ fn arm_fold(result: &BatteryArmResult) -> ArmFold {
         result.gate_id(),
         result.state().as_str()
     );
-    let command = format!("  full-evidence: cargo xtask gate {}\n", result.gate_id());
+    let command = format!(
+        "  full-evidence: cargo xtask gate --report {}\n",
+        result.gate_id()
+    );
     ArmFold {
         full: format!("{identity}  reason={}\n{command}", quoted(result.reason())),
         fallback: format!("{identity}  reason=<omitted from bounded fold>\n{command}"),

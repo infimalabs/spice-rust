@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gate::{BatteryArmResult, BatteryReport, GateId};
+use gate::{BatteryArmResult, BatteryReport, FocusedArmReport, GateId};
 
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const FORMAT_ACTION: &str =
@@ -424,15 +424,37 @@ fn run_selected_gate(
     cargo_log: &Path,
     browser_log: &Path,
 ) -> BatteryArmResult {
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let default_output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["gate", "env-name-ledger"])
         .current_dir(&fixture.repository)
         .env(PROCESS_PATH, programs)
         .output()
-        .expect("launch one real gate arm");
+        .expect("launch one real gate arm with human output");
+    assert!(
+        default_output.status.success(),
+        "{}",
+        streams(&default_output)
+    );
+    assert!(
+        default_output.stdout.is_empty(),
+        "an admitting arm needs no human diagnostic: {}",
+        streams(&default_output)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "--report", "env-name-ledger"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, programs)
+        .output()
+        .expect("launch one real gate arm with machine output");
     assert!(output.status.success(), "{}", streams(&output));
-    let result: BatteryArmResult =
-        serde_json::from_slice(&output.stdout).expect("selected arm emits one JSON result");
+    let document = output
+        .stdout
+        .strip_suffix(b"\n")
+        .expect("machine report carries one terminal newline");
+    let report = FocusedArmReport::decode(document)
+        .expect("explicit report mode emits one canonical focused report");
+    let result = report.result().clone();
     assert_eq!(result.gate_id(), GateId::EnvNameLedger);
     assert!(!cargo_log.exists(), "selected arm launched a Cargo stage");
     assert!(
@@ -444,12 +466,43 @@ fn run_selected_gate(
 }
 
 fn run_refusing_selected_gate(fixture: &Fixture, programs: &Path) -> BatteryArmResult {
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let default_output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["gate", "file-shape"])
         .current_dir(&fixture.repository)
         .env(PROCESS_PATH, programs)
         .output()
-        .expect("launch the refusing file-shape gate arm");
+        .expect("launch the refusing file-shape gate arm with human output");
+    assert_eq!(
+        default_output.status.code(),
+        Some(1),
+        "{}",
+        streams(&default_output)
+    );
+    assert!(
+        default_output.stdout.len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES,
+        "focused diagnostic exceeded its bound: {}",
+        streams(&default_output)
+    );
+    let default_stdout = String::from_utf8_lossy(&default_output.stdout);
+    assert!(default_stdout.contains("gate=file-shape state=failed"));
+    assert!(default_stdout.contains("full-evidence: cargo xtask gate --report file-shape"));
+    assert!(
+        FocusedArmReport::decode(
+            default_output
+                .stdout
+                .strip_suffix(b"\n")
+                .unwrap_or_default()
+        )
+        .is_err(),
+        "ordinary refusal unexpectedly emitted its canonical machine report"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "--report", "file-shape"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, programs)
+        .output()
+        .expect("launch the refusing file-shape gate arm with machine output");
     assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
     let lines = output
         .stdout
@@ -458,11 +511,12 @@ fn run_refusing_selected_gate(fixture: &Fixture, programs: &Path) -> BatteryArmR
     assert_eq!(
         lines.iter().filter(|line| !line.is_empty()).count(),
         1,
-        "a refusing selected arm still emits exactly one machine row: {}",
+        "explicit report mode emits exactly one machine row: {}",
         streams(&output)
     );
-    let result: BatteryArmResult =
-        serde_json::from_slice(lines[0]).expect("refusing selected arm emits canonical JSON");
+    let report = FocusedArmReport::decode(lines[0])
+        .expect("refusing selected arm emits a canonical focused report");
+    let result = report.result().clone();
     assert_eq!(result.gate_id(), GateId::FileShape);
     assert!(!result.state().admits());
     assert!(!String::from_utf8_lossy(&output.stdout).contains("[verify]"));
@@ -651,12 +705,13 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
     assert!(
         stdout.contains(concat!(
             "cargo xtask <help|verify [--package PACKAGE]|",
-            "verify-action <selection|battery>|gate ARM|"
+            "verify-action <selection|battery>|gate [--report] ARM|"
         )),
         "{}",
         streams(&output)
     );
     assert!(stdout.contains("Neither is a completion verifier"));
+    assert!(stdout.contains("gate --report ARM emits one canonical machine report"));
     for gate_id in GateId::BATTERY {
         assert!(
             stdout
