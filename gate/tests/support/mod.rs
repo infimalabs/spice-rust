@@ -1,3 +1,4 @@
+use gate::metrics::BaselineCapture;
 use gate::{
     ActorCapture, ArmObservation, ArmOutcome, CORE_GATE_IDS, ClaimCapture, Contract, CoreArmInput,
     CoreArmReport, CoreEvidence, CoreInputs, CoreObservation, CoreReport, CoreSource, GateId,
@@ -254,9 +255,11 @@ pub(crate) fn acquired_inputs(
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let baselines = captured_baselines(repository, &contract);
     let source = CoreSource::capture(&tree, &contract, claim, actor, latches)
         .expect("capture one immutable core source");
-    let inputs = acquire_core(&source, &contract).expect("acquire one complete core battery");
+    let inputs =
+        acquire_core(&source, &contract, &baselines).expect("acquire one complete core battery");
 
     assert_eq!(
         inputs
@@ -276,6 +279,17 @@ pub(crate) fn acquired_inputs(
         );
     }
     inputs
+}
+
+/// Committed texts captured beside a direct core fixture source.
+pub(crate) fn captured_baselines(repository: &Tree, contract: &Contract) -> BaselineCapture {
+    let classes = contract.rule_policy().document().file_classes();
+    let mut suffixes = classes.file_shape().to_vec();
+    suffixes.extend(classes.complexity().iter().cloned());
+    suffixes.extend(classes.magic().iter().cloned());
+    suffixes.sort();
+    suffixes.dedup();
+    BaselineCapture::capture(&repository.root, &suffixes)
 }
 
 /// The one arm of an acquired report a test is speaking about.

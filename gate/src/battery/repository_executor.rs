@@ -59,6 +59,15 @@ enum FamilyExecution {
     Refused(String),
 }
 
+/// Core evidence and committed ancestry captured in one repository instant.
+struct CapturedCore {
+    source: Digest,
+    evidence: Option<Result<Vec<ArmEvidence>, String>>,
+    bounds: Vec<BoundDecision>,
+    observations: Vec<LatchObservation>,
+    baselines: BaselineCapture,
+}
+
 pub(super) enum VerifierContractAcquisition {
     Applicable(VerifierCompilerContract),
     NotApplicable(String),
@@ -166,52 +175,23 @@ impl<'trace> RepositoryExecutor<'trace> {
         let (state, actor) =
             state_run.bind(tree.paths(), tree.renames(), tree.publishes_state(), &actor)?;
         let latches = state.latches();
-        // One capture, taken once: the digest every arm is labelled with, the
-        // requested core acquisition and the bounds it decided, and the
-        // committed baselines every delta or merge-authorship decision reads
-        // are all read here, and nothing below this block can reach the live
-        // repository again. Suffix classes cover arms with class-bound jurisdictions;
-        // exact rim changes cover every-change arms such as local-paths, whose
-        // inputs may be extensionless. Both are retained together because a
-        // second capture could name a different commit than this report does.
-        let (source, core, mut bounds, mut observations, baselines) = {
-            let captured = match selected {
-                Some(gate_id) => CoreSource::capture_arm(
-                    &tree,
-                    &contract,
-                    claim,
-                    actor.clone(),
-                    latches,
-                    gate_id,
-                ),
-                None => CoreSource::capture(&tree, &contract, claim, actor.clone(), latches),
-            }
-            .map_err(|error| {
-                BatteryError::new(format!("cannot identify battery source: {error}"))
-            })?;
-            let (core, bounds, observations) = match selected {
-                None => {
-                    record_capture_analyses(&mut trace, ArmFamily::Core, CORE_GATE_IDS);
-                    let (evidence, bounds, observations) = core_family(&captured, &contract);
-                    (Some(evidence), bounds, observations)
-                }
-                Some(gate_id) if CORE_GATE_IDS.contains(&gate_id) => {
-                    record_capture_analyses(&mut trace, ArmFamily::Core, [gate_id]);
-                    let (evidence, bounds, observations) = core_arm(&captured, &contract, gate_id);
-                    (Some(evidence), bounds, observations)
-                }
-                Some(_) => (None, Vec::new(), Vec::new()),
-            };
-            let baselines =
-                capture_baselines(&repository, &contract, &rim, captured.clean_merge_tree());
-            (
-                captured.digest().clone(),
-                core,
-                bounds,
-                observations,
-                baselines,
-            )
-        };
+        let CapturedCore {
+            source,
+            evidence: core,
+            mut bounds,
+            mut observations,
+            baselines,
+        } = capture_core(
+            &repository,
+            &tree,
+            &contract,
+            claim,
+            &actor,
+            latches,
+            &rim,
+            selected,
+            &mut trace,
+        )?;
         let (metrics, metric_bounds, metric_observations) = match selected {
             None => {
                 record_capture_analyses(
@@ -534,6 +514,54 @@ impl BatteryExecutor for RepositoryExecutor<'_> {
     }
 }
 
+/// Capture core evidence and every committed comparison against one instant.
+///
+/// Suffix classes cover arms with class-bound jurisdictions; exact rim changes
+/// cover every-change arms such as local-paths, whose inputs may be
+/// extensionless. Both are retained together because a second capture could
+/// name a different commit than the report does.
+#[expect(clippy::too_many_arguments)]
+fn capture_core(
+    repository: &Path,
+    tree: &SelectedTree,
+    contract: &Contract,
+    claim: ClaimCapture,
+    actor: &ActorCapture,
+    latches: &[LatchEntry],
+    rim: &RimCapture,
+    selected: Option<GateId>,
+    trace: &mut Option<&mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+) -> Result<CapturedCore, BatteryError> {
+    let source = match selected {
+        Some(gate_id) => {
+            CoreSource::capture_arm(tree, contract, claim, actor.clone(), latches, gate_id)
+        }
+        None => CoreSource::capture(tree, contract, claim, actor.clone(), latches),
+    }
+    .map_err(|error| BatteryError::new(format!("cannot identify battery source: {error}")))?;
+    let baselines = capture_baselines(repository, contract, rim, source.clean_merge_tree());
+    let (evidence, bounds, observations) = match selected {
+        None => {
+            record_capture_analyses(trace, ArmFamily::Core, CORE_GATE_IDS);
+            let (evidence, bounds, observations) = core_family(&source, contract, &baselines);
+            (Some(evidence), bounds, observations)
+        }
+        Some(gate_id) if CORE_GATE_IDS.contains(&gate_id) => {
+            record_capture_analyses(trace, ArmFamily::Core, [gate_id]);
+            let (evidence, bounds, observations) = core_arm(&source, contract, &baselines, gate_id);
+            (Some(evidence), bounds, observations)
+        }
+        Some(_) => (None, Vec::new(), Vec::new()),
+    };
+    Ok(CapturedCore {
+        source: source.digest().clone(),
+        evidence,
+        bounds,
+        observations,
+        baselines,
+    })
+}
+
 fn capture_baselines(
     repository: &Path,
     contract: &Contract,
@@ -625,16 +653,17 @@ fn metrics_arm(
 fn core_family(
     source: &CoreSource<'_>,
     contract: &Contract,
+    baselines: &BaselineCapture,
 ) -> (
     Result<Vec<ArmEvidence>, String>,
     Vec<BoundDecision>,
     Vec<LatchObservation>,
 ) {
-    let (inputs, observations) = match crate::core::acquire_core_with_observations(source, contract)
-    {
-        Ok(acquisition) => acquisition,
-        Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
-    };
+    let (inputs, observations) =
+        match crate::core::acquire_core_with_observations(source, contract, baselines) {
+            Ok(acquisition) => acquisition,
+            Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
+        };
     let bounds = inputs.bounds().to_vec();
     let arms = evaluate_core(&inputs)
         .arms()
@@ -649,13 +678,15 @@ fn core_family(
 fn core_arm(
     source: &CoreSource<'_>,
     contract: &Contract,
+    baselines: &BaselineCapture,
     gate_id: GateId,
 ) -> (
     Result<Vec<ArmEvidence>, String>,
     Vec<BoundDecision>,
     Vec<LatchObservation>,
 ) {
-    let (input, bounds, observations) = match acquire_core_arm(source, contract, gate_id) {
+    let (input, bounds, observations) = match acquire_core_arm(source, contract, baselines, gate_id)
+    {
         Ok(acquisition) => acquisition,
         Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
     };

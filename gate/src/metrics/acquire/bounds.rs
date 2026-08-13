@@ -1,7 +1,6 @@
 //! Bounded metric rows and the exact observations their decisions consumed.
 
 use super::*;
-use crate::metrics::ResolvedMetricRule;
 
 /// One measured quantity's row, judged against the limit it was decided under.
 ///
@@ -42,7 +41,7 @@ fn bounded_evidence(
         &PolicyContext::new().with_path(path),
     )
     .map_err(|error| format!("{name} bound did not resolve for {path:?}: {error}"))?;
-    let committed_over_base = changed_committed_breach(&rule, committed, value);
+    let committed_over_base = rule.changed_committed_breach(committed, value);
     let binding = MetricStateBinding::new(
         metric,
         key.clone(),
@@ -104,7 +103,7 @@ fn bound_routine(
             metric.as_str()
         )
     })?;
-    let committed_over_base = changed_committed_breach(&rule, committed, value);
+    let committed_over_base = rule.changed_committed_breach(committed, value);
     let binding = MetricStateBinding::new(
         metric,
         key,
@@ -133,11 +132,4 @@ fn bound_routine(
         .measured(&decision)
         .map_err(|error| format!("{} evidence for {path:?}: {error}", metric.as_str()))?;
     Ok((evidence, (decision, observation)))
-}
-
-/// Whether an edited value inherited debt that already spent elastic headroom.
-fn changed_committed_breach(rule: &ResolvedMetricRule, committed: Option<u64>, value: u64) -> bool {
-    committed.is_some_and(|committed| {
-        !rule.unlimited() && committed > rule.base_limit() && committed != value
-    })
 }
