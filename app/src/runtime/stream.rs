@@ -112,7 +112,7 @@ impl CanvasRuntime {
             StreamFrame::Messages {
                 limit, messages, ..
             } => {
-                self.message_limit = *limit as usize;
+                self.message_limit = Some(*limit as usize);
                 self.messages.clear();
                 self.activities.clear();
                 for message in messages {
@@ -302,8 +302,10 @@ impl CanvasRuntime {
             return;
         }
         self.messages.push(message.clone());
-        if self.messages.len() > self.message_limit {
-            let excess = self.messages.len() - self.message_limit;
+        if let Some(limit) = self.message_limit
+            && self.messages.len() > limit
+        {
+            let excess = self.messages.len() - limit;
             self.messages.drain(..excess);
         }
     }
@@ -342,8 +344,8 @@ impl CanvasRuntime {
         // renderer takes the first matching row, while this history lets a
         // reconnect recognize an older identity replayed after newer work.
         self.activities.insert(0, activity);
-        if self.message_limit > 0 {
-            self.activities.truncate(self.message_limit);
+        if let Some(limit) = self.message_limit {
+            self.activities.truncate(limit);
         }
     }
 }

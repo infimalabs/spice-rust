@@ -105,7 +105,13 @@ async function assignTeamLaneIds(page) {
 ///
 /// Other independently runnable browser shards need a real lineage but must
 /// not replay the conversation assertions or their deliberate quiet window.
-export async function seatAgentTeam(page, fixture, worktrees, assertInvalidVendor = false) {
+export async function seatAgentTeam(
+  page,
+  fixture,
+  worktrees,
+  assertInvalidVendor = false,
+  beforeReload = null,
+) {
   const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
   await chooseCanvasView(page, "Agents");
@@ -159,6 +165,7 @@ export async function seatAgentTeam(page, fixture, worktrees, assertInvalidVendo
     await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
       console.locator(".team-detail-card").nth(index + 1));
   }
+  if (beforeReload) await beforeReload(console);
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Info/ }).click();
@@ -210,7 +217,13 @@ export async function assertAgentConversation(
   activityReplay,
   artifacts,
 ) {
-  const team = await seatAgentTeam(page, fixture, worktrees, true);
+  const team = await seatAgentTeam(
+    page,
+    fixture,
+    worktrees,
+    true,
+    (console) => activityReplay.assertBootstrapLiveMessages(console),
+  );
   const {
     console,
     firstSeatedAt,

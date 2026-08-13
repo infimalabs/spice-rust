@@ -428,7 +428,8 @@ pub struct CanvasRuntime {
     fact_pages: Vec<BrowserState<FactRow>>,
     trust_pages: Vec<BrowserState<TrustView>>,
     messages: Vec<AgentMessage>,
-    message_limit: usize,
+    /// Absent until the retained message page announces its exact capacity.
+    message_limit: Option<usize>,
     thread_pages: Vec<BrowserState<FactRow>>,
     facts: BrowserState<FactRow>,
     thread: BrowserState<FactRow>,
@@ -456,7 +457,7 @@ impl CanvasRuntime {
             fact_pages: Vec::new(),
             trust_pages: Vec::new(),
             messages: Vec::new(),
-            message_limit: 0,
+            message_limit: None,
             thread_pages: Vec::new(),
             facts: BrowserState::new(accepted),
             thread: BrowserState::new(accepted),

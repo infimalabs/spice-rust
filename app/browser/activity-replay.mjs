@@ -13,12 +13,29 @@ function decodeServerFrame(message) {
 export async function installActivityReplay(context) {
   let captured;
   let replayed = false;
+  let withheldBootstrap = false;
+  const observedProse = [];
   await context.routeWebSocket(/.*/, (socket) => {
     const server = socket.connectToServer();
     server.onMessage((message) => {
-      socket.send(message);
-      if (captured) return;
       const frame = decodeServerFrame(message);
+      // Exercise the browser's bootstrap boundary with the initial retained
+      // message page absent. A live prose frame can still follow on this same
+      // socket, and it must remain visible while the capacity announcement is
+      // outstanding rather than being truncated against an implicit zero.
+      if (!withheldBootstrap && frame.stream === "messages") {
+        withheldBootstrap = true;
+        return;
+      }
+      socket.send(message);
+      if (frame.stream === "message" && frame.message?.activity !== "tool") {
+        observedProse.push({
+          lane: frame.message?.lane,
+          author: frame.message?.author,
+          text: frame.message?.text,
+        });
+      }
+      if (captured) return;
       if (
         frame.stream === "message" &&
         frame.message?.activity === "tool" &&
@@ -30,6 +47,31 @@ export async function installActivityReplay(context) {
   });
 
   return {
+    async assertBootstrapLiveMessages(console) {
+      assert.equal(withheldBootstrap, true, "the route withheld the initial message snapshot");
+      await console.getByRole("tab", { name: /^Compose/ }).click();
+      const cards = console.locator('[data-card-kind="agent-message"]');
+      try {
+        await cards.nth(3).waitFor({ timeout: 10_000 });
+      } catch (error) {
+        const observed = {
+          prose: observedProse,
+          cards: await cards.count(),
+          tickers: await console.locator(".ticker").allTextContents(),
+          members: await console.locator(".team-agent").evaluateAll((nodes) => nodes.map(
+            (node) => ({ lane: node.dataset.agentLane, text: node.textContent }),
+          )),
+        };
+        throw new Error(`bootstrap live messages were absent: ${JSON.stringify(observed)}`, {
+          cause: error,
+        });
+      }
+      assert.equal(
+        await cards.count(),
+        4,
+        "four live agent messages remain visible before the capacity snapshot arrives",
+      );
+    },
     async assertOlderToolIgnored(page, team) {
       assert.ok(captured, "the route captured the production tool activity frame");
       assert.equal(replayed, false, "the older tool activity is replayed exactly once");
