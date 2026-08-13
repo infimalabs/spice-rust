@@ -53,6 +53,13 @@ async function assertProtocolReplacement(browser, endpoint, mode) {
       fulfilledBody = JSON.stringify({ future: "bootstrap-shape" });
       if (mode === "foreign") {
         headers[CANVAS_VERSION_HEADER] = String(Number(headers[CANVAS_VERSION_HEADER]) + 1);
+      } else if (mode === "prior") {
+        assert.equal(
+          headers[CANVAS_VERSION_HEADER],
+          "2",
+          "the current application replaces the zero-capacity generation",
+        );
+        headers[CANVAS_VERSION_HEADER] = "1";
       } else {
         assert.equal(mode, "absent", `known replacement mode: ${mode}`);
         delete headers[CANVAS_VERSION_HEADER];
@@ -145,10 +152,12 @@ async function assertMalformedProtocolStopsBeforeSocket(browser, endpoint) {
 
 /// Exercise the only pre-socket Canvas clock before strict body decoding.
 ///
-/// A page seeing a foreign or absent clock replaces its document without
-/// opening a socket. Malformed metadata is not a historical generation and is
-/// therefore reported instead of being silently mapped onto the reload path.
+/// A page seeing a prior, foreign, or absent clock replaces its document
+/// without opening a socket. Malformed metadata is not a historical generation
+/// and is therefore reported instead of being silently mapped onto the reload
+/// path.
 export async function assertCanvasProtocolRefresh(browser, endpoint) {
+  await assertProtocolReplacement(browser, endpoint, "prior");
   await assertProtocolReplacement(browser, endpoint, "foreign");
   await assertProtocolReplacement(browser, endpoint, "absent");
   await assertMalformedProtocolStopsBeforeSocket(browser, endpoint);
