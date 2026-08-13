@@ -20,6 +20,8 @@ use super::*;
 mod canvas_announcement;
 #[path = "tests/media.rs"]
 mod media;
+#[path = "tests/message_backlog.rs"]
+mod message_backlog;
 #[path = "tests/message_unavailable.rs"]
 mod message_unavailable;
 #[path = "tests/startup.rs"]

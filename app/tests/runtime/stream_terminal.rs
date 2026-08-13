@@ -1,0 +1,39 @@
+//! Terminal stream behavior kept separate from the runtime integration root.
+
+use super::*;
+
+#[test]
+fn stream_overflow_is_terminal_and_remains_distinct_in_chronology() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "stream": "overflow",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "after": {
+            "epoch": EPOCH,
+            "seq": 55,
+        },
+        "dropped": 7,
+    }))
+    .expect("overflow fixture serializes");
+    let frame = admitted_stream(&session, &bytes);
+
+    assert_eq!(
+        runtime.apply_stream(&frame),
+        vec![StreamDirective::Reconnect]
+    );
+    assert_eq!(
+        runtime.terminal(),
+        Some(StreamTerminal::Overflow {
+            after: wire::StreamCursor {
+                epoch: uuid(EPOCH),
+                seq: seq(55),
+            },
+            dropped: 7,
+        })
+    );
+    assert_eq!(runtime.events()[0].class(), "overflow");
+}
