@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use syn::{Item, Meta, UseTree};
+use syn::{ImplItem, Item, Meta, UseTree};
 
 const HOST_IMPORTS: [&str; 3] = ["CommittedTexts", "scan_jurisdiction", "tracked_paths"];
 
@@ -42,6 +42,32 @@ fn verdict_host_imports_carry_their_items_wasm_boundary() {
         found.iter().map(String::as_str).collect::<BTreeSet<_>>(),
         expected,
         "the fixture must inspect every host-only verdict import"
+    );
+}
+
+#[test]
+fn host_only_metric_debt_helper_carries_its_wasm_boundary() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/metrics/policy_binding.rs");
+    let source = fs::read_to_string(&path).expect("read metric policy binding source");
+    let file = syn::parse_file(&source).expect("parse metric policy binding source");
+    let methods = file
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Impl(item) => Some(item),
+            _ => None,
+        })
+        .flat_map(|item| item.items)
+        .filter_map(|item| match item {
+            ImplItem::Fn(method) if method.sig.ident == "changed_committed_breach" => Some(method),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(methods.len(), 1, "the host-only metric helper stays unique");
+    assert!(
+        methods[0].attrs.iter().any(excludes_wasm),
+        "changed_committed_breach lacks cfg(not(target_arch = \"wasm32\"))"
     );
 }
 
