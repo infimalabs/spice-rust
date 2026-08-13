@@ -10,7 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { chromium } from "playwright";
+import { chromium, firefox } from "playwright";
 
 const execute = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -47,6 +47,7 @@ const FIXTURE_SIGNAL_AUTHORITY = Object.freeze({
   handleSIGTERM: false,
   handleSIGHUP: false,
 });
+const BROWSER_TYPES = Object.freeze({ chromium, firefox });
 
 /// Chromium states its build in the user agent: a headed browser reports
 /// `Chrome/<version>`, a headless one `HeadlessChrome/<version>`. Reading that
@@ -76,19 +77,30 @@ export async function assertDemoOpenGate(binary = spiceBinary) {
   );
 }
 
-/// Open the browser every fixture and diagnostic script shares.
-export async function launchBrowser() {
+/// Open the browser engine every fixture and diagnostic script shares.
+///
+/// Chromium remains the explicit default. Diagnostics may select another
+/// named engine through this same guarded launch site when the operator's
+/// browser is part of the behavior under test.
+export async function launchBrowser(engine = "chromium") {
+  assert.ok(
+    Object.hasOwn(BROWSER_TYPES, engine),
+    `browser engine is one of ${Object.keys(BROWSER_TYPES).join(", ")}: ${engine}`,
+  );
+  const browserType = BROWSER_TYPES[engine];
   // The fixture owner is the signal authority. Playwright's default signal
   // hooks race that owner and can exit before its resident/vendor cleanup runs.
-  const browser = await chromium.launch({ headless: true, ...FIXTURE_SIGNAL_AUTHORITY });
+  const browser = await browserType.launch({ headless: true, ...FIXTURE_SIGNAL_AUTHORITY });
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
     const agent = await page.evaluate(() => navigator.userAgent);
-    assert.ok(
-      agent.includes(HEADLESS_USER_AGENT),
-      `the launched browser is headless and takes no operator focus: ${agent}`,
-    );
+    if (engine === "chromium") {
+      assert.ok(
+        agent.includes(HEADLESS_USER_AGENT),
+        `the launched browser is headless and takes no operator focus: ${agent}`,
+      );
+    }
   } catch (failure) {
     await browser.close();
     throw failure;
