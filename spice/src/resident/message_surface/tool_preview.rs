@@ -43,6 +43,12 @@ pub(in crate::resident) struct CallPreviews {
     by_call: BTreeMap<(CanonicalUuid, String), String>,
 }
 
+impl CallPreviews {
+    pub(super) fn clear_lane(&mut self, lane: CanonicalUuid) {
+        self.by_call.retain(|(candidate, _), _| *candidate != lane);
+    }
+}
+
 /// Render one tool moment as the line an operator reads.
 pub(super) fn activity(
     lane: CanonicalUuid,

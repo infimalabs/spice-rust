@@ -13,8 +13,8 @@ use crate::thread::{ThreadError, ThreadIndex};
 mod message;
 mod policy;
 
-use message::{MESSAGE_CAPACITY, MessageFeed, message_snapshot_fault};
-pub use message::{MessagePublishError, MessagePublisher};
+pub use message::{MESSAGE_CAPACITY, MessagePublishError, MessagePublisher};
+use message::{MessageFeed, message_snapshot_fault};
 pub use policy::Failure;
 use policy::{
     admit_subject, admit_subjects, pack_unique, present_facts, protocol_fault, refusal,
