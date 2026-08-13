@@ -172,6 +172,8 @@ const SCOPED_COMMANDS: [ScopedCommand; 3] = [
 ];
 
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
+const STRUCTURAL_PREFLIGHT_LABEL: &str =
+    "selected file-shape and routine-complexity gate preflight";
 /// Direct formatting over the gate-owned complete Rust-source selection.
 const FORMAT_LABEL: &str =
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
@@ -400,6 +402,16 @@ trait Runner: Sync {
             cancellation,
             cargo_jobs.min(workspace_workers),
         )
+    }
+    fn structural_preflight(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<BatteryRun, RunError> {
+        Ok(if cancellation.is_cancelled() {
+            BatteryRun::Cancelled
+        } else {
+            BatteryRun::Admitted(Vec::new())
+        })
     }
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError>;
     fn accept_battery_state(&self) -> Result<(), String> {
@@ -775,6 +787,46 @@ impl Runner for SystemRunner {
             let _ = (cancellation, cargo_jobs);
             Err(RunError::Launch(io::Error::other(
                 "workspace-test prebuild is unavailable on wasm32",
+            )))
+        }
+    }
+
+    fn structural_preflight(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<BatteryRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if cancellation.is_cancelled() {
+                return Ok(BatteryRun::Cancelled);
+            }
+            let reports = self
+                .state()?
+                .battery
+                .as_mut()
+                .ok_or_else(|| {
+                    RunError::Launch(io::Error::other(
+                        "full verifier battery capture is unavailable",
+                    ))
+                })?
+                .execute_structural_preflight()
+                .map_err(|error| RunError::Launch(io::Error::other(error.to_string())))?;
+            if cancellation.is_cancelled() {
+                return Ok(BatteryRun::Cancelled);
+            }
+            if reports.iter().all(gate::FocusedArmReport::admits) {
+                Ok(BatteryRun::Admitted(Vec::new()))
+            } else {
+                Ok(BatteryRun::Refused(
+                    gate::BatteryRefusalFold::from_focused_reports(&reports).into_bytes(),
+                ))
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = cancellation;
+            Err(RunError::Launch(io::Error::other(
+                "the structural gate preflight is unavailable on wasm32",
             )))
         }
     }
