@@ -46,7 +46,7 @@ fn execute_action<R: Runner>(
                 code,
             },
         ),
-        Action::Battery => execute_battery(runner.battery(cancellation)),
+        Action::Battery => execute_battery(runner.battery(cancellation), BATTERY_LABEL),
         Action::Landing => match runner.landing() {
             Err(source) => failure(VerifyError::Landing(source.to_string()), Disposition::Error),
             Ok(report) => {
@@ -183,7 +183,7 @@ fn execute_browser(run: Result<BrowserRun, RunError>) -> ActionCompletion {
     }
 }
 
-fn execute_battery(run: Result<BatteryRun, RunError>) -> ActionCompletion {
+fn execute_battery(run: Result<BatteryRun, RunError>, label: &'static str) -> ActionCompletion {
     match run {
         Err(RunError::Launch(source)) => failure(
             VerifyError::Battery(source.to_string()),
@@ -191,14 +191,16 @@ fn execute_battery(run: Result<BatteryRun, RunError>) -> ActionCompletion {
         ),
         Err(RunError::Cleanup(detail)) => failure(
             VerifyError::Cleanup {
-                label: BATTERY_LABEL.to_owned(),
+                label: label.to_owned(),
                 detail,
             },
             Disposition::CleanupError,
         ),
         Ok(BatteryRun::Admitted(document)) => {
             let mut output = document;
-            output.push(b'\n');
+            if !output.is_empty() {
+                output.push(b'\n');
+            }
             success(output, Disposition::Success)
         }
         Ok(BatteryRun::Refused(diagnostic)) => failure_with_bytes(
@@ -209,7 +211,7 @@ fn execute_battery(run: Result<BatteryRun, RunError>) -> ActionCompletion {
         Ok(BatteryRun::Error(detail)) => failure(VerifyError::Battery(detail), Disposition::Error),
         Ok(BatteryRun::Cancelled) => failure(
             VerifyError::Cancelled {
-                label: BATTERY_LABEL.to_owned(),
+                label: label.to_owned(),
             },
             Disposition::Cancelled,
         ),

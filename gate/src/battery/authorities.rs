@@ -375,7 +375,7 @@ impl<'trace> BatteryCapture<'trace> {
     /// # Errors
     ///
     /// Returns the same completeness failures as [`Self::execute`], plus use
-    /// of evidence on a selected or already-started capture.
+    /// of evidence on a selected capture or after its toolchain family starts.
     pub fn execute_with_verifier_evidence(
         &mut self,
         evidence: &[VerifierCompilerEvidence],
@@ -448,6 +448,31 @@ impl<'trace> BatteryCapture<'trace> {
         }
         let inputs = self.authorities.inputs()?;
         super::run_focused_arm(&inputs, &mut self.executor, gate_id)
+    }
+
+    /// Project the two structural arms captured for this complete battery.
+    ///
+    /// Their metrics were acquired when the immutable selected source was
+    /// materialized. Projecting them here therefore performs no second source
+    /// capture or analysis, and a later complete execution reuses the same
+    /// retained family evidence.
+    ///
+    /// # Errors
+    ///
+    /// Refuses selected-arm captures or invalid canonical inputs.
+    pub fn execute_structural_preflight(
+        &mut self,
+    ) -> Result<Vec<super::FocusedArmReport>, BatteryError> {
+        if self.selected.is_some() {
+            return Err(BatteryError::new(
+                "structural preflight requires a complete battery capture",
+            ));
+        }
+        let inputs = self.authorities.inputs()?;
+        [crate::GateId::FileShape, crate::GateId::Complexity]
+            .into_iter()
+            .map(|gate_id| super::run_focused_arm(&inputs, &mut self.executor, gate_id))
+            .collect()
     }
 
     /// Run once and bind the complete vector to the captured baseline.

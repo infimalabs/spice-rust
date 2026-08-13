@@ -40,6 +40,7 @@ mod tests {
         scoped_outcomes: VecDeque<Outcome>,
         entry_point: Option<Result<String, String>>,
         browser: Option<io::Result<BrowserRun>>,
+        structural: Option<Result<BatteryRun, String>>,
         battery: Option<Result<BatteryRun, String>>,
         landing: Option<Result<landing::Report, landing::Error>>,
         calls: Vec<&'static str>,
@@ -78,6 +79,10 @@ mod tests {
 
         fn set_battery(&self, outcome: BatteryRun) {
             self.state().battery = Some(Ok(outcome));
+        }
+
+        fn set_structural(&self, outcome: BatteryRun) {
+            self.state().structural = Some(Ok(outcome));
         }
 
         fn set_landing(&self, outcome: Result<landing::Report, landing::Error>) {
@@ -156,6 +161,19 @@ mod tests {
                 .take()
                 .expect("fixture has one browser outcome")
                 .map_err(RunError::Launch)
+        }
+
+        fn structural_preflight(
+            &self,
+            _cancellation: &CancellationToken,
+        ) -> Result<BatteryRun, RunError> {
+            let mut state = self.state();
+            state.calls.push(STRUCTURAL_PREFLIGHT_LABEL);
+            state
+                .structural
+                .take()
+                .expect("fixture has one structural outcome")
+                .map_err(RunError::Cleanup)
         }
 
         fn battery(&self, _cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
@@ -254,6 +272,32 @@ mod tests {
         assert!(output.contains(ENTRY_POINT_FIXTURE));
         assert!(output.contains("{\"admitted\":true}\n"));
         assert!(output.contains(&format!("{report}\n")));
+    }
+
+    #[test]
+    fn structural_refusal_stops_before_any_expensive_or_browser_action() {
+        let runner = runner(successful_commands());
+        runner.set_structural(BatteryRun::Refused(
+            b"fixture structural refusal\n".to_vec(),
+        ));
+        let mut output = Vec::new();
+
+        let error = verify_with(&runner, &mut output)
+            .expect_err("structural preflight refuses the verifier");
+
+        assert!(matches!(error, VerifyError::BatteryRefused));
+        assert_eq!(
+            runner.calls(),
+            [ENTRY_POINT_LABEL, FORMAT_LABEL, STRUCTURAL_PREFLIGHT_LABEL,]
+        );
+        assert_eq!(runner.state_accepts(), 0);
+        let output = String::from_utf8(output).expect("fixture output is UTF-8");
+        assert!(output.contains("fixture structural refusal\n"));
+        assert!(output.contains(&format!(
+            "stage=setup identity={STRUCTURAL_PREFLIGHT_LABEL:?}"
+        )));
+        assert!(!output.contains(&format!("identity={BROWSER_LABEL:?}")));
+        assert!(!output.contains(&format!("identity={BATTERY_LABEL:?}")));
     }
 
     #[test]
@@ -811,6 +855,7 @@ mod tests {
                     })),
                     completed: true,
                 })),
+                structural: Some(Ok(BatteryRun::Admitted(Vec::new()))),
                 battery: Some(Ok(BatteryRun::Admitted(br#"{"admitted":true}"#.to_vec()))),
                 landing: Some(Ok(landing::fixture_report(true))),
                 calls: Vec::new(),
@@ -840,7 +885,11 @@ mod tests {
     }
 
     fn labels() -> Vec<&'static str> {
-        VERIFY_ACTIONS.iter().map(|action| action.label()).collect()
+        VERIFY_ACTIONS
+            .iter()
+            .map(|action| action.label())
+            .chain([STRUCTURAL_PREFLIGHT_LABEL])
+            .collect()
     }
 
     fn assert_exact_calls(runner: &FakeRunner, expected: &[&'static str]) {

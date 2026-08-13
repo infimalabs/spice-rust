@@ -136,6 +136,17 @@ impl PreparedBattery<'_> {
             .map_err(|error| RunError::refusal("gate::kill-refused", error))
     }
 
+    /// Project the selected file-shape and routine-complexity arms early.
+    ///
+    /// The complete battery later reuses the same capture and cached metrics;
+    /// this seam exists only to refuse structural defects before expensive
+    /// external verifier suites begin.
+    pub fn execute_structural_preflight(&mut self) -> Result<Vec<FocusedArmReport>, RunError> {
+        self.capture
+            .execute_structural_preflight()
+            .map_err(|error| RunError::refusal("gate::structural-preflight-refused", error))
+    }
+
     /// Capture an exact compiler contract for one reusable arm.
     ///
     /// # Errors
