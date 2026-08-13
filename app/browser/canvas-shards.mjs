@@ -9,6 +9,7 @@ const EXPECTED_SCENARIOS = [
   "fixture-reaping",
   "light-readiness",
   "agent-conversation",
+  "firefox-restored-mosaic",
   "reference-composer",
   "authority-task-flow",
   "variant-surfaces",
@@ -30,6 +31,7 @@ export const CANVAS_SHARDS = Object.freeze([
     name: "interaction",
     scenarios: Object.freeze([
       "agent-conversation",
+      "firefox-restored-mosaic",
       "reference-composer",
       "authority-task-flow",
     ]),

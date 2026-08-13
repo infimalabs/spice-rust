@@ -118,6 +118,69 @@ impl CardLayout {
     }
 }
 
+const PLANE_LAYOUT_PROPERTIES: [(&str, &str); 2] = [
+    ("--mosaic-max-row", "data-max-row"),
+    ("--mosaic-plane-rows", "data-plane-rows"),
+];
+const CARD_LAYOUT_PROPERTIES: [(&str, &str); 5] = [
+    ("--mosaic-base", "data-base"),
+    ("--mosaic-rows", "data-rows"),
+    ("--mosaic-track", "data-track"),
+    ("--mosaic-span", "data-span"),
+    ("--mosaic-measure-span", "data-measure-span"),
+];
+
+fn copy_layout_property(element: &web_sys::HtmlElement, property: &str, attribute: &str) {
+    let value = element
+        .get_attribute(attribute)
+        .unwrap_or_else(|| panic!("Mosaic layout element carries {attribute}"));
+    value
+        .parse::<i32>()
+        .unwrap_or_else(|_| panic!("Mosaic layout attribute {attribute} is an integer: {value}"));
+    element
+        .style()
+        .set_property(property, &value)
+        .unwrap_or_else(|_| panic!("Mosaic layout writes {property}"));
+}
+
+fn copy_layout_properties(element: &web_sys::HtmlElement, properties: &[(&str, &str)]) {
+    for (property, attribute) in properties {
+        copy_layout_property(element, property, attribute);
+    }
+}
+
+#[hook]
+/// Copy admitted integer diagnostics into the one CSP-safe layout channel.
+///
+/// Firefox does not compute the typed `attr()` arithmetic this lattice once
+/// used, and the Canvas CSP deliberately refuses serialized style attributes.
+/// `CssStyleDeclaration` keeps the diagnostic attributes visible while every
+/// browser executes the same custom-property geometry.
+fn use_layout_properties(
+    host: NodeRef,
+    width: i32,
+    keys: Vec<String>,
+    plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
+) {
+    use_effect_with((host, width, keys, plane), move |(host, _, _, _)| {
+        let host = host
+            .cast::<web_sys::HtmlElement>()
+            .expect("a rendered Mosaic plane is an HTML element");
+        copy_layout_properties(&host, &PLANE_LAYOUT_PROPERTIES);
+        let cards = host
+            .query_selector_all(".mosaic-message-card")
+            .expect("the fixed Mosaic card selector is valid");
+        for index in 0..cards.length() {
+            let card = cards
+                .item(index)
+                .expect("the Mosaic card list retains every indexed node")
+                .dyn_into::<web_sys::HtmlElement>()
+                .expect("a Mosaic card is an HTML element");
+            copy_layout_properties(&card, &CARD_LAYOUT_PROPERTIES);
+        }
+    });
+}
+
 fn activity_measurement<'a>(
     measurements: &'a [ActivityMeasurement],
     width: i32,
@@ -246,6 +309,17 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let measurement_width = width.round() as i32;
     let image_revisions = use_reducer(ImageRevisions::default);
     let committed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
+    let card_keys = properties
+        .cards
+        .iter()
+        .map(ActivityCard::key)
+        .collect::<Vec<_>>();
+    use_layout_properties(
+        host.clone(),
+        measurement_width,
+        card_keys,
+        (*committed).clone(),
+    );
     let committed_spans = committed_spans(committed.as_ref());
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
     use_image_resolution_events(
