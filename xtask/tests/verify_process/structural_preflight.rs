@@ -75,7 +75,7 @@ fn assert_bounded_refusal(output: &std::process::Output, selected: &BatteryArmRe
         BATTERY_REFUSAL_FOLD_MAX_BYTES
     );
     assert!(
-        stdout.contains("full-evidence: cargo xtask gate file-shape"),
+        stdout.contains("full-evidence: cargo xtask gate --report file-shape"),
         "refusal omits the exact selected-arm recovery command: {}",
         streams(output)
     );
