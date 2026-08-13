@@ -59,6 +59,12 @@ impl BatteryRefusalFold {
         self.omitted_findings
     }
 
+    /// Render several focused canonical rows under one shared byte ceiling.
+    #[must_use]
+    pub fn from_focused_reports(reports: &[FocusedArmReport]) -> Self {
+        render(reports.iter().map(FocusedArmReport::result))
+    }
+
     /// Consume the fold as diagnostic bytes.
     #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
@@ -81,10 +87,10 @@ impl BatteryReport {
 }
 
 impl FocusedArmReport {
-    /// Derive a bounded human diagnostic without changing canonical report bytes.
+    /// Derive the same bounded human diagnostic for this canonical focused arm.
     #[must_use]
     pub fn refusal_fold(&self) -> BatteryRefusalFold {
-        render(std::slice::from_ref(self.result()))
+        render([self.result()])
     }
 }
 
@@ -93,32 +99,23 @@ struct ArmFold {
     fallback: String,
 }
 
-#[derive(Clone, Copy)]
-struct FoldCounts {
+struct FoldInventory {
     total_arms: usize,
     admitted_arms: usize,
     finding_arms: usize,
     cannot_run_arms: usize,
-    metric_findings: usize,
+    metric_finding_count: usize,
+    arms: Vec<ArmFold>,
+    findings: Vec<String>,
 }
 
-impl FoldCounts {
-    fn summary(self, omitted_arms: usize, omitted_findings: usize) -> String {
-        summary(
-            self.total_arms,
-            self.admitted_arms,
-            self.finding_arms,
-            self.cannot_run_arms,
-            self.metric_findings,
-            omitted_arms,
-            omitted_findings,
-        )
-    }
-}
-
-fn render(results: &[BatteryArmResult]) -> BatteryRefusalFold {
+fn render<'result>(
+    results: impl IntoIterator<Item = &'result BatteryArmResult>,
+) -> BatteryRefusalFold {
+    let results = results.into_iter().collect::<Vec<_>>();
     let refused: Vec<_> = results
         .iter()
+        .copied()
         .filter(|result| !result.state().admits())
         .collect();
     let arms: Vec<_> = refused.iter().map(|result| arm_fold(result)).collect();
@@ -131,19 +128,35 @@ fn render(results: &[BatteryArmResult]) -> BatteryRefusalFold {
         .iter()
         .filter(|result| result.state() == BatteryState::Failed)
         .count();
-    let counts = FoldCounts {
+    let cannot_run_arms = refused.len().saturating_sub(finding_arms);
+    let admitted_arms = results.len().saturating_sub(refused.len());
+    render_inventory(FoldInventory {
         total_arms: results.len(),
-        admitted_arms: results.len().saturating_sub(refused.len()),
+        admitted_arms,
         finding_arms,
-        cannot_run_arms: refused.len().saturating_sub(finding_arms),
-        metric_findings: metric_finding_count,
-    };
-    let complete_summary = counts.summary(0, 0);
+        cannot_run_arms,
+        metric_finding_count,
+        arms,
+        findings,
+    })
+}
 
-    let arm_size = arms
+fn render_inventory(inventory: FoldInventory) -> BatteryRefusalFold {
+    let complete_summary = summary(
+        inventory.total_arms,
+        inventory.admitted_arms,
+        inventory.finding_arms,
+        inventory.cannot_run_arms,
+        inventory.metric_finding_count,
+        0,
+        0,
+    );
+    let arm_size = inventory
+        .arms
         .iter()
         .fold(0usize, |size, arm| size.saturating_add(arm.full.len()));
-    let finding_size = findings
+    let finding_size = inventory
+        .findings
         .iter()
         .fold(0usize, |size, finding| size.saturating_add(finding.len()));
     let complete_size = complete_summary
@@ -151,38 +164,27 @@ fn render(results: &[BatteryArmResult]) -> BatteryRefusalFold {
         .saturating_add(arm_size)
         .saturating_add(finding_size);
     if complete_size <= BATTERY_REFUSAL_FOLD_MAX_BYTES {
-        return complete_fold(arms, findings, &complete_summary, complete_size);
+        let mut text = String::with_capacity(complete_size);
+        for arm in inventory.arms {
+            text.push_str(&arm.full);
+        }
+        for finding in inventory.findings {
+            text.push_str(&finding);
+        }
+        text.push_str(&complete_summary);
+        return BatteryRefusalFold {
+            text,
+            omitted_arms: 0,
+            omitted_findings: 0,
+        };
     }
-    bounded_fold(arms, findings, counts)
+
+    render_bounded(inventory)
 }
 
-fn complete_fold(
-    arms: Vec<ArmFold>,
-    findings: Vec<String>,
-    summary: &str,
-    complete_size: usize,
-) -> BatteryRefusalFold {
-    let mut text = String::with_capacity(complete_size);
-    for arm in arms {
-        text.push_str(&arm.full);
-    }
-    for finding in findings {
-        text.push_str(&finding);
-    }
-    text.push_str(summary);
-    BatteryRefusalFold {
-        text,
-        omitted_arms: 0,
-        omitted_findings: 0,
-    }
-}
-
-fn bounded_fold(
-    arms: Vec<ArmFold>,
-    findings: Vec<String>,
-    counts: FoldCounts,
-) -> BatteryRefusalFold {
-    let fallback_size = arms
+fn render_bounded(inventory: FoldInventory) -> BatteryRefusalFold {
+    let fallback_size = inventory
+        .arms
         .iter()
         .fold(0usize, |size, arm| size.saturating_add(arm.fallback.len()));
     let fixed_size = fallback_size.saturating_add(SUMMARY_RESERVE);
@@ -191,9 +193,9 @@ fn bounded_fold(
         "compiled battery arm summaries exceed the refusal fold limit"
     );
     let mut budget = BATTERY_REFUSAL_FOLD_MAX_BYTES - fixed_size;
-    let mut chosen_arms = Vec::with_capacity(arms.len());
+    let mut chosen_arms = Vec::with_capacity(inventory.arms.len());
     let mut omitted_arms = 0;
-    for arm in arms {
+    for arm in inventory.arms {
         let extra = arm.full.len().saturating_sub(arm.fallback.len());
         if arm.full.len() <= arm.fallback.len() || extra <= budget {
             budget = budget.saturating_sub(extra);
@@ -206,7 +208,7 @@ fn bounded_fold(
 
     let mut chosen_findings = Vec::new();
     let mut omitted_findings = 0;
-    for finding in findings {
+    for finding in inventory.findings {
         if finding.len() <= budget {
             budget -= finding.len();
             chosen_findings.push(finding);
@@ -214,7 +216,15 @@ fn bounded_fold(
             omitted_findings += 1;
         }
     }
-    let summary = counts.summary(omitted_arms, omitted_findings);
+    let summary = summary(
+        inventory.total_arms,
+        inventory.admitted_arms,
+        inventory.finding_arms,
+        inventory.cannot_run_arms,
+        inventory.metric_finding_count,
+        omitted_arms,
+        omitted_findings,
+    );
     assert!(
         summary.len() <= SUMMARY_RESERVE,
         "refusal fold summary exceeds its fixed reserve"
@@ -273,7 +283,7 @@ fn arm_fold(result: &BatteryArmResult) -> ArmFold {
         result.state().as_str()
     );
     let command = format!(
-        "  full-evidence: cargo xtask gate --json {}\n",
+        "  full-evidence: cargo xtask gate --report {}\n",
         result.gate_id()
     );
     ArmFold {

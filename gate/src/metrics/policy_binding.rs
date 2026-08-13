@@ -224,3 +224,29 @@ impl fmt::Display for PolicyBindingError {
 }
 
 impl Error for PolicyBindingError {}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changed_committed_debt_remains_a_host_acquisition_decision() {
+        let bounded = rule(false);
+        assert!(bounded.changed_committed_breach(Some(101), 100));
+        assert!(!bounded.changed_committed_breach(None, 100));
+        assert!(!bounded.changed_committed_breach(Some(100), 99));
+        assert!(!bounded.changed_committed_breach(Some(101), 101));
+        assert!(!rule(true).changed_committed_breach(Some(101), 100));
+    }
+
+    fn rule(unlimited: bool) -> ResolvedMetricRule {
+        ResolvedMetricRule {
+            metric: MetricId::FileLines,
+            base_limit: 100,
+            ratchet_limit: 150,
+            unlimited,
+            variation_percent: 0,
+            binding: binding(MetricId::FileLines, None).expect("global file rule binds"),
+        }
+    }
+}

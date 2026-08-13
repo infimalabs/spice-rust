@@ -12,6 +12,7 @@ mod app;
 mod build_cache;
 mod commit_message;
 mod develop;
+mod gate_command;
 mod hooks;
 mod landing;
 mod proof_image;
@@ -34,6 +35,7 @@ pub use build_cache::{
 };
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh};
+pub use gate_command::{gate_arm, gate_arm_report, verify_battery_child, verify_selection_child};
 use verify_browser::BrowserRun;
 use verify_error::valid_package_name;
 pub use verify_error::{GateArmError, VerifyError};
@@ -172,6 +174,8 @@ const SCOPED_COMMANDS: [ScopedCommand; 3] = [
 ];
 
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
+const STRUCTURAL_PREFLIGHT_LABEL: &str =
+    "selected file-shape and routine-complexity gate preflight";
 /// Direct formatting over the gate-owned complete Rust-source selection.
 const FORMAT_LABEL: &str =
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
@@ -400,6 +404,16 @@ trait Runner: Sync {
             cancellation,
             cargo_jobs.min(workspace_workers),
         )
+    }
+    fn structural_preflight(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<BatteryRun, RunError> {
+        Ok(if cancellation.is_cancelled() {
+            BatteryRun::Cancelled
+        } else {
+            BatteryRun::Admitted(Vec::new())
+        })
     }
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError>;
     fn accept_battery_state(&self) -> Result<(), String> {
@@ -779,6 +793,46 @@ impl Runner for SystemRunner {
         }
     }
 
+    fn structural_preflight(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<BatteryRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if cancellation.is_cancelled() {
+                return Ok(BatteryRun::Cancelled);
+            }
+            let reports = self
+                .state()?
+                .battery
+                .as_mut()
+                .ok_or_else(|| {
+                    RunError::Launch(io::Error::other(
+                        "full verifier battery capture is unavailable",
+                    ))
+                })?
+                .execute_structural_preflight()
+                .map_err(|error| RunError::Launch(io::Error::other(error.to_string())))?;
+            if cancellation.is_cancelled() {
+                return Ok(BatteryRun::Cancelled);
+            }
+            if reports.iter().all(gate::FocusedArmReport::admits) {
+                Ok(BatteryRun::Admitted(Vec::new()))
+            } else {
+                Ok(BatteryRun::Refused(
+                    gate::BatteryRefusalFold::from_focused_reports(&reports).into_bytes(),
+                ))
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = cancellation;
+            Err(RunError::Launch(io::Error::other(
+                "the structural gate preflight is unavailable on wasm32",
+            )))
+        }
+    }
+
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -849,145 +903,6 @@ impl Runner for SystemRunner {
 
     fn landing(&self) -> Result<landing::Report, landing::Error> {
         landing::inspect()
-    }
-}
-
-/// Execute the public partial gate-battery action.
-///
-/// This action owns a fresh capture and deliberately does not share the full
-/// verifier's retained compiler evidence. The boolean is true for admission
-/// and false for a policy refusal; the CLI owns their distinct exit codes.
-///
-/// # Errors
-///
-/// Returns gate acquisition or refusal-output failures.
-pub fn verify_battery_child(output: &mut impl Write) -> Result<bool, String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let report =
-            spice::gate::run(gate::Selector::staged()).map_err(|error| error.to_string())?;
-        if report.admits() {
-            Ok(true)
-        } else {
-            output
-                .write_all(report.refusal_fold().as_bytes())
-                .map_err(|error| error.to_string())?;
-            Ok(false)
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = output;
-        Err("the canonical native Rust gate battery is unavailable on wasm32".to_owned())
-    }
-}
-
-/// Execute the ordinary fail-closed staged-change gate.
-///
-/// Progress is buffered so a clean hook remains silent. A refusal publishes
-/// the exact selection/test evidence or the compact focused-arm fold; the
-/// complete battery remains available through [`verify_battery_child`].
-///
-/// # Errors
-///
-/// Returns selection, test, policy, or refusal-output failures.
-pub fn verify_selection_child(output: &mut impl Write) -> Result<bool, String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut progress = Vec::new();
-        let report = match spice::change_gate::run(&mut progress) {
-            Ok(report) => report,
-            Err(error) => {
-                output
-                    .write_all(&progress)
-                    .map_err(|fault| fault.to_string())?;
-                if error.is_fault() {
-                    return Err(error.to_string());
-                }
-                writeln!(output, "{}", error).map_err(|fault| fault.to_string())?;
-                return Ok(false);
-            }
-        };
-        if report.admits() {
-            return Ok(true);
-        }
-        output
-            .write_all(&progress)
-            .map_err(|error| error.to_string())?;
-        output
-            .write_all(report.refusal_fold().as_bytes())
-            .map_err(|error| error.to_string())?;
-        Ok(false)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = output;
-        Err("the ordinary native Rust change gate is unavailable on wasm32".to_owned())
-    }
-}
-
-/// Run one canonical gate arm against the staged worktree.
-///
-/// Admitting arms retain their canonical JSON result row. A refusal emits only
-/// the bounded human fold, whose recovery command names [`gate_arm_report`].
-///
-/// # Errors
-///
-/// Returns acquisition, encoding, output, or non-admitting arm failures.
-pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
-    gate_arm_with(gate_id, output, GateArmRendering::Human)
-}
-
-/// Run one canonical gate arm and emit its complete focused report as JSON.
-///
-/// # Errors
-///
-/// Returns acquisition, encoding, output, or non-admitting arm failures.
-pub fn gate_arm_report(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
-    gate_arm_with(gate_id, output, GateArmRendering::Canonical)
-}
-
-#[derive(Clone, Copy)]
-enum GateArmRendering {
-    Human,
-    Canonical,
-}
-
-fn gate_arm_with(
-    gate_id: gate::GateId,
-    output: &mut impl Write,
-    rendering: GateArmRendering,
-) -> Result<(), GateArmError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let report = spice::gate::run_arm_report(gate::Selector::staged(), gate_id)
-            .map_err(GateArmError::Run)?;
-        match rendering {
-            GateArmRendering::Canonical => {
-                let canonical = report.encode().map_err(GateArmError::Encode)?;
-                output
-                    .write_all(&canonical)
-                    .and_then(|()| output.write_all(b"\n"))
-                    .map_err(GateArmError::Output)?;
-            }
-            GateArmRendering::Human if report.admits() => {
-                serde_json::to_writer(&mut *output, report.result())
-                    .map_err(GateArmError::Encode)?;
-                writeln!(output).map_err(GateArmError::Output)?;
-            }
-            GateArmRendering::Human => output
-                .write_all(report.refusal_fold().as_bytes())
-                .map_err(GateArmError::Output)?,
-        }
-        if !report.admits() {
-            return Err(GateArmError::Refused(gate_id));
-        }
-        Ok(())
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (gate_id, output, rendering);
-        Err(GateArmError::Unavailable)
     }
 }
 

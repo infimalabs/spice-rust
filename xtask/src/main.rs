@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Read};
+use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -13,7 +13,7 @@ const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
     "usage: cargo xtask <help|verify [--package PACKAGE]|verify-action <selection|battery>|",
-    "gate [--json] ARM|app|activate-hooks|",
+    "gate [--report] ARM|app|activate-hooks|",
     "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
     "[--free-space-floor BYTES] [--retain-live-worktrees N]|",
@@ -30,7 +30,9 @@ fn help() -> String {
             "verify-action selection is the ordinary staged-change gate; ",
             "verify-action battery is its explicit complete policy surface. ",
             "Neither is a completion verifier.\n\n",
-            "gate [--json] ARM accepts:\n  {arms}"
+            "For focused arms, gate ARM emits bounded diagnostics only on refusal; ",
+            "gate --report ARM emits one canonical machine report.\n\n",
+            "gate ARM accepts:\n  {arms}"
         ),
         usage = USAGE,
         arms = arms,
@@ -42,11 +44,35 @@ fn main() -> ExitCode {
     let command = arguments.next();
 
     let mut output = io::stdout().lock();
-    match command.as_deref() {
-        Some(value) if value == OsStr::new("verify-action") && arguments.len() == 1 => {
+    // Dispatch only current spellings; removed command names have no alias arm.
+    let result: CommandResult = match command.as_deref() {
+        Some(value) if is_exact_command(value, "verify-action", arguments.len(), 1) => {
             let action = arguments.next().expect("one verifier action was admitted");
             drop(output);
             return run_verify_action(&action, &mut io::stderr().lock());
+        }
+        Some(value) if is_exact_command(value, "help", arguments.len(), 0) => {
+            writeln!(output, "{}", help()).map_err(Into::into)
+        }
+        Some(value) if value == OsStr::new("verify") => {
+            run_verify(arguments.collect(), &mut output)
+        }
+        Some(value) if is_exact_command(value, "__verify-system", arguments.len(), 0) => {
+            xtask::verify_child(&mut output).map_err(Into::into)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if is_workspace_test_command(value) => {
+            run_workspace_test_command(value, arguments.collect(), &mut output)
+        }
+        Some(value) if value == OsStr::new("gate") => {
+            run_gate(arguments.collect(), &mut output, &mut io::stderr().lock())
+        }
+        Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
+        Some(value) if is_exact_command(value, "activate-hooks", arguments.len(), 0) => {
+            run_activate_hooks(&mut output)
+        }
+        Some(value) if value == OsStr::new("build-cache") => {
+            run_build_cache(arguments.collect(), &mut output)
         }
         Some(value) if value == OsStr::new("install") => {
             drop(output);
@@ -56,46 +82,13 @@ fn main() -> ExitCode {
             drop(output);
             return run_proof_image(arguments.collect());
         }
-        Some(_) | None => {}
-    }
-    finish(dispatch_command(command.as_deref(), arguments, &mut output))
-}
-
-fn dispatch_command(
-    command: Option<&OsStr>,
-    mut arguments: impl ExactSizeIterator<Item = OsString>,
-    output: &mut impl io::Write,
-) -> CommandResult {
-    // Dispatch only current spellings; removed command names have no alias arm.
-    match command {
-        Some(value) if value == OsStr::new("help") && arguments.len() == 0 => {
-            writeln!(output, "{}", help()).map_err(Into::into)
+        Some(value) if is_exact_command(value, "stage-target", arguments.len(), 1) => {
+            run_stage_target(arguments.next(), &mut output)
         }
-        Some(value) if value == OsStr::new("verify") => run_verify(arguments.collect(), output),
-        Some(value) if value == OsStr::new("__verify-system") && arguments.len() == 0 => {
-            xtask::verify_child(output).map_err(Into::into)
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        Some(value) if is_workspace_test_command(value) => {
-            run_workspace_test_command(value, arguments.collect(), output)
-        }
-        Some(value) if value == OsStr::new("gate") => {
-            run_gate(arguments.collect(), output, &mut io::stderr().lock())
-        }
-        Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), output),
-        Some(value) if value == OsStr::new("activate-hooks") && arguments.len() == 0 => {
-            run_activate_hooks(output)
-        }
-        Some(value) if value == OsStr::new("build-cache") => {
-            run_build_cache(arguments.collect(), output)
-        }
-        Some(value) if value == OsStr::new("stage-target") && arguments.len() == 1 => {
-            run_stage_target(arguments.next(), output)
-        }
-        Some(value) if value == OsStr::new("commit-msg") && arguments.len() == 1 => {
+        Some(value) if is_exact_command(value, "commit-msg", arguments.len(), 1) => {
             run_commit_message_command(arguments.next())
         }
-        Some(value) if value == OsStr::new("reference-transaction") && arguments.len() == 1 => {
+        Some(value) if is_exact_command(value, "reference-transaction", arguments.len(), 1) => {
             let state = arguments
                 .next()
                 .expect("one reference-transaction state was admitted");
@@ -103,9 +96,19 @@ fn dispatch_command(
         }
         _ => {
             eprintln!("{}", help());
-            Err(usage_error().into())
+            return ExitCode::from(USAGE_EXIT);
         }
-    }
+    };
+    finish(result)
+}
+
+fn is_exact_command(
+    command: &OsStr,
+    expected: &str,
+    actual_arity: usize,
+    expected_arity: usize,
+) -> bool {
+    command == OsStr::new(expected) && actual_arity == expected_arity
 }
 
 fn finish(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
@@ -174,9 +177,13 @@ fn run_gate(
     output: &mut impl io::Write,
     progress: &mut impl io::Write,
 ) -> CommandResult {
-    let Some((arm, canonical)) = gate_arguments(&arguments) else {
-        eprintln!("{}", help());
-        return Err(usage_error().into());
+    let (arm, emit_report) = match arguments.as_slice() {
+        [arm] => (arm, false),
+        [flag, arm] if flag == OsStr::new("--report") => (arm, true),
+        _ => {
+            eprintln!("{}", help());
+            return Err(usage_error().into());
+        }
     };
     let Some(arm) = arm.to_str() else {
         eprintln!("{}", help());
@@ -208,43 +215,10 @@ fn run_gate(
             return Err(xtask::GateArmError::Unavailable.into());
         }
     }
-    if canonical {
+    if emit_report {
         xtask::gate_arm_report(gate_id, output).map_err(Into::into)
     } else {
         xtask::gate_arm(gate_id, output).map_err(Into::into)
-    }
-}
-
-fn gate_arguments(arguments: &[OsString]) -> Option<(&OsString, bool)> {
-    match arguments {
-        [arm] => Some((arm, false)),
-        [option, arm] if option == OsStr::new("--json") => Some((arm, true)),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod gate_argument_tests {
-    use super::*;
-
-    #[test]
-    fn focused_gate_json_is_one_explicit_machine_path() {
-        let human = [OsString::from("file-shape")];
-        let machine = [OsString::from("--json"), OsString::from("file-shape")];
-
-        let (human_arm, human_canonical) = gate_arguments(&human).expect("human gate request");
-        assert_eq!(human_arm, OsStr::new("file-shape"));
-        assert!(!human_canonical);
-
-        let (machine_arm, machine_canonical) =
-            gate_arguments(&machine).expect("machine gate request");
-        assert_eq!(machine_arm, OsStr::new("file-shape"));
-        assert!(machine_canonical);
-
-        assert!(gate_arguments(&[]).is_none());
-        assert!(
-            gate_arguments(&[OsString::from("file-shape"), OsString::from("--json")]).is_none()
-        );
     }
 }
 

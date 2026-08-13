@@ -80,7 +80,7 @@ fn refusal_fold_lists_only_non_admitting_arms_in_canonical_order() {
         );
         assert!(
             text.contains(&format!(
-                "  full-evidence: cargo xtask gate --json {}",
+                "  full-evidence: cargo xtask gate --report {}",
                 result.gate_id()
             )),
             "fold dropped the exact selected-arm command for {}",
@@ -305,7 +305,7 @@ fn fold_limit_is_deterministic_and_reports_omissions() {
     assert!(
         first
             .as_str()
-            .contains("full-evidence: cargo xtask gate --json file-shape")
+            .contains("full-evidence: cargo xtask gate --report file-shape")
     );
     assert!(first.as_str().contains("omitted_arms=1 omitted_findings=1"));
 }

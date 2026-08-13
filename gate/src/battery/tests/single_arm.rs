@@ -40,7 +40,7 @@ fn focused_reports_distinguish_clean_findings_and_executor_failure() {
     assert!(fold.as_str().contains("gate=file-shape state=unmeasured"));
     assert!(
         fold.as_str()
-            .contains("full-evidence: cargo xtask gate --json file-shape")
+            .contains("full-evidence: cargo xtask gate --report file-shape")
     );
     assert!(fold.as_str().contains(concat!(
         "battery refusal summary: total_arms=1 admitted_arms=0 ",
@@ -108,9 +108,29 @@ fn selected_production_arms_execute_alone_and_match_their_full_rows() {
         hygiene(),
     )
     .expect("capture complete production battery");
+    let structural = complete
+        .execute_structural_preflight()
+        .expect("project complete capture structural preflight");
     let report = complete
         .execute()
         .expect("execute complete production battery");
+    assert_eq!(
+        structural
+            .iter()
+            .map(FocusedArmReport::gate_id)
+            .collect::<Vec<_>>(),
+        [GateId::FileShape, GateId::Complexity]
+    );
+    for focused in &structural {
+        assert_eq!(
+            focused.result(),
+            report
+                .results()
+                .iter()
+                .find(|result| result.gate_id() == focused.gate_id())
+                .expect("complete battery reuses each structural result")
+        );
+    }
 
     for (gate_id, family) in REPRESENTATIVE_ARMS {
         let mut events = Vec::new();

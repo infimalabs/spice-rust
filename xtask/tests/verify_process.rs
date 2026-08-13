@@ -11,19 +11,19 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gate::{BatteryReport, GateId};
+use gate::{BatteryArmResult, BatteryReport, FocusedArmReport, GateId};
 
 const PROCESS_PATH: &str = concat!("PA", "TH");
-const FIXTURE_WAIT_LIMIT: Duration = Duration::from_secs(15);
 const FORMAT_ACTION: &str =
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
 const WORKSPACE_TEST_ACTION: &str =
     "deterministic sharded cargo test --locked --workspace --all-targets";
+const STREAMING_FIXTURE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[path = "verify_process/browser_refusal.rs"]
 mod browser_refusal;
-#[path = "verify_process/focused_gate.rs"]
-mod focused_gate;
+#[path = "verify_process/structural_preflight.rs"]
+mod structural_preflight;
 
 #[test]
 fn verifier_refuses_a_formatting_defect_reached_only_through_include() {
@@ -86,31 +86,7 @@ fn verifier_streams_progress_before_exit_and_emits_every_final_byte_once() {
     let programs = install_full_verifier_programs(&fixture);
     let entered = fixture.root.join("streaming-rustfmt-entered");
     let release = fixture.root.join("streaming-rustfmt-release");
-    fs::remove_file(programs.directory.join("rustfmt"))
-        .expect("remove the real rustfmt fixture symlink");
-    executable(
-        &programs.directory.join("rustfmt"),
-        &format!(
-            concat!(
-                "#!/bin/sh\n",
-                "if [ \"$*\" = \"--version\" ]; then\n",
-                "  printf '%s\\n' 'rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)'\n",
-                "  exit 0\n",
-                "fi\n",
-                "printf 'entered\\n' > '{}'\n",
-                "attempt=0\n",
-                "while [ ! -e '{}' ]; do\n",
-                "  if [ \"$attempt\" -ge 500 ]; then exit 95; fi\n",
-                "  attempt=$((attempt + 1))\n",
-                "  /bin/sleep 0.01\n",
-                "done\n",
-                "printf 'fixture-action-output\\n'\n",
-                "exit 0\n",
-            ),
-            entered.display(),
-            release.display(),
-        ),
-    );
+    install_held_rustfmt(&programs.directory, &entered, &release);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("verify")
@@ -147,7 +123,7 @@ fn verifier_streams_progress_before_exit_and_emits_every_final_byte_once() {
     });
 
     let first = observed_first_record
-        .recv_timeout(FIXTURE_WAIT_LIMIT)
+        .recv_timeout(STREAMING_FIXTURE_TIMEOUT)
         .expect("the scheduler record is visible before the held action exits");
     wait_for_file(&entered);
     let was_running = child
@@ -158,9 +134,45 @@ fn verifier_streams_progress_before_exit_and_emits_every_final_byte_once() {
     let status = child.wait().expect("wait for streamed verifier completion");
     let stdout = stdout_reader.join().expect("stdout reader joins");
     let stderr = stderr_reader.join().expect("stderr reader joins");
-    let first = String::from_utf8(first).expect("first verifier record is UTF-8");
-    let stdout = String::from_utf8(stdout).expect("complete verifier output is UTF-8");
+    let process_output = std::process::Output {
+        status,
+        stdout,
+        stderr,
+    };
+    assert_streamed_verifier(&first, was_running, &process_output);
+    assert_full_verifier_action_trace(&programs, &fixture.repository, &process_output);
+}
 
+fn install_held_rustfmt(programs: &Path, entered: &Path, release: &Path) {
+    fs::remove_file(programs.join("rustfmt")).expect("remove the real rustfmt fixture symlink");
+    executable(
+        &programs.join("rustfmt"),
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)'\n",
+                "  exit 0\n",
+                "fi\n",
+                "printf 'entered\\n' > '{}'\n",
+                "attempt=0\n",
+                "while [ ! -e '{}' ]; do\n",
+                "  if [ \"$attempt\" -ge 500 ]; then exit 95; fi\n",
+                "  attempt=$((attempt + 1))\n",
+                "  /bin/sleep 0.01\n",
+                "done\n",
+                "printf 'fixture-action-output\\n'\n",
+                "exit 0\n",
+            ),
+            entered.display(),
+            release.display(),
+        ),
+    );
+}
+
+fn assert_streamed_verifier(first: &[u8], was_running: bool, output: &std::process::Output) {
+    let first = String::from_utf8_lossy(first);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         first.starts_with("[verify] scheduler workers="),
         "unexpected first live record: {first:?}"
@@ -169,11 +181,7 @@ fn verifier_streams_progress_before_exit_and_emits_every_final_byte_once() {
         was_running,
         "the first record was buffered until process exit"
     );
-    assert!(
-        status.success(),
-        "streamed verifier failed: stdout={stdout} stderr={}",
-        String::from_utf8_lossy(&stderr)
-    );
+    assert!(output.status.success(), "{}", streams(output));
     assert_eq!(stdout.matches("[verify] scheduler workers=").count(), 1);
     assert_eq!(stdout.matches("fixture-action-output").count(), 1);
     assert_eq!(
@@ -410,6 +418,111 @@ fn assert_workspace_test_execution(
     );
 }
 
+fn run_selected_gate(
+    fixture: &Fixture,
+    programs: &Path,
+    cargo_log: &Path,
+    browser_log: &Path,
+) -> BatteryArmResult {
+    let default_output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "env-name-ledger"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, programs)
+        .output()
+        .expect("launch one real gate arm with human output");
+    assert!(
+        default_output.status.success(),
+        "{}",
+        streams(&default_output)
+    );
+    assert!(
+        default_output.stdout.is_empty(),
+        "an admitting arm needs no human diagnostic: {}",
+        streams(&default_output)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "--report", "env-name-ledger"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, programs)
+        .output()
+        .expect("launch one real gate arm with machine output");
+    assert!(output.status.success(), "{}", streams(&output));
+    let document = output
+        .stdout
+        .strip_suffix(b"\n")
+        .expect("machine report carries one terminal newline");
+    let report = FocusedArmReport::decode(document)
+        .expect("explicit report mode emits one canonical focused report");
+    let result = report.result().clone();
+    assert_eq!(result.gate_id(), GateId::EnvNameLedger);
+    assert!(!cargo_log.exists(), "selected arm launched a Cargo stage");
+    assert!(
+        !browser_log.exists(),
+        "selected arm launched the browser stage"
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("[verify]"));
+    result
+}
+
+fn run_refusing_selected_gate(fixture: &Fixture, programs: &Path) -> BatteryArmResult {
+    let default_output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "file-shape"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, programs)
+        .output()
+        .expect("launch the refusing file-shape gate arm with human output");
+    assert_eq!(
+        default_output.status.code(),
+        Some(1),
+        "{}",
+        streams(&default_output)
+    );
+    assert!(
+        default_output.stdout.len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES,
+        "focused diagnostic exceeded its bound: {}",
+        streams(&default_output)
+    );
+    let default_stdout = String::from_utf8_lossy(&default_output.stdout);
+    assert!(default_stdout.contains("gate=file-shape state=failed"));
+    assert!(default_stdout.contains("full-evidence: cargo xtask gate --report file-shape"));
+    assert!(
+        FocusedArmReport::decode(
+            default_output
+                .stdout
+                .strip_suffix(b"\n")
+                .unwrap_or_default()
+        )
+        .is_err(),
+        "ordinary refusal unexpectedly emitted its canonical machine report"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "--report", "file-shape"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, programs)
+        .output()
+        .expect("launch the refusing file-shape gate arm with machine output");
+    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
+    let lines = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines.iter().filter(|line| !line.is_empty()).count(),
+        1,
+        "explicit report mode emits exactly one machine row: {}",
+        streams(&output)
+    );
+    let report = FocusedArmReport::decode(lines[0])
+        .expect("refusing selected arm emits a canonical focused report");
+    let result = report.result().clone();
+    assert_eq!(result.gate_id(), GateId::FileShape);
+    assert!(!result.state().admits());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("[verify]"));
+    result
+}
+
 #[test]
 fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidence() {
     let fixture = Fixture::new();
@@ -577,6 +690,53 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
             .split(|byte| *byte == b'\n')
             .all(|line| BatteryReport::decode(line).is_err()),
         "scoped verifier emitted a complete full-battery report"
+    );
+}
+
+#[test]
+fn command_help_enumerates_every_single_gate_arm_spelling() {
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("help")
+        .output()
+        .expect("launch xtask help");
+
+    assert!(output.status.success(), "{}", streams(&output));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(concat!(
+            "cargo xtask <help|verify [--package PACKAGE]|",
+            "verify-action <selection|battery>|gate [--report] ARM|"
+        )),
+        "{}",
+        streams(&output)
+    );
+    assert!(stdout.contains("Neither is a completion verifier"));
+    assert!(stdout.contains("gate --report ARM emits one canonical machine report"));
+    for gate_id in GateId::BATTERY {
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line == format!("  {}", gate_id.as_str())),
+            "help omits {}:\n{}",
+            gate_id.as_str(),
+            streams(&output)
+        );
+    }
+}
+
+#[test]
+fn unknown_gate_arm_points_to_the_canonical_inventory() {
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "not-a-gate"])
+        .output()
+        .expect("launch unknown gate arm");
+
+    assert_eq!(output.status.code(), Some(2), "{}", streams(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("run `cargo xtask help` for accepted gate arms"),
+        "{}",
+        streams(&output)
     );
 }
 
@@ -826,7 +986,7 @@ fn wait_for_file(path: &Path) {
     let started = Instant::now();
     while !path.is_file() {
         assert!(
-            started.elapsed() < FIXTURE_WAIT_LIMIT,
+            started.elapsed() < STREAMING_FIXTURE_TIMEOUT,
             "fixture did not publish {}",
             path.display()
         );

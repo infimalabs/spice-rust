@@ -20,9 +20,11 @@ use sill::{
 use super::verify_timing::{self, Conclusion, Disposition, Stage};
 use super::{
     Action, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, CommandRun, ENTRY_POINT_LABEL,
-    FORMAT_LABEL, ProcessOutput, RunError, Runner, SCOPED_COMMANDS, Status, VERIFY_ACTIONS,
-    VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, valid_package_name,
+    FORMAT_LABEL, ProcessOutput, RunError, Runner, SCOPED_COMMANDS, STRUCTURAL_PREFLIGHT_LABEL,
+    Status, VERIFY_ACTIONS, VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, valid_package_name,
 };
+
+mod setup;
 
 /// The explicit full-verifier dependency graph, indexed by report ordinal.
 ///
@@ -35,7 +37,10 @@ use super::{
 /// tests so the reusable native Cargo root is not forced into competing
 /// documentation and test publication work. The evidence-consuming battery
 /// overlaps that documentation tail once browser and workspace tests have
-/// completed; contract landing remains the barrier over every action.
+/// completed; contract landing remains the barrier over every action. After
+/// formatting admits, the scheduler synchronously projects the capture-time
+/// file-shape and complexity evidence before it can launch the compiler chain;
+/// this setup gate is not a second report action or a second source capture.
 const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[],
     &[0],
@@ -220,6 +225,7 @@ struct WorkerCompletion {
 
 struct GraphRun {
     nodes: Vec<NodeState>,
+    structural_preflight_failure: Option<VerifyError>,
     prebuild_failure: Option<VerifyError>,
     output_fault: Option<io::Error>,
     deadline_exceeded: bool,
@@ -424,6 +430,7 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
 
     let GraphRun {
         mut nodes,
+        structural_preflight_failure,
         prebuild_failure,
         output_fault,
         deadline_exceeded,
@@ -440,6 +447,10 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
     if interrupted.load(Ordering::Acquire) {
         write_failure_summary(output, "operator", &cleanup, true)?;
         return Err(VerifyError::Interrupted);
+    }
+    if let Some(primary) = structural_preflight_failure {
+        write_failure_summary(output, "structural-preflight", &cleanup, false)?;
+        return Err(primary);
     }
     if let Some(primary) = prebuild_failure {
         write_failure_summary(output, "9", &cleanup, false)?;
@@ -488,54 +499,24 @@ fn schedule_graph<R: Runner>(
     let mut output_fault = None;
     let mut deadline_exceeded = false;
     let mut test_phase_started = None;
-    let mut workspace_tests_prebuilt = false;
-    let mut prebuild_failure = None;
-    let mut rebalance = Some(rebalance);
+    let mut setups = setup::SetupRun::new(rebalance);
 
     thread::scope(|scope| {
         loop {
-            if !failure_seen
-                && test_phase_started.is_some_and(|started: Instant| started.elapsed() >= runtime)
-            {
-                deadline_exceeded = true;
-                failure_seen = true;
-                cancellation.cancel();
-            }
-            if !failure_seen
-                && !cancellation.is_cancelled()
-                && !workspace_tests_prebuilt
-                && workspace_test_prebuild_ready(&nodes)
-            {
-                let completion = execute_workspace_test_prebuild(runner, cancellation, budget);
-                workspace_tests_prebuilt = completion.result.is_ok();
-                if let Err(error) = render_workspace_test_prebuild(completion, output) {
-                    match error {
-                        VerifyError::Output(error) => {
-                            output_fault.get_or_insert(error);
-                            failure_seen = true;
-                            cancellation.cancel();
-                        }
-                        error => {
-                            prebuild_failure = Some(error);
-                            failure_seen = true;
-                            cancellation.cancel();
-                        }
-                    }
+            enforce_test_phase_deadline(
+                test_phase_started,
+                runtime,
+                &mut deadline_exceeded,
+                &mut failure_seen,
+                cancellation,
+            );
+            if !failure_seen && !cancellation.is_cancelled() {
+                if let Some(rebalanced) =
+                    setups.advance(runner, &nodes, output, budget, cancellation)
+                {
+                    budget = rebalanced;
                 }
-                if !workspace_tests_prebuilt {
-                    failure_seen = true;
-                    cancellation.cancel();
-                } else if !failure_seen {
-                    let rebalance = rebalance
-                        .take()
-                        .expect("workspace-test setup rebalances exactly once");
-                    budget = rebalance(budget);
-                    if let Err(error) = write_rebalanced_budget(output, budget) {
-                        output_fault.get_or_insert(error);
-                        failure_seen = true;
-                        cancellation.cancel();
-                    }
-                }
+                failure_seen = setups.failed();
             }
             if !failure_seen && !cancellation.is_cancelled() {
                 start_ready_actions(
@@ -575,79 +556,37 @@ fn schedule_graph<R: Runner>(
             );
         }
     });
+    finish_graph(nodes, setups, output_fault, deadline_exceeded)
+}
+
+fn finish_graph<Rebalance>(
+    nodes: Vec<NodeState>,
+    setups: setup::SetupRun<Rebalance>,
+    output_fault: Option<io::Error>,
+    deadline_exceeded: bool,
+) -> GraphRun {
+    let (structural_preflight_failure, prebuild_failure, setup_fault) = setups.into_failures();
     GraphRun {
         nodes,
+        structural_preflight_failure,
         prebuild_failure,
-        output_fault,
+        output_fault: output_fault.or(setup_fault),
         deadline_exceeded,
     }
 }
 
-fn write_rebalanced_budget(output: &mut impl Write, budget: Budget) -> io::Result<()> {
-    let active = budget
-        .active_cargo_jobs
-        .map_or_else(|| "unknown".to_owned(), |count| count.to_string());
-    writeln!(
-        output,
-        concat!(
-            "[verify] scheduler-rebalanced trigger=workspace-test-setup workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={}"
-        ),
-        budget.workers, budget.cargo_jobs, active, budget.workspace_workers,
-    )?;
-    output.flush()
-}
-
-fn workspace_test_prebuild_ready(nodes: &[NodeState]) -> bool {
-    matches!(
-        nodes.get(6),
-        Some(NodeState::Complete(ActionCompletion { result: Ok(()), .. }))
-    ) && matches!(nodes.get(7), Some(NodeState::Pending))
-        && matches!(nodes.get(8), Some(NodeState::Pending))
-}
-
-fn execute_workspace_test_prebuild<R: Runner>(
-    runner: &R,
+fn enforce_test_phase_deadline(
+    started: Option<Instant>,
+    runtime: Duration,
+    deadline_exceeded: &mut bool,
+    failure_seen: &mut bool,
     cancellation: &CancellationToken,
-    budget: Budget,
-) -> ActionCompletion {
-    let started = Instant::now();
-    let mut completion = execute_process(
-        runner.workspace_test_prebuild(cancellation, budget.cargo_jobs),
-        WORKSPACE_TEST_PREBUILD_LABEL,
-        |source| VerifyError::Launch {
-            label: WORKSPACE_TEST_PREBUILD_LABEL,
-            source,
-        },
-        |code| VerifyError::Exit {
-            label: WORKSPACE_TEST_PREBUILD_LABEL,
-            code,
-        },
-    );
-    completion.elapsed = started.elapsed();
-    completion
-}
-
-fn render_workspace_test_prebuild(
-    completion: ActionCompletion,
-    output: &mut impl Write,
-) -> Result<(), VerifyError> {
-    writeln!(
-        output,
-        "[verify] stage=setup identity={WORKSPACE_TEST_PREBUILD_LABEL:?}"
-    )
-    .map_err(VerifyError::Output)?;
-    output
-        .write_all(&completion.output)
-        .map_err(VerifyError::Output)?;
-    writeln!(
-        output,
-        "[verify] stage=setup-terminal elapsed_ms={} disposition={} identity={WORKSPACE_TEST_PREBUILD_LABEL:?}",
-        completion.elapsed.as_millis(),
-        completion.disposition,
-    )
-    .map_err(VerifyError::Output)?;
-    completion.result
+) {
+    if !*failure_seen && started.is_some_and(|started| started.elapsed() >= runtime) {
+        *deadline_exceeded = true;
+        *failure_seen = true;
+        cancellation.cancel();
+    }
 }
 
 #[expect(

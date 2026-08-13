@@ -300,7 +300,11 @@ impl<'trace> RepositoryExecutor<'trace> {
         .map_err(BatteryError::new)
     }
 
-    /// Offer opaque verifier evidence before any battery arm executes.
+    /// Offer opaque verifier evidence before the toolchain family executes.
+    ///
+    /// Capture-time structural evidence may already have been projected by the
+    /// verifier preflight. It neither consumes nor depends on compiler evidence,
+    /// so that cached family does not close this seam.
     pub(super) fn set_verifier_evidence(
         &mut self,
         evidence: &[VerifierCompilerEvidence],
@@ -312,9 +316,9 @@ impl<'trace> RepositoryExecutor<'trace> {
                 "selected-arm captures cannot consume full-verifier evidence",
             ));
         }
-        if self.context.is_some() || self.families.iter().any(Option::is_some) {
+        if self.families[family_index(ArmFamily::Toolchain)].is_some() {
             return Err(BatteryError::new(
-                "full-verifier evidence must be supplied before battery execution",
+                "full-verifier evidence must be supplied before toolchain-family execution",
             ));
         }
         self.verifier_environment = environment;
