@@ -10,11 +10,11 @@ import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
   nestedQuoteMessage, nestedQuotePreview, seatAgentTeam,
 } from "./agent-conversation.mjs";
+import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
 import { assertComposerShards } from "./composer-shards.mjs";
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertVacantWakeSubmission } from "./vacant-wake-submission.mjs";
-import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertCanvasProtocolRefresh } from "./canvas-compatibility.mjs";
 import { assertAuthoritySurface, driveTeam } from "./canvas-authority.mjs";
@@ -793,43 +793,6 @@ async function assertSameGenerationResume(
   assert.ok(after.length > before.length, "same-generation resume appends missed facts");
 }
 
-async function assertFirefoxRestoredMosaic(endpoint) {
-  const firefox = await launchBrowser("firefox");
-  const context = await firefox.newContext({
-    colorScheme: "dark",
-    viewport: { width: 1717, height: 1470 },
-  });
-  const page = await context.newPage();
-  const monitor = monitorPage(page);
-  try {
-    await page.goto(endpoint, { waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
-    const console = page.locator('[data-pane="agent-console"]');
-    await console.getByRole("tab", { name: /^Compose/ }).click();
-    const before = await assertMosaicLattice(page, false);
-    assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
-
-    await page.reload({ waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
-    await console.getByRole("tab", { name: /^Compose/ }).click();
-    const restored = await assertMosaicLattice(page, false);
-    assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
-
-    await page.waitForTimeout(LIVENESS_PROBE_MS + 500);
-    const settled = await assertMosaicLattice(page, false);
-    assert.equal(
-      settled.length,
-      restored.length,
-      "Firefox retains every restored card after the liveness heartbeat",
-    );
-    await page.screenshot({ path: join(artifacts, "firefox-restored-mosaic.png"), fullPage: true });
-    monitor.assertClean();
-  } finally {
-    await context.close();
-    await firefox.close();
-  }
-}
-
 assertBoundaryLoadReading();
 const run = startShardWorker(process.argv.slice(2));
 if (process.env.SPICE_CANVAS_PREBUILT !== "1") await buildResident();
@@ -903,7 +866,7 @@ try {
         await assertTeamMenu(lightPage, fixture);
       });
       await run.scenario("firefox-restored-mosaic", async () => {
-        await assertFirefoxRestoredMosaic(resident.discovery.endpoint);
+        await assertFirefoxRestoredMosaic(resident.discovery.endpoint, artifacts);
       });
       await run.scenario("reference-composer", async () => {
         const reference = await browser.newContext({ colorScheme: "dark", viewport: { width: 1000, height: 568 } });

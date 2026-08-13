@@ -363,6 +363,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
           const box = card.getBoundingClientRect();
           const style = getComputedStyle(card);
           return {
+            key: card.dataset.mosaicCardKey,
             kind: card.dataset.cardKind,
             lane: card.dataset.agentLane,
             creationIndex: Number(card.dataset.creationIndex),
@@ -416,6 +417,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       "DOM order is the stable creation order submitted to Rust",
     );
     for (const card of plane.cards) {
+      assert.ok(card.key, "every Mosaic card exposes its stable identity");
       const wideSpan = Math.min(plane.trackCount, plane.baseSpan * 2);
       const wideEligible = wideSpan > plane.baseSpan && card.heights[0] >= plane.tallThreshold;
       const expectedSpans = wideEligible ? [plane.baseSpan, wideSpan] : [plane.baseSpan];
