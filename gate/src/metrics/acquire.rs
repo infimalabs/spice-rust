@@ -35,9 +35,9 @@ use bounds::{bounded_row, routine_evidence};
 /// walks could disagree about what a link points at.
 ///
 /// The committed baselines are borrowed rather than read here, because they are
-/// the one input no selected tree holds: the magic delta compares the selection
-/// against the live repository's `HEAD`, which the capture that materialized
-/// this tree is the last thing allowed to observe.
+/// the one input no selected tree holds: magic deltas and authored structural
+/// debt compare the selection against the live repository's `HEAD`, which the
+/// capture that materialized this tree is the last thing allowed to observe.
 ///
 /// The acting actor and the durable latches are borrowed for the same reason,
 /// and are what a bounded arm needs beyond bytes: an elastic limit varies with
@@ -226,7 +226,7 @@ fn acquire_arm_evidence(
     observations: &mut Vec<LatchObservation>,
 ) -> Result<StructuralArmEvidence, MetricAcquisitionError> {
     let metrics = match declaration.id() {
-        GateId::Complexity => complexity_metrics(source, bounds, observations)?,
+        GateId::Complexity => complexity_metrics(source, declaration, bounds, observations)?,
         GateId::FileShape => file_shape_metrics(source, declaration, bounds, observations)?,
         GateId::MagicNumbers => magic_metrics(source, declaration)?,
         GateId::MarkdownLinks => markdown_metrics(source)?,
@@ -415,7 +415,11 @@ fn file_shape_rows(
             shape.lines(),
             committed_shape.as_ref().map(|shape| shape.lines()),
         ),
-        (MetricId::FileBytes, shape.bytes(), None),
+        (
+            MetricId::FileBytes,
+            shape.bytes(),
+            committed_shape.as_ref().map(|shape| shape.bytes()),
+        ),
     ] {
         let (row, observed) = bounded_row(source, path, key, metric, value, committed)?;
         rows.push(row);
@@ -637,9 +641,16 @@ fn magic_metrics(
 /// skip and a clean parse of an empty file are indistinguishable from.
 fn complexity_metrics(
     source: &MetricSource<'_>,
+    declaration: ArmDeclaration,
     bounds: &mut Vec<BoundDecision>,
     observations: &mut Vec<LatchObservation>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
+    if let BaselineCapture::Unreachable(reason) = source.baselines {
+        return unavailable(
+            declaration,
+            &format!("committed complexity parents could not be read: {reason}"),
+        );
+    }
     let suffixes = source
         .contract
         .rule_policy()
@@ -665,7 +676,9 @@ fn complexity_metrics(
 /// a measured routine contributes both. Appending here keeps evidence and
 /// decisions in the same parse traversal and the same canonical metric order.
 /// A merge-inherited file contributes neither because this commit authored no
-/// routine in it and therefore owns no complexity or bound decision for it.
+/// routine in it and therefore owns no complexity or bound decision for it. A
+/// changed routine whose committed value was already over base is held to base,
+/// while an unchanged committed breach retains the flex it previously earned.
 fn complexity_rows(
     source: &MetricSource<'_>,
     path: &str,
@@ -673,22 +686,41 @@ fn complexity_rows(
     bounds: &mut Vec<BoundDecision>,
     observations: &mut Vec<LatchObservation>,
 ) -> Result<(), MetricAcquisitionError> {
-    if std::fs::read(source.root().join(path))
-        .is_ok_and(|bytes| source.baselines.merge_inherits(path, &bytes))
-    {
+    let current = match std::fs::read(source.root().join(path)) {
+        Ok(current) => current,
+        Err(error) => {
+            let state = EvidenceState::Unavailable {
+                reason: format!("selected complexity source could not be read: {error}"),
+            };
+            return whole_file_complexity(path, &state, metrics);
+        }
+    };
+    if source.baselines.merge_inherits(path, &current) {
         return Ok(());
     }
-    let routines = match read_complexity(source, path) {
+    let committed = committed_complexity(source, path, &current);
+    let routines = match read_complexity(path, &current) {
         Ok(routines) => routines,
         Err(state) => return whole_file_complexity(path, &state, metrics),
     };
     for routine in routines {
-        for (metric, value) in [
-            (MetricId::RoutineCcn, routine.ccn()),
-            (MetricId::RoutineLength, routine.length()),
+        let predecessor = committed
+            .iter()
+            .find(|candidate| candidate.function() == routine.function());
+        for (metric, value, committed) in [
+            (
+                MetricId::RoutineCcn,
+                routine.ccn(),
+                predecessor.map(ComplexityRoutine::ccn),
+            ),
+            (
+                MetricId::RoutineLength,
+                routine.length(),
+                predecessor.map(ComplexityRoutine::length),
+            ),
         ] {
             let (evidence, observed) =
-                routine_evidence(source, path, routine.function(), metric, value)?;
+                routine_evidence(source, path, routine.function(), metric, value, committed)?;
             metrics.push(evidence);
             if let Some((decision, observation)) = observed {
                 bounds.push(decision);
@@ -699,17 +731,31 @@ fn complexity_rows(
     Ok(())
 }
 
-/// Parse one selected file, or the state explaining why it was not measured.
-fn read_complexity(
+/// Parse the committed version of one current complexity source when reachable.
+///
+/// A missing or unparseable predecessor supplies no prior metric value, so no
+/// inferred latch can be formed. The current parse reports its own refusal
+/// separately.
+fn committed_complexity(
     source: &MetricSource<'_>,
     path: &str,
-) -> Result<Vec<ComplexityRoutine>, EvidenceState> {
-    let text = std::fs::read_to_string(source.root().join(path)).map_err(|error| {
-        EvidenceState::Unavailable {
-            reason: format!("selected complexity source could not be read: {error}"),
-        }
+    current: &[u8],
+) -> Vec<ComplexityRoutine> {
+    source
+        .baselines
+        .baseline_bytes(path, current)
+        .filter(|committed| *committed != current)
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .and_then(|text| measure_complexity(path, text).ok())
+        .unwrap_or_default()
+}
+
+/// Parse one selected file, or the state explaining why it was not measured.
+fn read_complexity(path: &str, bytes: &[u8]) -> Result<Vec<ComplexityRoutine>, EvidenceState> {
+    let text = std::str::from_utf8(bytes).map_err(|error| EvidenceState::Unavailable {
+        reason: format!("selected complexity source could not be read: {error}"),
     })?;
-    measure_complexity(path, &text).map_err(ParseError::into_evidence_state)
+    measure_complexity(path, text).map_err(ParseError::into_evidence_state)
 }
 
 /// A file the parser refused speaks once per metric, on one shared key.
