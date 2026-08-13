@@ -48,6 +48,14 @@ impl ResolvedMetricRule {
     pub const fn binding(&self) -> &RuleBinding {
         &self.binding
     }
+
+    /// Whether an edited value inherited debt that already spent flex.
+    #[must_use]
+    pub(crate) fn changed_committed_breach(&self, committed: Option<u64>, value: u64) -> bool {
+        committed.is_some_and(|committed| {
+            !self.unlimited && committed > self.base_limit && committed != value
+        })
+    }
 }
 
 /// Resolved threshold and selection provenance for magic-number scanning.

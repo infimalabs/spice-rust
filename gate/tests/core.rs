@@ -16,8 +16,8 @@ use wire::{Digest, Domain, Phase, TaskHandle};
 mod support;
 
 use support::{
-    acquired, acquired_arm, contract_repository, git, git_commit, git_output, git_repository,
-    measured,
+    acquired, acquired_arm, captured_baselines, contract_repository, git, git_commit, git_output,
+    git_repository, measured,
 };
 
 #[derive(Deserialize)]
@@ -722,6 +722,7 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let baselines = captured_baselines(&repository, &contract);
     let captured = CoreSource::capture(
         &tree,
         &contract,
@@ -735,7 +736,8 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
     git(&repository, &["add", "src/app.rs"]);
     repository.write("src/app.rs", "fn main() {\n    // unstaged\n}\n");
 
-    let inputs = acquire_core(&captured, &contract).expect("acquire one complete core battery");
+    let inputs =
+        acquire_core(&captured, &contract, &baselines).expect("acquire one complete core battery");
     let staging = acquired_input(&inputs, GateId::Staging);
     assert_eq!(
         staging.observation(),
@@ -750,6 +752,7 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
         "the staging arm is labelled with the digest its observation was taken under"
     );
 
+    let later_baselines = captured_baselines(&repository, &contract);
     let later = CoreSource::capture(
         &tree,
         &contract,
@@ -758,7 +761,8 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
         &[],
     )
     .expect("capture the same tree over the mutated repository");
-    let later_inputs = acquire_core(&later, &contract).expect("acquire the later battery");
+    let later_inputs =
+        acquire_core(&later, &contract, &later_baselines).expect("acquire the later battery");
     assert_eq!(
         acquired_input(&later_inputs, GateId::Staging).observation(),
         &measured(CoreEvidence::Staging(

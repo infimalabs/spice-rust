@@ -13,7 +13,7 @@ use gate::{
 mod support;
 
 use support::{
-    Tree, acquired, acquired_arm, acquired_inputs, contract_repository, git_commit,
+    Tree, acquired, acquired_arm, acquired_inputs, contract_repository, git, git_commit,
     workspace_document,
 };
 
@@ -499,6 +499,89 @@ fn a_latched_document_is_decided_and_judged_against_its_base_limit() {
             .contains("DOCTRINE.md: 20000 characters (cap 10000)"),
         "the arm was judged against a cap the decision did not hold it to: {}",
         arm.diagnostic()
+    );
+
+    repository.remove();
+}
+
+/// Editing inherited document debt spends flex until the document heals.
+#[test]
+fn an_authored_document_above_its_committed_base_is_held_to_the_true_limit() {
+    const PATH: &str = "DOCTRINE.md";
+    const BASE: u64 = 10_000;
+
+    let repository = contract_repository("core-acquire-repo-docs-committed-debt");
+    repository.write(PATH, &"x".repeat(12_000));
+    git_commit(&repository, "commit document debt inside flex");
+
+    let acquire = || {
+        acquired_inputs(
+            &repository,
+            ClaimCapture::Idle,
+            ActorCapture::Acting {
+                actor: "worktree-author".to_owned(),
+                bound_claims: Vec::new(),
+            },
+            &[],
+        )
+    };
+    let unchanged = acquire();
+    let [elastic] = unchanged.bounds() else {
+        panic!(
+            "one document must decide one bound: {:?}",
+            unchanged.bounds()
+        );
+    };
+    assert_eq!(
+        (
+            elastic.base_limit(),
+            elastic.configured_elastic_limit(),
+            elastic.active_limit(),
+        ),
+        (BASE, 15_000, 14_850)
+    );
+    assert!(elastic.over_base() && !elastic.over_limit());
+    assert_eq!(elastic.latch_transition(), LatchTransition::Clear);
+    assert_eq!(
+        acquired_arm(&evaluate_core(&unchanged), GateId::RepoDocs).standing(),
+        CoreStanding::Passed,
+        "unchanged committed debt keeps its 1.5x flex"
+    );
+
+    repository.write(PATH, &"x".repeat(11_000));
+    git(&repository, &["add", PATH]);
+    let changed = acquire();
+    let [held] = changed.bounds() else {
+        panic!(
+            "one changed document must decide one bound: {:?}",
+            changed.bounds()
+        );
+    };
+    assert_eq!(held.active_limit(), BASE);
+    assert!(held.measured() > BASE && held.measured() < held.elastic_limit());
+    assert!(held.over_limit() && !held.elastic_breach());
+    assert_eq!(held.latch_transition(), LatchTransition::Held);
+    assert_eq!(
+        acquired_arm(&evaluate_core(&changed), GateId::RepoDocs).standing(),
+        CoreStanding::Failed,
+        "an authored improvement remains actionable until it reaches base"
+    );
+
+    repository.write(PATH, &"x".repeat(BASE as usize));
+    git(&repository, &["add", PATH]);
+    let healed = acquire();
+    let [decision] = healed.bounds() else {
+        panic!(
+            "one healed document must decide one bound: {:?}",
+            healed.bounds()
+        );
+    };
+    assert_eq!(decision.active_limit(), BASE);
+    assert!(!decision.over_limit() && !decision.over_base());
+    assert_eq!(decision.latch_transition(), LatchTransition::Healed);
+    assert_eq!(
+        acquired_arm(&evaluate_core(&healed), GateId::RepoDocs).standing(),
+        CoreStanding::Passed
     );
 
     repository.remove();

@@ -39,8 +39,8 @@ use crate::input::Contract;
 use crate::jurisdiction::Jurisdiction;
 use crate::measure::Bounds;
 use crate::metrics::{
-    MetricId, MetricKey, MetricStateBinding, ParserEvidence, ParserId, measure_repository_document,
-    resolve_metric_rule,
+    BaselineCapture, MetricId, MetricKey, MetricStateBinding, ParserEvidence, ParserId,
+    measure_repository_document, resolve_metric_rule,
 };
 use crate::policy::PolicyContext;
 use crate::state::{
@@ -350,7 +350,9 @@ impl GitObservations {
 ///
 /// Every declaration in [`core_declarations`] contributes exactly one arm, in
 /// compiled order. No arm is omitted, none is invented, and no standing is
-/// computed here.
+/// computed here. `baselines` must be the committed capture taken beside
+/// `source`; repository-document debt is a comparison between those two
+/// immutable inputs, not a later read of the live repository.
 ///
 /// # Errors
 ///
@@ -360,14 +362,16 @@ impl GitObservations {
 pub fn acquire_core(
     source: &CoreSource<'_>,
     contract: &Contract,
+    baselines: &BaselineCapture,
 ) -> Result<CoreInputs, CoreInputError> {
-    acquire_core_with_observations(source, contract).map(|(inputs, _)| inputs)
+    acquire_core_with_observations(source, contract, baselines).map(|(inputs, _)| inputs)
 }
 
 /// Acquire the complete core family and retain its exact state observations.
 pub(crate) fn acquire_core_with_observations(
     source: &CoreSource<'_>,
     contract: &Contract,
+    baselines: &BaselineCapture,
 ) -> Result<(CoreInputs, Vec<LatchObservation>), CoreInputError> {
     let configuration = ConfigurationInventorySource::capture(source)?;
     let mut arms = Vec::with_capacity(core_declarations().len());
@@ -388,6 +392,7 @@ pub(crate) fn acquire_core_with_observations(
                 declaration,
                 source,
                 contract,
+                baselines,
                 Some(&configuration),
                 &mut bounds,
                 &mut observations,
@@ -401,6 +406,7 @@ pub(crate) fn acquire_core_with_observations(
 pub(crate) fn acquire_core_arm(
     source: &CoreSource<'_>,
     contract: &Contract,
+    baselines: &BaselineCapture,
     gate_id: GateId,
 ) -> Result<(CoreArmInput, Vec<BoundDecision>, Vec<LatchObservation>), CoreInputError> {
     let declaration = core_declarations()
@@ -425,6 +431,7 @@ pub(crate) fn acquire_core_arm(
         declaration,
         source,
         contract,
+        baselines,
         configuration.as_ref(),
         &mut bounds,
         &mut observations,
@@ -437,6 +444,7 @@ fn observe(
     declaration: &CoreArmDeclaration,
     source: &CoreSource<'_>,
     contract: &Contract,
+    baselines: &BaselineCapture,
     configuration: Option<&ConfigurationInventorySource>,
     bounds: &mut Vec<BoundDecision>,
     observations: &mut Vec<LatchObservation>,
@@ -451,7 +459,9 @@ fn observe(
             CoreInputError::new("staging acquisition omitted its Git observation")
         })?,
         GateId::ConfigKeyValidity => return config_keys(contract),
-        GateId::RepoDocs => return repo_docs(source, contract, bounds, observations),
+        GateId::RepoDocs => {
+            return repo_docs(source, contract, baselines, bounds, observations);
+        }
         GateId::ConfigFalseDisable => {
             return configuration
                 .ok_or_else(|| {
@@ -473,9 +483,15 @@ fn observe(
 fn repo_docs(
     source: &CoreSource<'_>,
     contract: &Contract,
+    baselines: &BaselineCapture,
     bounds: &mut Vec<BoundDecision>,
     observations: &mut Vec<LatchObservation>,
 ) -> Result<CoreObservation, CoreInputError> {
+    if let BaselineCapture::Unreachable(reason) = baselines {
+        return Err(CoreInputError::new(format!(
+            "committed repository-document parents could not be read: {reason}"
+        )));
+    }
     let mut measurements = Vec::new();
     for entry in source.jurisdiction.measurable() {
         let path = entry.path();
@@ -500,12 +516,18 @@ fn repo_docs(
                 "measure selected repository document {path:?}: {error}"
             ))
         })?;
+        let committed = baselines
+            .baseline_bytes(path, &bytes)
+            .filter(|committed| *committed != bytes)
+            .and_then(|committed| measure_repository_document(path, committed).ok())
+            .map(|document| document.characters());
         let (measurement, decision, observation) = document_measurement(
             &source.actor,
             contract,
             &source.latches,
             path,
             document.characters(),
+            committed,
         )?;
         measurements.push(measurement);
         bounds.push(decision);
@@ -532,8 +554,10 @@ fn repo_docs(
 ///
 /// A latched document is held to its base limit, because a breach already
 /// spent the elastic headroom the ratchet lends. The latch is read from the
-/// ledger this run published as its state authority, so the arm and the report
-/// answer to one reading.
+/// ledger this run published as its state authority; a changed committed value
+/// already above base infers the same state before a first durable observation
+/// can exist. The arm and the report therefore answer to one debt rule whether
+/// the prior breach is visible in the ledger or in the committed document.
 ///
 /// A bound claim is resolved only for a document that breached its cap, which
 /// is the same set the predecessor asks the ledger about: a document inside its
@@ -545,6 +569,7 @@ fn document_measurement(
     latches: &[LatchEntry],
     path: &str,
     characters: u64,
+    committed: Option<u64>,
 ) -> Result<(DocMeasurement, BoundDecision, LatchObservation), CoreInputError> {
     let rule = resolve_metric_rule(
         contract.rule_policy(),
@@ -556,6 +581,7 @@ fn document_measurement(
             "resolve repository-document bound for {path:?}: {error}"
         ))
     })?;
+    let committed_over_base = rule.changed_committed_breach(committed, characters);
     let key = MetricKey::path(path)
         .map_err(|error| CoreInputError::new(format!("repository-document key: {error}")))?;
     let binding = MetricStateBinding::new(
@@ -568,7 +594,7 @@ fn document_measurement(
         rule,
     )
     .map_err(|error| CoreInputError::new(format!("bind repository-document {path:?}: {error}")))?;
-    let latched = latches.contains(binding.entry());
+    let latched = latches.contains(binding.entry()) || committed_over_base;
     let actor_inputs = actor.actor_inputs(path).map_err(|error| {
         CoreInputError::new(format!(
             "actor provenance for repository document {path:?}: {error}"

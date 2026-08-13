@@ -6,8 +6,8 @@ use gate::{
 mod support;
 
 use support::{
-    Tree, acquired, acquired_arm, contract_repository, git_commit, git_repository, measured,
-    policy_document, workspace_document,
+    Tree, acquired, acquired_arm, captured_baselines, contract_repository, git_commit,
+    git_repository, measured, policy_document, workspace_document,
 };
 
 fn shape_contract_repository(label: &str) -> Tree {
@@ -29,6 +29,7 @@ fn shape_refusal(repository: &Tree) -> String {
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let baselines = captured_baselines(repository, &contract);
     let source = CoreSource::capture(
         &tree,
         &contract,
@@ -37,7 +38,7 @@ fn shape_refusal(repository: &Tree) -> String {
         &[],
     )
     .expect("capture one immutable core source");
-    acquire_core(&source, &contract)
+    acquire_core(&source, &contract, &baselines)
         .expect_err("an unusable shape input must refuse rather than acquire")
         .to_string()
 }
