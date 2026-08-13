@@ -50,6 +50,7 @@ impl ResolvedMetricRule {
     }
 
     /// Whether an edited value inherited debt that already spent flex.
+    #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
     pub(crate) fn changed_committed_breach(&self, committed: Option<u64>, value: u64) -> bool {
         committed.is_some_and(|committed| {

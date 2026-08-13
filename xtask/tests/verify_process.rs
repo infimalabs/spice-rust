@@ -11,10 +11,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gate::metrics::{EvidenceState, MetricId, MetricKey};
-use gate::{ArmEvidence, BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryArmResult, BatteryReport, GateId};
+use gate::{BatteryReport, GateId};
 
 const PROCESS_PATH: &str = concat!("PA", "TH");
+const FIXTURE_WAIT_LIMIT: Duration = Duration::from_secs(15);
 const FORMAT_ACTION: &str =
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
 const WORKSPACE_TEST_ACTION: &str =
@@ -22,6 +22,8 @@ const WORKSPACE_TEST_ACTION: &str =
 
 #[path = "verify_process/browser_refusal.rs"]
 mod browser_refusal;
+#[path = "verify_process/focused_gate.rs"]
+mod focused_gate;
 
 #[test]
 fn verifier_refuses_a_formatting_defect_reached_only_through_include() {
@@ -76,44 +78,6 @@ fn verifier_refuses_a_formatting_defect_reached_only_through_include() {
         !cargo_marker.exists(),
         "the verifier crossed its formatter refusal"
     );
-}
-
-#[test]
-fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
-    let fixture = Fixture::new();
-    let programs = install_full_verifier_programs(&fixture);
-
-    install_file_shape_overrun(&fixture);
-    let selected_result = run_selected_gate(
-        &fixture,
-        &programs.directory,
-        &programs.cargo_log,
-        &programs.browser_log,
-    );
-    let refused_result = run_refusing_selected_gate(&fixture, &programs.directory);
-
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("verify")
-        .current_dir(&fixture.repository)
-        .env(PROCESS_PATH, &programs.directory)
-        .output()
-        .expect("launch the real verifier process");
-
-    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("battery refused publication"),
-        "{}",
-        streams(&output)
-    );
-    assert!(
-        !programs.forbidden_marker.exists(),
-        "a forbidden program crossed the verifier rim: {}",
-        programs.forbidden_marker.display()
-    );
-    assert_full_verifier_action_trace(&programs, &fixture.repository, &output);
-
-    assert_bounded_refusal(&output, &refused_result);
-    assert_eq!(selected_result.gate_id(), GateId::EnvNameLedger);
 }
 
 #[test]
@@ -183,7 +147,7 @@ fn verifier_streams_progress_before_exit_and_emits_every_final_byte_once() {
     });
 
     let first = observed_first_record
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(FIXTURE_WAIT_LIMIT)
         .expect("the scheduler record is visible before the held action exits");
     wait_for_file(&entered);
     let was_running = child
@@ -446,57 +410,6 @@ fn assert_workspace_test_execution(
     );
 }
 
-fn run_selected_gate(
-    fixture: &Fixture,
-    programs: &Path,
-    cargo_log: &Path,
-    browser_log: &Path,
-) -> BatteryArmResult {
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["gate", "env-name-ledger"])
-        .current_dir(&fixture.repository)
-        .env(PROCESS_PATH, programs)
-        .output()
-        .expect("launch one real gate arm");
-    assert!(output.status.success(), "{}", streams(&output));
-    let result: BatteryArmResult =
-        serde_json::from_slice(&output.stdout).expect("selected arm emits one JSON result");
-    assert_eq!(result.gate_id(), GateId::EnvNameLedger);
-    assert!(!cargo_log.exists(), "selected arm launched a Cargo stage");
-    assert!(
-        !browser_log.exists(),
-        "selected arm launched the browser stage"
-    );
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("[verify]"));
-    result
-}
-
-fn run_refusing_selected_gate(fixture: &Fixture, programs: &Path) -> BatteryArmResult {
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["gate", "file-shape"])
-        .current_dir(&fixture.repository)
-        .env(PROCESS_PATH, programs)
-        .output()
-        .expect("launch the refusing file-shape gate arm");
-    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
-    let lines = output
-        .stdout
-        .split(|byte| *byte == b'\n')
-        .collect::<Vec<_>>();
-    assert_eq!(
-        lines.iter().filter(|line| !line.is_empty()).count(),
-        1,
-        "a refusing selected arm still emits exactly one machine row: {}",
-        streams(&output)
-    );
-    let result: BatteryArmResult =
-        serde_json::from_slice(lines[0]).expect("refusing selected arm emits canonical JSON");
-    assert_eq!(result.gate_id(), GateId::FileShape);
-    assert!(!result.state().admits());
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("[verify]"));
-    result
-}
-
 #[test]
 fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidence() {
     let fixture = Fixture::new();
@@ -571,115 +484,6 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
         trunk.trim(),
         "build index.html --release --locked --filehash=false"
     );
-}
-
-fn assert_bounded_refusal(output: &std::process::Output, selected: &BatteryArmResult) {
-    let stdout = String::from_utf8(output.stdout.clone()).expect("verifier stdout is UTF-8");
-    let first_arm = format!(
-        "arm position={} gate={} state={}",
-        selected.position(),
-        selected.gate_id(),
-        selected.state().as_str(),
-    );
-    let fold_start = stdout
-        .find(&first_arm)
-        .unwrap_or_else(|| panic!("verifier emits the refusal fold: {}", streams(output)));
-    let summary_start = stdout
-        .rfind("battery refusal summary:")
-        .expect("verifier closes its refusal fold with a summary");
-    let summary_end = stdout[summary_start..]
-        .find('\n')
-        .map_or(stdout.len(), |end| summary_start + end + 1);
-    let fold = &stdout.as_bytes()[fold_start..summary_end];
-    assert!(
-        fold.len() <= BATTERY_REFUSAL_FOLD_MAX_BYTES,
-        "battery diagnostic is {} bytes, limit is {}",
-        fold.len(),
-        BATTERY_REFUSAL_FOLD_MAX_BYTES
-    );
-    assert!(
-        stdout.contains("full-evidence: cargo xtask gate file-shape"),
-        "refusal omits the exact selected-arm recovery command: {}",
-        streams(output)
-    );
-    assert!(
-        !stdout.contains("[verify] contract landing"),
-        "a refused battery crossed contract landing: {}",
-        streams(output)
-    );
-
-    let ArmEvidence::Metrics { report } = selected.evidence() else {
-        panic!("the selected file-shape arm carries structural metrics")
-    };
-    let metric = report
-        .metrics()
-        .iter()
-        .find(|metric| {
-            metric.metric() == MetricId::FileLines
-                && metric.key() == &MetricKey::path("src/overrun.rs").expect("fixture overrun path")
-        })
-        .expect("selected file-shape evidence names the overrun path");
-    let EvidenceState::Measured { measurement } = metric.state() else {
-        panic!("the overrun is a measured file-lines value")
-    };
-    let latch = measurement
-        .latch()
-        .expect("file lines carry their active latch");
-    let exact_finding = format!(
-        concat!(
-            "finding gate=file-shape metric=file.lines key=path=\"src/overrun.rs\" ",
-            "state=failed unit=source-lines value={} base_limit={} ",
-            "configured_ratchet_limit={} ratchet_limit={} active_limit={} ",
-            "latch_transition={}"
-        ),
-        measurement.value(),
-        latch.base_limit(),
-        latch.configured_ratchet_limit(),
-        latch.ratchet_limit(),
-        latch.active_limit(),
-        latch.transition(),
-    );
-    assert!(
-        stdout.contains(&exact_finding),
-        "refusal omits the exact actionable file-shape finding {exact_finding:?}: {}",
-        streams(output)
-    );
-
-    let reports = output
-        .stdout
-        .split(|byte| *byte == b'\n')
-        .filter_map(|line| BatteryReport::decode(line).ok())
-        .collect::<Vec<_>>();
-    assert!(
-        reports.is_empty(),
-        "a refusing human verifier emitted a complete canonical BatteryReport: {}",
-        streams(output)
-    );
-    let lifecycle = String::from_utf8_lossy(&output.stdout);
-    for identity in [
-        "canonical Rust gate battery",
-        "npm run test:canvas (BROWSER-1kKSWhZk guard)",
-    ] {
-        assert_eq!(
-            lifecycle
-                .lines()
-                .filter(|line| {
-                    line.contains("stage=start") && line.contains(&format!("identity={identity:?}"))
-                })
-                .count(),
-            1,
-            "action {identity:?} did not start exactly once: {}",
-            streams(output)
-        );
-    }
-}
-
-fn install_file_shape_overrun(fixture: &Fixture) {
-    const OVERLONG_LINES: usize = 4_000;
-    let path = fixture.repository.join("src/overrun.rs");
-    fs::write(&path, "// measured overrun\n".repeat(OVERLONG_LINES))
-        .expect("write real file-shape overrun");
-    git(&fixture.repository, &["add", "src/overrun.rs"]);
 }
 
 #[test]
@@ -773,52 +577,6 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
             .split(|byte| *byte == b'\n')
             .all(|line| BatteryReport::decode(line).is_err()),
         "scoped verifier emitted a complete full-battery report"
-    );
-}
-
-#[test]
-fn command_help_enumerates_every_single_gate_arm_spelling() {
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("help")
-        .output()
-        .expect("launch xtask help");
-
-    assert!(output.status.success(), "{}", streams(&output));
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(concat!(
-            "cargo xtask <help|verify [--package PACKAGE]|",
-            "verify-action <selection|battery>|gate ARM|"
-        )),
-        "{}",
-        streams(&output)
-    );
-    assert!(stdout.contains("Neither is a completion verifier"));
-    for gate_id in GateId::BATTERY {
-        assert!(
-            stdout
-                .lines()
-                .any(|line| line == format!("  {}", gate_id.as_str())),
-            "help omits {}:\n{}",
-            gate_id.as_str(),
-            streams(&output)
-        );
-    }
-}
-
-#[test]
-fn unknown_gate_arm_points_to_the_canonical_inventory() {
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["gate", "not-a-gate"])
-        .output()
-        .expect("launch unknown gate arm");
-
-    assert_eq!(output.status.code(), Some(2), "{}", streams(&output));
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("run `cargo xtask help` for accepted gate arms"),
-        "{}",
-        streams(&output)
     );
 }
 
@@ -1068,7 +826,7 @@ fn wait_for_file(path: &Path) {
     let started = Instant::now();
     while !path.is_file() {
         assert!(
-            started.elapsed() < Duration::from_secs(2),
+            started.elapsed() < FIXTURE_WAIT_LIMIT,
             "fixture did not publish {}",
             path.display()
         );

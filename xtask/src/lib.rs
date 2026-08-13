@@ -926,26 +926,67 @@ pub fn verify_selection_child(output: &mut impl Write) -> Result<bool, String> {
     }
 }
 
-/// Run one canonical gate arm against the staged worktree and emit its JSON row.
+/// Run one canonical gate arm against the staged worktree.
+///
+/// Admitting arms retain their canonical JSON result row. A refusal emits only
+/// the bounded human fold, whose recovery command names [`gate_arm_report`].
 ///
 /// # Errors
 ///
 /// Returns acquisition, encoding, output, or non-admitting arm failures.
 pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
+    gate_arm_with(gate_id, output, GateArmRendering::Human)
+}
+
+/// Run one canonical gate arm and emit its complete focused report as JSON.
+///
+/// # Errors
+///
+/// Returns acquisition, encoding, output, or non-admitting arm failures.
+pub fn gate_arm_report(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
+    gate_arm_with(gate_id, output, GateArmRendering::Canonical)
+}
+
+#[derive(Clone, Copy)]
+enum GateArmRendering {
+    Human,
+    Canonical,
+}
+
+fn gate_arm_with(
+    gate_id: gate::GateId,
+    output: &mut impl Write,
+    rendering: GateArmRendering,
+) -> Result<(), GateArmError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let result =
-            spice::gate::run_arm(gate::Selector::staged(), gate_id).map_err(GateArmError::Run)?;
-        serde_json::to_writer(&mut *output, &result).map_err(GateArmError::Encode)?;
-        writeln!(output).map_err(GateArmError::Output)?;
-        if !result.state().admits() {
+        let report = spice::gate::run_arm_report(gate::Selector::staged(), gate_id)
+            .map_err(GateArmError::Run)?;
+        match rendering {
+            GateArmRendering::Canonical => {
+                let canonical = report.encode().map_err(GateArmError::Encode)?;
+                output
+                    .write_all(&canonical)
+                    .and_then(|()| output.write_all(b"\n"))
+                    .map_err(GateArmError::Output)?;
+            }
+            GateArmRendering::Human if report.admits() => {
+                serde_json::to_writer(&mut *output, report.result())
+                    .map_err(GateArmError::Encode)?;
+                writeln!(output).map_err(GateArmError::Output)?;
+            }
+            GateArmRendering::Human => output
+                .write_all(report.refusal_fold().as_bytes())
+                .map_err(GateArmError::Output)?,
+        }
+        if !report.admits() {
             return Err(GateArmError::Refused(gate_id));
         }
         Ok(())
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (gate_id, output);
+        let _ = (gate_id, output, rendering);
         Err(GateArmError::Unavailable)
     }
 }

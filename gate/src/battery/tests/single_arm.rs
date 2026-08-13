@@ -33,6 +33,24 @@ fn focused_reports_distinguish_clean_findings_and_executor_failure() {
     assert_eq!(findings_executor.calls, [gate_id]);
     assert!(!findings.admits());
     assert!(!findings.findings().is_empty());
+    let canonical = findings.encode().expect("encode focused refusal");
+    let fold = findings.refusal_fold();
+    assert_eq!(fold, findings.refusal_fold());
+    assert!(fold.as_bytes().len() <= BATTERY_REFUSAL_FOLD_MAX_BYTES);
+    assert!(fold.as_str().contains("gate=file-shape state=unmeasured"));
+    assert!(
+        fold.as_str()
+            .contains("full-evidence: cargo xtask gate --json file-shape")
+    );
+    assert!(fold.as_str().contains(concat!(
+        "battery refusal summary: total_arms=1 admitted_arms=0 ",
+        "finding_arms=0 cannot_run_arms=1"
+    )));
+    assert_eq!(
+        findings.encode().expect("encode after focused fold"),
+        canonical,
+        "the human fold must not mutate canonical focused evidence"
+    );
 
     let mut refused_executor = RecordingExecutor::all_passed(&fixture.source);
     refused_executor.refusal = Some(clean.result().position());

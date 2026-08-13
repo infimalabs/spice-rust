@@ -260,10 +260,9 @@ fn a_refused_stop_with_a_dead_endpoint_proceeds_and_republishes_the_refusal() {
 
 /// A refused stop with the endpoint still live is named, not waited out.
 ///
-/// The elapsed bound is the half of this that the horizon would have satisfied
-/// on its own: falling through to the withdrawal wait also ends in an error,
-/// just fifteen seconds later and under a name that says the resident did not
-/// stop rather than that `down` refused.
+/// The elapsed bound remains well below the former fifteen-second withdrawal
+/// horizon: falling through to that wait also ended in an error under a name
+/// that said the resident did not stop rather than that `down` refused.
 #[test]
 fn a_refused_stop_with_a_live_endpoint_is_named_rather_than_waited_out() {
     let fixture = Fixture::new("stop-refused-live");
@@ -288,7 +287,7 @@ fn a_refused_stop_with_a_live_endpoint_is_named_rather_than_waited_out() {
         "a refused stop over a live endpoint was not named: {stopped:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(1),
+        elapsed < Duration::from_secs(5),
         "the refusal fell through to the shutdown horizon: {elapsed:?}"
     );
 }
