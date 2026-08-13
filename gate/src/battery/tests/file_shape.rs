@@ -58,6 +58,15 @@ fn file_shape_arm(report: &BatteryReport) -> &BatteryArmResult {
         .expect("the battery ran the file-shape arm")
 }
 
+/// The complexity arm's result within one complete battery report.
+fn complexity_arm(report: &BatteryReport) -> &BatteryArmResult {
+    report
+        .results()
+        .iter()
+        .find(|result| result.gate_id() == GateId::Complexity)
+        .expect("the battery ran the complexity arm")
+}
+
 /// Every row the file-shape arm carries for one selected path.
 fn rows_for<'report>(report: &'report BatteryReport, path: &str) -> Vec<&'report MetricEvidence> {
     let ArmEvidence::Metrics { report } = file_shape_arm(report).evidence() else {
@@ -128,6 +137,40 @@ fn row_for<'report>(
         metric.as_str()
     );
     row
+}
+
+/// The one row a named routine carries for one metric.
+fn routine_row_for<'report>(
+    report: &'report BatteryReport,
+    path: &str,
+    function: &str,
+    metric: MetricId,
+) -> &'report MetricEvidence {
+    let rows = routine_rows_for(report, path, function);
+    let mut matching = rows.into_iter().filter(|row| row.metric() == metric);
+    let row = matching
+        .next()
+        .unwrap_or_else(|| panic!("{path:?}:{function} carries no {} row", metric.as_str()));
+    assert!(
+        matching.next().is_none(),
+        "{path:?}:{function} carries more than one {} row",
+        metric.as_str()
+    );
+    row
+}
+
+/// One valid Rust routine spanning exactly `lines` source lines.
+fn routine_with_lines(name: &str, lines: usize) -> String {
+    assert!(lines >= 2, "a routine needs an opening and closing line");
+    let body = "    let _ = 1;\n".repeat(lines - 2);
+    format!("pub fn {name}() {{\n{body}}}\n")
+}
+
+/// One valid Rust routine with exactly the requested cyclomatic complexity.
+fn routine_with_ccn(name: &str, ccn: usize) -> String {
+    assert!(ccn >= 1, "a routine has at least one execution path");
+    let decisions = "    if true {}\n".repeat(ccn - 1);
+    format!("pub fn {name}() {{\n{decisions}}}\n")
 }
 
 /// Seed the current file-line latch through the production state transaction.
@@ -626,4 +669,134 @@ fn a_staged_regression_after_a_committed_base_breach_is_held_to_the_true_limit()
         BatteryState::Passed,
         "the inferred latch clears exactly at the contract-owned true limit"
     );
+}
+
+/// An edited file above its byte base cannot spend a fresh elastic allowance.
+#[test]
+fn a_changed_file_above_the_committed_byte_base_is_held_to_the_true_limit() {
+    const PATH: &str = "src/byte-debt.rs";
+    const BASE: u64 = 80_000;
+    const COMMITTED: usize = 90_000;
+    const CHANGED: usize = 85_000;
+
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(
+        repository.join(PATH),
+        format!("// {}\n", "x".repeat(COMMITTED)),
+    )
+    .expect("committed source above the byte base");
+    fixture_git(&repository, &["add", PATH]);
+    fixture_git(&repository, &["commit", "-q", "-m", "commit byte debt"]);
+
+    let unchanged = battery_report(&repository);
+    let (_, elastic) = measured(row_for(&unchanged, PATH, MetricId::FileBytes), PATH);
+    assert_eq!(elastic.base_limit(), BASE);
+    assert!(elastic.active_limit() > BASE && !elastic.over_limit());
+    assert_eq!(elastic.transition(), "clear");
+
+    fs::write(
+        repository.join(PATH),
+        format!("// {}\n", "x".repeat(CHANGED)),
+    )
+    .expect("improve the file without reaching the byte base");
+    fixture_git(&repository, &["add", PATH]);
+    let changed = battery_report(&repository);
+    let (bytes, held) = measured(row_for(&changed, PATH, MetricId::FileBytes), PATH);
+    assert_eq!(held.active_limit(), BASE);
+    assert!(bytes > BASE && bytes < held.ratchet_limit());
+    assert!(held.over_limit() && !held.ratchet_breach());
+    assert_eq!(held.transition(), "held");
+    assert_eq!(file_shape_arm(&changed).state(), BatteryState::Failed);
+}
+
+/// An edited over-base routine must heal to base before it regains flex.
+#[test]
+fn a_changed_routine_above_the_committed_base_is_held_to_the_true_limit() {
+    const PATH: &str = "src/routine-debt.rs";
+    const FUNCTION: &str = "authored";
+    const BASE: u64 = 80;
+
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(repository.join(PATH), routine_with_lines(FUNCTION, 100))
+        .expect("committed routine above the length base");
+    fixture_git(&repository, &["add", PATH]);
+    fixture_git(&repository, &["commit", "-q", "-m", "commit routine debt"]);
+
+    let unchanged = battery_report(&repository);
+    let row = routine_row_for(&unchanged, PATH, FUNCTION, MetricId::RoutineLength);
+    let (_, elastic) = measured(row, PATH);
+    assert_eq!(
+        (elastic.base_limit(), elastic.configured_ratchet_limit()),
+        (BASE, 120)
+    );
+    assert!(elastic.active_limit() > BASE && !elastic.over_limit());
+    assert_eq!(elastic.transition(), "clear");
+
+    fs::write(repository.join(PATH), routine_with_lines(FUNCTION, 90))
+        .expect("improve the routine without reaching the length base");
+    fixture_git(&repository, &["add", PATH]);
+    let changed = battery_report(&repository);
+    let row = routine_row_for(&changed, PATH, FUNCTION, MetricId::RoutineLength);
+    let (length, held) = measured(row, PATH);
+    assert_eq!(held.active_limit(), BASE);
+    assert!(length > BASE && length < held.ratchet_limit());
+    assert!(held.over_limit() && !held.ratchet_breach());
+    assert_eq!(held.transition(), "held");
+    assert_eq!(complexity_arm(&changed).state(), BatteryState::Failed);
+
+    fs::write(
+        repository.join(PATH),
+        routine_with_lines(FUNCTION, BASE as usize),
+    )
+    .expect("heal the routine to the true length base");
+    fixture_git(&repository, &["add", PATH]);
+    let healed = battery_report(&repository);
+    let row = routine_row_for(&healed, PATH, FUNCTION, MetricId::RoutineLength);
+    let (_, healed_latch) = measured(row, PATH);
+    assert_eq!(healed_latch.active_limit(), BASE);
+    assert!(!healed_latch.over_limit());
+    assert_eq!(healed_latch.transition(), "healed");
+    assert_eq!(complexity_arm(&healed).state(), BatteryState::Passed);
+}
+
+/// Cyclomatic debt follows the same authored-change rule as routine length.
+#[test]
+fn a_changed_routine_above_the_committed_ccn_base_is_held_to_the_true_limit() {
+    const PATH: &str = "src/ccn-debt.rs";
+    const FUNCTION: &str = "branching";
+    const BASE: u64 = 20;
+
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(repository.join(PATH), routine_with_ccn(FUNCTION, 25))
+        .expect("committed routine above the complexity base");
+    fixture_git(&repository, &["add", PATH]);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "commit complexity debt"],
+    );
+
+    let unchanged = battery_report(&repository);
+    let row = routine_row_for(&unchanged, PATH, FUNCTION, MetricId::RoutineCcn);
+    let (_, elastic) = measured(row, PATH);
+    assert_eq!(
+        (elastic.base_limit(), elastic.configured_ratchet_limit()),
+        (BASE, 30)
+    );
+    assert!(elastic.active_limit() > BASE && !elastic.over_limit());
+    assert_eq!(elastic.transition(), "clear");
+
+    fs::write(repository.join(PATH), routine_with_ccn(FUNCTION, 22))
+        .expect("improve the routine without reaching the complexity base");
+    fixture_git(&repository, &["add", PATH]);
+    let changed = battery_report(&repository);
+    let row = routine_row_for(&changed, PATH, FUNCTION, MetricId::RoutineCcn);
+    let (ccn, held) = measured(row, PATH);
+    assert_eq!(held.active_limit(), BASE);
+    assert!(ccn > BASE && ccn < held.ratchet_limit());
+    assert!(held.over_limit() && !held.ratchet_breach());
+    assert_eq!(held.transition(), "held");
+    assert_eq!(complexity_arm(&changed).state(), BatteryState::Failed);
 }
