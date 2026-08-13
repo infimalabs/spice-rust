@@ -9,8 +9,10 @@ use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 use super::{CommandResult, lane_surface, store_fault};
 use super::{RuntimePaths, taste_surface};
 
+mod backlog;
 mod tool_preview;
 
+pub(super) use backlog::restore_agent_messages;
 pub(super) use tool_preview::CallPreviews;
 
 /// Captured-generation policy and disposable publishers used after one record
@@ -172,45 +174,63 @@ pub(super) fn publish_agent_messages(
     previews: &mut CallPreviews,
 ) -> CommandResult<()> {
     for (event, decoded) in record.decoded.events().iter().enumerate() {
-        let (activity, locus, text, media) = match decoded {
-            listen::Event::Prose(prose) => (
-                AgentActivityKind::Prose,
-                prose.locus,
-                prose.text.clone(),
-                prose.media.clone(),
-            ),
-            listen::Event::Tool(tool) => (
-                AgentActivityKind::Tool,
-                tool.locus,
-                tool_preview::activity(record.lane, tool, previews),
-                match &tool.moment {
-                    listen::ToolMoment::Result(outcome) => outcome.media.clone(),
-                    listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => {
-                        Vec::new()
-                    }
-                },
-            ),
-            _ => continue,
-        };
-        wire::media::admit_media(&media)
-            .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
         let event = u32::try_from(event)
             .map_err(|error| store_fault("canvas::message-locus-invalid", &error.to_string()))?;
-        publisher
-            .publish(wire::AgentMessage {
-                lane: record.lane,
-                author: record.occupant,
-                locus: wire::MessageLocus {
-                    member: locus.member,
-                    offset: locus.offset,
-                    length: locus.length,
-                    event,
-                },
-                activity,
-                text,
-                media,
-            })
-            .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+        publish_agent_event(
+            publisher,
+            record.lane,
+            record.occupant,
+            event,
+            decoded,
+            previews,
+        )?;
     }
+    Ok(())
+}
+
+/// Project one typed tape event through the sole live/restored message policy.
+pub(super) fn publish_agent_event(
+    publisher: &impl AgentMessagePublisher,
+    lane: CanonicalUuid,
+    author: CanonicalUuid,
+    event: u32,
+    decoded: &listen::Event,
+    previews: &mut CallPreviews,
+) -> CommandResult<()> {
+    let (activity, locus, text, media) = match decoded {
+        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => (
+            AgentActivityKind::Prose,
+            prose.locus,
+            prose.text.clone(),
+            prose.media.clone(),
+        ),
+        listen::Event::Tool(tool) => (
+            AgentActivityKind::Tool,
+            tool.locus,
+            tool_preview::activity(lane, tool, previews),
+            match &tool.moment {
+                listen::ToolMoment::Result(outcome) => outcome.media.clone(),
+                listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => Vec::new(),
+            },
+        ),
+        _ => return Ok(()),
+    };
+    wire::media::admit_media(&media)
+        .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
+    publisher
+        .publish(wire::AgentMessage {
+            lane,
+            author,
+            locus: wire::MessageLocus {
+                member: locus.member,
+                offset: locus.offset,
+                length: locus.length,
+                event,
+            },
+            activity,
+            text,
+            media,
+        })
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     Ok(())
 }

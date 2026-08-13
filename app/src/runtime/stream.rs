@@ -303,10 +303,18 @@ impl CanvasRuntime {
         }
         self.messages.push(message.clone());
         if let Some(limit) = self.message_limit
-            && self.messages.len() > limit
+            && self
+                .messages
+                .iter()
+                .filter(|existing| existing.lane == message.lane)
+                .count()
+                > limit
+            && let Some(oldest) = self
+                .messages
+                .iter()
+                .position(|existing| existing.lane == message.lane)
         {
-            let excess = self.messages.len() - limit;
-            self.messages.drain(..excess);
+            self.messages.remove(oldest);
         }
     }
 
@@ -345,9 +353,27 @@ impl CanvasRuntime {
         // reconnect recognize an older identity replayed after newer work.
         self.activities.insert(0, activity);
         if let Some(limit) = self.message_limit {
-            self.activities.truncate(limit);
+            let lane = self.activities[0].lane;
+            retain_first_for_lane(&mut self.activities, lane, limit, |activity| activity.lane);
         }
     }
+}
+
+/// Keep the first bounded rows for one lane without evicting sibling-lane history.
+fn retain_first_for_lane<T>(
+    rows: &mut Vec<T>,
+    lane: CanonicalUuid,
+    limit: usize,
+    row_lane: impl Fn(&T) -> CanonicalUuid,
+) {
+    let mut seen = 0;
+    rows.retain(|row| {
+        if row_lane(row) != lane {
+            return true;
+        }
+        seen += 1;
+        seen <= limit
+    });
 }
 
 fn project_page(packed: &Packed<wire::StreamFact>) -> Packed<FactRow> {

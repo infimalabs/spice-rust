@@ -56,10 +56,10 @@ async function assertProtocolReplacement(browser, endpoint, mode) {
       } else if (mode === "prior") {
         assert.equal(
           headers[CANVAS_VERSION_HEADER],
-          "2",
-          "the current application replaces the zero-capacity generation",
+          "3",
+          "the current application loads one bounded backlog per lane",
         );
-        headers[CANVAS_VERSION_HEADER] = "1";
+        headers[CANVAS_VERSION_HEADER] = "2";
       } else {
         assert.equal(mode, "absent", `known replacement mode: ${mode}`);
         delete headers[CANVAS_VERSION_HEADER];

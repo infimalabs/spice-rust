@@ -184,6 +184,8 @@ pub(super) async fn run_surface(
     } = capture::channels();
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
     ingest_transcripts(bus, paths, None, progress)?;
+    let residency = current_residency(bus, epoch)?;
+    message_surface::restore_agent_messages(paths, residency.body(), &message_publisher, progress)?;
     let command_surface = command_surface::Surface::new(
         bus,
         repository,

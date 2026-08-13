@@ -477,7 +477,7 @@ pub enum StreamFrame {
         v: WireVersion,
         id: CanonicalUuid,
         epoch: CanonicalUuid,
-        /// Maximum number of newest activities retained by this generation.
+        /// Maximum number of newest visible cards retained for each lane by this generation.
         limit: u32,
         messages: Vec<AgentMessage>,
     },

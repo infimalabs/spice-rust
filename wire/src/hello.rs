@@ -31,12 +31,12 @@ pub struct CanvasVersion(pub u32);
 impl CanvasVersion {
     /// The one Canvas protocol this build speaks.
     ///
-    /// Version 2 replaces the generation whose message-retention capacity
-    /// began at an implicit zero. A version-1 document can survive a resident
-    /// replacement in memory, so the pre-socket clock must make it reload into
-    /// the current runtime rather than reconnecting with a permanently empty
-    /// Mosaic.
-    pub const CURRENT: Self = Self(2);
+    /// Version 3 makes the advertised visible-card bound per lane, keeps status
+    /// outside that budget, and restores each lane's durable backlog before
+    /// publication. A version-2 document applies the bound globally, so the
+    /// pre-socket clock must reload it rather than let one busy lane evict every
+    /// sibling lane's Mosaic history.
+    pub const CURRENT: Self = Self(3);
 
     /// True when this is the Canvas protocol this build speaks.
     #[must_use]

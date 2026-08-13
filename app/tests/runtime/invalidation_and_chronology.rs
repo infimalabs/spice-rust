@@ -1,3 +1,7 @@
+//! Runtime cache invalidation and chronology regressions.
+
+use super::*;
+
 /// One durable envelope around a fact body, at a position nothing else uses.
 fn envelope(
     position: u64,
