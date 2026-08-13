@@ -13,6 +13,10 @@ use tape::{Locus, SourceId, Tape};
 
 use crate::{Decoded, Dialect, Event, LocusLengthError, RecordContext, Residue, decode};
 
+mod tail;
+
+pub use tail::{TailScan, scan_tail};
+
 /// Serializable spelling of one durable tape span.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use listen::{
-    Checkpoint, Dialect, EventKind, Position, RecordPayload, Scan, ScanError, Span, scan,
+    Checkpoint, Dialect, EventKind, Position, RecordPayload, Scan, ScanError, Span, scan, scan_tail,
 };
 use tape::Tape;
 
@@ -110,6 +110,101 @@ fn complete_events_and_residue_advance_while_a_partial_record_does_not() {
     assert_eq!(resumed.records.len(), 1);
     assert!(resumed.pending.is_empty());
     assert_eq!(resumed.records[0].next, resumed.checkpoint);
+    scratch.remove();
+}
+
+#[test]
+fn tail_scan_starts_near_eof_and_its_source_checkpoint_reads_only_appends() {
+    let scratch = Scratch::new("tail-window");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let prose = line(PROSE);
+    for _ in 0..400 {
+        tape.tee(&prose).expect("season record is durable");
+    }
+
+    let tail = scan_tail(
+        scratch.path(),
+        Dialect::Codex,
+        u64::try_from(prose.len() * 3).expect("window fits"),
+    )
+    .expect("tail scan succeeds");
+    assert!(
+        tail.start.next > Position::start(),
+        "a season-long tape is not scanned from byte zero"
+    );
+    assert_eq!(tail.scan.records.len(), 3);
+
+    tape.tee(&prose).expect("one append is durable");
+    let appended = scan(scratch.path(), Dialect::Codex, Some(&tail.scan.checkpoint))
+        .expect("source checkpoint resumes");
+    assert_eq!(appended.records.len(), 1, "only the append is decoded");
+    scratch.remove();
+}
+
+#[test]
+fn tail_checkpoint_stays_before_an_unterminated_record_until_it_completes() {
+    let scratch = Scratch::new("tail-pending");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    tape.tee(&line(PROSE)).expect("older prose is durable");
+    let partial = br#"{"type":"turn.failed"#;
+    tape.tee(partial).expect("partial record is durable");
+
+    let tail = scan_tail(scratch.path(), Dialect::Codex, 4).expect("tail scan succeeds");
+    assert!(tail.scan.records.is_empty());
+    assert!(!tail.scan.pending.is_empty());
+    assert_eq!(
+        tail.scan.checkpoint, tail.start,
+        "the resume cursor stays before incomplete bytes"
+    );
+
+    tape.tee(b",\"error\":{\"message\":\"stopped\"}}\n")
+        .expect("partial record completes");
+    let completed = scan(scratch.path(), Dialect::Codex, Some(&tail.scan.checkpoint))
+        .expect("completion resumes from the safe boundary");
+    assert_eq!(completed.records.len(), 1);
+    scratch.remove();
+}
+
+#[test]
+fn tail_window_crosses_sealed_members_without_reopening_the_season_start() {
+    let scratch = Scratch::new("tail-sealed");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let prose = line(PROSE);
+    for _ in 0..20 {
+        tape.tee(&prose).expect("older member grows");
+    }
+    tape.seal().expect("older member seals");
+    for _ in 0..5 {
+        tape.tee(&prose).expect("active member grows");
+    }
+
+    let tail = scan_tail(
+        scratch.path(),
+        Dialect::Codex,
+        u64::try_from(prose.len() * 7).expect("window fits"),
+    )
+    .expect("cross-member tail scans");
+    assert_eq!(tail.scan.records.len(), 7);
+    assert!(
+        tail.start.next
+            > Position {
+                member: 1,
+                offset: 0,
+            },
+        "the tail begins inside the season rather than at byte zero",
+    );
+    let members = tail
+        .scan
+        .records
+        .iter()
+        .filter_map(|record| match &record.payload {
+            RecordPayload::Events(events) => events.first(),
+            RecordPayload::Residue(_) => None,
+        })
+        .filter_map(|event| event.spans.first())
+        .map(|span| span.member)
+        .collect::<Vec<_>>();
+    assert!(members.contains(&1) && members.contains(&2));
     scratch.remove();
 }
 

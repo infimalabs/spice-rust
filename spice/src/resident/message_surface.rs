@@ -12,7 +12,7 @@ use super::{RuntimePaths, taste_surface};
 mod backlog;
 mod tool_preview;
 
-pub(super) use backlog::restore_agent_messages;
+pub(super) use backlog::{BacklogReader, restore_agent_messages};
 pub(super) use tool_preview::CallPreviews;
 
 /// Captured-generation policy and disposable publishers used after one record

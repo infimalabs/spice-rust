@@ -10,7 +10,7 @@ use wire::{AgentMessage, Fault, FaultClass};
 use super::Failure;
 
 /// Newest visible transcript cards retained per lane for a reconnecting Canvas.
-pub(super) const MESSAGE_CAPACITY: usize = 256;
+pub const MESSAGE_CAPACITY: usize = 256;
 
 #[derive(Clone, Debug)]
 pub(super) struct MessageFeed {

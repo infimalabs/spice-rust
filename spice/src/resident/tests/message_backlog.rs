@@ -4,6 +4,8 @@ use super::*;
 
 const CODEX_PROSE: &[u8] = br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
 "#;
+const CODEX_APPEND: &[u8] = br#"{"type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
+"#;
 
 #[test]
 fn each_resident_generation_restores_durable_prose_before_canvas_subscription() {
@@ -22,12 +24,14 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
     for generation in 0..2 {
         let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
         let publisher = source.message_publisher();
+        let mut reader = message_surface::BacklogReader::default();
         let mut diagnostic = Vec::new();
         let residency = current_residency(&bus, epoch).expect("residency reads");
         message_surface::restore_agent_messages(
             &paths,
             residency.body(),
             &publisher,
+            &mut reader,
             &mut diagnostic,
         )
         .expect("durable backlog restores");
@@ -66,6 +70,79 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         drop(source);
     }
 
+    bus.shutdown().expect("backlog bus stops");
+    fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+#[test]
+fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_append() {
+    let (root, paths) = resident_fixture("message-backlog-resume");
+    let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
+        .expect("backlog bus starts");
+    let epoch = test_uuid(14);
+    let lane = test_uuid(15);
+    let empty_lane = test_uuid(16);
+    let author = test_uuid(17);
+    seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        .expect("the backlog tape opens");
+    tape.tee(CODEX_PROSE).expect("initial prose is captured");
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let publisher = source.message_publisher();
+    let residency = current_residency(&bus, epoch).expect("residency reads");
+    let mut reader = message_surface::BacklogReader::default();
+    let mut diagnostic = Vec::new();
+
+    message_surface::restore_agent_messages(
+        &paths,
+        residency.body(),
+        &publisher,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("initial backlog restores");
+    tape.tee(CODEX_APPEND).expect("appended prose is captured");
+    message_surface::restore_agent_messages(
+        &paths,
+        residency.body(),
+        &publisher,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("appended backlog resumes");
+
+    let accepted = wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    };
+    let request = wire::StreamRequest::Subscribe {
+        v: wire::WireVersion::CURRENT,
+        id: test_uuid(18),
+        epoch,
+        subjects: vec![wire::ViewSubject::Messages],
+        after: None,
+    };
+    let (_, frames) = source
+        .begin(&accepted, &request)
+        .expect("Canvas subscription begins");
+    let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected message snapshot")
+    };
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>(),
+        ["durable restart backlog", "appended after initial backlog"],
+    );
+    assert!(
+        diagnostic.is_empty(),
+        "checkpoint resume diagnosed: {}",
+        String::from_utf8_lossy(&diagnostic),
+    );
+
+    drop(source);
     bus.shutdown().expect("backlog bus stops");
     fs::remove_dir_all(root).expect("backlog fixture cleanup");
 }

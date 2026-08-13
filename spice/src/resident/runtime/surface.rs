@@ -185,7 +185,13 @@ pub(super) async fn run_surface(
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let residency = current_residency(bus, epoch)?;
-    message_surface::restore_agent_messages(paths, residency.body(), &message_publisher, progress)?;
+    message_surface::restore_agent_messages(
+        paths,
+        residency.body(),
+        &message_publisher,
+        &mut message_surface::BacklogReader::default(),
+        progress,
+    )?;
     let command_surface = command_surface::Surface::new(
         bus,
         repository,
