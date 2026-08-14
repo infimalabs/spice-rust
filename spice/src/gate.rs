@@ -389,7 +389,25 @@ pub fn prepare_arm_in_state(
     gate_id: GateId,
     state_run: ::gate::BatteryStateRun,
 ) -> Result<PreparedArm<'static>, RunError> {
-    capture_in_state(selector, InputMode::Generic, gate_id, state_run)
+    prepare_arm_in_state_with_mode(selector, gate_id, state_run, InputMode::Generic)
+}
+
+/// Capture one current-source arm into an existing state transaction.
+pub fn prepare_arm_in_state_strict(
+    selector: Selector,
+    gate_id: GateId,
+    state_run: ::gate::BatteryStateRun,
+) -> Result<PreparedArm<'static>, RunError> {
+    prepare_arm_in_state_with_mode(selector, gate_id, state_run, InputMode::Strict)
+}
+
+fn prepare_arm_in_state_with_mode(
+    selector: Selector,
+    gate_id: GateId,
+    state_run: ::gate::BatteryStateRun,
+    input_mode: InputMode,
+) -> Result<PreparedArm<'static>, RunError> {
+    capture_in_state(selector, input_mode, gate_id, state_run)
         .map(|capture| PreparedArm { capture, gate_id })
 }
 

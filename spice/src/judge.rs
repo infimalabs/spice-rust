@@ -366,7 +366,11 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_SCRIPT: AtomicU64 = AtomicU64::new(0);
-    const PROCESS_RUNTIME: Duration = Duration::from_secs(5);
+    // These scripts finish immediately once scheduled. Their bound protects
+    // the test process from a fixture defect; the separate 40ms case below
+    // proves the production timeout behavior. Leave enough scheduling room
+    // for an exhaustive gate running hundreds of process tests concurrently.
+    const PROCESS_RUNTIME: Duration = Duration::from_secs(30);
 
     struct Script(PathBuf);
 

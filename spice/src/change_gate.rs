@@ -379,6 +379,9 @@ pub fn run(progress: &mut (impl Write + Send)) -> Result<ChangeGateReport, Chang
 
 /// Execute the richer current-source selector from the explicit xtask rim.
 ///
+/// Every capture uses the strict self-hosting inputs: both tracked contract
+/// documents and the complete compiled tool preflight are required.
+///
 /// # Errors
 ///
 /// Returns the same staged selection, test, or policy failures as [`run`].
@@ -394,12 +397,37 @@ enum SelectionSurface {
     CurrentSource,
 }
 
+impl SelectionSurface {
+    fn prepare_anchor(self) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
+        match self {
+            Self::Packaged => crate::gate::prepare_arm(Selector::staged(), GateId::Staging),
+            Self::CurrentSource => {
+                crate::gate::prepare_arm_strict(Selector::staged(), GateId::Staging)
+            }
+        }
+    }
+
+    fn prepare_arm_in_state(
+        self,
+        gate_id: GateId,
+        state_run: ::gate::BatteryStateRun,
+    ) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
+        match self {
+            Self::Packaged => {
+                crate::gate::prepare_arm_in_state(Selector::staged(), gate_id, state_run)
+            }
+            Self::CurrentSource => {
+                crate::gate::prepare_arm_in_state_strict(Selector::staged(), gate_id, state_run)
+            }
+        }
+    }
+}
+
 fn run_with_selection(
     progress: &mut (impl Write + Send),
     surface: SelectionSurface,
 ) -> Result<ChangeGateReport, ChangeGateError> {
-    let mut anchor = crate::gate::prepare_arm(Selector::staged(), GateId::Staging)
-        .map_err(ChangeGateError::gate)?;
+    let mut anchor = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
     let (selection, test_execution) = select_changes(&anchor, surface)?;
     publish_selection(progress, &selection)?;
 
@@ -422,6 +450,7 @@ fn run_with_selection(
         &mut anchor,
         &selection,
         &source,
+        surface,
         execution,
         &mut shared_progress,
     )?;
@@ -556,6 +585,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
     anchor: &mut crate::gate::PreparedArm<'_>,
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
+    surface: SelectionSurface,
     execution: ChangeGateExecution,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<(TestSelectionReport, ChangePolicyReport), ChangeGateError> {
@@ -580,7 +610,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
                 &mut test_progress,
             )
         });
-        let policy = run_focused_policy(anchor, selection.gate_ids(), source, progress)
+        let policy = run_focused_policy(anchor, selection.gate_ids(), source, surface, progress)
             .and_then(|reports| ChangePolicyReport::focused(source, &reports));
         let tests = test_worker.join().map_err(|_| {
             ChangeGateError::environment(
@@ -599,6 +629,7 @@ fn run_focused_policy(
     anchor: &mut crate::gate::PreparedArm<'_>,
     gate_ids: &[GateId],
     source: &wire::Digest,
+    surface: SelectionSurface,
     progress: &mut impl Write,
 ) -> Result<Vec<FocusedArmReport>, ChangeGateError> {
     let state_run = anchor.state_run();
@@ -613,7 +644,8 @@ fn run_focused_policy(
         let report = if *gate_id == GateId::Staging {
             anchor.execute().map_err(ChangeGateError::gate)?
         } else {
-            crate::gate::prepare_arm_in_state(Selector::staged(), *gate_id, state_run.clone())
+            surface
+                .prepare_arm_in_state(*gate_id, state_run.clone())
                 .and_then(|mut prepared| prepared.execute())
                 .map_err(ChangeGateError::gate)?
         };
