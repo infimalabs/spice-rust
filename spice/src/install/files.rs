@@ -7,8 +7,54 @@ use crate::repository::Repository;
 use super::handle::AdmittedPath;
 use super::{
     Asset, FileImage, Generation, InstallError, ObservedFile, Operation, ParentObservation,
-    fixed_asset_bytes, read_binary,
+    Retirement, fixed_asset_bytes, read_binary,
 };
+
+pub(super) fn retire_path(
+    repository: &Repository,
+    retirement: &Retirement,
+) -> Result<Option<Generation>, InstallError> {
+    let path = AdmittedPath::open(
+        repository.common_dir(),
+        &retirement.destination,
+        &retirement.parent,
+        false,
+        0,
+    )?;
+    let current = path.observe()?;
+    if let Some(current) = current {
+        if !retirement.expects_in_place(Some(&current)) {
+            return Err(super::retirement_drift(retirement, Some(current)));
+        }
+        path.remove(current.generation)?;
+    } else if !retirement.expects_in_place(None) {
+        // Absence is also the completed side of an interrupted retirement.
+        // The progress verifier admits that transition before reaching here.
+        return path.parent_generation();
+    }
+    path.parent_generation()
+}
+
+pub(super) fn restore_retirement(
+    repository: &Repository,
+    retirement: &Retirement,
+    previous: Option<&FileImage>,
+) -> Result<Option<Generation>, InstallError> {
+    let path = AdmittedPath::open(
+        repository.common_dir(),
+        &retirement.destination,
+        &retirement.parent,
+        false,
+        0,
+    )?;
+    let current = path.observe()?;
+    if current.is_some() {
+        return Err(super::retirement_drift(retirement, current));
+    }
+    previous
+        .map(|previous| path.publish(previous, None).map(Some))
+        .unwrap_or(Ok(None))
+}
 
 pub(super) fn publish_operation(
     repository: &Repository,
@@ -68,6 +114,7 @@ pub(super) fn restore_operation(
     repository: &Repository,
     operation: &Operation,
     expected: Generation,
+    previous: Option<&FileImage>,
 ) -> Result<Option<Generation>, InstallError> {
     let mut path = AdmittedPath::open(
         operation.location.root(repository),
@@ -76,8 +123,8 @@ pub(super) fn restore_operation(
         false,
         operation.introduced_parents.len(),
     )?;
-    let restored = match &operation.previous {
-        Some(previous) => path.publish(&previous.image, Some(expected)).map(Some),
+    let restored = match previous {
+        Some(previous) => path.publish(previous, Some(expected)).map(Some),
         None => {
             path.remove(expected)?;
             Ok(None)

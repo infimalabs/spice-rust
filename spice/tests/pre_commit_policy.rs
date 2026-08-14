@@ -34,7 +34,19 @@ fn python_and_rust_tracked_documents_keep_independent_pre_commit_policy() {
     assert_eq!(command.label(), "Spice source gate");
     assert_eq!(
         command.run(),
-        ["cargo", "xtask", "verify-action", "selection"]
+        [
+            "cargo",
+            "run",
+            "--quiet",
+            "--locked",
+            "--package",
+            "spice",
+            "--bin",
+            "spice",
+            "--",
+            "gate",
+            "selection",
+        ]
     );
 }
 

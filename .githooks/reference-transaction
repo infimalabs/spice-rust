@@ -11,4 +11,4 @@
 set -eu
 
 common=$(git rev-parse --path-format=absolute --git-common-dir)
-exec "$common/.spice-install/bin/spice" gate reference-transaction "$1"
+exec "$common/.spice-install/bin/spice" gate reference-transaction "$@"

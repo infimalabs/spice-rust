@@ -240,6 +240,9 @@ fn arbitrary_duplicate_reordered_and_mismatched_records_are_inert() {
     tamper_record("record-old-version", |record| {
         record["version"] = 1.into();
     });
+    tamper_record("record-expanded-rollback", |record| {
+        record["plan"]["rollback_record"] = serde_json::json!({});
+    });
 }
 
 #[test]

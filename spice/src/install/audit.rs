@@ -110,65 +110,26 @@ pub fn audit_appliance(
 ) -> Result<ApplianceAudit, InstallError> {
     let installed = installed_binary(repository);
     let preview = preview_command(current_binary);
-    let loaded = match read_record(repository) {
-        Ok(Some(loaded)) => loaded,
-        Ok(None) => {
-            return Ok(report(
-                ApplianceState::MissingReceipt,
-                "no installed-appliance receipt exists".to_owned(),
-                Some(preview),
-                None,
-                installed,
-                current_binary,
-            ));
-        }
-        Err(error) if stale_receipt(&error) => {
-            return Ok(report(
-                ApplianceState::StaleReceipt,
-                error.to_string(),
-                Some(preview),
-                None,
-                installed,
-                current_binary,
-            ));
-        }
-        Err(error) => return Err(error),
+    let loaded = match load_audit_record(repository, current_binary, &installed, &preview)? {
+        Ok(loaded) => loaded,
+        Err(audit) => return Ok(audit),
     };
     let record = loaded.record;
     let receipt = record.plan_digest.clone();
-    if record.status != InstallStatus::Complete {
-        return Ok(report(
-            ApplianceState::StaleReceipt,
-            format!("installed-appliance receipt is {:?}", record.status),
-            Some(preview),
-            Some(receipt),
-            installed,
-            current_binary,
-        ));
+    if let Some(audit) =
+        receipt_state_audit(current_binary, &record, &installed, &preview, &receipt)
+    {
+        return Ok(audit);
     }
-    if let Err(error) = verify_progress(repository, &record) {
-        if let InstallError::Drift { path, .. } = &error {
-            let state = drift_state(repository, path)?;
-            return Ok(report(
-                state,
-                error.to_string(),
-                Some(preview),
-                Some(receipt),
-                installed,
-                current_binary,
-            ));
-        }
-        if stale_receipt(&error) {
-            return Ok(report(
-                ApplianceState::StaleReceipt,
-                error.to_string(),
-                Some(preview),
-                Some(receipt),
-                installed,
-                current_binary,
-            ));
-        }
-        return Err(error);
+    if let Some(audit) = progress_audit(
+        repository,
+        current_binary,
+        &record,
+        &installed,
+        &preview,
+        &receipt,
+    )? {
+        return Ok(audit);
     }
     let Some(binary) = record
         .plan
@@ -207,6 +168,88 @@ pub fn audit_appliance(
         installed,
         current_binary,
     ))
+}
+
+fn receipt_state_audit(
+    current_binary: &Path,
+    record: &super::record::InstallRecord,
+    installed: &Path,
+    preview: &str,
+    receipt: &Digest,
+) -> Option<ApplianceAudit> {
+    let detail = if record.version != super::RECORD_VERSION {
+        format!(
+            "installed-appliance receipt version {} requires the version-{} forward migration",
+            record.version,
+            super::RECORD_VERSION,
+        )
+    } else if record.status != InstallStatus::Complete {
+        format!("installed-appliance receipt is {:?}", record.status)
+    } else {
+        return None;
+    };
+    Some(report(
+        ApplianceState::StaleReceipt,
+        detail,
+        Some(preview.to_owned()),
+        Some(receipt.clone()),
+        installed.to_path_buf(),
+        current_binary,
+    ))
+}
+
+fn load_audit_record(
+    repository: &Repository,
+    current_binary: &Path,
+    installed: &Path,
+    preview: &str,
+) -> Result<Result<super::record::LoadedRecord, ApplianceAudit>, InstallError> {
+    match read_record(repository) {
+        Ok(Some(loaded)) => Ok(Ok(loaded)),
+        Ok(None) => Ok(Err(report(
+            ApplianceState::MissingReceipt,
+            "no installed-appliance receipt exists".to_owned(),
+            Some(preview.to_owned()),
+            None,
+            installed.to_path_buf(),
+            current_binary,
+        ))),
+        Err(error) if stale_receipt(&error) => Ok(Err(report(
+            ApplianceState::StaleReceipt,
+            error.to_string(),
+            Some(preview.to_owned()),
+            None,
+            installed.to_path_buf(),
+            current_binary,
+        ))),
+        Err(error) => Err(error),
+    }
+}
+
+fn progress_audit(
+    repository: &Repository,
+    current_binary: &Path,
+    record: &super::record::InstallRecord,
+    installed: &Path,
+    preview: &str,
+    receipt: &Digest,
+) -> Result<Option<ApplianceAudit>, InstallError> {
+    let Err(error) = verify_progress(repository, record) else {
+        return Ok(None);
+    };
+    let state = match &error {
+        InstallError::Drift { path, .. } => drift_state(repository, path)?,
+        _ if stale_receipt(&error) => ApplianceState::StaleReceipt,
+        _ => return Err(error),
+    };
+    Ok(Some(report(
+        state,
+        error.to_string(),
+        Some(preview.to_owned()),
+        Some(receipt.clone()),
+        installed.to_path_buf(),
+        current_binary,
+    )))
 }
 
 fn stale_receipt(error: &InstallError) -> bool {

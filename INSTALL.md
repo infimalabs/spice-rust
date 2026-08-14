@@ -100,7 +100,8 @@ awk '/^worktree / { sub(/^worktree /, ""); print }' |
 while IFS= read -r SPICE_WORKTREE; do
   git -C "$SPICE_WORKTREE" config --worktree core.hooksPath .githooks
 done
-cargo xtask activate-hooks
+target/debug/spice install
+target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
 SPICE_HOOKS="$SPICE_COMMON/.spice-install/git-hooks"
 test "$(git config --local --get core.hooksPath)" = "$SPICE_HOOKS"
 git worktree list --porcelain |
@@ -129,10 +130,10 @@ command forms.
 
 ## Hooks are a repository-wide choice
 
-`cargo xtask activate-hooks` is not scoped to the worktree that runs it. It
-walks `git worktree list --porcelain` and reads the effective `core.hooksPath`
-of every linked worktree before publishing or configuring anything
-(`preflight_worktree_hooks`, `xtask/src/hooks.rs`). Two values pass: the tracked
+`spice install` is not scoped to the worktree that runs it. Its preview walks
+`git worktree list --porcelain` and reads the effective `core.hooksPath` of
+every linked worktree before publishing or configuring anything
+(`spice/src/install/hook_activation.rs`). Two values pass: the tracked
 `.githooks` a fresh checkout runs, and the path being activated. Any other
 value, or more than one value from any scope, is another system's selection, and
 activation refuses naming that worktree rather than clearing it. Nothing is
@@ -217,10 +218,15 @@ only while its recorded non-binary generated files still match disk; binary
 reconciliation names the exact observed executable as superseded. Preview then
 derives one current digest, and apply exchanges the assets in place. Receipt
 edits, non-binary drift, and interrupted directions still refuse before writes.
+The one supported version-7 forward migration keeps its exact reversal images
+inside a digest-bound compressed receipt snapshot, not in a second executable
+or stamp. New assets publish first, legacy runtime files retire second, and the
+hook-path mutation remains last; reversal restores the version-7 assets and
+receipt exactly.
 
-Neither command changes `PATH` or `core.hooksPath`; activation remains the
-separate `cargo xtask activate-hooks` operation. Apply publishes common assets
-only for the exact preview digest. `cargo xtask install --no-resident` is the
+Neither command changes `PATH`. The digest-bound apply publishes common assets
+and changes `core.hooksPath` only after every asset and retirement step succeeds.
+`cargo xtask install --no-resident` is the
 one-command build-and-apply shortcut; without that flag it also restores the
 resident lifecycle below.
 
@@ -270,9 +276,9 @@ validates the installed receipt and every asset it owns and compares the
 installed executable with those exact built bytes. Missing, stale, tampered,
 or other-build installs refuse before source verification and name the
 current-build `spice install` preview; apply the digest it prints to refresh.
-Re-run `cargo xtask activate-hooks` only when `core.hooksPath` itself needs to
-select the installed hook directory. An upgrade stops nothing outside this
-appliance.
+Re-run the installed `spice install` preview/apply pair when `core.hooksPath`
+or linked-worktree topology needs reconciliation. An upgrade stops nothing
+outside this appliance.
 
 ## The independence proof
 

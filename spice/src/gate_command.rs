@@ -117,6 +117,43 @@ pub(crate) fn pre_commit() -> Outcome<pre_commit::Report> {
     pre_commit::run()
 }
 
+/// Run the current source repository's strict ordinary change selection.
+///
+/// This leaf is the policy-free destination for source-development delegates:
+/// Cargo may build this product command, but no xtask command or hook owns a
+/// second selection implementation.
+pub(crate) fn selection() -> Outcome<spice::change_gate::ChangeGateReport> {
+    let mut progress = Vec::new();
+    match spice::change_gate::run_current_source(&mut progress) {
+        Ok(report) if report.admits() => direct(report),
+        Ok(report) => {
+            progress.extend_from_slice(report.refusal_fold().as_bytes());
+            Outcome::Refusal(Refusal::evidence(
+                "gate::selection-regressed",
+                String::from_utf8_lossy(&progress).into_owned(),
+                "repair the selected change before committing it",
+            ))
+        }
+        Err(error) if error.is_fault() => Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: error.reason().to_owned(),
+            detail: selection_detail(&progress, error.detail()),
+        }),
+        Err(error) => Outcome::Refusal(Refusal::evidence(
+            error.reason(),
+            selection_detail(&progress, error.detail()),
+            "repair the named selection input, then rerun the source gate",
+        )),
+    }
+}
+
+fn selection_detail(progress: &[u8], detail: &str) -> String {
+    if progress.is_empty() {
+        return detail.to_owned();
+    }
+    format!("{}{detail}", String::from_utf8_lossy(progress))
+}
+
 pub(crate) use commit_message::Run as CommitMessageRun;
 
 /// Apply the current repository commit-message policy to Git's message file.
