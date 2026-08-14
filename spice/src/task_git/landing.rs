@@ -56,15 +56,20 @@ pub(super) fn require_landing_within_footprint(
     merge_head: &str,
     agent_head: &str,
 ) -> Result<(), Error> {
+    require_tree_within_footprint(root, label, upstream_head, merge_head, agent_head)
+}
+
+/// Refuse a sealed resolved tree before any merge commit names it.
+pub(super) fn require_tree_within_footprint(
+    root: &Path,
+    label: &str,
+    upstream_head: &str,
+    tree: &str,
+    agent_head: &str,
+) -> Result<(), Error> {
     let landed = read_paths(
         root,
-        &[
-            "diff",
-            "--no-renames",
-            "--name-only",
-            upstream_head,
-            merge_head,
-        ],
+        &["diff", "--no-renames", "--name-only", upstream_head, tree],
         "read the landing diff",
     )?;
     let footprint = footprint_paths(root, upstream_head, agent_head)?;

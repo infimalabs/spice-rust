@@ -103,6 +103,67 @@ fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_1
 }
 
 #[test]
+fn resolution_worker_exhausts_real_authority_change_while_ordinary_selection_refuses_it() {
+    let repository = GateRepository::new();
+    let authority = repository.path().join("spice-rust.toml");
+    let mut policy = fs::read_to_string(&authority).expect("read fixture policy authority");
+    policy.push_str("\n# allocator-owned resolution fixture\n");
+    fs::write(&authority, policy).expect("move fixture policy authority");
+    repository.add("spice-rust.toml");
+
+    let ordinary = run_commit_worker(repository.path());
+    let Some((ordinary_kind, ordinary_document)) = ordinary.terminal.split_first() else {
+        panic!("ordinary authority selection published no terminal");
+    };
+    assert_eq!(*ordinary_kind, b'F');
+    let ordinary: serde_json::Value =
+        serde_json::from_slice(ordinary_document).expect("decode ordinary authority refusal");
+    assert_eq!(ordinary["reason"], "gate::change-selection-refused");
+
+    let resolution = run_resolution_worker(repository.path());
+    let Some((resolution_kind, resolution_document)) = resolution.terminal.split_first() else {
+        panic!("resolution authority evidence published no terminal");
+    };
+    assert_eq!(
+        *resolution_kind,
+        b'R',
+        "resolution worker did not admit exhaustive authority evidence: {}",
+        String::from_utf8_lossy(resolution_document),
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(resolution_document).expect("decode resolution report");
+    assert_eq!(report["version"], 1);
+    assert!(report.get("packaged").is_some());
+    assert!(
+        resolution.progress.contains("[rust-test-selection]"),
+        "exhaustive authority evidence omitted configured workspace tests: {}",
+        resolution.progress,
+    );
+
+    let configured = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .arg("__gate-resolution-selection-worker")
+        .current_dir(repository.path())
+        .env(
+            "SPICE_RS_PRE_COMMIT_SOURCE",
+            report["source"]
+                .as_str()
+                .expect("resolution report carries string source"),
+        )
+        .env(
+            "SPICE_RS_PRE_COMMIT_PATHS",
+            serde_json::to_string(&["spice-rust.toml"]).expect("encode configured authority paths"),
+        )
+        .output()
+        .expect("launch private configured resolution selector");
+    assert!(
+        configured.status.success(),
+        "private configured resolution selector failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&configured.stdout),
+        String::from_utf8_lossy(&configured.stderr),
+    );
+}
+
+#[test]
 fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selected_work() {
     let marker_scratch = Scratch::new("selected-test-marker");
     let marker = marker_scratch.path().join("executed");
@@ -312,10 +373,18 @@ struct WorkerBoundary {
 }
 
 fn run_commit_worker(root: &Path) -> WorkerBoundary {
-    run_commit_worker_with_path(root, None)
+    run_worker_with_path(root, "__gate-pre-commit-worker", None)
 }
 
 fn run_commit_worker_with_path(root: &Path, path: Option<&Path>) -> WorkerBoundary {
+    run_worker_with_path(root, "__gate-pre-commit-worker", path)
+}
+
+fn run_resolution_worker(root: &Path) -> WorkerBoundary {
+    run_worker_with_path(root, "__gate-resolution-worker", None)
+}
+
+fn run_worker_with_path(root: &Path, worker: &str, path: Option<&Path>) -> WorkerBoundary {
     let scratch = Scratch::new("commit-worker-boundary");
     let progress = scratch.path().join("progress.jsonl");
     let terminal = scratch.path().join("terminal.bin");
@@ -323,7 +392,7 @@ fn run_commit_worker_with_path(root: &Path, path: Option<&Path>) -> WorkerBounda
     fs::write(&terminal, []).expect("create worker terminal file");
     let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
     command
-        .arg("__gate-pre-commit-worker")
+        .arg(worker)
         .arg(&progress)
         .arg(&terminal)
         .current_dir(root)

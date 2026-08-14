@@ -117,6 +117,11 @@ pub(crate) fn pre_commit() -> Outcome<pre_commit::Report> {
     pre_commit::run()
 }
 
+/// Run exhaustive evidence for an allocator-authenticated merge resolution.
+pub(crate) fn resolution_evidence(repository: &Repository) -> Outcome<()> {
+    pre_commit::run_resolution(repository)
+}
+
 /// Run the current source repository's strict ordinary change selection.
 ///
 /// This leaf is the policy-free destination for source-development delegates:

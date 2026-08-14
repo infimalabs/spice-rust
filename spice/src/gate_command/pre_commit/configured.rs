@@ -53,6 +53,12 @@ pub(super) struct ConfiguredReport {
     steps: Vec<StepReport>,
 }
 
+#[derive(Clone, Copy)]
+enum ExecutionMode {
+    Ordinary,
+    Resolution,
+}
+
 impl ConfiguredReport {
     pub(super) fn admits(&self) -> bool {
         self.steps.iter().all(|step| step.findings.is_empty())
@@ -461,6 +467,23 @@ impl Dispatch {
         runtime: Duration,
         cancellation: Cancellation,
     ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
+        self.execute_configured_mode(runtime, cancellation, ExecutionMode::Ordinary)
+    }
+
+    pub(super) fn execute_resolution_configured(
+        &self,
+        runtime: Duration,
+        cancellation: Cancellation,
+    ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
+        self.execute_configured_mode(runtime, cancellation, ExecutionMode::Resolution)
+    }
+
+    fn execute_configured_mode(
+        &self,
+        runtime: Duration,
+        cancellation: Cancellation,
+        mode: ExecutionMode,
+    ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
         if !self.has_configured() {
             return Ok(None);
         }
@@ -493,6 +516,7 @@ impl Dispatch {
             &base,
             ExecutionBounds::production(runtime),
             cancellation,
+            mode,
             &mut verify,
         )
         .map(Some)
@@ -517,6 +541,7 @@ fn execute_steps(
     base_environment: &[(OsString, OsString)],
     bounds: ExecutionBounds,
     cancellation: Cancellation,
+    mode: ExecutionMode,
     verify: &mut impl FnMut() -> Result<(), ConfiguredFailure>,
 ) -> Result<ConfiguredReport, ConfiguredFailure> {
     let started = Instant::now();
@@ -525,13 +550,21 @@ fn execute_steps(
         verify()?;
         let selected_paths = scoped_paths(command, staged_paths)?;
         if !command.scopes().paths().is_empty() && selected_paths.is_empty() {
-            reports.push(step_report(command, selected_paths, false, Vec::new()));
+            reports.push(step_report(
+                command,
+                command.run().to_vec(),
+                selected_paths,
+                false,
+                Vec::new(),
+            ));
             continue;
         }
+        let argv = effective_argv(command, mode);
         let remaining = bounds.runtime.saturating_sub(started.elapsed());
         if remaining.is_zero() {
             reports.push(step_report(
                 command,
+                argv,
                 selected_paths,
                 true,
                 vec![finding(
@@ -543,7 +576,8 @@ fn execute_steps(
         }
         let environment = command_environment(base_environment, source, &selected_paths)?;
         let spec = command_spec(
-            command,
+            command.label(),
+            &argv,
             root,
             environment,
             remaining,
@@ -563,7 +597,7 @@ fn execute_steps(
                 StepFindingKind::Timeout | StepFindingKind::Cancellation | StepFindingKind::Cleanup
             )
         });
-        reports.push(step_report(command, selected_paths, true, findings));
+        reports.push(step_report(command, argv, selected_paths, true, findings));
         verify()?;
         if terminal {
             break;
@@ -574,6 +608,22 @@ fn execute_steps(
         source: source.clone(),
         steps: reports,
     })
+}
+
+fn effective_argv(command: &PreCommitStep, mode: ExecutionMode) -> Vec<String> {
+    let argv = command.run();
+    if !matches!(mode, ExecutionMode::Resolution)
+        || !command.scopes().paths().is_empty()
+        || argv.len() < 4
+        || argv[argv.len() - 3] != "--"
+        || argv[argv.len() - 2..] != ["gate", "selection"]
+    {
+        return argv.to_vec();
+    }
+    let mut effective = argv[..argv.len() - 3].to_vec();
+    effective.push("--".to_owned());
+    effective.push(super::RESOLUTION_SELECTION_WORKER_ARGUMENT.to_owned());
+    effective
 }
 
 fn scoped_paths(
@@ -600,15 +650,15 @@ fn scoped_paths(
 }
 
 fn command_spec(
-    command: &PreCommitStep,
+    label: &str,
+    argv: &[String],
     root: &Path,
     environment: Environment,
     runtime: Duration,
     bounds: ExecutionBounds,
     cancellation: Cancellation,
 ) -> Result<Spec, ConfiguredFailure> {
-    let (program, arguments) = command
-        .run()
+    let (program, arguments) = argv
         .split_first()
         .expect("typed pre-commit argv is nonempty");
     let capture = StreamPolicy::Capture {
@@ -625,7 +675,7 @@ fn command_spec(
             ConfiguredFailure::fault("gate::pre-commit-command-invalid", error.to_string())
         })?,
         wait: WaitPolicy::new(
-            format!("configured pre-commit step {}", command.label()),
+            format!("configured pre-commit step {label}"),
             cancellation,
             RestartDisposition::Never,
         )
@@ -749,13 +799,14 @@ fn captured(output: Option<&sill::CapturedOutput>) -> String {
 
 fn step_report(
     command: &PreCommitStep,
+    argv: Vec<String>,
     selected_paths: Vec<String>,
     enabled: bool,
     findings: Vec<StepFinding>,
 ) -> StepReport {
     StepReport {
         label: command.label().to_owned(),
-        argv: command.run().to_vec(),
+        argv,
         selected_paths,
         enabled,
         findings,

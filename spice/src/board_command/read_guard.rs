@@ -344,7 +344,15 @@ pub(super) fn publish_task_boundary(
     };
     let lane = task_repository(snapshot, command, resident)?;
     let actor = command.actor().to_string();
-    spice::task_git::publish(
+    let at = current_instant()?;
+    let active = board::Active::admit(entry, command.actor(), at).map_err(|error| {
+        refusal(
+            "git::resolution-claim-refused",
+            Some(error.to_string()),
+            "renew or win the exact active task phase before retrying its Git boundary",
+        )
+    })?;
+    spice::task_git::publish_claimed(
         &lane,
         spice::task_git::Metadata {
             label: entry.handle().as_str(),
@@ -352,6 +360,44 @@ pub(super) fn publish_task_boundary(
             project: &entry.statement().project,
             phase: entry.workflow().phase.as_str(),
             actor: &actor,
+        },
+        &active,
+        || {
+            match crate::gate_command::resolution_evidence(&lane) {
+                Outcome::Reply(_) => {}
+                Outcome::Refusal(refusal) => {
+                    let reason = refusal.reason().to_owned();
+                    let detail = refusal.complete_explanation();
+                    return Err(spice::task_git::ResolutionEvidenceError::refusal(
+                        reason,
+                        detail,
+                        "repair the named policy or test evidence and retry task completion",
+                    ));
+                }
+                Outcome::Fault(fault) => {
+                    return Err(spice::task_git::ResolutionEvidenceError::fault(
+                        fault.reason,
+                        fault.detail,
+                    ));
+                }
+            }
+            let now = current_instant().map_err(|outcome| {
+                spice::task_git::ResolutionEvidenceError::fault(
+                    "git::resolution-clock-unavailable",
+                    format!("{outcome:?}"),
+                )
+            })?;
+            if now >= active.expiry() {
+                return Err(spice::task_git::ResolutionEvidenceError::refusal(
+                    "git::resolution-claim-expired",
+                    format!(
+                        "active claim expired at {} during evidence",
+                        active.expiry()
+                    ),
+                    "renew or win the task again before retrying task completion",
+                ));
+            }
+            Ok(())
         },
     )
     .map(Some)

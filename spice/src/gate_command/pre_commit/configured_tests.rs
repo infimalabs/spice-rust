@@ -85,6 +85,55 @@ fn test_bounds(runtime: Duration) -> ExecutionBounds {
 }
 
 #[test]
+fn only_unscoped_resolution_source_gate_argv_selects_the_private_exhaustive_leaf() {
+    let current = parsed_commands(&[row(
+        "Spice source gate",
+        &[
+            "cargo",
+            "run",
+            "--quiet",
+            "--locked",
+            "--package",
+            "spice",
+            "--bin",
+            "spice",
+            "--",
+            "gate",
+            "selection",
+        ],
+        &[],
+    )]);
+    let ordinary = effective_argv(&current[0], ExecutionMode::Ordinary);
+    assert_eq!(ordinary, current[0].run());
+    let resolution = effective_argv(&current[0], ExecutionMode::Resolution);
+    assert_eq!(
+        resolution,
+        [
+            "cargo",
+            "run",
+            "--quiet",
+            "--locked",
+            "--package",
+            "spice",
+            "--bin",
+            "spice",
+            "--",
+            super::super::RESOLUTION_SELECTION_WORKER_ARGUMENT,
+        ],
+    );
+
+    let scoped = parsed_commands(&[row(
+        "scoped source gate",
+        &["cargo", "run", "--", "gate", "selection"],
+        &["src/**"],
+    )]);
+    assert_eq!(
+        effective_argv(&scoped[0], ExecutionMode::Resolution),
+        scoped[0].run(),
+    );
+}
+
+#[test]
 fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_environment() {
     let scratch = Scratch::new("ordered-environment");
     let log = scratch.root.join("commands.log");
@@ -152,6 +201,7 @@ fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_envi
         &base_environment(),
         test_bounds(Duration::from_secs(2)),
         Cancellation::Never,
+        ExecutionMode::Ordinary,
         &mut || {
             verifications += 1;
             Ok(())
@@ -238,6 +288,7 @@ fn independent_child_failures_are_aggregated_in_authored_order() {
         &base_environment(),
         bounds,
         Cancellation::Never,
+        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("independent failures remain report evidence");
@@ -311,6 +362,7 @@ fn one_shared_deadline_terminates_and_reaps_a_late_step_process_tree() {
         &base_environment(),
         test_bounds(Duration::from_millis(180)),
         Cancellation::Never,
+        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("deadline is report evidence");
@@ -374,6 +426,7 @@ fn cancellation_terminates_and_reaps_the_configured_process_tree() {
         &base_environment(),
         test_bounds(Duration::from_secs(2)),
         Cancellation::Token(token),
+        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("cancellation is report evidence");
@@ -428,6 +481,7 @@ fn authority_movement_between_steps_stops_before_the_next_spawn() {
         &base_environment(),
         test_bounds(Duration::from_secs(2)),
         Cancellation::Never,
+        ExecutionMode::Ordinary,
         &mut || {
             checks += 1;
             if checks == 2 {

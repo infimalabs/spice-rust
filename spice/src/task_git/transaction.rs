@@ -56,6 +56,49 @@ pub(super) fn materialize_and_update(
     ))
 }
 
+pub(super) fn materialize_resolution(
+    root: &Path,
+    target: &str,
+    expected: &str,
+    tree: &str,
+    label: &str,
+) -> Result<(), Error> {
+    let marker = transaction_path(root)?;
+    write_pending(
+        &marker,
+        &Pending::Resolution {
+            expected: expected.to_owned(),
+            target: target.to_owned(),
+            tree: tree.to_owned(),
+        },
+    )?;
+    let materialized = run(root, &["read-tree", "--reset", "-u", target])?;
+    if !materialized.success() {
+        let detail = materialized.detail("materialize admitted task resolution");
+        recover_pending(root)?;
+        return Err(Error::fault("git::materialize-failed", detail));
+    }
+    let reference = required_read(
+        root,
+        &["symbolic-ref", "--quiet", "HEAD"],
+        "resolve resolution HEAD ref",
+    )?;
+    let updated = run(root, &["update-ref", &reference, target, expected])?;
+    let current = required_read(root, &["rev-parse", "HEAD"], "read resolution HEAD")?;
+    if updated.success() || current == target {
+        clear_merge_state(root)?;
+        remove_marker(&marker)?;
+        return Ok(());
+    }
+    let detail = updated.detail("advance branch to admitted task resolution");
+    recover_pending(root)?;
+    Err(Error::refusal(
+        "git::resolution-ref-race",
+        detail,
+        format!("inspect the retained resolution, then retry task completion for {label}"),
+    ))
+}
+
 fn restore_move_failure(root: &Path, error: Error) -> Error {
     match recover_pending(root) {
         Ok(()) => error,
@@ -172,8 +215,10 @@ pub(super) fn conflict_error(label: &str, upstream: &str) -> Error {
         format!(
             concat!(
                 "resolve every conflicted path, git add the ",
-                "resolution, commit while MERGE_HEAD exists, then ",
-                "retry task completion for {label}",
+                "resolution, then run `spice task done --validation ",
+                "\"<evidence>\"` while MERGE_HEAD exists; do not create ",
+                "the merge with git commit because task completion owns it ",
+                "for {label}",
             ),
             label = label
         ),
@@ -310,8 +355,43 @@ pub(super) fn recover_pending(root: &Path) -> Result<(), Error> {
             upstream,
             previous,
         } => recover_conflict(root, &agent, &upstream, &previous)?,
+        Pending::Resolution {
+            expected,
+            target,
+            tree,
+        } => recover_resolution(root, &expected, &target, &tree)?,
     }
     remove_marker(&marker)
+}
+
+fn recover_resolution(root: &Path, expected: &str, target: &str, tree: &str) -> Result<(), Error> {
+    let current = required_read(root, &["rev-parse", "HEAD"], "recover task resolution")?;
+    if current == target {
+        let restored = run(root, &["read-tree", "--reset", "-u", target])?;
+        if !restored.success() {
+            return Err(Error::fault(
+                "git::transaction-recovery-failed",
+                restored.detail("restore committed task resolution"),
+            ));
+        }
+        return clear_merge_state(root);
+    }
+    if current != expected {
+        return Err(Error::refusal(
+            "git::transaction-head-moved",
+            format!("task resolution expected {expected} or {target}, but HEAD is {current}"),
+            "inspect HEAD and the retained merge state before retrying task completion",
+        ));
+    }
+    let restored = run(root, &["read-tree", "--reset", "-u", tree])?;
+    if restored.success() {
+        Ok(())
+    } else {
+        Err(Error::fault(
+            "git::transaction-recovery-failed",
+            restored.detail("restore staged task resolution"),
+        ))
+    }
 }
 
 fn recover_move(root: &Path, expected: &str, target: &str) -> Result<(), Error> {
@@ -418,6 +498,18 @@ fn restore_merge_state(
                     return Err(filesystem_fault("clear partial Git state", &path, error));
                 }
             },
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn clear_merge_state(root: &Path) -> Result<(), Error> {
+    for name in MERGE_STATE_FILES {
+        let path = git_state_path(root, name)?;
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(filesystem_fault("clear admitted merge state", &path, error)),
         }
     }
     Ok(())

@@ -197,6 +197,7 @@ fn shadow_path(environment: &Environment) -> &std::ffi::OsStr {
 
 /// One committed repository and one linked worktree checked out beside it.
 struct Fixture {
+    root: PathBuf,
     common: PathBuf,
     linked: PathBuf,
     branch: String,
@@ -209,12 +210,18 @@ impl Fixture {
 
     fn with_branch(label: &str, branch: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "spice-git-shadow-{label}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).expect("create Git shadow fixture root");
+        let root = loop {
+            let candidate = std::env::temp_dir().join(format!(
+                "spice-git-shadow-{label}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("create Git shadow fixture root: {error}"),
+            }
+        };
         git(&root, &["init", "-q"]);
         git(&root, &["config", "user.email", "shadow@example.invalid"]);
         git(&root, &["config", "user.name", "Git Shadow Fixture"]);
@@ -240,6 +247,7 @@ impl Fixture {
             ],
         );
         Self {
+            root: root.clone(),
             common: root.join(".git"),
             linked,
             branch,
@@ -262,6 +270,12 @@ impl Fixture {
     /// leaking in would be read back as this test's own answer.
     fn base(&self) -> Environment {
         Environment::new([("PATH", "/usr/bin:/bin")]).expect("fixture environment admits")
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove Git shadow fixture root");
     }
 }
 

@@ -21,6 +21,8 @@ use wire::{Digest, Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply
 mod configured;
 
 const WORKER_ARGUMENT: &str = "__gate-pre-commit-worker";
+const RESOLUTION_WORKER_ARGUMENT: &str = "__gate-resolution-worker";
+const RESOLUTION_SELECTION_WORKER_ARGUMENT: &str = "__gate-resolution-selection-worker";
 const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
@@ -83,6 +85,7 @@ impl WorkerPhase {
 }
 
 const PRE_COMMIT_REPORT_VERSION: u64 = 1;
+const RESOLUTION_REPORT_VERSION: u64 = 1;
 
 /// One complete packaged-plus-configured pre-commit battery result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -168,6 +171,127 @@ impl Report {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ResolutionPackagedReport {
+    policy: Vec<u8>,
+    tests: Vec<u8>,
+}
+
+impl ResolutionPackagedReport {
+    fn new(report: &spice::change_gate::ExhaustiveChangeGateReport) -> Result<Self, String> {
+        Ok(Self {
+            policy: report
+                .policy()
+                .encode()
+                .map_err(|error| error.to_string())?,
+            tests: report.tests().encode().map_err(|error| error.to_string())?,
+        })
+    }
+
+    fn validate(&self, source: &Digest) -> Result<bool, String> {
+        let policy =
+            gate::BatteryReport::decode(&self.policy).map_err(|error| error.to_string())?;
+        let tests =
+            gate::TestSelectionReport::decode(&self.tests).map_err(|error| error.to_string())?;
+        if policy.context().source() != source || tests.source() != source {
+            return Err("resolution packaged evidence names a different staged source".to_owned());
+        }
+        Ok(policy.admits() && tests.admits())
+    }
+
+    fn refusal_evidence(&self) -> String {
+        gate::BatteryReport::decode(&self.policy).map_or_else(
+            |error| format!("invalid exhaustive policy evidence: {error}"),
+            |report| report.refusal_fold().to_string(),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ResolutionReport {
+    version: u64,
+    source: Digest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    packaged: Option<ResolutionPackagedReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    configured: Option<configured::ConfiguredReport>,
+}
+
+impl ResolutionReport {
+    fn new(
+        source: Digest,
+        packaged: Option<ResolutionPackagedReport>,
+        configured: Option<configured::ConfiguredReport>,
+    ) -> Result<Self, String> {
+        let report = Self {
+            version: RESOLUTION_REPORT_VERSION,
+            source,
+            packaged,
+            configured,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.version != RESOLUTION_REPORT_VERSION {
+            return Err(format!(
+                "unsupported resolution report version {}; expected {RESOLUTION_REPORT_VERSION}",
+                self.version,
+            ));
+        }
+        if self.packaged.is_none() && self.configured.is_none() {
+            return Err("resolution report carries an empty effective battery".to_owned());
+        }
+        if let Some(packaged) = &self.packaged {
+            let _ = packaged.validate(&self.source)?;
+        }
+        if self
+            .configured
+            .as_ref()
+            .is_some_and(|report| report.source() != &self.source)
+        {
+            return Err(
+                "resolution configured evidence names a different staged source".to_owned(),
+            );
+        }
+        Ok(())
+    }
+
+    fn admits(&self) -> bool {
+        self.packaged
+            .as_ref()
+            .is_none_or(|report| report.validate(&self.source) == Ok(true))
+            && self
+                .configured
+                .as_ref()
+                .is_none_or(configured::ConfiguredReport::admits)
+    }
+
+    fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let report: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        report.validate()?;
+        Ok(report)
+    }
+
+    fn refusal_evidence(&self) -> String {
+        let mut evidence = self
+            .packaged
+            .as_ref()
+            .map_or_else(String::new, ResolutionPackagedReport::refusal_evidence);
+        if let Some(configured) = self.configured.as_ref().filter(|report| !report.admits()) {
+            evidence.push_str(&configured.refusal_evidence());
+        }
+        evidence
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct WorkerFailure {
@@ -250,6 +374,22 @@ pub(super) fn run() -> Outcome<Report> {
     run_with(supervise)
 }
 
+/// Run the exhaustive evidence worker for one allocator-owned merge resolution.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the resolution binary rim rejects configured-command recursion before supervision"
+)]
+pub(super) fn run_resolution(repository: &Repository) -> Outcome<()> {
+    if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
+        return configured::recursion_refusal(&source);
+    }
+    let _dispatch = match DispatchGuard::acquire_in(repository) {
+        Ok(dispatch) => dispatch,
+        Err(outcome) => return outcome,
+    };
+    run_with_resolution(|files| supervise_resolution(files, repository.worktree_root()))
+}
+
 #[derive(Debug)]
 struct DispatchGuard {
     _possession: Possession,
@@ -298,14 +438,45 @@ fn run_with(supervisor: impl FnOnce(&WorkerFiles) -> Outcome<Report>) -> Outcome
     }
 }
 
+fn run_with_resolution(supervisor: impl FnOnce(&WorkerFiles) -> Outcome<()>) -> Outcome<()> {
+    let files = match WorkerFiles::create() {
+        Ok(files) => files,
+        Err(error) => return fault("gate::pre-commit-supervisor-unavailable", error),
+    };
+    let answer = supervisor(&files);
+    match files.cleanup() {
+        Ok(()) => answer,
+        Err(error) => fault("gate::pre-commit-cleanup-failed", error),
+    }
+}
+
 #[expect(
     clippy::disallowed_methods,
     reason = "the hidden worker rim must reject configured-command recursion before reading caller paths"
 )]
 pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32> {
     let _executable = arguments.next()?;
-    if arguments.next().as_deref() != Some(OsStr::new(WORKER_ARGUMENT)) {
+    let worker = arguments.next()?;
+    if worker.as_os_str() != OsStr::new(WORKER_ARGUMENT)
+        && worker.as_os_str() != OsStr::new(RESOLUTION_WORKER_ARGUMENT)
+        && worker.as_os_str() != OsStr::new(RESOLUTION_SELECTION_WORKER_ARGUMENT)
+    {
         return None;
+    }
+    if worker.as_os_str() == OsStr::new(RESOLUTION_SELECTION_WORKER_ARGUMENT) {
+        if arguments.next().is_some() {
+            eprintln!("resolution selection worker received trailing arguments");
+            return Some(1);
+        }
+        let outcome = resolution_selection_worker();
+        crate::render::render(&outcome, crate::render::Form::Text)
+            .expect("typed resolution selection outcome renders as text")
+            .speak();
+        return Some(match outcome {
+            Outcome::Reply(_) => crate::REPLY_EXIT,
+            Outcome::Refusal(_) => crate::REFUSAL_EXIT,
+            Outcome::Fault(_) => crate::FAULT_EXIT,
+        });
     }
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
         let refusal: Outcome<()> = configured::recursion_refusal(&source);
@@ -326,13 +497,101 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         eprintln!("commit-gate worker received trailing arguments");
         return Some(1);
     }
-    Some(match worker(Path::new(&progress), Path::new(&terminal)) {
+    let result = if worker.as_os_str() == OsStr::new(RESOLUTION_WORKER_ARGUMENT) {
+        resolution_worker(Path::new(&progress), Path::new(&terminal))
+    } else {
+        worker_run(Path::new(&progress), Path::new(&terminal))
+    };
+    Some(match result {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("commit-gate worker failed to publish its terminal: {error}");
             1
         }
     })
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the private configured resolution rim acquires the source and path authorities injected by its supervising worker"
+)]
+fn resolution_selection_worker() -> Outcome<()> {
+    let expected_source = match env::var(configured::SOURCE_VARIABLE) {
+        Ok(source) => source,
+        Err(error) => {
+            return fault(
+                "gate::resolution-source-authority-missing",
+                format!("{}: {error}", configured::SOURCE_VARIABLE),
+            );
+        }
+    };
+    let expected_paths = match env::var(configured::PATHS_VARIABLE)
+        .map_err(|error| error.to_string())
+        .and_then(|paths| {
+            serde_json::from_str::<Vec<String>>(&paths).map_err(|error| error.to_string())
+        }) {
+        Ok(paths) => paths,
+        Err(error) => {
+            return fault(
+                "gate::resolution-path-authority-invalid",
+                format!("{}: {error}", configured::PATHS_VARIABLE),
+            );
+        }
+    };
+    // SAFETY: `worker_entry` runs before the binary creates any threads, this
+    // private leaf never returns to ordinary command dispatch, and the copied
+    // authorities above remain available for the terminal comparison. Removing
+    // them here prevents nested workspace-test binaries from mistaking their
+    // own commit-worker fixtures for configured-command recursion.
+    unsafe {
+        env::remove_var(configured::SOURCE_VARIABLE);
+        env::remove_var(configured::PATHS_VARIABLE);
+    }
+    let mut progress = Vec::new();
+    match spice::change_gate::run_exhaustive(&mut progress) {
+        Ok(report)
+            if report.source().to_string() == expected_source
+                && report.tests().changed_sources() == expected_paths
+                && report.admits() =>
+        {
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Direct {},
+                body: (),
+            })
+        }
+        Ok(report)
+            if report.source().to_string() != expected_source
+                || report.tests().changed_sources() != expected_paths =>
+        {
+            Outcome::Refusal(Refusal::evidence(
+                "gate::resolution-configured-source-moved",
+                format!(
+                    "expected_source={expected_source}; observed_source={}; expected_paths={expected_paths:?}; observed_paths={:?}",
+                    report.source(),
+                    report.tests().changed_sources(),
+                ),
+                "retry task completion after the staged source and path set stop moving",
+            ))
+        }
+        Ok(report) => {
+            progress.extend_from_slice(report.refusal_fold().as_bytes());
+            Outcome::Refusal(Refusal::evidence(
+                "gate::resolution-configured-regressed",
+                String::from_utf8_lossy(&progress).into_owned(),
+                "repair the exhaustive source finding, then retry task completion",
+            ))
+        }
+        Err(error) if error.is_fault() => Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: error.reason().to_owned(),
+            detail: error.detail().to_owned(),
+        }),
+        Err(error) => Outcome::Refusal(Refusal::evidence(
+            error.reason(),
+            error.detail(),
+            "repair the exhaustive source finding, then retry task completion",
+        )),
+    }
 }
 
 fn supervise(files: &WorkerFiles) -> Outcome<Report> {
@@ -368,6 +627,40 @@ fn supervise(files: &WorkerFiles) -> Outcome<Report> {
     classify(files, &waited)
 }
 
+fn supervise_resolution(files: &WorkerFiles, root: &Path) -> Outcome<()> {
+    let executable = match env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => return fault("gate::pre-commit-executable-unavailable", error),
+    };
+    let spec = match worker_spec_at(
+        executable,
+        [
+            OsString::from(RESOLUTION_WORKER_ARGUMENT),
+            files.progress.as_os_str().to_owned(),
+            files.terminal.as_os_str().to_owned(),
+        ],
+        root,
+        ProcessBounds::production(),
+    ) {
+        Ok(spec) => spec,
+        Err(error) => return fault("gate::resolution-worker-invalid", error),
+    };
+    let running = match sill::spawn(spec) {
+        Ok(running) => running,
+        Err(error) => return fault("gate::resolution-worker-unavailable", error),
+    };
+    let waited = match running.wait() {
+        Ok(waited) => waited,
+        Err(error) => {
+            return resolution_worker_lost(
+                &files.progress,
+                format!("resolution worker wait or reap failed: {error}"),
+            );
+        }
+    };
+    classify_resolution(files, &waited)
+}
+
 fn classify(files: &WorkerFiles, waited: &WaitOutcome) -> Outcome<Report> {
     if !waited.outputs_drained() {
         return worker_lost(
@@ -390,6 +683,77 @@ fn classify(files: &WorkerFiles, waited: &WaitOutcome) -> Outcome<Report> {
             ),
         ),
         Completion::Exited(_) => terminal(&files.terminal, &files.progress, &files.report),
+    }
+}
+
+fn classify_resolution(files: &WorkerFiles, waited: &WaitOutcome) -> Outcome<()> {
+    if !waited.outputs_drained() {
+        return resolution_worker_lost(
+            &files.progress,
+            "resolution worker output did not drain inside its reserved deadline".to_owned(),
+        );
+    }
+    match waited.completion() {
+        Completion::TimedOut(_) => resolution_deadline(&files.progress),
+        Completion::Cancelled(_) => resolution_worker_lost(
+            &files.progress,
+            "resolution worker was cancelled outside the commit deadline".to_owned(),
+        ),
+        Completion::Exited(status) if !status.success() => resolution_worker_lost(
+            &files.progress,
+            format!(
+                "resolution worker exited {:?}; stderr={}",
+                status.code(),
+                captured(waited.stderr()),
+            ),
+        ),
+        Completion::Exited(_) => resolution_terminal(&files.terminal, &files.progress),
+    }
+}
+
+fn resolution_terminal(path: &Path, progress: &Path) -> Outcome<()> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return resolution_worker_lost(
+                progress,
+                format!("resolution terminal could not be read: {error}"),
+            );
+        }
+    };
+    let Some((kind, document)) = bytes.split_first() else {
+        return resolution_worker_lost(
+            progress,
+            "resolution worker published no terminal".to_owned(),
+        );
+    };
+    match *kind {
+        REPORT_RECORD => match ResolutionReport::decode(document) {
+            Ok(report) if report.admits() => Outcome::Reply(Reply {
+                position: ReplyPosition::Direct {},
+                body: (),
+            }),
+            Ok(report) => Outcome::Refusal(Refusal::evidence(
+                "gate::resolution-regressed",
+                report.refusal_evidence(),
+                "repair the exhaustive packaged or configured finding, then retry task completion",
+            )),
+            Err(error) => resolution_worker_lost(
+                progress,
+                format!("resolution worker published an invalid report: {error}"),
+            ),
+        },
+        FAILURE_RECORD => match serde_json::from_slice::<WorkerFailure>(document) {
+            Ok(failure) => resolution_worker_failure(failure),
+            Err(error) => resolution_worker_lost(
+                progress,
+                format!("resolution worker published an invalid failure: {error}"),
+            ),
+        },
+        other => resolution_worker_lost(
+            progress,
+            format!("resolution worker published unknown terminal record {other}"),
+        ),
     }
 }
 
@@ -493,7 +857,7 @@ fn report_artifact_fault(artifact: &str, error: io::Error) -> Fault {
     }
 }
 
-fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
+fn worker_run(progress_path: &Path, terminal: &Path) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
     let mut progress = OpenOptions::new().append(true).open(progress_path)?;
     let started = Instant::now();
@@ -506,6 +870,77 @@ fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
         }
         Err(failure) => write_failure(terminal, &failure),
     }
+}
+
+fn resolution_worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
+    let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
+    let mut progress = OpenOptions::new().append(true).open(progress_path)?;
+    let started = Instant::now();
+    write_phase(&mut progress, &WorkerPhase::Capture)?;
+    match dispatch_resolution(&mut progress, started) {
+        Ok(report) => {
+            let mut document = vec![REPORT_RECORD];
+            document.extend(report.encode().map_err(io::Error::other)?);
+            fs::write(terminal, document)
+        }
+        Err(failure) => write_failure(terminal, &failure),
+    }
+}
+
+fn dispatch_resolution(
+    progress: &mut File,
+    started: Instant,
+) -> Result<ResolutionReport, WorkerFailure> {
+    write_phase(progress, &WorkerPhase::Policy).map_err(worker_io_failure)?;
+    let mut dispatch = configured::Dispatch::capture().map_err(configured_failure)?;
+    let source = dispatch.source().clone();
+    let packaged = if dispatch.builtins_enabled() {
+        write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
+        let report = spice::change_gate::run_exhaustive(progress).map_err(change_gate_failure)?;
+        if report.source() != &source {
+            return Err(WorkerFailure {
+                reason: "gate::resolution-staged-source-moved".to_owned(),
+                detail: format!(
+                    "dispatcher source {source} differs from exhaustive source {}",
+                    report.source(),
+                ),
+                fault: false,
+            });
+        }
+        dispatch = dispatch.rebind(&source).map_err(configured_failure)?;
+        Some(
+            ResolutionPackagedReport::new(&report).map_err(|detail| WorkerFailure {
+                reason: "gate::resolution-report-invalid".to_owned(),
+                detail,
+                fault: true,
+            })?,
+        )
+    } else {
+        None
+    };
+    let configured = if dispatch.has_configured() {
+        write_phase(
+            progress,
+            &WorkerPhase::Configured {
+                steps: dispatch.configured_count(),
+            },
+        )
+        .map_err(worker_io_failure)?;
+        let remaining = WORK_RUNTIME
+            .saturating_sub(started.elapsed())
+            .saturating_sub(configured::cleanup_reserve());
+        dispatch
+            .execute_resolution_configured(remaining, Cancellation::Never)
+            .map_err(configured_failure)?
+    } else {
+        None
+    };
+    dispatch.verify().map_err(configured_failure)?;
+    ResolutionReport::new(source, packaged, configured).map_err(|detail| WorkerFailure {
+        reason: "gate::resolution-report-invalid".to_owned(),
+        detail,
+        fault: true,
+    })
 }
 
 fn dispatch(progress: &mut File, started: Instant) -> Result<Report, WorkerFailure> {
@@ -586,6 +1021,14 @@ fn write_failure(path: &Path, failure: &WorkerFailure) -> io::Result<()> {
 }
 
 fn worker_failure(failure: WorkerFailure) -> Outcome<Report> {
+    failure_outcome(failure)
+}
+
+fn resolution_worker_failure(failure: WorkerFailure) -> Outcome<()> {
+    failure_outcome(failure)
+}
+
+fn failure_outcome<T>(failure: WorkerFailure) -> Outcome<T> {
     if failure.fault {
         Outcome::Fault(Fault {
             class: FaultClass::Environment,
@@ -630,6 +1073,14 @@ fn change_gate_failure(error: spice::change_gate::ChangeGateError) -> WorkerFail
 }
 
 fn deadline(progress: &Path) -> Outcome<Report> {
+    deadline_outcome(progress)
+}
+
+fn resolution_deadline(progress: &Path) -> Outcome<()> {
+    deadline_outcome(progress)
+}
+
+fn deadline_outcome<T>(progress: &Path) -> Outcome<T> {
     let phase = last_phase(progress);
     Outcome::Refusal(Refusal::bare(
         RefusalDiagnostic::new(
@@ -651,6 +1102,14 @@ fn deadline(progress: &Path) -> Outcome<Report> {
 }
 
 fn worker_lost(progress: &Path, detail: String) -> Outcome<Report> {
+    worker_lost_outcome(progress, detail)
+}
+
+fn resolution_worker_lost(progress: &Path, detail: String) -> Outcome<()> {
+    worker_lost_outcome(progress, detail)
+}
+
+fn worker_lost_outcome<T>(progress: &Path, detail: String) -> Outcome<T> {
     let phase = last_phase(progress);
     Outcome::Fault(Fault {
         class: FaultClass::Environment,
@@ -732,12 +1191,22 @@ fn worker_spec(
     arguments: impl IntoIterator<Item = OsString>,
     bounds: ProcessBounds,
 ) -> Result<Spec, String> {
+    let current = env::current_dir().map_err(|error| error.to_string())?;
+    worker_spec_at(executable, arguments, &current, bounds)
+}
+
+fn worker_spec_at(
+    executable: impl Into<OsString>,
+    arguments: impl IntoIterator<Item = OsString>,
+    root: &Path,
+    bounds: ProcessBounds,
+) -> Result<Spec, String> {
     let capture = StreamPolicy::Capture {
         limit: OUTPUT_LIMIT,
     };
     Ok(Spec {
         argv: Argv::new(executable, arguments).map_err(|error| error.to_string())?,
-        cwd: env::current_dir().map_err(|error| error.to_string())?,
+        cwd: root.to_path_buf(),
         environment: ambient_environment().map_err(|error| error.to_string())?,
         group: ProcessGroup::New,
         deadlines: Deadlines::new(bounds.runtime, bounds.output_drain, bounds.reap)
