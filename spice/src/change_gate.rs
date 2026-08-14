@@ -7,14 +7,11 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
 
 use gate::{
-    ArmDisposition, ArmFamily, BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryArmResult, BatteryManifest,
-    BatteryReport, BatteryState, ChangeSelectionMode, ChangeSelectionReport, FocusedArmReport,
-    GateId, RepositoryExecutionEvent, Selector, StateRunScope, TestSelectionReport,
+    ArmDisposition, ArmFamily, BatteryArmResult, BatteryManifest, BatteryState,
+    ChangeSelectionReport, FocusedArmReport, GateId, Selector, StateRunScope, TestSelectionReport,
 };
 use serde::{Deserialize, Serialize};
 use sill::Environment;
@@ -39,20 +36,6 @@ pub enum ChangePolicyReport {
         source: wire::Digest,
         results: Vec<PolicyArmSummary>,
     },
-    /// Every packaged arm applicable to this repository, retained individually.
-    Applicable {
-        source: wire::Digest,
-        results: Vec<PolicyArmSummary>,
-    },
-    /// One complete source-bound summary for an exhaustive change.
-    Exhaustive {
-        source: wire::Digest,
-        report_digest: wire::Digest,
-        report_bytes: u64,
-        results: Vec<PolicyArmSummary>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        refusal_fold: Option<String>,
-    },
 }
 
 impl ChangePolicyReport {
@@ -61,16 +44,6 @@ impl ChangePolicyReport {
         reports: &[FocusedArmReport],
     ) -> Result<Self, ChangeGateError> {
         Ok(Self::Focused {
-            source: source.clone(),
-            results: Self::summaries(source, reports)?,
-        })
-    }
-
-    fn applicable(
-        source: &wire::Digest,
-        reports: &[FocusedArmReport],
-    ) -> Result<Self, ChangeGateError> {
-        Ok(Self::Applicable {
             source: source.clone(),
             results: Self::summaries(source, reports)?,
         })
@@ -100,36 +73,11 @@ impl ChangePolicyReport {
         Ok(results)
     }
 
-    fn exhaustive(report: &BatteryReport) -> Result<Self, ChangeGateError> {
-        let encoded = report.encode().map_err(|error| {
-            ChangeGateError::protocol("change-gate-exhaustive-policy-unencodable", error)
-        })?;
-        let report_bytes = u64::try_from(encoded.len()).map_err(|error| {
-            ChangeGateError::protocol("change-gate-exhaustive-policy-too-large", error)
-        })?;
-        let report_digest = wire::Digest::compute(wire::Domain::GateBatteryReport, &encoded);
-        let results = report
-            .results()
-            .iter()
-            .map(|result| PolicyArmSummary::from_result(result, report_digest.clone()))
-            .collect();
-        let refusal_fold = (!report.admits()).then(|| report.refusal_fold().as_str().to_owned());
-        Ok(Self::Exhaustive {
-            source: report.context().source().clone(),
-            report_digest,
-            report_bytes,
-            results,
-            refusal_fold,
-        })
-    }
-
     /// Number of canonical policy arms retained by this report.
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
-            Self::Focused { results, .. }
-            | Self::Applicable { results, .. }
-            | Self::Exhaustive { results, .. } => results.len(),
+            Self::Focused { results, .. } => results.len(),
         }
     }
 
@@ -142,9 +90,7 @@ impl ChangePolicyReport {
     /// Canonical policy results in selected manifest order.
     pub fn iter(&self) -> std::slice::Iter<'_, PolicyArmSummary> {
         match self {
-            Self::Focused { results, .. }
-            | Self::Applicable { results, .. }
-            | Self::Exhaustive { results, .. } => results.iter(),
+            Self::Focused { results, .. } => results.iter(),
         }
     }
 
@@ -152,95 +98,14 @@ impl ChangePolicyReport {
         self.iter().all(|result| result.state.admits())
     }
 
-    fn validate(
-        &self,
-        mode: ChangeSelectionMode,
-        gate_ids: &[GateId],
-        source: &wire::Digest,
-    ) -> Result<(), ChangeGateError> {
-        match (mode, self) {
-            (
-                ChangeSelectionMode::Local,
-                Self::Focused {
-                    source: observed,
-                    results,
-                },
-            ) => {
+    fn validate(&self, gate_ids: &[GateId], source: &wire::Digest) -> Result<(), ChangeGateError> {
+        match self {
+            Self::Focused {
+                source: observed,
+                results,
+            } => {
                 validate_policy_results(results, gate_ids)?;
                 validate_policy_source(observed, source, "focused")?;
-            }
-            (
-                ChangeSelectionMode::Exhaustive,
-                Self::Applicable {
-                    source: observed,
-                    results,
-                },
-            ) => {
-                validate_policy_results(results, gate_ids)?;
-                validate_policy_source(observed, source, "applicable")?;
-            }
-            (
-                ChangeSelectionMode::Exhaustive,
-                Self::Exhaustive {
-                    source: observed,
-                    report_digest,
-                    report_bytes,
-                    results,
-                    refusal_fold,
-                },
-            ) => {
-                if gate_ids != GateId::BATTERY {
-                    return Err(ChangeGateError::protocol(
-                        "change-gate-exhaustive-policy-incomplete",
-                        "complete policy evidence requires the canonical battery inventory",
-                    ));
-                }
-                if *report_bytes == 0 {
-                    return Err(ChangeGateError::protocol(
-                        "change-gate-exhaustive-policy-invalid",
-                        "complete policy summary names an empty underlying report",
-                    ));
-                }
-                if results
-                    .iter()
-                    .any(|result| result.authority != *report_digest)
-                {
-                    return Err(ChangeGateError::protocol(
-                        "change-gate-exhaustive-policy-invalid",
-                        "complete policy arms disagree with the full-report authority digest",
-                    ));
-                }
-                let refusing = results.iter().any(|result| !result.state.admits());
-                if refusing
-                    != refusal_fold.as_ref().is_some_and(|fold| {
-                        !fold.is_empty() && fold.len() <= BATTERY_REFUSAL_FOLD_MAX_BYTES
-                    })
-                {
-                    return Err(ChangeGateError::protocol(
-                        "change-gate-exhaustive-policy-invalid",
-                        "complete policy refusal fold disagrees with its terminal arm states",
-                    ));
-                }
-                validate_policy_results(results, gate_ids)?;
-                validate_policy_source(observed, source, "complete")?;
-            }
-            (ChangeSelectionMode::Local, Self::Exhaustive { .. }) => {
-                return Err(ChangeGateError::protocol(
-                    "change-gate-policy-overbroad",
-                    "local selection cannot retain an exhaustive policy report",
-                ));
-            }
-            (ChangeSelectionMode::Local, Self::Applicable { .. }) => {
-                return Err(ChangeGateError::protocol(
-                    "change-gate-policy-overbroad",
-                    "local selection cannot retain applicable-exhaustive policy evidence",
-                ));
-            }
-            (ChangeSelectionMode::Exhaustive, Self::Focused { .. }) => {
-                return Err(ChangeGateError::protocol(
-                    "change-gate-policy-incomplete",
-                    "exhaustive selection requires applicable or complete policy evidence",
-                ));
             }
         }
         Ok(())
@@ -415,13 +280,6 @@ impl ChangeGateReport {
     /// Compact deterministic evidence for selected policy refusals.
     #[must_use]
     pub fn refusal_fold(&self) -> String {
-        if let ChangePolicyReport::Exhaustive {
-            refusal_fold: Some(fold),
-            ..
-        } = &self.policy
-        {
-            return fold.clone();
-        }
         let mut refusal = String::new();
         for result in self.policy.iter().filter(|result| !result.state().admits()) {
             let _ = writeln!(
@@ -485,16 +343,7 @@ impl ChangeGateReport {
                 "test selection names a source absent from policy selection",
             ));
         }
-        if self.selection.mode() == ChangeSelectionMode::Exhaustive
-            && self.tests.changed_sources() != self.selection.changed_sources()
-        {
-            return Err(ChangeGateError::protocol(
-                "change-gate-exhaustive-test-incomplete",
-                "exhaustive policy selection requires test evidence for every changed source",
-            ));
-        }
-        self.policy
-            .validate(self.selection.mode(), self.selection.gate_ids(), source)?;
+        self.policy.validate(self.selection.gate_ids(), source)?;
         Ok(())
     }
 }
@@ -551,7 +400,7 @@ fn run_with_selection(
 ) -> Result<ChangeGateReport, ChangeGateError> {
     let mut anchor = crate::gate::prepare_arm(Selector::staged(), GateId::Staging)
         .map_err(ChangeGateError::gate)?;
-    let (selection, test_execution, current_source) = select_changes(&anchor, surface)?;
+    let (selection, test_execution) = select_changes(&anchor, surface)?;
     publish_selection(progress, &selection)?;
 
     let repository = Repository::discover(Path::new(".")).map_err(|error| {
@@ -574,7 +423,6 @@ fn run_with_selection(
         &selection,
         &source,
         execution,
-        current_source,
         &mut shared_progress,
     )?;
     publish_test_selection(&mut shared_progress, &tests)?;
@@ -593,11 +441,9 @@ fn run_with_selection(
 
     let report = ChangeGateReport::new(selection, tests, policy)?;
     if report.admits() {
-        let scope = match report.selection().mode() {
-            ChangeSelectionMode::Local => StateRunScope::Partial,
-            ChangeSelectionMode::Exhaustive => StateRunScope::Exhaustive,
-        };
-        anchor.accept_state(scope).map_err(ChangeGateError::gate)?;
+        anchor
+            .accept_state(StateRunScope::Partial)
+            .map_err(ChangeGateError::gate)?;
     } else {
         anchor.reject_state().map_err(ChangeGateError::gate)?;
     }
@@ -607,8 +453,8 @@ fn run_with_selection(
 fn select_changes(
     anchor: &crate::gate::PreparedArm<'_>,
     surface: SelectionSurface,
-) -> Result<(ChangeSelectionReport, TestExecution, bool), ChangeGateError> {
-    let (selection, test_execution, current_source) = match surface {
+) -> Result<(ChangeSelectionReport, TestExecution), ChangeGateError> {
+    let (selection, test_execution) = match surface {
         SelectionSurface::Packaged => {
             let policy = packaged_policy(anchor.root(), anchor.paths())?;
             (
@@ -618,18 +464,16 @@ fn select_changes(
                     &policy.selection,
                 ),
                 TestExecution::Packaged(policy.test_engines),
-                false,
             )
         }
         SelectionSurface::CurrentSource => (
             gate::select_current_source_change_gates(anchor.source().clone(), anchor.changes()),
             TestExecution::CurrentSourceCargo,
-            true,
         ),
     };
     let selection =
         selection.map_err(|error| ChangeGateError::refusal("change-selection-refused", error))?;
-    Ok((selection, test_execution, current_source))
+    Ok((selection, test_execution))
 }
 
 fn publish_selection(
@@ -691,7 +535,7 @@ fn packaged_policy(
     let policy = resolved.root().policy();
     let selection = gate::ChangeSelectionPolicy::new(gate::ChangeSelectionPolicyInputs {
         tracked_sources,
-        policy_authorities: &[TRACKED_POLICY.to_owned()],
+        policy_authorities: &[TRACKED_POLICY.to_owned(), "baseline.toml".to_owned()],
         configured: tracked.is_some(),
         repository_documents: policy.repo_truth().docs(),
         file_shape_suffixes: policy.file_shape().source_suffixes(),
@@ -713,7 +557,6 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     execution: ChangeGateExecution,
-    current_source: bool,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<(TestSelectionReport, ChangePolicyReport), ChangeGateError> {
     let ChangeGateExecution {
@@ -724,12 +567,10 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         test_execution,
         environment,
     } = execution;
-    let mode = selection.mode();
     let (tests, policy) = thread::scope(|scope| {
         let mut test_progress = progress.clone();
         let test_worker = scope.spawn(move || {
             run_selected_tests(
-                mode,
                 &selected_root,
                 &writable_root,
                 test_source,
@@ -739,19 +580,8 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
                 &mut test_progress,
             )
         });
-        let policy = match (mode, current_source) {
-            (ChangeSelectionMode::Local, _) => {
-                run_focused_policy(anchor, selection.gate_ids(), source, progress)
-                    .and_then(|reports| ChangePolicyReport::focused(source, &reports))
-            }
-            (ChangeSelectionMode::Exhaustive, true) => {
-                run_exhaustive_policy(anchor, selection.gate_ids(), source, progress)
-            }
-            (ChangeSelectionMode::Exhaustive, false) => {
-                run_focused_policy(anchor, selection.gate_ids(), source, progress)
-                    .and_then(|reports| ChangePolicyReport::applicable(source, &reports))
-            }
-        };
+        let policy = run_focused_policy(anchor, selection.gate_ids(), source, progress)
+            .and_then(|reports| ChangePolicyReport::focused(source, &reports));
         let tests = test_worker.join().map_err(|_| {
             ChangeGateError::environment(
                 "change-gate-test-worker-panicked",
@@ -799,111 +629,6 @@ fn run_focused_policy(
         policy.push(report);
     }
     Ok(policy)
-}
-
-fn run_exhaustive_policy<W: Write + Send + ?Sized>(
-    anchor: &crate::gate::PreparedArm<'_>,
-    gate_ids: &[GateId],
-    source: &wire::Digest,
-    progress: &mut SharedProgress<'_, W>,
-) -> Result<ChangePolicyReport, ChangeGateError> {
-    if gate_ids != GateId::BATTERY.as_slice() {
-        return Err(ChangeGateError::protocol(
-            "change-gate-exhaustive-policy-incomplete",
-            "exhaustive policy selection does not equal the canonical battery inventory",
-        ));
-    }
-
-    let trace_fault = Arc::new(Mutex::new(None));
-    let retained_trace_fault = Arc::clone(&trace_fault);
-    let mut trace_progress = progress.clone();
-    let policy_started = Instant::now();
-    let mut trace = move |event| {
-        let elapsed = policy_started.elapsed().as_millis();
-        let result = match event {
-            RepositoryExecutionEvent::ArmInvoked {
-                position,
-                gate_id,
-                family,
-            } => writeln!(
-                trace_progress,
-                "[change-gate-policy] gate={} family={family:?} position={position} elapsed_ms={elapsed}",
-                gate_id.as_str(),
-            ),
-            RepositoryExecutionEvent::FamilyInvoked { family } => writeln!(
-                trace_progress,
-                "[change-gate-policy-family] family={family:?} elapsed_ms={elapsed}",
-            ),
-            RepositoryExecutionEvent::AnalysisInvoked { gate_id, family } => writeln!(
-                trace_progress,
-                "[change-gate-policy-analysis] gate={} family={family:?} elapsed_ms={elapsed}",
-                gate_id.as_str(),
-            ),
-            RepositoryExecutionEvent::ToolchainAnalysisCompleted { gate_id, .. } => writeln!(
-                trace_progress,
-                "[change-gate-policy-analysis-terminal] gate={} elapsed_ms={elapsed}",
-                gate_id.as_str(),
-            ),
-        };
-        if let Err(error) = result {
-            let mut fault = retained_trace_fault
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if fault.is_none() {
-                *fault = Some(error.to_string());
-            }
-        }
-    };
-
-    let setup_started = Instant::now();
-    let mut battery =
-        crate::gate::prepare_in_state_traced(Selector::staged(), anchor.state_run(), &mut trace)
-            .map_err(ChangeGateError::gate)?;
-    if battery.source() != source {
-        return Err(ChangeGateError::refusal(
-            "change-gate-source-moved",
-            "staged source changed while preparing the exhaustive battery",
-        ));
-    }
-    writeln!(
-        progress,
-        "[change-gate-policy-setup] mode=exhaustive elapsed_ms={}",
-        setup_started.elapsed().as_millis(),
-    )
-    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
-    progress
-        .flush()
-        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
-    let report = battery.execute(&[]).map_err(ChangeGateError::gate)?;
-    drop(battery);
-    drop(trace);
-    if let Some(error) = trace_fault
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-    {
-        return Err(ChangeGateError::environment(
-            "change-gate-progress-unavailable",
-            error,
-        ));
-    }
-    if report.context().source() != source {
-        return Err(ChangeGateError::refusal(
-            "change-gate-source-moved",
-            "staged source changed while executing the exhaustive battery",
-        ));
-    }
-    writeln!(
-        progress,
-        "[change-gate-policy-terminal] mode=exhaustive arms={} elapsed_ms={}",
-        report.results().len(),
-        policy_started.elapsed().as_millis(),
-    )
-    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
-    progress
-        .flush()
-        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
-    ChangePolicyReport::exhaustive(&report)
 }
 
 #[expect(

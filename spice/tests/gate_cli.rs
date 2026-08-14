@@ -23,6 +23,8 @@ use spice::change_gate::ChangeGateReport;
 use spice::placeholder::PlaceholderReason;
 use wire::{Digest, Domain, Outcome, Refusal, ReplyPosition};
 
+#[path = "gate_cli/cargo_optional.rs"]
+mod cargo_optional;
 #[path = "gate_cli/refusal.rs"]
 mod refusal_artifact;
 
@@ -99,7 +101,7 @@ fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_1
 }
 
 #[test]
-fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sources() {
+fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selected_work() {
     let marker_scratch = Scratch::new("selected-test-marker");
     let marker = marker_scratch.path().join("executed");
     let repository = GateRepository::new();
@@ -131,148 +133,42 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sou
     assert_eq!(report.edges()[0].test(), "gate-fixture::lib:gate_fixture");
     assert_eq!(report.coverage(), &CoverageCompleteness::Complete);
 
-    assert_unknown_source_escalates_to_applicable_inventory();
-}
-
-#[test]
-fn generic_repository_publishes_zero_engine_evidence_without_invoking_cargo() {
-    let repository = Scratch::new("generic-repository");
-    git(repository.path(), &["init", "-q"]);
-    git(
-        repository.path(),
-        &["config", "user.email", "generic@example.invalid"],
-    );
-    git(
-        repository.path(),
-        &["config", "user.name", "Generic Fixture"],
-    );
-    fs::write(
-        repository.path().join("README.md"),
-        "# Generic repository\n",
-    )
-    .expect("write generic repository source");
-    git(repository.path(), &["add", "README.md"]);
-    git(repository.path(), &["commit", "-qm", "fixture"]);
-    fs::write(
-        repository.path().join("README.md"),
-        "# Generic repository\n\nChanged documentation.\n",
-    )
-    .expect("modify generic repository source");
-    git(repository.path(), &["add", "README.md"]);
-
-    let programs = Scratch::new("generic-programs");
-    let cargo_marker = programs.path().join("cargo-invoked");
-    executable(
-        &programs.path().join("cargo"),
-        &format!(
-            "#!/bin/sh\nprintf invoked > '{}'\nexit 91\n",
-            cargo_marker.display(),
-        ),
-    );
-
-    let boundary = run_commit_worker_with_path(repository.path(), Some(programs.path()));
-    let Some((kind, document)) = boundary.terminal.split_first() else {
-        panic!("generic staged source produced no terminal record");
-    };
-    assert_eq!(
-        *kind, b'R',
-        "generic repository did not admit: {boundary:?}"
-    );
-    let change_report =
-        ChangeGateReport::decode(document).expect("generic terminal is a change-gate report");
-    let tests = selection_report(&boundary.progress);
-
-    assert_eq!(change_report.selection().source(), tests.source());
-    assert_eq!(change_report.tests(), &tests);
-    assert_eq!(tests.changed_sources(), &["README.md"]);
-    assert!(tests.engines().is_empty());
-    assert!(tests.tests().is_empty());
-    assert!(tests.edges().is_empty());
-    assert!(tests.admits());
-    assert!(
-        !cargo_marker.exists(),
-        "zero-engine generic policy invoked Cargo"
-    );
-}
-
-fn assert_unknown_source_escalates_to_applicable_inventory() {
+    let refused_marker_scratch = Scratch::new("refused-selected-test-marker");
+    let refused_marker = refused_marker_scratch.path().join("executed");
     let repository = GateRepository::new();
-    fs::create_dir(repository.path().join("assets")).expect("create unknown-source directory");
-    fs::write(repository.path().join("assets/opaque.bin"), [0, 1, 2, 3])
-        .expect("write unknown staged source");
-    repository.add("assets/opaque.bin");
+    repository.write_selected_test(&refused_marker);
+    repository.add("src/lib.rs");
+    fs::create_dir(repository.path().join("tools")).expect("create unknown-source directory");
+    fs::write(
+        repository.path().join("tools/outside.rs"),
+        "pub fn outside_every_package() {}\n",
+    )
+    .expect("write unknown staged Rust source");
+    repository.add("tools/outside.rs");
 
     let unknown = run_commit_worker(repository.path());
-    let Some((kind, document)) = unknown.terminal.split_first() else {
-        panic!("unknown staged source produced no terminal record");
-    };
-    assert_eq!(
-        *kind, b'R',
-        "unknown staged source did not escalate through selection: {unknown:?}"
+    assert_selection_refusal(
+        &unknown,
+        "\"tools/outside.rs\" is Rust source outside every compiled workspace root",
+        &refused_marker,
     );
-    let change_report = ChangeGateReport::decode(document)
-        .expect("unknown terminal is an exhaustive change-gate report");
-    assert!(
-        document.len() < COMPACT_CHANGE_REPORT_MAX_BYTES,
-        "complete policy summary leaked raw battery evidence: {} bytes",
-        document.len(),
-    );
-    assert_eq!(
-        change_report.selection().mode(),
-        gate::ChangeSelectionMode::Exhaustive,
-    );
-    assert_eq!(
-        change_report.selection().gate_ids(),
-        change_report.selection().applicable_gate_ids(),
-    );
-    assert!(
-        !change_report
-            .selection()
-            .gate_ids()
-            .contains(&gate::GateId::CanvasWebTypecheck)
-    );
-    assert_eq!(
-        change_report.policy().len(),
-        change_report.selection().applicable_gate_ids().len(),
-    );
-    assert_eq!(
-        change_report
-            .policy()
-            .iter()
-            .map(spice::change_gate::PolicyArmSummary::gate_id)
-            .collect::<Vec<_>>(),
-        change_report.selection().applicable_gate_ids(),
-    );
-    assert_policy_position_tamper_is_refused(document);
-    assert!(
-        unknown
-            .progress
-            .contains("[change-gate-policy] gate=staging"),
-        "applicable exhaustive selection did not publish focused arm progress: {}",
-        unknown.progress,
-    );
-    let terminal_report = change_report.tests();
-    let progress_report = selection_report(&unknown.progress);
-    assert_eq!(terminal_report, &progress_report);
-    assert!(terminal_report.admits());
-    assert_eq!(terminal_report.changed_sources(), &["assets/opaque.bin"]);
-    assert_eq!(terminal_report.engines(), &["cargo-workspace"]);
-    assert_eq!(terminal_report.tests(), &["gate-fixture::lib:gate_fixture"]);
-    assert_eq!(terminal_report.edges().len(), 1);
-    assert_eq!(terminal_report.coverage(), &CoverageCompleteness::Complete);
-}
+    let authority_marker_scratch = Scratch::new("authority-selected-test-marker");
+    let authority_marker = authority_marker_scratch.path().join("executed");
+    let repository = GateRepository::new();
+    repository.write_selected_test(&authority_marker);
+    repository.add("src/lib.rs");
+    let policy = repository.path().join("spice-rust.toml");
+    let mut policy_text = fs::read_to_string(&policy).expect("read authority fixture policy");
+    policy_text.push_str("\n# staged authority change\n");
+    fs::write(&policy, policy_text).expect("write valid authority change");
+    repository.add("spice-rust.toml");
 
-fn assert_policy_position_tamper_is_refused(document: &[u8]) {
-    let marker = b"\"results\":[{\"position\":0";
-    let position = document
-        .windows(marker.len())
-        .position(|window| window == marker)
-        .expect("complete policy summary retains the first canonical position");
-    let mut tampered = document.to_vec();
-    tampered[position + marker.len() - 1] = b'9';
-    let error = ChangeGateReport::decode(&tampered)
-        .expect_err("a reordered compact policy result fails closed");
-    assert_eq!(error.reason(), "gate::change-gate-policy-incomplete");
+    let authority = run_commit_worker(repository.path());
+    assert_selection_refusal(
+        &authority,
+        "\"spice-rust.toml\" changes packaged selection policy",
+        &authority_marker,
+    );
 }
 
 #[test]
@@ -447,6 +343,31 @@ fn run_commit_worker_with_path(root: &Path, path: Option<&Path>) -> WorkerBounda
         progress: fs::read_to_string(progress).expect("read commit worker progress"),
         terminal: fs::read(terminal).expect("read commit worker terminal"),
     }
+}
+
+fn assert_selection_refusal(boundary: &WorkerBoundary, detail: &str, test_marker: &Path) {
+    let Some((kind, document)) = boundary.terminal.split_first() else {
+        panic!("refused staged source produced no terminal record");
+    };
+    assert_eq!(
+        *kind, b'F',
+        "staged source did not refuse at selection: {boundary:?}"
+    );
+    let failure: serde_json::Value =
+        serde_json::from_slice(document).expect("decode selected-change refusal boundary");
+    assert_eq!(
+        failure["reason"], "gate::change-selection-refused",
+        "worker surfaced the wrong refusal: {failure}",
+    );
+    assert_eq!(failure["detail"], detail);
+    assert_eq!(failure["fault"], false);
+    assert!(!test_marker.exists(), "refused selection executed a test");
+    assert!(
+        !boundary.progress.contains("[change-gate-policy]")
+            && !boundary.progress.contains("[rust-test"),
+        "refused selection started policy or workspace tests: {}",
+        boundary.progress,
+    );
 }
 
 fn selection_report(progress: &str) -> TestSelectionReport {

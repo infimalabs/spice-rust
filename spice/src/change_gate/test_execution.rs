@@ -3,9 +3,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use gate::{
-    ChangeSelectionMode, TestSelectionReport, WORKSPACE_TEST_CONCURRENCY_CAP, WorkspaceTestRoots,
-};
+use gate::{TestSelectionReport, WORKSPACE_TEST_CONCURRENCY_CAP, WorkspaceTestRoots};
 use sill::Environment;
 
 use super::ChangeGateError;
@@ -15,12 +13,7 @@ pub(super) enum TestExecution {
     CurrentSourceCargo,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "test mode, exact source, roots, environment, and progress are independent authorities"
-)]
 pub(super) fn run_selected_tests(
-    mode: ChangeSelectionMode,
     selected_root: &Path,
     writable_root: &Path,
     source: wire::Digest,
@@ -33,11 +26,7 @@ pub(super) fn run_selected_tests(
         TestExecution::CurrentSourceCargo => true,
         TestExecution::Packaged(engines) => {
             engines.contains(&crate::config::TestEngine::CargoWorkspace)
-                && gate::cargo_workspace_tests_applicable(
-                    selected_root,
-                    changes,
-                    mode == ChangeSelectionMode::Exhaustive,
-                )
+                && gate::cargo_workspace_tests_applicable(selected_root, changes, false)
         }
     };
     if !cargo_selected {
@@ -46,24 +35,14 @@ pub(super) fn run_selected_tests(
     }
 
     let roots = WorkspaceTestRoots::new(selected_root, writable_root);
-    match mode {
-        ChangeSelectionMode::Local => gate::run_selected_workspace_tests_at(
-            roots,
-            source,
-            changes,
-            environment,
-            WORKSPACE_TEST_CONCURRENCY_CAP,
-            progress,
-        ),
-        ChangeSelectionMode::Exhaustive => gate::run_exhaustive_selected_workspace_tests_at(
-            roots,
-            source,
-            changes,
-            environment,
-            WORKSPACE_TEST_CONCURRENCY_CAP,
-            progress,
-        ),
-    }
+    gate::run_selected_workspace_tests_at(
+        roots,
+        source,
+        changes,
+        environment,
+        WORKSPACE_TEST_CONCURRENCY_CAP,
+        progress,
+    )
     .map_err(|error| ChangeGateError::refusal("change-gate-tests-refused", error))
 }
 
@@ -87,7 +66,6 @@ mod tests {
         let mut progress = Vec::new();
 
         let report = run_selected_tests(
-            ChangeSelectionMode::Local,
             &root,
             &root,
             source.clone(),
@@ -120,7 +98,6 @@ mod tests {
         let mut progress = Vec::new();
 
         let report = run_selected_tests(
-            ChangeSelectionMode::Local,
             &root,
             &root,
             wire::Digest::compute(wire::Domain::GateTree, b"documentation-only source"),
@@ -148,7 +125,6 @@ mod tests {
                 .expect("minimal environment");
 
         let error = run_selected_tests(
-            ChangeSelectionMode::Local,
             &root,
             &root,
             wire::Digest::compute(wire::Domain::GateTree, b"Cargo source"),
@@ -173,7 +149,6 @@ mod tests {
                 .expect("minimal environment");
 
         let error = run_selected_tests(
-            ChangeSelectionMode::Local,
             &root,
             &root,
             wire::Digest::compute(wire::Domain::GateTree, b"current-source documentation"),
