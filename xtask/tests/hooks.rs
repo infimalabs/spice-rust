@@ -21,6 +21,7 @@ const ACTIVE_HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transact
 const GIT_DIRECTORY: &str = concat!("GIT_", "DIR");
 const GIT_WORKING_TREE: &str = concat!("GIT_", "WORK_TREE");
 const GIT_INDEX: &str = concat!("GIT_", "INDEX_FILE");
+const PRE_COMMIT_SOURCE: &str = wire::SpiceVariable::PreCommitSource.as_str();
 type FileImage = (Vec<u8>, u32);
 
 #[test]
@@ -40,6 +41,29 @@ fn install_exercises_pre_commit_before_explicit_activation() {
     assert_eq!(
         ACTIVE_HOOKS.map(|hook| image(&installation.tracked.join(hook))),
         installation.tracked_hooks
+    );
+}
+
+#[test]
+fn tracked_current_source_hook_runs_once_under_dispatcher_source_override() {
+    let scratch = Scratch::new();
+    repository_history(&scratch);
+    let installation = install_spice_hooks(&scratch);
+    let cargo_log = scratch.join("cargo.log");
+    install_cargo_alias(&scratch, &cargo_log);
+
+    let output = Command::new(installation.tracked.join("pre-commit"))
+        .current_dir(scratch.path())
+        .env(PRE_COMMIT_SOURCE, "fixture-dispatch-source")
+        .output()
+        .expect("run tracked current-source hook under dispatcher source override");
+
+    assert_success(&output, "tracked current-source pre-commit");
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        fs::read_to_string(cargo_log).expect("read current-source invocation log"),
+        "verify-action selection\n"
     );
 }
 
@@ -286,6 +310,10 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
             1
         );
         assert!(!text.contains("cargo xtask verify"));
+        assert!(
+            !text.contains("spice gate pre-commit"),
+            "the current-source hook must remain a direct xtask leaf: {text}"
+        );
     }
     if hook == "reference-transaction" {
         // Git runs this one inside the transaction, holding the repository
@@ -303,6 +331,25 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
         assert!(text.contains("/.spice-install/bin/spice\" gate reference-transaction"));
     }
     bytes
+}
+
+#[test]
+fn current_source_selection_reaches_change_gate_without_installed_redispatch() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let source = fs::read_to_string(root.join("xtask/src/gate_command.rs"))
+        .expect("read current-source gate command implementation");
+
+    assert_eq!(
+        source
+            .matches("spice::change_gate::run_current_source(&mut progress)")
+            .count(),
+        1,
+        "the xtask selection leaf must reach change_gate exactly once"
+    );
+    assert!(
+        !source.contains("gate_command::pre_commit"),
+        "the xtask selection leaf must not redispatch the installed pre-commit gate"
+    );
 }
 
 fn fixture_spice(scratch: &Scratch) -> PathBuf {

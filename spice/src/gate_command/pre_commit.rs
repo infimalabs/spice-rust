@@ -6,7 +6,7 @@ use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, BufRead as _, BufReader, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gate::{ArmFamily, GateId};
 use serde::{Deserialize, Serialize};
@@ -16,12 +16,8 @@ use sill::{
     StreamPolicy, WaitOutcome, WaitPolicy,
 };
 use spice::repository::Repository;
-use wire::{Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic};
+use wire::{Digest, Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply, ReplyPosition};
 
-#[expect(
-    dead_code,
-    reason = "the configured executor lands before the dependent packaged/configured composition task"
-)]
 mod configured;
 
 const WORKER_ARGUMENT: &str = "__gate-pre-commit-worker";
@@ -50,7 +46,11 @@ const _: () = assert!(
 #[serde(tag = "phase", rename_all = "kebab-case")]
 enum WorkerPhase {
     Capture,
+    Policy,
     TestSelection,
+    Configured {
+        steps: usize,
+    },
     Family {
         family: ArmFamily,
     },
@@ -65,7 +65,9 @@ impl WorkerPhase {
     fn render(&self) -> String {
         match self {
             Self::Capture => "capture".to_owned(),
+            Self::Policy => "policy".to_owned(),
             Self::TestSelection => "test-selection".to_owned(),
+            Self::Configured { steps } => format!("configured steps={steps}"),
             Self::Family { family } => format!("family family={}", family_name(*family)),
             Self::Arm {
                 ordinal,
@@ -77,6 +79,92 @@ impl WorkerPhase {
                 family_name(*family),
             ),
         }
+    }
+}
+
+const PRE_COMMIT_REPORT_VERSION: u64 = 1;
+
+/// One complete packaged-plus-configured pre-commit battery result.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Report {
+    version: u64,
+    source: Digest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    packaged: Option<spice::change_gate::ChangeGateReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    configured: Option<configured::ConfiguredReport>,
+}
+
+impl Report {
+    fn new(
+        source: Digest,
+        packaged: Option<spice::change_gate::ChangeGateReport>,
+        configured: Option<configured::ConfiguredReport>,
+    ) -> Result<Self, String> {
+        let report = Self {
+            version: PRE_COMMIT_REPORT_VERSION,
+            source,
+            packaged,
+            configured,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    pub(crate) const fn packaged(&self) -> Option<&spice::change_gate::ChangeGateReport> {
+        self.packaged.as_ref()
+    }
+
+    fn configured(&self) -> Option<&configured::ConfiguredReport> {
+        self.configured.as_ref()
+    }
+
+    pub(crate) fn admits(&self) -> bool {
+        self.packaged
+            .as_ref()
+            .is_none_or(spice::change_gate::ChangeGateReport::admits)
+            && self
+                .configured
+                .as_ref()
+                .is_none_or(configured::ConfiguredReport::admits)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.version != PRE_COMMIT_REPORT_VERSION {
+            return Err(format!(
+                "unsupported pre-commit report version {}; expected {PRE_COMMIT_REPORT_VERSION}",
+                self.version,
+            ));
+        }
+        if self.packaged.is_none() && self.configured.is_none() {
+            return Err("pre-commit report carries an empty effective battery".to_owned());
+        }
+        if self
+            .packaged
+            .as_ref()
+            .is_some_and(|report| report.selection().source() != &self.source)
+        {
+            return Err("packaged pre-commit report names a different staged source".to_owned());
+        }
+        if self
+            .configured
+            .as_ref()
+            .is_some_and(|report| report.source() != &self.source)
+        {
+            return Err("configured pre-commit report names a different staged source".to_owned());
+        }
+        Ok(())
+    }
+
+    fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let report: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        report.validate()?;
+        Ok(report)
     }
 }
 
@@ -151,7 +239,7 @@ impl Drop for WorkerFiles {
     clippy::disallowed_methods,
     reason = "the pre-commit binary rim must reject a recursion marker before launching its worker"
 )]
-pub(super) fn run() -> Outcome<spice::change_gate::ChangeGateReport> {
+pub(super) fn run() -> Outcome<Report> {
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
         return configured::recursion_refusal(&source);
     }
@@ -198,9 +286,7 @@ impl DispatchGuard {
     }
 }
 
-fn run_with(
-    supervisor: impl FnOnce(&WorkerFiles) -> Outcome<spice::change_gate::ChangeGateReport>,
-) -> Outcome<spice::change_gate::ChangeGateReport> {
+fn run_with(supervisor: impl FnOnce(&WorkerFiles) -> Outcome<Report>) -> Outcome<Report> {
     let files = match WorkerFiles::create() {
         Ok(files) => files,
         Err(error) => return fault("gate::pre-commit-supervisor-unavailable", error),
@@ -212,10 +298,21 @@ fn run_with(
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the hidden worker rim must reject configured-command recursion before reading caller paths"
+)]
 pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32> {
     let _executable = arguments.next()?;
     if arguments.next().as_deref() != Some(OsStr::new(WORKER_ARGUMENT)) {
         return None;
+    }
+    if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
+        eprintln!(
+            "spice: gate::pre-commit-recursion; hidden worker re-entry from staged source {:?} is refused",
+            source.to_string_lossy(),
+        );
+        return Some(2);
     }
     let Some(progress) = arguments.next() else {
         eprintln!("commit-gate worker requires a progress path");
@@ -238,7 +335,7 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
     })
 }
 
-fn supervise(files: &WorkerFiles) -> Outcome<spice::change_gate::ChangeGateReport> {
+fn supervise(files: &WorkerFiles) -> Outcome<Report> {
     let executable = match env::current_exe() {
         Ok(executable) => executable,
         Err(error) => return fault("gate::pre-commit-executable-unavailable", error),
@@ -271,10 +368,7 @@ fn supervise(files: &WorkerFiles) -> Outcome<spice::change_gate::ChangeGateRepor
     classify(files, &waited)
 }
 
-fn classify(
-    files: &WorkerFiles,
-    waited: &WaitOutcome,
-) -> Outcome<spice::change_gate::ChangeGateReport> {
+fn classify(files: &WorkerFiles, waited: &WaitOutcome) -> Outcome<Report> {
     if !waited.outputs_drained() {
         return worker_lost(
             &files.progress,
@@ -299,11 +393,7 @@ fn classify(
     }
 }
 
-fn terminal(
-    path: &Path,
-    progress: &Path,
-    report_artifact: &Path,
-) -> Outcome<spice::change_gate::ChangeGateReport> {
+fn terminal(path: &Path, progress: &Path, report_artifact: &Path) -> Outcome<Report> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -317,11 +407,11 @@ fn terminal(
         return worker_lost(progress, "worker published no terminal record".to_owned());
     };
     match *kind {
-        REPORT_RECORD => match spice::change_gate::ChangeGateReport::decode(document) {
-            Ok(report) => super::pre_commit_report(Ok(report), report_artifact),
+        REPORT_RECORD => match Report::decode(document) {
+            Ok(report) => report_outcome(report, report_artifact),
             Err(error) => worker_lost(
                 progress,
-                format!("worker published an invalid change-gate report: {error}"),
+                format!("worker published an invalid pre-commit report: {error}"),
             ),
         },
         FAILURE_RECORD => match serde_json::from_slice::<WorkerFailure>(document) {
@@ -338,18 +428,148 @@ fn terminal(
     }
 }
 
+fn report_outcome(report: Report, artifact: &Path) -> Outcome<Report> {
+    if report.admits() {
+        return Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body: report,
+        });
+    }
+    let evidence = match refusal_evidence(&report, artifact) {
+        Ok(evidence) => evidence,
+        Err(fault) => return Outcome::Fault(fault),
+    };
+    Outcome::Refusal(Refusal::evidence(
+        "gate::pre-commit-regressed",
+        evidence,
+        "repair the packaged or configured finding, then retry the same plain git commit; use the explicit full verifier when repository-wide evidence is required",
+    ))
+}
+
+fn refusal_evidence(report: &Report, artifact: &Path) -> Result<String, Fault> {
+    let mut evidence = String::new();
+    if let Some(packaged) = report.packaged().filter(|packaged| !packaged.admits()) {
+        evidence.push_str(packaged.refusal_fold().as_str());
+    }
+    if let Some(configured) = report
+        .configured()
+        .filter(|configured| !configured.admits())
+    {
+        evidence.push_str(&configured.refusal_evidence());
+    }
+    let bytes = report.encode().map_err(|error| Fault {
+        class: FaultClass::Protocol,
+        reason: "gate::pre-commit-report-unencodable".to_owned(),
+        detail: error.to_string(),
+    })?;
+    let artifact_text = artifact.to_str().ok_or_else(|| Fault {
+        class: FaultClass::Environment,
+        reason: "gate::pre-commit-report-artifact-unavailable".to_owned(),
+        detail: format!("report artifact path is not UTF-8: {artifact:?}"),
+    })?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(artifact)
+        .map_err(|error| report_artifact_fault(artifact_text, error))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| report_artifact_fault(artifact_text, error))?;
+    let artifact = serde_json::to_string(artifact_text).map_err(|error| Fault {
+        class: FaultClass::Protocol,
+        reason: "gate::pre-commit-report-artifact-unencodable".to_owned(),
+        detail: error.to_string(),
+    })?;
+    evidence.push_str(&format!("full-report: {artifact}\n"));
+    Ok(evidence)
+}
+
+fn report_artifact_fault(artifact: &str, error: io::Error) -> Fault {
+    Fault {
+        class: FaultClass::Environment,
+        reason: "gate::pre-commit-report-artifact-unavailable".to_owned(),
+        detail: format!("cannot publish canonical report at {artifact}: {error}"),
+    }
+}
+
 fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
     let mut progress = OpenOptions::new().append(true).open(progress_path)?;
+    let started = Instant::now();
     write_phase(&mut progress, &WorkerPhase::Capture)?;
-    write_phase(&mut progress, &WorkerPhase::TestSelection)?;
-    match spice::change_gate::run(&mut progress) {
+    match dispatch(&mut progress, started) {
         Ok(report) => {
             let mut document = vec![REPORT_RECORD];
             document.extend(report.encode().map_err(io::Error::other)?);
             fs::write(terminal, document)
         }
-        Err(error) => write_failure(terminal, &change_gate_failure(error)),
+        Err(failure) => write_failure(terminal, &failure),
+    }
+}
+
+fn dispatch(progress: &mut File, started: Instant) -> Result<Report, WorkerFailure> {
+    write_phase(progress, &WorkerPhase::Policy).map_err(worker_io_failure)?;
+    let mut dispatch = configured::Dispatch::capture().map_err(configured_failure)?;
+    let source = dispatch.source().clone();
+
+    let packaged = if dispatch.builtins_enabled() {
+        write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
+        let report = spice::change_gate::run(progress).map_err(change_gate_failure)?;
+        if report.selection().source() != &source {
+            return Err(WorkerFailure {
+                reason: "gate::pre-commit-staged-source-moved".to_owned(),
+                detail: format!(
+                    "dispatcher source {source} differs from packaged source {}",
+                    report.selection().source(),
+                ),
+                fault: false,
+            });
+        }
+        dispatch = dispatch.rebind(&source).map_err(configured_failure)?;
+        Some(report)
+    } else {
+        None
+    };
+
+    let configured = if dispatch.has_configured() {
+        write_phase(
+            progress,
+            &WorkerPhase::Configured {
+                steps: dispatch.configured_count(),
+            },
+        )
+        .map_err(worker_io_failure)?;
+        let remaining = WORK_RUNTIME
+            .saturating_sub(started.elapsed())
+            .saturating_sub(configured::cleanup_reserve());
+        dispatch
+            .execute_configured(remaining, Cancellation::Never)
+            .map_err(configured_failure)?
+    } else {
+        None
+    };
+    dispatch.verify().map_err(configured_failure)?;
+    Report::new(source, packaged, configured).map_err(|detail| WorkerFailure {
+        reason: "gate::pre-commit-report-invalid".to_owned(),
+        detail,
+        fault: true,
+    })
+}
+
+fn worker_io_failure(error: io::Error) -> WorkerFailure {
+    WorkerFailure {
+        reason: "gate::pre-commit-progress-unavailable".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    }
+}
+
+fn configured_failure(error: configured::ConfiguredFailure) -> WorkerFailure {
+    WorkerFailure {
+        reason: error.reason().to_owned(),
+        detail: error.detail().to_owned(),
+        fault: error.is_fault(),
     }
 }
 
@@ -365,7 +585,7 @@ fn write_failure(path: &Path, failure: &WorkerFailure) -> io::Result<()> {
     fs::write(path, document)
 }
 
-fn worker_failure(failure: WorkerFailure) -> Outcome<spice::change_gate::ChangeGateReport> {
+fn worker_failure(failure: WorkerFailure) -> Outcome<Report> {
     if failure.fault {
         Outcome::Fault(Fault {
             class: FaultClass::Environment,
@@ -409,7 +629,7 @@ fn change_gate_failure(error: spice::change_gate::ChangeGateError) -> WorkerFail
     }
 }
 
-fn deadline(progress: &Path) -> Outcome<spice::change_gate::ChangeGateReport> {
+fn deadline(progress: &Path) -> Outcome<Report> {
     let phase = last_phase(progress);
     Outcome::Refusal(Refusal::bare(
         RefusalDiagnostic::new(
@@ -430,7 +650,7 @@ fn deadline(progress: &Path) -> Outcome<spice::change_gate::ChangeGateReport> {
     ))
 }
 
-fn worker_lost(progress: &Path, detail: String) -> Outcome<spice::change_gate::ChangeGateReport> {
+fn worker_lost(progress: &Path, detail: String) -> Outcome<Report> {
     let phase = last_phase(progress);
     Outcome::Fault(Fault {
         class: FaultClass::Environment,

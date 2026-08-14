@@ -165,13 +165,21 @@ The same key names have native Rust semantics only when authored in
 configured commands form an ordered appended list. Machine-local configuration
 is also separate; Rust reads only `.spice-rs/config.toml`.
 
-The native configured-command executor runs each admitted `run` array as exact
-argv, never through a shell, from the canonical repository root. One retained
-staged seal supplies every step with the same `SPICE_RS_PRE_COMMIT_SOURCE`
+The installed pre-commit dispatcher resolves that native policy once. It runs
+the packaged selected-change gate exactly once when built-ins are enabled,
+then runs configured commands in authored order; disabling built-ins runs only
+the configured list, and disabling them with an empty list refuses before any
+work begins. The native configured-command executor runs each admitted `run`
+array as exact argv, never through a shell, from the canonical repository root.
+One retained staged seal supplies every step with the same
+`SPICE_RS_PRE_COMMIT_SOURCE`
 digest and a `SPICE_RS_PRE_COMMIT_PATHS` JSON array containing only the staged
 paths selected by that step's authored scopes. The source variable is also the
 recursion tripwire: a configured command cannot redispatch `spice gate
-pre-commit`. The child environment is captured once, strips Git's local
+pre-commit`. The tracked `cargo xtask verify-action selection` hook remains a
+direct current-source `change_gate` leaf, so it is permitted under that source
+override without re-entering the installed dispatcher. The child environment
+is captured once, strips Git's local
 repository variables and indexed `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*`
 overrides, then replaces both Spice-owned values with the captured authority.
 Standard input is null, output capture is bounded, and all configured steps

@@ -25,6 +25,8 @@ use wire::{Digest, Domain, Outcome, Refusal, ReplyPosition};
 
 #[path = "gate_cli/cargo_optional.rs"]
 mod cargo_optional;
+#[path = "gate_cli/dispatch.rs"]
+mod dispatch;
 #[path = "gate_cli/refusal.rs"]
 mod refusal_artifact;
 
@@ -113,15 +115,14 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
         panic!("known staged source produced no terminal record");
     };
     assert_eq!(*kind, b'R', "known staged source did not admit: {known:?}");
-    let gate_report =
-        ChangeGateReport::decode(document).expect("known worker terminal is a change-gate report");
+    let gate_report = packaged_change_report(document);
     assert_eq!(
         gate_report.selection().mode(),
         gate::ChangeSelectionMode::Local,
     );
     assert_eq!(
         fs::read_to_string(&marker).expect("selected target wrote its execution marker"),
-        "canonical selected target executed",
+        "canonical selected target executed\n",
     );
     let report = selection_report(&known.progress);
     assert!(report.admits());
@@ -382,6 +383,16 @@ fn selection_report(progress: &str) -> TestSelectionReport {
         "worker must publish exactly one selection report: {progress}"
     );
     TestSelectionReport::decode(encoded[0].as_bytes()).expect("decode worker selection report")
+}
+
+fn packaged_change_report(document: &[u8]) -> ChangeGateReport {
+    let report: serde_json::Value =
+        serde_json::from_slice(document).expect("worker terminal is a composite pre-commit report");
+    let packaged = report
+        .get("packaged")
+        .expect("default pre-commit report carries the packaged result");
+    serde_json::from_value(packaged.clone())
+        .expect("composite terminal carries a shaped packaged change-gate report")
 }
 
 fn invoke(argv: &[&str], current: &Path) -> Spoken {
@@ -847,11 +858,14 @@ impl GateRepository {
                     "pub fn fixture() {{}}\n\n",
                     "#[test]\n",
                     "fn canonical_selected_target() {{\n",
-                    "    std::fs::write(\n",
-                    "        {marker},\n",
-                    "        \"canonical selected target executed\",\n",
-                    "    )\n",
-                    "    .expect(\"write selected-target execution marker\");\n",
+                    "    use std::io::Write as _;\n",
+                    "    let mut marker = std::fs::OpenOptions::new()\n",
+                    "        .create(true)\n",
+                    "        .append(true)\n",
+                    "        .open({marker})\n",
+                    "        .expect(\"open selected-target execution marker\");\n",
+                    "    writeln!(marker, \"canonical selected target executed\")\n",
+                    "        .expect(\"append selected-target execution marker\");\n",
                     "}}\n",
                 ),
                 marker = marker,

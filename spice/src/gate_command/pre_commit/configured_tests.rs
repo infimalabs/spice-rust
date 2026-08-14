@@ -468,9 +468,7 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
     )
     .expect("write executable policy fixture");
     let repository = Repository::discover(&scratch.root).expect("discover trust fixture");
-    let policy = ExecutablePolicy::load(&repository)
-        .expect("load executable policy")
-        .expect("fixture has configured commands");
+    let policy = DispatchPolicy::load(&repository).expect("load executable policy");
 
     let detail = policy.trust_refusal_detail(Some(TrustState::Pended));
     assert!(
@@ -503,9 +501,7 @@ fn durable_trust_is_read_only_and_required_before_execution() {
     )
     .expect("write trusted policy fixture");
     let repository = Repository::discover(&scratch.root).expect("discover trust fixture");
-    let policy = ExecutablePolicy::load(&repository)
-        .expect("load executable policy")
-        .expect("fixture has configured commands");
+    let policy = DispatchPolicy::load(&repository).expect("load executable policy");
     let state = repository.admit_state().expect("admit fixture state paths");
     fs::create_dir_all(state.data()).expect("create fixture authority parent");
     drop(journal::Journal::open(state.journal()).expect("baseline fixture authority"));
@@ -577,9 +573,7 @@ fn missing_trust_authority_refuses_with_the_exact_executable_capability() {
     )
     .expect("write executable policy fixture");
     let repository = Repository::discover(&scratch.root).expect("discover trust fixture");
-    let policy = ExecutablePolicy::load(&repository)
-        .expect("load executable policy")
-        .expect("fixture has configured commands");
+    let policy = DispatchPolicy::load(&repository).expect("load executable policy");
 
     let refusal = policy
         .require_approved(&repository)
@@ -619,9 +613,7 @@ fn tracked_policy_movement_after_capture_refuses_even_when_bytes_are_restored() 
     let original = "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n";
     fs::write(&configuration, original).expect("write executable policy fixture");
     let repository = Repository::discover(&scratch.root).expect("discover policy fixture");
-    let policy = ExecutablePolicy::load(&repository)
-        .expect("load executable policy")
-        .expect("fixture has configured commands");
+    let policy = DispatchPolicy::load(&repository).expect("load executable policy");
     fs::write(
         &configuration,
         "[policy]\npre_commit = [{ label = 'moved', run = ['/bin/false'] }]\n",

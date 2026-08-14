@@ -201,11 +201,17 @@ fails closed by selecting every workspace test target and all 27 policy arms.
 `cargo xtask verify-action battery` remains the explicit complete policy
 surface. It does not share the full verifier's retained compiler evidence and
 neither action is a completion verifier. The native `spice gate pre-commit`
-command executes the same selected-change report in one isolated worker process
-with a 164-second work allowance and cleanup reserves inside its fixed
-180-second envelope. A clean worker is silent; a refusal names only selected
-failures plus a private canonical report path. The supervisor owns the worker's
-complete process group, including Cargo, rustc, Trunk, parsers, and descendants.
+command resolves tracked pre-commit policy once in one isolated worker. It runs
+the packaged selected-change gate exactly once by default, followed by admitted
+configured commands in authored order; `pre_commit_builtins = false` runs only
+configured commands and refuses an empty effective battery. Packaged and
+configured work share the captured source and the fixed 180-second envelope,
+including a 164-second worker allowance and cleanup reserves. A clean worker is
+silent; a refusal names only selected failures plus a private canonical report
+path. The supervisor owns the worker's complete process group, including Cargo,
+rustc, Trunk, parsers, and descendants. The tracked source hook remains a direct
+`cargo xtask verify-action selection` leaf and never redispatches this installed
+command.
 
 For fast feedback while changing one Cargo package, scope Clippy, all-target
 tests, and doctests to that package:
