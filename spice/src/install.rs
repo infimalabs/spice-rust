@@ -37,9 +37,9 @@ use path::validate_relative;
 use progress::{
     apply_with_interruption, unapply_with_interruption, verify_progress, verify_refresh_progress,
 };
-use record::read_record;
 #[cfg(test)]
 use record::record_path;
+use record::{RefreshRecord, read_record, read_record_for_refresh};
 use rollback::{RollbackArchive, RollbackState};
 use validation::{asset_contract, fixed_content_differs_from_current_build, validate_operation};
 
@@ -54,6 +54,8 @@ use model::{ObservedFile, RepositoryIdentity};
 
 const PLAN_VERSION: u16 = 8;
 const RECORD_VERSION: u16 = 8;
+const RETIREMENT_WITNESS_MISMATCH: &str =
+    "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
 const LEGACY_RECORD_VERSIONS: [(u16, &str); 5] = [
     (2, "SURFACE-1kJRGpf2"),
@@ -269,6 +271,26 @@ impl InstallPlan {
                 ));
             }
         }
+        if self
+            .retirements
+            .iter()
+            .any(|retirement| retirement.rollback.is_some())
+            && self.rollback_archive.is_none()
+        {
+            return Err(InstallError::InvalidRecord(
+                "install retirement rollback witness has no rollback archive".to_owned(),
+            ));
+        }
+        if self.retirements.iter().any(|retirement| {
+            matches!(
+                (&retirement.rollback, &retirement.superseded),
+                (Some(rollback), Some(superseded)) if rollback != superseded
+            )
+        }) {
+            return Err(InstallError::InvalidRecord(
+                RETIREMENT_WITNESS_MISMATCH.to_owned(),
+            ));
+        }
         if let Some(rollback) = self.rollback_state()? {
             self.validate_rollback_state(&rollback)?;
         }
@@ -343,11 +365,11 @@ impl InstallPlan {
             .iter()
             .zip(&self.retirements)
             .any(|(image, retirement)| {
-                !rollback_image_matches(image.as_ref(), retirement.superseded.as_ref())
+                !rollback_image_matches(image.as_ref(), retirement.rollback_witness())
             })
         {
             return Err(InstallError::InvalidRecord(
-                "migration rollback archive does not match its retirement witnesses".to_owned(),
+                RETIREMENT_WITNESS_MISMATCH.to_owned(),
             ));
         }
         if self
@@ -471,49 +493,60 @@ pub fn plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
-    if let Some(loaded) = read_record(repository)? {
-        let record = loaded.record;
-        let rollback_record = if record.plan.version == MIGRATABLE_RECORD_VERSION {
-            Some(
-                loaded
-                    .image
-                    .as_ref()
-                    .expect("only a version-7 receipt retains its source image"),
-            )
-        } else {
-            None
-        };
-        let rollback_archive = (record.plan.version != MIGRATABLE_RECORD_VERSION)
-            .then_some(record.plan.rollback_archive.as_ref())
-            .flatten();
-        if record.status == InstallStatus::Uninstalled {
-            verify_progress(repository, &record)?;
-            return build_plan(repository, spice_binary);
-        }
-        if record.status == InstallStatus::Complete
-            && (current_build_differs(&record.plan, spice_binary)?
-                || hook_activation::topology_changed(repository, &record.plan)?)
-        {
-            // A rebuilt executable over a complete install is a refresh, not a
-            // conflict. The same transaction also carries fixed hooks and the
-            // generated skill across build boundaries. Every receipt-owned
-            // destination must still be intact; only binary drift has the
-            // explicit reconciliation authority described below.
-            let binary_superseded = verify_refresh_progress(repository, &record)?;
-            return build_plan_over(
-                repository,
-                spice_binary,
-                Some(&record.plan),
-                binary_superseded.as_ref(),
-                rollback_record,
-                rollback_archive,
-            );
-        }
-        verify_binary_context(&record.plan, spice_binary)?;
-        verify_progress(repository, &record)?;
-        return Ok(record.plan);
+    if let Some(refresh) = read_record_for_refresh(repository)? {
+        return plan_from_refresh(repository, spice_binary, refresh);
     }
     build_plan(repository, spice_binary)
+}
+
+fn plan_from_refresh(
+    repository: &Repository,
+    spice_binary: Option<&Path>,
+    refresh: RefreshRecord,
+) -> Result<InstallPlan, InstallError> {
+    let repairable = refresh.is_repairable();
+    let loaded = refresh.into_loaded();
+    let record = loaded.record;
+    let rollback_record = if record.plan.version == MIGRATABLE_RECORD_VERSION {
+        Some(
+            loaded
+                .image
+                .as_ref()
+                .expect("only a version-7 receipt retains its source image"),
+        )
+    } else {
+        None
+    };
+    let rollback_archive = (record.plan.version != MIGRATABLE_RECORD_VERSION)
+        .then_some(record.plan.rollback_archive.as_ref())
+        .flatten();
+    if record.status == InstallStatus::Uninstalled {
+        verify_progress(repository, &record)?;
+        return build_plan(repository, spice_binary);
+    }
+    if record.status == InstallStatus::Complete
+        && (repairable
+            || current_build_differs(&record.plan, spice_binary)?
+            || hook_activation::topology_changed(repository, &record.plan)?)
+    {
+        // A rebuilt executable over a complete install is a refresh, not a
+        // conflict. The same transaction also carries fixed hooks and the
+        // generated skill across build boundaries. Every receipt-owned
+        // destination must still be intact; only binary drift has the
+        // explicit reconciliation authority described below.
+        let binary_superseded = verify_refresh_progress(repository, &record)?;
+        return build_plan_over(
+            repository,
+            spice_binary,
+            Some(&record.plan),
+            binary_superseded.as_ref(),
+            rollback_record,
+            rollback_archive,
+        );
+    }
+    verify_binary_context(&record.plan, spice_binary)?;
+    verify_progress(repository, &record)?;
+    Ok(record.plan)
 }
 
 /// Apply only the exact current plan named by `expected`.
@@ -667,12 +700,24 @@ fn retirement(
             || observed.clone(),
             |retirement| retirement.previous.clone(),
         );
-    let rollback = compacting
+    let rollback_image = compacting
         .then(|| observed.as_ref().map(|observed| observed.image.clone()))
         .flatten();
     let superseded = compacting
         .then(|| observed.as_ref().map(ObservedFile::generated))
         .flatten();
+    let rollback_witness = if compacting {
+        superseded.clone()
+    } else {
+        installed
+            .and_then(|plan| {
+                plan.retirements
+                    .iter()
+                    .find(|retirement| retirement.path == path)
+            })
+            .and_then(Retirement::rollback_witness)
+            .cloned()
+    };
     Ok((
         Retirement {
             path: path.to_owned(),
@@ -681,8 +726,9 @@ fn retirement(
             previous: (!compacting).then_some(previous).flatten(),
             observed: (!compacting).then_some(observed).flatten(),
             superseded,
+            rollback: rollback_witness,
         },
-        rollback,
+        rollback_image,
     ))
 }
 

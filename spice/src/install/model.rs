@@ -228,6 +228,8 @@ pub struct Retirement {
     pub(super) observed: Option<ObservedFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) superseded: Option<GeneratedImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) rollback: Option<GeneratedImage>,
 }
 
 impl Retirement {
@@ -255,6 +257,10 @@ impl Retirement {
             || images_match(observed, self.observed.as_ref()),
             |superseded| observed.is_some_and(|observed| &observed.generated() == superseded),
         )
+    }
+
+    pub(super) fn rollback_witness(&self) -> Option<&GeneratedImage> {
+        self.rollback.as_ref().or(self.superseded.as_ref())
     }
 }
 

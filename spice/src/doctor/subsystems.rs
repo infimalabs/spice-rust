@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use sill::{Availability, LockFile, LockName};
 use spice::config::Root;
-use spice::install::InstallStatus;
+use spice::install::{ApplianceState, InstallStatus};
 use spice::repository::{Repository, StatePaths};
 use wire::{DoctorObservation, DoctorSubsystem, DoctorSubsystemDiagnosis, FactKind, ResidencyHead};
 
@@ -320,8 +320,23 @@ fn installation(repository: &Repository) -> DoctorObservation {
                 ),
             },
         },
-        Err(error) => unavailable(format!("installation receipt is unavailable: {error}")),
+        Err(error) => repairable_installation(repository).unwrap_or_else(|| {
+            unavailable(format!("installation receipt is unavailable: {error}"))
+        }),
     }
+}
+
+fn repairable_installation(repository: &Repository) -> Option<DoctorObservation> {
+    let current_binary = std::env::current_exe().ok()?;
+    let audit = spice::install::audit_appliance(repository, &current_binary).ok()?;
+    (audit.state() == ApplianceState::RepairableReceipt).then(|| {
+        DoctorObservation::InputRequired {
+            reason: format!(
+                "installation receipt requires an exact digest-bound forward-repair preview; run {} and authorize only the emitted plan",
+                audit.repair().expect("repairable audits name their preview command")
+            ),
+        }
+    })
 }
 
 fn release(authority: &Authority) -> DoctorObservation {
