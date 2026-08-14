@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sill::{Acquisition, LockFile, Possession};
 
-use super::{SelectedTree, TreeError, create_private_workspace, make_removable, private_directory};
+use super::{
+    SelectedTree, SelectionSeal, TreeError, create_private_workspace, make_removable,
+    private_directory,
+};
 use crate::held_root::{self, HeldRootRemoval};
 use crate::state::RenameMap;
 
@@ -80,6 +83,7 @@ impl BuildRoot {
     pub(super) fn finish(
         &mut self,
         repository: &Path,
+        source: SelectionSeal,
         paths: Vec<String>,
         renames: RenameMap,
         publishes_state: bool,
@@ -88,6 +92,7 @@ impl BuildRoot {
             workspace: self.workspace.clone(),
             root: self.root.clone(),
             repository: repository.to_path_buf(),
+            source,
             paths,
             renames,
             publishes_state,

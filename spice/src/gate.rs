@@ -73,6 +73,17 @@ impl PreparedArm<'_> {
         self.capture.changes()
     }
 
+    /// Prove the live selected source has not moved since this preparation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact staged index, `HEAD`, or repository movement.
+    pub fn verify_source(&self) -> Result<(), RunError> {
+        self.capture
+            .verify_source()
+            .map_err(|error| RunError::refusal("gate::source-moved", error))
+    }
+
     /// Execute the one canonical focused arm this capture selected.
     ///
     /// # Errors

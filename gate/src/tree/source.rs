@@ -17,6 +17,55 @@ use super::{
     open_repository, resolve_revision, write_private_source,
 };
 
+pub(super) fn head_seal(repo: &gix::Repository) -> Result<Option<RevisionSeal>, TreeError> {
+    let head = repo.head().map_err(|source| TreeError::Repository {
+        path: repo
+            .workdir()
+            .unwrap_or_else(|| repo.git_dir())
+            .to_path_buf(),
+        evidence: source.to_string(),
+    })?;
+    if head.id().is_none() {
+        return Ok(None);
+    }
+    RevisionSeal::capture(repo, "HEAD").map(Some)
+}
+
+#[derive(Debug)]
+pub(super) enum SelectionSeal {
+    Index {
+        before: IndexSeal,
+        head: Option<RevisionSeal>,
+    },
+    Revision {
+        before: RevisionSeal,
+        revision: String,
+    },
+}
+
+impl SelectionSeal {
+    pub(super) fn verify(&self, repo: &gix::Repository) -> Result<(), TreeError> {
+        match self {
+            Self::Index { before, head } => {
+                if &head_seal(repo)? != head {
+                    return Err(TreeError::RevisionChanged {
+                        revision: "HEAD".to_owned(),
+                    });
+                }
+                before.verify(repo)?;
+            }
+            Self::Revision { before, revision } => {
+                if RevisionSeal::capture(repo, revision).ok().as_ref() != Some(before) {
+                    return Err(TreeError::RevisionChanged {
+                        revision: revision.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct IndexSeal {
     snapshot: IndexSnapshot,

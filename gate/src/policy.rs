@@ -41,6 +41,16 @@ pub fn validate_tracked_path_selector(raw: &str) -> Result<(), String> {
     matcher::PathPattern::tracked(raw).map(|_| ())
 }
 
+/// Match one normalized repository path with the tracked selector dialect.
+///
+/// # Errors
+///
+/// Returns the same selector diagnostic as [`validate_tracked_path_selector`]
+/// when `raw` is not an admitted tracked path selector.
+pub fn tracked_path_selector_matches(raw: &str, path: &str) -> Result<bool, String> {
+    matcher::PathPattern::tracked(raw).map(|pattern| pattern.matches(path))
+}
+
 /// The three file classes the structural arms select their scopes from.
 ///
 /// Each arm names one of these in its `ScopeDeclaration`, and none of them may
