@@ -79,6 +79,12 @@ impl PreparedArm<'_> {
         self.capture.changes()
     }
 
+    /// Every regular path retained by the immutable selected tree.
+    #[must_use]
+    pub fn paths(&self) -> &[String] {
+        self.capture.paths()
+    }
+
     /// Prove the live selected source has not moved since this preparation.
     ///
     /// # Errors

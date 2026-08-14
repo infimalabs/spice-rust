@@ -4,20 +4,27 @@
 //! none of them and performs no repository walk: the command rim supplies the
 //! exact changed paths and the source digest they came from. Changes to an
 //! authority that can alter the selector itself, or a path class this build
-//! does not understand, escalate to the complete synchronous battery.
+//! does not understand, escalate to every packaged arm applicable to the
+//! current repository. The explicit xtask current-source selector retains its
+//! richer source-tree knowledge in a separate module.
 
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use wire::Digest;
 
 use crate::GateId;
 
+mod current_source;
+mod policy;
+
+pub use current_source::select_current_source_change_gates;
+pub use policy::{ChangeSelectionPolicy, ChangeSelectionPolicyInputs};
+
 /// Current staged-change policy-selection schema.
-pub const CHANGE_SELECTION_REPORT_VERSION: u64 = 1;
+pub const CHANGE_SELECTION_REPORT_VERSION: u64 = 2;
 
 /// Whether the ordinary gate proved a local arm set or escalated deliberately.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -25,7 +32,7 @@ pub const CHANGE_SELECTION_REPORT_VERSION: u64 = 1;
 pub enum ChangeSelectionMode {
     /// Every changed path belongs to a known local class.
     Local,
-    /// An authority or unknown path requires every synchronous battery arm.
+    /// An authority or unknown path requires every applicable packaged arm.
     Exhaustive,
 }
 
@@ -66,6 +73,7 @@ pub struct ChangeSelectionReport {
     source: Digest,
     mode: ChangeSelectionMode,
     changed_sources: Vec<String>,
+    applicable_gate_ids: Vec<GateId>,
     gate_ids: Vec<GateId>,
     edges: Vec<ChangeSelectionEdge>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,7 +93,7 @@ impl ChangeSelectionReport {
         &self.source
     }
 
-    /// Local execution or explicit complete-battery escalation.
+    /// Local execution or explicit applicable-inventory escalation.
     #[must_use]
     pub const fn mode(&self) -> ChangeSelectionMode {
         self.mode
@@ -95,6 +103,12 @@ impl ChangeSelectionReport {
     #[must_use]
     pub fn changed_sources(&self) -> &[String] {
         &self.changed_sources
+    }
+
+    /// Canonical packaged arms applicable to this repository and policy.
+    #[must_use]
+    pub fn applicable_gate_ids(&self) -> &[GateId] {
+        &self.applicable_gate_ids
     }
 
     /// Canonically ordered synchronous battery arms owed by the change.
@@ -154,19 +168,19 @@ impl ChangeSelectionReport {
                 "change selection contains an invalid repository-relative path",
             ));
         }
-        if self.gate_ids.is_empty()
-            || !self.gate_ids.windows(2).all(|pair| pair[0] < pair[1])
-            || self
-                .gate_ids
-                .iter()
-                .any(|gate_id| !GateId::BATTERY.contains(gate_id))
+        validate_gate_inventory("applicable", &self.applicable_gate_ids)?;
+        validate_gate_inventory("selected", &self.gate_ids)?;
+        if self
+            .gate_ids
+            .iter()
+            .any(|gate_id| !self.applicable_gate_ids.contains(gate_id))
         {
             return Err(ChangeSelectionError::new(
-                "change selection requires unique canonical battery arms in manifest order",
+                "change selection names an arm inapplicable to this repository",
             ));
         }
         for required in ALWAYS {
-            if !self.gate_ids.contains(&required) {
+            if !self.applicable_gate_ids.contains(&required) || !self.gate_ids.contains(&required) {
                 return Err(ChangeSelectionError::new(format!(
                     "change selection omitted always-on arm {required}"
                 )));
@@ -196,12 +210,22 @@ impl ChangeSelectionReport {
                 "changed source {path:?} has no policy-selection edge"
             )));
         }
+        if !self.changed_sources.is_empty()
+            && let Some(gate_id) = self
+                .gate_ids
+                .iter()
+                .find(|gate_id| !self.edges.iter().any(|edge| edge.gate_id == **gate_id))
+        {
+            return Err(ChangeSelectionError::new(format!(
+                "selected arm {gate_id} has no changed-source policy edge"
+            )));
+        }
         match (self.mode, self.escalation.as_deref()) {
             (ChangeSelectionMode::Local, None) => {}
             (ChangeSelectionMode::Exhaustive, Some(reason)) if valid_text(reason) => {
-                if self.gate_ids != GateId::BATTERY {
+                if self.gate_ids != self.applicable_gate_ids {
                     return Err(ChangeSelectionError::new(
-                        "exhaustive change selection must name the complete battery",
+                        "exhaustive change selection must name every applicable packaged arm",
                     ));
                 }
             }
@@ -215,14 +239,28 @@ impl ChangeSelectionReport {
     }
 }
 
-/// Select every canonical policy arm owed by exact staged paths.
+/// Select every applicable packaged policy arm owed by exact staged paths.
 ///
-/// This function is pure and intentionally has no repository parameter. A path
-/// class this build cannot prove is safe causes a complete-battery plan rather
-/// than omission or success with unknown evidence.
+/// This function is pure and intentionally has no repository parameter. The
+/// supplied policy was compiled from the same retained staged tree. A path
+/// class it cannot prove local escalates to that policy's complete applicable
+/// inventory rather than to this source release's workspace battery.
 pub fn select_change_gates(
     source: Digest,
     changed_sources: &[String],
+    policy: &ChangeSelectionPolicy,
+) -> Result<ChangeSelectionReport, ChangeSelectionError> {
+    let applicable = policy.applicable_gates(changed_sources);
+    select_with(source, changed_sources, applicable, |path| {
+        policy.gates_for_path(path)
+    })
+}
+
+fn select_with(
+    source: Digest,
+    changed_sources: &[String],
+    applicable_gate_ids: Vec<GateId>,
+    mut gates_for_path: impl FnMut(&str) -> (Vec<GateId>, Option<String>),
 ) -> Result<ChangeSelectionReport, ChangeSelectionError> {
     let mut changed_sources = changed_sources.to_vec();
     changed_sources.sort();
@@ -236,6 +274,8 @@ pub fn select_change_gates(
         ));
     }
 
+    validate_gate_inventory("applicable", &applicable_gate_ids)?;
+    let applicable = applicable_gate_ids.iter().copied().collect::<BTreeSet<_>>();
     let mut selected = ALWAYS.into_iter().collect::<BTreeSet<_>>();
     let mut per_path = Vec::new();
     let mut escalations = Vec::new();
@@ -244,6 +284,7 @@ pub fn select_change_gates(
         let gates = ALWAYS
             .into_iter()
             .chain(gates)
+            .filter(|gate_id| applicable.contains(gate_id))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -256,7 +297,7 @@ pub fn select_change_gates(
     let mode = if escalations.is_empty() {
         ChangeSelectionMode::Local
     } else {
-        selected = GateId::BATTERY.into_iter().collect();
+        selected.clone_from(&applicable);
         ChangeSelectionMode::Exhaustive
     };
     let gate_ids = selected.into_iter().collect::<Vec<_>>();
@@ -281,6 +322,7 @@ pub fn select_change_gates(
         source,
         mode,
         changed_sources,
+        applicable_gate_ids,
         gate_ids,
         edges,
         escalation: (!escalations.is_empty()).then(|| escalations.join("; ")),
@@ -290,212 +332,6 @@ pub fn select_change_gates(
 }
 
 const ALWAYS: [GateId; 3] = [GateId::MergeIntegrity, GateId::PlanPhase, GateId::Staging];
-
-fn gates_for_path(path: &str) -> (Vec<GateId>, Option<String>) {
-    if exhaustive_authority(path) {
-        return (
-            Vec::new(),
-            Some(format!(
-                "{path:?} changes gate or toolchain selection authority"
-            )),
-        );
-    }
-
-    let mut gates = BTreeSet::from([GateId::LocalPaths, GateId::FileShape]);
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match extension.as_str() {
-        "rs" => {
-            if !known_workspace_rust_source(path) {
-                return (
-                    Vec::new(),
-                    Some(format!(
-                        "{path:?} is Rust source outside every compiled workspace root"
-                    )),
-                );
-            }
-            gates.extend([
-                GateId::Formatters,
-                GateId::EnvPolicy,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-                GateId::MarkdownLinks,
-            ]);
-        }
-        "js" | "mjs" | "cjs" => {
-            gates.extend([
-                GateId::JavascriptUnused,
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-            ]);
-            if frontend_path(path) {
-                gates.insert(GateId::CanvasWebTypecheck);
-            }
-        }
-        "html" | "css" => {
-            if frontend_path(path) {
-                gates.insert(GateId::CanvasWebTypecheck);
-            }
-        }
-        "md" | "txt" | "rst" => {
-            gates.extend([GateId::RepoDocs, GateId::Taste, GateId::MarkdownLinks]);
-        }
-        "py" | "pyi" => {
-            gates.extend([
-                GateId::PythonTypecheck,
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-                GateId::Reachability,
-                GateId::SymbolReachability,
-                GateId::PythonUnused,
-                GateId::AssertionFreeTests,
-                GateId::PrivateInternals,
-            ]);
-        }
-        "cs" => {
-            gates.extend([
-                GateId::CsharpUnusedCandidates,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-            ]);
-        }
-        "sh" | "bash" | "zsh" => {
-            gates.extend([
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-            ]);
-        }
-        "toml" | "json" | "yaml" | "yml" | "lock" => {
-            if Path::new(path).file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
-                && !known_workspace_manifest(path)
-            {
-                return (
-                    Vec::new(),
-                    Some(format!(
-                        "{path:?} is a package manifest outside every compiled workspace root"
-                    )),
-                );
-            }
-            gates.insert(GateId::RepoShape);
-            if frontend_path(path) || matches!(path, "package.json" | "package-lock.json") {
-                gates.insert(GateId::CanvasWebTypecheck);
-            }
-        }
-        "" if known_extensionless(path) => {
-            gates.insert(GateId::RepoShape);
-        }
-        _ if frontend_path(path) => {
-            gates.insert(GateId::CanvasWebTypecheck);
-        }
-        _ => {
-            return (
-                Vec::new(),
-                Some(format!(
-                    "{path:?} has no compiled change-local policy class"
-                )),
-            );
-        }
-    }
-    (gates.into_iter().collect(), None)
-}
-
-fn known_workspace_rust_source(path: &str) -> bool {
-    let Some(root) = path.split('/').next() else {
-        return false;
-    };
-    matches!(root, "src" | "tests" | "examples" | "benches") || known_workspace_package_root(root)
-}
-
-fn known_workspace_manifest(path: &str) -> bool {
-    let mut components = path.split('/');
-    let Some(root) = components.next() else {
-        return false;
-    };
-    components.next() == Some("Cargo.toml")
-        && components.next().is_none()
-        && known_workspace_package_root(root)
-}
-
-fn known_workspace_package_root(root: &str) -> bool {
-    matches!(
-        root,
-        "app"
-            | "artifact"
-            | "atomic"
-            | "board"
-            | "bus"
-            | "canvas"
-            | "consent"
-            | "dialect"
-            | "dist"
-            | "fold"
-            | "gate"
-            | "journal"
-            | "lane"
-            | "listen"
-            | "proof"
-            | "sill"
-            | "spice"
-            | "steer"
-            | "tape"
-            | "taste"
-            | "vendor"
-            | "wire"
-            | "xtask"
-    )
-}
-
-fn exhaustive_authority(path: &str) -> bool {
-    matches!(
-        path,
-        ".cargo/config.toml"
-            | ".githooks/pre-commit"
-            | "spice-rust.toml"
-            | "baseline.toml"
-            | "rust-toolchain.toml"
-            | "Cargo.lock"
-            | "Cargo.toml"
-            | "gate/src/battery/manifest.toml"
-            | "gate/src/change_selection.rs"
-            | "gate/src/lib.rs"
-            | "gate/src/manifest.rs"
-            | "gate/src/test_evidence.rs"
-            | "gate/src/workspace_tests.rs"
-            | "spice/src/change_gate.rs"
-            | "spice/src/cli.rs"
-            | "spice/src/cli/contracts.rs"
-            | "spice/src/cli/mounts.rs"
-            | "spice/src/cli/syntax.rs"
-            | "spice/src/gate.rs"
-            | "spice/src/gate_command.rs"
-            | "spice/src/install/git-hooks/pre-commit"
-            | "spice/src/install/git_hooks.rs"
-            | "spice/src/lib.rs"
-            | "spice/src/main.rs"
-            | "xtask/src/lib.rs"
-            | "xtask/src/main.rs"
-    ) || path.starts_with("gate/src/workspace_tests/")
-        || path.starts_with("spice/src/gate_command/pre_commit")
-}
-
-fn frontend_path(path: &str) -> bool {
-    path.starts_with("app/") || path.starts_with("canvas/") || path.starts_with("package")
-}
-
-fn known_extensionless(path: &str) -> bool {
-    matches!(path, ".gitignore" | ".gitattributes" | "LICENSE")
-        || path.starts_with(".githooks/")
-        || path.starts_with("spice/src/install/git-hooks/")
-}
 
 fn valid_repository_path(path: &str) -> bool {
     valid_text(path)
@@ -515,6 +351,21 @@ fn validate_sorted_unique(label: &str, values: &[String]) -> Result<(), ChangeSe
         Err(ChangeSelectionError::new(format!(
             "{label} inventory must be sorted and unique"
         )))
+    }
+}
+
+fn validate_gate_inventory(label: &str, gate_ids: &[GateId]) -> Result<(), ChangeSelectionError> {
+    if gate_ids.is_empty()
+        || !gate_ids.windows(2).all(|pair| pair[0] < pair[1])
+        || gate_ids
+            .iter()
+            .any(|gate_id| !GateId::BATTERY.contains(gate_id))
+    {
+        Err(ChangeSelectionError::new(format!(
+            "change selection requires unique canonical {label} arms in manifest order"
+        )))
+    } else {
+        Ok(())
     }
 }
 
@@ -547,170 +398,5 @@ impl fmt::Display for ChangeSelectionError {
 impl Error for ChangeSelectionError {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn selection(paths: &[&str]) -> ChangeSelectionReport {
-        select_change_gates(
-            Digest::compute(wire::Domain::GateTree, b"change selection fixture"),
-            &paths
-                .iter()
-                .map(|path| (*path).to_owned())
-                .collect::<Vec<_>>(),
-        )
-        .expect("select representative changes")
-    }
-
-    fn contains(report: &ChangeSelectionReport, gates: &[GateId]) {
-        for gate in gates {
-            assert!(
-                report.gate_ids().contains(gate),
-                "{} is absent from {:?}",
-                gate,
-                report.gate_ids(),
-            );
-        }
-    }
-
-    #[test]
-    fn backend_frontend_docs_and_config_select_their_canonical_checks() {
-        let backend = selection(&["journal/src/lib.rs"]);
-        assert_eq!(backend.mode(), ChangeSelectionMode::Local);
-        contains(
-            &backend,
-            &[
-                GateId::Formatters,
-                GateId::EnvPolicy,
-                GateId::FileShape,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-                GateId::MarkdownLinks,
-            ],
-        );
-
-        let frontend = selection(&["app/browser/canvas-coordinator.mjs"]);
-        assert_eq!(frontend.mode(), ChangeSelectionMode::Local);
-        contains(
-            &frontend,
-            &[
-                GateId::CanvasWebTypecheck,
-                GateId::JavascriptUnused,
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-            ],
-        );
-
-        let documentation = selection(&["DEVELOPMENT.md"]);
-        contains(
-            &documentation,
-            &[GateId::RepoDocs, GateId::Taste, GateId::MarkdownLinks],
-        );
-
-        let configuration = selection(&["gate/Cargo.toml"]);
-        contains(
-            &configuration,
-            &[GateId::RepoShape, GateId::LocalPaths, GateId::FileShape],
-        );
-    }
-
-    #[test]
-    fn policy_authority_and_unknown_paths_escalate_to_every_battery_arm() {
-        for path in [
-            "spice-rust.toml",
-            "assets/opaque.bin",
-            "tools/outside.rs",
-            "tools/component/Cargo.toml",
-        ] {
-            let report = selection(&[path]);
-            assert_eq!(report.mode(), ChangeSelectionMode::Exhaustive);
-            assert_eq!(report.gate_ids(), GateId::BATTERY);
-            assert!(report.escalation().is_some());
-            assert_eq!(
-                ChangeSelectionReport::decode(&report.encode().expect("encode selection"))
-                    .expect("decode selection"),
-                report,
-            );
-        }
-    }
-
-    #[test]
-    fn selector_command_and_hook_authorities_escalate_to_every_battery_arm() {
-        for path in [
-            ".cargo/config.toml",
-            ".githooks/pre-commit",
-            "Cargo.lock",
-            "Cargo.toml",
-            "baseline.toml",
-            "rust-toolchain.toml",
-            "spice-rust.toml",
-            "gate/src/battery/manifest.toml",
-            "gate/src/change_selection.rs",
-            "gate/src/lib.rs",
-            "gate/src/manifest.rs",
-            "gate/src/test_evidence.rs",
-            "gate/src/workspace_tests.rs",
-            "gate/src/workspace_tests/selection.rs",
-            "gate/src/workspace_tests/source_reach.rs",
-            "spice/src/change_gate.rs",
-            "spice/src/cli.rs",
-            "spice/src/cli/contracts.rs",
-            "spice/src/cli/mounts.rs",
-            "spice/src/cli/syntax.rs",
-            "spice/src/gate.rs",
-            "spice/src/gate_command.rs",
-            "spice/src/gate_command/pre_commit.rs",
-            "spice/src/install/git-hooks/pre-commit",
-            "spice/src/install/git_hooks.rs",
-            "spice/src/lib.rs",
-            "spice/src/main.rs",
-            "xtask/src/lib.rs",
-            "xtask/src/main.rs",
-        ] {
-            let report = selection(&[path]);
-            assert_eq!(
-                report.mode(),
-                ChangeSelectionMode::Exhaustive,
-                "selector authority stayed local: {path}",
-            );
-            assert_eq!(report.gate_ids(), GateId::BATTERY);
-            assert_eq!(report.changed_sources(), [path]);
-            assert_eq!(report.edges().len(), GateId::BATTERY.len());
-        }
-    }
-
-    #[test]
-    fn old_and_new_cross_class_paths_retain_both_policy_families() {
-        let report = selection(&[
-            "README.fixture.md",
-            "app/browser/renamed.mjs",
-            "app/src/renamed.rs",
-            "wire/src/renamed.rs",
-        ]);
-
-        assert_eq!(report.mode(), ChangeSelectionMode::Local);
-        contains(
-            &report,
-            &[
-                GateId::RepoDocs,
-                GateId::Taste,
-                GateId::Formatters,
-                GateId::CanvasWebTypecheck,
-                GateId::JavascriptUnused,
-            ],
-        );
-        for path in report.changed_sources() {
-            assert!(report.edges().iter().any(|edge| edge.source() == path));
-        }
-    }
-
-    #[test]
-    fn every_changed_path_and_always_on_arm_retains_provenance() {
-        let report = selection(&["README.md", "wire/src/lib.rs"]);
-        for gate_id in ALWAYS {
-            assert!(report.gate_ids().contains(&gate_id));
-        }
-        for path in report.changed_sources() {
-            assert!(report.edges().iter().any(|edge| edge.source() == path));
-        }
-    }
-}
+#[path = "change_selection/tests.rs"]
+mod tests;

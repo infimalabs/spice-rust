@@ -130,14 +130,15 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sou
     assert_eq!(report.edges()[0].test(), "gate-fixture::lib:gate_fixture");
     assert_eq!(report.coverage(), &CoverageCompleteness::Complete);
 
+    assert_unknown_source_escalates_to_applicable_inventory();
+}
+
+fn assert_unknown_source_escalates_to_applicable_inventory() {
     let repository = GateRepository::new();
-    fs::create_dir(repository.path().join("tools")).expect("create unknown-source directory");
-    fs::write(
-        repository.path().join("tools/outside.rs"),
-        "pub fn outside_every_package() {}\n",
-    )
-    .expect("write unknown staged Rust source");
-    repository.add("tools/outside.rs");
+    fs::create_dir(repository.path().join("assets")).expect("create unknown-source directory");
+    fs::write(repository.path().join("assets/opaque.bin"), [0, 1, 2, 3])
+        .expect("write unknown staged source");
+    repository.add("assets/opaque.bin");
 
     let unknown = run_commit_worker(repository.path());
     let Some((kind, document)) = unknown.terminal.split_first() else {
@@ -158,16 +159,47 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sou
         change_report.selection().mode(),
         gate::ChangeSelectionMode::Exhaustive,
     );
-    assert_eq!(change_report.selection().gate_ids(), gate::GateId::BATTERY);
-    assert_eq!(change_report.policy().len(), gate::GateId::BATTERY.len());
+    assert_eq!(
+        change_report.selection().gate_ids(),
+        change_report.selection().applicable_gate_ids(),
+    );
+    assert!(
+        !change_report
+            .selection()
+            .gate_ids()
+            .contains(&gate::GateId::CanvasWebTypecheck)
+    );
+    assert_eq!(
+        change_report.policy().len(),
+        change_report.selection().applicable_gate_ids().len(),
+    );
     assert_eq!(
         change_report
             .policy()
             .iter()
             .map(spice::change_gate::PolicyArmSummary::gate_id)
             .collect::<Vec<_>>(),
-        gate::GateId::BATTERY,
+        change_report.selection().applicable_gate_ids(),
     );
+    assert_policy_position_tamper_is_refused(document);
+    assert!(
+        unknown
+            .progress
+            .contains("[change-gate-policy] gate=staging"),
+        "applicable exhaustive selection did not publish focused arm progress: {}",
+        unknown.progress,
+    );
+    let terminal_report = change_report.tests();
+    let progress_report = selection_report(&unknown.progress);
+    assert_eq!(terminal_report, &progress_report);
+    assert!(terminal_report.admits());
+    assert_eq!(terminal_report.changed_sources(), &["assets/opaque.bin"]);
+    assert_eq!(terminal_report.tests(), &["gate-fixture::lib:gate_fixture"]);
+    assert_eq!(terminal_report.edges().len(), 1);
+    assert_eq!(terminal_report.coverage(), &CoverageCompleteness::Complete);
+}
+
+fn assert_policy_position_tamper_is_refused(document: &[u8]) {
     let marker = b"\"results\":[{\"position\":0";
     let position = document
         .windows(marker.len())
@@ -178,35 +210,6 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sou
     let error = ChangeGateReport::decode(&tampered)
         .expect_err("a reordered compact policy result fails closed");
     assert_eq!(error.reason(), "gate::change-gate-policy-incomplete");
-    let marker = b"\"authority\":\"";
-    let position = document
-        .windows(marker.len())
-        .position(|window| window == marker)
-        .expect("complete policy summary retains its authority digest");
-    let mut tampered = document.to_vec();
-    let digit = &mut tampered[position + marker.len()];
-    *digit = if *digit == b'0' { b'1' } else { b'0' };
-    let error = ChangeGateReport::decode(&tampered)
-        .expect_err("a policy arm detached from the complete authority fails closed");
-    assert_eq!(
-        error.reason(),
-        "gate::change-gate-exhaustive-policy-invalid"
-    );
-    assert!(
-        unknown
-            .progress
-            .contains("[change-gate-policy-terminal] mode=exhaustive arms=27 elapsed_ms="),
-        "exhaustive selection did not publish one complete 27-arm terminal: {}",
-        unknown.progress,
-    );
-    let terminal_report = change_report.tests();
-    let progress_report = selection_report(&unknown.progress);
-    assert_eq!(terminal_report, &progress_report);
-    assert!(terminal_report.admits());
-    assert_eq!(terminal_report.changed_sources(), &["tools/outside.rs"]);
-    assert_eq!(terminal_report.tests(), &["gate-fixture::lib:gate_fixture"]);
-    assert_eq!(terminal_report.edges().len(), 1);
-    assert_eq!(terminal_report.coverage(), &CoverageCompleteness::Complete);
 }
 
 #[test]

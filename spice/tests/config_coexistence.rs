@@ -28,20 +28,8 @@ const RUST_ONLY_ROOTS: &[&str] = &[
     "board", "canvas", "consent", "gate", "lane", "listen", "lock", "proof", "steer", "vendor",
 ];
 
-fn workspace() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("spice crate has a workspace parent")
-        .to_path_buf()
-}
-
-fn python_configuration() -> PathBuf {
-    workspace().join("spice.toml")
-}
-
-fn rust_configuration() -> PathBuf {
-    workspace().join("spice-rust.toml")
-}
+const PYTHON_CONFIGURATION: &str = include_str!("../../spice.toml");
+const RUST_CONFIGURATION: &str = include_str!("../../spice-rust.toml");
 
 /// Writable repository carrying the tracked files selected for this test.
 ///
@@ -61,11 +49,11 @@ impl RepositoryFixture {
         ));
         fs::create_dir(&root).expect("create coexistence fixture root");
         fs::create_dir(root.join(".git")).expect("initialize coexistence fixture repository");
-        for source in [python_configuration(), rust_configuration()] {
-            let name = source
-                .file_name()
-                .expect("tracked configuration has a name");
-            fs::copy(&source, root.join(name)).expect("copy selected tracked configuration");
+        for (name, source) in [
+            ("spice.toml", PYTHON_CONFIGURATION),
+            ("spice-rust.toml", RUST_CONFIGURATION),
+        ] {
+            fs::write(root.join(name), source).expect("write selected tracked configuration");
         }
         Self {
             root: fs::canonicalize(root).expect("canonicalize coexistence fixture root"),
@@ -116,10 +104,8 @@ fn rust_and_python_tracked_configuration_paths_are_distinct() {
 
 #[test]
 fn python_configuration_authors_no_root_its_schema_refuses() {
-    let document = fs::read_to_string(python_configuration()).expect("read Python configuration");
-
     assert_eq!(
-        roots_the_predecessor_refuses(&document),
+        roots_the_predecessor_refuses(PYTHON_CONFIGURATION),
         Vec::<String>::new(),
         "Python's own tracked document must satisfy the predecessor schema",
     );
@@ -127,8 +113,7 @@ fn python_configuration_authors_no_root_its_schema_refuses() {
 
 #[test]
 fn a_rust_only_root_is_admitted_without_entering_python_configuration() {
-    let rust = fs::read_to_string(rust_configuration()).expect("read Rust configuration");
-    let candidate = format!("{rust}\n[gate]\n");
+    let candidate = format!("{RUST_CONFIGURATION}\n[gate]\n");
     resolve(Inputs::new(
         Some(Document::new("spice-rust.toml", &candidate)),
         None,
@@ -136,11 +121,10 @@ fn a_rust_only_root_is_admitted_without_entering_python_configuration() {
     ))
     .expect("Rust-only root is admitted in the Rust-owned document");
 
-    let python = fs::read_to_string(python_configuration()).expect("read Python configuration");
-    let planted = format!("{python}\n[gate]\n");
+    let planted = format!("{PYTHON_CONFIGURATION}\n[gate]\n");
     assert_eq!(roots_the_predecessor_refuses(&planted), ["gate"]);
     assert_eq!(
-        roots_the_predecessor_refuses(&python),
+        roots_the_predecessor_refuses(PYTHON_CONFIGURATION),
         Vec::<String>::new(),
         "the Python-owned bytes remain unchanged and valid",
     );
