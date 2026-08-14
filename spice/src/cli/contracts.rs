@@ -1,202 +1,114 @@
 use super::*;
 
-macro_rules! row {
-    (
-        [$($path:literal),+], $syntax:literal, $principal:ident,
-        $journal:ident => $position:ident,
-        [$($fact:ident),*], [$($guard:ident),*], $result:ident, $battery:literal
-    ) => {
-        Contract {
-            path: &[$($path),+],
-            syntax: $syntax,
-            principal: Principal::$principal,
-            journal: JournalAccess::$journal,
-            reply_position: ReplyPositionLaw::$position,
-            facts: &[$(FactKind::$fact),*],
-            guards: &[$(Guard::$guard),*],
-            tools: NO_TOOLS,
-            result: ResultClass::$result,
-            outcomes: ExitOutcome::ALL,
-            battery: $battery,
-        }
-    };
-    (
-        [$($path:literal),+], $syntax:literal, $principal:ident, $journal:ident,
-        [$($fact:ident),*], [$($guard:ident),*], $result:ident, $battery:literal
-    ) => {
-        row!(
-            [$($path),+], $syntax, $principal, $journal,
-            [$($fact),*], [$($guard),*], NO_TOOLS, $result, $battery
-        )
-    };
-    (
-        [$($path:literal),+], $syntax:literal, $principal:ident, $journal:ident,
-        [$($fact:ident),*], [$($guard:ident),*], $tools:expr, $result:ident, $battery:literal
-    ) => {
-        Contract {
-            path: &[$($path),+],
-            syntax: $syntax,
-            principal: Principal::$principal,
-            journal: JournalAccess::$journal,
-            reply_position: JournalAccess::$journal.reply_position(),
-            facts: &[$(FactKind::$fact),*],
-            guards: &[$(Guard::$guard),*],
-            tools: $tools,
-            result: ResultClass::$result,
-            outcomes: ExitOutcome::ALL,
-            battery: $battery,
-        }
-    };
-}
+#[macro_use]
+mod macros;
 
 /// Every current leaf. Parser registration and help are generated from these rows.
 pub(super) const CONTRACTS: &[Contract] = &[
-    row!(
+    local_direct!(
         ["demo"],
         "demo [--root DIR] [--reuse DIR] [--seed-only] [--preserve] [--open]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "spice::demo"
     ),
-    row!(
+    local_direct!(
         ["watch"],
         "watch [ROOT]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Stream,
         "listen::watch"
     ),
-    row!(
+    local_direct!(
         ["retro"],
         "retro [LANE|LOCUS|PATH]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Stream,
         "listen::retro"
     ),
-    row!(
+    local_direct!(
         ["session"],
         "session",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_briefing"
     ),
-    row!(
+    local_direct!(
         ["session", "briefing"],
         "session briefing [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
          [--turn-id ID...] [--tool NAME...] [--max-lines N] [--max-bytes N] \
          [--explain-pruning] [--deadline-seconds SECONDS]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_briefing"
     ),
-    row!(
+    local_direct!(
         ["session", "commands"],
         "session commands [FILES...] [--limit N] [--newest-first] \
          [--since-compaction] [--failed] [--pipelines] [--noncanonical-pipelines] \
          [--summary] [--max-text N]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_commands"
     ),
-    row!(
+    local_direct!(
         ["session", "commits"],
         "session commits [FILES...] [--limit N]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_commits"
     ),
-    row!(
+    local_direct!(
         ["session", "compactions"],
         "session compactions [FILES...] [--limit N]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_compactions"
     ),
-    row!(
+    local_direct!(
         ["session", "messages"],
         "session messages [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
          [--turn-id ID...] [--side user|assistant...] \
          [--phase-kind prompt|commentary|final_answer...] [--flavor FLAVOR...] \
          [--limit N] [--oldest-first] [--max-text N]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_messages"
     ),
-    row!(
+    local_direct!(
         ["session", "phases"],
         "session phases [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
          [--turn-id ID...] [--tool NAME...] [--limit N] [--examples N] [--max-text N]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_phases"
     ),
-    row!(
+    local_direct!(
         ["session", "slices"],
         "session slices [FILES...] [--limit N] [--slice-id ID...] \
          [--view summary|full] [--max-text N]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_slices"
     ),
-    row!(
+    local_direct!(
         ["session", "summary"],
         "session summary [FILES...] [--recent N]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_summary"
     ),
-    row!(
+    local_direct!(
         ["session", "sweep"],
         "session sweep [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
          [--turn-id ID...] [--tool NAME...] [--count N] [--deadline-seconds SECONDS]",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_sweep"
     ),
-    row!(
+    local_direct!(
         ["session", "thread"],
         "session thread THREAD_ID",
-        Local,
-        None,
-        [],
         [Daemonless, Offline],
         Reply,
         "rim::session_thread"
@@ -345,6 +257,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
     // only one the split left behind. Its contract id and its handler already
     // named `gate`, so the retirement row for `dev` was accurate and the path
     // was the leftover -- the path moved rather than the row narrowing.
+    row!(
+        ["gate", "commit-msg"],
+        "gate commit-msg MESSAGE_FILE",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "gate::commit-message"
+    ),
     row!(
         ["gate", "pre-commit"],
         "gate pre-commit",
