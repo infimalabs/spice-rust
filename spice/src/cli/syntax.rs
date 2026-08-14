@@ -154,6 +154,8 @@ fn positional(syntax: &'static str, required: bool, trailing: bool) -> Result<Ar
         // not be UTF-8, so this one typed positional must retain `OsString`
         // all the way from Clap to `Path`.
         argument = argument.value_parser(OsStringValueParser::new());
+    } else if name.contains('|') && name.chars().any(char::is_lowercase) {
+        argument = argument.value_parser(PossibleValuesParser::new(name.split('|')));
     }
     Ok(argument)
 }

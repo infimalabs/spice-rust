@@ -23,10 +23,13 @@ pub use tools::ExternalTool;
 pub const JUDGE_EXECUTABLE: &str = tools::JUDGE_EXECUTABLE;
 use tools::{
     CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NO_TOOLS, PROOF_TOOLS,
-    TASK_DONE_TOOLS, TASK_GIT_TOOLS, UP_TOOLS,
+    REFERENCE_TRANSACTION_TOOLS, TASK_DONE_TOOLS, TASK_GIT_TOOLS, UP_TOOLS,
 };
 #[cfg(test)]
-use tools::{ToolBounds, ToolCancellation, ToolNetwork, posture_violations};
+use tools::{
+    ToolBounds, ToolCancellation, ToolMode, ToolNetwork, ToolRequirement, ToolSource,
+    posture_violations,
+};
 
 /// The renderer flag, spelled once so its registration and its reader cannot
 /// drift into naming two different arguments that merely agree today.
@@ -274,6 +277,7 @@ fn observation_landed(path: &[&str]) -> bool {
             | ["gate", "commit-msg"]
             | ["gate", "kill"]
             | ["gate", "pre-commit"]
+            | ["gate", "reference-transaction"]
             | ["gate", "receipt"]
     )
 }

@@ -70,6 +70,17 @@ pub(super) const GATE_MUTATION_TOOLS: &[ExternalTool] = &[ExternalTool {
     network: ToolNetwork::Permitted,
 }];
 
+pub(super) const REFERENCE_TRANSACTION_TOOLS: &[ExternalTool] = &[ExternalTool {
+    name: "git",
+    owner: "gate::reference_transaction",
+    mode: ToolMode::Launch,
+    requirement: ToolRequirement::Conditional,
+    source: ToolSource::ReferenceTransactionContract,
+    bounds: ToolBounds::ReferenceTransaction,
+    cancellation: ToolCancellation::ChildOwned,
+    network: ToolNetwork::Permitted,
+}];
+
 const TASK_GIT_TOOL: ExternalTool = ExternalTool {
     name: "git",
     owner: "task_git",
@@ -225,6 +236,12 @@ fn validate_source_posture(path: &str, tool: &ExternalTool, violations: &mut Vec
             ToolMode::Launch,
             ToolBounds::GateContract,
             ToolCancellation::Deadline,
+            ToolNetwork::Permitted,
+        ),
+        ToolSource::ReferenceTransactionContract => (
+            ToolMode::Launch,
+            ToolBounds::ReferenceTransaction,
+            ToolCancellation::ChildOwned,
             ToolNetwork::Permitted,
         ),
         ToolSource::ProofRuntime | ToolSource::ProofBattery => (
