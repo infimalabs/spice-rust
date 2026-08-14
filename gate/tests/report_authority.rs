@@ -18,6 +18,7 @@ const REPORT_SOURCES: &[&str] = &[
     "src/camp.rs",
     "src/ratchet.rs",
     "src/test_evidence.rs",
+    "src/test_evidence/reports.rs",
     "src/verdict.rs",
 ];
 

@@ -231,6 +231,10 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
             "[vendor.codex]\nauto_compact_window_tokens = 100\n",
             "vendor.codex.auto_compact_window_tokens",
         ),
+        (
+            "[policy]\ntest_engines = [\"unknown-engine\"]\n",
+            "policy.test_engines[0]",
+        ),
         ("[vendor.codex]\nmodel = \"\"\n", "vendor.codex.model"),
         ("[vendor.gemini]\nbinary = \"gemini\"\n", "vendor.gemini"),
     ] {
@@ -248,6 +252,10 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
     )
     .expect_err("duplicate consent identities must refuse");
     assert!(duplicate.contains("consent.rule"), "{duplicate}");
+
+    let duplicate = decode("[policy]\ntest_engines = [\"cargo-workspace\", \"cargo-workspace\"]\n")
+        .expect_err("duplicate test engines must refuse");
+    assert!(duplicate.contains("policy.test_engines"), "{duplicate}");
 }
 
 /// Every tracked structural-policy key Gate admits is one this schema accepts.
@@ -295,7 +303,7 @@ fn every_tracked_structural_policy_key_reaches_its_accessor() {
 }
 
 /// Each value is distinct so no reading can be satisfied by another's bytes.
-const TRACKED_STRUCTURAL_DECLARATIONS: [(&str, &str); 10] = [
+const TRACKED_STRUCTURAL_DECLARATIONS: [(&str, &str); 11] = [
     ("policy.repo_truth.docs", "[\"DOCTRINE.md\"]"),
     ("policy.file_shape.source_suffixes", "[\".rs\"]"),
     ("policy.languages.complexity", "[\".rs\", \".py\"]"),
@@ -304,6 +312,7 @@ const TRACKED_STRUCTURAL_DECLARATIONS: [(&str, &str); 10] = [
     ("policy.generated_paths", "[\"build/derived\"]"),
     ("policy.name_cluster_threshold", "3"),
     ("policy.taste_mining_threshold", "4"),
+    ("policy.test_engines", "[\"cargo-workspace\"]"),
     ("policy.test_paths", "[\"suite\"]"),
     ("policy.package.boundary_underscore_pattern", "\"^[a-z]+$\""),
 ];
@@ -336,6 +345,10 @@ fn assert_structural_policy_values(policy: &spice::config::WorkspacePolicy) {
     assert_eq!(policy.generated_paths(), ["build/derived".to_owned()]);
     assert_eq!(policy.name_cluster_threshold(), Some(3));
     assert_eq!(policy.taste_mining_threshold(), Some(4));
+    assert_eq!(
+        policy.test_engines(),
+        [spice::config::TestEngine::CargoWorkspace]
+    );
     assert_eq!(policy.test_paths(), ["suite".to_owned()]);
     assert_eq!(
         policy.package().boundary_underscore_pattern(),

@@ -195,8 +195,9 @@ pub use verdict::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use workspace_tests::{
-    WorkspaceTestError, WorkspaceTestExecution, WorkspaceTestRoots, prebuild_shared_at,
-    run as run_workspace_tests, run_at as run_workspace_tests_at,
+    WorkspaceTestError, WorkspaceTestExecution, WorkspaceTestRoots,
+    cargo_workspace_tests_applicable, prebuild_shared_at, run as run_workspace_tests,
+    run_at as run_workspace_tests_at,
     run_exhaustive_selected_at as run_exhaustive_selected_workspace_tests_at,
     run_prebuilt_shared_at, run_selected_at as run_selected_workspace_tests_at,
 };

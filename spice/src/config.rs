@@ -305,6 +305,8 @@ pub struct WorkspacePolicy {
     pre_commit_builtins: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pre_commit: Vec<PreCommitStep>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    test_engines: Vec<TestEngine>,
     commit_message: gate::CommitMessagePolicy,
     repo_truth: gate::RepoTruthPolicy,
     file_shape: gate::FileShapePolicy,
@@ -327,6 +329,8 @@ struct WorkspacePolicyInput {
     env_names: Vec<String>,
     pre_commit_builtins: bool,
     pre_commit: Vec<PreCommitStep>,
+    #[serde(deserialize_with = "unique_test_engines")]
+    test_engines: Vec<TestEngine>,
     commit_message: gate::CommitMessagePolicy,
     repo_truth: gate::RepoTruthPolicy,
     file_shape: gate::FileShapePolicy,
@@ -347,6 +351,7 @@ impl Default for WorkspacePolicyInput {
             env_names: Vec::new(),
             pre_commit_builtins: true,
             pre_commit: Vec::new(),
+            test_engines: Vec::new(),
             commit_message: gate::CommitMessagePolicy::default(),
             repo_truth: gate::RepoTruthPolicy::default(),
             file_shape: gate::FileShapePolicy::default(),
@@ -368,6 +373,7 @@ impl From<WorkspacePolicyInput> for WorkspacePolicy {
             env_names: input.env_names,
             pre_commit_builtins: input.pre_commit_builtins,
             pre_commit: input.pre_commit,
+            test_engines: input.test_engines,
             commit_message: input.commit_message,
             repo_truth: input.repo_truth,
             file_shape: input.file_shape,
@@ -416,6 +422,12 @@ impl WorkspacePolicy {
     #[must_use]
     pub fn pre_commit(&self) -> &[PreCommitStep] {
         &self.pre_commit
+    }
+
+    /// Packaged test engines this repository explicitly enables.
+    #[must_use]
+    pub fn test_engines(&self) -> &[TestEngine] {
+        &self.test_engines
     }
 
     /// Documents the workspace measures as repository truth.
@@ -499,6 +511,27 @@ impl WorkspacePolicy {
     }
 }
 
+/// One compiled test executor a repository may explicitly enable.
+///
+/// The declaration selects a packaged command contract; it never carries an
+/// executable path or argument vector from repository data.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TestEngine {
+    /// Canonical Cargo metadata reach and bounded workspace target execution.
+    CargoWorkspace,
+}
+
+impl TestEngine {
+    /// Stable report and configuration identity.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CargoWorkspace => "cargo-workspace",
+        }
+    }
+}
+
 const fn default_project_min_depth() -> u64 {
     dialect::PROJECT_MIN_DEPTH as u64
 }
@@ -543,6 +576,22 @@ fn unique_names<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String
         }
     }
     Ok(names)
+}
+
+fn unique_test_engines<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<TestEngine>, D::Error> {
+    let engines = Vec::<TestEngine>::deserialize(deserializer)?;
+    let mut seen = BTreeSet::new();
+    for engine in &engines {
+        if !seen.insert(*engine) {
+            return Err(D::Error::custom(format!(
+                "policy.test_engines must be unique; duplicate {:?}",
+                engine.as_str(),
+            )));
+        }
+    }
+    Ok(engines)
 }
 
 fn nonempty_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {

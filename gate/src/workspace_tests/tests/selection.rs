@@ -18,6 +18,7 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
     assert!(report.admits());
     assert_eq!(report.source(), &source);
     assert_eq!(report.changed_sources(), ["fixture-a/src/behavior.rs"]);
+    assert_eq!(report.engines(), ["cargo-workspace"]);
     assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
     assert_eq!(report.edges().len(), 1);
     assert!(
@@ -357,4 +358,80 @@ fn partially_mapped_rust_sources_retain_edges_and_escalate_unknown_reach() {
         2,
     );
     assert_eq!(report.coverage(), &crate::CoverageCompleteness::Complete);
+}
+
+#[test]
+fn complete_zero_engine_evidence_round_trips_mixed_changed_sources() {
+    let source = wire::Digest::compute(wire::Domain::GateTree, b"generic selected tree");
+    let report = crate::TestSelectionReport::complete_without_engines(
+        source.clone(),
+        vec!["README.md".to_owned(), "assets/icon.svg".to_owned()],
+    )
+    .expect("zero-engine evidence is complete by declaration");
+
+    assert!(report.admits());
+    assert_eq!(report.source(), &source);
+    assert_eq!(report.changed_sources(), ["README.md", "assets/icon.svg"]);
+    assert!(report.engines().is_empty());
+    assert!(report.tests().is_empty());
+    assert!(report.edges().is_empty());
+    assert_eq!(
+        crate::TestSelectionReport::decode(&report.encode().expect("encode zero-engine report"))
+            .expect("decode zero-engine report"),
+        report
+    );
+}
+
+#[test]
+fn selection_report_refuses_an_engine_outside_the_compiled_vocabulary() {
+    let report = crate::TestSelectionReport::complete_without_engines(
+        wire::Digest::compute(wire::Domain::GateTree, b"unknown engine"),
+        vec!["README.md".to_owned()],
+    )
+    .expect("seed report");
+    let mut document = serde_json::to_value(report).expect("encode report value");
+    document["engines"] = serde_json::json!(["repository-authored-command"]);
+
+    let error = crate::TestSelectionReport::decode(
+        &serde_json::to_vec(&document).expect("encode mutated report"),
+    )
+    .expect_err("unknown engine identity must refuse");
+    assert!(
+        error
+            .detail()
+            .contains("unsupported selected test engine \"repository-authored-command\""),
+        "{error}"
+    );
+}
+
+#[test]
+fn cargo_applicability_requires_both_a_workspace_and_relevant_scope() {
+    let root = fixture_root("cargo-engine-applicability");
+    fs::create_dir_all(&root).expect("create applicability fixture");
+
+    assert!(!cargo_workspace_tests_applicable(
+        &root,
+        &["src/lib.rs".to_owned()],
+        false,
+    ));
+
+    fs::write(root.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\n")
+        .expect("write workspace authority");
+    assert!(!cargo_workspace_tests_applicable(
+        &root,
+        &["README.md".to_owned()],
+        false,
+    ));
+    assert!(cargo_workspace_tests_applicable(
+        &root,
+        &["README.md".to_owned(), "src/lib.rs".to_owned()],
+        false,
+    ));
+    assert!(cargo_workspace_tests_applicable(
+        &root,
+        &["assets/opaque.bin".to_owned()],
+        true,
+    ));
+
+    fs::remove_dir_all(root).expect("remove applicability fixture");
 }

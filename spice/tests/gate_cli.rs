@@ -23,6 +23,8 @@ use spice::change_gate::ChangeGateReport;
 use spice::placeholder::PlaceholderReason;
 use wire::{Digest, Domain, Outcome, Refusal, ReplyPosition};
 
+#[path = "gate_cli/cargo_optional.rs"]
+mod cargo_optional;
 #[path = "gate_cli/refusal.rs"]
 mod refusal_artifact;
 
@@ -124,6 +126,7 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
     let report = selection_report(&known.progress);
     assert!(report.admits());
     assert_eq!(report.changed_sources(), &["src/lib.rs"]);
+    assert_eq!(report.engines(), &["cargo-workspace"]);
     assert_eq!(report.tests(), &["gate-fixture::lib:gate_fixture"]);
     assert_eq!(report.edges().len(), 1);
     assert_eq!(report.edges()[0].source(), "src/lib.rs");
@@ -149,7 +152,6 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
         "\"tools/outside.rs\" is Rust source outside every compiled workspace root",
         &refused_marker,
     );
-
     let authority_marker_scratch = Scratch::new("authority-selected-test-marker");
     let authority_marker = authority_marker_scratch.path().join("executed");
     let repository = GateRepository::new();
@@ -309,17 +311,26 @@ struct WorkerBoundary {
 }
 
 fn run_commit_worker(root: &Path) -> WorkerBoundary {
+    run_commit_worker_with_path(root, None)
+}
+
+fn run_commit_worker_with_path(root: &Path, path: Option<&Path>) -> WorkerBoundary {
     let scratch = Scratch::new("commit-worker-boundary");
     let progress = scratch.path().join("progress.jsonl");
     let terminal = scratch.path().join("terminal.bin");
     fs::write(&progress, []).expect("create worker progress file");
     fs::write(&terminal, []).expect("create worker terminal file");
-    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
         .arg("__gate-pre-commit-worker")
         .arg(&progress)
         .arg(&terminal)
         .current_dir(root)
-        .env_remove(steer::hook::INBOX)
+        .env_remove(steer::hook::INBOX);
+    if let Some(path) = path {
+        command.env(PROCESS_PATH, path);
+    }
+    let output = command
         .output()
         .expect("launch normal commit worker boundary");
     assert!(
@@ -731,7 +742,10 @@ impl GateRepository {
         fs::create_dir_all(scratch.path().join("gate/src")).expect("create camp loci");
         fs::write(
             scratch.path().join("spice-rust.toml"),
-            format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
+            format!(
+                "{}[policy]\ntest_engines = [\"cargo-workspace\"]\n\n[gate.walk]\nskip = []\n",
+                gate::NARROWEST_FILE_CLASSES,
+            ),
         )
         .expect("write tracked policy");
         fs::write(
