@@ -13,9 +13,14 @@ use syn::{
 use super::acquire::CoreSource;
 use super::{ConfigInventoryEvidence, CoreEvidence, CoreFinding, CoreInputError, CoreObservation};
 
+const CONFIGURATION_ROOT: &str = "spice/src/config.rs";
+const CONFIGURATION_REGISTRY_MODULE: &str = "registry";
+const CONFIGURATION_REGISTRY: &str = "spice/src/config/registry.rs";
+
 /// Parsed production Rust sources shared by configuration inventory providers.
 pub(super) struct ConfigurationInventorySource {
     files: Vec<ParsedSource>,
+    spice_surface: bool,
 }
 
 struct ParsedSource {
@@ -26,10 +31,10 @@ struct ParsedSource {
 impl ConfigurationInventorySource {
     /// Parse every admitted production Rust source from the selected tree once.
     pub(super) fn capture(source: &CoreSource<'_>) -> Result<Self, CoreInputError> {
+        let entries = source.jurisdiction().entries();
+        let spice_surface = entries.iter().any(|entry| production_rust(entry.path()));
         let mut files = Vec::new();
-        for entry in source
-            .jurisdiction()
-            .entries()
+        for entry in entries
             .iter()
             .filter(|entry| entry.measurable() && production_rust(entry.path()))
         {
@@ -46,7 +51,10 @@ impl ConfigurationInventorySource {
             })?;
             files.push(ParsedSource { path, syntax });
         }
-        Ok(Self { files })
+        Ok(Self {
+            files,
+            spice_surface,
+        })
     }
 
     /// Gather false-default registry declarations and their typed consumers.
@@ -106,20 +114,66 @@ impl ConfigurationInventorySource {
     }
 
     fn registry_rows(&self) -> Result<Vec<RegistryRow>, CoreInputError> {
-        let mut rows = Vec::new();
-        for source in &self.files {
-            let mut visitor = DeclarationVisitor::default();
-            visitor.visit_file(&source.syntax);
-            if let Some(error) = visitor.error {
-                return Err(CoreInputError::new(format!(
-                    "configuration inventory cannot inspect {} registry: {error}",
-                    source.path
-                )));
-            }
-            rows.extend(visitor.rows);
+        if !self.spice_surface {
+            return Ok(Vec::new());
+        }
+        let root = self.required_source(CONFIGURATION_ROOT, "root")?;
+        let mut declarations = inspect_registry(root)?;
+        if declares_external_module(root, CONFIGURATION_REGISTRY_MODULE) {
+            let registry = self.required_source(CONFIGURATION_REGISTRY, "split module")?;
+            declarations.extend(inspect_registry(registry)?);
+        }
+        if declarations.is_empty() {
+            return Err(CoreInputError::new(format!(
+                "configuration inventory found no authoritative configuration_registry! \
+                 declaration in {CONFIGURATION_ROOT} or its declared registry module"
+            )));
+        }
+        if declarations.len() > 1 {
+            return Err(CoreInputError::new(format!(
+                "configuration inventory found multiple authoritative configuration_registry! \
+                 declarations in {CONFIGURATION_ROOT} and its declared registry module"
+            )));
+        }
+        let rows = declarations
+            .pop()
+            .expect("one authoritative registry declaration remains");
+        if rows.is_empty() {
+            return Err(CoreInputError::new(format!(
+                "configuration inventory authoritative configuration_registry! declaration in \
+                 {CONFIGURATION_ROOT} contains no rows"
+            )));
         }
         Ok(rows)
     }
+
+    fn required_source(&self, path: &str, role: &str) -> Result<&ParsedSource, CoreInputError> {
+        self.files
+            .iter()
+            .find(|source| source.path == path)
+            .ok_or_else(|| {
+                CoreInputError::new(format!(
+                    "configuration inventory authoritative {role} {path} is absent"
+                ))
+            })
+    }
+}
+
+fn inspect_registry(source: &ParsedSource) -> Result<Vec<Vec<RegistryRow>>, CoreInputError> {
+    let mut visitor = DeclarationVisitor::default();
+    visitor.visit_file(&source.syntax);
+    visitor.error.map_or(Ok(visitor.declarations), |error| {
+        Err(CoreInputError::new(format!(
+            "configuration inventory cannot inspect {} registry: {error}",
+            source.path
+        )))
+    })
+}
+
+fn declares_external_module(source: &ParsedSource, name: &str) -> bool {
+    source.syntax.items.iter().any(|item| {
+        matches!(item, Item::Mod(module) if module.ident == name && module.content.is_none())
+    })
 }
 
 fn production_rust(path: &str) -> bool {
@@ -131,7 +185,7 @@ fn production_rust(path: &str) -> bool {
 
 #[derive(Default)]
 struct DeclarationVisitor {
-    rows: Vec<RegistryRow>,
+    declarations: Vec<Vec<RegistryRow>>,
     error: Option<syn::Error>,
 }
 
@@ -146,7 +200,7 @@ impl<'ast> Visit<'ast> for DeclarationVisitor {
                 .is_some_and(|segment| segment.ident == "configuration_registry")
         {
             match syn::parse2::<RegistryRows>(node.mac.tokens.clone()) {
-                Ok(rows) => self.rows.extend(rows.0),
+                Ok(rows) => self.declarations.push(rows.0),
                 Err(error) => self.error = Some(error),
             }
         }

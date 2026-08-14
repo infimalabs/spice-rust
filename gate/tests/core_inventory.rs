@@ -2,8 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use gate::{
-    ActorCapture, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence, CoreArmReport,
-    CoreEvidence, CoreFinding, CoreObservation, CoreStanding, GateId,
+    ActorCapture, BatteryCapture, BatteryState, ClaimCapture, ConfigInventoryEvidence,
+    ConfigKeyEvidence, CoreArmReport, CoreEvidence, CoreFinding, CoreObservation, CoreStanding,
+    GateId, HygieneConfiguration, RimCapture, Selector,
 };
 
 mod support;
@@ -398,6 +399,7 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
             .unwrap_or_else(|error| panic!("read current {path}: {error}"));
         repository.write(path, &source);
     }
+    write_registry_decoy(&repository);
     git_commit(&repository, "current false-disable sources");
 
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
@@ -508,6 +510,7 @@ fn tracked_trust_inventory_passes_when_every_policy_source_is_tracked() {
             .unwrap_or_else(|error| panic!("read current configuration registry {path}: {error}"));
         repository.write(path, &config);
     }
+    write_registry_decoy(&repository);
     git_commit(&repository, "current tracked-trust registry");
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigTrackedTrust);
@@ -529,6 +532,129 @@ fn tracked_trust_inventory_passes_when_every_policy_source_is_tracked() {
     assert_eq!(arm.standing(), CoreStanding::Passed);
 
     repository.remove();
+}
+
+#[test]
+fn focused_inventories_refuse_a_missing_authoritative_registry_despite_a_decoy() {
+    let repository = contract_repository("core-configuration-registry-missing");
+    write_registry_decoy(&repository);
+    git_commit(&repository, "missing authoritative configuration registry");
+
+    for gate_id in [GateId::ConfigFalseDisable, GateId::ConfigTrackedTrust] {
+        let result = focused_inventory_result(&repository, gate_id);
+        assert!(
+            !result.state().admits(),
+            "{gate_id} admitted the absent authoritative registry"
+        );
+        assert!(
+            result
+                .reason()
+                .contains("authoritative root spice/src/config.rs is absent"),
+            "{gate_id} did not name the absent registry: {}",
+            result.reason()
+        );
+    }
+
+    repository.remove();
+}
+
+#[test]
+fn focused_inventories_use_the_declared_split_registry_and_ignore_a_decoy() {
+    let repository = contract_repository("core-configuration-registry-split");
+    repository.write("spice/src/config.rs", "mod registry;\npub struct Root;\n");
+    repository.write(
+        "spice/src/config/registry.rs",
+        &false_disable_registry(&["vendor.codex.fast_mode"]),
+    );
+    repository.write(
+        "spice/src/consumer.rs",
+        concat!(
+            "use crate::config::Root;\n",
+            "fn consume(root: &Root) -> bool {\n",
+            "    root.vendor().codex().fast_mode()\n",
+            "}\n",
+        ),
+    );
+    write_registry_decoy(&repository);
+    git_commit(&repository, "split authoritative registry with decoy");
+
+    for gate_id in [GateId::ConfigFalseDisable, GateId::ConfigTrackedTrust] {
+        let result = focused_inventory_result(&repository, gate_id);
+        assert_eq!(
+            result.state(),
+            BatteryState::Passed,
+            "{gate_id} did not use only the declared split registry: {}",
+            result.reason()
+        );
+    }
+
+    repository.remove();
+}
+
+#[test]
+fn focused_inventories_refuse_a_declared_but_missing_split_registry_module() {
+    let repository = contract_repository("core-configuration-registry-split-missing");
+    repository.write("spice/src/config.rs", "mod registry;\npub struct Root;\n");
+    git_commit(&repository, "missing declared split registry module");
+
+    for gate_id in [GateId::ConfigFalseDisable, GateId::ConfigTrackedTrust] {
+        let result = focused_inventory_result(&repository, gate_id);
+        assert!(!result.state().admits());
+        assert!(
+            result
+                .reason()
+                .contains("authoritative split module spice/src/config/registry.rs is absent"),
+            "{gate_id} did not name the missing split registry: {}",
+            result.reason()
+        );
+    }
+
+    repository.remove();
+}
+
+fn focused_inventory_result(repository: &Tree, gate_id: GateId) -> gate::BatteryArmResult {
+    let mut capture = BatteryCapture::capture_arm(
+        &repository.root,
+        &Selector::staged(),
+        ClaimCapture::Idle,
+        ActorCapture::Acting {
+            actor: "configuration-inventory-fixture".to_owned(),
+            bound_claims: Vec::new(),
+        },
+        RimCapture::new(&repository.root, None, Vec::new())
+            .expect("fixture repository root is absolute"),
+        HygieneConfiguration::current(),
+        gate_id,
+    )
+    .unwrap_or_else(|error| panic!("capture focused {gate_id}: {error}"));
+    capture
+        .execute_arm(gate_id)
+        .unwrap_or_else(|error| panic!("execute focused {gate_id}: {error}"))
+}
+
+fn write_registry_decoy(repository: &Tree) {
+    repository.write(
+        "spice/src/registry_decoy.rs",
+        concat!(
+            "macro_rules! configuration_registry { ($($tokens:tt)*) => {}; }\n",
+            "configuration_registry! {\n",
+            "    fixed \"vendor.codex.fast_mode\" {\n",
+            "        kind: Boolean,\n",
+            "        builtin: Some(Builtin::Boolean(false)),\n",
+            "        layers: LOCAL,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "    fixed \"decoy.enabled\" {\n",
+            "        kind: Boolean,\n",
+            "        builtin: Some(Builtin::Boolean(false)),\n",
+            "        layers: TRACKED,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "}\n",
+        ),
+    );
 }
 
 fn untracked_trust_repository(label: &str) -> Tree {
