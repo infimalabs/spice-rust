@@ -39,12 +39,16 @@ impl Repository {
     }
 
     fn git(&self, arguments: &[&str]) -> String {
+        self.git_at(&self.root, arguments)
+    }
+
+    fn git_at(&self, directory: &Path, arguments: &[&str]) -> String {
         let _fixture_git_guard = FIXTURE_GIT_BARRIER
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let output = Command::new("/usr/bin/git")
             .args(arguments)
-            .current_dir(&self.root)
+            .current_dir(directory)
             .env_clear()
             .env("HOME", &self.root)
             .output()
@@ -189,6 +193,59 @@ fn retained_staged_seal_detects_replacement_after_materialization() {
 }
 
 #[test]
+fn linked_peer_ref_traffic_preserves_hook_and_verifier_staged_source_validation() {
+    let repository = Repository::new("linked-peer-ref-traffic");
+    repository.write("selected.txt", b"first\n");
+    repository.commit("selected base");
+    let linked = repository.root.with_file_name(format!(
+        "{}-peer",
+        repository
+            .root
+            .file_name()
+            .expect("repository has a file name")
+            .to_string_lossy()
+    ));
+    let linked_text = linked.to_str().expect("fixture path is Unicode");
+    repository.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "peer-traffic",
+        linked_text,
+        "HEAD",
+    ]);
+    repository.write("selected.txt", b"staged\n");
+    repository.git(&["add", "selected.txt"]);
+
+    let selected = Selector::staged()
+        .materialize_with(&repository.root, |_| {
+            repository.git_at(
+                &linked,
+                &["commit", "--allow-empty", "-q", "-m", "capture traffic"],
+            );
+            repository.git_at(&linked, &["pack-refs", "--all", "--no-prune"]);
+        })
+        .expect("pre-commit source validation ignores unrelated peer refs");
+    assert_eq!(
+        fs::read(selected.root().join("selected.txt")).expect("read staged source"),
+        b"staged\n"
+    );
+
+    repository.git_at(
+        &linked,
+        &["commit", "--allow-empty", "-q", "-m", "verifier traffic"],
+    );
+    repository.git_at(&linked, &["pack-refs", "--all", "--no-prune"]);
+    selected
+        .verify_source()
+        .expect("verifier source validation ignores unrelated peer refs");
+
+    drop(selected);
+    repository.git(&["worktree", "remove", "--force", linked_text]);
+}
+
+#[test]
 fn an_index_swap_and_restore_before_decode_is_refused_without_a_partial_root() {
     let repository = Repository::new("index-swap-restore");
     repository.write("selected.txt", b"first\n");
@@ -235,9 +292,78 @@ fn a_branch_move_after_capture_refuses_the_captured_commit() {
         })
         .expect_err("a moving branch must refuse the selection");
 
+    assert!(
+        matches!(
+            refused,
+            TreeError::RevisionChanged { ref revision } if revision == "main"
+        ),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_selected_packed_ref_move_after_capture_is_refused() {
+    let repository = Repository::new("moving-packed-revision");
+    repository.write("selected.txt", b"first\n");
+    let first = repository.commit("first");
+    repository.write("selected.txt", b"second\n");
+    repository.commit("second");
+    repository.git(&["pack-refs", "--all", "--prune"]);
+
+    let refused = Selector::revision("main")
+        .materialize_with(&repository.root, |_| {
+            repository.git(&["update-ref", "refs/heads/main", &first]);
+        })
+        .expect_err("movement of the selected packed ref must refuse");
+
+    assert!(
+        matches!(
+            refused,
+            TreeError::RevisionChanged { ref revision } if revision == "main"
+        ),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn symbolic_head_movement_after_capture_is_refused() {
+    let repository = Repository::new("moving-symbolic-head");
+    repository.write("selected.txt", b"selected\n");
+    repository.commit("selected");
+    repository.git(&["branch", "other"]);
+
+    let refused = Selector::staged()
+        .materialize_with(&repository.root, |_| {
+            repository.git(&["symbolic-ref", "HEAD", "refs/heads/other"]);
+        })
+        .expect_err("movement of symbolic HEAD must refuse");
+
     assert!(matches!(
         refused,
-        TreeError::RevisionChanged { revision } if revision == "main"
+        TreeError::RevisionChanged { revision } if revision == "HEAD"
+    ));
+}
+
+#[test]
+fn shallow_boundary_movement_after_capture_is_refused() {
+    let repository = Repository::new("moving-shallow-boundary");
+    repository.write("selected.txt", b"first\n");
+    let first = repository.commit("first");
+    repository.write("selected.txt", b"second\n");
+    let second = repository.commit("second");
+    fs::write(repository.root.join(".git/shallow"), format!("{first}\n"))
+        .expect("publish a shallow boundary");
+
+    let refused = Selector::revision("HEAD")
+        .materialize_with(&repository.root, |_| {
+            fs::write(repository.root.join(".git/shallow"), format!("{second}\n"))
+                .expect("move the shallow boundary");
+        })
+        .expect_err("movement of the shallow boundary must refuse");
+
+    assert!(matches!(
+        refused,
+        TreeError::RevisionChanged { revision } if revision == "HEAD"
     ));
 }
 
@@ -256,10 +382,13 @@ fn a_ref_swap_and_restore_before_resolution_is_refused() {
         })
         .expect_err("a transient ref replacement must be named");
 
-    assert!(matches!(
-        refused,
-        TreeError::RevisionChanged { revision } if revision == "main"
-    ));
+    assert!(
+        matches!(
+            refused,
+            TreeError::RevisionChanged { ref revision } if revision == "main"
+        ),
+        "{refused:?}"
+    );
 }
 
 #[test]
@@ -340,6 +469,13 @@ fn packed_refs_reflogs_pseudorefs_and_ancestry_resolve_from_the_capture() {
     let reflog = Selector::revision("HEAD@{1}")
         .materialize(&repository.root)
         .expect("resolve the captured reflog");
+    repository.git(&["checkout", "-q", "-b", "global-search", &first]);
+    repository.write("selected.txt", b"global\n");
+    repository.commit("captured global needle");
+    repository.git(&["checkout", "-q", "main"]);
+    let global = Selector::revision(":/captured global needle")
+        .materialize(&repository.root)
+        .expect("resolve a global revision search from captured references");
     fs::write(
         repository.root.join(".git/MERGE_HEAD"),
         format!("{first}\n"),
@@ -362,6 +498,10 @@ fn packed_refs_reflogs_pseudorefs_and_ancestry_resolve_from_the_capture() {
     assert_eq!(
         fs::read(packed.root().join("selected.txt")).expect("read the packed revision"),
         b"second\n"
+    );
+    assert_eq!(
+        fs::read(global.root().join("selected.txt")).expect("read the global revision"),
+        b"global\n"
     );
 }
 

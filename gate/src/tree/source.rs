@@ -13,8 +13,8 @@ use std::os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _};
 use std::time::SystemTime;
 
 use super::{
-    TreeError, create_private_directory_tree, create_private_workspace, normalized_path,
-    open_repository, resolve_revision, write_private_source,
+    TreeError, create_private_directory_tree, create_private_workspace, open_repository,
+    resolve_revision, revision_spec, write_private_source,
 };
 
 pub(super) fn head_seal(repo: &gix::Repository) -> Result<Option<RevisionSeal>, TreeError> {
@@ -75,7 +75,6 @@ pub(super) struct IndexSeal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IndexSnapshot {
     files: Vec<ObservedFile>,
-    directory: ObservedDirectory,
 }
 
 impl IndexSeal {
@@ -175,9 +174,7 @@ impl IndexSnapshot {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let directory = observed_directory(&directory)
-            .map_err(|source| TreeError::io("capturing the index directory", &directory, source))?;
-        Ok(Self { files, directory })
+        Ok(Self { files })
     }
 
     fn open(
@@ -362,6 +359,7 @@ impl RevisionSeal {
         {
             return Ok(Self::ObjectId(id));
         }
+        resolve_revision(repo, revision)?;
         let first = RevisionMetadata::capture_once(repo, revision).map_err(|source| {
             TreeError::io("capturing revision sources", repo.git_dir(), source)
         })?;
@@ -393,14 +391,16 @@ impl RevisionSeal {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RevisionMetadata {
+    resolved: gix::ObjectId,
     files: Vec<CapturedRevisionFile>,
-    directories: Vec<CapturedRevisionDirectory>,
+    packed_refs: Vec<gix::refs::Reference>,
     linked: bool,
 }
 
 impl RevisionMetadata {
     fn capture_once(repo: &gix::Repository, revision: &str) -> io::Result<Self> {
-        let (file_paths, directory_paths) = revision_source_paths(repo, revision)?;
+        let resolved = resolve_revision(repo, revision).map_err(io::Error::other)?;
+        let (file_paths, packed_refs) = revision_source_paths(repo, revision)?;
         let files = file_paths
             .into_iter()
             .map(|source| {
@@ -408,17 +408,10 @@ impl RevisionMetadata {
                 observed_file(&path).map(|observed| CapturedRevisionFile { source, observed })
             })
             .collect::<io::Result<Vec<_>>>()?;
-        let directories = directory_paths
-            .into_iter()
-            .map(|source| {
-                let path = revision_source_path(repo, &source);
-                observed_directory(&path)
-                    .map(|observed| CapturedRevisionDirectory { source, observed })
-            })
-            .collect::<io::Result<Vec<_>>>()?;
         Ok(Self {
+            resolved,
             files,
-            directories,
+            packed_refs,
             linked: repo.common_dir() != repo.git_dir(),
         })
     }
@@ -473,12 +466,32 @@ impl RevisionMetadata {
                 &file.observed.bytes,
             )?;
         }
+        if !git.join("HEAD").exists() {
+            write_private_source(
+                &source,
+                &git.join("HEAD"),
+                b"ref: refs/heads/spice-captured-source\n",
+            )?;
+        }
+        if !self.packed_refs.is_empty() {
+            write_private_source(
+                &source,
+                &common.join("packed-refs"),
+                &packed_reference_bytes(&self.packed_refs)?,
+            )?;
+        }
 
         let snapshot = open_repository(&git).map_err(|error| TreeError::RevisionUnresolved {
             revision: revision.to_owned(),
             evidence: error.to_string(),
         })?;
-        resolve_revision(&snapshot, revision)
+        let resolved = resolve_revision(&snapshot, revision)?;
+        if resolved != self.resolved {
+            return Err(TreeError::RevisionChanged {
+                revision: revision.to_owned(),
+            });
+        }
+        Ok(resolved)
     }
 }
 
@@ -500,105 +513,98 @@ struct CapturedRevisionFile {
     observed: ObservedFile,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CapturedRevisionDirectory {
-    source: RevisionSourcePath,
-    observed: ObservedDirectory,
-}
-
 fn revision_source_paths(
     repo: &gix::Repository,
     revision: &str,
-) -> io::Result<(BTreeSet<RevisionSourcePath>, BTreeSet<RevisionSourcePath>)> {
-    let linked = repo.common_dir() != repo.git_dir();
-    let worktree_area = if linked {
-        RevisionArea::Worktree
-    } else {
-        RevisionArea::Common
-    };
+) -> io::Result<(BTreeSet<RevisionSourcePath>, Vec<gix::refs::Reference>)> {
     let mut files = BTreeSet::new();
-    let mut directories = BTreeSet::new();
-    directories.insert(RevisionSourcePath {
-        area: worktree_area,
-        relative: PathBuf::new(),
-    });
-    directories.insert(RevisionSourcePath {
-        area: RevisionArea::Common,
-        relative: PathBuf::new(),
-    });
-    files.insert(RevisionSourcePath {
-        area: worktree_area,
-        relative: PathBuf::from("HEAD"),
-    });
-    if linked {
-        add_optional_revision_file(repo, RevisionArea::Common, Path::new("HEAD"), &mut files)?;
+    let mut packed_refs = BTreeSet::new();
+    for reference in revision_references(repo, revision)? {
+        let area = reference_area(repo, &reference.name);
+        if !add_optional_revision_file(repo, area, reference.name.to_path(), &mut files)? {
+            if reference.target.try_id().is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "symbolic revision source {} has no loose file",
+                        reference.name
+                    ),
+                ));
+            }
+            packed_refs.insert(reference.clone());
+        }
+        let log = Path::new("logs").join(reference.name.to_path());
+        add_optional_revision_file(repo, area, &log, &mut files)?;
     }
-    for area in [worktree_area, RevisionArea::Common] {
-        collect_revision_directory(repo, area, Path::new("refs"), &mut files, &mut directories)?;
-        collect_revision_directory(repo, area, Path::new("logs"), &mut files, &mut directories)?;
-        for relative in ["packed-refs", "shallow"] {
-            add_optional_revision_file(repo, area, Path::new(relative), &mut files)?;
+    add_optional_revision_file(repo, RevisionArea::Common, Path::new("shallow"), &mut files)?;
+    Ok((files, packed_refs.into_iter().collect()))
+}
+
+fn revision_references(
+    repo: &gix::Repository,
+    revision: &str,
+) -> io::Result<Vec<gix::refs::Reference>> {
+    let spec = revision_spec(repo, revision).map_err(io::Error::other)?;
+    let mut pending = spec
+        .first_reference()
+        .into_iter()
+        .chain(spec.second_reference())
+        .cloned()
+        .collect::<Vec<_>>();
+    if revision.starts_with(":/") {
+        let references = repo.references().map_err(io::Error::other)?;
+        for reference in references.all().map_err(io::Error::other)? {
+            pending.push(reference.map_err(io::Error::other)?.inner);
         }
     }
+    if revision_starts_from_head(revision) {
+        let head = repo.find_reference("HEAD").map_err(io::Error::other)?.inner;
+        pending.push(head);
+    }
 
+    let mut references = Vec::new();
+    while let Some(reference) = pending.pop() {
+        if references
+            .iter()
+            .any(|seen: &gix::refs::Reference| seen.name == reference.name)
+        {
+            continue;
+        }
+        if let Some(target) = reference.target.try_name() {
+            pending.push(
+                repo.find_reference(target.as_bstr())
+                    .map_err(io::Error::other)?
+                    .inner,
+            );
+        }
+        references.push(reference);
+    }
+    references.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(references)
+}
+
+fn revision_starts_from_head(revision: &str) -> bool {
     let atom_end = revision
         .char_indices()
         .find_map(|(index, character)| "~^:@".contains(character).then_some(index))
         .unwrap_or(revision.len());
-    let atom = &revision[..atom_end];
-    if normalized_path(atom.as_bytes()).is_ok() {
-        add_optional_revision_file(repo, worktree_area, Path::new(atom), &mut files)?;
-    }
-    Ok((files, directories))
+    matches!(&revision[..atom_end], "" | "HEAD" | "@")
 }
 
-fn collect_revision_directory(
-    repo: &gix::Repository,
-    area: RevisionArea,
-    relative: &Path,
-    files: &mut BTreeSet<RevisionSourcePath>,
-    directories: &mut BTreeSet<RevisionSourcePath>,
-) -> io::Result<()> {
-    let source = RevisionSourcePath {
-        area,
-        relative: relative.to_path_buf(),
-    };
-    let path = revision_source_path(repo, &source);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    if !metadata.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("revision source {} is not a directory", path.display()),
-        ));
+fn reference_area(repo: &gix::Repository, name: &gix::refs::FullName) -> RevisionArea {
+    if repo.common_dir() == repo.git_dir() {
+        return RevisionArea::Common;
     }
-    directories.insert(source);
-    for entry in fs::read_dir(&path)? {
-        let entry = entry?;
-        let child_relative = relative.join(entry.file_name());
-        let child = RevisionSourcePath {
-            area,
-            relative: child_relative.clone(),
-        };
-        let metadata = fs::symlink_metadata(entry.path())?;
-        if metadata.is_dir() {
-            collect_revision_directory(repo, area, &child_relative, files, directories)?;
-        } else if metadata.is_file() {
-            files.insert(child);
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "revision source {} is not a regular file",
-                    entry.path().display()
-                ),
-            ));
-        }
+    let path = name.to_path();
+    if !path.starts_with("refs")
+        || path.starts_with("refs/bisect")
+        || path.starts_with("refs/rewritten")
+        || path.starts_with("refs/worktree")
+    {
+        RevisionArea::Worktree
+    } else {
+        RevisionArea::Common
     }
-    Ok(())
 }
 
 fn add_optional_revision_file(
@@ -606,7 +612,7 @@ fn add_optional_revision_file(
     area: RevisionArea,
     relative: &Path,
     files: &mut BTreeSet<RevisionSourcePath>,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     let source = RevisionSourcePath {
         area,
         relative: relative.to_path_buf(),
@@ -615,15 +621,37 @@ fn add_optional_revision_file(
     match fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.is_file() => {
             files.insert(source);
-            Ok(())
+            Ok(true)
         }
         Ok(_) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("revision source {} is not a regular file", path.display()),
         )),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }
+}
+
+fn packed_reference_bytes(references: &[gix::refs::Reference]) -> Result<Vec<u8>, TreeError> {
+    let mut bytes = Vec::new();
+    for reference in references {
+        let Some(target) = reference.target.try_id() else {
+            return Err(TreeError::RevisionUnresolved {
+                revision: reference.name.to_string(),
+                evidence: "captured packed reference is symbolic".to_owned(),
+            });
+        };
+        bytes.extend_from_slice(target.to_string().as_bytes());
+        bytes.push(b' ');
+        bytes.extend_from_slice(reference.name.as_bstr());
+        bytes.push(b'\n');
+        if let Some(peeled) = reference.peeled {
+            bytes.push(b'^');
+            bytes.extend_from_slice(peeled.to_string().as_bytes());
+            bytes.push(b'\n');
+        }
+    }
+    Ok(bytes)
 }
 
 fn revision_source_path(repo: &gix::Repository, source: &RevisionSourcePath) -> PathBuf {
@@ -660,12 +688,6 @@ struct ObservedFile {
     bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ObservedDirectory {
-    path: PathBuf,
-    identity: FileIdentity,
-}
-
 fn observed_file(path: &Path) -> io::Result<ObservedFile> {
     let before = fs::symlink_metadata(path)?;
     if !before.is_file() {
@@ -698,20 +720,6 @@ fn observed_file(path: &Path) -> io::Result<ObservedFile> {
         path: path.to_path_buf(),
         identity: after,
         bytes,
-    })
-}
-
-fn observed_directory(path: &Path) -> io::Result<ObservedDirectory> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "source is not a directory",
-        ));
-    }
-    Ok(ObservedDirectory {
-        path: path.to_path_buf(),
-        identity: file_identity(&metadata),
     })
 }
 
