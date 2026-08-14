@@ -51,6 +51,11 @@ const SHELL: [GateId; 4] = [
 /// This is intentionally separate from [`super::select_change_gates`]: these
 /// path names describe this source repository and must never become packaged
 /// applicability for an installed appliance.
+///
+/// # Errors
+///
+/// Returns the exact staged path and classification failure for any authority,
+/// unknown class, or source outside the compiled current-source roots.
 pub fn select_current_source_change_gates(
     source: Digest,
     changed_sources: &[String],

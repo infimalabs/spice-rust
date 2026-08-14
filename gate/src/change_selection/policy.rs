@@ -51,6 +51,9 @@ pub struct ChangeSelectionPolicyInputs<'a> {
 }
 
 /// Validated repository-neutral policy used by packaged change selection.
+///
+/// Applicability bounds which local arms may be selected; it never authorizes
+/// an unclassified staged path to expand into the complete applicable set.
 #[derive(Clone, Debug)]
 pub struct ChangeSelectionPolicy {
     tracked_sources: Vec<String>,

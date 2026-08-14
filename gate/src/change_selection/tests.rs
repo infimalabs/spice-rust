@@ -363,6 +363,7 @@ fn current_source_override_retains_the_richer_workspace_selector() {
         .collect::<Vec<_>>(),
     );
     assert_eq!(report.applicable_gate_ids(), GateId::BATTERY);
+    assert_ne!(report.gate_ids(), report.applicable_gate_ids());
 }
 
 #[test]

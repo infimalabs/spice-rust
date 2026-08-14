@@ -190,7 +190,8 @@ absent generated paths exclude nothing, and absent test paths conservatively
 leave every Python path eligible for test policy. Unknown paths and changes to
 the tracked policy refuse before any selected arm or workspace test begins.
 The richer Spice-workspace selector remains a separate current-source entrypoint
-called explicitly by `cargo xtask verify-action selection`.
+called explicitly by `cargo xtask verify-action selection`; complete policy
+execution remains explicit through `verify-action battery` or the full verifier.
 
 ## Git hook selection
 

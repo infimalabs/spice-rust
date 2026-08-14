@@ -27,6 +27,16 @@ fn report_rejects_missing_and_source_mismatched_policy_evidence() {
 }
 
 #[test]
+fn ordinary_policy_wire_shape_rejects_removed_applicable_coverage() {
+    let error = serde_json::from_slice::<ChangePolicyReport>(
+        br#"{"coverage":"applicable","source":"removed","results":[]}"#,
+    )
+    .expect_err("ordinary policy evidence cannot retain applicable-wide execution");
+
+    assert!(error.to_string().contains("unknown variant `applicable`"));
+}
+
+#[test]
 fn malformed_staged_policy_refuses_before_any_compiled_inventory_is_selected() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
