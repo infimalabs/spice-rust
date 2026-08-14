@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use wire::Digest;
 
-use super::record::read_record;
+use super::record::{RefreshRecord, read_record_for_refresh};
 use super::{
     Asset, BINARY_PATH, EXECUTABLE_MODE, GIT_COMMIT_MESSAGE_PATH, GIT_PRE_COMMIT_PATH,
     GIT_REFERENCE_TRANSACTION_PATH, GeneratedImage, InstallError, InstallStatus, Repository,
@@ -19,6 +19,7 @@ pub enum ApplianceState {
     Current,
     MissingReceipt,
     StaleReceipt,
+    RepairableReceipt,
     MissingBinary,
     BinaryTampered,
     HookTampered,
@@ -34,6 +35,7 @@ impl ApplianceState {
             Self::Current => "current",
             Self::MissingReceipt => "missing-receipt",
             Self::StaleReceipt => "stale-receipt",
+            Self::RepairableReceipt => "repairable-receipt",
             Self::MissingBinary => "missing-binary",
             Self::BinaryTampered => "binary-tampered",
             Self::HookTampered => "hook-tampered",
@@ -114,22 +116,35 @@ pub fn audit_appliance(
         Ok(loaded) => loaded,
         Err(audit) => return Ok(audit),
     };
-    let record = loaded.record;
-    let receipt = record.plan_digest.clone();
-    if let Some(audit) =
-        receipt_state_audit(current_binary, &record, &installed, &preview, &receipt)
+    let receipt = loaded.receipt;
+    let repairable = loaded.refresh.is_repairable();
+    let record = &loaded.refresh.loaded().record;
+    if let Some(audit) = receipt_state_audit(current_binary, record, &installed, &preview, &receipt)
     {
         return Ok(audit);
     }
     if let Some(audit) = progress_audit(
         repository,
         current_binary,
-        &record,
+        record,
         &installed,
         &preview,
         &receipt,
     )? {
         return Ok(audit);
+    }
+    if repairable {
+        super::plan_from_refresh(repository, Some(current_binary), loaded.refresh)?;
+        return Ok(report(
+            ApplianceState::RepairableReceipt,
+            format!(
+                "installed-appliance receipt {receipt} can be forward repaired by an exact current-build install plan"
+            ),
+            Some(preview),
+            Some(receipt),
+            installed,
+            current_binary,
+        ));
     }
     let Some(binary) = record
         .plan
@@ -203,9 +218,28 @@ fn load_audit_record(
     current_binary: &Path,
     installed: &Path,
     preview: &str,
-) -> Result<Result<super::record::LoadedRecord, ApplianceAudit>, InstallError> {
-    match read_record(repository) {
-        Ok(Some(loaded)) => Ok(Ok(loaded)),
+) -> Result<Result<AuditLoadedRecord, ApplianceAudit>, InstallError> {
+    match read_record_for_refresh(repository) {
+        Ok(Some(RefreshRecord::Current(loaded))) => {
+            let receipt = loaded.record.plan_digest.clone();
+            Ok(Ok(AuditLoadedRecord {
+                refresh: RefreshRecord::Current(loaded),
+                receipt,
+            }))
+        }
+        Ok(Some(RefreshRecord::Repairable {
+            loaded,
+            original_digest,
+        })) => {
+            let receipt = original_digest.clone();
+            Ok(Ok(AuditLoadedRecord {
+                refresh: RefreshRecord::Repairable {
+                    loaded,
+                    original_digest,
+                },
+                receipt,
+            }))
+        }
         Ok(None) => Ok(Err(report(
             ApplianceState::MissingReceipt,
             "no installed-appliance receipt exists".to_owned(),
@@ -224,6 +258,11 @@ fn load_audit_record(
         ))),
         Err(error) => Err(error),
     }
+}
+
+struct AuditLoadedRecord {
+    refresh: RefreshRecord,
+    receipt: Digest,
 }
 
 fn progress_audit(

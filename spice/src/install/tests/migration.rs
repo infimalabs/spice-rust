@@ -23,12 +23,157 @@ fn version_7_upgrade_retires_legacy_runtime_after_publication_and_rolls_back_exa
     resume_and_reverse(fixture, &migration);
 }
 
+#[test]
+fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
+    let fixture = version_7_fixture();
+    let migration = preview_migration(&fixture);
+    let migrated = apply(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &migration.digest().unwrap(),
+    )
+    .expect("apply migration before publishing the pre-witness refresh");
+    assert_eq!(migrated.status(), InstallStatus::Complete);
+
+    let mut record = read_record(&fixture.repository)
+        .unwrap()
+        .expect("migrated receipt exists")
+        .record;
+    for retirement in &mut record.plan.retirements {
+        retirement.superseded = None;
+        retirement.rollback = None;
+    }
+    record.plan_digest = record
+        .plan
+        .digest()
+        .expect("pre-witness refresh has a coherent digest");
+    let pre_witness_digest = record.plan_digest.clone();
+    fs::write(
+        record_path(&fixture.repository).unwrap(),
+        wire::encode(&record).expect("encode pre-witness v8 receipt"),
+    )
+    .expect("publish pre-witness v8 receipt");
+
+    let strict = inspect(&fixture.repository).expect_err("strict inspection must still refuse");
+    assert_retirement_witness_refusal(&strict);
+    let reversal = unapply(&fixture.repository).expect_err("strict unapply must still refuse");
+    assert_retirement_witness_refusal(&reversal);
+
+    let before = installed_state(&fixture.repository, &migration);
+    let audit = audit_appliance(&fixture.repository, &fixture.binary)
+        .expect("audit classifies a bounded repairable receipt");
+    assert_eq!(audit.state(), ApplianceState::RepairableReceipt);
+    assert_eq!(audit.receipt(), Some(&pre_witness_digest));
+    assert!(
+        audit.detail().contains("can be forward repaired"),
+        "{audit:?}"
+    );
+    assert_eq!(installed_state(&fixture.repository, &migration), before);
+
+    let repair = plan(&fixture.repository, Some(&fixture.binary))
+        .expect("derive exact side-effect-free repair plan");
+    assert_ne!(repair.digest().unwrap(), pre_witness_digest);
+    assert!(repair.canonical_bytes().unwrap().len() < MAX_COMPACT_PLAN_BYTES);
+    let rollback = repair
+        .rollback_state()
+        .expect("decode repaired rollback archive")
+        .expect("repair retains rollback state");
+    assert!(
+        rollback
+            .retirements
+            .iter()
+            .zip(repair.retirements())
+            .all(|(image, retirement)| rollback_image_matches(
+                image.as_ref(),
+                retirement.rollback_witness()
+            ))
+    );
+    assert_eq!(installed_state(&fixture.repository, &migration), before);
+
+    let other = fixture
+        .scratch
+        .executable("build/other-spice", b"another current build");
+    let stale = apply(&fixture.repository, Some(&other), &repair.digest().unwrap())
+        .expect_err("a repair digest cannot authorize another build");
+    assert!(matches!(stale, InstallError::DigestMismatch { .. }));
+    assert_eq!(installed_state(&fixture.repository, &migration), before);
+
+    let interrupted = apply_with_interruption(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &repair.digest().unwrap(),
+        Some(0),
+    )
+    .expect_err("interrupt the exact repair after its first publication");
+    assert!(matches!(
+        interrupted,
+        InstallError::Interrupted { operation: 0 }
+    ));
+    assert_eq!(
+        inspect(&fixture.repository)
+            .expect("inspect interrupted repair")
+            .expect("interrupted repair receipt exists")
+            .status(),
+        InstallStatus::Applying
+    );
+    let repaired = apply(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &repair.digest().unwrap(),
+    )
+    .expect("resume the exact repair plan");
+    assert_eq!(repaired.status(), InstallStatus::Complete);
+    assert!(
+        audit_appliance(&fixture.repository, &fixture.binary)
+            .expect("audit repaired appliance")
+            .is_current()
+    );
+    assert_eq!(
+        inspect(&fixture.repository)
+            .expect("inspect repaired receipt")
+            .expect("repaired receipt exists")
+            .status(),
+        InstallStatus::Complete
+    );
+
+    let refresh = plan(&fixture.repository, Some(&other))
+        .expect("derive a normal refresh after the forward repair");
+    let rollback = refresh
+        .rollback_state()
+        .expect("decode refreshed rollback archive")
+        .expect("refresh retains rollback state");
+    assert!(
+        rollback
+            .retirements
+            .iter()
+            .zip(refresh.retirements())
+            .all(|(image, retirement)| {
+                retirement.superseded.is_none()
+                    && rollback_image_matches(image.as_ref(), retirement.rollback_witness())
+            })
+    );
+    assert!(refresh.canonical_bytes().unwrap().len() < MAX_COMPACT_PLAN_BYTES);
+    apply(
+        &fixture.repository,
+        Some(&other),
+        &refresh.digest().unwrap(),
+    )
+    .expect("apply a normal refresh after the forward repair");
+    assert!(
+        audit_appliance(&fixture.repository, &other)
+            .expect("audit refreshed repaired appliance")
+            .is_current()
+    );
+    reverse_and_assert_version_7(&fixture);
+}
+
 #[derive(Clone, Copy, Debug)]
 enum RetirementTamper {
     Bytes,
     Mode,
     Removed,
     Invented,
+    Witness,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -46,6 +191,7 @@ fn resealed_retirement_images_must_match_their_exact_plan_witnesses() {
         RetirementTamper::Mode,
         RetirementTamper::Removed,
         RetirementTamper::Invented,
+        RetirementTamper::Witness,
     ] {
         retirement_tamper_refuses_inertly(tamper);
     }
@@ -95,6 +241,11 @@ fn retirement_tamper_refuses_inertly(tamper: RetirementTamper) {
             assert!(record.plan.retirements[1].superseded.is_none());
             assert!(rollback.retirements[1].is_none());
             rollback.retirements[1] = Some(FileImage::new(DATA_MODE, b"invented\n".to_vec()));
+        }
+        RetirementTamper::Witness => {
+            assert!(record.plan.retirements[0].superseded.is_some());
+            record.plan.retirements[0].rollback =
+                Some(GeneratedImage::new(DATA_MODE, b"conflicting witness\n"));
         }
     }
     record.plan.rollback_archive =
@@ -294,6 +445,14 @@ fn resume_and_reverse(fixture: MigrationFixture, migration: &InstallPlan) {
             .is_current()
     );
 
+    reverse_and_assert_version_7(&fixture);
+    assert_eq!(
+        images(&fixture.repository, &fixture.prior.plan),
+        fixture.prior_assets
+    );
+}
+
+fn reverse_and_assert_version_7(fixture: &MigrationFixture) {
     let rolled_back = unapply(&fixture.repository).expect("reverse migration");
     assert_eq!(rolled_back.status(), InstallStatus::Uninstalled);
     assert_eq!(
@@ -307,8 +466,15 @@ fn resume_and_reverse(fixture: MigrationFixture, migration: &InstallPlan) {
     );
     assert_eq!(mode(&fixture.legacy_guard), DATA_MODE);
     assert_eq!(
-        images(&fixture.repository, &fixture.prior.plan),
-        fixture.prior_assets
+        images(&fixture.repository, &fixture.prior.plan)
+            .into_iter()
+            .map(|observed| observed.map(|observed| observed.image))
+            .collect::<Vec<_>>(),
+        fixture
+            .prior_assets
+            .iter()
+            .map(|observed| observed.as_ref().map(|observed| observed.image.clone()))
+            .collect::<Vec<_>>()
     );
     assert_eq!(
         git_values(

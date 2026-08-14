@@ -1,4 +1,7 @@
-use super::record::{InstallRecord, LoadedRecord, write_initial_record, write_record};
+use super::record::{
+    InstallRecord, LoadedRecord, RefreshRecord, read_record_for_refresh, write_initial_record,
+    write_record,
+};
 use super::*;
 
 pub(super) fn apply_with_interruption(
@@ -112,7 +115,7 @@ fn prepare_apply(
     spice_binary: Option<&Path>,
     expected: &Digest,
 ) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
-    match read_record(repository)? {
+    match read_record_for_refresh(repository)? {
         Some(loaded) => prepare_loaded(repository, spice_binary, expected, loaded),
         None => {
             let plan = build_plan(repository, spice_binary)?;
@@ -126,8 +129,10 @@ fn prepare_loaded(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
-    loaded: LoadedRecord,
+    refresh: RefreshRecord,
 ) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
+    let repairable = matches!(refresh, RefreshRecord::Repairable { .. });
+    let loaded = refresh.into_loaded();
     let LoadedRecord {
         record,
         generation,
@@ -137,7 +142,7 @@ fn prepare_loaded(
         return prepare_reinstall(repository, spice_binary, expected, generation, record);
     }
     if record.status == InstallStatus::Complete
-        && refresh_required(repository, &record.plan, spice_binary)?
+        && (repairable || refresh_required(repository, &record.plan, spice_binary)?)
     {
         return prepare_refresh(
             repository,

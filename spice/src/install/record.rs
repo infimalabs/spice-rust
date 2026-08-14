@@ -37,6 +37,32 @@ pub(super) struct LoadedRecord {
     pub(super) image: Option<FileImage>,
 }
 
+pub(super) enum RefreshRecord {
+    Current(LoadedRecord),
+    Repairable {
+        loaded: LoadedRecord,
+        original_digest: Digest,
+    },
+}
+
+impl RefreshRecord {
+    pub(super) const fn is_repairable(&self) -> bool {
+        matches!(self, Self::Repairable { .. })
+    }
+
+    pub(super) const fn loaded(&self) -> &LoadedRecord {
+        match self {
+            Self::Current(loaded) | Self::Repairable { loaded, .. } => loaded,
+        }
+    }
+
+    pub(super) fn into_loaded(self) -> LoadedRecord {
+        match self {
+            Self::Current(loaded) | Self::Repairable { loaded, .. } => loaded,
+        }
+    }
+}
+
 impl InstallRecord {
     pub(super) fn new(plan: InstallPlan) -> Result<Self, InstallError> {
         let plan_digest = plan.digest()?;
@@ -141,6 +167,10 @@ impl InstallRecord {
         } else {
             self.plan.validate()?;
         }
+        self.validate_plan_closure()
+    }
+
+    fn validate_plan_closure(&self) -> Result<(), InstallError> {
         if self.repository != self.plan.repository {
             return Err(InstallError::InvalidRecord(
                 "install record repository does not close over its plan".to_owned(),
@@ -174,6 +204,48 @@ impl InstallRecord {
             ));
         }
         Ok(())
+    }
+
+    /// Reconstruct only the exact witness-free v8 refresh shape emitted before
+    /// retirement archives became witness-bound. The original authored digest
+    /// remains the audit identity; the reconstructed plan must be previewed and
+    /// separately authorized before any durable receipt is replaced.
+    fn repair_missing_retirement_witnesses(&mut self) -> Result<Digest, InstallError> {
+        let original_digest = self.plan_digest.clone();
+        if self.version != RECORD_VERSION
+            || self.plan.version != super::PLAN_VERSION
+            || self.status != InstallStatus::Complete
+            || super::binary_operation(&self.plan).is_none()
+            || self.plan.rollback_archive.is_none()
+            || self.plan.retirements.is_empty()
+        {
+            return Err(retirement_witness_mismatch());
+        }
+        self.validate_plan_closure()?;
+        self.validate_progress_content()?;
+        if self.plan.retirements.iter().any(|retirement| {
+            retirement.previous.is_some()
+                || retirement.observed.is_some()
+                || retirement.superseded.is_some()
+                || retirement.rollback.is_some()
+        }) {
+            return Err(retirement_witness_mismatch());
+        }
+        let rollback = self
+            .plan
+            .rollback_state()?
+            .ok_or_else(retirement_witness_mismatch)?;
+        if rollback.retirements.len() != self.plan.retirements.len() {
+            return Err(InstallError::InvalidRecord(
+                "migration rollback archive has the wrong image inventory length".to_owned(),
+            ));
+        }
+        for (retirement, image) in self.plan.retirements.iter_mut().zip(&rollback.retirements) {
+            retirement.rollback = image.as_ref().map(FileImage::generated);
+        }
+        self.plan_digest = self.plan.digest()?;
+        self.validate_loaded()?;
+        Ok(original_digest)
     }
 
     fn validate_progress_content(&self) -> Result<(), InstallError> {
@@ -288,6 +360,34 @@ impl InstallRecord {
 }
 
 pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
+    let Some(mut loaded) = decode_record(repository)? else {
+        return Ok(None);
+    };
+    finish_loaded_record(repository, &mut loaded)?;
+    Ok(Some(loaded))
+}
+
+pub(super) fn read_record_for_refresh(
+    repository: &Repository,
+) -> Result<Option<RefreshRecord>, InstallError> {
+    let Some(mut loaded) = decode_record(repository)? else {
+        return Ok(None);
+    };
+    match finish_loaded_record(repository, &mut loaded) {
+        Ok(()) => Ok(Some(RefreshRecord::Current(loaded))),
+        Err(error) if is_retirement_witness_mismatch(&error) => {
+            let original_digest = loaded.record.repair_missing_retirement_witnesses()?;
+            finish_loaded_record(repository, &mut loaded)?;
+            Ok(Some(RefreshRecord::Repairable {
+                loaded,
+                original_digest,
+            }))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
     record_path(repository)?;
     let binding = bind_destination(repository.common_dir(), RECORD_PATH)?;
     let (observed, _) = observe_bound(
@@ -300,7 +400,7 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
     };
     let generation = observed.generation;
     let image = observed.image;
-    let mut record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
+    let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
     if let Some((_, owner)) = LEGACY_RECORD_VERSIONS
         .iter()
         .find(|(version, _)| *version == record.version)
@@ -316,17 +416,36 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
             "install record is not canonical".to_owned(),
         ));
     }
-    record.validate_loaded()?;
+    Ok(Some(LoadedRecord {
+        record,
+        generation,
+        image: Some(image),
+    }))
+}
+
+fn finish_loaded_record(
+    repository: &Repository,
+    loaded: &mut LoadedRecord,
+) -> Result<(), InstallError> {
+    loaded.record.validate_loaded()?;
+    let record = &mut loaded.record;
     if record.repository.common_git != repository.common_dir() {
         record.rebase_repository(repository)?;
     }
     record.validate_loaded_for_repository(repository)?;
-    let image = (record.version == super::MIGRATABLE_RECORD_VERSION).then_some(image);
-    Ok(Some(LoadedRecord {
-        record,
-        generation,
-        image,
-    }))
+    if record.version != super::MIGRATABLE_RECORD_VERSION {
+        loaded.image = None;
+    }
+    Ok(())
+}
+
+fn is_retirement_witness_mismatch(error: &InstallError) -> bool {
+    matches!(error, InstallError::InvalidRecord(detail)
+        if detail == super::RETIREMENT_WITNESS_MISMATCH)
+}
+
+fn retirement_witness_mismatch() -> InstallError {
+    InstallError::InvalidRecord(super::RETIREMENT_WITNESS_MISMATCH.to_owned())
 }
 
 pub(super) fn decode_rollback_record(
