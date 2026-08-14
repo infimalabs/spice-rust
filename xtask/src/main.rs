@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Read, Write as _};
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -19,7 +19,7 @@ const USAGE: &str = concat!(
     "[--free-space-floor BYTES] [--retain-live-worktrees N]|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "stage-target TARGET|",
-    "commit-msg MESSAGE_FILE|reference-transaction STATE>"
+    "commit-msg MESSAGE_FILE>"
 );
 
 fn help() -> String {
@@ -87,12 +87,6 @@ fn main() -> ExitCode {
         }
         Some(value) if is_exact_command(value, "commit-msg", arguments.len(), 1) => {
             run_commit_message_command(arguments.next())
-        }
-        Some(value) if is_exact_command(value, "reference-transaction", arguments.len(), 1) => {
-            let state = arguments
-                .next()
-                .expect("one reference-transaction state was admitted");
-            run_reference_transaction(&state)
         }
         _ => {
             eprintln!("{}", help());
@@ -223,14 +217,7 @@ fn run_gate(
 }
 
 fn run_activate_hooks(output: &mut impl io::Write) -> CommandResult {
-    // The executable published for the hooks to exec is this one. Cargo keeps
-    // it under a content-keyed directory, so this is the only moment its path
-    // is known to anything that could copy it.
-    env::current_exe()
-        .map_err(Into::into)
-        .and_then(|entry_point| {
-            xtask::activate_hooks(Path::new("."), &entry_point, output).map_err(Into::into)
-        })
+    xtask::activate_hooks(Path::new("."), output).map_err(Into::into)
 }
 
 fn run_build_cache(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
@@ -571,15 +558,6 @@ fn run_commit_message(path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
         path,
         resolved.root().policy().commit_message(),
     )?)
-}
-
-fn run_reference_transaction(state: &OsStr) -> Result<(), Box<dyn std::error::Error>> {
-    let mut input = String::new();
-    if state == OsStr::new("prepared") {
-        io::stdin().read_to_string(&mut input)?;
-    }
-    let repository = env::current_dir()?;
-    xtask::reference_transaction(&repository, state, &input).map_err(Into::into)
 }
 
 #[cfg(test)]
