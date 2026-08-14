@@ -128,21 +128,41 @@ pub(crate) fn pre_commit_worker_entry(
     arguments: impl Iterator<Item = std::ffi::OsString>,
 ) -> Option<i32> {
     let arguments = arguments.collect::<Vec<_>>();
-    let json_count = arguments
+    let has_json = arguments
         .iter()
         .skip(1)
-        .filter(|argument| argument.as_os_str() == std::ffi::OsStr::new("--json"))
-        .count();
-    let reference_arguments = (json_count <= 1).then(|| {
-        arguments
-            .iter()
-            .filter(|argument| argument.as_os_str() != std::ffi::OsStr::new("--json"))
-            .cloned()
-            .collect::<Vec<_>>()
-    });
+        .any(|argument| argument.as_os_str() == std::ffi::OsStr::new("--json"));
+    if !has_json && let Some(code) = reference_transaction::entry(arguments.iter().cloned()) {
+        return Some(code);
+    }
+    let reference_arguments = parser_admitted_json_reference_arguments(&arguments);
     reference_arguments
         .and_then(|arguments| reference_transaction::entry(arguments.into_iter()))
         .or_else(|| pre_commit::worker_entry(arguments.into_iter()))
+}
+
+fn parser_admitted_json_reference_arguments(
+    arguments: &[std::ffi::OsString],
+) -> Option<Vec<std::ffi::OsString>> {
+    let (program, operands) = arguments.split_first()?;
+    let normalized = std::iter::once(program.clone())
+        .chain(
+            operands
+                .iter()
+                .filter(|argument| argument.as_os_str() != std::ffi::OsStr::new("--json"))
+                .cloned(),
+        )
+        .collect::<Vec<_>>();
+    if normalized.get(1).map(std::ffi::OsString::as_os_str) != Some(std::ffi::OsStr::new("gate"))
+        || normalized.get(2).map(std::ffi::OsString::as_os_str)
+            != Some(std::ffi::OsStr::new("reference-transaction"))
+    {
+        return None;
+    }
+    crate::cli::command()
+        .try_get_matches_from(arguments.iter().cloned())
+        .ok()?;
+    Some(normalized)
 }
 
 /// Audit the compiled shared bound without changing a tracked floor.
