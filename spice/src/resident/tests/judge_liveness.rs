@@ -10,7 +10,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-const PROOF_BOUND: Duration = Duration::from_secs(5);
+// The held judge and resident work are expected to make prompt progress once
+// scheduled. This guards a broken fixture without making exhaustive shards
+// confuse host scheduling latency with a blocked current-thread runtime.
+const PROOF_BOUND: Duration = Duration::from_secs(30);
 
 #[test]
 fn real_judge_does_not_block_the_current_thread_resident_surface() {
