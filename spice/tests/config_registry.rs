@@ -25,6 +25,7 @@ pre_commit_builtins = false
 pre_commit = [
     { label = "Rust gate", run = ["gate/pre-commit", "--fixture"], scopes = { paths = ["src/**", "tests/**"] } },
 ]
+test_engines = ["cargo-workspace"]
 package_roots = ["src/fixture"]
 generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
@@ -506,6 +507,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "policy.pre_commit[].label",
     "policy.pre_commit[].run",
     "policy.pre_commit[].scopes.paths",
+    "policy.test_engines",
     "policy.commit_message.allowed_trailers",
     "policy.commit_message.blocked_trailers",
     "policy.repo_truth.docs",

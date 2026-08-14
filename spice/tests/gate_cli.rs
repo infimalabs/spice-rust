@@ -124,6 +124,7 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sou
     let report = selection_report(&known.progress);
     assert!(report.admits());
     assert_eq!(report.changed_sources(), &["src/lib.rs"]);
+    assert_eq!(report.engines(), &["cargo-workspace"]);
     assert_eq!(report.tests(), &["gate-fixture::lib:gate_fixture"]);
     assert_eq!(report.edges().len(), 1);
     assert_eq!(report.edges()[0].source(), "src/lib.rs");
@@ -131,6 +132,67 @@ fn commit_worker_executes_the_exact_staged_rust_target_and_escalates_unknown_sou
     assert_eq!(report.coverage(), &CoverageCompleteness::Complete);
 
     assert_unknown_source_escalates_to_applicable_inventory();
+}
+
+#[test]
+fn generic_repository_publishes_zero_engine_evidence_without_invoking_cargo() {
+    let repository = Scratch::new("generic-repository");
+    git(repository.path(), &["init", "-q"]);
+    git(
+        repository.path(),
+        &["config", "user.email", "generic@example.invalid"],
+    );
+    git(
+        repository.path(),
+        &["config", "user.name", "Generic Fixture"],
+    );
+    fs::write(
+        repository.path().join("README.md"),
+        "# Generic repository\n",
+    )
+    .expect("write generic repository source");
+    git(repository.path(), &["add", "README.md"]);
+    git(repository.path(), &["commit", "-qm", "fixture"]);
+    fs::write(
+        repository.path().join("README.md"),
+        "# Generic repository\n\nChanged documentation.\n",
+    )
+    .expect("modify generic repository source");
+    git(repository.path(), &["add", "README.md"]);
+
+    let programs = Scratch::new("generic-programs");
+    let cargo_marker = programs.path().join("cargo-invoked");
+    executable(
+        &programs.path().join("cargo"),
+        &format!(
+            "#!/bin/sh\nprintf invoked > '{}'\nexit 91\n",
+            cargo_marker.display(),
+        ),
+    );
+
+    let boundary = run_commit_worker_with_path(repository.path(), Some(programs.path()));
+    let Some((kind, document)) = boundary.terminal.split_first() else {
+        panic!("generic staged source produced no terminal record");
+    };
+    assert_eq!(
+        *kind, b'R',
+        "generic repository did not admit: {boundary:?}"
+    );
+    let change_report =
+        ChangeGateReport::decode(document).expect("generic terminal is a change-gate report");
+    let tests = selection_report(&boundary.progress);
+
+    assert_eq!(change_report.selection().source(), tests.source());
+    assert_eq!(change_report.tests(), &tests);
+    assert_eq!(tests.changed_sources(), &["README.md"]);
+    assert!(tests.engines().is_empty());
+    assert!(tests.tests().is_empty());
+    assert!(tests.edges().is_empty());
+    assert!(tests.admits());
+    assert!(
+        !cargo_marker.exists(),
+        "zero-engine generic policy invoked Cargo"
+    );
 }
 
 fn assert_unknown_source_escalates_to_applicable_inventory() {
@@ -194,6 +256,7 @@ fn assert_unknown_source_escalates_to_applicable_inventory() {
     assert_eq!(terminal_report, &progress_report);
     assert!(terminal_report.admits());
     assert_eq!(terminal_report.changed_sources(), &["assets/opaque.bin"]);
+    assert_eq!(terminal_report.engines(), &["cargo-workspace"]);
     assert_eq!(terminal_report.tests(), &["gate-fixture::lib:gate_fixture"]);
     assert_eq!(terminal_report.edges().len(), 1);
     assert_eq!(terminal_report.coverage(), &CoverageCompleteness::Complete);
@@ -352,17 +415,26 @@ struct WorkerBoundary {
 }
 
 fn run_commit_worker(root: &Path) -> WorkerBoundary {
+    run_commit_worker_with_path(root, None)
+}
+
+fn run_commit_worker_with_path(root: &Path, path: Option<&Path>) -> WorkerBoundary {
     let scratch = Scratch::new("commit-worker-boundary");
     let progress = scratch.path().join("progress.jsonl");
     let terminal = scratch.path().join("terminal.bin");
     fs::write(&progress, []).expect("create worker progress file");
     fs::write(&terminal, []).expect("create worker terminal file");
-    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
         .arg("__gate-pre-commit-worker")
         .arg(&progress)
         .arg(&terminal)
         .current_dir(root)
-        .env_remove(steer::hook::INBOX)
+        .env_remove(steer::hook::INBOX);
+    if let Some(path) = path {
+        command.env(PROCESS_PATH, path);
+    }
+    let output = command
         .output()
         .expect("launch normal commit worker boundary");
     assert!(
@@ -749,7 +821,10 @@ impl GateRepository {
         fs::create_dir_all(scratch.path().join("gate/src")).expect("create camp loci");
         fs::write(
             scratch.path().join("spice-rust.toml"),
-            format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
+            format!(
+                "{}[policy]\ntest_engines = [\"cargo-workspace\"]\n\n[gate.walk]\nskip = []\n",
+                gate::NARROWEST_FILE_CLASSES,
+            ),
         )
         .expect("write tracked policy");
         fs::write(

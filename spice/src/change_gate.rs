@@ -15,55 +15,20 @@ use gate::{
     ArmDisposition, ArmFamily, BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryArmResult, BatteryManifest,
     BatteryReport, BatteryState, ChangeSelectionMode, ChangeSelectionReport, FocusedArmReport,
     GateId, RepositoryExecutionEvent, Selector, StateRunScope, TestSelectionReport,
-    WORKSPACE_TEST_CONCURRENCY_CAP, WorkspaceTestRoots,
 };
 use serde::{Deserialize, Serialize};
 use sill::Environment;
 
 use crate::repository::Repository;
 
+mod progress;
+mod test_execution;
+
+use progress::{SharedProgress, publish_test_selection};
+use test_execution::{TestExecution, run_selected_tests};
+
 /// Current combined ordinary-change-gate report schema.
-pub const CHANGE_GATE_REPORT_VERSION: u64 = 3;
-
-struct SharedProgress<'a, W: Write + Send + ?Sized> {
-    inner: Arc<Mutex<&'a mut W>>,
-}
-
-impl<'a, W: Write + Send + ?Sized> SharedProgress<'a, W> {
-    fn new(progress: &'a mut W) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(progress)),
-        }
-    }
-
-    fn sink(&self) -> io::Result<std::sync::MutexGuard<'_, &'a mut W>> {
-        self.inner
-            .lock()
-            .map_err(|_| io::Error::other("change-gate progress lock was poisoned"))
-    }
-}
-
-impl<W: Write + Send + ?Sized> Clone for SharedProgress<'_, W> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
-}
-
-impl<W: Write + Send + ?Sized> Write for SharedProgress<'_, W> {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        self.sink()?.write(buffer)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.sink()?.flush()
-    }
-
-    fn write_fmt(&mut self, arguments: fmt::Arguments<'_>) -> io::Result<()> {
-        self.sink()?.write_fmt(arguments)
-    }
-}
+pub const CHANGE_GATE_REPORT_VERSION: u64 = 4;
 
 /// Policy evidence shaped to the selector's exact authority scope.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -429,7 +394,7 @@ impl ChangeGateReport {
         &self.selection
     }
 
-    /// Exact staged-build-source-to-test execution evidence.
+    /// Exact staged-source-to-test-engine execution evidence.
     #[must_use]
     pub const fn tests(&self) -> &TestSelectionReport {
         &self.tests
@@ -525,7 +490,7 @@ impl ChangeGateReport {
         {
             return Err(ChangeGateError::protocol(
                 "change-gate-exhaustive-test-incomplete",
-                "exhaustive policy selection requires test edges for every changed source",
+                "exhaustive policy selection requires test evidence for every changed source",
             ));
         }
         self.policy
@@ -539,14 +504,21 @@ struct ChangeGateExecution {
     writable_root: PathBuf,
     test_source: wire::Digest,
     test_changes: Vec<String>,
+    test_execution: TestExecution,
     environment: Environment,
+}
+
+struct PackagedPolicy {
+    selection: gate::ChangeSelectionPolicy,
+    test_engines: Vec<crate::config::TestEngine>,
 }
 
 /// Execute the ordinary staged-change gate without an ambient repository-wide selector.
 ///
 /// The staging arm owns the first immutable capture. Its exact changes feed the
-/// pure policy selector and canonical Cargo target reach. Every other selected
-/// arm is a focused canonical run whose source digest must match that capture.
+/// pure policy selector and every explicitly enabled packaged test engine.
+/// Every other selected arm is a focused canonical run whose source digest
+/// must match that capture.
 ///
 /// # Errors
 ///
@@ -579,36 +551,8 @@ fn run_with_selection(
 ) -> Result<ChangeGateReport, ChangeGateError> {
     let mut anchor = crate::gate::prepare_arm(Selector::staged(), GateId::Staging)
         .map_err(ChangeGateError::gate)?;
-    let selection = match surface {
-        SelectionSurface::Packaged => {
-            let policy = packaged_selection_policy(anchor.root(), anchor.paths())?;
-            gate::select_change_gates(anchor.source().clone(), anchor.changes(), &policy)
-        }
-        SelectionSurface::CurrentSource => {
-            gate::select_current_source_change_gates(anchor.source().clone(), anchor.changes())
-        }
-    }
-    .map_err(|error| ChangeGateError::refusal("change-selection-refused", error))?;
-    writeln!(
-        progress,
-        "[change-gate-selection] mode={:?} changes={} policy_arms={}",
-        selection.mode(),
-        selection.changed_sources().len(),
-        selection.gate_ids().len(),
-    )
-    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
-    writeln!(
-        progress,
-        "[change-gate-selection-report] {}",
-        String::from_utf8(selection.encode().map_err(|error| {
-            ChangeGateError::protocol("change-selection-unencodable", error)
-        })?,)
-        .map_err(|error| ChangeGateError::protocol("change-selection-non-utf8", error))?,
-    )
-    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
-    progress
-        .flush()
-        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    let (selection, test_execution, current_source) = select_changes(&anchor, surface)?;
+    publish_selection(progress, &selection)?;
 
     let repository = Repository::discover(Path::new(".")).map_err(|error| {
         ChangeGateError::environment("change-gate-repository-unresolved", error)
@@ -618,6 +562,7 @@ fn run_with_selection(
         writable_root: repository.worktree_root().to_path_buf(),
         test_source: anchor.source().clone(),
         test_changes: anchor.changes().to_vec(),
+        test_execution,
         environment: ambient_environment().map_err(|error| {
             ChangeGateError::environment("change-gate-environment-unavailable", error)
         })?,
@@ -629,23 +574,10 @@ fn run_with_selection(
         &selection,
         &source,
         execution,
-        matches!(surface, SelectionSurface::CurrentSource),
+        current_source,
         &mut shared_progress,
     )?;
-    writeln!(
-        shared_progress,
-        "[rust-test-selection-report] {}",
-        String::from_utf8(
-            tests.encode().map_err(|error| {
-                ChangeGateError::protocol("test-selection-unencodable", error)
-            })?,
-        )
-        .map_err(|error| ChangeGateError::protocol("test-selection-non-utf8", error))?,
-    )
-    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
-    shared_progress
-        .flush()
-        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    publish_test_selection(&mut shared_progress, &tests)?;
     if !tests.admits() {
         let evidence = String::from_utf8(
             tests
@@ -672,10 +604,72 @@ fn run_with_selection(
     Ok(report)
 }
 
+fn select_changes(
+    anchor: &crate::gate::PreparedArm<'_>,
+    surface: SelectionSurface,
+) -> Result<(ChangeSelectionReport, TestExecution, bool), ChangeGateError> {
+    let (selection, test_execution, current_source) = match surface {
+        SelectionSurface::Packaged => {
+            let policy = packaged_policy(anchor.root(), anchor.paths())?;
+            (
+                gate::select_change_gates(
+                    anchor.source().clone(),
+                    anchor.changes(),
+                    &policy.selection,
+                ),
+                TestExecution::Packaged(policy.test_engines),
+                false,
+            )
+        }
+        SelectionSurface::CurrentSource => (
+            gate::select_current_source_change_gates(anchor.source().clone(), anchor.changes()),
+            TestExecution::CurrentSourceCargo,
+            true,
+        ),
+    };
+    let selection =
+        selection.map_err(|error| ChangeGateError::refusal("change-selection-refused", error))?;
+    Ok((selection, test_execution, current_source))
+}
+
+fn publish_selection(
+    progress: &mut (impl Write + Send),
+    selection: &ChangeSelectionReport,
+) -> Result<(), ChangeGateError> {
+    writeln!(
+        progress,
+        "[change-gate-selection] mode={:?} changes={} policy_arms={}",
+        selection.mode(),
+        selection.changed_sources().len(),
+        selection.gate_ids().len(),
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    writeln!(
+        progress,
+        "[change-gate-selection-report] {}",
+        String::from_utf8(selection.encode().map_err(|error| {
+            ChangeGateError::protocol("change-selection-unencodable", error)
+        })?,)
+        .map_err(|error| ChangeGateError::protocol("change-selection-non-utf8", error))?,
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    progress
+        .flush()
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
+}
+
+#[cfg(test)]
 fn packaged_selection_policy(
     root: &Path,
     tracked_sources: &[String],
 ) -> Result<gate::ChangeSelectionPolicy, ChangeGateError> {
+    packaged_policy(root, tracked_sources).map(|policy| policy.selection)
+}
+
+fn packaged_policy(
+    root: &Path,
+    tracked_sources: &[String],
+) -> Result<PackagedPolicy, ChangeGateError> {
     const TRACKED_POLICY: &str = "spice-rust.toml";
 
     let path = root.join(TRACKED_POLICY);
@@ -695,7 +689,7 @@ fn packaged_selection_policy(
     let resolved = crate::config::resolve(crate::config::Inputs::new(document, None, &[]))
         .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))?;
     let policy = resolved.root().policy();
-    gate::ChangeSelectionPolicy::new(gate::ChangeSelectionPolicyInputs {
+    let selection = gate::ChangeSelectionPolicy::new(gate::ChangeSelectionPolicyInputs {
         tracked_sources,
         policy_authorities: &[TRACKED_POLICY.to_owned()],
         configured: tracked.is_some(),
@@ -707,7 +701,11 @@ fn packaged_selection_policy(
         generated_paths: policy.generated_paths(),
         test_paths: policy.test_paths(),
     })
-    .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))
+    .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))?;
+    Ok(PackagedPolicy {
+        selection,
+        test_engines: policy.test_engines().to_vec(),
+    })
 }
 
 fn run_policy_and_tests<W: Write + Send + ?Sized>(
@@ -723,34 +721,23 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         writable_root,
         test_source,
         test_changes,
+        test_execution,
         environment,
     } = execution;
     let mode = selection.mode();
     let (tests, policy) = thread::scope(|scope| {
         let mut test_progress = progress.clone();
         let test_worker = scope.spawn(move || {
-            let roots = WorkspaceTestRoots::new(&selected_root, &writable_root);
-            match mode {
-                ChangeSelectionMode::Local => gate::run_selected_workspace_tests_at(
-                    roots,
-                    test_source,
-                    &test_changes,
-                    environment,
-                    WORKSPACE_TEST_CONCURRENCY_CAP,
-                    &mut test_progress,
-                ),
-                ChangeSelectionMode::Exhaustive => {
-                    gate::run_exhaustive_selected_workspace_tests_at(
-                        roots,
-                        test_source,
-                        &test_changes,
-                        environment,
-                        WORKSPACE_TEST_CONCURRENCY_CAP,
-                        &mut test_progress,
-                    )
-                }
-            }
-            .map_err(|error| ChangeGateError::refusal("change-gate-tests-refused", error))
+            run_selected_tests(
+                mode,
+                &selected_root,
+                &writable_root,
+                test_source,
+                &test_changes,
+                test_execution,
+                environment,
+                &mut test_progress,
+            )
         });
         let policy = match (mode, current_source) {
             (ChangeSelectionMode::Local, _) => {

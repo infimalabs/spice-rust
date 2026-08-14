@@ -33,6 +33,23 @@ use coordinator::{
 use coordinator::{LastTest, isolate_shard_outputs, target_arguments};
 use selection::{exhaustive_selection_report, package_inventory, selection_report};
 
+/// Whether the compiled Cargo workspace engine applies to this selected tree.
+///
+/// This predicate runs before metadata or tool discovery, so an undeclared or
+/// irrelevant engine cannot make Cargo a dependency of a generic repository.
+#[must_use]
+pub fn cargo_workspace_tests_applicable(
+    root: &Path,
+    changed_sources: &[String],
+    exhaustive: bool,
+) -> bool {
+    root.join("Cargo.toml").is_file()
+        && (exhaustive
+            || changed_sources
+                .iter()
+                .any(|path| selection::test_relevant_source(path)))
+}
+
 /// Keep each post-prebuild Cargo invocation small enough for the full verifier's
 /// bounded workspace branch to make steady progress under the test-phase cap.
 /// Targets are source-weight balanced across the minimum shard count so one

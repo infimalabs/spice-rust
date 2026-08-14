@@ -329,6 +329,18 @@ fn current_source_override_retains_the_richer_workspace_selector() {
 }
 
 #[test]
+fn current_source_report_modules_remain_exhaustive_authorities() {
+    let report = select_current_source_change_gates(
+        source(),
+        &strings(&["gate/src/test_evidence/reports.rs"]),
+    )
+    .expect("select moved report authority");
+
+    assert_eq!(report.mode(), ChangeSelectionMode::Exhaustive);
+    assert_eq!(report.gate_ids(), GateId::BATTERY);
+}
+
+#[test]
 fn every_changed_path_and_always_on_arm_retains_provenance() {
     let tracked = strings(&["README.md", "src/lib.rs"]);
     let policy = policy(&tracked, false, None, &[], &[], &[]);
