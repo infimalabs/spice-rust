@@ -109,9 +109,9 @@ impl<Rebalance: FnOnce(Budget) -> Budget> SetupRun<Rebalance> {
 
 fn structural_preflight_ready(nodes: &[NodeState]) -> bool {
     matches!(
-        nodes.get(1),
+        nodes.get(2),
         Some(NodeState::Complete(ActionCompletion { result: Ok(()), .. }))
-    ) && matches!(nodes.get(2), Some(NodeState::Pending))
+    ) && matches!(nodes.get(3), Some(NodeState::Pending))
 }
 
 fn execute_structural_preflight<R: Runner>(

@@ -9,7 +9,7 @@ struct BrowserRefusalPrograms {
 fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
     let fixture = Fixture::new();
     let programs = install_browser_refusal_programs(&fixture);
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let output = Command::new(fixture.xtask())
         .arg("verify")
         .current_dir(&fixture.repository)
         .env(PROCESS_PATH, &programs.directory)
@@ -33,7 +33,7 @@ fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
 fn install_browser_refusal_programs(fixture: &Fixture) -> BrowserRefusalPrograms {
     let directory = fixture.root.join("programs");
     fs::create_dir(&directory).expect("create process fixture directory");
-    install_unset_hooks_git(&directory);
+    install_real_git(&directory);
     install_real_rustfmt(&directory);
     let cargo_log = fixture.root.join("cargo-actions");
     executable(
@@ -107,11 +107,11 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
         chain.get(..5),
         Some(
             &[
+                "build --locked -p spice --bin spice",
                 "clippy --locked --workspace --all-targets -- -D warnings",
                 "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
                 "check --locked --workspace --target wasm32-unknown-unknown",
                 app_action.as_str(),
-                "build --locked -p spice --bin spice",
             ][..]
         )
     );

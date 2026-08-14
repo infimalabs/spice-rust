@@ -17,7 +17,7 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
     );
     let refused_result = run_refusing_selected_gate(&fixture, &programs.directory);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let output = Command::new(fixture.xtask())
         .arg("verify")
         .current_dir(&fixture.repository)
         .env(PROCESS_PATH, &programs.directory)
@@ -35,9 +35,10 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
         "a forbidden program crossed the verifier rim: {}",
         programs.forbidden_marker.display()
     );
-    assert!(
-        !programs.cargo_log.exists(),
-        "a structural refusal launched Cargo: {}",
+    assert_eq!(
+        fs::read_to_string(&programs.cargo_log).expect("read freshness build trace"),
+        "build --locked -p spice --bin spice\n",
+        "a structural refusal crossed the required freshness build: {}",
         streams(&output)
     );
     assert!(

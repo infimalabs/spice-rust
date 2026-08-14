@@ -11,8 +11,12 @@ impl Runner for WorkerPanicRunner {
     fn format(&self, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
         panic!("fixture verifier worker panic")
     }
-    fn run(&self, _: Step, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
-        panic!("a successor crossed a panicked prerequisite")
+    fn run(&self, step: Step, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
+        if step.label == VERIFY_ACTIONS[0].label() {
+            Ok(timed_command(true))
+        } else {
+            panic!("a successor crossed a panicked prerequisite")
+        }
     }
     fn run_scoped(
         &self,
@@ -111,8 +115,12 @@ impl Runner for InterruptRunner {
     ) -> Result<CommandRun, RunError> {
         supervised_sleep(&self.pid_file, cancellation, jobs)
     }
-    fn run(&self, _: Step, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
-        panic!("a successor crossed interruption")
+    fn run(&self, step: Step, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
+        if step.label == VERIFY_ACTIONS[0].label() {
+            Ok(timed_command(true))
+        } else {
+            panic!("a successor crossed interruption")
+        }
     }
     fn run_scoped(
         &self,
