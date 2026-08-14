@@ -4,10 +4,11 @@ pub(super) fn validate_operation(
     operation: &Operation,
     introduced: &mut BTreeSet<(Location, String)>,
     content: GeneratedContentAuthority,
+    common_git: &Path,
 ) -> Result<(), InstallError> {
     let (location, path, expected_mode) = asset_contract(operation.asset);
     validate_operation_contract(operation, location, path, expected_mode)?;
-    validate_generated_content(operation, content)?;
+    validate_generated_content(operation, content, common_git)?;
     validate_introduced_parents(operation, introduced)
 }
 
@@ -54,75 +55,23 @@ fn validate_operation_contract(
 fn validate_generated_content(
     operation: &Operation,
     content: GeneratedContentAuthority,
+    common_git: &Path,
 ) -> Result<(), InstallError> {
+    if operation.asset == Asset::Exclusions {
+        return Err(InstallError::InvalidRecord(
+            "install plan contains the retired version-5 exclusions asset".to_owned(),
+        ));
+    }
+    if content == GeneratedContentAuthority::CurrentBuild
+        && let Some(bytes) = fixed_asset_bytes(operation.asset, common_git)?
+        && operation.generated != GeneratedImage::new(asset_contract(operation.asset).2, &bytes)
+    {
+        return Err(InstallError::InvalidRecord(format!(
+            "{} differs from this build",
+            asset_name(operation.asset)
+        )));
+    }
     match operation.asset {
-        Asset::Exclusions => {
-            return Err(InstallError::InvalidRecord(
-                "install plan contains the retired version-5 exclusions asset".to_owned(),
-            ));
-        }
-        Asset::HookEntry
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(
-                        EXECUTABLE_MODE,
-                        steer::hook::STAGES[0].bytes().as_bytes(),
-                    ) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "entry hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::GitPreCommit
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(EXECUTABLE_MODE, GIT_PRE_COMMIT.as_bytes()) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "Git pre-commit hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::GitCommitMessage
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(EXECUTABLE_MODE, GIT_COMMIT_MESSAGE.as_bytes()) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "Git commit-msg hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::GitReferenceTransaction
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(
-                        EXECUTABLE_MODE,
-                        GIT_REFERENCE_TRANSACTION.as_bytes(),
-                    ) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "Git reference-transaction hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::HookStatic
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(
-                        EXECUTABLE_MODE,
-                        steer::hook::STAGES[1].bytes().as_bytes(),
-                    ) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "static hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::Skill
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated != GeneratedImage::new(DATA_MODE, SKILL.as_bytes()) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "generated skill differs from this build".to_owned(),
-            ));
-        }
         Asset::Binary
             if operation.generated.digest == Digest::compute(Domain::InstallArtifact, &[]) =>
         {
@@ -141,25 +90,28 @@ fn validate_generated_content(
 /// caller rather than an embedded build asset, and [`super::rebuilt_binary`]
 /// compares that explicit input. A retired asset is rejected structurally
 /// before this predicate can participate in refresh selection.
-pub(super) fn fixed_content_differs_from_current_build(operation: &Operation) -> bool {
-    let expected = match operation.asset {
-        Asset::GitPreCommit => GeneratedImage::new(EXECUTABLE_MODE, GIT_PRE_COMMIT.as_bytes()),
-        Asset::GitCommitMessage => {
-            GeneratedImage::new(EXECUTABLE_MODE, GIT_COMMIT_MESSAGE.as_bytes())
-        }
-        Asset::GitReferenceTransaction => {
-            GeneratedImage::new(EXECUTABLE_MODE, GIT_REFERENCE_TRANSACTION.as_bytes())
-        }
-        Asset::HookEntry => {
-            GeneratedImage::new(EXECUTABLE_MODE, steer::hook::STAGES[0].bytes().as_bytes())
-        }
-        Asset::HookStatic => {
-            GeneratedImage::new(EXECUTABLE_MODE, steer::hook::STAGES[1].bytes().as_bytes())
-        }
-        Asset::Skill => GeneratedImage::new(DATA_MODE, SKILL.as_bytes()),
-        Asset::Exclusions | Asset::Binary => return false,
+pub(super) fn fixed_content_differs_from_current_build(
+    operation: &Operation,
+    common_git: &Path,
+) -> Result<bool, InstallError> {
+    let Some(bytes) = fixed_asset_bytes(operation.asset, common_git)? else {
+        return Ok(false);
     };
-    operation.generated != expected
+    let expected = GeneratedImage::new(asset_contract(operation.asset).2, &bytes);
+    Ok(operation.generated != expected)
+}
+
+fn asset_name(asset: Asset) -> &'static str {
+    match asset {
+        Asset::Exclusions => "retired exclusions asset",
+        Asset::GitPreCommit => "Git pre-commit hook",
+        Asset::GitCommitMessage => "Git commit-msg hook",
+        Asset::GitReferenceTransaction => "Git reference-transaction hook",
+        Asset::HookEntry => "entry hook",
+        Asset::HookStatic => "static hook",
+        Asset::Skill => "generated skill",
+        Asset::Binary => "Spice executable",
+    }
 }
 
 fn validate_introduced_parents(

@@ -130,6 +130,7 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::ParentChanged(_)
         | InstallError::BinaryNotRegular(_)
         | InstallError::BinaryEmpty(_)
+        | InstallError::HookPathUnrepresentable { .. }
         | InstallError::BinaryContextChanged
         | InstallError::DigestMismatch { .. }
         | InstallError::LegacyRecord { .. }
@@ -186,6 +187,7 @@ fn install_refusal<B>(error: &InstallError, witness: &str, expected: &str) -> Ou
 fn install_refusal_reason(error: &InstallError) -> &'static str {
     match error {
         InstallError::DigestMismatch { .. } => "install::digest-moved",
+        InstallError::HookPathUnrepresentable { .. } => "install::hook-path-unrepresentable",
         InstallError::LegacyRecord { .. } => "install::release-owned-state",
         InstallError::RecordMissing => "install::record-missing",
         InstallError::ApplyInProgress | InstallError::UnapplyInProgress => {
@@ -216,6 +218,9 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         InstallError::BinaryNotRegular(path) | InstallError::BinaryEmpty(path) => format!(
             "inspect the selected executable with `{}`; rebuild it with `cargo build --locked -p spice`, then rerun `target/debug/spice install`",
             inspect_path(path),
+        ),
+        InstallError::HookPathUnrepresentable { path, .. } => format!(
+            "move or recreate the repository at a UTF-8 path with no line separators, then rerun this executable's install preview; the refused Git-common path was {path:?}",
         ),
         InstallError::BinaryContextChanged => concat!(
             "the `.spice-install/bin/spice` asset was planned from another executable; preview ",

@@ -41,10 +41,11 @@ struct EnvironmentPolicy {
 /// collision sentinels in the coexistence tests, not variables this port owns.
 /// The workspace-test coordinator also passes its writable fixture root and
 /// shared-output authority while compiling tests from an immutable selected
-/// tree. Those references oblige the ledger to account all fifteen names. They are
-/// named here rather than added to [`SpiceVariable`], because Doctor reports
-/// the variables Spice owns and a row for one of these would claim ownership
-/// Spice does not have.
+/// tree. The generated-hook process fixture contributes three private log and
+/// exit-control names. Those references oblige the ledger to account all
+/// eighteen names. They are named here rather than added to [`SpiceVariable`],
+/// because Doctor reports the variables Spice owns and a row for one of these
+/// would claim ownership Spice does not have.
 ///
 /// Membership turns on ownership alone, never on when a name is read. A build
 /// stamp Spice owns still gets a row: `SPICE_NATIVE_PINS` is sealed into the
@@ -59,6 +60,9 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_WORK_TREE",                       // env-policy: allow
     "SPICE_CANVAS_BINARY",                 // env-policy: allow
     "SPICE_HOOKS",                         // env-policy: allow
+    "SPICE_HOOK_ARGV_LOG",                 // env-policy: allow
+    "SPICE_HOOK_EXIT_CODE",                // env-policy: allow
+    "SPICE_HOOK_STDIN_LOG",                // env-policy: allow
     "SPICE_INBOX",                         // env-policy: allow
     "SPICE_LANE",                          // env-policy: allow
     "SPICE_NATIVE_SHELL",                  // env-policy: allow

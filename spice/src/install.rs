@@ -14,6 +14,7 @@ use crate::repository::Repository;
 mod binding;
 mod error;
 mod files;
+mod git_hooks;
 mod handle;
 mod path;
 mod progress;
@@ -64,9 +65,6 @@ const SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
 const BINARY_PATH: &str = ".spice-install/bin/spice";
 
 const SKILL: &str = include_str!("install/skill.md");
-const GIT_PRE_COMMIT: &str = include_str!("install/git-hooks/pre-commit");
-const GIT_COMMIT_MESSAGE: &str = include_str!("install/git-hooks/commit-msg");
-const GIT_REFERENCE_TRANSACTION: &str = include_str!("install/git-hooks/reference-transaction");
 
 #[cfg(debug_assertions)]
 #[doc(hidden)]
@@ -462,7 +460,12 @@ impl InstallPlan {
         let mut introduced = BTreeSet::new();
         let mut destinations = BTreeSet::new();
         for operation in &self.operations {
-            validate_operation(operation, &mut introduced, content)?;
+            validate_operation(
+                operation,
+                &mut introduced,
+                content,
+                &self.repository.common_git,
+            )?;
             if !destinations.insert((operation.location, operation.destination.clone())) {
                 return Err(InstallError::InvalidRecord(
                     "install plan duplicates a physical destination".to_owned(),
@@ -515,10 +518,13 @@ impl InstallPlan {
     }
 
     /// Whether an embedded hook or skill identity belongs to another build.
-    fn fixed_content_differs_from_current_build(&self) -> bool {
-        self.operations
-            .iter()
-            .any(fixed_content_differs_from_current_build)
+    fn fixed_content_differs_from_current_build(&self) -> Result<bool, InstallError> {
+        for operation in &self.operations {
+            if fixed_content_differs_from_current_build(operation, &self.repository.common_git)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -675,39 +681,17 @@ fn build_plan_over(
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
 
-    for (asset, path, bytes, mode) in [
-        (
-            Asset::GitPreCommit,
-            GIT_PRE_COMMIT_PATH,
-            GIT_PRE_COMMIT.as_bytes(),
-            EXECUTABLE_MODE,
-        ),
-        (
-            Asset::GitCommitMessage,
-            GIT_COMMIT_MESSAGE_PATH,
-            GIT_COMMIT_MESSAGE.as_bytes(),
-            EXECUTABLE_MODE,
-        ),
-        (
-            Asset::GitReferenceTransaction,
-            GIT_REFERENCE_TRANSACTION_PATH,
-            GIT_REFERENCE_TRANSACTION.as_bytes(),
-            EXECUTABLE_MODE,
-        ),
-        (
-            Asset::HookEntry,
-            ENTRY_PATH,
-            steer::hook::STAGES[0].bytes().as_bytes(),
-            EXECUTABLE_MODE,
-        ),
-        (
-            Asset::HookStatic,
-            STATIC_PATH,
-            steer::hook::STAGES[1].bytes().as_bytes(),
-            EXECUTABLE_MODE,
-        ),
-        (Asset::Skill, SKILL_PATH, SKILL.as_bytes(), DATA_MODE),
+    for asset in [
+        Asset::GitPreCommit,
+        Asset::GitCommitMessage,
+        Asset::GitReferenceTransaction,
+        Asset::HookEntry,
+        Asset::HookStatic,
+        Asset::Skill,
     ] {
+        let (_, path, mode) = asset_contract(asset);
+        let bytes = fixed_asset_bytes(asset, repository.common_dir())?
+            .expect("the fixed asset inventory contains no variable asset");
         let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
         let (previous, superseded) = reversal_context(installed, asset, observed, None);
         operations.push(operation(
@@ -716,7 +700,7 @@ fn build_plan_over(
             bound,
             previous,
             superseded,
-            GeneratedImage::new(mode, bytes),
+            GeneratedImage::new(mode, &bytes),
         )?);
     }
 
@@ -857,7 +841,24 @@ fn current_build_differs(
     // Evaluate the binary first so adding or dropping the executable remains a
     // shape refusal even when an embedded asset also changed.
     let binary_differs = rebuilt_binary(plan, spice_binary)?;
-    Ok(binary_differs || plan.fixed_content_differs_from_current_build())
+    Ok(binary_differs || plan.fixed_content_differs_from_current_build()?)
+}
+
+fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>, InstallError> {
+    let bytes = match asset {
+        Asset::GitPreCommit => git_hooks::launcher(common_git, git_hooks::GitHook::PreCommit)?,
+        Asset::GitCommitMessage => {
+            git_hooks::launcher(common_git, git_hooks::GitHook::CommitMessage)?
+        }
+        Asset::GitReferenceTransaction => {
+            git_hooks::launcher(common_git, git_hooks::GitHook::ReferenceTransaction)?
+        }
+        Asset::HookEntry => steer::hook::STAGES[0].bytes().as_bytes().to_vec(),
+        Asset::HookStatic => steer::hook::STAGES[1].bytes().as_bytes().to_vec(),
+        Asset::Skill => SKILL.as_bytes().to_vec(),
+        Asset::Exclusions | Asset::Binary => return Ok(None),
+    };
+    Ok(Some(bytes))
 }
 
 fn binary_operation(plan: &InstallPlan) -> Option<&Operation> {
