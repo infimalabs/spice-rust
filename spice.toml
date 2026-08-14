@@ -1,6 +1,7 @@
 # Tracked repository policy owned by Python Spice. Rust Spice reads
 # `spice-rust.toml`; this file retains the predecessor's scheduler, judge,
-# policy, and sole normal pre-commit bridge without becoming a Rust input.
+# policy, and its pre-commit bridge without becoming a Rust input. That bridge
+# is active only while an operator selects the predecessor's hook path.
 
 [tasks]
 # Public scheduler stems beyond the packaged `task` and `serve` defaults.
@@ -99,11 +100,12 @@ pre_commit = [
 # private writable scratch so that isolation remains valid on a read-only proof
 # host.
 #
-# Nine foreign environment names are admitted here. The installed pre-commit
-# hook unsets Git's three local-environment names before it execs verify, and
-# the hooks fixture exports exactly those three to prove the child sees none of
-# them. The Git shadow writes three more, and it is production rather than a
-# fixture: it points `GIT_CONFIG_SYSTEM` at the per-worktree config it
+# Nine foreign environment names are admitted here. Rust's configured-command
+# executor strips Git's three local-environment names before it execs an exact
+# configured argv, and the hooks fixture exports exactly those three to prove
+# the child sees none of them. The Git shadow writes three more, and it is
+# production rather than a fixture: it points `GIT_CONFIG_SYSTEM` at the
+# per-worktree config it
 # publishes, counts the command-scope pairs it appends in `GIT_CONFIG_COUNT`,
 # and sets `GIT_EDITOR` to `echo` for the one probe that asks Git to print its
 # own system config path. The hygiene acquisition fixture fixes the seventh,
