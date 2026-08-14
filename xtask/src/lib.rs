@@ -1,6 +1,5 @@
 //! Repository-local build, verification, and release commands.
 
-use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
@@ -16,7 +15,6 @@ mod gate_command;
 mod hooks;
 mod landing;
 mod proof_image;
-mod reference_transaction;
 mod release;
 #[cfg(not(target_arch = "wasm32"))]
 mod test_evidence;
@@ -45,12 +43,8 @@ const BROWSER_RECEIPT: &[u8] = verify_browser::RECEIPT;
 // off the wasm target; the workspace wasm check compiles this crate too.
 #[cfg(not(target_arch = "wasm32"))]
 pub use develop::refresh_install;
-pub use hooks::{
-    HookActivationError, activate_hooks, audit_entry_point, audit_entry_point_for_guard,
-    compiled_reference_transaction_guard_digest, reference_transaction_guard_digest,
-};
+pub use hooks::{HookActivationError, activate_hooks, audit_entry_point};
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
-pub use reference_transaction::{ReferenceTransactionError, WorktreeDamage};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
 #[cfg(not(target_arch = "wasm32"))]
 pub use test_evidence::{TestEvidenceRunError, run as run_test_evidence};
@@ -74,26 +68,6 @@ pub fn commit_message(
     policy: &gate::CommitMessagePolicy,
 ) -> Result<bool, CommitMessageError> {
     commit_message::apply(path, policy)
-}
-
-/// Guard a Git reference transaction from abandoning upstream-merged commits.
-///
-/// States other than `prepared` are intentionally inert, as required by Git's
-/// reference-transaction hook protocol. A rewind whose declared upstream
-/// resolves to no commit is refused rather than permitted: a guard that could
-/// not read the upstream has cleared nothing, and passing it would report what
-/// it reports after checking one.
-///
-/// # Errors
-///
-/// Returns malformed hook input, Git execution failure, a protected-history
-/// refusal, or an upstream this guard could not resolve.
-pub fn reference_transaction(
-    repository: &Path,
-    state: &OsStr,
-    input: &str,
-) -> Result<(), ReferenceTransactionError> {
-    reference_transaction::apply(repository, state, input)
 }
 
 /// Every verification action, in stable report order.
@@ -205,7 +179,7 @@ const DOCUMENTATION_LABEL: &str = "cargo doc --locked --workspace --lib --bins -
 /// the guard Git is enforcing right now is the one this tree describes, and a
 /// battery that passes while eleven worktrees enforce an older guard is green
 /// about the wrong repository. It costs one file read and no build.
-const ENTRY_POINT_LABEL: &str = "published reference-transaction guard is this build's";
+const ENTRY_POINT_LABEL: &str = "installed reference-transaction target is executable";
 /// Real-browser guard for the production Mosaic engine edge.
 ///
 /// BROWSER-1kKSWhZk removed one of the two former surfaces. This mandatory

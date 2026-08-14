@@ -87,12 +87,13 @@
 //! `packed-refs.lock` owned by another writer.
 
 use std::error::Error;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+const USAGE: &str = "usage: spice gate reference-transaction <prepared|committed|aborted>";
 const PREPARED: &str = "prepared";
 const PROTECTED_COMMIT_LIMIT: usize = 5;
 const ASCII_ZERO: u8 = 0x30;
@@ -148,6 +149,76 @@ pub fn apply(
             refuse_abandoning_rewind(repository, &current_ref, &baseline, &updates)
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransactionState {
+    Prepared,
+    Committed,
+    Aborted,
+}
+
+impl TransactionState {
+    fn parse(value: &OsStr) -> Option<Self> {
+        match value.to_str() {
+            Some("prepared") => Some(Self::Prepared),
+            Some("committed") => Some(Self::Committed),
+            Some("aborted") => Some(Self::Aborted),
+            _ => None,
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::Committed => "committed",
+            Self::Aborted => "aborted",
+        }
+    }
+}
+
+/// Enter the hook-only command before ordinary CLI and mount initialization.
+///
+/// Returning `None` means the arguments do not select this command. Once its
+/// exact prefix is present, every malformed state or arity is owned here and
+/// fails with the public usage exit rather than falling through to another
+/// parser or execution path.
+pub(super) fn entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32> {
+    arguments.next()?;
+    if arguments.next().as_deref() != Some(OsStr::new("gate")) {
+        return None;
+    }
+    if arguments.next().as_deref() != Some(OsStr::new("reference-transaction")) {
+        return None;
+    }
+    let state = arguments.next();
+    let extra = arguments.next();
+    let Some(state) = state
+        .as_deref()
+        .filter(|_| extra.is_none())
+        .and_then(TransactionState::parse)
+    else {
+        eprintln!("{USAGE}");
+        return Some(2);
+    };
+    let result = run(state);
+    Some(match result {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    })
+}
+
+fn run(state: TransactionState) -> Result<(), Box<dyn Error>> {
+    if state != TransactionState::Prepared {
+        return Ok(());
+    }
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    let repository = std::env::current_dir()?;
+    apply(&repository, OsStr::new(state.as_str()), &input).map_err(Into::into)
 }
 
 /// The commit the branch holds before this transaction is written.
