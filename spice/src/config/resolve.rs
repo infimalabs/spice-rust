@@ -11,6 +11,11 @@ use super::{
     Builtin, Descriptor, FlagMapping, PathSegment, Root, ValueKind, descriptor, descriptors,
 };
 
+mod path;
+
+pub use path::ConcretePath;
+use path::OwnedSegment;
+
 /// One already-acquired configuration document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Document<'a> {
@@ -65,94 +70,6 @@ impl<'a> Inputs<'a> {
     #[must_use]
     pub const fn empty() -> Self {
         Self::new(None, None, &[])
-    }
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum OwnedSegment {
-    Key(String),
-    Index(usize),
-}
-
-/// An owned, structurally segmented path produced by the resolver.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct ConcretePath(Vec<OwnedSegment>);
-
-impl ConcretePath {
-    fn root() -> Self {
-        Self(Vec::new())
-    }
-
-    /// Borrow every key and index without reparsing display text.
-    pub fn segments(&self) -> impl ExactSizeIterator<Item = PathSegment<'_>> {
-        self.0.iter().map(|segment| match segment {
-            OwnedSegment::Key(key) => PathSegment::Key(key),
-            OwnedSegment::Index(index) => PathSegment::Index(*index),
-        })
-    }
-
-    fn borrowed(&self) -> Vec<PathSegment<'_>> {
-        self.segments().collect()
-    }
-
-    fn starts_with(&self, prefix: &Self) -> bool {
-        self.0.starts_with(&prefix.0)
-    }
-
-    fn related(&self, other: &Self) -> bool {
-        self.starts_with(other) || other.starts_with(self)
-    }
-
-    fn push_key(&mut self, key: &str) {
-        self.0.push(OwnedSegment::Key(key.to_owned()));
-    }
-
-    fn push_index(&mut self, index: usize) {
-        self.0.push(OwnedSegment::Index(index));
-    }
-
-    fn pop(&mut self) {
-        self.0.pop();
-    }
-}
-
-impl fmt::Display for ConcretePath {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.is_empty() {
-            return formatter.write_str("<root>");
-        }
-        let mut first = true;
-        for segment in &self.0 {
-            match segment {
-                OwnedSegment::Key(key) => {
-                    if !first {
-                        formatter.write_str(".")?;
-                    }
-                    write_key(formatter, key)?;
-                }
-                OwnedSegment::Index(index) => write!(formatter, "[{index}]")?,
-            }
-            first = false;
-        }
-        Ok(())
-    }
-}
-
-fn write_key(formatter: &mut fmt::Formatter<'_>, key: &str) -> fmt::Result {
-    if !key.is_empty()
-        && key
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        formatter.write_str(key)
-    } else {
-        formatter.write_str("\"")?;
-        for character in key.chars() {
-            for escaped in character.escape_default() {
-                write!(formatter, "{escaped}")?;
-            }
-        }
-        formatter.write_str("\"")
     }
 }
 
@@ -897,6 +814,9 @@ fn decode_root(value: Value) -> Result<Root, (ConcretePath, String)> {
             message,
         ));
     }
+    if let Some(error) = invalid_pre_commit_policy(&value) {
+        return Err(error);
+    }
     serde_path_to_error::deserialize(value).map_err(|error| {
         let path = ConcretePath(
             error
@@ -913,6 +833,28 @@ fn decode_root(value: Value) -> Result<Root, (ConcretePath, String)> {
         );
         (path, error.inner().message().to_owned())
     })
+}
+
+fn invalid_pre_commit_policy(value: &Value) -> Option<(ConcretePath, String)> {
+    let policy = value.get("policy")?.as_table()?;
+    let builtins = policy
+        .get("pre_commit_builtins")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let commands_empty = policy
+        .get("pre_commit")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty);
+    if builtins || !commands_empty {
+        return None;
+    }
+    Some((
+        ConcretePath(vec![
+            OwnedSegment::Key("policy".to_owned()),
+            OwnedSegment::Key("pre_commit_builtins".to_owned()),
+        ]),
+        super::pre_commit::EMPTY_PRE_COMMIT_MESSAGE.to_owned(),
+    ))
 }
 
 fn invalid_hidden_stem(value: &Value) -> Option<(usize, String)> {

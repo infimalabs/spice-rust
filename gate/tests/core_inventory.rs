@@ -390,6 +390,7 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
         .expect("workspace root");
     for path in [
         "spice/src/config.rs",
+        "spice/src/config/registry.rs",
         "spice/src/config/pre_commit.rs",
         "spice/src/extension.rs",
     ] {
@@ -402,10 +403,7 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
-    let expected = [
-        config_path(&["policy", "pre_commit_builtins"]),
-        config_path(&["vendor", "codex", "fast_mode"]),
-    ];
+    let expected = [config_path(&["vendor", "codex", "fast_mode"])];
 
     assert_eq!(evidence.declared(), expected);
     assert_eq!(evidence.observed(), expected);
@@ -458,7 +456,7 @@ fn false_disable_registry(paths: &[&str]) -> String {
             )
         })
         .collect();
-    ["registry! {\n", &rows, "}\n"].concat()
+    ["configuration_registry! {\n", &rows, "}\n"].concat()
 }
 
 fn false_disable_evidence(arm: &CoreArmReport) -> &ConfigInventoryEvidence {
@@ -505,9 +503,11 @@ fn tracked_trust_inventory_passes_when_every_policy_source_is_tracked() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root");
-    let config = fs::read_to_string(workspace.join("spice/src/config.rs"))
-        .expect("read current configuration registry");
-    repository.write("spice/src/config.rs", &config);
+    for path in ["spice/src/config.rs", "spice/src/config/registry.rs"] {
+        let config = fs::read_to_string(workspace.join(path))
+            .unwrap_or_else(|error| panic!("read current configuration registry {path}: {error}"));
+        repository.write(path, &config);
+    }
     git_commit(&repository, "current tracked-trust registry");
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigTrackedTrust);
@@ -536,7 +536,7 @@ fn untracked_trust_repository(label: &str) -> Tree {
     repository.write(
         "spice/src/config.rs",
         concat!(
-            "registry! {\n",
+            "configuration_registry! {\n",
             "    fixed \"lane.vendor\" {\n",
             "        kind: String,\n",
             "        builtin: Some(Builtin::String(\"codex\")),\n",

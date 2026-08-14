@@ -156,12 +156,14 @@ Tracked policy is physically separate. Python builds its repository layer from
 through `gate/src/input.rs#POLICY_PATH`. Neither runtime falls back to the
 other's file when its own is absent or malformed.
 
-The Python document retains the one deliberate execution bridge: its sole
+The Python document currently retains one deliberate execution bridge: its
 `policy.pre_commit` entry invokes the current Rust `spice gate pre-commit`
-command while `policy.pre_commit_builtins` is false. That is a command owned by
-the predecessor hook, not a shared configuration read. Rust's document omits
-both predecessor-only bridge keys. Machine-local configuration is also
-separate; Rust reads only `.spice-rs/config.toml`.
+command while its own `policy.pre_commit_builtins` setting is false. That
+command is owned by the predecessor hook, not a shared configuration read.
+The same key names have native Rust semantics only when authored in
+`spice-rust.toml`: packaged Rust built-ins are enabled by default and any
+configured commands form an ordered appended list. Machine-local configuration
+is also separate; Rust reads only `.spice-rs/config.toml`.
 
 ## Git hook selection
 

@@ -57,6 +57,8 @@ fn missing_and_empty_documents_are_empty_intent() {
 
     assert_eq!(missing, empty);
     assert_eq!(missing.root(), &spice::config::Root::default());
+    assert!(missing.root().policy().pre_commit_builtins());
+    assert!(missing.root().policy().pre_commit().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
     assert_eq!(missing.provenance().len(), 53);
@@ -82,6 +84,29 @@ fn missing_and_empty_documents_are_empty_intent() {
     let default_json = serde_json::to_value(missing.root()).expect("default JSON renders");
     assert!(default_json["proof"].get("container").is_none());
     assert!(default_json["proof"].get("runner").is_none());
+}
+
+#[test]
+fn disabling_builtins_without_a_command_refuses_at_the_authored_field() {
+    let error = resolve(documents(
+        Some("[policy]\npre_commit_builtins = false\n"),
+        None,
+    ))
+    .expect_err("an empty effective pre-commit battery must refuse");
+    let [issue] = error.issues() else {
+        panic!("one authored field should explain the empty battery");
+    };
+    assert_eq!(issue.source(), ConfigSource::Tracked);
+    assert_eq!(issue.kind(), IssueKind::Malformed);
+    assert_eq!(
+        issue.path().map(ToString::to_string).as_deref(),
+        Some("policy.pre_commit_builtins")
+    );
+    assert!(
+        issue
+            .message()
+            .contains("requires at least one policy.pre_commit command")
+    );
 }
 
 #[test]

@@ -137,6 +137,7 @@ pub use policy::{
     RepoTruthPolicy, ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic,
     RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector,
     SelectionProvenance, SelectorSpecificity, migrate_predecessor_policy,
+    validate_tracked_path_selector,
 };
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{

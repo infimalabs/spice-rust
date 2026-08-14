@@ -61,7 +61,7 @@ enabled = true
 
 [policy]
 # The repository declares its complete pre-commit command below; do not run the
-# installed predecessor's built-in Rust gate a second time around it.
+# Python predecessor's built-in Rust gate a second time around it.
 pre_commit_builtins = false
 
 # The native Git publisher runs this cheap repository load over every
@@ -70,9 +70,9 @@ admission = [
     "cargo", "metadata", "--no-deps", "--offline", "--format-version", "1",
 ]
 
-# The installed predecessor still owns the active Git hook path. Its one
-# repository command crosses directly into the current-source Rust gate, which
-# admits this declaration but never dispatches it again.
+# The installed predecessor still owns the active Git hook path. Its repository
+# command crosses directly into the current-source Rust gate. Rust never reads
+# this Python-owned file as its own policy input.
 pre_commit = [
     { label = "Rust gate", run = ["cargo", "run", "--locked", "--package", "spice", "--", "gate", "pre-commit"] },
 ]
