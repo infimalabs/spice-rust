@@ -454,8 +454,8 @@ struct SystemRunner {
 #[cfg(not(target_arch = "wasm32"))]
 impl SystemRunner {
     fn prepare() -> Result<Self, String> {
-        let battery =
-            spice::gate::prepare(gate::Selector::staged()).map_err(|error| error.to_string())?;
+        let battery = spice::gate::prepare_strict(gate::Selector::staged())
+            .map_err(|error| error.to_string())?;
         Ok(Self::from_state(SystemState {
             battery: Some(battery),
             compiler_contracts: Vec::new(),

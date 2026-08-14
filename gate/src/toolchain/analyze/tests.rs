@@ -111,6 +111,22 @@ fn every_declared_arm_has_a_named_analysis_or_a_named_owed_analyzer() {
 }
 
 #[test]
+fn rust_workspace_applicability_is_settled_before_cargo_discovery() {
+    let fixture = CanvasFixture::new("rust-applicability", false);
+    assert!(fixture.root.join("app/src/lib.rs").is_file());
+    assert!(!fixture.root.join("Cargo.toml").exists());
+    let declaration = declaration(GateId::RustTypecheck).expect("Rust arm is declared");
+    let analysis = before_tools(declaration, &fixture.root)
+        .expect("a tree without a workspace manifest is inapplicable");
+    assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
+    assert!(
+        analysis
+            .reason
+            .contains(declaration.jurisdiction.applicability)
+    );
+}
+
+#[test]
 fn canvas_argument_vectors_are_exactly_the_two_declared_analyses() {
     let declared = declaration(GateId::CanvasWebTypecheck)
         .expect("canvas arm is declared")

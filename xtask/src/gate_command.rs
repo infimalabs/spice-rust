@@ -17,7 +17,7 @@ pub fn verify_battery_child(output: &mut impl Write) -> Result<bool, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let report =
-            spice::gate::run(gate::Selector::staged()).map_err(|error| error.to_string())?;
+            spice::gate::run_strict(gate::Selector::staged()).map_err(|error| error.to_string())?;
         if report.admits() {
             Ok(true)
         } else {
@@ -86,7 +86,7 @@ pub fn verify_selection_child(output: &mut impl Write) -> Result<bool, String> {
 pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let report = spice::gate::run_arm_report(gate::Selector::staged(), gate_id)
+        let report = spice::gate::run_arm_report_strict(gate::Selector::staged(), gate_id)
             .map_err(GateArmError::Run)?;
         if !report.admits() {
             output
@@ -111,7 +111,7 @@ pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), Ga
 pub fn gate_arm_report(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let report = spice::gate::run_arm_report(gate::Selector::staged(), gate_id)
+        let report = spice::gate::run_arm_report_strict(gate::Selector::staged(), gate_id)
             .map_err(GateArmError::Run)?;
         let document = report.encode().map_err(GateArmError::Encode)?;
         output

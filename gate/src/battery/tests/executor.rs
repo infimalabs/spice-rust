@@ -253,6 +253,85 @@ fn one_capture_reads_every_authority_and_runs_each_family_once() {
 }
 
 #[test]
+fn generic_non_rust_capture_needs_no_tracked_inputs_or_rust_tool_probe() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::remove_file(repository.join(crate::POLICY_PATH)).expect("remove generic policy");
+    fs::remove_file(repository.join(crate::BASELINE_PATH)).expect("remove generic baseline");
+    fixture_git(&repository, &["add", "--all"]);
+    fixture_git(&repository, &["commit", "-q", "-m", "generic repository"]);
+
+    let selector = crate::Selector::staged();
+    let actor = acting("generic-actor");
+    let hygiene = crate::HygieneConfiguration::new(["app/main.py"], ["tests"])
+        .expect("generic hygiene roots");
+    let rim = crate::RimCapture::new(
+        &repository,
+        Some(repository.join("no-programs-here").into_os_string()),
+        Vec::new(),
+    )
+    .expect("absolute empty program search path");
+    let mut complete = crate::BatteryCapture::capture_generic(
+        &repository,
+        &selector,
+        crate::ClaimCapture::Idle,
+        actor.clone(),
+        rim.clone(),
+        hygiene.clone(),
+    )
+    .expect("generic complete capture admits absent tracked inputs");
+    let receipt_error = complete
+        .execute_receipt()
+        .expect_err("a lower-is-better receipt still requires its floor");
+    assert!(receipt_error.detail().contains(crate::BASELINE_PATH));
+    let complete_report = complete
+        .execute()
+        .expect("the generic packaged battery remains complete");
+    assert_eq!(complete_report.results().len(), GateId::BATTERY.len());
+    assert!(complete_report.context().configuration().is_empty());
+    assert!(complete_report.context().tools().is_empty());
+    complete
+        .reject_state()
+        .expect("discard generic fixture state");
+
+    let mut capture = crate::BatteryCapture::capture_generic_arm(
+        &repository,
+        &selector,
+        crate::ClaimCapture::Idle,
+        actor.clone(),
+        rim.clone(),
+        hygiene.clone(),
+        GateId::RustTypecheck,
+    )
+    .expect("generic non-Rust capture");
+    let report = capture
+        .execute_arm_report(GateId::RustTypecheck)
+        .expect("inapplicable Rust arm reports without probing");
+    assert_eq!(report.result().state(), BatteryState::NotApplicable);
+    assert!(report.context().configuration().is_empty());
+    assert!(report.context().tools().is_empty());
+    assert!(matches!(
+        capture.execute_kill(),
+        Err(crate::KillError::MissingFloor { ref path, name })
+            if path.ends_with(crate::BASELINE_PATH) && name == "rust.mutation-survivors"
+    ));
+
+    let strict = match crate::BatteryCapture::capture_arm(
+        &repository,
+        &selector,
+        crate::ClaimCapture::Idle,
+        actor,
+        rim,
+        hygiene,
+        GateId::RustTypecheck,
+    ) {
+        Ok(_) => panic!("strict self-hosting accepted missing tracked inputs"),
+        Err(error) => error,
+    };
+    assert!(strict.detail().contains(crate::POLICY_PATH));
+}
+
+#[test]
 fn admitted_cross_process_receipt_never_reinvokes_compilers() {
     let fixture = Fixture::new();
     let repository = compiler_fixture_repository(&fixture);
