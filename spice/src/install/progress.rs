@@ -17,7 +17,9 @@ pub(super) fn apply_with_interruption(
         .plan
         .operations
         .iter()
-        .map(|operation| materialize_generated(operation, spice_binary))
+        .map(|operation| {
+            materialize_generated(operation, spice_binary, &record.plan.repository.common_git)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     if fresh {
         record.plan.validate_pristine(repository)?;

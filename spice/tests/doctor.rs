@@ -306,7 +306,7 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
     // Doctor reports the variables Spice owns, while the tracked vocabulary also
     // accounts the ones its fixtures and Git shadow use. The gate's name ledger
     // is pinned separately in wire/tests/environment_vocabulary.rs.
-    const UNOWNED: [&str; 15] = [
+    const UNOWNED: [&str; 18] = [
         "GIT_CONFIG_COUNT",                    // env-policy: allow
         "GIT_CONFIG_SYSTEM",                   // env-policy: allow
         "GIT_DIR",                             // env-policy: allow
@@ -315,6 +315,9 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
         "GIT_WORK_TREE",                       // env-policy: allow
         "SPICE_CANVAS_BINARY",                 // env-policy: allow
         "SPICE_HOOKS",                         // env-policy: allow
+        "SPICE_HOOK_ARGV_LOG",                 // env-policy: allow
+        "SPICE_HOOK_EXIT_CODE",                // env-policy: allow
+        "SPICE_HOOK_STDIN_LOG",                // env-policy: allow
         "SPICE_INBOX",                         // env-policy: allow
         "SPICE_LANE",                          // env-policy: allow
         "SPICE_NATIVE_SHELL",                  // env-policy: allow

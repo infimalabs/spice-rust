@@ -6,8 +6,8 @@ use crate::repository::Repository;
 
 use super::handle::AdmittedPath;
 use super::{
-    Asset, FileImage, GIT_COMMIT_MESSAGE, GIT_PRE_COMMIT, GIT_REFERENCE_TRANSACTION, Generation,
-    InstallError, ObservedFile, Operation, ParentObservation, SKILL, read_binary,
+    Asset, FileImage, Generation, InstallError, ObservedFile, Operation, ParentObservation,
+    fixed_asset_bytes, read_binary,
 };
 
 pub(super) fn publish_operation(
@@ -39,20 +39,19 @@ pub(super) fn publish_operation(
 pub(super) fn materialize_generated(
     operation: &Operation,
     spice_binary: Option<&Path>,
+    common_git: &Path,
 ) -> Result<FileImage, InstallError> {
-    let bytes = match operation.asset {
-        Asset::Exclusions => {
-            return Err(InstallError::InvalidRecord(
-                "install plan contains the retired version-5 exclusions asset".to_owned(),
-            ));
-        }
-        Asset::GitPreCommit => GIT_PRE_COMMIT.as_bytes().to_vec(),
-        Asset::GitCommitMessage => GIT_COMMIT_MESSAGE.as_bytes().to_vec(),
-        Asset::GitReferenceTransaction => GIT_REFERENCE_TRANSACTION.as_bytes().to_vec(),
-        Asset::HookEntry => steer::hook::STAGES[0].bytes().as_bytes().to_vec(),
-        Asset::HookStatic => steer::hook::STAGES[1].bytes().as_bytes().to_vec(),
-        Asset::Skill => SKILL.as_bytes().to_vec(),
-        Asset::Binary => read_binary(spice_binary.ok_or(InstallError::BinaryContextChanged)?)?,
+    let bytes = match fixed_asset_bytes(operation.asset, common_git)? {
+        Some(bytes) => bytes,
+        None => match operation.asset {
+            Asset::Exclusions => {
+                return Err(InstallError::InvalidRecord(
+                    "install plan contains the retired version-5 exclusions asset".to_owned(),
+                ));
+            }
+            Asset::Binary => read_binary(spice_binary.ok_or(InstallError::BinaryContextChanged)?)?,
+            _ => unreachable!("fixed assets materialize from repository-bound bytes"),
+        },
     };
     let image = FileImage::new(operation.generated.mode, bytes);
     if image.generated() != operation.generated {

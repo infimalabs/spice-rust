@@ -24,6 +24,10 @@ pub enum InstallError {
     ParentChanged(PathBuf),
     BinaryNotRegular(PathBuf),
     BinaryEmpty(PathBuf),
+    HookPathUnrepresentable {
+        path: PathBuf,
+        reason: &'static str,
+    },
     BinaryContextChanged,
     DigestMismatch {
         expected: Digest,
@@ -97,6 +101,10 @@ impl fmt::Display for InstallError {
             Self::BinaryEmpty(path) => {
                 write!(formatter, "Spice executable is empty: {}", path.display())
             }
+            Self::HookPathUnrepresentable { path, reason } => write!(
+                formatter,
+                "installed Spice hook path {path:?} {reason} and cannot be rendered on one shell line",
+            ),
             Self::BinaryContextChanged => {
                 formatter.write_str("Spice executable selection differs from the recorded plan")
             }
