@@ -153,6 +153,10 @@ fn a_differently_shaped_rust_repository_uses_policy_not_package_names() {
             "is Rust source outside every compiled workspace root",
         ),
         (
+            "tools/outside/src/lib.rs",
+            "is Rust source outside every compiled workspace root",
+        ),
+        (
             "tools/component/Cargo.toml",
             "is a package manifest outside every compiled workspace root",
         ),
@@ -259,6 +263,7 @@ fn generic_selection_has_no_spice_frontend_or_workspace_topology() {
     let tracked = strings(&[
         "Cargo.toml",
         "app/browser/canvas-coordinator.mjs",
+        "journal/Cargo.toml",
         "journal/src/lib.rs",
         "spice-rust.toml",
     ]);

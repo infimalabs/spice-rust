@@ -276,7 +276,15 @@ impl ChangeSelectionPolicy {
     }
 
     fn compiled_rust_source(&self, path: &str) -> bool {
-        compiled_package_source(path)
+        let Some(root) = compiled_package_root(path) else {
+            return false;
+        };
+        let manifest = if root.is_empty() {
+            "Cargo.toml".to_owned()
+        } else {
+            format!("{root}/Cargo.toml")
+        };
+        contains_exact(&self.tracked_sources, &manifest)
     }
 
     fn workspace_manifest(&self, path: &str) -> bool {
@@ -293,10 +301,24 @@ impl ChangeSelectionPolicy {
 }
 
 fn compiled_package_source(path: &str) -> bool {
-    path == "build.rs"
-        || ["src/", "tests/", "examples/", "benches/"]
-            .iter()
-            .any(|root| path.starts_with(root) || path.contains(&format!("/{root}")))
+    compiled_package_root(path).is_some()
+}
+
+fn compiled_package_root(path: &str) -> Option<&str> {
+    for directory in ["src", "tests", "examples", "benches"] {
+        let root_prefix = format!("{directory}/");
+        if path.starts_with(&root_prefix) {
+            return Some("");
+        }
+        let nested = format!("/{directory}/");
+        if let Some(position) = path.find(&nested) {
+            return Some(&path[..position]);
+        }
+    }
+    if path == "build.rs" {
+        return Some("");
+    }
+    path.strip_suffix("/build.rs")
 }
 
 fn repository_selection_authority(path: &str) -> bool {
