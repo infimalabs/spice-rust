@@ -129,26 +129,37 @@ impl ChangeSelectionPolicy {
         gates.into_iter().collect()
     }
 
-    pub(super) fn gates_for_path(&self, path: &str) -> (Vec<GateId>, Option<String>) {
+    pub(super) fn gates_for_path(&self, path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
         if self.policy_authority(path) {
-            return (
-                Vec::new(),
-                Some(format!("{path:?} changes packaged selection policy")),
-            );
+            return Err(ChangeSelectionError::new(format!(
+                "{path:?} changes packaged selection policy"
+            )));
+        }
+        if repository_selection_authority(path) {
+            return Err(ChangeSelectionError::new(format!(
+                "{path:?} changes repository build or test selection authority"
+            )));
         }
         if self.generated(path) {
-            return (vec![GateId::LocalPaths], None);
+            return Ok(vec![GateId::LocalPaths]);
+        }
+        if extension(path) == "rs" && self.rust_workspace() && !self.compiled_rust_source(path) {
+            return Err(ChangeSelectionError::new(format!(
+                "{path:?} is Rust source outside every compiled workspace root"
+            )));
+        }
+        if cargo_manifest(path) && self.rust_workspace() && !self.workspace_manifest(path) {
+            return Err(ChangeSelectionError::new(format!(
+                "{path:?} is a package manifest outside every compiled workspace root"
+            )));
         }
         let gates = self.gates_for_known_path(path);
         if !gates.iter().any(|gate_id| *gate_id != GateId::LocalPaths) {
-            return (
-                Vec::new(),
-                Some(format!(
-                    "{path:?} has no repository-declared packaged policy class"
-                )),
-            );
+            return Err(ChangeSelectionError::new(format!(
+                "{path:?} has no repository-declared packaged policy class"
+            )));
         }
-        (gates, None)
+        Ok(gates)
     }
 
     fn gates_for_known_path(&self, path: &str) -> Vec<GateId> {
@@ -260,6 +271,40 @@ impl ChangeSelectionPolicy {
     fn test_source(&self, path: &str) -> bool {
         self.test_paths.is_empty() || matches_any(&self.test_paths, path)
     }
+
+    fn compiled_rust_source(&self, path: &str) -> bool {
+        compiled_package_source(path)
+    }
+
+    fn workspace_manifest(&self, path: &str) -> bool {
+        let Some(root) = path.strip_suffix("/Cargo.toml") else {
+            return path == "Cargo.toml";
+        };
+        let prefix = format!("{root}/");
+        self.tracked_sources.iter().any(|source| {
+            source
+                .strip_prefix(&prefix)
+                .is_some_and(compiled_package_source)
+        })
+    }
+}
+
+fn compiled_package_source(path: &str) -> bool {
+    path == "build.rs"
+        || ["src/", "tests/", "examples/", "benches/"]
+            .iter()
+            .any(|root| path.starts_with(root) || path.contains(&format!("/{root}")))
+}
+
+fn repository_selection_authority(path: &str) -> bool {
+    matches!(
+        path,
+        ".cargo/config.toml"
+            | ".githooks/pre-commit"
+            | "Cargo.lock"
+            | "Cargo.toml"
+            | "rust-toolchain.toml"
+    )
 }
 
 fn exact_paths(label: &str, paths: &[String]) -> Result<Vec<String>, ChangeSelectionError> {

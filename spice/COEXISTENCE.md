@@ -188,7 +188,7 @@ lists are required, repository-document omission retains Gate's generic
 `AGENTS.md` default, absent package roots do not narrow Python selection,
 absent generated paths exclude nothing, and absent test paths conservatively
 leave every Python path eligible for test policy. Unknown paths and changes to
-the tracked policy escalate only to arms applicable to that staged repository.
+the tracked policy refuse before any selected arm or workspace test begins.
 The richer Spice-workspace selector remains a separate current-source entrypoint
 called explicitly by `cargo xtask verify-action selection`.
 
