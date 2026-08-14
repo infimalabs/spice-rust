@@ -24,6 +24,8 @@ const STREAMING_FIXTURE_TIMEOUT: Duration = Duration::from_secs(15);
 mod browser_refusal;
 #[path = "verify_process/structural_preflight.rs"]
 mod structural_preflight;
+#[path = "verify_process/wasm_clippy.rs"]
+mod wasm_clippy;
 
 #[test]
 fn verifier_refuses_a_formatting_defect_reached_only_through_include() {
@@ -45,18 +47,18 @@ fn verifier_refuses_a_formatting_defect_reached_only_through_include() {
 
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create formatter fixture program directory");
-    install_unset_hooks_git(&programs);
+    install_real_git(&programs);
     install_real_rustfmt(&programs);
     let cargo_marker = fixture.root.join("cargo-invoked");
     executable(
         &programs.join("cargo"),
         &format!(
-            "#!/bin/sh\nprintf 'invoked\\n' > '{}'\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nexit 0\n",
             cargo_marker.display()
         ),
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let output = Command::new(fixture.xtask())
         .arg("verify")
         .current_dir(&fixture.repository)
         .env(PROCESS_PATH, &programs)
@@ -75,8 +77,9 @@ fn verifier_refuses_a_formatting_defect_reached_only_through_include() {
         streams(&output)
     );
     assert!(
-        !cargo_marker.exists(),
-        "the verifier crossed its formatter refusal"
+        fs::read_to_string(&cargo_marker)
+            .is_ok_and(|action| action == "build --locked -p spice --bin spice\n"),
+        "the verifier crossed its formatter refusal into another Cargo action"
     );
 }
 
@@ -88,7 +91,7 @@ fn verifier_streams_progress_before_exit_and_emits_every_final_byte_once() {
     let release = fixture.root.join("streaming-rustfmt-release");
     install_held_rustfmt(&programs.directory, &entered, &release);
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let mut child = Command::new(fixture.xtask())
         .arg("verify")
         .current_dir(&fixture.repository)
         .env(PROCESS_PATH, &programs.directory)
@@ -271,7 +274,7 @@ fn expected_resident_binary(repository: &Path) -> PathBuf {
 fn install_full_verifier_programs(fixture: &Fixture) -> FullVerifierPrograms {
     let directory = fixture.root.join("programs");
     fs::create_dir(&directory).expect("create process fixture directory");
-    install_unset_hooks_git(&directory);
+    install_real_git(&directory);
     install_real_rustfmt(&directory);
     let forbidden_marker = fixture.root.join("forbidden-program-invoked");
     for program in ["python", "python3", "taskwarrior", "task"] {
@@ -391,11 +394,11 @@ fn assert_workspace_test_execution(
             .take(9)
             .collect::<Vec<_>>(),
         [
+            "build --locked -p spice --bin spice",
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
             app_action.as_str(),
-            "build --locked -p spice --bin spice",
             "test --locked --workspace --all-targets --no-run",
             "test --locked --package verify-process-fixture-id --lib",
             "doc --locked --workspace --lib --bins --no-deps",
@@ -611,7 +614,7 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
 
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create scoped verifier program directory");
-    install_unset_hooks_git(&programs);
+    install_real_git(&programs);
     let cargo_log = fixture.root.join("cargo-actions");
     executable(
         &programs.join("cargo"),
@@ -740,148 +743,10 @@ fn unknown_gate_arm_points_to_the_canonical_inventory() {
     );
 }
 
-#[test]
-fn verifier_wasm_clippy_rejects_a_lint_hidden_from_the_native_target() {
-    let fixture = Fixture::new();
-    wasm_lint_fixture(&fixture.repository);
-    let programs = fixture.root.join("programs");
-    fs::create_dir(&programs).expect("create wasm lint fixture programs");
-    install_real_rustfmt(&programs);
-    let cargo_log = fixture.root.join("cargo-actions");
-    executable(
-        &programs.join("cargo"),
-        &format!(
-            concat!(
-                "#!/bin/sh\n",
-                "printf '%s\\n' \"$*\" >> '{cargo_log}'\n",
-                "if [ \"$*\" = \"--version\" ]; then\n",
-                "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
-                "  exit 0\n",
-                "fi\n",
-                "if [ \"$*\" = \"clippy --locked -p app --target ",
-                "wasm32-unknown-unknown -- -D warnings\" ]; then\n",
-                "  {path_name}=${{{path_name}#*:}}\n",
-                "  export {path_name}\n",
-                "  exec cargo \"$@\"\n",
-                "fi\n",
-                "exit 0\n",
-            ),
-            cargo_log = cargo_log.display(),
-            path_name = PROCESS_PATH,
-        ),
-    );
-    let launcher = programs.join("verify");
-    executable(
-        &launcher,
-        &format!(
-            concat!(
-                "#!/bin/sh\n",
-                "{path_name}='{programs}':${{{path_name}}}\n",
-                "export {path_name}\n",
-                "exec '{xtask}' verify\n",
-            ),
-            path_name = PROCESS_PATH,
-            programs = programs.display(),
-            xtask = env!("CARGO_BIN_EXE_xtask"),
-        ),
-    );
-
-    let output = Command::new(launcher)
-        .current_dir(&fixture.repository)
-        .output()
-        .expect("launch verifier against the wasm lint fixture");
-
-    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("variable does not need to be mutable"),
-        "{}",
-        streams(&output),
-    );
-    let cargo_actions = fs::read_to_string(cargo_log).expect("read wasm lint Cargo actions");
-    let cargo_actions = cargo_actions.lines().collect::<Vec<_>>();
-    assert_eq!(
-        cargo_actions
-            .iter()
-            .copied()
-            .filter(|action| action.starts_with("clippy "))
-            .collect::<Vec<_>>(),
-        [
-            "clippy --locked --workspace --all-targets -- -D warnings",
-            "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
-        ],
-    );
-    assert!(
-        cargo_actions
-            .iter()
-            .all(|action| *action == "--version" || action.starts_with("clippy ")),
-        "unexpected Cargo action while the battery ran concurrently: {cargo_actions:?}",
-    );
-    assert!(
-        cargo_actions
-            .iter()
-            .copied()
-            .filter(|action| *action == "--version")
-            .count()
-            <= 1,
-        "the concurrent battery repeated its Cargo probe: {cargo_actions:?}",
-    );
-}
-
-fn wasm_lint_fixture(repository: &Path) {
-    fs::write(
-        repository.join("Cargo.toml"),
-        concat!(
-            "[package]\n",
-            "name = \"app\"\n",
-            "version = \"0.0.0\"\n",
-            "edition = \"2024\"\n",
-        ),
-    )
-    .expect("write wasm lint manifest");
-    fs::write(
-        repository.join("Cargo.lock"),
-        concat!(
-            "version = 4\n\n",
-            "[[package]]\n",
-            "name = \"app\"\n",
-            "version = \"0.0.0\"\n",
-        ),
-    )
-    .expect("write wasm lint lock");
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask manifest has a workspace parent");
-    fs::copy(
-        workspace.join("rust-toolchain.toml"),
-        repository.join("rust-toolchain.toml"),
-    )
-    .expect("copy the workspace wasm lint toolchain");
-    fs::write(
-        repository.join("src/lib.rs"),
-        concat!(
-            "#[cfg(target_arch = \"wasm32\")]\n",
-            "pub fn wasm_only_lint() {\n",
-            "    let mut value = 7;\n",
-            "    assert_eq!(value, 7);\n",
-            "}\n",
-        ),
-    )
-    .expect("write wasm-only lint source");
-    git(
-        repository,
-        &[
-            "add",
-            "Cargo.toml",
-            "Cargo.lock",
-            "rust-toolchain.toml",
-            "src/lib.rs",
-        ],
-    );
-}
-
 struct Fixture {
     root: PathBuf,
     repository: PathBuf,
+    xtask: PathBuf,
 }
 
 impl Fixture {
@@ -933,7 +798,38 @@ impl Fixture {
             .expect("write verifier fixture source");
         git(&repository, &["add", "."]);
         git(&repository, &["commit", "-qm", "fixture"]);
-        Self { root, repository }
+        let binaries = root.join("current-build");
+        fs::create_dir(&binaries).expect("create fixture current-build directory");
+        let xtask = binaries.join(format!("xtask{}", env::consts::EXE_SUFFIX));
+        let current_spice = binaries.join(format!("spice{}", env::consts::EXE_SUFFIX));
+        fs::copy(env!("CARGO_BIN_EXE_xtask"), &xtask).expect("copy fixture xtask executable");
+        fs::copy(env!("CARGO_BIN_EXE_xtask"), &current_spice)
+            .expect("copy fixture current Spice image");
+        let discovered = spice::repository::Repository::discover(&repository)
+            .expect("discover verifier fixture repository");
+        let plan = spice::install::plan(&discovered, Some(&current_spice))
+            .expect("plan fixture installed appliance");
+        spice::install::apply(&discovered, Some(&current_spice), &plan.digest().unwrap())
+            .expect("publish fixture installed appliance");
+        let hooks = discovered.common_dir().join(".spice-install/git-hooks");
+        git(
+            &repository,
+            &[
+                "config",
+                "--local",
+                "core.hooksPath",
+                hooks.to_str().expect("fixture hook path is UTF-8"),
+            ],
+        );
+        Self {
+            root,
+            repository,
+            xtask,
+        }
+    }
+
+    fn xtask(&self) -> &Path {
+        &self.xtask
     }
 }
 
@@ -949,17 +845,9 @@ fn executable(path: &Path, text: &str) {
         .expect("make process fixture executable");
 }
 
-fn install_unset_hooks_git(programs: &Path) {
-    executable(
-        &programs.join("git"),
-        concat!(
-            "#!/bin/sh\n",
-            "if [ \"$*\" = \"config --get core.hooksPath\" ]; then\n",
-            "  exit 1\n",
-            "fi\n",
-            "exit 98\n",
-        ),
-    );
+fn install_real_git(programs: &Path) {
+    std::os::unix::fs::symlink("/usr/bin/git", programs.join("git"))
+        .expect("install real Git in the verifier fixture rim");
 }
 
 fn install_real_rustfmt(programs: &Path) {

@@ -3,6 +3,8 @@
 use std::io::{self, Write};
 use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
 
 use sill::CancellationToken;
@@ -82,6 +84,10 @@ pub fn commit_message(
 /// constrained by the explicit graph in `verify_execution`, not this report
 /// order.
 const VERIFY_ACTIONS: [Action; 13] = [
+    Action::Command(Step::cargo(
+        RESIDENT_BUILD_LABEL,
+        &["build", "--locked", "-p", "spice", "--bin", "spice"],
+    )),
     Action::EntryPoint,
     Action::Format,
     Action::Command(Step::cargo(
@@ -115,10 +121,6 @@ const VERIFY_ACTIONS: [Action; 13] = [
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
     )),
     Action::Command(Step::cargo(CANVAS_APP_LABEL, &["xtask", "app"])),
-    Action::Command(Step::cargo(
-        RESIDENT_BUILD_LABEL,
-        &["build", "--locked", "-p", "spice", "--bin", "spice"],
-    )),
     Action::Browser,
     Action::WorkspaceTests,
     Action::Command(Step::cargo(
@@ -172,13 +174,13 @@ const FORMAT_LABEL: &str =
 /// `-D warnings` a broken intra-doc link in either file is a hard error, and
 /// under the default target set nothing in this tree ever raised it.
 const DOCUMENTATION_LABEL: &str = "cargo doc --locked --workspace --lib --bins --no-deps";
-/// Precondition rather than a check of this tree, which is why it runs first.
+/// Receipt-backed proof that the installed appliance is this exact build.
 ///
-/// Every other action asks whether the tree is correct. This one asks whether
-/// the guard Git is enforcing right now is the one this tree describes, and a
-/// battery that passes while eleven worktrees enforce an older guard is green
-/// about the wrong repository. It costs one file read and no build.
-const ENTRY_POINT_LABEL: &str = "installed reference-transaction target is executable";
+/// The preceding supervised Cargo action builds the current Spice executable.
+/// This audit then verifies every receipt-owned byte and compares the installed
+/// binary digest to that build. None of this work enters the reference-
+/// transaction hook's lock-sensitive path.
+const ENTRY_POINT_LABEL: &str = "installed appliance receipt matches current built Spice";
 /// Real-browser guard for the production Mosaic engine edge.
 ///
 /// BROWSER-1kKSWhZk removed one of the two former surfaces. This mandatory
@@ -187,7 +189,8 @@ const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
 /// Exit spelling for a completed verifier action that refused publication.
 pub const VERIFY_ACTION_REFUSAL_EXIT: u8 = 3;
 const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
-const RESIDENT_BUILD_LABEL: &str = "cargo build --locked -p spice --bin spice (canvas resident)";
+const RESIDENT_BUILD_LABEL: &str =
+    "cargo build --locked -p spice --bin spice (freshness reference and canvas resident)";
 const WORKSPACE_TEST_CONCURRENCY_CAP: usize = gate::WORKSPACE_TEST_CONCURRENCY_CAP;
 const WORKSPACE_TEST_LABEL: &str =
     "deterministic sharded cargo test --locked --workspace --all-targets";
@@ -587,11 +590,38 @@ impl SystemRunner {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn current_spice_binary() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("resolve the running xtask executable: {error}"))?;
+    let mut directory = executable
+        .parent()
+        .ok_or_else(|| format!("xtask executable has no parent: {}", executable.display()))?;
+    if directory.file_name().is_some_and(|name| name == "deps") {
+        directory = directory.parent().ok_or_else(|| {
+            format!(
+                "xtask dependency executable has no target-profile parent: {}",
+                executable.display()
+            )
+        })?;
+    }
+    Ok(directory.join(format!("spice{}", std::env::consts::EXE_SUFFIX)))
+}
+
 impl Runner for SystemRunner {
     fn entry_point(&self) -> Result<String, String> {
-        let mut report = Vec::new();
-        hooks::audit_entry_point(Path::new("."), &mut report).map_err(|error| error.to_string())?;
-        String::from_utf8(report).map_err(|error| error.to_string())
+        #[cfg(target_arch = "wasm32")]
+        {
+            Err("installed-appliance audit is unavailable on wasm32".to_owned())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let current_binary = current_spice_binary()?;
+            let mut report = Vec::new();
+            hooks::audit_entry_point(Path::new("."), &current_binary, &mut report)
+                .map_err(|error| error.to_string())?;
+            String::from_utf8(report).map_err(|error| error.to_string())
+        }
     }
 
     fn format(

@@ -57,6 +57,7 @@ mod tests {
     impl TimedRunner {
         fn benchmark() -> Self {
             let mut delays = BTreeMap::new();
+            delays.insert(VERIFY_ACTIONS[0].label(), Duration::from_millis(10));
             delays.insert(ENTRY_POINT_LABEL, Duration::from_millis(5));
             delays.insert(FORMAT_LABEL, Duration::from_millis(5));
             for action in &VERIFY_ACTIONS[2..=6] {
@@ -215,7 +216,7 @@ mod tests {
         }
         assert_eq!(
             PREREQUISITES.last(),
-            Some(&&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11][..])
+            Some(&&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11][..])
         );
     }
 
@@ -461,19 +462,11 @@ mod tests {
         .expect_err("the complete verifier deadline refuses further work");
 
         assert!(matches!(error, VerifyError::TimedOut { .. }));
-        assert_eq!(
-            runner.calls(),
-            [
-                ENTRY_POINT_LABEL,
-                FORMAT_LABEL,
-                VERIFY_ACTIONS[2].label(),
-                VERIFY_ACTIONS[3].label(),
-                VERIFY_ACTIONS[4].label(),
-                VERIFY_ACTIONS[5].label(),
-                VERIFY_ACTIONS[6].label(),
-                BROWSER_LABEL,
-            ]
-        );
+        let expected = VERIFY_ACTIONS[..=7]
+            .iter()
+            .map(|action| action.label())
+            .collect::<Vec<_>>();
+        assert_eq!(runner.calls(), expected);
         let output = String::from_utf8(output).expect("deadline output is UTF-8");
         assert!(output.contains("deadline_scope=test-phase deadline_ms=1"));
         assert!(output.contains("primary_ordinal=deadline"));
@@ -737,6 +730,7 @@ mod tests {
         assert!(runner.peak.load(Ordering::Acquire) >= 2);
     }
 
+    #[rustfmt::skip]
     mod benchmark;
 
     fn benchmark_arguments(test: &str) -> [&str; 5] {
@@ -848,7 +842,7 @@ mod tests {
         ));
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains("disposition=panic"));
-        assert!(output.contains("primary_ordinal=2 interrupted=false"));
+        assert!(output.contains("primary_ordinal=3 interrupted=false"));
     }
 
     #[cfg(unix)]

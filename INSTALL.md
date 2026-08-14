@@ -264,10 +264,14 @@ start.
 `.spice-install` lives under the Git common directory, so an upgrade is
 repository-wide: every linked worktree sees the new executable at once, and no
 worktree sees it missing, because the refresh replaces each published file in
-place rather than withdrawing the plan and reinstalling it. Re-run
-`cargo xtask activate-hooks` when the hook assets or the verifier guard change
-— `cargo xtask verify` refuses while the published copy is not the running
-build's, and names the command. An upgrade stops nothing outside this
+place rather than withdrawing the plan and reinstalling it. The normal
+`cargo xtask verify` battery first builds the current Spice executable, then
+validates the installed receipt and every asset it owns and compares the
+installed executable with those exact built bytes. Missing, stale, tampered,
+or other-build installs refuse before source verification and name the
+current-build `spice install` preview; apply the digest it prints to refresh.
+Re-run `cargo xtask activate-hooks` only when `core.hooksPath` itself needs to
+select the installed hook directory. An upgrade stops nothing outside this
 appliance.
 
 ## The independence proof
