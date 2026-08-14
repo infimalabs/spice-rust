@@ -401,11 +401,11 @@ fn every_nonterminal_receipt_remains_bound_to_current_build_assets() {
 }
 
 /// The build digest still refuses a foreign reference-transaction hook now that
-/// the hook reaches a published executable rather than a build system.
+/// the hook reaches the installed product rather than a build system.
 ///
 /// Keeping the hook as text is what keeps this arm reachable. Only the
-/// executable it execs is compiled, and that artifact is published by explicit
-/// activation instead of being embedded here, so `include_str!` still has bytes
+/// executable it execs is compiled, and that artifact is published by the same
+/// digest-bound installation, so `include_str!` still has bytes
 /// to compare against and a receipt carrying anything else is still refused. An
 /// arm that had quietly become unreachable would look exactly like this one
 /// without a test to tell them apart.

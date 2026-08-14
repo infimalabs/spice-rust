@@ -20,6 +20,7 @@ use spice::change_gate::ChangeGateReport;
 use spice::repository::Repository;
 
 mod pre_commit;
+mod reference_transaction;
 
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
@@ -120,7 +121,9 @@ pub(crate) fn pre_commit() -> Outcome<ChangeGateReport> {
 pub(crate) fn pre_commit_worker_entry(
     arguments: impl Iterator<Item = std::ffi::OsString>,
 ) -> Option<i32> {
-    pre_commit::worker_entry(arguments)
+    let arguments = arguments.collect::<Vec<_>>();
+    reference_transaction::entry(arguments.iter().cloned())
+        .or_else(|| pre_commit::worker_entry(arguments.into_iter()))
 }
 
 fn pre_commit_report(

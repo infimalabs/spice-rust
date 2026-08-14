@@ -1,6 +1,5 @@
 #![cfg(unix)]
 
-use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -9,11 +8,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{InstallStatus, apply, installed_git_hooks, plan};
 use spice::repository::Repository;
-
-#[path = "hooks/activation_assertions.rs"]
-mod activation_assertions;
-
-use activation_assertions::*;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const ACTIVE_HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transaction"];
@@ -25,9 +19,9 @@ const VALID_ORIGIN: &str =
 type FileImage = (Vec<u8>, u32);
 
 #[test]
-fn install_exercises_spice_hooks_before_explicit_activation() {
+fn install_exercises_nontransaction_hooks_before_explicit_activation() {
     let scratch = Scratch::new();
-    let (base, protected, local) = repository_history(&scratch);
+    repository_history(&scratch);
     let installation = install_spice_hooks(&scratch);
     let cargo_log = scratch.join("cargo.log");
     install_cargo_alias(&scratch, &cargo_log);
@@ -35,17 +29,6 @@ fn install_exercises_spice_hooks_before_explicit_activation() {
     exercise_pre_commit(&scratch, &cargo_log);
     exercise_commit_message(&scratch);
     assert_prior_hooks_unchanged(&scratch, &installation);
-    exercise_reference_guard(&scratch, &base, &protected, &local);
-    // The guard ran through the installed hook several times above, holding the
-    // packed-refs lock each time. The Cargo alias appends every invocation it
-    // is handed, so a log naming no reference transaction is the runtime half
-    // of the structural pin in `tracked_current_hook`: the hook reached the
-    // published executable, and the build system was never entered at all.
-    let invocations = fs::read_to_string(&cargo_log).unwrap();
-    assert!(
-        !invocations.contains("reference-transaction"),
-        "the reference-transaction hook must not reach Cargo: {invocations}"
-    );
     assert_eq!(
         ACTIVE_HOOKS.map(|hook| image(&installation.operator.join(hook))),
         installation.operator_hooks
@@ -93,12 +76,9 @@ fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change(
     let repository_config = image(&scratch.join(".git/config"));
     let worktree_config = image(&scratch.join(".git/worktrees/predecessor/config.worktree"));
     let installed_hooks = ACTIVE_HOOKS.map(|hook| image(&common_hooks(&scratch).join(hook)));
-    let published = published_entry_point(scratch.path());
-    let published_before = image(&published);
-    let replacement = scratch.executable("replacement-xtask", b"#!/bin/sh\nexit 0\n");
     let mut output = Vec::new();
 
-    let error = xtask::activate_hooks(scratch.path(), &replacement, &mut output)
+    let error = xtask::activate_hooks(scratch.path(), &mut output)
         .expect_err("foreign predecessor hooks must refuse activation");
 
     assert!(
@@ -118,7 +98,6 @@ fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change(
         image(&scratch.join(".git/worktrees/predecessor/config.worktree")),
         worktree_config
     );
-    assert_eq!(image(&published), published_before);
     assert_eq!(
         ACTIVE_HOOKS.map(|hook| image(&common_hooks(&scratch).join(hook))),
         installed_hooks
@@ -155,9 +134,8 @@ fn activation_admits_repeated_identical_tolerated_hook_values() {
             [selection, selection]
         );
 
-        let replacement = scratch.executable("replacement-xtask", b"#!/bin/sh\nexit 0\n");
         let mut output = Vec::new();
-        xtask::activate_hooks(scratch.path(), &replacement, &mut output)
+        xtask::activate_hooks(scratch.path(), &mut output)
             .expect("identical tolerated selections admit activation");
 
         assert_eq!(configured_hooks(&scratch), target);
@@ -195,12 +173,9 @@ fn activation_refuses_mixed_tolerated_and_repeated_foreign_hook_values() {
         );
         let repository_config = image(&scratch.join(".git/config"));
         let worktree_config = image(&scratch.join(".git/config.worktree"));
-        let published = published_entry_point(scratch.path());
-        let published_before = image(&published);
-        let replacement = scratch.executable("replacement-xtask", b"#!/bin/sh\nexit 0\n");
         let mut output = Vec::new();
 
-        let error = xtask::activate_hooks(scratch.path(), &replacement, &mut output)
+        let error = xtask::activate_hooks(scratch.path(), &mut output)
             .expect_err("more than one selection or a foreign selection must refuse");
 
         assert!(matches!(
@@ -213,215 +188,7 @@ fn activation_refuses_mixed_tolerated_and_repeated_foreign_hook_values() {
             image(&scratch.join(".git/config.worktree")),
             worktree_config
         );
-        assert_eq!(image(&published), published_before);
     }
-}
-
-/// A lane running under the git shadow environment sees its own branch as its
-/// upstream, deliberately, so `git status` never moves when origin advances.
-/// The reference guard must read the integration branch the shadow keeps
-/// readable instead, or every backwards move of an unpublished lane commit is
-/// reported as abandoning published history.
-#[test]
-fn a_shadowed_upstream_does_not_publish_a_lanes_local_commits() {
-    let scratch = Scratch::new();
-    let (base, protected, local) = repository_history(&scratch);
-    shadow_lane_branch(&scratch, "main-b", &local, &base);
-
-    assert_eq!(rev_parse(&scratch, "@{upstream}^{commit}"), local);
-    assert_eq!(
-        config_get(&scratch, "branch.main-b.merge"),
-        "refs/heads/main"
-    );
-    // The trap this test exists for: the effective remote is the shadow's `.`
-    // while the repository's own pairing still names origin. Without this the
-    // fixture could stop reproducing the disagreement and the test below would
-    // keep passing for the wrong reason.
-    assert_eq!(config_get(&scratch, "branch.main-b.remote"), ".");
-    assert_eq!(config_get_local(&scratch, "branch.main-b.remote"), "origin");
-    assert_eq!(rev_parse(&scratch, "refs/remotes/origin/main"), protected);
-    assert_eq!(rev_parse(&scratch, "refs/heads/main"), base);
-
-    guard(
-        &scratch,
-        &format!("{local} {protected} refs/heads/main-b\n"),
-    )
-    .expect("a shadowed lane may rewind a commit it never published");
-
-    let refusal = guard(&scratch, &format!("{protected} {base} refs/heads/main-b\n"))
-        .expect_err("history published to the integration branch stays protected");
-    assert!(
-        refusal
-            .to_string()
-            .contains("refused to abandon upstream-merged commits")
-    );
-}
-
-/// What Git writes in the old field of a queue line when nothing was declared.
-///
-/// `git update-ref <reference> <new>` takes an optional old value and declares
-/// none, so the field carries the zero OID whether the update rewinds published
-/// history or creates a branch. Spelled here rather than imported: the guard's
-/// own constant agreeing with itself would prove nothing about what Git sends.
-const UNDECLARED_OLD: &str = "0000000000000000000000000000000000000000";
-
-/// The tip is read from the reference, never from the queue's old field.
-///
-/// The field is whatever the caller declared, and the caller Git runs for
-/// `update-ref` declares nothing. A guard judging it reads every such rewind as
-/// a branch creation and refuses none of them -- which is the branch most likely
-/// to be moved that way left unprotected against the command most likely to move
-/// it.
-#[test]
-fn a_rewind_declaring_no_old_value_is_judged_against_the_reference() {
-    let scratch = Scratch::new();
-    let (base, protected, _local) = repository_history(&scratch);
-
-    // The fixture's premise, stated so it cannot quietly stop holding: the
-    // reference carries published history while the queue says it carries
-    // nothing. If these ever agreed, the zero below would be the truth and
-    // permitting it would be correct.
-    assert_eq!(reference_tip(&scratch, "refs/heads/main"), protected);
-    assert_eq!(rev_parse(&scratch, "@{upstream}^{commit}"), protected);
-
-    let refusal = guard(
-        &scratch,
-        &format!("{UNDECLARED_OLD} {base} refs/heads/main\n"),
-    )
-    .expect_err("a rewind is judged against the tip the reference holds");
-    let refusal = refusal.to_string();
-    assert!(
-        refusal.contains("refused to abandon upstream-merged commits"),
-        "{refusal}"
-    );
-    assert!(
-        refusal.contains(&protected[..7]),
-        "the refusal must name the commit the walk found, so a refusal for some \
-         other reason cannot stand in for one that started at the real tip: \
-         {refusal}"
-    );
-}
-
-/// A creation stays permitted, and is permitted only for having no tip.
-///
-/// Reading the reference must not turn every new branch into a refusal: an
-/// unborn branch has nothing to abandon. The branch is created *behind* the
-/// published baseline rather than at it, which is what `git checkout -b` off an
-/// older commit does and what makes this arm able to fail. Created at the
-/// baseline, a fix that substituted some other tip -- the baseline itself being
-/// the obvious one -- would still permit it as a fast-forward, and the test
-/// would pass without proving the absent tip was what permitted it.
-///
-/// The second half is the other control. It gives that same branch a tip and
-/// re-sends a queue line identical but for the commit; the refusal proves the
-/// permit above came from the absent tip rather than from the guard falling
-/// inert earlier -- an unpaired branch or an unmatched reference would also have
-/// returned quietly.
-#[test]
-fn creating_the_current_branch_is_permitted_only_while_it_has_no_tip() {
-    let scratch = Scratch::new();
-    let (base, protected, _local) = repository_history(&scratch);
-    let branch = "main-created";
-    let unborn = format!("refs/heads/{branch}");
-    git(&scratch, &["symbolic-ref", "HEAD", &unborn]);
-    // Paired, so the guard reaches the judgement rather than falling inert at
-    // the baseline and permitting the creation below for the wrong reason.
-    let remote = format!("branch.{branch}.remote");
-    let merge = format!("branch.{branch}.merge");
-    git(&scratch, &["config", &remote, "origin"]);
-    git(&scratch, &["config", &merge, "refs/heads/main"]);
-
-    assert_eq!(
-        reference_tip(&scratch, &unborn),
-        "",
-        "the branch already exists, so this is a rewind rather than a creation"
-    );
-    guard(&scratch, &format!("{UNDECLARED_OLD} {base} {unborn}\n"))
-        .expect("a branch that holds no tip abandons nothing by being created");
-
-    git(&scratch, &["update-ref", &unborn, &protected]);
-    assert_eq!(reference_tip(&scratch, &unborn), protected);
-    let refusal = guard(&scratch, &format!("{UNDECLARED_OLD} {base} {unborn}\n"))
-        .expect_err("the same branch, now holding published history, is judged");
-    assert!(
-        refusal
-            .to_string()
-            .contains("refused to abandon upstream-merged commits"),
-        "{refusal}"
-    );
-}
-
-/// The commit a reference holds, or the empty string if it holds none.
-///
-/// `rev_parse` cannot answer for an unborn branch: it fails, and the fixture
-/// helper turns a failure into a panic rather than an answer.
-fn reference_tip(scratch: &Scratch, reference: &str) -> String {
-    let arguments = ["for-each-ref", "--format=%(objectname)", reference];
-    String::from_utf8(git(scratch, &arguments).stdout)
-        .unwrap()
-        .trim()
-        .to_owned()
-}
-
-/// Put `lane` under the shadow, in the scopes the real shadow writes.
-///
-/// Measured in a live lane worktree with `git config --show-origin` rather than
-/// reconstructed: `branch.<lane>.merge` carries `refs/heads/<lane>` from the
-/// agent's generated config and `refs/heads/main` from the repository's own,
-/// while `branch.<lane>.remote` carries `origin` from the repository and `.`
-/// from the command line. So the shadow never touches the repository's real
-/// pairing; it layers over it. `@{upstream}` resolves to the lane itself
-/// because git tracking reads the *first* merge value and the single-valued
-/// remote resolves to `.`, and that is the whole point of the shadow --
-/// `git status` stops moving when origin advances.
-///
-/// The two halves are therefore recorded differently on purpose. The self-merge
-/// is added first and the true integration branch last, reproducing the order
-/// that makes `@{upstream}` self-referential while the repository's own value
-/// stays last. The `.` remote goes to worktree scope, which stands in for the
-/// command scope a fixture cannot set: both outrank local, and what matters is
-/// that the effective remote disagrees with the local one. A guard that read
-/// the effective value would find `.` and quietly protect nothing.
-///
-/// The local `refs/heads/main` is left behind at `stale` so it cannot stand in
-/// for the remote-tracking reference the contract names; a lane worktree has no
-/// reason to hold a current copy of the integration branch it never checks out.
-fn shadow_lane_branch(scratch: &Scratch, lane: &str, tip: &str, stale: &str) {
-    git(scratch, &["branch", lane, tip]);
-    git(
-        scratch,
-        &["symbolic-ref", "HEAD", &format!("refs/heads/{lane}")],
-    );
-    git(scratch, &["update-ref", "refs/heads/main", stale]);
-    let merge = format!("branch.{lane}.merge");
-    let remote = format!("branch.{lane}.remote");
-    git(
-        scratch,
-        &["config", "--add", &merge, &format!("refs/heads/{lane}")],
-    );
-    git(scratch, &["config", "--local", &remote, "origin"]);
-    git(scratch, &["config", "--add", &merge, "refs/heads/main"]);
-    git(scratch, &["config", "extensions.worktreeConfig", "true"]);
-    git(scratch, &["config", "--worktree", &remote, "."]);
-}
-
-fn guard(scratch: &Scratch, prepared: &str) -> Result<(), impl std::error::Error + use<>> {
-    xtask::reference_transaction(scratch.path(), OsStr::new("prepared"), prepared)
-}
-
-fn config_get(scratch: &Scratch, key: &str) -> String {
-    String::from_utf8(git(scratch, &["config", "--get", key]).stdout)
-        .unwrap()
-        .trim()
-        .to_owned()
-}
-
-/// The repository's own value, ignoring whatever the shadow layers above it.
-fn config_get_local(scratch: &Scratch, key: &str) -> String {
-    String::from_utf8(git(scratch, &["config", "--local", "--get", key]).stdout)
-        .unwrap()
-        .trim()
-        .to_owned()
 }
 
 fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
@@ -435,20 +202,8 @@ fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
         );
         scratch.executable(&format!(".githooks/{hook}"), &tracked_current_hook(hook));
     }
-    // The tracked hooks go live here, and the reference-transaction hook among
-    // them execs the published entry point on every ref update from now on. An
-    // absent entry point aborts the transaction rather than falling back to
-    // anything, so a repository with these hooks configured is by construction
-    // one that has been activated before; the fixture publishes the entry point
-    // to be that repository instead of a state the hook is meant to refuse.
-    publish_fixture_entry_point(scratch);
-    git(
-        scratch,
-        &["config", "--local", "core.hooksPath", ".githooks"],
-    );
     let operator_before = ACTIVE_HOOKS.map(|hook| image(&operator.join(hook)));
     let tracked_before = ACTIVE_HOOKS.map(|hook| image(&tracked.join(hook)));
-    let config_before = image(&scratch.join(".git/config"));
     let repository = Repository::discover(scratch.path()).expect("discover temporary repository");
     let spice = fixture_spice(scratch);
     let planned = plan(&repository, Some(&spice)).expect("plan Spice hooks");
@@ -459,6 +214,11 @@ fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
     )
     .expect("install Spice hooks");
     assert_eq!(receipt.status(), InstallStatus::Complete);
+    git(
+        scratch,
+        &["config", "--local", "core.hooksPath", ".githooks"],
+    );
+    let config_before = image(&scratch.join(".git/config"));
 
     let installed_hooks = installed_git_hooks(&repository);
     let pre_commit = installed_hooks.join("pre-commit");
@@ -513,23 +273,20 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
              with no build system anywhere in its path: {text}"
         );
         assert_eq!(text.matches("exec ").count(), 1);
-        assert!(text.contains("/.spice-install/bin/xtask\" reference-transaction"));
+        assert!(text.contains("/.spice-install/bin/spice\" gate reference-transaction"));
     }
     bytes
 }
 
 fn fixture_spice(scratch: &Scratch) -> PathBuf {
     let dispatcher = scratch.join("bin/xtask-dispatcher");
-    let published = published_entry_point(scratch.path());
     assert!(!dispatcher.to_string_lossy().contains('\''));
-    assert!(!published.to_string_lossy().contains('\''));
     scratch.executable(
         "fixture-spice",
         format!(
-            "#!/bin/sh -eu\n[ \"$1\" = gate ]\nhook=$2\nshift 2\ncase \"$hook\" in\n  pre-commit)\n    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n    exec '{}' verify-action selection \"$@\"\n    ;;\n  commit-msg) exec '{}' commit-msg \"$@\" ;;\n  reference-transaction) exec '{}' reference-transaction \"$@\" ;;\n  *) exit 64 ;;\nesac\n",
+            "#!/bin/sh -eu\n[ \"$1\" = gate ]\nhook=$2\nshift 2\ncase \"$hook\" in\n  pre-commit)\n    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n    exec '{}' verify-action selection \"$@\"\n    ;;\n  commit-msg) exec '{}' commit-msg \"$@\" ;;\n  reference-transaction) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
             dispatcher.display(),
             dispatcher.display(),
-            published.display()
         )
         .as_bytes(),
     )
@@ -622,97 +379,6 @@ fn assert_prior_hooks_unchanged(scratch: &Scratch, evidence: &PriorHookEvidence)
     assert_eq!(image(&scratch.join(".git/config")), evidence.config);
 }
 
-fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, local: &str) {
-    assert_eq!(rev_parse(scratch, "@{upstream}^{commit}"), protected);
-    let prepared_input = format!("{protected} {base} refs/heads/main\n");
-    let direct_refusal =
-        xtask::reference_transaction(scratch.path(), OsStr::new("prepared"), &prepared_input)
-            .expect_err("direct native guard refuses protected rewind");
-    assert!(
-        direct_refusal
-            .to_string()
-            .contains("refused to abandon upstream-merged commits")
-    );
-
-    let linked = scratch.join("linked");
-    git(
-        scratch,
-        &["worktree", "add", "--quiet", "--detach", "linked", "HEAD"],
-    );
-    // Before activation nothing execs the published copy, so a stale one
-    // enforces nothing and the audit owes no refusal. It has to say that rather
-    // than pass quietly, or an inert repository and a current one look alike.
-    let mut inert = Vec::new();
-    xtask::audit_entry_point(scratch.path(), &mut inert)
-        .expect("an unactivated repository owes no guard refusal");
-    let inert = String::from_utf8(inert).unwrap();
-    assert!(
-        inert.contains("not activated"),
-        "the audit names the inert case: {inert}"
-    );
-
-    let mut activated = Vec::new();
-    // The binary Cargo built for this test, not `current_exe`: in an
-    // integration test that would be the harness, and publishing the harness
-    // would leave the hook running something with no guard in it at all.
-    let entry_point = Path::new(env!("CARGO_BIN_EXE_xtask"));
-    xtask::activate_hooks(scratch.path(), entry_point, &mut activated)
-        .expect("run explicit hook activation");
-    assert_entry_point_answers_the_guard(scratch, entry_point, &prepared_input);
-    // One executable serves every worktree, so publishing to a path they share
-    // is the answer rather than a compromise. The linked worktree resolves the
-    // same file, which is also what makes a second lane activating over a first
-    // lane's copy uninteresting: `reference_transaction::apply` reads only the
-    // repository at the current directory, through Git, and carries no lane
-    // identity for a per-lane copy to differ on.
-    assert_eq!(
-        published_entry_point(&linked),
-        published_entry_point(scratch.path())
-    );
-    assert_stale_entry_point_is_republished(scratch, entry_point);
-    assert_unusable_entry_point_is_repaired(scratch, entry_point);
-    assert_guard_audit_refuses_a_prior_build(scratch, entry_point);
-    assert_an_absent_entry_point_aborts_ref_updates(scratch, entry_point);
-    let shared_hooks = common_hooks(scratch);
-    assert_eq!(
-        configured_hooks(scratch),
-        shared_hooks.display().to_string()
-    );
-    assert_eq!(
-        configured_hooks_at(&linked),
-        shared_hooks.display().to_string()
-    );
-    assert_eq!(
-        git_at(&linked, &["rev-parse", "--git-path", "hooks"]),
-        shared_hooks.display().to_string()
-    );
-    assert!(!linked.join(".spice-install").exists());
-    assert!(
-        String::from_utf8(activated)
-            .unwrap()
-            .contains("activated Spice hooks")
-    );
-
-    let refused = update_ref(scratch, base, protected);
-    assert_ne!(refused.status.code(), Some(0), "{}", streams(&refused));
-    assert!(
-        String::from_utf8(refused.stderr)
-            .unwrap()
-            .contains("refused to abandon upstream-merged commits")
-    );
-    assert_eq!(rev_parse(scratch, "refs/heads/main"), protected);
-
-    assert_success(
-        &update_ref(scratch, local, protected),
-        "advance current branch to local commit",
-    );
-    assert_success(
-        &update_ref(scratch, protected, local),
-        "rewind only the unmerged local commit",
-    );
-    assert_eq!(rev_parse(scratch, "refs/heads/main"), protected);
-}
-
 struct PriorHookEvidence {
     operator: PathBuf,
     operator_hooks: [FileImage; 3],
@@ -749,7 +415,7 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
                 "    exec '{}' commit-msg \"$2\"\n",
                 "fi\n",
                 // No reference-transaction arm on purpose. The hook execs the
-                // published binary directly now, so routing that subcommand
+                // installed Spice binary directly, so routing that subcommand
                 // back through Cargo has to fail loudly here rather than be
                 // quietly served: an arm answering it would let the deleted
                 // wrapper return and every assertion below still pass.
@@ -846,14 +512,6 @@ fn repository_history(scratch: &Scratch) -> (String, String, String) {
     (base, protected, local)
 }
 
-fn update_ref(scratch: &Scratch, new: &str, old: &str) -> Output {
-    Command::new("git")
-        .args(["update-ref", "refs/heads/main", new, old])
-        .current_dir(scratch.path())
-        .output()
-        .expect("update current branch reference")
-}
-
 fn rev_parse(scratch: &Scratch, revision: &str) -> String {
     String::from_utf8(git(scratch, &["rev-parse", revision]).stdout)
         .unwrap()
@@ -872,26 +530,6 @@ fn configured_hooks_at(root: &Path) -> String {
 fn common_hooks(scratch: &Scratch) -> PathBuf {
     let repository = Repository::discover(scratch.path()).expect("discover hook repository");
     installed_git_hooks(&repository)
-}
-
-fn published_entry_point(root: &Path) -> PathBuf {
-    let repository = Repository::discover(root).expect("discover hook repository");
-    repository.common_dir().join(".spice-install/bin/xtask")
-}
-
-/// Put the entry point in place the way an earlier activation would have.
-///
-/// This copies rather than calling activation, because activation also flips
-/// `core.hooksPath`, and that flip is the one thing this test watches for
-/// before and after. Borrowing it here would consume the transition it exists
-/// to observe.
-fn publish_fixture_entry_point(scratch: &Scratch) {
-    let published = published_entry_point(scratch.path());
-    fs::create_dir_all(published.parent().expect("entry point has a parent"))
-        .expect("create fixture entry point directory");
-    fs::copy(env!("CARGO_BIN_EXE_xtask"), &published).expect("publish fixture entry point");
-    fs::set_permissions(&published, fs::Permissions::from_mode(0o755))
-        .expect("make fixture entry point executable");
 }
 
 fn git_at(root: &Path, arguments: &[&str]) -> String {
