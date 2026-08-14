@@ -46,8 +46,7 @@ fn generic_repository_publishes_zero_engine_evidence_without_invoking_cargo() {
         *kind, b'R',
         "generic repository did not admit: {boundary:?}"
     );
-    let change_report =
-        ChangeGateReport::decode(document).expect("generic terminal is a change-gate report");
+    let change_report = packaged_change_report(document);
     let tests = selection_report(&boundary.progress);
 
     assert_eq!(change_report.selection().source(), tests.source());

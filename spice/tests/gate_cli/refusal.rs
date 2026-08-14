@@ -99,7 +99,7 @@ fn assert_oversized_json_refusal(
     };
     assert_eq!(
         refusal.reason(),
-        "gate::change-gate-regressed",
+        "gate::pre-commit-regressed",
         "the fixture must reach the selected-change refusal mapper: {refusal:?}",
     );
     let Refusal::Evidence {
@@ -210,7 +210,7 @@ fn pre_commit_refusal_publishes_one_failed_result_behind_a_private_report_path()
     let Outcome::Refusal(refusal) = outcome else {
         panic!("one typed regression must refuse: {outcome:?}");
     };
-    assert_eq!(refusal.reason(), "gate::change-gate-regressed");
+    assert_eq!(refusal.reason(), "gate::pre-commit-regressed");
     assert_eq!(
         assert_concise_pre_commit_refusal(&refusal).0,
         1,
@@ -289,12 +289,7 @@ fn read_report_artifact(evidence: &str) -> (PathBuf, Vec<u8>, ChangeGateReport) 
         "the audit report is private",
     );
     let report_bytes = fs::read(&report_path).expect("read full report artifact");
-    let pre_commit_report = ChangeGateReport::decode(&report_bytes).unwrap_or_else(|error| {
-        panic!(
-            "pre-commit artifact carries a canonical report: {error}; path={}",
-            report_path.display()
-        )
-    });
+    let pre_commit_report = packaged_change_report(&report_bytes);
     fs::remove_file(&report_path).expect("remove test report artifact");
     (report_path, report_bytes, pre_commit_report)
 }

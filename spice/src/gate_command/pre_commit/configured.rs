@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
@@ -45,7 +46,8 @@ const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
 ];
 
 /// One ordered configured-command result bound to an immutable staged source.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ConfiguredReport {
     source: Digest,
     steps: Vec<StepReport>,
@@ -60,6 +62,7 @@ impl ConfiguredReport {
         &self.source
     }
 
+    #[cfg(test)]
     pub(super) fn steps(&self) -> &[StepReport] {
         &self.steps
     }
@@ -83,7 +86,8 @@ impl ConfiguredReport {
 }
 
 /// Execution evidence for one authored declaration.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct StepReport {
     label: String,
     argv: Vec<String>,
@@ -92,13 +96,10 @@ pub(super) struct StepReport {
     findings: Vec<StepFinding>,
 }
 
+#[cfg(test)]
 impl StepReport {
     pub(super) fn label(&self) -> &str {
         &self.label
-    }
-
-    pub(super) fn argv(&self) -> &[String] {
-        &self.argv
     }
 
     pub(super) fn selected_paths(&self) -> &[String] {
@@ -115,12 +116,14 @@ impl StepReport {
 }
 
 /// One independently classified failure from a configured child.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct StepFinding {
     kind: StepFindingKind,
     detail: String,
 }
 
+#[cfg(test)]
 impl StepFinding {
     pub(super) const fn kind(&self) -> StepFindingKind {
         self.kind
@@ -132,7 +135,8 @@ impl StepFinding {
 }
 
 /// Closed failure vocabulary for configured process supervision.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub(super) enum StepFindingKind {
     Exit,
     Signal,
@@ -216,27 +220,70 @@ impl ExecutionBounds {
     }
 }
 
-struct ExecutablePolicy {
+struct DispatchPolicy {
+    builtins: bool,
     surface: Surface,
     configuration: PathBuf,
     source: ConfigSource,
+    tracked: Option<String>,
     commands: Vec<PreCommitStep>,
 }
 
-impl ExecutablePolicy {
-    fn load(repository: &Repository) -> Result<Option<Self>, ConfiguredFailure> {
+impl DispatchPolicy {
+    fn load(repository: &Repository) -> Result<Self, ConfiguredFailure> {
         let loaded = spice::config::capture_repository(repository, &[]).map_err(|error| {
             ConfiguredFailure::refusal("gate::pre-commit-policy-refused", error.to_string())
         })?;
-        let Some(declarations) = pre_commit_declarations(&loaded) else {
-            return Ok(None);
-        };
-        Ok(Some(Self {
+        let policy = loaded.resolved().root().policy();
+        let builtins = policy.pre_commit_builtins();
+        let commands = policy.pre_commit().to_vec();
+        let (configuration, source) = pre_commit_declarations(&loaded).map_or_else(
+            || {
+                (
+                    loaded.locations().tracked().to_path_buf(),
+                    ConfigSource::Tracked,
+                )
+            },
+            |declarations| {
+                (
+                    declarations.configuration().to_path_buf(),
+                    declarations.source(),
+                )
+            },
+        );
+        Ok(Self {
+            builtins,
             surface: Surface::from_loaded(&loaded),
-            configuration: declarations.configuration().to_path_buf(),
-            source: declarations.source(),
-            commands: declarations.commands().to_vec(),
-        }))
+            configuration,
+            source,
+            tracked: loaded.tracked().map(ToOwned::to_owned),
+            commands,
+        })
+    }
+
+    fn verify_selected(&self, selected_root: &Path) -> Result<(), ConfiguredFailure> {
+        let selected = match fs::read_to_string(selected_root.join("spice-rust.toml")) {
+            Ok(text) => Some(text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(ConfiguredFailure::fault(
+                    "gate::pre-commit-policy-unavailable",
+                    error.to_string(),
+                ));
+            }
+        };
+        if selected == self.tracked {
+            return Ok(());
+        }
+        Err(ConfiguredFailure::refusal(
+            "gate::pre-commit-policy-source-mismatch",
+            format!(
+                "configuration={} live_present={} staged_present={}",
+                json(&self.configuration.display().to_string()),
+                self.tracked.is_some(),
+                selected.is_some(),
+            ),
+        ))
     }
 
     fn verify_current(&self, repository: &Repository) -> Result<(), ConfiguredFailure> {
@@ -309,71 +356,153 @@ impl ExecutablePolicy {
     }
 }
 
-/// Execute the current configured list without composing the packaged battery.
-///
-/// The composition task calls this seam with the remaining outer deadline.
-#[expect(
-    dead_code,
-    reason = "the configured executor lands before the dependent packaged/configured composition task"
-)]
-pub(super) fn execute_configured(
-    runtime: Duration,
-    cancellation: Cancellation,
-) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
-    let current = env::current_dir().map_err(|error| {
-        ConfiguredFailure::fault(
-            "gate::pre-commit-working-directory-unavailable",
-            error.to_string(),
-        )
-    })?;
-    let repository = Repository::discover(&current).map_err(|error| {
-        ConfiguredFailure::fault("gate::pre-commit-repository-unresolved", error.to_string())
-    })?;
-    let Some(policy) = ExecutablePolicy::load(&repository)? else {
-        return Ok(None);
-    };
-    let base = ambient_environment()?;
-    if let Some((_, source)) = base
-        .iter()
-        .find(|(name, _)| name == OsStr::new(SOURCE_VARIABLE))
-    {
-        return Err(ConfiguredFailure::refusal(
-            "gate::pre-commit-recursion",
-            format!(
-                "configured command redispatched spice gate pre-commit from staged source {}",
-                json(&source.to_string_lossy()),
-            ),
-        ));
-    }
-    let anchor = spice::gate::prepare_arm(gate::Selector::staged(), gate::GateId::Staging)
-        .map_err(|error| {
-            ConfiguredFailure::refusal("gate::pre-commit-staged-source-refused", error.to_string())
-        })?;
-    let source = anchor.source().clone();
-    let paths = anchor.changes().to_vec();
-    let root = repository.worktree_root().to_path_buf();
-    let mut verify = || {
-        anchor.verify_source().map_err(|error| {
-            ConfiguredFailure::refusal(
-                "gate::pre-commit-staged-source-moved",
-                format!("source={source}; {}", error.detail()),
+/// One typed dispatch policy and one staged source retained for the whole battery.
+pub(super) struct Dispatch {
+    repository: Repository,
+    policy: DispatchPolicy,
+    anchor: spice::gate::PreparedArm<'static>,
+}
+
+impl Dispatch {
+    pub(super) fn capture() -> Result<Self, ConfiguredFailure> {
+        let current = env::current_dir().map_err(|error| {
+            ConfiguredFailure::fault(
+                "gate::pre-commit-working-directory-unavailable",
+                error.to_string(),
             )
         })?;
-        policy.verify_current(&repository)?;
-        policy.require_approved(&repository)
-    };
-    verify()?;
-    execute_steps(
-        &policy.commands,
-        &source,
-        &paths,
-        &root,
-        &base,
-        ExecutionBounds::production(runtime),
-        cancellation,
-        &mut verify,
-    )
-    .map(Some)
+        let repository = Repository::discover(&current).map_err(|error| {
+            ConfiguredFailure::fault("gate::pre-commit-repository-unresolved", error.to_string())
+        })?;
+        let state = repository.admit_state().map_err(|error| {
+            ConfiguredFailure::fault("gate::pre-commit-state-unavailable", error.to_string())
+        })?;
+        fs::create_dir_all(state.locks()).map_err(|error| {
+            ConfiguredFailure::fault("gate::pre-commit-state-unavailable", error.to_string())
+        })?;
+        let anchor = spice::gate::prepare_arm(gate::Selector::staged(), gate::GateId::Staging)
+            .map_err(|error| {
+                ConfiguredFailure::refusal(
+                    "gate::pre-commit-staged-source-refused",
+                    error.to_string(),
+                )
+            })?;
+        let policy = DispatchPolicy::load(&repository)?;
+        policy.verify_selected(anchor.root())?;
+        let dispatch = Self {
+            repository,
+            policy,
+            anchor,
+        };
+        dispatch.verify()?;
+        Ok(dispatch)
+    }
+
+    pub(super) const fn builtins_enabled(&self) -> bool {
+        self.policy.builtins
+    }
+
+    pub(super) fn has_configured(&self) -> bool {
+        !self.policy.commands.is_empty()
+    }
+
+    pub(super) fn configured_count(&self) -> usize {
+        self.policy.commands.len()
+    }
+
+    pub(super) fn source(&self) -> &Digest {
+        self.anchor.source()
+    }
+
+    pub(super) fn verify(&self) -> Result<(), ConfiguredFailure> {
+        self.anchor.verify_source().map_err(|error| {
+            ConfiguredFailure::refusal(
+                "gate::pre-commit-staged-source-moved",
+                format!("source={}; {}", self.source(), error.detail()),
+            )
+        })?;
+        self.policy.verify_current(&self.repository)
+    }
+
+    pub(super) fn rebind(self, expected: &Digest) -> Result<Self, ConfiguredFailure> {
+        let Self {
+            repository,
+            policy,
+            anchor: _,
+        } = self;
+        let anchor = spice::gate::prepare_arm(gate::Selector::staged(), gate::GateId::Staging)
+            .map_err(|error| {
+                ConfiguredFailure::refusal(
+                    "gate::pre-commit-staged-source-refused",
+                    error.to_string(),
+                )
+            })?;
+        if anchor.source() != expected {
+            return Err(ConfiguredFailure::refusal(
+                "gate::pre-commit-staged-source-moved",
+                format!(
+                    "dispatcher source {expected} differs from rebound source {}",
+                    anchor.source(),
+                ),
+            ));
+        }
+        policy.verify_selected(anchor.root())?;
+        let rebound = Self {
+            repository,
+            policy,
+            anchor,
+        };
+        rebound.verify()?;
+        Ok(rebound)
+    }
+
+    pub(super) fn execute_configured(
+        &self,
+        runtime: Duration,
+        cancellation: Cancellation,
+    ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
+        if !self.has_configured() {
+            return Ok(None);
+        }
+        let base = ambient_environment()?;
+        if let Some((_, source)) = base
+            .iter()
+            .find(|(name, _)| name == OsStr::new(SOURCE_VARIABLE))
+        {
+            return Err(ConfiguredFailure::refusal(
+                "gate::pre-commit-recursion",
+                format!(
+                    "configured command redispatched spice gate pre-commit from staged source {}",
+                    json(&source.to_string_lossy()),
+                ),
+            ));
+        }
+        let source = self.source().clone();
+        let paths = self.anchor.changes().to_vec();
+        let root = self.repository.worktree_root().to_path_buf();
+        let mut verify = || {
+            self.verify()?;
+            self.policy.require_approved(&self.repository)
+        };
+        verify()?;
+        execute_steps(
+            &self.policy.commands,
+            &source,
+            &paths,
+            &root,
+            &base,
+            ExecutionBounds::production(runtime),
+            cancellation,
+            &mut verify,
+        )
+        .map(Some)
+    }
+}
+
+pub(super) const fn cleanup_reserve() -> Duration {
+    OUTPUT_DRAIN
+        .saturating_add(REAP_DEADLINE)
+        .saturating_add(TERMINATION_GRACE)
 }
 
 #[expect(

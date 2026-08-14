@@ -151,7 +151,7 @@ fn deadline_terminates_the_worker_group_and_names_its_last_phase() {
     assert!(observed.contains("phase=family family=toolchain"));
     assert!(observed.contains("findings=incomplete"));
     let rendered = crate::render::render_commit_gate(
-        &Outcome::<spice::change_gate::ChangeGateReport>::Refusal(refusal),
+        &Outcome::<Report>::Refusal(refusal),
         crate::render::Form::Text,
     )
     .expect("deadline refusal renders")
@@ -225,6 +225,79 @@ fn abnormal_worker_exit_is_typed_and_retains_the_last_exact_phase() {
     );
     assert!(fault.detail.contains("worker exited Some(17)"));
     files.cleanup().expect("remove lost-worker files");
+}
+
+#[test]
+fn configured_only_report_is_validated_and_silent_when_every_step_admits() {
+    let source = Digest::compute(wire::Domain::GateTree, b"configured-only source");
+    let document = serde_json::json!({
+        "version": PRE_COMMIT_REPORT_VERSION,
+        "source": source,
+        "configured": {
+            "source": source,
+            "steps": [{
+                "label": "configured fixture",
+                "argv": ["/bin/true"],
+                "selected_paths": ["src/lib.rs"],
+                "enabled": true,
+                "findings": [],
+            }],
+        },
+    });
+    let report = Report::decode(&serde_json::to_vec(&document).expect("encode fixture report"))
+        .expect("configured-only report is valid");
+
+    assert!(report.packaged().is_none());
+    let configured = report.configured().expect("configured report retained");
+    assert_eq!(configured.steps().len(), 1);
+    assert_eq!(configured.steps()[0].label(), "configured fixture");
+    assert_eq!(configured.steps()[0].selected_paths(), ["src/lib.rs"]);
+    assert!(configured.steps()[0].enabled());
+    assert!(configured.steps()[0].findings().is_empty());
+    assert!(report.admits());
+    let outcome = report_outcome(report, Path::new("unused-on-admission"));
+    assert!(matches!(outcome, Outcome::Reply(_)));
+    assert!(
+        crate::render::render_commit_gate(&outcome, crate::render::Form::Text)
+            .expect("configured admission renders")
+            .is_none(),
+        "clean configured-only admission must remain silent",
+    );
+}
+
+#[test]
+fn composite_report_refuses_an_empty_battery_or_mismatched_source() {
+    let source = Digest::compute(wire::Domain::GateTree, b"empty battery");
+    let empty = serde_json::json!({
+        "version": PRE_COMMIT_REPORT_VERSION,
+        "source": source,
+    });
+    assert!(
+        Report::decode(&serde_json::to_vec(&empty).expect("encode empty report"))
+            .expect_err("empty battery must refuse")
+            .contains("empty effective battery")
+    );
+
+    let other = Digest::compute(wire::Domain::GateTree, b"other configured source");
+    let mismatch = serde_json::json!({
+        "version": PRE_COMMIT_REPORT_VERSION,
+        "source": source,
+        "configured": {
+            "source": other,
+            "steps": [{
+                "label": "configured fixture",
+                "argv": ["/bin/true"],
+                "selected_paths": [],
+                "enabled": true,
+                "findings": [],
+            }],
+        },
+    });
+    assert!(
+        Report::decode(&serde_json::to_vec(&mismatch).expect("encode mismatched report"))
+            .expect_err("mismatched configured source must refuse")
+            .contains("different staged source")
+    );
 }
 
 #[cfg(unix)]
