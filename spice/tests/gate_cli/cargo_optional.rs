@@ -58,6 +58,12 @@ fn generic_repository_publishes_zero_engine_evidence_without_invoking_cargo() {
     assert!(tests.edges().is_empty());
     assert!(tests.admits());
     assert!(
+        !boundary.progress.contains("[rust-test] ")
+            && !boundary.progress.contains("[rust-test-selection] "),
+        "zero-engine generic policy emitted Cargo execution progress: {}",
+        boundary.progress,
+    );
+    assert!(
         !cargo_marker.exists(),
         "zero-engine generic policy invoked Cargo"
     );
