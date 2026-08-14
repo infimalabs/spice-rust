@@ -205,11 +205,15 @@ fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
     let operator_before = ACTIVE_HOOKS.map(|hook| image(&operator.join(hook)));
     let tracked_before = ACTIVE_HOOKS.map(|hook| image(&tracked.join(hook)));
     let repository = Repository::discover(scratch.path()).expect("discover temporary repository");
-    let planned = plan(&repository, None).expect("plan Spice hooks");
-    let receipt = apply(&repository, None, &planned.digest().expect("digest plan"))
-        .expect("install Spice hooks");
+    let spice = fixture_spice(scratch);
+    let planned = plan(&repository, Some(&spice)).expect("plan Spice hooks");
+    let receipt = apply(
+        &repository,
+        Some(&spice),
+        &planned.digest().expect("digest plan"),
+    )
+    .expect("install Spice hooks");
     assert_eq!(receipt.status(), InstallStatus::Complete);
-    install_fixture_spice_target(scratch);
     git(
         scratch,
         &["config", "--local", "core.hooksPath", ".githooks"],
@@ -246,12 +250,6 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let path = root.join(".githooks").join(hook);
     let bytes = fs::read(&path).expect("read tracked native hook wrapper");
-    let installed = fs::read(root.join("spice/src/install/git-hooks").join(hook))
-        .expect("read installed native hook template");
-    assert_eq!(
-        bytes, installed,
-        "tracked and installed hooks must be one image"
-    );
     let text = String::from_utf8_lossy(&bytes);
     assert!(!text.contains("spice dev"));
     if hook == "pre-commit" {
@@ -278,6 +276,20 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
         assert!(text.contains("/.spice-install/bin/spice\" gate reference-transaction"));
     }
     bytes
+}
+
+fn fixture_spice(scratch: &Scratch) -> PathBuf {
+    let dispatcher = scratch.join("bin/xtask-dispatcher");
+    assert!(!dispatcher.to_string_lossy().contains('\''));
+    scratch.executable(
+        "fixture-spice",
+        format!(
+            "#!/bin/sh -eu\n[ \"$1\" = gate ]\nhook=$2\nshift 2\ncase \"$hook\" in\n  pre-commit)\n    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n    exec '{}' verify-action selection \"$@\"\n    ;;\n  commit-msg) exec '{}' commit-msg \"$@\" ;;\n  reference-transaction) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
+            dispatcher.display(),
+            dispatcher.display(),
+        )
+        .as_bytes(),
+    )
 }
 
 fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
@@ -518,10 +530,6 @@ fn configured_hooks_at(root: &Path) -> String {
 fn common_hooks(scratch: &Scratch) -> PathBuf {
     let repository = Repository::discover(scratch.path()).expect("discover hook repository");
     installed_git_hooks(&repository)
-}
-
-fn install_fixture_spice_target(scratch: &Scratch) {
-    scratch.executable(".git/.spice-install/bin/spice", b"#!/bin/sh\nexit 0\n");
 }
 
 fn git_at(root: &Path, arguments: &[&str]) -> String {

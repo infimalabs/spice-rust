@@ -478,6 +478,7 @@ fn exhaustive_authority(path: &str) -> bool {
             | "spice/src/gate.rs"
             | "spice/src/gate_command.rs"
             | "spice/src/install/git-hooks/pre-commit"
+            | "spice/src/install/git_hooks.rs"
             | "spice/src/lib.rs"
             | "spice/src/main.rs"
             | "xtask/src/lib.rs"
@@ -659,6 +660,7 @@ mod tests {
             "spice/src/gate_command.rs",
             "spice/src/gate_command/pre_commit.rs",
             "spice/src/install/git-hooks/pre-commit",
+            "spice/src/install/git_hooks.rs",
             "spice/src/lib.rs",
             "spice/src/main.rs",
             "xtask/src/lib.rs",

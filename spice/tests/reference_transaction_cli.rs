@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use spice::install::{apply, installed_git_hooks, plan};
+use spice::repository::Repository;
+
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const USAGE: &str = "usage: spice gate reference-transaction <prepared|committed|aborted>\n";
-const HOOK: &[u8] = include_bytes!("../src/install/git-hooks/reference-transaction");
 
 #[test]
 fn committed_and_aborted_are_inert_before_repository_access() {
@@ -115,22 +117,21 @@ fn linked_worktree_reaches_the_same_common_installed_product() {
 
 #[test]
 fn hook_launcher_has_one_direct_product_path_and_never_enters_cargo() {
-    let text = std::str::from_utf8(HOOK).expect("hook template is UTF-8");
-    assert_eq!(text.matches("exec ").count(), 1);
-    assert!(
-        text.contains(
-            "exec \"$common/.spice-install/bin/spice\" gate reference-transaction \"$1\""
-        )
-    );
-    assert!(!text.contains("cargo"));
-    assert!(!text.contains("xtask"));
-
     let scratch = Scratch::repository("no-cold-build");
-    let hook = scratch.executable("hook", HOOK);
     let log = scratch.join("spice-argv");
     let cargo_marker = scratch.join("cargo-entered");
     let spice_script = format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >'{}'\n", log.display());
-    scratch.executable(".git/.spice-install/bin/spice", spice_script.as_bytes());
+    let source = scratch.executable("fixture-spice", spice_script.as_bytes());
+    let hook = scratch.install_hook_target(&source);
+    let bytes = fs::read(&hook).expect("read installed hook launcher");
+    let text = std::str::from_utf8(&bytes).expect("hook launcher is UTF-8");
+
+    assert_eq!(text.lines().count(), 2);
+    assert_eq!(text.matches("exec ").count(), 1);
+    assert!(text.contains("/.spice-install/bin/spice' gate reference-transaction \"$@\""));
+    assert!(!text.contains("cargo"));
+    assert!(!text.contains("xtask"));
+
     let bin = scratch.join("bin");
     fs::create_dir(&bin).expect("create sentinel PATH directory");
     let cargo_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", cargo_marker.display());
@@ -267,17 +268,25 @@ impl Scratch {
     }
 
     fn install_real_hook_target(&self) {
-        let hook = self.executable(".git/.spice-install/git-hooks/reference-transaction", HOOK);
-        let binary = self.join(".git/.spice-install/bin/spice");
-        fs::create_dir_all(binary.parent().unwrap()).expect("create installed binary parent");
-        fs::copy(spice(), &binary).expect("publish test Spice binary");
-        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
-            .expect("make installed Spice executable");
+        self.install_hook_target(Path::new(spice()));
+    }
+
+    fn install_hook_target(&self, source: &Path) -> PathBuf {
+        let repository = Repository::discover(self.path()).expect("discover test repository");
+        let planned = plan(&repository, Some(source)).expect("plan test installation");
+        apply(
+            &repository,
+            Some(source),
+            &planned.digest().expect("digest test installation"),
+        )
+        .expect("apply test installation");
+        let hook = installed_git_hooks(&repository).join("reference-transaction");
         self.git(&[
             "config",
             "core.hooksPath",
             hook.parent().unwrap().to_str().expect("hook path is UTF-8"),
         ]);
+        hook
     }
 }
 
