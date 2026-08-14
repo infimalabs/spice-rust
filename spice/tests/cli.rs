@@ -16,6 +16,8 @@ use wire::{Outcome, ReplyPosition, Version};
 
 #[path = "support/staged_app.rs"]
 mod staged_app;
+#[path = "cli/watch.rs"]
+mod watch;
 
 /// The exit a refused request carries, in either form.
 const REFUSAL_EXIT: i32 = 2;
@@ -181,65 +183,6 @@ fn malformed_locus_is_a_typed_refusal_without_selector_fallthrough() {
             .and_then(wire::RefusalDiagnostic::observed),
         Some("one:two:three")
     );
-}
-
-#[test]
-fn watch_follows_a_real_filesystem_notification_then_reconciles_tape() {
-    let scratch = Scratch::new("watch-notification");
-    let (_, tape) = session(scratch.path());
-    let root = scratch.path().to_string_lossy().into_owned();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args(["--json", "watch", &root])
-        .env_remove(steer::hook::INBOX)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("watch launches");
-    let stdout = child.stdout.take().expect("stdout is piped");
-    let (sender, receiver) = mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            if sender.send(line.expect("watch speaks UTF-8")).is_err() {
-                break;
-            }
-        }
-    });
-
-    let first = receiver
-        .recv_timeout(Duration::from_secs(10))
-        .expect("armed watch emits its initial cursor state");
-    let initial: StreamOutcome = wire::decode(first.as_bytes()).expect("initial DTO decodes");
-    assert!(matches!(
-        initial.observations.as_slice(),
-        [Observation::Absent { .. }]
-    ));
-
-    tape.tee(&record(CODEX_PROSE))
-        .expect("a record arrives after the watcher is armed");
-    let observed = loop {
-        let line = receiver
-            .recv_timeout(Duration::from_secs(10))
-            .expect("filesystem activity wakes the blocking watcher");
-        let outcome: StreamOutcome = wire::decode(line.as_bytes()).expect("wake DTO decodes");
-        if outcome
-            .observations
-            .iter()
-            .any(|observation| matches!(observation, Observation::Event { .. }))
-        {
-            break outcome;
-        }
-    };
-    assert_eq!(observed.mode, Mode::Watch);
-
-    child.kill().expect("fixture follower stops");
-    let status = child.wait().expect("fixture follower is reaped");
-    assert!(
-        !status.success(),
-        "the endless follower was explicitly stopped"
-    );
-    drop(receiver);
-    reader.join().expect("stdout reader joins");
-    scratch.remove();
 }
 
 #[cfg(unix)]
