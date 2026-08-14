@@ -156,14 +156,18 @@ Tracked policy is physically separate. Python builds its repository layer from
 through `gate/src/input.rs#POLICY_PATH`. Neither runtime falls back to the
 other's file when its own is absent or malformed.
 
-The Python document currently retains one deliberate execution bridge: its
+The Python document retains one deliberate execution bridge: its
 `policy.pre_commit` entry invokes the current Rust `spice gate pre-commit`
 command while its own `policy.pre_commit_builtins` setting is false. That
-command is owned by the predecessor hook, not a shared configuration read.
-The same key names have native Rust semantics only when authored in
-`spice-rust.toml`: packaged Rust built-ins are enabled by default and any
-configured commands form an ordered appended list. Machine-local configuration
-is also separate; Rust reads only `.spice-rs/config.toml`.
+command is owned by the predecessor hook and enters Rust from outside the Rust
+configured-command recursion boundary; it is not a shared configuration read.
+The Rust document carries the distinct self-hosting override: its built-ins are
+disabled and its sole `Spice source gate` command is exactly `cargo xtask
+verify-action selection`. A Rust configured command receives
+`SPICE_RS_PRE_COMMIT_SOURCE`, so pointing that edge back at `spice gate
+pre-commit` would be recursive and is refused. The xtask selection command is
+the direct current-source leaf and does not redispatch. Machine-local
+configuration is also separate; Rust reads only `.spice-rs/config.toml`.
 
 The installed pre-commit dispatcher resolves that native policy once. It runs
 the packaged selected-change gate exactly once when built-ins are enabled,
@@ -186,6 +190,9 @@ Standard input is null, output capture is bounded, and all configured steps
 share one deadline and process-group cleanup budget. No configured command can
 start until the current executable configuration digest has a durable operator
 grant; index movement, policy movement, or trust revocation stops the battery.
+The repository does not auto-grant its self-hosting command: changing the
+tracked Rust document produces the complete digest/path/argv refusal and waits
+for an explicit operator decision about those exact bytes.
 
 Packaged change selection is repository-neutral. It compiles an applicability
 profile from the immutable staged path inventory and the typed tracked

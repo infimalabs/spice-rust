@@ -81,6 +81,118 @@ fn disabled_built_ins_without_configured_entries_refuse_before_work() {
 }
 
 #[test]
+fn source_override_refuses_its_exact_capability_without_creating_trust() {
+    let repository = source_override_repository();
+    let discovered = spice::repository::Repository::discover(repository.path())
+        .expect("discover source-policy fixture");
+    let journal = discovered
+        .admit_state()
+        .expect("admit source-policy fixture state")
+        .journal()
+        .to_path_buf();
+    assert!(!journal.exists(), "fixture began with trust authority");
+
+    let boundary = run_commit_worker(repository.path());
+
+    let failure = terminal_failure(&boundary);
+    assert_eq!(
+        failure["reason"],
+        "gate::pre-commit-configuration-untrusted"
+    );
+    let detail = failure["detail"]
+        .as_str()
+        .expect("trust refusal carries exact capability detail");
+    for evidence in [
+        "standing=absent",
+        "provenance=tracked",
+        "spice-rust.toml",
+        "Spice source gate",
+        "cargo",
+        "xtask",
+        "verify-action",
+        "selection",
+        "spice trust grant",
+    ] {
+        assert!(detail.contains(evidence), "missing {evidence:?}: {detail}");
+    }
+    assert!(!boundary.progress.contains("test-selection"));
+    assert!(!boundary.progress.contains("[change-gate-selection-report]"));
+    assert!(
+        boundary
+            .progress
+            .contains("{\"phase\":\"configured\",\"steps\":1}")
+    );
+    assert!(!journal.exists(), "the refusal created trust authority");
+}
+
+#[test]
+fn explicitly_trusted_source_override_runs_one_xtask_leaf_through_the_hook() {
+    let repository = source_override_repository();
+    let first = run_commit_worker(repository.path());
+    let failure = terminal_failure(&first);
+    let detail = failure["detail"]
+        .as_str()
+        .expect("trust refusal carries the exact digest");
+    let digest = detail
+        .split_once("digest=")
+        .and_then(|(_, remainder)| remainder.split_whitespace().next())
+        .expect("trust refusal names digest")
+        .parse::<Digest>()
+        .expect("trust refusal digest is canonical");
+    grant_fixture_trust(&repository, digest.clone());
+    repository.install_pre_commit();
+
+    let programs = repository.path().join("programs");
+    fs::create_dir(&programs).expect("create source-gate executable path");
+    let log = repository.path().join("source-gate.log");
+    executable(
+        &programs.join("cargo"),
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s|%s|%s\\n' \"$*\" \"$SPICE_RS_PRE_COMMIT_SOURCE\" ",
+                "\"$SPICE_RS_PRE_COMMIT_PATHS\" >> '{}'\n",
+            ),
+            log.display(),
+        ),
+    );
+    let path = std::env::join_paths([programs, PathBuf::from("/usr/bin"), PathBuf::from("/bin")])
+        .expect("compose source-gate executable path");
+
+    let output = Command::new("/usr/bin/git")
+        .args(["commit", "-qm", "Exercise the trusted source gate"])
+        .current_dir(repository.path())
+        .env("PATH", path)
+        .output()
+        .expect("commit through the installed Rust hook");
+
+    assert!(
+        output.status.success(),
+        "trusted source hook failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    let invocation = fs::read_to_string(log).expect("read source-gate invocation");
+    let fields = invocation.trim_end().split('|').collect::<Vec<_>>();
+    assert_eq!(
+        fields.len(),
+        3,
+        "unexpected source-gate log: {invocation:?}"
+    );
+    assert_eq!(fields[0], "xtask verify-action selection");
+    let staged_source = fields[1]
+        .parse::<Digest>()
+        .expect("configured source handoff is a canonical digest");
+    assert_ne!(
+        staged_source, digest,
+        "the staged-tree identity must remain distinct from configuration trust",
+    );
+    assert_eq!(fields[2], "[\"src/lib.rs\"]");
+}
+
+#[test]
 fn recursion_marker_refuses_public_and_hidden_dispatcher_entrypoints() {
     let scratch = Scratch::new("dispatcher-recursion");
     let source = wire::Digest::compute(wire::Domain::GateTree, b"recursive fixture");
@@ -144,6 +256,56 @@ fn dispatch_repository(builtins: Option<bool>) -> GateRepository {
     repository.write_source(2);
     repository.add("src/lib.rs");
     repository
+}
+
+fn source_override_repository() -> GateRepository {
+    let repository = GateRepository::new();
+    fs::write(
+        repository.path().join("spice-rust.toml"),
+        include_str!("../../../spice-rust.toml"),
+    )
+    .expect("write the exact source-repository policy");
+    repository.add("spice-rust.toml");
+    git(
+        repository.path(),
+        &["commit", "-qm", "Adopt the source-repository gate"],
+    );
+    repository.write_source(2);
+    repository.add("src/lib.rs");
+    repository
+}
+
+fn grant_fixture_trust(repository: &GateRepository, digest: Digest) {
+    let discovered = spice::repository::Repository::discover(repository.path())
+        .expect("discover trusted source-policy fixture");
+    let state = discovered
+        .admit_state()
+        .expect("admit trusted source-policy fixture state");
+    fs::create_dir_all(state.data()).expect("create fixture trust authority parent");
+    let mut authority = journal::Journal::open(state.journal()).expect("open fixture authority");
+    let mut write = journal::JournalWrite::new(
+        wire::Actor::Spice,
+        "recovery:source-gate-trust-fixture"
+            .parse()
+            .expect("fixture origin"),
+        "2030-08-14T12:00:00.000Z".parse().expect("fixture instant"),
+        wire::Producer::CommandDoor,
+    );
+    let pended = write
+        .fact(
+            wire::body::TrustPended {
+                surface: "configuration".to_owned(),
+                digest: digest.clone(),
+                previous: None,
+            },
+            journal::FactCause::Root,
+        )
+        .expect("build fixture trust fact");
+    write.trust_head(pended, move |_| wire::TrustHead {
+        digest,
+        state: wire::TrustState::Granted,
+    });
+    authority.apply(write).expect("commit fixture trust grant");
 }
 
 fn terminal_failure_reason(boundary: &WorkerBoundary) -> String {

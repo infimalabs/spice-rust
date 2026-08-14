@@ -13,6 +13,7 @@ mod app;
 mod build_cache;
 mod develop;
 mod gate_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod hooks;
 mod landing;
 mod proof_image;
@@ -44,6 +45,7 @@ const BROWSER_RECEIPT: &[u8] = verify_browser::RECEIPT;
 // off the wasm target; the workspace wasm check compiles this crate too.
 #[cfg(not(target_arch = "wasm32"))]
 pub use develop::refresh_install;
+#[cfg(not(target_arch = "wasm32"))]
 pub use hooks::{HookActivationError, activate_hooks, audit_entry_point};
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};

@@ -68,6 +68,7 @@ fn main() -> ExitCode {
             run_gate(arguments.collect(), &mut output, &mut io::stderr().lock())
         }
         Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
+        #[cfg(not(target_arch = "wasm32"))]
         Some(value) if is_exact_command(value, "activate-hooks", arguments.len(), 0) => {
             run_activate_hooks(&mut output)
         }
@@ -216,6 +217,7 @@ fn run_gate(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_activate_hooks(output: &mut impl io::Write) -> CommandResult {
     xtask::activate_hooks(Path::new("."), output).map_err(Into::into)
 }

@@ -5,7 +5,8 @@ use wire::ConfigSource;
 
 /// Serialized shape of one leaf value.
 ///
-/// Semantic validation still belongs to the domain type named by [`Root`].
+/// Semantic validation still belongs to the domain type named by
+/// [`Root`](crate::config::Root).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ValueKind {
     /// One boolean.

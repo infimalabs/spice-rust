@@ -27,11 +27,24 @@ fn python_and_rust_tracked_documents_keep_independent_pre_commit_policy() {
         ]
     );
 
-    assert!(rust.root().policy().pre_commit_builtins());
-    assert!(
-        rust.root().policy().pre_commit().is_empty(),
-        "Rust reads only spice-rust.toml and applies its native packaged default",
+    assert!(!rust.root().policy().pre_commit_builtins());
+    let [command] = rust.root().policy().pre_commit() else {
+        panic!("the Rust-owned document retains its one current-source command");
+    };
+    assert_eq!(command.label(), "Spice source gate");
+    assert_eq!(
+        command.run(),
+        ["cargo", "xtask", "verify-action", "selection"]
     );
+}
+
+#[test]
+fn generic_rust_policy_without_the_source_override_keeps_packaged_builtins() {
+    let generic = resolve(Inputs::new(None, None, &[]))
+        .expect("an absent tracked document resolves to packaged defaults");
+
+    assert!(generic.root().policy().pre_commit_builtins());
+    assert!(generic.root().policy().pre_commit().is_empty());
 }
 
 fn resolve_document(name: &str) -> spice::config::Resolved {
