@@ -8,16 +8,13 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transaction"];
-
 /// The installed product path every linked worktree's hook resolves.
 const ENTRY_POINT_PATH: &str = ".spice-install/bin/spice";
 
-/// Point the repository and every linked worktree at the installed hook set.
+/// Ask the installed appliance to preview and apply its own current plan.
 ///
-/// This is deliberately separate from digest-bound installation: the install
-/// plan publishes the hooks and product, while this explicit activation changes
-/// only Git configuration after proving those installed assets exist.
+/// This developer convenience owns no hook preflight or mutation. The installed
+/// `spice install` plan is the sole authority for both assets and Git selection.
 ///
 /// # Errors
 ///
@@ -25,162 +22,76 @@ const ENTRY_POINT_PATH: &str = ".spice-install/bin/spice";
 pub fn activate_hooks(root: &Path, output: &mut impl Write) -> Result<(), HookActivationError> {
     let repository = spice::repository::Repository::discover(root)
         .map_err(|error| HookActivationError::Repository(error.to_string()))?;
-    let hooks = repository.common_dir().join(".spice-install/git-hooks");
-    for hook in HOOKS {
-        let path = hooks.join(hook);
-        if !is_executable(&path)? {
-            return Err(HookActivationError::HookNotExecutable(path));
-        }
-    }
     let entry_point = repository.common_dir().join(ENTRY_POINT_PATH);
     if !is_executable(&entry_point)? {
         return Err(HookActivationError::HookNotExecutable(entry_point));
     }
-    let hooks_text = hooks
-        .to_str()
-        .ok_or_else(|| HookActivationError::UnnameablePath(hooks.clone()))?;
-    let overrides = preflight_worktree_hooks(&repository, hooks_text)?;
-
-    for (worktree, prior) in overrides {
-        git(
-            &worktree,
-            &["config", "--worktree", "--unset-all", "core.hooksPath"],
-            "clear worktree hook override",
-        )?;
-        writeln!(
-            output,
-            "cleared worktree hook override at {} (was {prior})",
-            worktree.display()
-        )
-        .map_err(HookActivationError::Output)?;
-    }
-    git(
+    let preview = delegated_install(
+        &entry_point,
         repository.worktree_root(),
-        &["config", "--local", "core.hooksPath", hooks_text],
-        "activate common Git hooks",
+        &[],
+        "preview installed hook activation",
     )?;
-    let configured = git(
+    let preview: spice::install::InstallPreview =
+        wire::decode(&preview.stdout).map_err(|error| HookActivationError::InvalidReply {
+            operation: "preview installed hook activation",
+            detail: error.to_string(),
+        })?;
+    let apply = format!("--apply={}", preview.digest());
+    let receipt = delegated_install(
+        &entry_point,
         repository.worktree_root(),
-        &["config", "--local", "--get", "core.hooksPath"],
-        "verify common Git hooks",
+        &[apply.as_str()],
+        "apply installed hook activation",
     )?;
-    let configured = utf8(
-        "git config --local --get core.hooksPath",
-        &configured.stdout,
-    )?
-    .trim_ascii_end();
-    if configured != hooks_text {
-        return Err(HookActivationError::ConfigurationDrift {
-            expected: hooks,
-            observed: configured.to_owned(),
+    let receipt: spice::install::InstallReceipt =
+        wire::decode(&receipt.stdout).map_err(|error| HookActivationError::InvalidReply {
+            operation: "apply installed hook activation",
+            detail: error.to_string(),
+        })?;
+    if receipt.status() != spice::install::InstallStatus::Complete
+        || receipt.digest() != preview.digest()
+        || receipt.plan() != preview.plan()
+    {
+        return Err(HookActivationError::InvalidReply {
+            operation: "apply installed hook activation",
+            detail: format!(
+                "installer returned status {:?}, digest {}, and a plan matching preview={}",
+                receipt.status(),
+                receipt.digest(),
+                receipt.plan() == preview.plan(),
+            ),
         });
     }
-    writeln!(output, "activated Spice hooks from {hooks_text}").map_err(HookActivationError::Output)
+    writeln!(
+        output,
+        "activated Spice hooks through installed plan {}",
+        receipt.digest(),
+    )
+    .map_err(HookActivationError::Output)
 }
 
-/// Refuse before the first write when a worktree selects foreign hooks.
-///
-/// **Same-worktree coexistence is unsupported for hooks.** `core.hooksPath` is
-/// single-valued per scope, so one worktree gets this port's guarantees or the
-/// Python predecessor's and never both. The stronger claim -- unsupported per
-/// *repository* -- is refused by the evidence: `extensions.worktreeConfig` makes
-/// per-worktree selection real, and lanes do run on it.
-///
-/// The other direction, one hook path dispatching to both, is rejected because
-/// `reference-transaction` runs inside the ref transaction while the
-/// repository-global `packed-refs` lock is held; it therefore execs a prebuilt
-/// binary and never a build system. A dispatcher would pay a second interpreter
-/// start under that lock on every ref update, in all lanes at once. The two
-/// gates also disagree on rules, so running both means the stricter one governs
-/// silently.
-///
-/// So this walks every worktree and reads its *effective* `core.hooksPath`
-/// before anything is published. Two values configured across scopes refuse even
-/// where each alone would pass. It once cleared every worktree unconditionally;
-/// stopping here is what keeps it from stripping the predecessor's hooks.
-fn preflight_worktree_hooks(
-    repository: &spice::repository::Repository,
-    hooks_text: &str,
-) -> Result<Vec<(PathBuf, String)>, HookActivationError> {
-    let listed = git(
-        repository.worktree_root(),
-        &["worktree", "list", "--porcelain"],
-        "list Git worktrees",
-    )?;
-    let listed = utf8("git worktree list --porcelain", &listed.stdout)?;
-    let mut overrides = Vec::new();
-    for worktree in listed
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .map(PathBuf::from)
-    {
-        let configured = optional_git_config(
-            &worktree,
-            &["config", "--get-all", "core.hooksPath"],
-            "read effective worktree hooks",
-            None,
-        )?;
-        if let Some(values) = configured
-            && !is_one_tolerated_hook_selection(&values, hooks_text)
-        {
-            return Err(HookActivationError::ForeignHookPath {
-                worktree,
-                observed: values.join(", "),
-            });
-        }
-        if let Some(values) = optional_git_config(
-            &worktree,
-            &["config", "--worktree", "--get-all", "core.hooksPath"],
-            "read worktree hook override",
-            Some("extension worktreeConfig is enabled"),
-        )? {
-            overrides.push((worktree, values.join("\n")));
-        }
-    }
-    Ok(overrides)
-}
-
-/// Whether all effective configuration layers repeat one admitted selection.
-///
-/// Git reports the same value once per layer that declares it. Repeating one
-/// tolerated selection does not add another hook path, while even two different
-/// tolerated values would leave activation guessing which layer is authoritative.
-fn is_one_tolerated_hook_selection(values: &[String], hooks_text: &str) -> bool {
-    let Some(first) = values.first() else {
-        return false;
-    };
-    (first == ".githooks" || first == hooks_text) && values.iter().all(|value| value == first)
-}
-
-fn optional_git_config(
-    root: &Path,
+fn delegated_install(
+    executable: &Path,
+    worktree: &Path,
     arguments: &[&str],
     operation: &'static str,
-    absent_diagnostic: Option<&str>,
-) -> Result<Option<Vec<String>>, HookActivationError> {
-    let output = Command::new("git")
+) -> Result<Output, HookActivationError> {
+    let output = Command::new(executable)
+        .arg("install")
         .args(arguments)
-        .current_dir(root)
+        .current_dir(worktree)
         .output()
-        .map_err(|source| HookActivationError::Launch { operation, source })?;
+        .map_err(|source| HookActivationError::InstalledLaunch { operation, source })?;
     if output.status.success() {
-        let values = utf8(operation, &output.stdout)?
-            .lines()
-            .map(str::to_owned)
-            .collect();
-        return Ok(Some(values));
+        Ok(output)
+    } else {
+        Err(HookActivationError::InstalledExit {
+            operation,
+            code: output.status.code(),
+            diagnostic: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
     }
-    let diagnostic = String::from_utf8_lossy(&output.stderr).into_owned();
-    if output.status.code() == Some(1)
-        || absent_diagnostic.is_some_and(|absent| diagnostic.contains(absent))
-    {
-        return Ok(None);
-    }
-    Err(HookActivationError::Exit {
-        operation,
-        code: output.status.code(),
-        diagnostic,
-    })
 }
 
 /// Audit that the activated hooks and receipt own this exact built product.
@@ -299,12 +210,11 @@ pub enum HookActivationError {
         path: PathBuf,
         source: io::Error,
     },
-    UnnameablePath(PathBuf),
-    ForeignHookPath {
-        worktree: PathBuf,
-        observed: String,
-    },
     Launch {
+        operation: &'static str,
+        source: io::Error,
+    },
+    InstalledLaunch {
         operation: &'static str,
         source: io::Error,
     },
@@ -313,8 +223,17 @@ pub enum HookActivationError {
         code: Option<i32>,
         diagnostic: String,
     },
+    InstalledExit {
+        operation: &'static str,
+        code: Option<i32>,
+        diagnostic: String,
+    },
     NonUtf8 {
         operation: &'static str,
+    },
+    InvalidReply {
+        operation: &'static str,
+        detail: String,
     },
     ConfigurationDrift {
         expected: PathBuf,
@@ -345,21 +264,14 @@ impl fmt::Display for HookActivationError {
                     path.display()
                 )
             }
-            Self::UnnameablePath(path) => {
-                write!(
-                    formatter,
-                    "installed hook path is not UTF-8: {}",
-                    path.display()
-                )
-            }
-            Self::ForeignHookPath { worktree, observed } => write!(
-                formatter,
-                "refusing to replace foreign core.hooksPath {observed:?} in {}; \
-                 keep Rust and predecessor hooks in separate worktrees",
-                worktree.display()
-            ),
             Self::Launch { operation, source } => {
                 write!(formatter, "failed to launch Git to {operation}: {source}")
+            }
+            Self::InstalledLaunch { operation, source } => {
+                write!(
+                    formatter,
+                    "failed to launch installed Spice to {operation}: {source}"
+                )
             }
             Self::Exit {
                 operation,
@@ -379,7 +291,31 @@ impl fmt::Display for HookActivationError {
                 "Git terminated by signal while trying to {operation}: {}",
                 diagnostic.trim_ascii_end()
             ),
+            Self::InstalledExit {
+                operation,
+                code: Some(code),
+                diagnostic,
+            } => write!(
+                formatter,
+                "installed Spice failed to {operation} with exit {code}: {}",
+                diagnostic.trim_ascii_end()
+            ),
+            Self::InstalledExit {
+                operation,
+                code: None,
+                diagnostic,
+            } => write!(
+                formatter,
+                "installed Spice terminated by signal while trying to {operation}: {}",
+                diagnostic.trim_ascii_end()
+            ),
             Self::NonUtf8 { operation } => write!(formatter, "{operation} emitted non-UTF-8"),
+            Self::InvalidReply { operation, detail } => {
+                write!(
+                    formatter,
+                    "installed Spice returned an invalid reply while trying to {operation}: {detail}"
+                )
+            }
             Self::ConfigurationDrift { expected, observed } => write!(
                 formatter,
                 "hook activation failed: expected {}, found {observed}",
@@ -409,17 +345,18 @@ impl fmt::Display for HookActivationError {
 impl std::error::Error for HookActivationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Inspect { source, .. } | Self::Launch { source, .. } | Self::Output(source) => {
-                Some(source)
-            }
+            Self::Inspect { source, .. }
+            | Self::Launch { source, .. }
+            | Self::InstalledLaunch { source, .. }
+            | Self::Output(source) => Some(source),
             Self::ApplianceInspect(error) => Some(error),
             Self::Repository(_)
             | Self::HookNotExecutable(_)
-            | Self::UnnameablePath(_)
-            | Self::ForeignHookPath { .. }
             | Self::Exit { .. }
+            | Self::InstalledExit { .. }
             | Self::NonUtf8 { .. }
             | Self::ConfigurationDrift { .. }
+            | Self::InvalidReply { .. }
             | Self::Appliance { .. } => None,
         }
     }

@@ -49,6 +49,12 @@ pub(super) fn apply_with_interruption(
             record_generation.expect("the install record was published"),
         )?);
     }
+    record_generation = apply_activation(
+        repository,
+        &mut record,
+        record_generation,
+        interrupt_after_write,
+    )?;
     record.status = InstallStatus::Complete;
     write_record(
         repository,
@@ -56,6 +62,28 @@ pub(super) fn apply_with_interruption(
         record_generation.expect("the install record was published"),
     )?;
     Ok(record.receipt())
+}
+
+fn apply_activation(
+    repository: &Repository,
+    record: &mut InstallRecord,
+    mut record_generation: Option<Generation>,
+    interrupt_after_write: Option<usize>,
+) -> Result<Option<Generation>, InstallError> {
+    if record.plan.hook_activation.is_some() && record.completed == record.plan.operations.len() {
+        let index = record.completed;
+        hook_activation::apply(repository, &record.plan)?;
+        if interrupt_after_write == Some(index) {
+            return Err(InstallError::Interrupted { operation: index });
+        }
+        record.completed += 1;
+        record_generation = Some(write_record(
+            repository,
+            record,
+            record_generation.expect("the install record was published"),
+        )?);
+    }
+    Ok(record_generation)
 }
 
 fn prepare_apply(
@@ -87,7 +115,7 @@ fn prepare_loaded(
         return Ok((InstallRecord::new(plan)?, Some(loaded.generation), true));
     }
     if record.status == InstallStatus::Complete
-        && current_build_differs(&record.plan, spice_binary)?
+        && refresh_required(repository, &record.plan, spice_binary)?
     {
         // The refresh transaction: one record swap from the complete install to
         // the current build's complete plan, then in-place replacement of each
@@ -122,6 +150,15 @@ fn prepare_loaded(
             Ok((record, Some(loaded.generation), false))
         }
     }
+}
+
+fn refresh_required(
+    repository: &Repository,
+    plan: &InstallPlan,
+    spice_binary: Option<&Path>,
+) -> Result<bool, InstallError> {
+    Ok(current_build_differs(plan, spice_binary)?
+        || hook_activation::topology_changed(repository, plan)?)
 }
 
 fn apply_operation(
@@ -203,54 +240,115 @@ pub(super) fn unapply_with_interruption(
         InstallStatus::Unapplying => verify_progress(repository, &record)?,
     }
 
-    while record.completed < record.plan.operations.len() {
-        let reverse = record.plan.operations.len() - 1 - record.completed;
-        let operation = &record.plan.operations[reverse];
-        let (current, parent) = observe_bound(
-            operation.location.root(repository),
-            &operation.destination,
-            &operation.parent,
+    while record.completed < record.plan.operation_count() {
+        if let Some(generation) = reverse_activation(
+            repository,
+            &mut record,
+            record_generation,
+            interrupt_after_write,
+        )? {
+            record_generation = generation;
+            continue;
+        }
+        record_generation = reverse_file_operation(
+            repository,
+            &mut record,
+            record_generation,
+            interrupt_after_write,
         )?;
-        let (restored, needs_cleanup) =
-            if restored_matches(current.as_ref(), operation, record.restored[reverse]) {
-                (record.restored[reverse], true)
-            } else if restoration_image_matches(current.as_ref(), operation) {
-                (current.as_ref().map(|observed| observed.generation), true)
-            } else if installed_matches(
-                current.as_ref(),
-                operation,
-                record.installed[reverse],
-                parent,
-                record.installed_parents[reverse],
-            ) {
-                (
-                    restore_operation(
-                        repository,
-                        operation,
-                        current
-                            .as_ref()
-                            .expect("an installed image match is present")
-                            .generation,
-                    )?,
-                    false,
-                )
-            } else {
-                return Err(drift(operation, current));
-            };
-        record.restored[reverse] = restored;
-        if needs_cleanup {
-            cleanup_operation(repository, operation)?;
-        }
-        record_generation = write_record(repository, &record, record_generation)?;
-        if interrupt_after_write == Some(reverse) {
-            return Err(InstallError::Interrupted { operation: reverse });
-        }
-        record.completed += 1;
-        record_generation = write_record(repository, &record, record_generation)?;
     }
     record.status = InstallStatus::Uninstalled;
     write_record(repository, &record, record_generation)?;
     Ok(record.receipt())
+}
+
+fn reverse_activation(
+    repository: &Repository,
+    record: &mut InstallRecord,
+    mut record_generation: Generation,
+    interrupt_after_write: Option<usize>,
+) -> Result<Option<Generation>, InstallError> {
+    let Some(activation) = record
+        .plan
+        .hook_activation
+        .as_ref()
+        .filter(|_| record.completed == 0)
+    else {
+        return Ok(None);
+    };
+    let reverse = record.plan.operation_count() - 1;
+    hook_activation::restore(activation)?;
+    record_generation = write_record(repository, record, record_generation)?;
+    if interrupt_after_write == Some(reverse) {
+        return Err(InstallError::Interrupted { operation: reverse });
+    }
+    record.completed += 1;
+    record_generation = write_record(repository, record, record_generation)?;
+    Ok(Some(record_generation))
+}
+
+fn reverse_file_operation(
+    repository: &Repository,
+    record: &mut InstallRecord,
+    mut record_generation: Generation,
+    interrupt_after_write: Option<usize>,
+) -> Result<Generation, InstallError> {
+    let hook_offset = usize::from(record.plan.hook_activation.is_some());
+    let file_completed = record.completed - hook_offset;
+    let reverse = record.plan.operations.len() - 1 - file_completed;
+    let operation = &record.plan.operations[reverse];
+    let (current, parent) = observe_bound(
+        operation.location.root(repository),
+        &operation.destination,
+        &operation.parent,
+    )?;
+    let (restored, needs_cleanup) = restored_image(
+        repository,
+        record,
+        operation,
+        reverse,
+        current.as_ref(),
+        parent,
+    )?;
+    record.restored[reverse] = restored;
+    if needs_cleanup {
+        cleanup_operation(repository, operation)?;
+    }
+    record_generation = write_record(repository, record, record_generation)?;
+    if interrupt_after_write == Some(reverse) {
+        return Err(InstallError::Interrupted { operation: reverse });
+    }
+    record.completed += 1;
+    write_record(repository, record, record_generation)
+}
+
+fn restored_image(
+    repository: &Repository,
+    record: &InstallRecord,
+    operation: &Operation,
+    reverse: usize,
+    current: Option<&ObservedFile>,
+    parent: Option<Generation>,
+) -> Result<(Option<Generation>, bool), InstallError> {
+    if restored_matches(current, operation, record.restored[reverse]) {
+        return Ok((record.restored[reverse], true));
+    }
+    if restoration_image_matches(current, operation) {
+        return Ok((current.map(|observed| observed.generation), true));
+    }
+    if installed_matches(
+        current,
+        operation,
+        record.installed[reverse],
+        parent,
+        record.installed_parents[reverse],
+    ) {
+        let generation = current
+            .expect("an installed image match is present")
+            .generation;
+        return Ok((restore_operation(repository, operation, generation)?, false));
+    }
+    Err(drift(operation, current.cloned()))
 }
 
 pub(super) fn verify_progress(
@@ -258,66 +356,129 @@ pub(super) fn verify_progress(
     record: &InstallRecord,
 ) -> Result<(), InstallError> {
     record.validate_loaded_for_repository(repository)?;
+    verify_file_progress(repository, record, reversed_file_count(record))?;
+    verify_activation_progress(record)
+}
+
+fn reversed_file_count(record: &InstallRecord) -> usize {
+    match record.status {
+        InstallStatus::Unapplying => record
+            .completed
+            .saturating_sub(usize::from(record.plan.hook_activation.is_some())),
+        _ => record.completed.min(record.plan.operations.len()),
+    }
+}
+
+fn verify_file_progress(
+    repository: &Repository,
+    record: &InstallRecord,
+    file_completed: usize,
+) -> Result<(), InstallError> {
     for (index, operation) in record.plan.operations.iter().enumerate() {
         let (observed, parent) = observe_bound(
             operation.location.root(repository),
             &operation.destination,
             &operation.parent,
         )?;
-        let valid = match record.status {
-            InstallStatus::Applying => record.installed[index].map_or_else(
-                || {
-                    operation.expects_in_place(observed.as_ref())
-                        || (index == record.completed
-                            && matches_generated(observed.as_ref(), operation))
-                },
-                |generation| {
-                    installed_matches(
-                        observed.as_ref(),
-                        operation,
-                        Some(generation),
-                        parent,
-                        record.installed_parents[index],
-                    )
-                },
-            ),
-            InstallStatus::Complete => installed_matches(
-                observed.as_ref(),
+        let valid = file_progress_valid(
+            record,
+            operation,
+            index,
+            observed.as_ref(),
+            parent,
+            file_completed,
+        );
+        if !valid {
+            return Err(drift(operation, observed));
+        }
+    }
+    Ok(())
+}
+
+fn file_progress_valid(
+    record: &InstallRecord,
+    operation: &Operation,
+    index: usize,
+    observed: Option<&ObservedFile>,
+    parent: Option<Generation>,
+    file_completed: usize,
+) -> bool {
+    match record.status {
+        InstallStatus::Applying => record.installed[index].map_or_else(
+            || {
+                operation.expects_in_place(observed)
+                    || (index == record.completed && matches_generated(observed, operation))
+            },
+            |generation| {
+                installed_matches(
+                    observed,
+                    operation,
+                    Some(generation),
+                    parent,
+                    record.installed_parents[index],
+                )
+            },
+        ),
+        InstallStatus::Complete => installed_matches(
+            observed,
+            operation,
+            record.installed[index],
+            parent,
+            record.installed_parents[index],
+        ),
+        InstallStatus::Unapplying => {
+            unapplying_file_valid(record, operation, index, observed, parent, file_completed)
+        }
+        InstallStatus::Uninstalled => restored_matches(observed, operation, record.restored[index]),
+    }
+}
+
+fn unapplying_file_valid(
+    record: &InstallRecord,
+    operation: &Operation,
+    index: usize,
+    observed: Option<&ObservedFile>,
+    parent: Option<Generation>,
+    file_completed: usize,
+) -> bool {
+    let reversed = record.plan.operations.len() - 1 - index;
+    if reversed < file_completed {
+        return restored_matches(observed, operation, record.restored[index]);
+    }
+    if reversed == file_completed {
+        return restored_matches(observed, operation, record.restored[index])
+            || restoration_image_matches(observed, operation)
+            || installed_matches(
+                observed,
                 operation,
                 record.installed[index],
                 parent,
                 record.installed_parents[index],
-            ),
-            InstallStatus::Unapplying => {
-                let reversed = record.plan.operations.len() - 1 - index;
-                if reversed < record.completed {
-                    restored_matches(observed.as_ref(), operation, record.restored[index])
-                } else if reversed == record.completed {
-                    restored_matches(observed.as_ref(), operation, record.restored[index])
-                        || restoration_image_matches(observed.as_ref(), operation)
-                        || installed_matches(
-                            observed.as_ref(),
-                            operation,
-                            record.installed[index],
-                            parent,
-                            record.installed_parents[index],
-                        )
-                } else {
-                    installed_matches(
-                        observed.as_ref(),
-                        operation,
-                        record.installed[index],
-                        parent,
-                        record.installed_parents[index],
-                    )
-                }
+            );
+    }
+    installed_matches(
+        observed,
+        operation,
+        record.installed[index],
+        parent,
+        record.installed_parents[index],
+    )
+}
+
+fn verify_activation_progress(record: &InstallRecord) -> Result<(), InstallError> {
+    if let Some(activation) = &record.plan.hook_activation {
+        match record.status {
+            InstallStatus::Applying if record.completed < record.plan.operations.len() => {
+                hook_activation::verify(activation, false)?;
             }
-            InstallStatus::Uninstalled => {
-                restored_matches(observed.as_ref(), operation, record.restored[index])
+            InstallStatus::Applying => hook_activation::verify_transition(activation)?,
+            InstallStatus::Complete => hook_activation::verify(activation, true)?,
+            InstallStatus::Unapplying if record.completed == 0 => {
+                hook_activation::verify_transition(activation)?;
             }
-        };
-        if !valid {
-            return Err(drift(operation, observed));
+            InstallStatus::Unapplying | InstallStatus::Uninstalled => {
+                hook_activation::verify(activation, false)?;
+            }
         }
     }
     Ok(())
@@ -365,6 +526,9 @@ pub(super) fn verify_refresh_progress(
             continue;
         }
         return Err(drift(operation, observed));
+    }
+    if let Some(activation) = &record.plan.hook_activation {
+        hook_activation::verify_refreshable(activation)?;
     }
     Ok(binary_superseded)
 }

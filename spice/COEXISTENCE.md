@@ -8,7 +8,7 @@ artifacts, receipts, and Git shadow files have distinct physical names.
 
 `spice/tests/coexistence.rs` snapshots Python's complete state tree around real
 Rust commands. The concurrent process proof is
-`spice/tests/resident/vendor_process/coexistence.rs#installed_spice_lifecycle_leaves_the_predecessor_system_untouched`.
+`spice/tests/resident/vendor_process/coexistence.rs#installed_spice_lifecycle_requires_explicit_predecessor_hook_handoff`.
 This record maps the policy those tests enforce; `spice/tests/coexistence_record.rs`
 keeps every local citation resolvable.
 
@@ -202,10 +202,15 @@ are mutually exclusive there. Python generates its hooks from
 separate hook assets from `spice/src/install.rs#GIT_PRE_COMMIT_PATH` and resolves
 them through `spice/src/install.rs#pub fn installed_git_hooks`.
 
-Activation is guarded: `xtask/src/hooks.rs#fn preflight_worktree_hooks` checks
-every worktree before writing, and `xtask/src/hooks.rs#ForeignHookPath` refuses
-to seize a worktree configured for Python. Hook choice is therefore an operator
-selection, not a cross-delivery path.
+Activation is part of the installed appliance's digest-bound plan.
+`spice/src/install/hook_activation.rs#pub(super) fn plan` records every
+worktree's effective and worktree-local selection before any asset write, and
+`spice/src/install/error.rs#ForeignHookPath` refuses to seize a worktree
+configured for Python. Apply publishes the executable hook assets first and
+switches the common absolute `core.hooksPath` last; unapply restores the exact
+prior values from the same receipt. `cargo xtask activate-hooks` delegates to
+that installed preview/apply surface and owns no Git configuration mutation.
+Hook choice is therefore an operator selection, not a cross-delivery path.
 
 ## Validation boundary
 

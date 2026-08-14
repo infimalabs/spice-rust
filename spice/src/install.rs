@@ -17,6 +17,7 @@ mod error;
 mod files;
 mod git_hooks;
 mod handle;
+mod hook_activation;
 mod path;
 mod progress;
 mod record;
@@ -39,13 +40,18 @@ use record::read_record;
 use record::record_path;
 use validation::{asset_contract, fixed_content_differs_from_current_build, validate_operation};
 
-const PLAN_VERSION: u16 = 6;
-const RECORD_VERSION: u16 = 6;
-const LEGACY_RECORD_VERSIONS: [(u16, &str); 4] = [
+pub use hook_activation::{
+    HookActivationPlan, HookConfigurationMutation, HookConfigurationScope, HookWorktreeObservation,
+};
+
+const PLAN_VERSION: u16 = 7;
+const RECORD_VERSION: u16 = 7;
+const LEGACY_RECORD_VERSIONS: [(u16, &str); 5] = [
     (2, "SURFACE-1kJRGpf2"),
     (3, "HOOKS-1kJQnmG8"),
     (4, "INSTALL-1kKQTfBp"),
     (5, "INSTALL-1kLW2GVN"),
+    (6, "HOOKS-1kMFzkkc"),
 ];
 const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice-rs/install.json";
@@ -365,6 +371,8 @@ pub struct InstallPlan {
     repository: RepositoryIdentity,
     record: BoundDestination,
     operations: Vec<Operation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hook_activation: Option<HookActivationPlan>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -384,6 +392,18 @@ impl InstallPlan {
     #[must_use]
     pub fn operations(&self) -> &[Operation] {
         &self.operations
+    }
+
+    /// Repository-wide Git hook activation appended after every file operation.
+    #[must_use]
+    pub const fn hook_activation(&self) -> Option<&HookActivationPlan> {
+        self.hook_activation.as_ref()
+    }
+
+    /// Number of durable publication stages in this plan.
+    #[must_use]
+    pub fn operation_count(&self) -> usize {
+        self.operations.len() + usize::from(self.hook_activation.is_some())
     }
 
     /// Canonical plan bytes consumed by preview and digest admission.
@@ -452,6 +472,19 @@ impl InstallPlan {
                 "optional binary is not the final operation".to_owned(),
             ));
         }
+        if self.hook_activation.is_some()
+            != self
+                .operations
+                .last()
+                .is_some_and(|operation| operation.asset == Asset::Binary)
+        {
+            return Err(InstallError::InvalidRecord(
+                "hook activation and installed executable must be planned together".to_owned(),
+            ));
+        }
+        if let Some(activation) = &self.hook_activation {
+            activation.validate(content == GeneratedContentAuthority::HistoricalReceipt)?;
+        }
 
         if self.repository.worktree.is_some() || !self.repository.common_git.is_absolute() {
             return Err(InstallError::InvalidRecord(
@@ -515,6 +548,9 @@ impl InstallPlan {
             if !operation.expects_in_place(observed.as_ref()) {
                 return Err(drift(operation, observed));
             }
+        }
+        if let Some(activation) = &self.hook_activation {
+            hook_activation::verify_pristine(activation)?;
         }
         Ok(())
     }
@@ -626,7 +662,8 @@ pub fn plan(
             return build_plan(repository, spice_binary);
         }
         if record.status == InstallStatus::Complete
-            && current_build_differs(&record.plan, spice_binary)?
+            && (current_build_differs(&record.plan, spice_binary)?
+                || hook_activation::topology_changed(repository, &record.plan)?)
         {
             // A rebuilt executable over a complete install is a refresh, not a
             // conflict. The same transaction also carries fixed hooks and the
@@ -722,11 +759,16 @@ fn build_plan_over(
     }
 
     let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
+    let hook_activation = spice_binary
+        .is_some()
+        .then(|| hook_activation::plan(repository, installed))
+        .transpose()?;
     let plan = InstallPlan {
         version: PLAN_VERSION,
         repository: RepositoryIdentity::capture(repository),
         record,
         operations,
+        hook_activation,
     };
     plan.validate_pristine(repository)?;
     Ok(plan)

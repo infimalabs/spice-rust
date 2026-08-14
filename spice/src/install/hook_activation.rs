@@ -1,0 +1,732 @@
+//! Repository-wide Git hook activation carried by one install plan.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use serde::{Deserialize, Serialize};
+
+use super::{BINARY_PATH, InstallError, InstallPlan, Repository, installed_git_hooks};
+
+const HOOK_KEY: &str = "core.hooksPath";
+const GIT: &str = "/usr/bin/git";
+
+/// Git configuration scope changed by one activation mutation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HookConfigurationScope {
+    /// The common repository configuration shared by every linked worktree.
+    Local,
+    /// One linked worktree's `config.worktree` override.
+    Worktree,
+}
+
+impl HookConfigurationScope {
+    const fn option(self) -> &'static str {
+        match self {
+            Self::Local => "--local",
+            Self::Worktree => "--worktree",
+        }
+    }
+}
+
+/// One exact Git configuration replacement and its reversal value.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookConfigurationMutation {
+    worktree: String,
+    scope: HookConfigurationScope,
+    previous: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    superseded: Option<Vec<String>>,
+    generated: Vec<String>,
+}
+
+impl HookConfigurationMutation {
+    /// Absolute worktree used to address this Git configuration scope.
+    #[must_use]
+    pub fn worktree(&self) -> &str {
+        &self.worktree
+    }
+
+    /// Git configuration scope replaced by this mutation.
+    #[must_use]
+    pub const fn scope(&self) -> HookConfigurationScope {
+        self.scope
+    }
+
+    /// Exact values restored by install reversal.
+    #[must_use]
+    pub fn previous(&self) -> &[String] {
+        &self.previous
+    }
+
+    /// Exact live values this refresh replaces, when superseding an install.
+    #[must_use]
+    pub fn superseded(&self) -> Option<&[String]> {
+        self.superseded.as_deref()
+    }
+
+    /// Exact values installed by activation.
+    #[must_use]
+    pub fn generated(&self) -> &[String] {
+        &self.generated
+    }
+
+    fn expects_in_place(&self, observed: &[String]) -> bool {
+        self.superseded.as_deref().unwrap_or(&self.previous) == observed
+    }
+}
+
+/// Every effective and worktree-local hook value observed during preflight.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookWorktreeObservation {
+    worktree: String,
+    effective: Vec<String>,
+    worktree_local: Vec<String>,
+}
+
+impl HookWorktreeObservation {
+    /// Absolute linked-worktree path.
+    #[must_use]
+    pub fn worktree(&self) -> &str {
+        &self.worktree
+    }
+
+    /// Every effective `core.hooksPath` value reported across Git scopes.
+    #[must_use]
+    pub fn effective(&self) -> &[String] {
+        &self.effective
+    }
+
+    /// Exact worktree-local override values, empty when none exist.
+    #[must_use]
+    pub fn worktree_local(&self) -> &[String] {
+        &self.worktree_local
+    }
+}
+
+/// Side-effect-free all-worktree hook activation plan.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookActivationPlan {
+    hooks_path: String,
+    observations: Vec<HookWorktreeObservation>,
+    mutations: Vec<HookConfigurationMutation>,
+}
+
+impl HookActivationPlan {
+    /// Absolute installed hook directory selected for every worktree.
+    #[must_use]
+    pub fn hooks_path(&self) -> &str {
+        &self.hooks_path
+    }
+
+    /// Complete preflight evidence in canonical worktree order.
+    #[must_use]
+    pub fn observations(&self) -> &[HookWorktreeObservation] {
+        &self.observations
+    }
+
+    /// Exact configuration replacements, with the common path switch last.
+    #[must_use]
+    pub fn mutations(&self) -> &[HookConfigurationMutation] {
+        &self.mutations
+    }
+
+    pub(super) fn validate(&self, historical: bool) -> Result<(), InstallError> {
+        valid_value(&self.hooks_path)?;
+        if !Path::new(&self.hooks_path).is_absolute() {
+            return Err(InstallError::InvalidRecord(
+                "hook activation target is not absolute".to_owned(),
+            ));
+        }
+        self.validate_observations()?;
+        self.validate_mutations()?;
+        self.validate_shape()?;
+        self.validate_effective(historical)
+    }
+
+    fn validate_observations(&self) -> Result<(), InstallError> {
+        if self.observations.is_empty()
+            || !self
+                .observations
+                .windows(2)
+                .all(|pair| pair[0].worktree < pair[1].worktree)
+        {
+            return Err(InstallError::InvalidRecord(
+                "hook activation worktrees are not canonical and unique".to_owned(),
+            ));
+        }
+        for observation in &self.observations {
+            valid_worktree(&observation.worktree)?;
+            valid_values(&observation.effective)?;
+            valid_values(&observation.worktree_local)?;
+        }
+        Ok(())
+    }
+
+    fn validate_mutations(&self) -> Result<(), InstallError> {
+        if self.mutations.is_empty() {
+            return Err(InstallError::InvalidRecord(
+                "hook activation omits the common configuration switch".to_owned(),
+            ));
+        }
+        for mutation in &self.mutations {
+            valid_worktree(&mutation.worktree)?;
+            valid_values(&mutation.previous)?;
+            valid_values(&mutation.generated)?;
+            if let Some(superseded) = &mutation.superseded {
+                valid_values(superseded)?;
+            }
+            if mutation.scope == HookConfigurationScope::Worktree && !mutation.generated.is_empty()
+            {
+                return Err(InstallError::InvalidRecord(
+                    "worktree hook activation must clear its override".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_shape(&self) -> Result<(), InstallError> {
+        let common = self.mutations.last().expect("nonempty mutation inventory");
+        if common.scope != HookConfigurationScope::Local
+            || common.generated != [self.hooks_path.clone()]
+            || self.mutations[..self.mutations.len() - 1]
+                .iter()
+                .any(|mutation| mutation.scope != HookConfigurationScope::Worktree)
+        {
+            return Err(InstallError::InvalidRecord(
+                "hook activation does not place its common path switch last".to_owned(),
+            ));
+        }
+        let worktree_mutations = &self.mutations[..self.mutations.len() - 1];
+        if !worktree_mutations
+            .windows(2)
+            .all(|pair| pair[0].worktree < pair[1].worktree)
+            || self.mutations.iter().any(|mutation| {
+                !self
+                    .observations
+                    .iter()
+                    .any(|observation| observation.worktree == mutation.worktree)
+            })
+        {
+            return Err(InstallError::InvalidRecord(
+                "hook activation mutations do not close over canonical worktree observations"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_effective(&self, historical: bool) -> Result<(), InstallError> {
+        let common = self.mutations.last().expect("validated mutation inventory");
+        if !historical
+            && self.observations.iter().any(|observation| {
+                !tolerated(&observation.effective, &self.hooks_path)
+                    && !common.superseded.as_ref().is_some_and(|superseded| {
+                        superseded.len() == 1 && tolerated(&observation.effective, &superseded[0])
+                    })
+            })
+        {
+            return Err(InstallError::InvalidRecord(
+                "hook activation retains a foreign effective selection".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn rebase_main_worktree(
+        &mut self,
+        repository: &Repository,
+    ) -> Result<(), InstallError> {
+        let Some(prior) = self
+            .mutations
+            .last()
+            .filter(|mutation| mutation.scope == HookConfigurationScope::Local)
+            .map(|mutation| mutation.worktree.clone())
+        else {
+            return Ok(());
+        };
+        let mut worktrees = list_worktrees(repository)?;
+        worktrees.sort();
+        let current =
+            worktree_string(worktrees.first().ok_or_else(|| {
+                InstallError::InvalidRecord("Git returned no worktree".to_owned())
+            })?)?;
+        for observation in &mut self.observations {
+            if observation.worktree == prior {
+                observation.worktree.clone_from(&current);
+            }
+        }
+        for mutation in &mut self.mutations {
+            if mutation.worktree == prior {
+                mutation.worktree.clone_from(&current);
+            }
+        }
+        self.observations
+            .sort_by(|left, right| left.worktree.cmp(&right.worktree));
+        Ok(())
+    }
+}
+
+pub(super) fn plan(
+    repository: &Repository,
+    installed: Option<&InstallPlan>,
+) -> Result<HookActivationPlan, InstallError> {
+    let hooks = installed_git_hooks(repository);
+    let hooks_path = hooks
+        .to_str()
+        .ok_or_else(|| InstallError::HookPathUnrepresentable {
+            path: hooks.clone(),
+            reason: "is not UTF-8",
+        })?
+        .to_owned();
+    valid_value(&hooks_path).map_err(|_| InstallError::HookPathUnrepresentable {
+        path: hooks,
+        reason: "contains a line separator",
+    })?;
+
+    let mut worktrees = list_worktrees(repository)?;
+    worktrees.sort();
+    worktrees.dedup();
+    let prior = installed.and_then(InstallPlan::hook_activation);
+    let mut observations = Vec::with_capacity(worktrees.len());
+    let mut mutations = Vec::new();
+    for worktree in worktrees {
+        let effective = config_values(&worktree, None)?;
+        if !tolerated(&effective, &hooks_path)
+            && !prior.is_some_and(|activation| tolerated(&effective, &activation.hooks_path))
+        {
+            return Err(InstallError::ForeignHookPath {
+                worktree,
+                observed: effective,
+            });
+        }
+        let worktree_local = worktree_values(&worktree)?;
+        let spelling = worktree_string(&worktree)?;
+        observations.push(HookWorktreeObservation {
+            worktree: spelling.clone(),
+            effective,
+            worktree_local: worktree_local.clone(),
+        });
+        let inherited = prior.and_then(|activation| {
+            activation.mutations.iter().find(|mutation| {
+                mutation.scope == HookConfigurationScope::Worktree && mutation.worktree == spelling
+            })
+        });
+        if !worktree_local.is_empty() || inherited.is_some() {
+            mutations.push(HookConfigurationMutation {
+                worktree: spelling,
+                scope: HookConfigurationScope::Worktree,
+                previous: inherited.map_or_else(
+                    || worktree_local.clone(),
+                    |mutation| mutation.previous.clone(),
+                ),
+                superseded: inherited.map(|_| worktree_local.clone()),
+                generated: Vec::new(),
+            });
+        }
+    }
+    let main = observations
+        .first()
+        .expect("Git returned at least one worktree")
+        .worktree
+        .clone();
+    let local = config_values(Path::new(&main), Some(HookConfigurationScope::Local))?;
+    let inherited = prior.and_then(|activation| activation.mutations.last());
+    mutations.push(HookConfigurationMutation {
+        worktree: main,
+        scope: HookConfigurationScope::Local,
+        previous: inherited.map_or_else(|| local.clone(), |mutation| mutation.previous.clone()),
+        superseded: inherited.map(|_| local.clone()),
+        generated: vec![hooks_path.clone()],
+    });
+    let activation = HookActivationPlan {
+        hooks_path,
+        observations,
+        mutations,
+    };
+    activation.validate(false)?;
+    Ok(activation)
+}
+
+pub(super) fn topology_changed(
+    repository: &Repository,
+    installed: &InstallPlan,
+) -> Result<bool, InstallError> {
+    let Some(prior) = installed.hook_activation() else {
+        return Ok(false);
+    };
+    let current = plan(repository, Some(installed))?;
+    let same_worktrees = current
+        .observations
+        .iter()
+        .map(|observation| observation.worktree.as_str())
+        .eq(prior
+            .observations
+            .iter()
+            .map(|observation| observation.worktree.as_str()));
+    let same_mutations = current
+        .mutations
+        .iter()
+        .zip(&prior.mutations)
+        .all(|(current, prior)| {
+            current.worktree == prior.worktree
+                && current.scope == prior.scope
+                && current.previous == prior.previous
+                && current.generated == prior.generated
+                && current.superseded.as_deref() == Some(prior.generated.as_slice())
+        })
+        && current.mutations.len() == prior.mutations.len();
+    Ok(!same_worktrees || !same_mutations)
+}
+
+pub(super) fn apply(repository: &Repository, install: &InstallPlan) -> Result<(), InstallError> {
+    let activation = install
+        .hook_activation()
+        .ok_or_else(|| InstallError::InvalidRecord("install has no hook activation".to_owned()))?;
+    verify_assets(repository, install)?;
+    for mutation in &activation.mutations {
+        replace(mutation, false)?;
+    }
+    verify(activation, true)
+}
+
+pub(super) fn restore(activation: &HookActivationPlan) -> Result<(), InstallError> {
+    for mutation in activation.mutations.iter().rev() {
+        replace(mutation, true)?;
+    }
+    verify(activation, false)
+}
+
+pub(super) fn verify(activation: &HookActivationPlan, generated: bool) -> Result<(), InstallError> {
+    for mutation in &activation.mutations {
+        let observed = mutation_values(mutation)?;
+        let expected = if generated {
+            &mutation.generated
+        } else {
+            &mutation.previous
+        };
+        if &observed != expected {
+            return Err(InstallError::GitConfigurationDrift {
+                worktree: PathBuf::from(&mutation.worktree),
+                scope: mutation.scope,
+                observed,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn verify_transition(activation: &HookActivationPlan) -> Result<(), InstallError> {
+    for mutation in &activation.mutations {
+        let observed = mutation_values(mutation)?;
+        if observed != mutation.previous
+            && observed != mutation.generated
+            && !transition_state(&observed, &mutation.previous)
+            && !transition_state(&observed, &mutation.generated)
+        {
+            return Err(InstallError::GitConfigurationDrift {
+                worktree: PathBuf::from(&mutation.worktree),
+                scope: mutation.scope,
+                observed,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn verify_pristine(activation: &HookActivationPlan) -> Result<(), InstallError> {
+    for mutation in &activation.mutations {
+        let observed = mutation_values(mutation)?;
+        if !mutation.expects_in_place(&observed) {
+            return Err(InstallError::GitConfigurationDrift {
+                worktree: PathBuf::from(&mutation.worktree),
+                scope: mutation.scope,
+                observed,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn verify_refreshable(activation: &HookActivationPlan) -> Result<(), InstallError> {
+    for mutation in &activation.mutations {
+        let observed = mutation_values(mutation)?;
+        if observed != mutation.generated && !tolerated(&observed, &activation.hooks_path) {
+            return Err(InstallError::GitConfigurationDrift {
+                worktree: PathBuf::from(&mutation.worktree),
+                scope: mutation.scope,
+                observed,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn replace(mutation: &HookConfigurationMutation, restoring: bool) -> Result<(), InstallError> {
+    let observed = mutation_values(mutation)?;
+    let generated = if restoring {
+        &mutation.previous
+    } else {
+        &mutation.generated
+    };
+    let expected = if restoring {
+        &mutation.generated
+    } else if let Some(superseded) = &mutation.superseded {
+        superseded
+    } else {
+        &mutation.previous
+    };
+    if &observed == generated {
+        return Ok(());
+    }
+    if &observed != expected && !transition_state(&observed, generated) {
+        return Err(InstallError::GitConfigurationDrift {
+            worktree: PathBuf::from(&mutation.worktree),
+            scope: mutation.scope,
+            observed,
+        });
+    }
+    set_values(mutation, generated)?;
+    let observed = mutation_values(mutation)?;
+    if &observed != generated {
+        return Err(InstallError::GitConfigurationDrift {
+            worktree: PathBuf::from(&mutation.worktree),
+            scope: mutation.scope,
+            observed,
+        });
+    }
+    Ok(())
+}
+
+fn set_values(mutation: &HookConfigurationMutation, values: &[String]) -> Result<(), InstallError> {
+    let worktree = Path::new(&mutation.worktree);
+    let scope = mutation.scope.option();
+    let Some((first, rest)) = values.split_first() else {
+        let unset = git(
+            worktree,
+            ["config", scope, "--unset-all", HOOK_KEY],
+            "clear Git hook selection",
+        );
+        return match unset {
+            Ok(_)
+            | Err(InstallError::GitExit {
+                code: Some(1 | 5), ..
+            }) => Ok(()),
+            Err(error) => Err(error),
+        };
+    };
+    git(
+        worktree,
+        ["config", scope, "--replace-all", HOOK_KEY, first],
+        "replace Git hook selection",
+    )?;
+    for value in rest {
+        git(
+            worktree,
+            ["config", scope, "--add", HOOK_KEY, value],
+            "write Git hook selection",
+        )?;
+    }
+    Ok(())
+}
+
+fn transition_state(observed: &[String], target: &[String]) -> bool {
+    !target.is_empty() && observed.len() < target.len() && target.starts_with(observed)
+}
+
+fn verify_assets(repository: &Repository, plan: &InstallPlan) -> Result<(), InstallError> {
+    if plan
+        .operations()
+        .last()
+        .is_none_or(|operation| operation.path() != BINARY_PATH)
+    {
+        return Err(InstallError::InvalidRecord(
+            "hook activation requires an installed Spice executable".to_owned(),
+        ));
+    }
+    for operation in plan.operations() {
+        let observed = super::observe(&operation.destination(repository))?;
+        if !super::matches_generated(observed.as_ref(), operation) {
+            return Err(super::drift(operation, observed));
+        }
+    }
+    Ok(())
+}
+
+fn mutation_values(mutation: &HookConfigurationMutation) -> Result<Vec<String>, InstallError> {
+    config_values(Path::new(&mutation.worktree), Some(mutation.scope))
+}
+
+fn list_worktrees(repository: &Repository) -> Result<Vec<PathBuf>, InstallError> {
+    let output = git(
+        repository.worktree_root(),
+        ["worktree", "list", "--porcelain", "-z"],
+        "list Git worktrees",
+    )?;
+    let mut worktrees = Vec::new();
+    for field in output.stdout.split(|byte| *byte == 0) {
+        if let Some(path) = field.strip_prefix(b"worktree ") {
+            let path = std::str::from_utf8(path)
+                .map_err(|_| InstallError::GitNonUtf8("list Git worktrees"))?;
+            worktrees.push(PathBuf::from(path));
+        }
+    }
+    if worktrees.is_empty() {
+        return Err(InstallError::InvalidRecord(
+            "Git returned no worktrees for hook activation".to_owned(),
+        ));
+    }
+    Ok(worktrees)
+}
+
+fn worktree_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
+    if !worktree_config_enabled(worktree)? {
+        return Ok(Vec::new());
+    }
+    match git(
+        worktree,
+        ["config", "--worktree", "--get-all", HOOK_KEY],
+        "read worktree-local Git hooks",
+    ) {
+        Ok(output) => values("read worktree-local Git hooks", &output.stdout),
+        Err(InstallError::GitExit { code: Some(1), .. }) => Ok(Vec::new()),
+        Err(InstallError::GitExit { diagnostic, .. })
+            if diagnostic.contains("extension worktreeConfig is enabled") =>
+        {
+            Ok(Vec::new())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn worktree_config_enabled(worktree: &Path) -> Result<bool, InstallError> {
+    let output = Command::new(GIT)
+        .args(["config", "--local", "--get", "extensions.worktreeConfig"])
+        .current_dir(worktree)
+        .output()
+        .map_err(|source| InstallError::GitLaunch {
+            operation: "read Git worktree configuration mode",
+            source,
+        })?;
+    if output.status.success() {
+        let value = std::str::from_utf8(&output.stdout)
+            .map_err(|_| InstallError::GitNonUtf8("read Git worktree configuration mode"))?;
+        Ok(value.trim_ascii_end().eq_ignore_ascii_case("true"))
+    } else if output.status.code() == Some(1) {
+        Ok(false)
+    } else {
+        Err(InstallError::GitExit {
+            operation: "read Git worktree configuration mode",
+            code: output.status.code(),
+            diagnostic: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}
+
+fn config_values(
+    worktree: &Path,
+    scope: Option<HookConfigurationScope>,
+) -> Result<Vec<String>, InstallError> {
+    let mut command = Command::new(GIT);
+    command.arg("config");
+    if let Some(scope) = scope {
+        command.arg(scope.option());
+    }
+    let output = command
+        .args(["--get-all", HOOK_KEY])
+        .current_dir(worktree)
+        .output()
+        .map_err(|source| InstallError::GitLaunch {
+            operation: "read Git hook selection",
+            source,
+        })?;
+    if output.status.success() {
+        values("read Git hook selection", &output.stdout)
+    } else if output.status.code() == Some(1) {
+        Ok(Vec::new())
+    } else {
+        Err(InstallError::GitExit {
+            operation: "read Git hook selection",
+            code: output.status.code(),
+            diagnostic: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}
+
+fn values(operation: &'static str, bytes: &[u8]) -> Result<Vec<String>, InstallError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| InstallError::GitNonUtf8(operation))?;
+    Ok(text.lines().map(str::to_owned).collect())
+}
+
+fn tolerated(values: &[String], hooks_path: &str) -> bool {
+    let Some(first) = values.first() else {
+        return true;
+    };
+    (first == ".githooks" || first == hooks_path) && values.iter().all(|value| value == first)
+}
+
+fn worktree_string(path: &Path) -> Result<String, InstallError> {
+    let text = path
+        .to_str()
+        .ok_or(InstallError::GitNonUtf8("name Git worktree"))?;
+    valid_value(text)?;
+    if !path.is_absolute() {
+        return Err(InstallError::InvalidRecord(
+            "Git worktree path is not absolute".to_owned(),
+        ));
+    }
+    Ok(text.to_owned())
+}
+
+fn valid_worktree(path: &str) -> Result<(), InstallError> {
+    valid_value(path)?;
+    if Path::new(path).is_absolute() {
+        Ok(())
+    } else {
+        Err(InstallError::InvalidRecord(
+            "hook activation worktree is not absolute".to_owned(),
+        ))
+    }
+}
+
+fn valid_values(values: &[String]) -> Result<(), InstallError> {
+    for value in values {
+        valid_value(value)?;
+    }
+    Ok(())
+}
+
+fn valid_value(value: &str) -> Result<(), InstallError> {
+    if value.is_empty() || value.contains(['\0', '\r', '\n']) {
+        Err(InstallError::InvalidRecord(
+            "hook activation carries an invalid Git configuration value".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn git<const N: usize>(
+    root: &Path,
+    arguments: [&str; N],
+    operation: &'static str,
+) -> Result<Output, InstallError> {
+    let output = Command::new(GIT)
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .map_err(|source| InstallError::GitLaunch { operation, source })?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(InstallError::GitExit {
+            operation,
+            code: output.status.code(),
+            diagnostic: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}

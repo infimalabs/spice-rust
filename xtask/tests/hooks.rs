@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use spice::install::{InstallStatus, apply, installed_git_hooks, plan};
+use spice::install::{
+    InstallPreview, InstallReceipt, InstallStatus, apply, installed_git_hooks, plan,
+};
 use spice::repository::Repository;
 
 #[path = "hooks/activation_assertions.rs"]
@@ -78,13 +80,22 @@ fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change(
     let repository_config = image(&scratch.join(".git/config"));
     let worktree_config = image(&scratch.join(".git/worktrees/predecessor/config.worktree"));
     let installed_hooks = ACTIVE_HOOKS.map(|hook| image(&common_hooks(&scratch).join(hook)));
+    install_refusal_delegate(&scratch, &predecessor);
+    let installed_entry = image(&installed_spice(&scratch));
     let mut output = Vec::new();
 
     let error = xtask::activate_hooks(scratch.path(), &mut output)
         .expect_err("foreign predecessor hooks must refuse activation");
 
     assert!(
-        matches!(error, xtask::HookActivationError::ForeignHookPath { .. }),
+        matches!(
+            error,
+            xtask::HookActivationError::InstalledExit { code: Some(2), .. }
+        ),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("install::foreign-hooks"),
         "{error}"
     );
     assert!(error.to_string().contains(".spice/hooks"), "{error}");
@@ -104,6 +115,7 @@ fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change(
         ACTIVE_HOOKS.map(|hook| image(&common_hooks(&scratch).join(hook))),
         installed_hooks
     );
+    assert_eq!(image(&installed_spice(&scratch)), installed_entry);
     assert_eq!(configured_hooks(&scratch), ".githooks");
     assert_eq!(configured_hooks_at(&predecessor), ".spice/hooks");
     assert_eq!(
@@ -113,84 +125,95 @@ fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change(
 }
 
 #[test]
-fn activation_admits_repeated_identical_tolerated_hook_values() {
-    for select_target in [false, true] {
-        let scratch = Scratch::new();
-        repository_history(&scratch);
-        install_spice_hooks(&scratch);
-        git(&scratch, &["config", "extensions.worktreeConfig", "true"]);
-        let target = common_hooks(&scratch).display().to_string();
-        let selection = if select_target { &target } else { ".githooks" };
-        git(
-            &scratch,
-            &["config", "--local", "core.hooksPath", selection],
-        );
-        git(
-            &scratch,
-            &["config", "--worktree", "core.hooksPath", selection],
-        );
-        assert_eq!(
-            git_at(scratch.path(), &["config", "--get-all", "core.hooksPath"])
-                .lines()
-                .collect::<Vec<_>>(),
-            [selection, selection]
-        );
+fn activation_delegates_preview_and_exact_digest_apply_from_the_repository_root() {
+    let scratch = Scratch::new();
+    repository_history(&scratch);
+    let installation = install_spice_hooks(&scratch);
+    let (digest, log) = install_success_delegate(&scratch, &installation);
+    let nested = scratch.join("nested/caller");
+    fs::create_dir_all(&nested).expect("create nested activation caller");
+    let mut output = Vec::new();
 
-        let mut output = Vec::new();
-        xtask::activate_hooks(scratch.path(), &mut output)
-            .expect("identical tolerated selections admit activation");
+    xtask::activate_hooks(&nested, &mut output).expect("installed delegation completes");
 
-        assert_eq!(configured_hooks(&scratch), target);
-        assert!(
-            String::from_utf8(output)
-                .unwrap()
-                .contains("cleared worktree hook override")
-        );
-    }
+    let canonical_root = fs::canonicalize(scratch.path()).expect("canonicalize fixture root");
+    assert_eq!(
+        fs::read_to_string(log).expect("read installed delegation log"),
+        format!(
+            "{}|install\n{}|install --apply={digest}\n",
+            canonical_root.display(),
+            canonical_root.display(),
+        )
+    );
+    assert_eq!(
+        String::from_utf8(output).expect("activation output is UTF-8"),
+        format!("activated Spice hooks through installed plan {digest}\n")
+    );
 }
 
-#[test]
-fn activation_refuses_mixed_tolerated_and_repeated_foreign_hook_values() {
-    for repeat_foreign in [false, true] {
-        let scratch = Scratch::new();
-        repository_history(&scratch);
-        install_spice_hooks(&scratch);
-        git(&scratch, &["config", "extensions.worktreeConfig", "true"]);
-        let target = common_hooks(&scratch).display().to_string();
-        let (local, worktree) = if repeat_foreign {
-            (".spice/hooks", ".spice/hooks")
-        } else {
-            (".githooks", target.as_str())
-        };
-        git(&scratch, &["config", "--local", "core.hooksPath", local]);
-        git(
-            &scratch,
-            &["config", "--worktree", "core.hooksPath", worktree],
-        );
-        assert_eq!(
-            git_at(scratch.path(), &["config", "--get-all", "core.hooksPath"])
-                .lines()
-                .collect::<Vec<_>>(),
-            [local, worktree]
-        );
-        let repository_config = image(&scratch.join(".git/config"));
-        let worktree_config = image(&scratch.join(".git/config.worktree"));
-        let mut output = Vec::new();
+fn install_success_delegate(
+    scratch: &Scratch,
+    installation: &PriorHookEvidence,
+) -> (String, PathBuf) {
+    let preview = InstallPreview::from_plan(installation.receipt.plan().clone())
+        .expect("installed fixture plan previews");
+    assert_eq!(preview.digest(), installation.receipt.digest());
+    let preview = String::from_utf8(wire::encode(&preview).expect("encode delegated preview"))
+        .expect("delegated preview is UTF-8");
+    let receipt =
+        String::from_utf8(wire::encode(&installation.receipt).expect("encode delegated receipt"))
+            .expect("delegated receipt is UTF-8");
+    assert!(!preview.contains('\''));
+    assert!(!receipt.contains('\''));
+    let digest = installation.receipt.digest().to_string();
+    let log = scratch.join("installed-delegation.log");
+    assert!(!log.to_string_lossy().contains('\''));
+    write_installed_spice(
+        scratch,
+        format!(
+            concat!(
+                "#!/bin/sh -eu\n",
+                "printf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\n",
+                "case \"$*\" in\n",
+                "  install) printf '%s\\n' '{}' ;;\n",
+                "  'install --apply={}') printf '%s\\n' '{}' ;;\n",
+                "  *) exit 64 ;;\n",
+                "esac\n",
+            ),
+            log.display(),
+            preview,
+            digest,
+            receipt,
+        )
+        .as_bytes(),
+    );
+    (digest, log)
+}
 
-        let error = xtask::activate_hooks(scratch.path(), &mut output)
-            .expect_err("more than one selection or a foreign selection must refuse");
+fn install_refusal_delegate(scratch: &Scratch, predecessor: &Path) {
+    assert!(!predecessor.to_string_lossy().contains('\''));
+    write_installed_spice(
+        scratch,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' 'spice: install::foreign-hooks; refusing foreign core.hooksPath [\".spice/hooks\"] in {}' >&2\nexit 2\n",
+            predecessor.display(),
+        )
+        .as_bytes(),
+    );
+}
 
-        assert!(matches!(
-            error,
-            xtask::HookActivationError::ForeignHookPath { .. }
-        ));
-        assert!(output.is_empty());
-        assert_eq!(image(&scratch.join(".git/config")), repository_config);
-        assert_eq!(
-            image(&scratch.join(".git/config.worktree")),
-            worktree_config
-        );
-    }
+fn write_installed_spice(scratch: &Scratch, bytes: &[u8]) {
+    let path = installed_spice(scratch);
+    fs::write(&path, bytes).expect("write installed Spice delegate");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+        .expect("make installed Spice delegate executable");
+}
+
+fn installed_spice(scratch: &Scratch) -> PathBuf {
+    Repository::discover(scratch.path())
+        .expect("discover installed Spice path")
+        .common_dir()
+        .join(".spice-install/bin/spice")
 }
 
 fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
@@ -246,6 +269,7 @@ fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
         tracked,
         tracked_hooks: tracked_before,
         config: config_before,
+        receipt,
     }
 }
 
@@ -331,6 +355,7 @@ struct PriorHookEvidence {
     tracked: PathBuf,
     tracked_hooks: [FileImage; 3],
     config: FileImage,
+    receipt: InstallReceipt,
 }
 
 fn install_cargo_alias(scratch: &Scratch, log: &Path) {

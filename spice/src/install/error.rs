@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use wire::Digest;
 
+use super::HookConfigurationScope;
 use crate::repository::{ResolveError, StateError};
 
 /// Planning, admission, publication, or reversal failure.
@@ -28,6 +29,25 @@ pub enum InstallError {
         path: PathBuf,
         reason: &'static str,
     },
+    ForeignHookPath {
+        worktree: PathBuf,
+        observed: Vec<String>,
+    },
+    GitConfigurationDrift {
+        worktree: PathBuf,
+        scope: HookConfigurationScope,
+        observed: Vec<String>,
+    },
+    GitLaunch {
+        operation: &'static str,
+        source: io::Error,
+    },
+    GitExit {
+        operation: &'static str,
+        code: Option<i32>,
+        diagnostic: String,
+    },
+    GitNonUtf8(&'static str),
     BinaryContextChanged,
     DigestMismatch {
         expected: Digest,
@@ -63,76 +83,153 @@ impl InstallError {
 impl fmt::Display for InstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Repository(error) => error.fmt(formatter),
-            Self::State(error) => error.fmt(formatter),
-            Self::Encode(error) => write!(formatter, "install plan did not encode: {error}"),
-            Self::Decode(error) => write!(formatter, "install record did not decode: {error}"),
-            Self::Io {
-                operation,
-                path,
-                source,
-            } => write!(
-                formatter,
-                "failed to {operation} at {}: {source}",
-                path.display()
-            ),
-            Self::PathShape(path) => write!(
-                formatter,
-                "install path is not a real regular file or directory: {}",
-                path.display()
-            ),
-            Self::PathOutsideRoot(path) => write!(
-                formatter,
-                "install path resolves outside its canonical permitted root: {}",
-                path.display()
-            ),
-            Self::ParentChanged(path) => write!(
-                formatter,
-                "install destination parent generation changed after planning: {}",
-                path.display()
-            ),
-            Self::BinaryNotRegular(path) => {
-                write!(
-                    formatter,
-                    "Spice executable is not a regular file: {}",
-                    path.display()
-                )
-            }
-            Self::BinaryEmpty(path) => {
-                write!(formatter, "Spice executable is empty: {}", path.display())
-            }
-            Self::HookPathUnrepresentable { path, reason } => write!(
-                formatter,
-                "installed Spice hook path {path:?} {reason} and cannot be rendered on one shell line",
-            ),
-            Self::BinaryContextChanged => {
-                formatter.write_str("Spice executable selection differs from the recorded plan")
-            }
-            Self::DigestMismatch { expected, observed } => write!(
-                formatter,
-                "install plan digest mismatch: expected {expected}, observed {observed}"
-            ),
-            Self::InvalidRecord(reason) => write!(formatter, "invalid install record: {reason}"),
-            Self::LegacyRecord { path, owner } => write!(
-                formatter,
-                "install record at {} belongs to the retired release {owner}; \
-                 unapply it with that release before installing Spice",
-                path.display(),
-            ),
-            Self::RecordMissing => formatter.write_str("no Spice install record exists"),
-            Self::ApplyInProgress => formatter.write_str("Spice installation is incomplete"),
-            Self::UnapplyInProgress => formatter.write_str("Spice unapply is incomplete"),
-            Self::Drift { path, observed } => write!(
-                formatter,
-                "installed path drifted at {path}; observed {}",
-                observed
-                    .as_ref()
-                    .map_or_else(|| "absence".to_owned(), ToString::to_string)
-            ),
-            Self::Interrupted { operation } => {
-                write!(formatter, "fixture interrupted after operation {operation}")
-            }
+            Self::Repository(_)
+            | Self::State(_)
+            | Self::Encode(_)
+            | Self::Decode(_)
+            | Self::Io { .. }
+            | Self::PathShape(_)
+            | Self::PathOutsideRoot(_)
+            | Self::ParentChanged(_)
+            | Self::BinaryNotRegular(_)
+            | Self::BinaryEmpty(_)
+            | Self::HookPathUnrepresentable { .. } => fmt_input_error(self, formatter),
+            Self::ForeignHookPath { .. }
+            | Self::GitConfigurationDrift { .. }
+            | Self::GitLaunch { .. }
+            | Self::GitExit { .. }
+            | Self::GitNonUtf8(_) => fmt_git_error(self, formatter),
+            Self::BinaryContextChanged
+            | Self::DigestMismatch { .. }
+            | Self::InvalidRecord(_)
+            | Self::LegacyRecord { .. }
+            | Self::RecordMissing
+            | Self::ApplyInProgress
+            | Self::UnapplyInProgress
+            | Self::Drift { .. }
+            | Self::Interrupted { .. } => fmt_progress_error(self, formatter),
         }
+    }
+}
+
+fn fmt_input_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match error {
+        InstallError::Repository(error) => fmt::Display::fmt(error, formatter),
+        InstallError::State(error) => fmt::Display::fmt(error, formatter),
+        InstallError::Encode(error) => write!(formatter, "install plan did not encode: {error}"),
+        InstallError::Decode(error) => write!(formatter, "install record did not decode: {error}"),
+        InstallError::Io {
+            operation,
+            path,
+            source,
+        } => write!(
+            formatter,
+            "failed to {operation} at {}: {source}",
+            path.display()
+        ),
+        InstallError::PathShape(path) => write!(
+            formatter,
+            "install path is not a real regular file or directory: {}",
+            path.display()
+        ),
+        InstallError::PathOutsideRoot(path) => write!(
+            formatter,
+            "install path resolves outside its canonical permitted root: {}",
+            path.display()
+        ),
+        InstallError::ParentChanged(path) => write!(
+            formatter,
+            "install destination parent generation changed after planning: {}",
+            path.display()
+        ),
+        InstallError::BinaryNotRegular(path) => {
+            write!(
+                formatter,
+                "Spice executable is not a regular file: {}",
+                path.display()
+            )
+        }
+        InstallError::BinaryEmpty(path) => {
+            write!(formatter, "Spice executable is empty: {}", path.display())
+        }
+        InstallError::HookPathUnrepresentable { path, reason } => write!(
+            formatter,
+            "installed Spice hook path {path:?} {reason} and cannot be rendered on one shell line",
+        ),
+        _ => unreachable!("input error formatter received another install error"),
+    }
+}
+
+fn fmt_git_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match error {
+        InstallError::ForeignHookPath { worktree, observed } => write!(
+            formatter,
+            "refusing to replace foreign core.hooksPath {observed:?} in {}; keep Spice and predecessor hooks in separate worktrees",
+            worktree.display(),
+        ),
+        InstallError::GitConfigurationDrift {
+            worktree,
+            scope,
+            observed,
+        } => write!(
+            formatter,
+            "installed Git hook configuration drifted in {scope:?} scope at {}; observed {observed:?}",
+            worktree.display(),
+        ),
+        InstallError::GitLaunch { operation, source } => {
+            write!(formatter, "failed to launch Git to {operation}: {source}")
+        }
+        InstallError::GitExit {
+            operation,
+            code,
+            diagnostic,
+        } => write!(
+            formatter,
+            "Git failed to {operation} with status {code:?}: {}",
+            diagnostic.trim_ascii_end(),
+        ),
+        InstallError::GitNonUtf8(operation) => {
+            write!(
+                formatter,
+                "Git emitted non-UTF-8 while trying to {operation}"
+            )
+        }
+        _ => unreachable!("Git error formatter received another install error"),
+    }
+}
+
+fn fmt_progress_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match error {
+        InstallError::BinaryContextChanged => {
+            formatter.write_str("Spice executable selection differs from the recorded plan")
+        }
+        InstallError::DigestMismatch { expected, observed } => write!(
+            formatter,
+            "install plan digest mismatch: expected {expected}, observed {observed}"
+        ),
+        InstallError::InvalidRecord(reason) => {
+            write!(formatter, "invalid install record: {reason}")
+        }
+        InstallError::LegacyRecord { path, owner } => write!(
+            formatter,
+            "install record at {} belongs to the retired release {owner}; \
+                 unapply it with that release before installing Spice",
+            path.display(),
+        ),
+        InstallError::RecordMissing => formatter.write_str("no Spice install record exists"),
+        InstallError::ApplyInProgress => formatter.write_str("Spice installation is incomplete"),
+        InstallError::UnapplyInProgress => formatter.write_str("Spice unapply is incomplete"),
+        InstallError::Drift { path, observed } => write!(
+            formatter,
+            "installed path drifted at {path}; observed {}",
+            observed
+                .as_ref()
+                .map_or_else(|| "absence".to_owned(), ToString::to_string)
+        ),
+        InstallError::Interrupted { operation } => {
+            write!(formatter, "fixture interrupted after operation {operation}")
+        }
+        _ => unreachable!("progress error formatter received another install error"),
     }
 }
 
@@ -142,7 +239,7 @@ impl Error for InstallError {
             Self::Repository(error) => Some(error),
             Self::State(error) => Some(error),
             Self::Encode(error) | Self::Decode(error) => Some(error),
-            Self::Io { source, .. } => Some(source),
+            Self::Io { source, .. } | Self::GitLaunch { source, .. } => Some(source),
             _ => None,
         }
     }
