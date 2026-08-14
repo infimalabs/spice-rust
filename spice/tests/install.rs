@@ -72,16 +72,19 @@ fn installed_spice_is_the_one_repository_local_executable() {
 fn linked_worktrees_share_one_common_install_and_receipt() {
     let scratch = Scratch::new("linked");
     let common = scratch.join(".git");
-    let git_dir = common.join("worktrees/linked");
     let linked = scratch.join("linked");
-    fs::create_dir_all(&git_dir).unwrap();
-    fs::create_dir(&linked).unwrap();
-    fs::write(
-        linked.join(".git"),
-        format!("gitdir: {}\n", git_dir.display()),
-    )
-    .unwrap();
-    fs::write(git_dir.join("commondir"), "../..\n").unwrap();
+    let added = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "--detach",
+            linked.to_str().unwrap(),
+            "HEAD",
+        ])
+        .current_dir(scratch.path())
+        .status()
+        .expect("launch linked fixture creation");
+    assert!(added.success());
     let first_repository = Repository::discover(scratch.path()).unwrap();
     let linked_repository = Repository::discover(&linked).unwrap();
     let source = Path::new(env!("CARGO_BIN_EXE_spice"));
@@ -309,11 +312,11 @@ fn assert_bad_record_is_inert(scratch: &Scratch) {
 fn cli_preview_apply_and_unapply_are_typed_idempotent_and_exact() {
     let scratch = Scratch::new("cli");
     let hook = scratch.executable(
-        ".spice/hooks/pre-commit",
+        ".githooks/pre-commit",
         b"#!/bin/sh\nexec spice dev pre-commit \"$@\"\n",
     );
     let git_config = scratch.join(".git/config");
-    fs::write(&git_config, b"[core]\n\thooksPath = .spice/hooks\n").unwrap();
+    fs::write(&git_config, b"[core]\n\thooksPath = .githooks\n").unwrap();
     let hook_before = image(&hook);
     let config_before = image(&git_config);
 
@@ -423,6 +426,30 @@ impl Scratch {
             ));
             match fs::create_dir(&root) {
                 Ok(()) => {
+                    let initialized = Command::new("git")
+                        .args(["init", "-q", "-b", "main"])
+                        .current_dir(&root)
+                        .status()
+                        .expect("launch integration fixture Git initialization");
+                    assert!(initialized.success());
+                    let configured = Command::new("git")
+                        .args(["config", "user.email", "install@example.invalid"])
+                        .current_dir(&root)
+                        .status()
+                        .expect("configure integration fixture Git email");
+                    assert!(configured.success());
+                    let configured = Command::new("git")
+                        .args(["config", "user.name", "Install Fixture"])
+                        .current_dir(&root)
+                        .status()
+                        .expect("configure integration fixture Git name");
+                    assert!(configured.success());
+                    let committed = Command::new("git")
+                        .args(["commit", "--allow-empty", "-qm", "fixture"])
+                        .current_dir(&root)
+                        .status()
+                        .expect("commit integration fixture Git root");
+                    assert!(committed.success());
                     fs::create_dir_all(root.join(".git/info")).unwrap();
                     fs::write(root.join(".git/info/exclude"), b"").unwrap();
                     return Self(root);

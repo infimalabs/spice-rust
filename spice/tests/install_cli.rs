@@ -41,6 +41,13 @@ impl Fixture {
             "spice-install-cli-{label}-{}-{sequence}",
             std::process::id()
         ));
+        fs::create_dir(&root).expect("create install fixture root");
+        let initialized = Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(&root)
+            .status()
+            .expect("launch install fixture Git initialization");
+        assert!(initialized.success());
         fs::create_dir_all(root.join(".git/info")).expect("create repository metadata");
         fs::create_dir_all(root.join(".git/.spice-rs/data"))
             .expect("create Spice state sentinel directory");
@@ -347,8 +354,8 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(text_digest, json_digest);
     assert_eq!(preview.digest().as_str(), text_digest);
     assert_eq!(preview.digest(), &preview.plan().digest().unwrap());
-    let operation_count = preview.plan().operations().len();
-    assert_eq!(operation_count, 7);
+    let operation_count = preview.plan().operation_count();
+    assert_eq!(operation_count, 8);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     assert!(fixture.root.join(".git/.spice-rs").is_dir());
@@ -394,6 +401,83 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     );
     assert!(fixture.record().is_file());
     fixture.assert_state_unchanged();
+}
+
+#[test]
+fn installed_hook_activation_uses_no_cargo_or_xtask_and_reverses_git_config() {
+    let fixture = Fixture::new("no-cargo-hook-activation");
+    let tools = fixture.root.join("fixture-tools");
+    fs::create_dir(&tools).expect("create fixture tool directory");
+    symlink("/usr/bin/git", tools.join("git")).expect("link fixture Git");
+    let invoked = fixture.root.join("build-tool-invoked");
+    for name in ["cargo", "xtask"] {
+        let path = tools.join(name);
+        fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' {name} >> {:?}\nexit 97\n",
+                invoked,
+            ),
+        )
+        .expect("write forbidden build-tool trap");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("make forbidden build-tool trap executable");
+    }
+    let invoke = |arguments: &[&str]| {
+        let output = fixture
+            .command(arguments)
+            .env("PATH", &tools)
+            .output()
+            .expect("launch install with trapped build tools");
+        Spoken {
+            code: output.status.code(),
+            out: output.stdout,
+            err: output.stderr,
+        }
+    };
+
+    let preview: InstallPreview = reply_body(invoke(&["--json", "install"]));
+    assert!(preview.plan().hook_activation().is_some());
+    assert!(git_hook_path(&fixture.root).is_none());
+    assert!(!invoked.exists());
+
+    let receipt: InstallReceipt = reply_body(invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", preview.digest()),
+    ]));
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    assert_eq!(
+        git_hook_path(&fixture.root).as_deref(),
+        preview
+            .plan()
+            .hook_activation()
+            .map(spice::install::HookActivationPlan::hooks_path),
+    );
+    assert!(!invoked.exists());
+
+    let removed: InstallReceipt = reply_body(invoke(&["--json", "install", "--unapply"]));
+    assert_eq!(removed.status(), InstallStatus::Uninstalled);
+    assert!(git_hook_path(&fixture.root).is_none());
+    assert!(!invoked.exists());
+}
+
+fn git_hook_path(root: &std::path::Path) -> Option<String> {
+    let output = Command::new("/usr/bin/git")
+        .args(["config", "--get", "core.hooksPath"])
+        .current_dir(root)
+        .output()
+        .expect("read fixture hook selection");
+    if output.status.code() == Some(1) {
+        return None;
+    }
+    assert!(output.status.success());
+    Some(
+        String::from_utf8(output.stdout)
+            .expect("fixture hook path is UTF-8")
+            .trim_ascii_end()
+            .to_owned(),
+    )
 }
 
 #[test]
@@ -590,7 +674,7 @@ fn preview_apply_and_unapply_overlap_with_small_fixture_owned_sources() {
 fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
     let fixture = Fixture::new("unapply");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    let operation_count = preview.plan().operations().len();
+    let operation_count = preview.plan().operation_count();
     let digest = preview.digest();
     let applied = fixture.invoke(&["install", &format!("--apply={digest}")]);
     applied.assert_success();
@@ -758,7 +842,7 @@ fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
 fn apply_pause_released_before_receiver_setup_is_observed() {
     let fixture = Fixture::new("apply-prelanded-pause");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    let operation_count = preview.plan().operations().len();
+    let operation_count = preview.plan().operation_count();
     let digest = preview.digest();
     let destination = fixture
         .root

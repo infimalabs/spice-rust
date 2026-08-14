@@ -11,6 +11,7 @@ fn a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying(
     let scratch = Scratch::new("refresh-prior-fixed");
     let repository = scratch.repository();
     let binary = scratch.binary(b"one installed build\n");
+    let linked_repository = linked_repository(&scratch, &repository);
     let installed = plan(&repository, Some(&binary)).unwrap();
     apply(&repository, Some(&binary), &installed.digest().unwrap()).unwrap();
     let historical = install_historical_assets(&repository);
@@ -18,7 +19,6 @@ fn a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying(
     set_test_mode(&binary, EXECUTABLE_MODE);
     let prior_record = fs::read(record_path(&repository).unwrap()).unwrap();
     let prior_images = images(&repository, &installed);
-    let linked_repository = linked_repository(&scratch, &repository);
 
     let reversal = unapply(&linked_repository)
         .expect_err("another build must refresh rather than reverse the live receipt");
@@ -99,17 +99,18 @@ fn install_historical_assets(repository: &Repository) -> [(Asset, GeneratedImage
 
 fn linked_repository(scratch: &Scratch, repository: &Repository) -> Repository {
     let linked = scratch.join("linked");
-    let linked_git = repository
-        .common_dir()
-        .join("worktrees/refresh-prior-fixed");
-    fs::create_dir(&linked).unwrap();
-    fs::create_dir_all(&linked_git).unwrap();
-    fs::write(
-        linked.join(".git"),
-        format!("gitdir: {}\n", linked_git.display()),
-    )
-    .unwrap();
-    fs::write(linked_git.join("commondir"), "../..\n").unwrap();
+    let added = std::process::Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "--detach",
+            linked.to_str().unwrap(),
+            "HEAD",
+        ])
+        .current_dir(repository.worktree_root())
+        .status()
+        .expect("launch linked-worktree fixture creation");
+    assert!(added.success());
     Repository::discover(&linked).unwrap()
 }
 

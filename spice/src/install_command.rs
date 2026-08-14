@@ -131,6 +131,8 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::BinaryNotRegular(_)
         | InstallError::BinaryEmpty(_)
         | InstallError::HookPathUnrepresentable { .. }
+        | InstallError::ForeignHookPath { .. }
+        | InstallError::GitConfigurationDrift { .. }
         | InstallError::BinaryContextChanged
         | InstallError::DigestMismatch { .. }
         | InstallError::LegacyRecord { .. }
@@ -154,7 +156,10 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         ),
         InstallError::Repository(_)
         | InstallError::State(StateError::Filesystem { .. })
-        | InstallError::Io { .. } => Outcome::Fault(Fault {
+        | InstallError::Io { .. }
+        | InstallError::GitLaunch { .. }
+        | InstallError::GitExit { .. }
+        | InstallError::GitNonUtf8(_) => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: "install::environment-failed".to_owned(),
             detail: error.to_string(),
@@ -188,6 +193,8 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
     match error {
         InstallError::DigestMismatch { .. } => "install::digest-moved",
         InstallError::HookPathUnrepresentable { .. } => "install::hook-path-unrepresentable",
+        InstallError::ForeignHookPath { .. } => "install::foreign-hooks",
+        InstallError::GitConfigurationDrift { .. } => "install::hook-configuration-drift",
         InstallError::LegacyRecord { .. } => "install::release-owned-state",
         InstallError::RecordMissing => "install::record-missing",
         InstallError::ApplyInProgress | InstallError::UnapplyInProgress => {
@@ -202,6 +209,12 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
 }
 
 fn install_refusal_remedy(error: &InstallError) -> String {
+    if let Some(remedy) = hook_configuration_remedy(error) {
+        return remedy;
+    }
+    if let Some(remedy) = state_remedy(error) {
+        return remedy;
+    }
     match error {
         InstallError::PathShape(path) => format!(
             "inspect the Rust-owned install target with `{}` and restore it to an unlinked regular file or directory before rerunning this executable's `install` preview",
@@ -256,31 +269,45 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         InstallError::Drift { path, .. } => format!(
             "resolve the asset root with `git rev-parse --path-format=absolute --git-common-dir`, inspect its Rust-owned target with `ls -ld -- <printed-common-git>/{path}`, and preserve the operator replacement or restore the recorded installed image before retrying reversal",
         ),
-        InstallError::State(StateError::Linked { path }) => format!(
-            "inspect the Rust state link with `{}` and replace it with the fixed unlinked state component before retrying preview",
-            inspect_path(path),
-        ),
-        InstallError::State(StateError::NotDirectory { path }) => format!(
-            "inspect the Rust state parent with `{}` and restore that fixed component as a directory before retrying preview",
-            inspect_path(path),
-        ),
-        InstallError::State(StateError::NotRegularFile { path }) => format!(
-            "inspect the Rust state leaf with `{}` and restore that fixed component as a regular file before retrying preview",
-            inspect_path(path),
-        ),
-        InstallError::State(StateError::RetiredState { path, release }) => format!(
-            "inspect the {release}-owned tree with `{}`; preserve its evidence and archive it under an operator-chosen path before retrying the current preview",
-            inspect_path(path),
-        ),
-        InstallError::Repository(_)
-        | InstallError::State(StateError::Filesystem { .. })
-        | InstallError::Encode(_)
-        | InstallError::Decode(_)
-        | InstallError::Io { .. }
-        | InstallError::InvalidRecord(_)
-        | InstallError::Interrupted { .. } => {
+        _ => {
             unreachable!("fault-only install errors never construct refusal guidance")
         }
+    }
+}
+
+fn hook_configuration_remedy(error: &InstallError) -> Option<String> {
+    match error {
+        InstallError::ForeignHookPath { worktree, .. } => Some(format!(
+            "inspect `core.hooksPath` in {} and keep predecessor hooks in a separate worktree before previewing installation again",
+            worktree.display(),
+        )),
+        InstallError::GitConfigurationDrift { worktree, .. } => Some(format!(
+            "inspect `git config --show-origin --get-all core.hooksPath` in {}; restore the exact previewed or installed value before retrying",
+            worktree.display(),
+        )),
+        _ => None,
+    }
+}
+
+fn state_remedy(error: &InstallError) -> Option<String> {
+    match error {
+        InstallError::State(StateError::Linked { path }) => Some(format!(
+            "inspect the Rust state link with `{}` and replace it with the fixed unlinked state component before retrying preview",
+            inspect_path(path),
+        )),
+        InstallError::State(StateError::NotDirectory { path }) => Some(format!(
+            "inspect the Rust state parent with `{}` and restore that fixed component as a directory before retrying preview",
+            inspect_path(path),
+        )),
+        InstallError::State(StateError::NotRegularFile { path }) => Some(format!(
+            "inspect the Rust state leaf with `{}` and restore that fixed component as a regular file before retrying preview",
+            inspect_path(path),
+        )),
+        InstallError::State(StateError::RetiredState { path, release }) => Some(format!(
+            "inspect the {release}-owned tree with `{}`; preserve its evidence and archive it under an operator-chosen path before retrying the current preview",
+            inspect_path(path),
+        )),
+        _ => None,
     }
 }
 

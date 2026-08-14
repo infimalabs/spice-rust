@@ -81,6 +81,33 @@ impl InstallRecord {
         self.validate_with_content(historical)
     }
 
+    fn rebase_repository(&mut self, repository: &Repository) -> Result<(), InstallError> {
+        if !matches!(
+            self.status,
+            InstallStatus::Complete | InstallStatus::Uninstalled
+        ) {
+            return Err(InstallError::InvalidRecord(
+                "an interrupted install cannot be relocated".to_owned(),
+            ));
+        }
+        let prior = self.repository.common_git.clone();
+        if prior == repository.common_dir() {
+            return Ok(());
+        }
+        if prior.exists() {
+            return Err(InstallError::InvalidRecord(
+                "install record was copied while its owning repository still exists".to_owned(),
+            ));
+        }
+        self.repository = RepositoryIdentity::capture(repository);
+        self.plan.repository = self.repository.clone();
+        if let Some(activation) = &mut self.plan.hook_activation {
+            activation.rebase_main_worktree(repository)?;
+        }
+        self.plan_digest = self.plan.digest()?;
+        Ok(())
+    }
+
     fn validate_with_content(&self, historical: bool) -> Result<(), InstallError> {
         if self.version != RECORD_VERSION {
             return Err(InstallError::InvalidRecord(format!(
@@ -88,6 +115,11 @@ impl InstallRecord {
                 self.version
             )));
         }
+        self.validate_plan_content(historical)?;
+        self.validate_progress_content()
+    }
+
+    fn validate_plan_content(&self, historical: bool) -> Result<(), InstallError> {
         if historical {
             self.plan.validate_historical_receipt()?;
         } else {
@@ -125,6 +157,10 @@ impl InstallRecord {
                 "install destination inventory is not exact and ordered".to_owned(),
             ));
         }
+        Ok(())
+    }
+
+    fn validate_progress_content(&self) -> Result<(), InstallError> {
         let slots = self.plan.operations.len();
         if self.installed.len() != slots
             || self.installed_parents.len() != slots
@@ -134,7 +170,8 @@ impl InstallRecord {
                 "install generation inventory has the wrong length".to_owned(),
             ));
         }
-        if self.completed > slots {
+        let operation_count = self.plan.operation_count();
+        if self.completed > operation_count {
             return Err(InstallError::InvalidRecord(
                 "install progress is past the operation inventory".to_owned(),
             ));
@@ -152,7 +189,7 @@ impl InstallRecord {
         if matches!(
             self.status,
             InstallStatus::Complete | InstallStatus::Uninstalled
-        ) && self.completed != slots
+        ) && self.completed != operation_count
         {
             return Err(InstallError::InvalidRecord(
                 "terminal install record has incomplete progress".to_owned(),
@@ -217,7 +254,7 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
     };
     let generation = observed.generation;
     let bytes = observed.image.bytes;
-    let record: InstallRecord = wire::decode(&bytes).map_err(InstallError::Decode)?;
+    let mut record: InstallRecord = wire::decode(&bytes).map_err(InstallError::Decode)?;
     if let Some((_, owner)) = LEGACY_RECORD_VERSIONS
         .iter()
         .find(|(version, _)| *version == record.version)
@@ -227,13 +264,17 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
             owner,
         });
     }
-    record.validate_loaded_for_repository(repository)?;
     let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
     if canonical != bytes {
         return Err(InstallError::InvalidRecord(
             "install record is not canonical".to_owned(),
         ));
     }
+    record.validate_loaded()?;
+    if record.repository.common_git != repository.common_dir() {
+        record.rebase_repository(repository)?;
+    }
+    record.validate_loaded_for_repository(repository)?;
     Ok(Some(LoadedRecord { record, generation }))
 }
 

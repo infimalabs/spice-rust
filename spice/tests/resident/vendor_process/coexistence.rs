@@ -36,6 +36,7 @@ struct PredecessorSystem {
     state: Vec<FileIdentity>,
     hooks: Vec<FileIdentity>,
     hook_config: FileIdentity,
+    expected_hooks_path: String,
     worktree: PathBuf,
     process: Child,
     pid: u32,
@@ -66,6 +67,7 @@ impl PredecessorSystem {
                 .map(|path| FileIdentity::read(path))
                 .collect(),
             hook_config: FileIdentity::read(&hook_config),
+            expected_hooks_path: ".spice/hooks".to_owned(),
             worktree,
             process,
             pid,
@@ -132,8 +134,8 @@ impl PredecessorSystem {
         );
         assert_eq!(
             fixture_git_output(&self.worktree, &["config", "--get", "core.hooksPath"]),
-            ".spice/hooks",
-            "{verb} stopped resolving predecessor steering hooks"
+            self.expected_hooks_path,
+            "{verb} changed the explicitly selected hook authority"
         );
         // `Child::id` reports the pid recorded at spawn and keeps reporting it
         // after the process is killed and reaped, so comparing it with the pid
@@ -148,6 +150,30 @@ impl PredecessorSystem {
             "{verb} stopped the predecessor process (pid {})",
             self.pid
         );
+    }
+
+    fn hand_off_hook_selection(&mut self) {
+        fixture_git(
+            &self.worktree,
+            &["config", "--worktree", "--unset-all", "core.hooksPath"],
+        );
+        self.hook_config = FileIdentity::read(&self.hook_config.path);
+        fixture_git(
+            &self.worktree,
+            &["config", "--local", "core.hooksPath", ".githooks"],
+        );
+        self.expected_hooks_path = ".githooks".to_owned();
+    }
+
+    fn expect_installed_hooks(&mut self, repository: &spice::repository::Repository) {
+        self.expected_hooks_path = spice::install::installed_git_hooks(repository)
+            .to_str()
+            .expect("installed hook path is UTF-8")
+            .to_owned();
+    }
+
+    fn expect_handoff_hooks(&mut self) {
+        self.expected_hooks_path = ".githooks".to_owned();
     }
 }
 
@@ -274,20 +300,14 @@ fn install_predecessor_state(fixture: &Fixture, worktree: &Path) -> (Vec<PathBuf
 }
 
 #[test]
-fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
+fn installed_spice_lifecycle_requires_explicit_predecessor_hook_handoff() {
     let fixture = Fixture::new("coexisting-native-lifecycle");
     let rig = configure(&fixture);
-    prepare_coexistence_repository(&fixture, &rig);
-    let mut predecessor = PredecessorSystem::install(&fixture);
-    let (installed_binary, plan_digest, binary_digest) = install_coexisting_appliance(&fixture);
-    predecessor.assert_unchanged("install");
+    let (mut predecessor, installed_binary, plan_digest, binary_digest) =
+        install_after_hook_handoff(&fixture, &rig);
 
-    let (resident_path, resident_tools) =
-        native_resident_path(&fixture, &predecessor.executable.path);
-    let mut resident =
-        RunningResident::spawn_with_path(&fixture, &installed_binary, &resident_path);
-    resident.assert_ready(&fixture);
-    predecessor.assert_unchanged("start");
+    let (resident_path, resident_tools, resident) =
+        start_coexisting_resident(&fixture, &installed_binary, &mut predecessor);
     let claude = add_lane_with(&fixture, &installed_binary, None, Dialect::Claude);
     let codex = add_lane_with(
         &fixture,
@@ -338,7 +358,8 @@ fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
          lanes=[{claude},{codex}] directives=[{},{}] vendor_logs=2 \
          same_uuid={python_same_uuid_key} predecessor_pid={} predecessor_files={} \
          predecessor_context=[thread,inbox,socket-marker,same-uuid-inbox] \
-         predecessor_hooks=.spice/hooks resident_path=[git:{},sleep:{},spice:predecessor] \
+         predecessor_hooks=preserved-after-explicit-handoff \
+         resident_path=[git:{},sleep:{},spice:predecessor] \
          agent_path_head={} client_path_entries=0 shutdown=clean",
         fixture.journal().display(),
         created[0],
@@ -354,6 +375,56 @@ fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
             .expect("installed appliance has a directory")
             .display(),
     );
+}
+
+fn start_coexisting_resident(
+    fixture: &Fixture,
+    installed_binary: &Path,
+    predecessor: &mut PredecessorSystem,
+) -> (PathBuf, [PathBuf; 2], RunningResident) {
+    let (resident_path, resident_tools) =
+        native_resident_path(fixture, &predecessor.executable.path);
+    let mut resident = RunningResident::spawn_with_path(fixture, installed_binary, &resident_path);
+    resident.assert_ready(fixture);
+    predecessor.assert_unchanged("start");
+    (resident_path, resident_tools, resident)
+}
+
+fn install_after_hook_handoff(
+    fixture: &Fixture,
+    rig: &Rig,
+) -> (PredecessorSystem, PathBuf, String, String) {
+    prepare_coexistence_repository(fixture, rig);
+    let mut predecessor = PredecessorSystem::install(fixture);
+    assert_foreign_hook_preflight_refuses(fixture, &mut predecessor);
+    predecessor.hand_off_hook_selection();
+    let (installed_binary, plan_digest, binary_digest) = install_coexisting_appliance(fixture);
+    let repository = spice::repository::Repository::discover(&fixture.root)
+        .expect("coexistence repository discovers after install");
+    predecessor.expect_installed_hooks(&repository);
+    predecessor.assert_unchanged("install");
+    (predecessor, installed_binary, plan_digest, binary_digest)
+}
+
+fn assert_foreign_hook_preflight_refuses(fixture: &Fixture, predecessor: &mut PredecessorSystem) {
+    let repository = spice::repository::Repository::discover(&fixture.root)
+        .expect("coexistence repository discovers for foreign preflight");
+    let source_binary = Path::new(env!("CARGO_BIN_EXE_spice"));
+
+    let error = spice::install::plan(&repository, Some(source_binary))
+        .expect_err("foreign predecessor hooks must refuse before installation");
+
+    assert!(matches!(
+        error,
+        spice::install::InstallError::ForeignHookPath { worktree, observed }
+            if worktree == fs::canonicalize(&predecessor.worktree).expect("worktree canonicalizes")
+                && observed == [".spice/hooks"]
+    ));
+    assert!(
+        !repository.common_dir().join(".spice-install").exists(),
+        "foreign hook preflight published installation state"
+    );
+    predecessor.assert_unchanged("foreign hook preflight");
 }
 
 fn prepare_coexistence_repository(fixture: &Fixture, rig: &Rig) {
@@ -484,12 +555,14 @@ fn upgrade_coexisting_appliance(fixture: &Fixture, predecessor: &mut Predecessor
     let removed =
         spice::install::unapply(&repository).expect("reverse installed build for upgrade");
     assert_eq!(removed.status(), spice::install::InstallStatus::Uninstalled);
+    predecessor.expect_handoff_hooks();
     predecessor.assert_unchanged("upgrade reversal");
     let plan = spice::install::plan(&repository, Some(&upgraded)).expect("upgrade plans");
     let digest = plan.digest().expect("upgrade plan digests");
     let receipt = spice::install::apply(&repository, Some(&upgraded), &digest)
         .expect("upgrade applies exactly");
     assert_eq!(receipt.status(), spice::install::InstallStatus::Complete);
+    predecessor.expect_installed_hooks(&repository);
     assert_eq!(
         fs::read(spice::install::installed_binary(&repository))
             .expect("upgraded installed binary reads"),
