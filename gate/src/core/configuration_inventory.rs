@@ -13,8 +13,6 @@ use syn::{
 use super::acquire::CoreSource;
 use super::{ConfigInventoryEvidence, CoreEvidence, CoreFinding, CoreInputError, CoreObservation};
 
-const CONFIG_REGISTRY_PATH: &str = "spice/src/config.rs";
-
 /// Parsed production Rust sources shared by configuration inventory providers.
 pub(super) struct ConfigurationInventorySource {
     files: Vec<ParsedSource>,
@@ -109,11 +107,7 @@ impl ConfigurationInventorySource {
 
     fn registry_rows(&self) -> Result<Vec<RegistryRow>, CoreInputError> {
         let mut rows = Vec::new();
-        for source in self
-            .files
-            .iter()
-            .filter(|source| source.path == CONFIG_REGISTRY_PATH)
-        {
+        for source in &self.files {
             let mut visitor = DeclarationVisitor::default();
             visitor.visit_file(&source.syntax);
             if let Some(error) = visitor.error {
@@ -149,7 +143,7 @@ impl<'ast> Visit<'ast> for DeclarationVisitor {
                 .path
                 .segments
                 .last()
-                .is_some_and(|segment| segment.ident == "registry")
+                .is_some_and(|segment| segment.ident == "configuration_registry")
         {
             match syn::parse2::<RegistryRows>(node.mac.tokens.clone()) {
                 Ok(rows) => self.rows.extend(rows.0),

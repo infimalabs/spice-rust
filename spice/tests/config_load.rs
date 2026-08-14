@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::config::{
     AcquisitionKind, FlagOverride, FlagValue, PathSegment, Resolved, capture_repository,
-    descriptor, descriptors, load, load_repository,
+    descriptor, descriptors, load, load_repository, pre_commit_declarations,
 };
 use wire::{ConfigSource, Name};
 
@@ -124,6 +124,57 @@ fn repository_loader_ignores_the_python_owned_document() {
         fs::read_to_string(root.join("spice.toml")).unwrap(),
         "[lane]\nvendor = 'python-collision'\n",
         "Rust configuration capture must not rewrite or consult Python policy",
+    );
+}
+
+#[test]
+fn captured_pre_commit_declarations_expose_exact_ordered_capability_material() {
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "pre-commit declarations");
+    let tracked = concat!(
+        "[policy]\n",
+        "pre_commit_builtins = false\n",
+        "pre_commit = [\n",
+        "  { label = 'first', run = ['tool', 'one'] },\n",
+        "  { label = 'second', run = ['tool', 'two'], scopes = { paths = ['src/**'] } },\n",
+        "]\n",
+    );
+    write(root.join("spice-rust.toml"), tracked);
+    write(
+        root.join("spice.toml"),
+        b"[policy]\npre_commit = [{ label = 'ignored', run = ['foreign'] }]\n",
+    );
+    let repository = spice::repository::Repository::discover(&root).expect("fixture repository");
+    let before = snapshot(scratch.path());
+    let loaded = capture_repository(&repository, &[]).expect("ordered commands capture");
+    let declarations =
+        pre_commit_declarations(&loaded).expect("captured commands expose their authority");
+
+    assert_eq!(declarations.source(), ConfigSource::Tracked);
+    assert_eq!(declarations.configuration(), loaded.locations().tracked());
+    assert_eq!(declarations.document(), tracked);
+    assert_eq!(declarations.generation(), loaded.generation());
+    assert_eq!(
+        declarations
+            .commands()
+            .iter()
+            .map(|step| {
+                (
+                    step.label(),
+                    step.run().join("\0"),
+                    step.scopes().paths().join("\0"),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("first", "tool\0one".to_owned(), String::new()),
+            ("second", "tool\0two".to_owned(), "src/**".to_owned(),),
+        ]
+    );
+    assert_eq!(
+        snapshot(scratch.path()),
+        before,
+        "capturing executable policy must not execute or mutate it",
     );
 }
 

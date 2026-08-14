@@ -246,6 +246,8 @@ fn root_is_exactly_the_sixteen_typed_domains() {
         .expect("rendered root decodes");
     assert_eq!(round_trip, root);
     assert_eq!(decode("").expect("empty root"), Root::default());
+    assert!(Root::default().policy().pre_commit_builtins());
+    assert!(Root::default().policy().pre_commit().is_empty());
     assert!(root.proof().container().is_some());
     assert!(root.proof().runner().is_some());
     assert_eq!(root.tasks().stems(), ["app", "board"]);
@@ -286,6 +288,7 @@ fn root_is_exactly_the_sixteen_typed_domains() {
     let Value::Table(table) = encoded(&Root::default()) else {
         panic!("a root must encode as a table");
     };
+    assert_eq!(table["policy"]["pre_commit_builtins"].as_bool(), Some(true));
     assert_eq!(
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
@@ -332,7 +335,11 @@ fn pre_commit_commands_admit_only_the_current_nonempty_shape() {
     for (document, expected) in [
         (
             "[policy]\npre_commit = [{ label = \"\", run = [\"gate/pre-commit\"] }]\n",
-            "labels must be nonempty",
+            "labels must contain non-whitespace characters",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"  \", run = [\"gate/pre-commit\"] }]\n",
+            "labels must contain non-whitespace characters",
         ),
         (
             "[policy]\npre_commit = [{ label = \"Rust gate\", run = [] }]\n",
@@ -354,10 +361,65 @@ fn pre_commit_commands_admit_only_the_current_nonempty_shape() {
             "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], formatter = true }]\n",
             "formatter",
         ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"\"] } }]\n",
+            "nonempty",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"src/**\", \"src/**\"] } }]\n",
+            "unique",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { unknown = [\"src/**\"] } }]\n",
+            "unknown",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"../src/**\"] } }]\n",
+            "repository-relative path",
+        ),
     ] {
         let error = decode(document).expect_err("a retired or empty pre-commit shape must refuse");
         assert!(error.contains(expected), "{document:?}: {error}");
     }
+
+    let disabled = decode("[policy]\npre_commit_builtins = false\n")
+        .expect_err("disabling every pre-commit step must refuse");
+    assert!(disabled.contains("requires at least one policy.pre_commit command"));
+}
+
+#[test]
+fn arbitrary_pre_commit_commands_round_trip_in_authored_order() {
+    let document = r#"
+[policy]
+pre_commit_builtins = true
+pre_commit = [
+    { label = "first", run = ["tool", "one"] },
+    { label = "second", run = ["tool", "two"], scopes = { paths = ["src/**"] } },
+    { label = "third", run = ["tool", "three", "--exact"] },
+]
+"#;
+    let root = decode(document).expect("an arbitrary ordered list decodes");
+    let round_trip = decode(&toml::to_string(&root).expect("ordered policy serializes"))
+        .expect("serialized ordered policy decodes");
+    assert_eq!(round_trip, root);
+    assert_eq!(
+        root.policy()
+            .pre_commit()
+            .iter()
+            .map(|step| {
+                (
+                    step.label(),
+                    step.run().join("\0"),
+                    step.scopes().paths().join("\0"),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("first", "tool\0one".to_owned(), String::new()),
+            ("second", "tool\0two".to_owned(), "src/**".to_owned(),),
+            ("third", "tool\0three\0--exact".to_owned(), String::new()),
+        ]
+    );
 }
 
 #[test]
