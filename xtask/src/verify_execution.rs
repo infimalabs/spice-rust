@@ -1,5 +1,6 @@
 //! Dependency-aware execution of the full verifier and serial scoped feedback.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
@@ -413,24 +414,7 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
     rebalance: impl FnOnce(Budget) -> Budget,
 ) -> Result<(), VerifyError> {
     debug_assert_eq!(VERIFY_ACTIONS.len(), PREREQUISITES.len());
-    let active = budget
-        .active_cargo_jobs
-        .map_or_else(|| "unknown".to_owned(), |count| count.to_string());
-    writeln!(
-        output,
-        concat!(
-            "[verify] scheduler workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={} action_count={} deadline_scope=test-phase deadline_ms={}"
-        ),
-        budget.workers,
-        budget.cargo_jobs,
-        active,
-        budget.workspace_workers,
-        VERIFY_ACTIONS.len(),
-        runtime.as_millis(),
-    )
-    .map_err(VerifyError::Output)?;
-    output.flush().map_err(VerifyError::Output)?;
+    write_scheduler_start(output, budget, runtime)?;
 
     let GraphRun {
         mut nodes,
@@ -486,6 +470,31 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
     Ok(())
 }
 
+fn write_scheduler_start(
+    output: &mut impl Write,
+    budget: Budget,
+    runtime: Duration,
+) -> Result<(), VerifyError> {
+    let active = budget
+        .active_cargo_jobs
+        .map_or_else(|| "unknown".to_owned(), |count| count.to_string());
+    writeln!(
+        output,
+        concat!(
+            "[verify] scheduler workers={} cargo_jobs={} ",
+            "active_peer_cargo_jobs={} workspace_workers={} action_count={} deadline_scope=test-phase deadline_ms={}"
+        ),
+        budget.workers,
+        budget.cargo_jobs,
+        active,
+        budget.workspace_workers,
+        VERIFY_ACTIONS.len(),
+        runtime.as_millis(),
+    )
+    .map_err(VerifyError::Output)?;
+    output.flush().map_err(VerifyError::Output)
+}
+
 fn schedule_graph<R: Runner>(
     runner: &R,
     output: &mut impl Write,
@@ -509,6 +518,7 @@ fn schedule_graph<R: Runner>(
         loop {
             enforce_test_phase_deadline(
                 test_phase_started,
+                test_phase_complete(&nodes),
                 runtime,
                 &mut deadline_exceeded,
                 &mut failure_seen,
@@ -581,12 +591,13 @@ fn finish_graph<Rebalance>(
 
 fn enforce_test_phase_deadline(
     started: Option<Instant>,
+    complete: bool,
     runtime: Duration,
     deadline_exceeded: &mut bool,
     failure_seen: &mut bool,
     cancellation: &CancellationToken,
 ) {
-    if !*failure_seen && started.is_some_and(|started| started.elapsed() >= runtime) {
+    if !*failure_seen && !complete && started.is_some_and(|started| started.elapsed() >= runtime) {
         *deadline_exceeded = true;
         *failure_seen = true;
         cancellation.cancel();
@@ -653,6 +664,17 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
 
 fn starts_test_phase_deadline(action: Action) -> bool {
     matches!(action, Action::Browser | Action::WorkspaceTests)
+}
+
+/// The test-phase bound protects the two test branches, not their terminal
+/// documentation, evidence, and landing consumers. Those consumers remain
+/// bounded by the child supervisor and its complete 299-second envelope.
+fn test_phase_complete(nodes: &[NodeState]) -> bool {
+    VERIFY_ACTIONS
+        .iter()
+        .enumerate()
+        .filter(|(_, action)| starts_test_phase_deadline(**action))
+        .all(|(index, _)| matches!(nodes[index], NodeState::Complete(_)))
 }
 
 fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
@@ -788,7 +810,7 @@ fn render_completions(
 }
 
 fn ready_nodes(nodes: &[NodeState]) -> Vec<usize> {
-    nodes
+    let mut ready = nodes
         .iter()
         .enumerate()
         .filter_map(|(index, node)| {
@@ -805,7 +827,25 @@ fn ready_nodes(nodes: &[NodeState]) -> Vec<usize> {
                 })
                 .then_some(index)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    ready.sort_by_key(|index| (Reverse(remaining_path_depth(*index)), *index));
+    ready
+}
+
+/// Prefer the ready action with the longest remaining dependency path.
+///
+/// Report ordinals remain stable presentation identities. They are only the
+/// deterministic tie-breaker after critical-path depth, so the workspace-test
+/// branch cannot sit behind the shorter browser branch under a tight worker
+/// budget and terminal consumers receive the earliest possible start.
+fn remaining_path_depth(index: usize) -> usize {
+    PREREQUISITES
+        .iter()
+        .enumerate()
+        .filter(|(_, prerequisites)| prerequisites.contains(&index))
+        .map(|(successor, _)| 1 + remaining_path_depth(successor))
+        .max()
+        .unwrap_or_default()
 }
 
 fn stage(index: usize, action: Action) -> Stage<'static> {

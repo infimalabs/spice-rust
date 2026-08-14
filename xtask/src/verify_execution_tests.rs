@@ -243,7 +243,11 @@ mod tests {
         nodes[5] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [6]);
         nodes[6] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
-        assert_eq!(ready_nodes(&nodes), [7, 8]);
+        assert_eq!(
+            ready_nodes(&nodes),
+            [8, 7],
+            "the longer workspace-test and documentation path launches first"
+        );
         nodes[7] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [8]);
         nodes[8] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
@@ -462,14 +466,56 @@ mod tests {
         .expect_err("the complete verifier deadline refuses further work");
 
         assert!(matches!(error, VerifyError::TimedOut { .. }));
-        let expected = VERIFY_ACTIONS[..=7]
+        let expected = VERIFY_ACTIONS[..=6]
             .iter()
+            .chain(&VERIFY_ACTIONS[8..=8])
             .map(|action| action.label())
             .collect::<Vec<_>>();
         assert_eq!(runner.calls(), expected);
         let output = String::from_utf8(output).expect("deadline output is UTF-8");
         assert!(output.contains("deadline_scope=test-phase deadline_ms=1"));
         assert!(output.contains("primary_ordinal=deadline"));
+    }
+
+    #[test]
+    fn completed_test_branches_release_the_terminal_tail_to_the_supervisor_envelope() {
+        let mut delays = VERIFY_ACTIONS
+            .iter()
+            .map(|action| (action.label(), Duration::from_millis(2)))
+            .collect::<BTreeMap<_, _>>();
+        delays.insert(BROWSER_LABEL, Duration::from_millis(80));
+        delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(120));
+        delays.insert(VERIFY_ACTIONS[9].label(), Duration::from_millis(50));
+        delays.insert(VERIFY_ACTIONS[10].label(), Duration::from_millis(50));
+        delays.insert(BATTERY_LABEL, Duration::from_millis(50));
+        let runner = TimedRunner::new(delays, 0).with_prebuild_delay(Duration::from_millis(2));
+        let mut output = Vec::new();
+        let started = Instant::now();
+
+        verify_with_deadline(
+            &runner,
+            &mut output,
+            Budget::fixture(3, 1, 0),
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_millis(180),
+        )
+        .expect("completed test branches leave their bounded terminal tail runnable");
+
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "the compressed terminal tail must remain inside its supervisor analogue"
+        );
+        let calls = runner.calls();
+        let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+        assert_line_order(
+            &output,
+            "stage=start ordinal=9/13",
+            "stage=start ordinal=8/13",
+        );
+        assert_terminal_exit_zero(&output, 9, VERIFY_ACTIONS[8].label());
+        assert_terminal_success(&output, 13, VERIFY_ACTIONS[12].label());
+        assert_exactly_once(&calls);
     }
 
     #[test]

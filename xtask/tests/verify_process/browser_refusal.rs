@@ -123,17 +123,31 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
         "build --locked -p spice --bin spice",
         "metadata --locked --format-version 1 --no-deps",
         "test --locked --workspace --all-targets --no-run",
+        "test --locked --package verify-process-fixture-id --lib",
     ];
     assert!(
         chain.iter().all(|action| allowed.contains(action)),
         "unexpected Cargo action under browser refusal: {cargo_actions:?}",
     );
-    let mut unique_chain = chain.clone();
+    assert_bounded_workspace_prefix(&chain);
+}
+
+fn assert_bounded_workspace_prefix(chain: &[&str]) {
+    const METADATA: &str = "metadata --locked --format-version 1 --no-deps";
+    assert!(
+        chain.iter().filter(|action| **action == METADATA).count() <= 2,
+        "workspace preparation repeated Cargo metadata unexpectedly: {chain:?}"
+    );
+    let mut unique_chain = chain
+        .iter()
+        .copied()
+        .filter(|action| *action != METADATA)
+        .collect::<Vec<_>>();
     unique_chain.sort_unstable();
     unique_chain.dedup();
     assert_eq!(
         unique_chain.len(),
-        chain.len(),
-        "duplicate Cargo action: {chain:?}"
+        chain.iter().filter(|action| **action != METADATA).count(),
+        "duplicate non-metadata Cargo action: {chain:?}"
     );
 }
