@@ -266,6 +266,71 @@ fn configured_only_report_is_validated_and_silent_when_every_step_admits() {
 }
 
 #[test]
+fn resolution_supervision_uses_private_artifacts_and_the_same_fixed_envelope() {
+    let phase = Cell::new(0);
+    let answer = run_with_resolution(|files| {
+        assert_eq!(phase.get(), 0);
+        for path in [&files.progress, &files.terminal] {
+            assert_eq!(
+                fs::metadata(path)
+                    .expect("resolution worker artifact metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+            );
+        }
+        phase.set(1);
+        resolution_deadline(&files.progress)
+    });
+
+    assert_eq!(phase.get(), 1);
+    let Outcome::Refusal(refusal) = answer else {
+        panic!("resolution fixture returns its deadline refusal");
+    };
+    assert_eq!(refusal.reason(), "gate::pre-commit-deadline-elapsed");
+    let bounds = ProcessBounds::production();
+    assert_eq!(
+        bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain,
+        Duration::from_secs(179),
+    );
+}
+
+#[test]
+fn configured_only_resolution_report_is_source_bound_and_nonempty() {
+    let source = Digest::compute(wire::Domain::GateTree, b"resolution source");
+    let document = serde_json::json!({
+        "version": RESOLUTION_REPORT_VERSION,
+        "source": source,
+        "configured": {
+            "source": source,
+            "steps": [{
+                "label": "resolution fixture",
+                "argv": ["/bin/true"],
+                "selected_paths": ["gate/src/change_selection.rs"],
+                "enabled": true,
+                "findings": [],
+            }],
+        },
+    });
+    let bytes = serde_json::to_vec(&document).expect("encode resolution fixture");
+    let report = ResolutionReport::decode(&bytes).expect("decode resolution evidence");
+
+    assert!(report.admits());
+    assert_eq!(report.source, source);
+
+    let empty = serde_json::json!({
+        "version": RESOLUTION_REPORT_VERSION,
+        "source": source,
+    });
+    assert!(
+        ResolutionReport::decode(&serde_json::to_vec(&empty).expect("encode empty resolution"))
+            .expect_err("empty resolution evidence refuses")
+            .contains("empty effective battery"),
+    );
+}
+
+#[test]
 fn composite_report_refuses_an_empty_battery_or_mismatched_source() {
     let source = Digest::compute(wire::Domain::GateTree, b"empty battery");
     let empty = serde_json::json!({

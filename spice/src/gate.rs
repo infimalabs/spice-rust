@@ -148,6 +148,12 @@ impl PreparedBattery<'_> {
         self.capture.changes()
     }
 
+    /// Every regular path retained by the immutable selected tree.
+    #[must_use]
+    pub fn paths(&self) -> &[String] {
+        self.capture.paths()
+    }
+
     /// Execute the existing canonical mutation profile over the retained source.
     ///
     /// # Errors

@@ -125,6 +125,43 @@ impl fmt::Display for Error {
 
 impl StdError for Error {}
 
+/// One failure from the allocator-only resolution evidence runner.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionEvidenceError {
+    class: ErrorClass,
+    reason: String,
+    detail: String,
+    remedy: String,
+}
+
+impl ResolutionEvidenceError {
+    /// Retain a policy or test refusal without converting it into a Git fault.
+    #[must_use]
+    pub fn refusal(
+        reason: impl Into<String>,
+        detail: impl Into<String>,
+        remedy: impl Into<String>,
+    ) -> Self {
+        Self {
+            class: ErrorClass::Refusal,
+            reason: reason.into(),
+            detail: detail.into(),
+            remedy: remedy.into(),
+        }
+    }
+
+    /// Retain an environment or protocol failure from the evidence process.
+    #[must_use]
+    pub fn fault(reason: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            class: ErrorClass::Fault,
+            reason: reason.into(),
+            detail: detail.into(),
+            remedy: "repair the named evidence process and retry task completion".to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Target {
     remote: String,
@@ -170,6 +207,11 @@ enum Pending {
         agent: String,
         upstream: String,
         previous: BTreeMap<String, Option<String>>,
+    },
+    Resolution {
+        expected: String,
+        target: String,
+        tree: String,
     },
 }
 
@@ -344,11 +386,47 @@ pub fn advance_at_launch(repository: &Repository) -> LaunchAdvance {
 }
 
 /// Publish one task phase before its journal transition commits.
+#[cfg(test)]
 pub fn publish(repository: &Repository, meta: Metadata<'_>) -> Result<GitBoundary, Error> {
+    publish_inner(repository, meta, None)
+}
+
+/// Publish an allocator-authenticated phase, including an owned merge resolution.
+///
+/// The evidence callback is reachable only when the repository retains the exact
+/// conflict state previously materialized for `active`. Ordinary commits and
+/// direct test callers cannot select it.
+pub fn publish_claimed(
+    repository: &Repository,
+    meta: Metadata<'_>,
+    active: &board::Active<'_>,
+    evidence: impl FnOnce() -> Result<(), ResolutionEvidenceError>,
+) -> Result<GitBoundary, Error> {
+    publish_inner(repository, meta, Some((active, Box::new(evidence))))
+}
+
+type ResolutionEvidence<'a> = Box<dyn FnOnce() -> Result<(), ResolutionEvidenceError> + 'a>;
+
+fn publish_inner<'a>(
+    repository: &Repository,
+    meta: Metadata<'_>,
+    resolution: Option<(&board::Active<'_>, ResolutionEvidence<'a>)>,
+) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
-    require_no_open_merge(root, meta.label)?;
-    require_clean(root, "task completion")?;
+    let open_merge = try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])?;
+    let resolution_state = open_merge.is_some() || resolution::has_state(root)?;
+    if resolution_state && resolution.is_none() {
+        require_no_open_merge(root, meta.label)?;
+        return Err(Error::refusal(
+            "git::merge-state-unrecognized",
+            "task completion found partial or malformed Git merge state",
+            "abort the malformed merge state and retry task completion from a clean lane",
+        ));
+    }
+    if !resolution_state {
+        require_clean(root, "task completion")?;
+    }
     let observed_head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let Some(target) = resolve_target(root)? else {
         return Ok(boundary(
@@ -361,6 +439,43 @@ pub fn publish(repository: &Repository, meta: Metadata<'_>) -> Result<GitBoundar
     };
     fetch(root, &target)?;
     let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
+    if let Some((active, evidence)) = resolution.filter(|_| resolution_state) {
+        let local_commits = ahead_count(root, &target.baseline)?;
+        let message = compose_message(meta, &observed_head);
+        let integrated = resolution::complete(
+            root,
+            &target,
+            meta,
+            active,
+            resolution::Parents {
+                agent: &observed_head,
+                upstream: &upstream_head,
+            },
+            &message,
+            evidence,
+        )?;
+        let admission = Admission::resolve(repository, &integrated)?;
+        let (integrated, published_upstream) = publish_with_retry(
+            root,
+            &target,
+            integrated.clone(),
+            upstream_head,
+            Publication {
+                repository,
+                agent_head: &integrated,
+                message: &message,
+                label: meta.label,
+                admission: &admission,
+            },
+        )?;
+        return Ok(boundary(
+            observed_head,
+            integrated,
+            Some(&target.baseline),
+            Some(published_upstream),
+            local_commits,
+        ));
+    }
     let agent_head = if is_ancestor(root, &observed_head, &upstream_head)? {
         recovered_lane_head(root, &observed_head, meta)?.unwrap_or(observed_head)
     } else {
@@ -757,6 +872,7 @@ mod landing;
 use landing::require_landing_within_footprint;
 mod launch;
 pub use launch::{LaunchAdvance, LaunchSkip};
+mod resolution;
 mod transaction;
 use transaction::*;
 mod command;
@@ -766,5 +882,7 @@ use command::*;
 mod command_tests;
 #[cfg(test)]
 mod landing_tests;
+#[cfg(test)]
+mod resolution_tests;
 #[cfg(test)]
 mod tests;
