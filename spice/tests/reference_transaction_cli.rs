@@ -35,14 +35,23 @@ fn committed_and_aborted_are_inert_before_repository_access() {
 }
 
 #[test]
-fn global_json_inert_state_still_uses_the_early_hook_path() {
+fn every_parser_admitted_json_scope_still_uses_the_early_hook_path() {
     let scratch = Scratch::directory("json-inert-state");
     let marker = scratch.join("git-entered");
     let git_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", marker.display());
     let git = scratch.executable("bin/git", git_script.as_bytes());
     for arguments in [
-        ["--json", "gate", "reference-transaction", "committed"],
-        ["gate", "reference-transaction", "aborted", "--json"],
+        &["--json", "gate", "reference-transaction", "committed"][..],
+        &["gate", "--json", "reference-transaction", "aborted"],
+        &["gate", "reference-transaction", "committed", "--json"],
+        &[
+            "--json",
+            "gate",
+            "--json",
+            "reference-transaction",
+            "aborted",
+            "--json",
+        ],
     ] {
         let output = Command::new(spice())
             .args(arguments)
@@ -55,6 +64,28 @@ fn global_json_inert_state_still_uses_the_early_hook_path() {
         assert!(output.stderr.is_empty());
     }
     assert!(!marker.exists(), "a JSON inert state launched Git");
+}
+
+#[test]
+fn parser_rejected_duplicate_json_never_reaches_hook_or_dispatch_gap() {
+    let scratch = Scratch::directory("duplicate-json");
+    let output = Command::new(spice())
+        .args([
+            "--json",
+            "--json",
+            "gate",
+            "reference-transaction",
+            "committed",
+        ])
+        .current_dir(scratch.path())
+        .output()
+        .expect("run parser-rejected duplicate JSON flags");
+
+    assert_eq!(output.status.code(), Some(2), "{}", streams(&output));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("parser diagnostic is UTF-8");
+    assert!(stderr.contains("the argument '--json' cannot be used multiple times"));
+    assert!(!stderr.contains("release::dispatch-gap"));
 }
 
 #[test]
@@ -77,14 +108,30 @@ fn prepared_queue_naming_no_branch_launches_no_git() {
     let marker = scratch.join("git-entered");
     let git_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", marker.display());
     let git = scratch.executable("bin/git", git_script.as_bytes());
-    let output = invoke_prepared_with_path(
-        scratch.path(),
-        "old new AUTO_MERGE\n",
-        git.parent().expect("sentinel Git has a parent"),
-    );
-    assert_success(&output, "non-branch prepared queue");
-    assert!(output.stdout.is_empty());
-    assert!(output.stderr.is_empty());
+    let path = git.parent().expect("sentinel Git has a parent");
+    for arguments in [
+        &["gate", "reference-transaction", "prepared"][..],
+        &["--json", "gate", "reference-transaction", "prepared"],
+        &["gate", "reference-transaction", "prepared", "--json"],
+        &[
+            "--json",
+            "gate",
+            "--json",
+            "reference-transaction",
+            "prepared",
+            "--json",
+        ],
+    ] {
+        let output = invoke_prepared_arguments(
+            scratch.path(),
+            "old new AUTO_MERGE\n",
+            Some(path),
+            arguments,
+        );
+        assert_success(&output, "non-branch prepared queue");
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
     assert!(!marker.exists(), "a non-branch prepared queue launched Git");
 }
 
@@ -220,14 +267,24 @@ fn invoke_prepared(root: &Path, input: &str) -> Output {
     invoke_prepared_command(root, input, None)
 }
 
-fn invoke_prepared_with_path(root: &Path, input: &str, path: &Path) -> Output {
-    invoke_prepared_command(root, input, Some(path))
+fn invoke_prepared_command(root: &Path, input: &str, path: Option<&Path>) -> Output {
+    invoke_prepared_arguments(
+        root,
+        input,
+        path,
+        &["gate", "reference-transaction", "prepared"],
+    )
 }
 
-fn invoke_prepared_command(root: &Path, input: &str, path: Option<&Path>) -> Output {
+fn invoke_prepared_arguments(
+    root: &Path,
+    input: &str,
+    path: Option<&Path>,
+    arguments: &[&str],
+) -> Output {
     let mut command = Command::new(spice());
     command
-        .args(["gate", "reference-transaction", "prepared"])
+        .args(arguments)
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
