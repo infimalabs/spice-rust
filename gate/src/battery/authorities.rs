@@ -19,13 +19,19 @@ use super::{
 };
 use crate::core::{ActorCapture, ClaimCapture};
 use crate::hygiene::HygieneConfiguration;
-use crate::input::{Contract, POLICY_PATH};
+use crate::input::{BASELINE_PATH, Contract, POLICY_PATH};
 use crate::manifest::OriginLayer;
 use crate::policy::Policy as RulePolicy;
 use crate::state::{ActorInputs, ActorResolution, BoundDecision, StateLedger, StateReceipt};
 use crate::toolchain::RimCapture;
 use crate::toolchain::{VerifierCompilerContract, VerifierCompilerEvidence};
 use crate::tree::Selector;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum InputMode {
+    Strict,
+    Generic,
+}
 
 /// Release whose grammar understood the tracked documents read here.
 const CURRENT_RELEASE: &str = "current";
@@ -112,7 +118,43 @@ impl BatteryCapture<'_> {
         hygiene: HygieneConfiguration,
     ) -> Result<Self, BatteryError> {
         Self::capture_inner(
-            repository, selector, claim, actor, rim, hygiene, None, None, None,
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Strict,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// Capture one repository with the installed generic input policy.
+    ///
+    /// Missing repository policy and lower-is-better state remain typed
+    /// absences. Present documents are parsed strictly, and selected family
+    /// arms retain sole authority to discover the tools they actually use.
+    pub fn capture_generic(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Generic,
+            None,
+            None,
+            None,
         )
     }
 
@@ -137,6 +179,31 @@ impl BatteryCapture<'_> {
             actor,
             rim,
             hygiene,
+            InputMode::Strict,
+            Some(gate_id),
+            None,
+            None,
+        )
+    }
+
+    /// Capture exactly one canonical arm with generic installed inputs.
+    pub fn capture_generic_arm(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        gate_id: crate::GateId,
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Generic,
             Some(gate_id),
             None,
             None,
@@ -165,6 +232,36 @@ impl BatteryCapture<'_> {
             actor,
             rim,
             hygiene,
+            InputMode::Strict,
+            Some(gate_id),
+            None,
+            Some(state_run),
+        )
+    }
+
+    /// Capture one generic installed arm into an enclosing state transaction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the shared state run accompanies six independent capture authorities"
+    )]
+    pub fn capture_generic_arm_in_state(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        gate_id: crate::GateId,
+        state_run: BatteryStateRun,
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Generic,
             Some(gate_id),
             None,
             Some(state_run),
@@ -195,6 +292,31 @@ impl<'trace> BatteryCapture<'trace> {
             actor,
             rim,
             hygiene,
+            InputMode::Strict,
+            None,
+            Some(trace),
+            None,
+        )
+    }
+
+    /// Capture a generic installed battery and expose its execution events.
+    pub fn capture_generic_traced(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Generic,
             None,
             Some(trace),
             None,
@@ -224,6 +346,36 @@ impl<'trace> BatteryCapture<'trace> {
             actor,
             rim,
             hygiene,
+            InputMode::Strict,
+            None,
+            Some(trace),
+            Some(state_run),
+        )
+    }
+
+    /// Capture a traced generic installed battery in one state transaction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the observer and shared state accompany six independent capture authorities"
+    )]
+    pub fn capture_generic_in_state_traced(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        state_run: BatteryStateRun,
+        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Generic,
             None,
             Some(trace),
             Some(state_run),
@@ -256,6 +408,36 @@ impl<'trace> BatteryCapture<'trace> {
             actor,
             rim,
             hygiene,
+            InputMode::Strict,
+            Some(gate_id),
+            Some(trace),
+            None,
+        )
+    }
+
+    /// Capture one generic installed arm while exposing analysis events.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the selected identity and observer accompany six independent capture authorities"
+    )]
+    pub fn capture_generic_arm_traced(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        gate_id: crate::GateId,
+        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Generic,
             Some(gate_id),
             Some(trace),
             None,
@@ -273,6 +455,7 @@ impl<'trace> BatteryCapture<'trace> {
         actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
+        input_mode: InputMode,
         selected: Option<crate::GateId>,
         trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
         state_run: Option<BatteryStateRun>,
@@ -295,6 +478,7 @@ impl<'trace> BatteryCapture<'trace> {
             rim,
             hygiene,
             &state_run,
+            input_mode,
             selected,
             trace,
         )?;
@@ -494,7 +678,11 @@ impl<'trace> BatteryCapture<'trace> {
     ///
     /// Returns the same completeness refusal as [`Self::execute`].
     pub fn execute_receipt(&mut self) -> Result<BatteryReceipt, BatteryError> {
-        let baseline = self.executor.contract().baseline().digest();
+        let baseline = self.executor.contract().baseline_digest().ok_or_else(|| {
+            BatteryError::new(format!(
+                "battery receipt requires lower-is-better state at {BASELINE_PATH:?}"
+            ))
+        })?;
         self.execute()
             .map(|report| BatteryReceipt::mint(report, &baseline))
     }

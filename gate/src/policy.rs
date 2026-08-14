@@ -18,7 +18,8 @@ use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize, Serializer};
 
 pub use config::{
-    FileShapePolicy, LanguagesPolicy, NARROWEST_FILE_CLASSES, PackagePolicy, RepoTruthPolicy,
+    FileShapePolicy, LanguagesPolicy, NARROWEST_FILE_CLASSES, PACKAGED_GENERIC_POLICY,
+    PackagePolicy, RepoTruthPolicy,
 };
 /// The repository-path and stem dialects, shared with the native-only arms.
 #[cfg(not(target_arch = "wasm32"))]

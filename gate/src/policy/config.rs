@@ -18,6 +18,37 @@ pub const NARROWEST_FILE_CLASSES: &str = concat!(
     "magic = [\".rs\"]\n",
 );
 
+/// Packaged file-class policy used only when a generic installed repository
+/// has no Rust Spice policy document at all.
+///
+/// This is not a fallback for an incomplete document: once a repository
+/// authors `spice-rust.toml`, all three selections remain required and the
+/// exact tracked field refuses if one is absent. The generic profile selects
+/// ordinary text/source shapes broadly, while the parser-backed classes name
+/// only suffixes this build can measure exactly. That keeps packaged built-ins
+/// useful across languages without converting an unsupported parser into a
+/// repository failure.
+pub const PACKAGED_GENERIC_POLICY: &str = concat!(
+    "[policy.file_shape]\n",
+    "source_suffixes = [",
+    "\".astro\", \".bash\", \".c\", \".cc\", \".cjs\", \".cpp\", ",
+    "\".cs\", \".css\", \".cts\", \".go\", \".h\", \".hpp\", ",
+    "\".html\", \".java\", \".js\", \".json\", \".jsx\", \".kt\", ",
+    "\".less\", \".lua\", \".m\", \".md\", \".mjs\", \".mm\", ",
+    "\".mts\", \".php\", \".py\", \".pyi\", \".rb\", \".rs\", ",
+    "\".rst\", \".sass\", \".scala\", \".scss\", \".sh\", \".sql\", ",
+    "\".svelte\", \".swift\", \".toml\", \".ts\", \".tsx\", \".txt\", ",
+    "\".vue\", \".xml\", \".yaml\", \".yml\", \".zsh\"",
+    "]\n",
+    "[policy.languages]\n",
+    "complexity = [\".cs\", \".js\", \".lua\", \".mjs\", \".py\", \".rs\"]\n",
+    "magic = [",
+    "\".c\", \".cc\", \".cpp\", \".go\", \".h\", \".hpp\", ",
+    "\".java\", \".kt\", \".m\", \".mm\", \".rs\", \".scala\", ",
+    "\".swift\", \".ts\"",
+    "]\n",
+);
+
 /// One repository's declaration of the documents that carry its doctrine.
 ///
 /// An absent `docs` is not an empty inventory: it is the packaged one. That is

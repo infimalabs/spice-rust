@@ -42,7 +42,7 @@ pub fn run(
         .map_err(TestEvidenceRunError::new)?;
     let environment = selected_test_environment(environment, repository.worktree_root())?;
     let prepared =
-        spice::gate::prepare(gate::Selector::staged()).map_err(TestEvidenceRunError::new)?;
+        spice::gate::prepare_strict(gate::Selector::staged()).map_err(TestEvidenceRunError::new)?;
     let workspace = workspace_tests::run_at(
         prepared.root(),
         environment,

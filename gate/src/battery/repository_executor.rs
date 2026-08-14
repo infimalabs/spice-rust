@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use wire::Digest;
 
+use super::authorities::InputMode;
 use super::{
     ArmEvidence, ArmExecution, ArmFamily, BatteryContext, BatteryError, BatteryExecutor,
     BatteryInputs, BatteryStateRun, CompiledArm, inline_evidence,
@@ -162,6 +163,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         rim: RimCapture,
         hygiene: HygieneConfiguration,
         state_run: &BatteryStateRun,
+        input_mode: InputMode,
         selected: Option<GateId>,
         mut trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     ) -> Result<Self, BatteryError> {
@@ -169,7 +171,11 @@ impl<'trace> RepositoryExecutor<'trace> {
         let tree = selector.materialize(&repository).map_err(|error| {
             BatteryError::new(format!("cannot capture battery source: {error}"))
         })?;
-        let contract = Contract::load(tree.root()).map_err(|error| {
+        let contract = match input_mode {
+            InputMode::Strict => Contract::load(tree.root()),
+            InputMode::Generic => Contract::load_generic(tree.root()),
+        }
+        .map_err(|error| {
             BatteryError::new(format!("cannot load captured battery contract: {error}"))
         })?;
         let (state, actor) =

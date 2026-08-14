@@ -162,6 +162,9 @@ pub(super) fn before_tools(declaration: ToolchainDeclaration, root: &Path) -> Op
         {
             Some(Analysis::not_applicable(declaration))
         }
+        GateId::RustTypecheck if !root.join("Cargo.toml").is_file() => {
+            Some(Analysis::not_applicable(declaration))
+        }
         GateId::PythonTypecheck => match python_sources(root) {
             Ok(true) => None,
             Ok(false) => Some(Analysis::not_applicable(declaration)),

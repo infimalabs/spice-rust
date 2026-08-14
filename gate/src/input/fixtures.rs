@@ -6,6 +6,85 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generic_inputs_preserve_typed_absence_while_strict_inputs_require_both_files() {
+        let root = fixture_root("generic-absent");
+
+        let generic = Contract::load_generic(&root).expect("generic inputs admit absent files");
+        assert_eq!(
+            generic.rule_policy().document(),
+            migrate_predecessor_policy(PACKAGED_GENERIC_POLICY_SOURCE, PACKAGED_GENERIC_POLICY)
+                .expect("the packaged generic policy resolves")
+                .document()
+        );
+        assert_eq!(
+            generic.tracked_configuration(),
+            &toml::Value::Table(toml::Table::new()),
+            "an absent repository policy must not invent tracked values"
+        );
+        assert!(generic.baseline_digest().is_none());
+        assert!(generic.tools().is_empty());
+        assert!(matches!(
+            generic.execute_kill(&root),
+            Err(KillError::MissingFloor { ref path, name })
+                if path == &root.join(BASELINE_PATH) && name == "rust.mutation-survivors"
+        ));
+
+        assert!(matches!(
+            Contract::load(&root),
+            Err(ContractError::Read { ref path, ref source })
+                if path == &root.join(POLICY_PATH)
+                    && source.kind() == io::ErrorKind::NotFound
+        ));
+        fs::remove_dir_all(root).expect("remove generic input fixture");
+    }
+
+    #[test]
+    fn generic_inputs_refuse_each_malformed_present_document_at_its_exact_path() {
+        let root = fixture_root("generic-malformed");
+        let policy_path = root.join(POLICY_PATH);
+        let baseline_path = root.join(BASELINE_PATH);
+
+        fs::write(&policy_path, "[policy\n").expect("malformed present policy");
+        let policy = Contract::load_generic(&root).expect_err("present malformed policy refuses");
+        assert!(matches!(
+            policy,
+            ContractError::Policy(PolicyError::Toml { ref path, .. })
+                if path == &policy_path
+        ));
+
+        fs::write(&policy_path, "").expect("present incomplete policy");
+        let incomplete =
+            Contract::load_generic(&root).expect_err("present incomplete policy refuses");
+        assert!(matches!(
+            incomplete,
+            ContractError::Policy(PolicyError::Rules { ref path, ref source })
+                if path == &policy_path
+                    && source.to_string().contains("policy.file_shape.source_suffixes")
+        ));
+
+        fs::write(&policy_path, PACKAGED_GENERIC_POLICY).expect("valid present policy");
+        fs::write(&baseline_path, "version = [\n").expect("malformed present baseline");
+        let baseline =
+            Contract::load_generic(&root).expect_err("present malformed baseline refuses");
+        assert!(matches!(
+            baseline,
+            ContractError::Baseline(BaselineError::Toml { ref path, .. })
+                if path == &baseline_path
+        ));
+        fs::remove_dir_all(root).expect("remove malformed input fixture");
+    }
+
+    fn fixture_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "spice-gate-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir(&root).expect("create isolated input fixture");
+        root
+    }
+
+    #[test]
     fn doctor_declarations_are_exact_views_of_both_current_tool_profiles() {
         let current = GateSet::current().expect("compiled gate set");
         assert_eq!(

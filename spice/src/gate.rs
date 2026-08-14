@@ -25,6 +25,12 @@ const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 
+#[derive(Clone, Copy)]
+enum InputMode {
+    Generic,
+    Strict,
+}
+
 mod finding_source;
 
 pub use finding_source::{
@@ -299,8 +305,23 @@ fn bind_cargo_jobs(
 ///
 /// Returns the same rim and capture failures as [`run`].
 pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError> {
+    prepare_with_mode(selector, InputMode::Generic)
+}
+
+/// Capture the current source repository's strict self-hosting contract.
+///
+/// Unlike installed generic acquisition, this requires both tracked input
+/// documents and identifies every compiled legacy parser tool before returning.
+pub fn prepare_strict(selector: Selector) -> Result<PreparedBattery<'static>, RunError> {
+    prepare_with_mode(selector, InputMode::Strict)
+}
+
+fn prepare_with_mode(
+    selector: Selector,
+    input_mode: InputMode,
+) -> Result<PreparedBattery<'static>, RunError> {
     let verifier_environment = verifier_environment();
-    capture(selector, None, None).map(|capture| PreparedBattery {
+    capture(selector, input_mode, None, None).map(|capture| PreparedBattery {
         capture,
         verifier_environment,
         cargo_jobs: None,
@@ -315,7 +336,14 @@ pub fn prepare_in_state_traced<'trace>(
     trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<PreparedBattery<'trace>, RunError> {
     let verifier_environment = verifier_environment();
-    capture_inner(selector, None, Some(trace), Some(state_run)).map(|capture| PreparedBattery {
+    capture_inner(
+        selector,
+        InputMode::Generic,
+        None,
+        Some(trace),
+        Some(state_run),
+    )
+    .map(|capture| PreparedBattery {
         capture,
         verifier_environment,
         cargo_jobs: None,
@@ -329,7 +357,24 @@ pub fn prepare_in_state_traced<'trace>(
 ///
 /// Returns the same rim and selected-arm capture failures as [`run_arm_report`].
 pub fn prepare_arm(selector: Selector, gate_id: GateId) -> Result<PreparedArm<'static>, RunError> {
-    capture(selector, Some(gate_id), None).map(|capture| PreparedArm { capture, gate_id })
+    prepare_arm_with_mode(selector, gate_id, InputMode::Generic)
+}
+
+/// Capture one current-source arm under the strict self-hosting contract.
+pub fn prepare_arm_strict(
+    selector: Selector,
+    gate_id: GateId,
+) -> Result<PreparedArm<'static>, RunError> {
+    prepare_arm_with_mode(selector, gate_id, InputMode::Strict)
+}
+
+fn prepare_arm_with_mode(
+    selector: Selector,
+    gate_id: GateId,
+    input_mode: InputMode,
+) -> Result<PreparedArm<'static>, RunError> {
+    capture(selector, input_mode, Some(gate_id), None)
+        .map(|capture| PreparedArm { capture, gate_id })
 }
 
 /// Capture one focused arm into an existing enclosing state transaction.
@@ -338,7 +383,8 @@ pub fn prepare_arm_in_state(
     gate_id: GateId,
     state_run: ::gate::BatteryStateRun,
 ) -> Result<PreparedArm<'static>, RunError> {
-    capture_in_state(selector, gate_id, state_run).map(|capture| PreparedArm { capture, gate_id })
+    capture_in_state(selector, InputMode::Generic, gate_id, state_run)
+        .map(|capture| PreparedArm { capture, gate_id })
 }
 
 /// Compile every reusable verifier stage and encode its source-bound receipt.
@@ -355,7 +401,7 @@ pub fn verifier_compiler_receipt(
     cargo_jobs: usize,
     authority: &[u8],
 ) -> Result<Vec<u8>, RunError> {
-    let mut battery = prepare(selector)?;
+    let mut battery = prepare_strict(selector)?;
     let mut evidence = Vec::new();
     for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
         let Some(contract) = battery.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
@@ -408,7 +454,7 @@ pub fn run_traced_with_verifier_receipt(
     authority: &[u8],
     trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<BatteryReport, RunError> {
-    let mut prepared = prepare_traced(selector, trace)?;
+    let mut prepared = prepare_traced_with_mode(selector, trace, InputMode::Strict)?;
     let evidence = prepared.admit_verifier_compiler_receipt(receipt, cargo_jobs, authority)?;
     let report = prepared.execute(&evidence)?;
     if report.admits() {
@@ -466,8 +512,16 @@ pub fn prepare_traced<'trace>(
     selector: Selector,
     trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<PreparedBattery<'trace>, RunError> {
+    prepare_traced_with_mode(selector, trace, InputMode::Generic)
+}
+
+fn prepare_traced_with_mode<'trace>(
+    selector: Selector,
+    trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+    input_mode: InputMode,
+) -> Result<PreparedBattery<'trace>, RunError> {
     let verifier_environment = verifier_environment();
-    capture(selector, None, Some(trace)).map(|capture| PreparedBattery {
+    capture(selector, input_mode, None, Some(trace)).map(|capture| PreparedBattery {
         capture,
         verifier_environment,
         cargo_jobs: None,
@@ -492,7 +546,16 @@ fn verifier_environment() -> Vec<(OsString, OsString)> {
 /// Returns the exact rim acquisition or battery refusal. No alternate command
 /// or predecessor implementation is attempted.
 pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
-    let mut prepared = prepare(selector)?;
+    run_with_mode(selector, InputMode::Generic)
+}
+
+/// Execute the current source repository's strict self-hosting battery.
+pub fn run_strict(selector: Selector) -> Result<BatteryReport, RunError> {
+    run_with_mode(selector, InputMode::Strict)
+}
+
+fn run_with_mode(selector: Selector, input_mode: InputMode) -> Result<BatteryReport, RunError> {
+    let mut prepared = prepare_with_mode(selector, input_mode)?;
     let report = prepared.execute(&[])?;
     if report.admits() {
         prepared.accept_state()?;
@@ -519,7 +582,23 @@ pub fn run_arm(selector: Selector, gate_id: GateId) -> Result<BatteryArmResult, 
 /// Returns the same acquisition and arm refusal as [`run_arm`], without
 /// executing sibling battery arms.
 pub fn run_arm_report(selector: Selector, gate_id: GateId) -> Result<FocusedArmReport, RunError> {
-    let mut prepared = prepare_arm(selector, gate_id)?;
+    run_arm_report_with_mode(selector, gate_id, InputMode::Generic)
+}
+
+/// Execute one current-source arm under the strict self-hosting contract.
+pub fn run_arm_report_strict(
+    selector: Selector,
+    gate_id: GateId,
+) -> Result<FocusedArmReport, RunError> {
+    run_arm_report_with_mode(selector, gate_id, InputMode::Strict)
+}
+
+fn run_arm_report_with_mode(
+    selector: Selector,
+    gate_id: GateId,
+    input_mode: InputMode,
+) -> Result<FocusedArmReport, RunError> {
+    let mut prepared = prepare_arm_with_mode(selector, gate_id, input_mode)?;
     let report = prepared.execute()?;
     if report.admits() {
         prepared.accept_state(StateRunScope::Partial)?;
@@ -572,22 +651,25 @@ pub fn run_traced(
 
 fn capture_in_state(
     selector: Selector,
+    input_mode: InputMode,
     gate_id: GateId,
     state_run: ::gate::BatteryStateRun,
 ) -> Result<BatteryCapture<'static>, RunError> {
-    capture_inner(selector, Some(gate_id), None, Some(state_run))
+    capture_inner(selector, input_mode, Some(gate_id), None, Some(state_run))
 }
 
 fn capture<'trace>(
     selector: Selector,
+    input_mode: InputMode,
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
-    capture_inner(selector, selected, trace, None)
+    capture_inner(selector, input_mode, selected, trace, None)
 }
 
 fn capture_inner<'trace>(
     selector: Selector,
+    input_mode: InputMode,
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     state_run: Option<::gate::BatteryStateRun>,
@@ -614,24 +696,56 @@ fn capture_inner<'trace>(
     let claim = ClaimCapture::Idle;
     let hygiene = HygieneConfiguration::current();
     let root = repository.worktree_root();
-    match (selected, trace, state_run) {
-        (Some(gate_id), None, Some(state_run)) => BatteryCapture::capture_arm_in_state(
-            root, &selector, claim, actor, rim, hygiene, gate_id, state_run,
+    match (input_mode, selected, trace, state_run) {
+        (InputMode::Generic, Some(gate_id), None, Some(state_run)) => {
+            BatteryCapture::capture_generic_arm_in_state(
+                root, &selector, claim, actor, rim, hygiene, gate_id, state_run,
+            )
+        }
+        (InputMode::Strict, Some(gate_id), None, Some(state_run)) => {
+            BatteryCapture::capture_arm_in_state(
+                root, &selector, claim, actor, rim, hygiene, gate_id, state_run,
+            )
+        }
+        (InputMode::Generic, Some(gate_id), Some(trace), None) => {
+            BatteryCapture::capture_generic_arm_traced(
+                root, &selector, claim, actor, rim, hygiene, gate_id, trace,
+            )
+        }
+        (InputMode::Strict, Some(gate_id), Some(trace), None) => {
+            BatteryCapture::capture_arm_traced(
+                root, &selector, claim, actor, rim, hygiene, gate_id, trace,
+            )
+        }
+        (InputMode::Generic, Some(gate_id), None, None) => BatteryCapture::capture_generic_arm(
+            root, &selector, claim, actor, rim, hygiene, gate_id,
         ),
-        (Some(gate_id), Some(trace), None) => BatteryCapture::capture_arm_traced(
-            root, &selector, claim, actor, rim, hygiene, gate_id, trace,
-        ),
-        (Some(gate_id), None, None) => {
+        (InputMode::Strict, Some(gate_id), None, None) => {
             BatteryCapture::capture_arm(root, &selector, claim, actor, rim, hygiene, gate_id)
         }
-        (None, Some(trace), None) => {
+        (InputMode::Generic, None, Some(trace), None) => BatteryCapture::capture_generic_traced(
+            root, &selector, claim, actor, rim, hygiene, trace,
+        ),
+        (InputMode::Strict, None, Some(trace), None) => {
             BatteryCapture::capture_traced(root, &selector, claim, actor, rim, hygiene, trace)
         }
-        (None, None, None) => BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene),
-        (None, Some(trace), Some(state_run)) => BatteryCapture::capture_in_state_traced(
-            root, &selector, claim, actor, rim, hygiene, state_run, trace,
-        ),
-        (None, None, Some(_)) | (Some(_), Some(_), Some(_)) => {
+        (InputMode::Generic, None, None, None) => {
+            BatteryCapture::capture_generic(root, &selector, claim, actor, rim, hygiene)
+        }
+        (InputMode::Strict, None, None, None) => {
+            BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene)
+        }
+        (InputMode::Generic, None, Some(trace), Some(state_run)) => {
+            BatteryCapture::capture_generic_in_state_traced(
+                root, &selector, claim, actor, rim, hygiene, state_run, trace,
+            )
+        }
+        (InputMode::Strict, None, Some(trace), Some(state_run)) => {
+            BatteryCapture::capture_in_state_traced(
+                root, &selector, claim, actor, rim, hygiene, state_run, trace,
+            )
+        }
+        (_, None, None, Some(_)) | (_, Some(_), Some(_), Some(_)) => {
             unreachable!("only complete shared-state captures are traced")
         }
     }

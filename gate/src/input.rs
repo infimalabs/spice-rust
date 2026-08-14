@@ -28,7 +28,9 @@ use crate::kill::{
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::policy::PackagePolicy;
-use crate::policy::{Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_policy};
+use crate::policy::{
+    PACKAGED_GENERIC_POLICY, Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_policy,
+};
 use crate::ratchet::Ratchet;
 
 /// Fixed tracked policy path within a selected repository tree.
@@ -62,6 +64,7 @@ const AWK_PROBE: &str = "BEGIN { print \"spice-gate-awk-v1\" }";
 const AWK_PROBE_OUTPUT: &str = "spice-gate-awk-v1";
 const DEFAULT_SKIP: &[&str] = &[".git/", "target/"];
 const RETIRED_FLOORS: &[(&str, u64)] = &[("rust.kill-rate", 1), ("rust.long-lines", 1)];
+const PACKAGED_GENERIC_POLICY_SOURCE: &str = "gate packaged generic policy";
 
 mod declaration;
 pub use declaration::*;
@@ -119,7 +122,7 @@ impl ToolIdentity {
 #[derive(Debug)]
 pub struct KillProfile {
     runner: Kill,
-    floor: SurvivorRate,
+    floor: Option<SurvivorRate>,
 }
 
 impl KillProfile {
@@ -145,6 +148,7 @@ impl KillProfile {
     #[must_use]
     pub const fn floor(&self) -> SurvivorRate {
         self.floor
+            .expect("a strict tracked contract carries the mutation floor")
     }
 }
 
@@ -162,11 +166,23 @@ pub struct Contract {
     shape: ShapePolicy,
     camp_policy: Policy,
     kill_profile: KillProfile,
-    baseline: Baseline,
-    ratchet: Ratchet,
+    baseline: Option<Baseline>,
+    ratchet: Option<Ratchet>,
     bounds: Bounds,
     tools: Vec<ToolIdentity>,
     compiled_walk_rules: usize,
+}
+
+struct PolicyInputs<'a> {
+    path: &'a Path,
+    tracked_text: &'a str,
+    rule_source: &'a str,
+    rule_text: &'a str,
+}
+
+struct BaselineInputs<'a> {
+    path: &'a Path,
+    text: Option<&'a str>,
 }
 
 impl Contract {
@@ -184,12 +200,58 @@ impl Contract {
         let baseline_path = root.join(BASELINE_PATH);
         let policy_text = read_tracked(&policy_path)?;
         let baseline_text = read_tracked(&baseline_path)?;
-        Self::from_tracked(
+        Self::from_inputs(
             root,
-            &policy_path,
-            &policy_text,
-            &baseline_path,
-            &baseline_text,
+            PolicyInputs {
+                path: &policy_path,
+                tracked_text: &policy_text,
+                rule_source: POLICY_PATH,
+                rule_text: &policy_text,
+            },
+            BaselineInputs {
+                path: &baseline_path,
+                text: Some(&baseline_text),
+            },
+            true,
+        )
+    }
+
+    /// Load the generic installed-builtin inputs for one selected repository.
+    ///
+    /// An absent policy is the typed empty repository layer: compiled package
+    /// policy remains enabled and no repository value or declaration is
+    /// invented. An absent baseline remains absent until a lower-is-better
+    /// surface explicitly asks for it. Present files always take the same
+    /// strict parsers as [`Self::load`], so malformed tracked bytes cannot turn
+    /// into packaged defaults merely because the caller selected generic mode.
+    ///
+    /// Compiled legacy parser tools are not identified here. Battery-family
+    /// tools are acquired by their selected arm after that arm has established
+    /// applicability; the strict source-self-hosting loader above retains the
+    /// exhaustive legacy probe.
+    pub(crate) fn load_generic(root: &Path) -> Result<Self, ContractError> {
+        let policy_path = root.join(POLICY_PATH);
+        let baseline_path = root.join(BASELINE_PATH);
+        let policy_text = read_optional_tracked(&policy_path)?;
+        let baseline_text = read_optional_tracked(&baseline_path)?;
+        let (tracked_policy_text, rule_policy_source, rule_policy_text) =
+            match policy_text.as_deref() {
+                Some(text) => (text, POLICY_PATH, text),
+                None => ("", PACKAGED_GENERIC_POLICY_SOURCE, PACKAGED_GENERIC_POLICY),
+            };
+        Self::from_inputs(
+            root,
+            PolicyInputs {
+                path: &policy_path,
+                tracked_text: tracked_policy_text,
+                rule_source: rule_policy_source,
+                rule_text: rule_policy_text,
+            },
+            BaselineInputs {
+                path: &baseline_path,
+                text: baseline_text.as_deref(),
+            },
+            false,
         )
     }
 
@@ -202,20 +264,43 @@ impl Contract {
         baseline_path: &Path,
         baseline_text: &str,
     ) -> Result<Self, ContractError> {
+        Self::from_inputs(
+            root,
+            PolicyInputs {
+                path: policy_path,
+                tracked_text: policy_text,
+                rule_source: POLICY_PATH,
+                rule_text: policy_text,
+            },
+            BaselineInputs {
+                path: baseline_path,
+                text: Some(baseline_text),
+            },
+            true,
+        )
+    }
+
+    fn from_inputs(
+        root: &Path,
+        policy: PolicyInputs<'_>,
+        baseline: BaselineInputs<'_>,
+        identify_compiled_tools: bool,
+    ) -> Result<Self, ContractError> {
         let gate_set = GateSet::current().map_err(ContractError::GateSet)?;
         let bounds = current_bounds().map_err(ContractError::Bounds)?;
         #[cfg(not(target_arch = "wasm32"))]
-        let tracked_configuration =
-            tracked_configuration(policy_path, policy_text).map_err(ContractError::Policy)?;
-        let tracked = tracked_policy(policy_path, policy_text).map_err(ContractError::Policy)?;
+        let tracked_configuration = tracked_configuration(policy.path, policy.tracked_text)
+            .map_err(ContractError::Policy)?;
+        let tracked =
+            tracked_policy(policy.path, policy.tracked_text).map_err(ContractError::Policy)?;
         let (ignore, compiled_walk_rules) =
-            tracked_ignore(policy_path, &tracked).map_err(ContractError::Policy)?;
+            tracked_ignore(policy.path, &tracked).map_err(ContractError::Policy)?;
         #[cfg(not(target_arch = "wasm32"))]
         let shape = ShapePolicy::from_tracked(&tracked.policy);
-        let rule_policy =
-            migrate_predecessor_policy(POLICY_PATH, policy_text).map_err(|source| {
+        let rule_policy = migrate_predecessor_policy(policy.rule_source, policy.rule_text)
+            .map_err(|source| {
                 ContractError::Policy(PolicyError::Rules {
-                    path: policy_path.to_path_buf(),
+                    path: policy.path.to_path_buf(),
                     source,
                 })
             })?;
@@ -228,19 +313,28 @@ impl Contract {
             Policy::tracked_index(ignore.clone(), metrics).map_err(ContractError::Metric)?;
         let camp_policy =
             Policy::new(ignore, gate_set.camp_metrics()).map_err(ContractError::Metric)?;
-        let baseline = Baseline::parse(baseline_path, baseline_text, &gate_set)
+        let baseline = baseline
+            .text
+            .map(|text| Baseline::parse(baseline.path, text, &gate_set))
+            .transpose()
             .map_err(ContractError::Baseline)?;
-        let ratchet = baseline.ratchet(&gate_set);
+        let ratchet = baseline
+            .as_ref()
+            .map(|baseline| baseline.ratchet(&gate_set));
         let kill_profile = KillProfile {
             runner: gate_set.build_kill(),
-            floor: baseline.mutation_floor(),
+            floor: baseline.as_ref().map(Baseline::mutation_floor),
         };
-        let tools = gate_set
-            .tools
-            .iter()
-            .map(|tool| identify_tool(tool, root, &bounds))
-            .collect::<Result<_, _>>()
-            .map_err(ContractError::Tool)?;
+        let tools = if identify_compiled_tools {
+            gate_set
+                .tools
+                .iter()
+                .map(|tool| identify_tool(tool, root, &bounds))
+                .collect::<Result<_, _>>()
+                .map_err(ContractError::Tool)?
+        } else {
+            Vec::new()
+        };
 
         Ok(Self {
             gate_set,
@@ -321,21 +415,36 @@ impl Contract {
     /// Returns the first selection, tool, inventory, baseline, or integrity
     /// refusal. The caller tree and tracked baseline are never mutation roots.
     pub fn execute_kill(&self, root: &Path) -> Result<KillRun, KillError> {
+        let floor = self
+            .kill_profile
+            .floor
+            .ok_or_else(|| KillError::MissingFloor {
+                path: root.join(BASELINE_PATH),
+                name: "rust.mutation-survivors",
+            })?;
         self.kill_profile
             .runner
-            .run(root, self.policy.ignore(), Some(self.kill_profile.floor))
+            .run(root, self.policy.ignore(), Some(floor))
     }
 
     /// Complete versioned floor state.
     #[must_use]
     pub const fn baseline(&self) -> &Baseline {
-        &self.baseline
+        self.baseline
+            .as_ref()
+            .expect("a strict tracked contract carries baseline.toml")
+    }
+
+    pub(crate) fn baseline_digest(&self) -> Option<Digest> {
+        self.baseline.as_ref().map(Baseline::digest)
     }
 
     /// Parser-backed floors for the ordinary run.
     #[must_use]
     pub const fn ratchet(&self) -> &Ratchet {
-        &self.ratchet
+        self.ratchet
+            .as_ref()
+            .expect("a strict tracked contract carries baseline.toml")
     }
 
     /// Shared declared process bounds.
@@ -380,6 +489,17 @@ fn read_tracked(path: &Path) -> Result<String, ContractError> {
         path: path.to_path_buf(),
         source,
     })
+}
+
+fn read_optional_tracked(path: &Path) -> Result<Option<String>, ContractError> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(ContractError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 #[derive(Default, Deserialize)]

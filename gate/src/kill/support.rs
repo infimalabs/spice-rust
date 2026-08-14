@@ -182,6 +182,13 @@ impl Error for RateError {
 /// Failure before mutation evidence was eligible for scoring.
 #[derive(Debug)]
 pub enum KillError {
+    /// The selected lower-is-better mutation arm had no tracked floor.
+    MissingFloor {
+        /// Exact absent tracked state path.
+        path: PathBuf,
+        /// Stable floor name the arm requires.
+        name: &'static str,
+    },
     /// Selected-tree walking or snapshotting failed.
     Walk(WalkError),
     /// One direct mutation executable could not be read for identification.
@@ -235,6 +242,11 @@ pub enum KillError {
 impl fmt::Display for KillError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingFloor { path, name } => write!(
+                formatter,
+                "selected mutation arm requires floor {name:?} in {}",
+                path.display()
+            ),
             Self::Walk(source) => source.fmt(formatter),
             Self::ToolRead {
                 role,
@@ -307,6 +319,7 @@ impl fmt::Display for KillError {
 impl Error for KillError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::MissingFloor { .. } => None,
             Self::Walk(source) => Some(source),
             Self::ToolRead { source, .. } => Some(source),
             _ => None,
