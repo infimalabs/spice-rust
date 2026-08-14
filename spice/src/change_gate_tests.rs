@@ -27,109 +27,13 @@ fn report_rejects_missing_and_source_mismatched_policy_evidence() {
 }
 
 #[test]
-fn exhaustive_report_requires_test_edges_for_every_changed_source() {
-    let source = wire::Digest::compute(wire::Domain::GateTree, b"exhaustive report");
-    let selection =
-        gate::select_current_source_change_gates(source.clone(), &["assets/opaque.bin".into()])
-            .expect("unknown path escalates");
-    let tests = gate::TestEvidenceGraph::select_tests(
-        source,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        gate::CoverageCompleteness::Complete,
+fn ordinary_policy_wire_shape_rejects_removed_applicable_coverage() {
+    let error = serde_json::from_slice::<ChangePolicyReport>(
+        br#"{"coverage":"applicable","source":"removed","results":[]}"#,
     )
-    .expect("empty test evidence remains structurally valid");
+    .expect_err("ordinary policy evidence cannot retain applicable-wide execution");
 
-    let policy = ChangePolicyReport::Focused {
-        source: selection.source().clone(),
-        results: Vec::new(),
-    };
-    let error = ChangeGateReport::new(selection, tests, policy)
-        .expect_err("exhaustive selection cannot omit its changed test source");
-    assert_eq!(
-        error.reason(),
-        "gate::change-gate-exhaustive-test-incomplete"
-    );
-}
-
-#[test]
-fn exhaustive_refusal_requires_and_returns_its_bounded_battery_fold() {
-    let source = wire::Digest::compute(wire::Domain::GateTree, b"exhaustive refusal");
-    let changed = vec!["assets/opaque.bin".to_owned()];
-    let selection = gate::select_current_source_change_gates(source.clone(), &changed)
-        .expect("unknown path escalates");
-    let test = "fixture::lib:fixture".to_owned();
-    let edge = gate::TestSelectionEdge::new(changed[0].clone(), test.clone())
-        .expect("synthetic exhaustive edge");
-    let tests = gate::TestEvidenceGraph::select_tests(
-        source.clone(),
-        changed,
-        vec![test],
-        vec![edge],
-        gate::CoverageCompleteness::Complete,
-    )
-    .expect("complete exhaustive test evidence");
-    let authority = wire::Digest::compute(wire::Domain::GateBatteryReport, b"full report");
-    let manifest = BatteryManifest::canonical().expect("canonical manifest");
-    let results = manifest
-        .arms()
-        .iter()
-        .enumerate()
-        .map(|(position, arm)| {
-            let ArmDisposition::Compiled {
-                gate_id,
-                family,
-                declaration,
-            } = arm.disposition();
-            PolicyArmSummary {
-                position,
-                gate_id: *gate_id,
-                family: *family,
-                declaration: declaration.clone(),
-                state: if position == 0 {
-                    BatteryState::Failed
-                } else {
-                    BatteryState::Passed
-                },
-                reason: if position == 0 {
-                    "synthetic refusal\n  README.md: 21 characters (cap 20)"
-                } else {
-                    "synthetic pass"
-                }
-                .to_owned(),
-                authority: authority.clone(),
-            }
-        })
-        .collect::<Vec<_>>();
-    let policy = ChangePolicyReport::Exhaustive {
-        source: source.clone(),
-        report_digest: authority.clone(),
-        report_bytes: 1,
-        results: results.clone(),
-        refusal_fold: Some("exact bounded finding\n".to_owned()),
-    };
-    let report = ChangeGateReport::new(selection.clone(), tests.clone(), policy)
-        .expect("complete refusing summary admits structurally");
-    assert_eq!(
-        report.policy().iter().next().expect("first arm").reason(),
-        "synthetic refusal\n  README.md: 21 characters (cap 20)"
-    );
-    assert_eq!(report.refusal_fold(), "exact bounded finding\n");
-
-    let missing = ChangePolicyReport::Exhaustive {
-        source,
-        report_digest: authority,
-        report_bytes: 1,
-        results,
-        refusal_fold: None,
-    };
-    let error = ChangeGateReport::new(selection, tests, missing)
-        .expect_err("a refusing complete summary requires its bounded fold");
-    assert_eq!(
-        error.reason(),
-        "gate::change-gate-exhaustive-policy-invalid"
-    );
+    assert!(error.to_string().contains("unknown variant `applicable`"));
 }
 
 #[test]

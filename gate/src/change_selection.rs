@@ -4,9 +4,9 @@
 //! none of them and performs no repository walk: the command rim supplies the
 //! exact changed paths and the source digest they came from. Changes to an
 //! authority that can alter the selector itself, or a path class this build
-//! does not understand, escalate to every packaged arm applicable to the
-//! current repository. The explicit xtask current-source selector retains its
-//! richer source-tree knowledge in a separate module.
+//! does not understand, refuse selection before any selected work can begin.
+//! The explicit xtask current-source selector retains its richer source-tree
+//! knowledge in a separate module under the same local-only contract.
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -26,14 +26,12 @@ pub use policy::{ChangeSelectionPolicy, ChangeSelectionPolicyInputs};
 /// Current staged-change policy-selection schema.
 pub const CHANGE_SELECTION_REPORT_VERSION: u64 = 2;
 
-/// Whether the ordinary gate proved a local arm set or escalated deliberately.
+/// The bounded execution mode admitted by the ordinary gate.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChangeSelectionMode {
     /// Every changed path belongs to a known local class.
     Local,
-    /// An authority or unknown path requires every applicable packaged arm.
-    Exhaustive,
 }
 
 /// One changed path's provenance for one selected canonical policy arm.
@@ -76,8 +74,6 @@ pub struct ChangeSelectionReport {
     applicable_gate_ids: Vec<GateId>,
     gate_ids: Vec<GateId>,
     edges: Vec<ChangeSelectionEdge>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    escalation: Option<String>,
 }
 
 impl ChangeSelectionReport {
@@ -93,7 +89,7 @@ impl ChangeSelectionReport {
         &self.source
     }
 
-    /// Local execution or explicit applicable-inventory escalation.
+    /// Bounded local execution.
     #[must_use]
     pub const fn mode(&self) -> ChangeSelectionMode {
         self.mode
@@ -121,12 +117,6 @@ impl ChangeSelectionReport {
     #[must_use]
     pub fn edges(&self) -> &[ChangeSelectionEdge] {
         &self.edges
-    }
-
-    /// Why local evidence was insufficient, only in exhaustive mode.
-    #[must_use]
-    pub fn escalation(&self) -> Option<&str> {
-        self.escalation.as_deref()
     }
 
     /// Canonical JSON bytes for this selection.
@@ -220,21 +210,6 @@ impl ChangeSelectionReport {
                 "selected arm {gate_id} has no changed-source policy edge"
             )));
         }
-        match (self.mode, self.escalation.as_deref()) {
-            (ChangeSelectionMode::Local, None) => {}
-            (ChangeSelectionMode::Exhaustive, Some(reason)) if valid_text(reason) => {
-                if self.gate_ids != self.applicable_gate_ids {
-                    return Err(ChangeSelectionError::new(
-                        "exhaustive change selection must name every applicable packaged arm",
-                    ));
-                }
-            }
-            _ => {
-                return Err(ChangeSelectionError::new(
-                    "local selection forbids escalation and exhaustive selection requires it",
-                ));
-            }
-        }
         Ok(())
     }
 }
@@ -242,9 +217,9 @@ impl ChangeSelectionReport {
 /// Select every applicable packaged policy arm owed by exact staged paths.
 ///
 /// This function is pure and intentionally has no repository parameter. The
-/// supplied policy was compiled from the same retained staged tree. A path
-/// class it cannot prove local escalates to that policy's complete applicable
-/// inventory rather than to this source release's workspace battery.
+/// supplied policy was compiled from the same retained staged tree. A path it
+/// cannot prove local refuses rather than omitting evidence or broadening the
+/// ordinary gate into a complete verifier.
 pub fn select_change_gates(
     source: Digest,
     changed_sources: &[String],
@@ -260,27 +235,26 @@ fn select_with(
     source: Digest,
     changed_sources: &[String],
     applicable_gate_ids: Vec<GateId>,
-    mut gates_for_path: impl FnMut(&str) -> (Vec<GateId>, Option<String>),
+    mut gates_for_path: impl FnMut(&str) -> Result<Vec<GateId>, ChangeSelectionError>,
 ) -> Result<ChangeSelectionReport, ChangeSelectionError> {
     let mut changed_sources = changed_sources.to_vec();
     changed_sources.sort();
     changed_sources.dedup();
-    if changed_sources
+    if let Some(path) = changed_sources
         .iter()
-        .any(|path| !valid_repository_path(path))
+        .find(|path| !valid_repository_path(path))
     {
-        return Err(ChangeSelectionError::new(
-            "changed sources must be normalized repository-relative paths",
-        ));
+        return Err(ChangeSelectionError::new(format!(
+            "{path:?} is not a normalized repository-relative path"
+        )));
     }
 
     validate_gate_inventory("applicable", &applicable_gate_ids)?;
     let applicable = applicable_gate_ids.iter().copied().collect::<BTreeSet<_>>();
     let mut selected = ALWAYS.into_iter().collect::<BTreeSet<_>>();
-    let mut per_path = Vec::new();
-    let mut escalations = Vec::new();
+    let mut edges = Vec::new();
     for path in &changed_sources {
-        let (gates, escalation) = gates_for_path(path);
+        let gates = gates_for_path(path)?;
         let gates = ALWAYS
             .into_iter()
             .chain(gates)
@@ -289,43 +263,24 @@ fn select_with(
             .into_iter()
             .collect::<Vec<_>>();
         selected.extend(gates.iter().copied());
-        per_path.push((path.clone(), gates));
-        if let Some(reason) = escalation {
-            escalations.push(reason);
-        }
-    }
-    let mode = if escalations.is_empty() {
-        ChangeSelectionMode::Local
-    } else {
-        selected.clone_from(&applicable);
-        ChangeSelectionMode::Exhaustive
-    };
-    let gate_ids = selected.into_iter().collect::<Vec<_>>();
-    let mut edges = Vec::new();
-    for (path, local) in per_path {
-        let gates = if mode == ChangeSelectionMode::Exhaustive {
-            gate_ids.as_slice()
-        } else {
-            local.as_slice()
-        };
         edges.extend(
             gates
                 .iter()
                 .copied()
-                .map(|gate_id| ChangeSelectionEdge::new(&path, gate_id)),
+                .map(|gate_id| ChangeSelectionEdge::new(path, gate_id)),
         );
     }
+    let gate_ids = selected.into_iter().collect::<Vec<_>>();
     edges.sort();
     edges.dedup();
     let report = ChangeSelectionReport {
         version: CHANGE_SELECTION_REPORT_VERSION,
         source,
-        mode,
+        mode: ChangeSelectionMode::Local,
         changed_sources,
         applicable_gate_ids,
         gate_ids,
         edges,
-        escalation: (!escalations.is_empty()).then(|| escalations.join("; ")),
     };
     report.validate()?;
     Ok(report)

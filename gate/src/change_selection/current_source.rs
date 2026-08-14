@@ -7,11 +7,55 @@ use super::{ChangeSelectionError, ChangeSelectionReport, select_with};
 use crate::GateId;
 use wire::Digest;
 
+const RUST: [GateId; 5] = [
+    GateId::Formatters,
+    GateId::EnvPolicy,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+    GateId::MarkdownLinks,
+];
+const JAVASCRIPT: [GateId; 5] = [
+    GateId::JavascriptUnused,
+    GateId::EnvPolicy,
+    GateId::EnvNameLedger,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+];
+const DOCUMENTATION: [GateId; 3] = [GateId::RepoDocs, GateId::Taste, GateId::MarkdownLinks];
+const PYTHON: [GateId; 10] = [
+    GateId::PythonTypecheck,
+    GateId::EnvPolicy,
+    GateId::EnvNameLedger,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+    GateId::Reachability,
+    GateId::SymbolReachability,
+    GateId::PythonUnused,
+    GateId::AssertionFreeTests,
+    GateId::PrivateInternals,
+];
+const CSHARP: [GateId; 3] = [
+    GateId::CsharpUnusedCandidates,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+];
+const SHELL: [GateId; 4] = [
+    GateId::EnvPolicy,
+    GateId::EnvNameLedger,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+];
+
 /// Select the richer Spice-source battery from its explicit xtask override.
 ///
 /// This is intentionally separate from [`super::select_change_gates`]: these
 /// path names describe this source repository and must never become packaged
 /// applicability for an installed appliance.
+///
+/// # Errors
+///
+/// Returns the exact staged path and classification failure for any authority,
+/// unknown class, or source outside the compiled current-source roots.
 pub fn select_current_source_change_gates(
     source: Digest,
     changed_sources: &[String],
@@ -24,14 +68,11 @@ pub fn select_current_source_change_gates(
     )
 }
 
-fn gates_for_path(path: &str) -> (Vec<GateId>, Option<String>) {
-    if exhaustive_authority(path) {
-        return (
-            Vec::new(),
-            Some(format!(
-                "{path:?} changes current-source gate or toolchain selection authority"
-            )),
-        );
+fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+    if selector_authority(path) {
+        return Err(ChangeSelectionError::new(format!(
+            "{path:?} changes gate or toolchain selection authority"
+        )));
     }
 
     let mut gates = BTreeSet::from([GateId::LocalPaths, GateId::FileShape]);
@@ -40,112 +81,77 @@ fn gates_for_path(path: &str) -> (Vec<GateId>, Option<String>) {
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    match extension.as_str() {
-        "rs" => {
-            if !known_workspace_rust_source(path) {
-                return (
-                    Vec::new(),
-                    Some(format!(
-                        "{path:?} is Rust source outside every current-source workspace root"
-                    )),
-                );
-            }
-            gates.extend([
-                GateId::Formatters,
-                GateId::EnvPolicy,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-                GateId::MarkdownLinks,
-            ]);
-        }
-        "js" | "mjs" | "cjs" => {
-            gates.extend([
-                GateId::JavascriptUnused,
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-            ]);
-            if frontend_path(path) {
-                gates.insert(GateId::CanvasWebTypecheck);
-            }
-        }
-        "html" | "css" => {
-            if frontend_path(path) {
-                gates.insert(GateId::CanvasWebTypecheck);
-            }
-        }
-        "md" | "txt" | "rst" => {
-            gates.extend([GateId::RepoDocs, GateId::Taste, GateId::MarkdownLinks]);
-        }
-        "py" | "pyi" => {
-            gates.extend([
-                GateId::PythonTypecheck,
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-                GateId::Reachability,
-                GateId::SymbolReachability,
-                GateId::PythonUnused,
-                GateId::AssertionFreeTests,
-                GateId::PrivateInternals,
-            ]);
-        }
-        "cs" => {
-            gates.extend([
-                GateId::CsharpUnusedCandidates,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-            ]);
-        }
-        "sh" | "bash" | "zsh" => {
-            gates.extend([
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-            ]);
-        }
-        "toml" | "json" | "yaml" | "yml" | "lock" => {
-            if Path::new(path).file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
-                && !known_workspace_manifest(path)
-            {
-                return (
-                    Vec::new(),
-                    Some(format!(
-                        "{path:?} is a package manifest outside every current-source workspace root"
-                    )),
-                );
-            }
-            gates.insert(GateId::RepoShape);
-            if frontend_path(path) || matches!(path, "package.json" | "package-lock.json") {
-                gates.insert(GateId::CanvasWebTypecheck);
-            }
-        }
-        "" if known_extensionless(path) => {
-            gates.insert(GateId::RepoShape);
-        }
-        _ if frontend_path(path) => {
-            gates.insert(GateId::CanvasWebTypecheck);
-        }
-        _ => {
-            return (
-                Vec::new(),
-                Some(format!(
-                    "{path:?} has no current-source change-local policy class"
-                )),
-            );
-        }
+    gates.extend(class_gates(path, extension.as_str())?);
+    Ok(gates.into_iter().collect())
+}
+
+fn class_gates(path: &str, extension: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+    match extension {
+        "rs" => rust_gates(path),
+        "js" | "mjs" | "cjs" => Ok(with_frontend(path, &JAVASCRIPT)),
+        "html" | "css" => Ok(with_frontend(path, &[])),
+        "md" | "txt" | "rst" => Ok(DOCUMENTATION.to_vec()),
+        "py" | "pyi" => Ok(PYTHON.to_vec()),
+        "cs" => Ok(CSHARP.to_vec()),
+        "sh" | "bash" | "zsh" => Ok(SHELL.to_vec()),
+        "toml" | "json" | "yaml" | "yml" | "lock" => configuration_gates(path),
+        "" if known_extensionless(path) => Ok(vec![GateId::RepoShape]),
+        _ if frontend_path(path) => Ok(vec![GateId::CanvasWebTypecheck]),
+        _ => Err(ChangeSelectionError::new(format!(
+            "{path:?} has no compiled change-local policy class"
+        ))),
     }
-    (gates.into_iter().collect(), None)
+}
+
+fn rust_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+    if !known_workspace_rust_source(path) {
+        return Err(ChangeSelectionError::new(format!(
+            "{path:?} is Rust source outside every compiled workspace root"
+        )));
+    }
+    Ok(RUST.to_vec())
+}
+
+fn configuration_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+    if Path::new(path).file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
+        && !known_workspace_manifest(path)
+    {
+        return Err(ChangeSelectionError::new(format!(
+            "{path:?} is a package manifest outside every compiled workspace root"
+        )));
+    }
+    let mut gates = vec![GateId::RepoShape];
+    if frontend_path(path) || matches!(path, "package.json" | "package-lock.json") {
+        gates.push(GateId::CanvasWebTypecheck);
+    }
+    Ok(gates)
+}
+
+fn with_frontend(path: &str, base: &[GateId]) -> Vec<GateId> {
+    let mut gates = base.to_vec();
+    if frontend_path(path) {
+        gates.push(GateId::CanvasWebTypecheck);
+    }
+    gates
 }
 
 fn known_workspace_rust_source(path: &str) -> bool {
-    let Some(root) = path.split('/').next() else {
+    let mut components = path.split('/');
+    let Some(root) = components.next() else {
         return false;
     };
-    matches!(root, "src" | "tests" | "examples" | "benches") || known_workspace_package_root(root)
+    if matches!(root, "src" | "tests" | "examples" | "benches") {
+        return true;
+    }
+    if !known_workspace_package_root(root) {
+        return false;
+    }
+    match components.next() {
+        Some("src" | "tests" | "examples" | "benches") => true,
+        Some("build.rs") => components.next().is_none(),
+        Some("build") => root == "fold",
+        _ => false,
+    }
 }
 
 fn known_workspace_manifest(path: &str) -> bool {
@@ -187,7 +193,7 @@ fn known_workspace_package_root(root: &str) -> bool {
     )
 }
 
-fn exhaustive_authority(path: &str) -> bool {
+fn selector_authority(path: &str) -> bool {
     matches!(
         path,
         ".cargo/config.toml"
@@ -214,9 +220,11 @@ fn exhaustive_authority(path: &str) -> bool {
             | "spice/src/install/git_hooks.rs"
             | "spice/src/lib.rs"
             | "spice/src/main.rs"
+            | "xtask/src/gate_command.rs"
             | "xtask/src/lib.rs"
             | "xtask/src/main.rs"
-    ) || path.starts_with("gate/src/workspace_tests/")
+    ) || path.starts_with("gate/src/change_selection/")
+        || path.starts_with("gate/src/workspace_tests/")
         || path.starts_with("spice/src/gate_command/pre_commit")
 }
 

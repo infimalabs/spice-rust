@@ -145,11 +145,29 @@ fn a_differently_shaped_rust_repository_uses_policy_not_package_names() {
             GateId::MagicNumbers,
         ],
     );
-    assert!(report.escalation().is_none());
-
+    let manifest = selection(&["crates/nebula/Cargo.toml"], &policy);
+    assert!(manifest.gate_ids().contains(&GateId::RustTypecheck));
+    for (path, condition) in [
+        (
+            "tools/outside.rs",
+            "is Rust source outside every compiled workspace root",
+        ),
+        (
+            "tools/component/Cargo.toml",
+            "is a package manifest outside every compiled workspace root",
+        ),
+    ] {
+        let error = select_change_gates(source(), &strings(&[path]), &policy)
+            .expect_err("out-of-workspace Rust input must refuse");
+        assert_eq!(error.detail(), format!("{path:?} {condition}"));
+    }
     for authority in ["Cargo.lock", "rust-toolchain.toml"] {
-        let report = selection(&[authority], &policy);
-        assert!(report.gate_ids().contains(&GateId::RustTypecheck));
+        let error = select_change_gates(source(), &strings(&[authority]), &policy)
+            .expect_err("repository build authorities must refuse");
+        assert_eq!(
+            error.detail(),
+            format!("{authority:?} changes repository build or test selection authority")
+        );
     }
 }
 
@@ -202,7 +220,7 @@ fn deleting_the_last_configured_source_keeps_its_gate_class_applicable() {
     let tracked = strings(&["Cargo.toml", "spice-rust.toml"]);
     let suffixes = strings(&[".rs"]);
     let policy = policy(&tracked, true, Some(&suffixes), &[], &[], &[]);
-    let report = selection(&["retired/component.rs"], &policy);
+    let report = selection(&["src/retired/component.rs"], &policy);
 
     assert_eq!(report.mode(), ChangeSelectionMode::Local);
     contains(
@@ -218,23 +236,22 @@ fn deleting_the_last_configured_source_keeps_its_gate_class_applicable() {
 }
 
 #[test]
-fn policy_and_unknown_changes_escalate_only_to_applicable_packaged_arms() {
+fn policy_and_unknown_changes_refuse_without_manufacturing_applicable_execution() {
     let tracked = strings(&["assets/opaque.bin", "notes/readme.md", "spice-rust.toml"]);
     let suffixes = strings(&[".md"]);
     let policy = policy(&tracked, true, Some(&suffixes), &[], &[], &[]);
-    for path in ["spice-rust.toml", "assets/opaque.bin"] {
-        let report = selection(&[path], &policy);
-        assert_eq!(report.mode(), ChangeSelectionMode::Exhaustive);
-        assert_eq!(report.gate_ids(), report.applicable_gate_ids());
-        assert!(!report.gate_ids().contains(&GateId::CanvasWebTypecheck));
-        assert!(!report.gate_ids().contains(&GateId::RustTypecheck));
-        assert!(report.escalation().is_some());
-        assert_eq!(
-            ChangeSelectionReport::decode(&report.encode().expect("encode selection"))
-                .expect("decode selection"),
-            report,
-        );
-    }
+    let authority = select_change_gates(source(), &strings(&["spice-rust.toml"]), &policy)
+        .expect_err("packaged selector authority must refuse");
+    assert_eq!(
+        authority.detail(),
+        "\"spice-rust.toml\" changes packaged selection policy"
+    );
+    let unknown = select_change_gates(source(), &strings(&["assets/opaque.bin"]), &policy)
+        .expect_err("unclassified packaged path must refuse");
+    assert_eq!(
+        unknown.detail(),
+        "\"assets/opaque.bin\" has no repository-declared packaged policy class"
+    );
 }
 
 #[test]
@@ -325,7 +342,88 @@ fn current_source_override_retains_the_richer_workspace_selector() {
             GateId::Formatters,
         ],
     );
+    assert_eq!(
+        report.gate_ids(),
+        BTreeSet::from([
+            GateId::MergeIntegrity,
+            GateId::PlanPhase,
+            GateId::Staging,
+            GateId::LocalPaths,
+            GateId::FileShape,
+            GateId::CanvasWebTypecheck,
+            GateId::JavascriptUnused,
+            GateId::EnvPolicy,
+            GateId::EnvNameLedger,
+            GateId::Complexity,
+            GateId::MagicNumbers,
+            GateId::Formatters,
+            GateId::MarkdownLinks,
+        ])
+        .into_iter()
+        .collect::<Vec<_>>(),
+    );
     assert_eq!(report.applicable_gate_ids(), GateId::BATTERY);
+    assert_ne!(report.gate_ids(), report.applicable_gate_ids());
+}
+
+#[test]
+fn current_source_classification_gaps_refuse_with_exact_paths() {
+    for (path, condition) in [
+        (
+            "assets/opaque.bin",
+            "has no compiled change-local policy class",
+        ),
+        (
+            "tools/outside.rs",
+            "is Rust source outside every compiled workspace root",
+        ),
+        (
+            "gate/tools/outside.rs",
+            "is Rust source outside every compiled workspace root",
+        ),
+        (
+            "tools/component/Cargo.toml",
+            "is a package manifest outside every compiled workspace root",
+        ),
+    ] {
+        let error = select_current_source_change_gates(source(), &strings(&[path]))
+            .expect_err("classification gap must refuse");
+        assert_eq!(error.detail(), format!("{path:?} {condition}"));
+    }
+}
+
+#[test]
+fn current_source_authorities_refuse_and_local_reports_are_canonical() {
+    for path in [
+        "spice-rust.toml",
+        "gate/src/change_selection.rs",
+        "gate/src/change_selection/policy.rs",
+        "spice/src/change_gate.rs",
+        "xtask/src/gate_command.rs",
+    ] {
+        let error = select_current_source_change_gates(source(), &strings(&[path]))
+            .expect_err("selector authority must refuse");
+        assert_eq!(
+            error.detail(),
+            format!("{path:?} changes gate or toolchain selection authority")
+        );
+    }
+
+    let report = select_current_source_change_gates(
+        source(),
+        &strings(&["README.fixture.md", "app/src/lib.rs", "wire/src/lib.rs"]),
+    )
+    .expect("known mixed-class inputs remain local");
+    assert_eq!(report.mode(), ChangeSelectionMode::Local);
+    assert_ne!(report.gate_ids(), GateId::BATTERY);
+    let encoded = report.encode().expect("encode canonical local report");
+    assert_eq!(
+        ChangeSelectionReport::decode(&encoded).expect("decode canonical local report"),
+        report,
+    );
+    let encoded = String::from_utf8(encoded).expect("selection report is UTF-8");
+    let exhaustive = encoded.replace("\"mode\":\"local\"", "\"mode\":\"exhaustive\"");
+    assert!(ChangeSelectionReport::decode(exhaustive.as_bytes()).is_err());
 }
 
 #[test]
