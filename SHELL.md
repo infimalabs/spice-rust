@@ -5,6 +5,52 @@ a boundary that Rust cannot cross without adding a prior binary artifact or
 losing source-in-the-current-shell behavior. This is the complete inventory;
 `xtask/tests/shell_inventory.rs` compares its live entries with the Git index.
 
+## Generated Git-hook launchers
+
+`spice install` generates `pre-commit`, `commit-msg`, and
+`reference-transaction` under the Git-common `.spice-install/git-hooks`. These
+are installed artifacts rather than tracked shell files. Their exact two-line
+forms (shown with a representative absolute Git-common prefix) are:
+
+```sh
+#!/bin/sh -eu
+exec '/absolute/git-common/.spice-install/bin/spice' gate pre-commit "$@"
+```
+
+```sh
+#!/bin/sh -eu
+exec '/absolute/git-common/.spice-install/bin/spice' gate commit-msg "$@"
+```
+
+```sh
+#!/bin/sh -eu
+exec '/absolute/git-common/.spice-install/bin/spice' gate reference-transaction "$@"
+```
+
+Each `exec` preserves Spice's exit status, stdout, and stderr and forwards Git's
+exact argv. `pre-commit` receives no operands; its Rust dispatcher captures the
+staged index. `commit-msg`
+receives exactly the message-file path. Both inherit standard input without
+reading it. `reference-transaction` receives exactly one state operand and
+preserves Git's update records on standard input; the Rust gate consumes them
+only for `prepared`, while `committed` and `aborted` are inert. No launcher reads
+policy or performs fallback routing.
+
+The short `#!/bin/sh -eu` line names a stable system interpreter and makes a
+failed expansion or command fatal. The shell performs no policy: its one command
+quotes and `exec`s the explicit absolute appliance path. Putting that long path
+in the shebang would depend on kernel shebang length and argument-parsing rules,
+could not portably encode the `gate HOOK` subcommand, and would leave repository
+relocation hidden inside kernel launch failure. The generated body instead makes
+that absolute, non-portable identity inspectable and repairable through a fresh
+digest-bound install plan.
+
+The tracked `.githooks` files are development launchers, not installed assets.
+They resolve the Git common directory and dispatch directly to its installed
+Spice. They never invoke Cargo or `xtask`; current-source policy is the separate
+configured `cargo run --quiet --locked --package spice --bin spice -- gate
+selection` leaf.
+
 ## `dist/proof-image/build.sh`
 
 Caller: Release operator, formerly documented by

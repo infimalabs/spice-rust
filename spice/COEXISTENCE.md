@@ -156,7 +156,8 @@ Tracked policy is physically separate. Python builds its repository layer from
 through `gate/src/input.rs#POLICY_PATH`. Neither runtime falls back to the
 other's file when its own is absent or malformed.
 
-The Python document retains one deliberate execution bridge: its
+The Python document retains one deliberate execution bridge, active only while
+an operator has selected the predecessor's hook path: its
 `policy.pre_commit` entry invokes the current Rust `spice gate pre-commit`
 command while its own `policy.pre_commit_builtins` setting is false. That
 command is owned by the predecessor hook and enters Rust from outside the Rust
@@ -166,15 +167,17 @@ disabled and its sole `Spice source gate` command builds and invokes exactly
 `spice gate selection` through Cargo. A Rust configured command receives
 `SPICE_RS_PRE_COMMIT_SOURCE`, so pointing that edge back at `spice gate
 pre-commit` would be recursive and is refused. The product selection command is
-the direct current-source leaf and does not redispatch. Machine-local
-configuration is also separate; Rust reads only `.spice-rs/config.toml`.
+the policy-free current-source leaf: it performs selection without loading or
+redispatching hook policy. Machine-local configuration is also separate; Rust
+reads only `.spice-rs/config.toml`.
 
 The installed pre-commit dispatcher resolves that native policy once. It runs
 the packaged selected-change gate exactly once when built-ins are enabled,
-then runs configured commands in authored order; disabling built-ins runs only
-the configured list, and disabling them with an empty list refuses before any
-work begins. The native configured-command executor runs each admitted `run`
-array as exact argv, never through a shell, from the canonical repository root.
+then runs an arbitrarily long configured list in authored order; disabling
+built-ins runs only that configured list, and disabling them with an empty list
+refuses before any work begins. The native configured-command executor runs each
+admitted `run` array as exact argv, never through a shell, from the canonical
+repository root.
 One retained staged seal supplies every step with the same
 `SPICE_RS_PRE_COMMIT_SOURCE`
 digest and a `SPICE_RS_PRE_COMMIT_PATHS` JSON array containing only the staged
@@ -227,6 +230,12 @@ switches the common absolute `core.hooksPath` last; unapply restores the exact
 prior values from the same receipt. No second activation command or Git
 configuration implementation remains.
 Hook choice is therefore an operator selection, not a cross-delivery path.
+Each installed hook is a two-line `/bin/sh -eu` launcher that `exec`s the
+absolute installed Spice path with one explicit gate name and Git's exact argv.
+That absolute identity is shared by linked worktrees and intentionally does not
+survive repository relocation by inference: a fresh digest-bound preview/apply
+must rebase an unambiguous move, while foreign or ambiguous topology refuses.
+No hook falls back to Cargo, `xtask`, ambient `PATH`, or the other runtime.
 
 ## Validation boundary
 
