@@ -9,6 +9,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use spice::install::{InstallStatus, apply, installed_git_hooks, plan};
 use spice::repository::Repository;
 
+#[path = "hooks/activation_assertions.rs"]
+mod activation_assertions;
+
+use activation_assertions::assert_reference_transaction_hook_targets_installed_spice;
+
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const ACTIVE_HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transaction"];
 const GIT_DIRECTORY: &str = concat!("GIT_", "DIR");
@@ -227,6 +232,7 @@ fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
     assert_eq!(mode(&pre_commit), 0o755);
     assert_eq!(mode(&commit_message), 0o755);
     assert_eq!(mode(&reference_transaction), 0o755);
+    assert_reference_transaction_hook_targets_installed_spice(scratch);
     assert_eq!(configured_hooks(scratch), ".githooks");
     assert_eq!(
         ACTIVE_HOOKS.map(|hook| image(&operator.join(hook))),
