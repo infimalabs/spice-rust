@@ -19,12 +19,10 @@ const ACTIVE_HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transact
 const GIT_DIRECTORY: &str = concat!("GIT_", "DIR");
 const GIT_WORKING_TREE: &str = concat!("GIT_", "WORK_TREE");
 const GIT_INDEX: &str = concat!("GIT_", "INDEX_FILE");
-const VALID_ORIGIN: &str =
-    "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=HOOKS-1kJQnmG8";
 type FileImage = (Vec<u8>, u32);
 
 #[test]
-fn install_exercises_nontransaction_hooks_before_explicit_activation() {
+fn install_exercises_pre_commit_before_explicit_activation() {
     let scratch = Scratch::new();
     repository_history(&scratch);
     let installation = install_spice_hooks(&scratch);
@@ -32,7 +30,6 @@ fn install_exercises_nontransaction_hooks_before_explicit_activation() {
     install_cargo_alias(&scratch, &cargo_log);
 
     exercise_pre_commit(&scratch, &cargo_log);
-    exercise_commit_message(&scratch);
     assert_prior_hooks_unchanged(&scratch, &installation);
     assert_eq!(
         ACTIVE_HOOKS.map(|hook| image(&installation.operator.join(hook))),
@@ -290,8 +287,7 @@ fn fixture_spice(scratch: &Scratch) -> PathBuf {
     scratch.executable(
         "fixture-spice",
         format!(
-            "#!/bin/sh -eu\n[ \"$1\" = gate ]\nhook=$2\nshift 2\ncase \"$hook\" in\n  pre-commit)\n    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n    exec '{}' verify-action selection \"$@\"\n    ;;\n  commit-msg) exec '{}' commit-msg \"$@\" ;;\n  reference-transaction) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
-            dispatcher.display(),
+            "#!/bin/sh -eu\n[ \"$1\" = gate ]\nhook=$2\nshift 2\ncase \"$hook\" in\n  pre-commit)\n    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n    exec '{}' verify-action selection \"$@\"\n    ;;\n  commit-msg) exit 0 ;;\n  reference-transaction) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
             dispatcher.display(),
         )
         .as_bytes(),
@@ -316,62 +312,6 @@ fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
     );
 }
 
-fn exercise_commit_message(scratch: &Scratch) {
-    let commit_message = common_hooks(scratch).join("commit-msg");
-    let message = scratch.join("COMMIT_EDITMSG");
-    fs::write(
-        &message,
-        format!(
-            "Preserve native hook policy\n\n{}\n\n{VALID_ORIGIN}\n",
-            "body prose ".repeat(14)
-        ),
-    )
-    .expect("write valid commit message");
-    let valid = invoke(&commit_message, scratch.path(), &[message.as_os_str()]);
-    assert!(valid.status.success(), "{}", streams(&valid));
-    assert!(valid.stdout.is_empty());
-    assert!(
-        String::from_utf8(valid.stderr)
-            .unwrap()
-            .contains("auto-folded commit message body lines")
-    );
-    assert!(
-        fs::read_to_string(&message)
-            .unwrap()
-            .lines()
-            .all(|line| line.chars().count() <= xtask::COMMIT_MESSAGE_WRAP_LIMIT)
-    );
-
-    fs::write(
-        &message,
-        "Preserve native provenance\n\nSpice-Origin: v2 unresolved\n",
-    )
-    .expect("write malformed provenance");
-    let malformed = invoke(&commit_message, scratch.path(), &[message.as_os_str()]);
-    assert_eq!(malformed.status.code(), Some(1));
-    assert!(malformed.stdout.is_empty());
-    let diagnostic = String::from_utf8(malformed.stderr).unwrap();
-    assert!(diagnostic.contains("malformed Spice-Origin trailer"));
-    assert!(diagnostic.contains("Spice-Origin: v2 unresolved"));
-
-    fs::write(
-        scratch.join("spice-rust.toml"),
-        "[policy.commit_message]\nblocked_trailers = [\"Co-Authored-By\"]\n",
-    )
-    .expect("write tracked trailer policy");
-    fs::write(
-        &message,
-        "Preserve native attribution\n\nCo-Authored-By: Agent <agent@example.test>\n",
-    )
-    .expect("write policy-refused attribution");
-    let blocked = invoke(&commit_message, scratch.path(), &[message.as_os_str()]);
-    assert_eq!(blocked.status.code(), Some(1));
-    assert!(blocked.stdout.is_empty());
-    let diagnostic = String::from_utf8(blocked.stderr).unwrap();
-    assert!(diagnostic.contains("uses blocked trailer co-authored-by"));
-    assert!(diagnostic.contains("blocked trailers: co-authored-by"));
-}
-
 fn assert_prior_hooks_unchanged(scratch: &Scratch, evidence: &PriorHookEvidence) {
     assert_eq!(configured_hooks(scratch), ".githooks");
     assert_eq!(
@@ -394,9 +334,6 @@ struct PriorHookEvidence {
 }
 
 fn install_cargo_alias(scratch: &Scratch, log: &Path) {
-    let xtask = Path::new(env!("CARGO_BIN_EXE_xtask"));
-    assert!(!xtask.as_os_str().is_empty());
-    assert!(!xtask.to_string_lossy().contains('\''));
     assert!(!log.to_string_lossy().contains('\''));
     let dispatcher = scratch.executable(
         "bin/xtask-dispatcher",
@@ -417,14 +354,9 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
                 "[ \"$2\" = selection ]; then\n",
                 "    exit 0\n",
                 "fi\n",
-                "if [ \"$#\" -eq 2 ] && [ \"$1\" = commit-msg ]; then\n",
-                "    exec '{}' commit-msg \"$2\"\n",
-                "fi\n",
-                // No reference-transaction arm on purpose. The hook execs the
-                // installed Spice binary directly, so routing that subcommand
-                // back through Cargo has to fail loudly here rather than be
-                // quietly served: an arm answering it would let the deleted
-                // wrapper return and every assertion below still pass.
+                // No installed-hook arms on purpose. Every installed hook
+                // reaches the installed Spice surface directly; this alias
+                // remains only for the source-development pre-commit fixture.
                 "printf 'unexpected xtask invocation: %s\\n' \"$*\" >&2\n",
                 "exit 64\n",
             ),
@@ -432,7 +364,6 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
             GIT_WORKING_TREE,
             GIT_INDEX,
             log.display(),
-            xtask.display(),
         )
         .as_bytes(),
     );
@@ -473,14 +404,6 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
         ),
     )
     .expect("write Cargo alias");
-}
-
-fn invoke(program: &Path, root: &Path, arguments: &[&std::ffi::OsStr]) -> Output {
-    Command::new(program)
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("run installed hook")
 }
 
 fn repository_history(scratch: &Scratch) -> (String, String, String) {

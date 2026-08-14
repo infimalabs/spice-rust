@@ -247,6 +247,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["gate"] => deliver(&gate_command::run(leaf), form),
         ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
+        ["gate", "commit-msg"] => deliver_commit_message(gate_command::commit_message(leaf), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "pre-commit"] => deliver_commit_gate(&gate_command::pre_commit(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
@@ -862,6 +863,20 @@ fn deliver_commit_gate<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) ->
             terminate(&fault);
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_commit_message(run: gate_command::CommitMessageRun, form: Form) -> ! {
+    if run.folded() && form == Form::Text {
+        eprintln!(
+            concat!(
+                "spice commit-msg: auto-folded commit message body lines; ",
+                "keep body prose wrapped at {} chars"
+            ),
+            spice::commit_message::WRAP_LIMIT
+        );
+    }
+    deliver_commit_gate(run.outcome(), form)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

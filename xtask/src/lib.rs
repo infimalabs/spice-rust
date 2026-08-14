@@ -9,7 +9,6 @@ use sill::CancellationToken;
 
 mod app;
 mod build_cache;
-mod commit_message;
 mod develop;
 mod gate_command;
 mod hooks;
@@ -31,9 +30,9 @@ pub use build_cache::{
     BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
     BuildCacheRootReport, build_cache, collect_build_cache_at, parse_byte_quantity,
 };
-pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh};
 pub use gate_command::{gate_arm, gate_arm_report, verify_battery_child, verify_selection_child};
+pub use spice::commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 use verify_browser::BrowserRun;
 use verify_error::valid_package_name;
 pub use verify_error::{GateArmError, VerifyError};
@@ -67,7 +66,7 @@ pub fn commit_message(
     path: &Path,
     policy: &gate::CommitMessagePolicy,
 ) -> Result<bool, CommitMessageError> {
-    commit_message::apply(path, policy)
+    spice::commit_message::apply(path, policy)
 }
 
 /// Every verification action, in stable report order.
