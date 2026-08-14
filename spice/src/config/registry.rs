@@ -368,6 +368,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "policy.test_engines" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "policy.commit_message.allowed_trailers" {
         kind: StringList,
         builtin: Some(Builtin::Absent),

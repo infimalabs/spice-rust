@@ -427,6 +427,20 @@ fn current_source_authorities_refuse_and_local_reports_are_canonical() {
 }
 
 #[test]
+fn current_source_report_modules_remain_selector_authorities() {
+    let error = select_current_source_change_gates(
+        source(),
+        &strings(&["gate/src/test_evidence/reports.rs"]),
+    )
+    .expect_err("moved report authority must refuse");
+
+    assert_eq!(
+        error.detail(),
+        "\"gate/src/test_evidence/reports.rs\" changes gate or toolchain selection authority"
+    );
+}
+
+#[test]
 fn every_changed_path_and_always_on_arm_retains_provenance() {
     let tracked = strings(&["README.md", "src/lib.rs"]);
     let policy = policy(&tracked, false, None, &[], &[], &[]);

@@ -224,6 +224,7 @@ fn selector_authority(path: &str) -> bool {
             | "xtask/src/lib.rs"
             | "xtask/src/main.rs"
     ) || path.starts_with("gate/src/change_selection/")
+        || path.starts_with("gate/src/test_evidence/")
         || path.starts_with("gate/src/workspace_tests/")
         || path.starts_with("spice/src/gate_command/pre_commit")
 }
