@@ -62,6 +62,12 @@ pub enum SpiceVariable {
     /// User shell restored behind the Rust structural command wrapper.
     #[serde(rename = "SPICE_RS_NATIVE_SHELL")] // env-policy: allow
     NativeShell,
+    /// Canonical JSON array of staged paths supplied to one configured pre-commit step.
+    #[serde(rename = "SPICE_RS_PRE_COMMIT_PATHS")] // env-policy: allow
+    PreCommitPaths,
+    /// Immutable staged-source digest supplied to every configured pre-commit step.
+    #[serde(rename = "SPICE_RS_PRE_COMMIT_SOURCE")] // env-policy: allow
+    PreCommitSource,
 }
 
 impl SpiceVariable {
@@ -87,6 +93,8 @@ impl SpiceVariable {
         Self::Inbox,
         Self::Lane,
         Self::NativeShell,
+        Self::PreCommitPaths,
+        Self::PreCommitSource,
     ];
 
     /// Exact process-environment spelling.
@@ -122,6 +130,8 @@ impl SpiceVariable {
             Self::MutationSeed => "SPICE_MUTATION_SEED", // env-policy: allow
             Self::NativePins => "SPICE_NATIVE_PINS", // env-policy: allow
             Self::NativeShell => "SPICE_RS_NATIVE_SHELL", // env-policy: allow
+            Self::PreCommitPaths => "SPICE_RS_PRE_COMMIT_PATHS", // env-policy: allow
+            Self::PreCommitSource => "SPICE_RS_PRE_COMMIT_SOURCE", // env-policy: allow
         }
     }
 }

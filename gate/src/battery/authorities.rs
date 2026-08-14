@@ -80,6 +80,15 @@ pub struct BatteryCapture<'trace> {
 }
 
 impl BatteryCapture<'_> {
+    /// Prove the live selector source still names this capture.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact selected-tree movement diagnostic.
+    pub fn verify_source(&self) -> Result<(), BatteryError> {
+        self.executor.verify_source()
+    }
+
     /// Capture one repository into a complete, runnable battery.
     ///
     /// `claim`, `actor`, `rim`, and `hygiene` are the caller's observations of

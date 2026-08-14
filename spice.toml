@@ -86,7 +86,8 @@ pre_commit = [
 # rather than a set of literals accumulating across crates.
 #
 # Session forensics reads the live Codex or Claude identity and the selected
-# agent vendor. `steer` owns the four hook/session names. A supervised launch
+# agent vendor. `steer` owns the four hook/session names. The configured commit
+# executor owns the staged-path JSON and source-digest handoff names. A supervised launch
 # separates the installed outer shell from the native shell restored by its
 # inner stage, while the wrapper reads the lane's rendered inbox and lane-bound
 # commands carry that lane identity. `gate` owns the mutation seed and attempt
@@ -146,6 +147,8 @@ env_names = [
     "SPICE_RS_INBOX",
     "SPICE_RS_LANE",
     "SPICE_RS_NATIVE_SHELL",
+    "SPICE_RS_PRE_COMMIT_PATHS",
+    "SPICE_RS_PRE_COMMIT_SOURCE",
     # Selected-tree tests receive these workspace-test fixture authorities.
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",

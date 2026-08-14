@@ -169,6 +169,26 @@ fn byte_identical_index_replacement_is_still_a_changed_source() {
 }
 
 #[test]
+fn retained_staged_seal_detects_replacement_after_materialization() {
+    let repository = Repository::new("retained-index-replacement");
+    repository.write("selected.txt", b"selected\n");
+    repository.git(&["add", "selected.txt"]);
+    let selected = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize one retained staged source");
+    let index = repository.root.join(".git/index");
+    let replacement = repository.root.join(".git/index.replacement");
+    fs::copy(&index, &replacement).expect("copy an identical replacement");
+    fs::rename(&replacement, &index).expect("replace the live index");
+
+    let refused = selected
+        .verify_source()
+        .expect_err("retained source seal must observe replacement");
+
+    assert!(matches!(refused, TreeError::IndexChanged { .. }));
+}
+
+#[test]
 fn an_index_swap_and_restore_before_decode_is_refused_without_a_partial_root() {
     let repository = Repository::new("index-swap-restore");
     repository.write("selected.txt", b"first\n");

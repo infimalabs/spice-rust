@@ -252,6 +252,13 @@ impl<'trace> RepositoryExecutor<'trace> {
         self.rim.changes()
     }
 
+    /// Prove the live selector source still names this retained tree.
+    pub(super) fn verify_source(&self) -> Result<(), BatteryError> {
+        self.tree
+            .verify_source()
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
+
     /// Run the canonical mutation profile against this executor's selected tree.
     pub(super) fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
         self.contract.execute_kill(self.tree.root())

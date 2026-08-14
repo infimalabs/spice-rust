@@ -39,7 +39,7 @@ mod tests;
 mod workspace;
 
 pub use error::TreeError;
-use source::{IndexSeal, RevisionSeal};
+use source::{IndexSeal, RevisionSeal, SelectionSeal, head_seal};
 use workspace::{BuildRoot, release_workspace};
 #[cfg(test)]
 use workspace::{reclaim_abandoned, workspace_lock};
@@ -128,6 +128,7 @@ impl Selector {
         source.verify(&repo)?;
         Ok(build.finish(
             repository,
+            source,
             items.into_iter().map(|item| item.path).collect(),
             renames,
             publishes_state,
@@ -145,6 +146,7 @@ pub struct SelectedTree {
     workspace: PathBuf,
     root: PathBuf,
     repository: PathBuf,
+    source: SelectionSeal,
     paths: Vec<String>,
     renames: RenameMap,
     publishes_state: bool,
@@ -168,6 +170,21 @@ impl SelectedTree {
     #[must_use]
     pub fn repository(&self) -> &Path {
         &self.repository
+    }
+
+    /// Prove that the live Git source has not moved since materialization.
+    ///
+    /// The staged seal retains its live index watch, so a write followed by a
+    /// byte-for-byte restoration still counts as movement rather than silently
+    /// becoming a fresh authority with the old digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact index, `HEAD`, revision, or repository movement that
+    /// invalidated this selected source.
+    pub fn verify_source(&self) -> Result<(), TreeError> {
+        let repository = open_repository(&self.repository)?;
+        self.source.verify(&repository)
     }
 
     /// Canonical regular paths carried by this exact selected source.
@@ -262,54 +279,6 @@ struct Item {
     path: String,
     id: gix::ObjectId,
     mode: FileMode,
-}
-
-enum SelectionSeal {
-    Index {
-        before: IndexSeal,
-        head: Option<RevisionSeal>,
-    },
-    Revision {
-        before: RevisionSeal,
-        revision: String,
-    },
-}
-
-impl SelectionSeal {
-    fn verify(&self, repo: &gix::Repository) -> Result<(), TreeError> {
-        match self {
-            Self::Index { before, head } => {
-                if &head_seal(repo)? != head {
-                    return Err(TreeError::RevisionChanged {
-                        revision: "HEAD".to_owned(),
-                    });
-                }
-                before.verify(repo)?;
-            }
-            Self::Revision { before, revision } => {
-                if RevisionSeal::capture(repo, revision).ok().as_ref() != Some(before) {
-                    return Err(TreeError::RevisionChanged {
-                        revision: revision.clone(),
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-fn head_seal(repo: &gix::Repository) -> Result<Option<RevisionSeal>, TreeError> {
-    let head = repo.head().map_err(|source| TreeError::Repository {
-        path: repo
-            .workdir()
-            .unwrap_or_else(|| repo.git_dir())
-            .to_path_buf(),
-        evidence: source.to_string(),
-    })?;
-    if head.id().is_none() {
-        return Ok(None);
-    }
-    RevisionSeal::capture(repo, "HEAD").map(Some)
 }
 
 fn staged_renames(

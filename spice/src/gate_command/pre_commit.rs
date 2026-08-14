@@ -11,10 +11,18 @@ use std::time::Duration;
 use gate::{ArmFamily, GateId};
 use serde::{Deserialize, Serialize};
 use sill::{
-    Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
-    RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
+    Acquisition, Argv, Cancellation, Completion, Deadlines, Environment, LockFile, LockName,
+    Output, Possession, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy,
+    StreamPolicy, WaitOutcome, WaitPolicy,
 };
+use spice::repository::Repository;
 use wire::{Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic};
+
+#[expect(
+    dead_code,
+    reason = "the configured executor lands before the dependent packaged/configured composition task"
+)]
+mod configured;
 
 const WORKER_ARGUMENT: &str = "__gate-pre-commit-worker";
 const REPORT_RECORD: u8 = b'R';
@@ -28,6 +36,7 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 1024 * 1024;
+const DISPATCH_LOCK: &str = "pre-commit.lock";
 
 const _: () = assert!(
     WORK_RUNTIME.as_secs()
@@ -138,8 +147,55 @@ impl Drop for WorkerFiles {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the pre-commit binary rim must reject a recursion marker before launching its worker"
+)]
 pub(super) fn run() -> Outcome<spice::change_gate::ChangeGateReport> {
+    if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
+        return configured::recursion_refusal(&source);
+    }
+    let _dispatch = match DispatchGuard::acquire() {
+        Ok(dispatch) => dispatch,
+        Err(outcome) => return outcome,
+    };
     run_with(supervise)
+}
+
+#[derive(Debug)]
+struct DispatchGuard {
+    _possession: Possession,
+}
+
+impl DispatchGuard {
+    fn acquire<T>() -> Result<Self, Outcome<T>> {
+        let current = env::current_dir()
+            .map_err(|error| fault("gate::pre-commit-working-directory-unavailable", error))?;
+        let repository = Repository::discover(&current)
+            .map_err(|error| fault("gate::pre-commit-repository-unresolved", error))?;
+        Self::acquire_in(&repository)
+    }
+
+    fn acquire_in<T>(repository: &Repository) -> Result<Self, Outcome<T>> {
+        let state = repository
+            .admit_state()
+            .map_err(|error| fault("gate::pre-commit-state-unavailable", error))?;
+        fs::create_dir_all(state.locks())
+            .map_err(|error| fault("gate::pre-commit-lock-unavailable", error))?;
+        let name = LockName::new("pre-commit").expect("pre-commit is a valid fixed lock name");
+        let lock = LockFile::new(name, state.locks().join(DISPATCH_LOCK));
+        match lock.try_acquire() {
+            Ok(Acquisition::Acquired(possession)) => Ok(Self {
+                _possession: possession,
+            }),
+            Ok(Acquisition::Contended) => Err(Outcome::Refusal(Refusal::evidence(
+                "gate::pre-commit-dispatch-active",
+                format!("lock={}", lock.path().display()),
+                "wait for the active commit gate to finish; configured commands cannot recursively redispatch it",
+            ))),
+            Err(error) => Err(fault("gate::pre-commit-lock-unavailable", error)),
+        }
+    }
 }
 
 fn run_with(
@@ -383,10 +439,7 @@ fn worker_lost(progress: &Path, detail: String) -> Outcome<spice::change_gate::C
     })
 }
 
-fn fault(
-    reason: &str,
-    error: impl std::fmt::Display,
-) -> Outcome<spice::change_gate::ChangeGateReport> {
+fn fault<T>(reason: &str, error: impl std::fmt::Display) -> Outcome<T> {
     Outcome::Fault(Fault {
         class: FaultClass::Environment,
         reason: reason.to_owned(),
