@@ -393,23 +393,30 @@ fn index_items(index: &gix::index::File) -> Result<Vec<Item>, TreeError> {
 }
 
 fn resolve_revision(repo: &gix::Repository, revision: &str) -> Result<gix::ObjectId, TreeError> {
-    refuse_ambiguous_reference(repo, revision)?;
-    let options = gix::revision::spec::parse::Options {
-        refs_hint: gix::revision::spec::parse::RefsHint::Fail,
-        object_kind_hint: None,
-    };
-    let spec = gix::revision::Spec::from_bstr(revision, repo, options).map_err(|source| {
-        TreeError::RevisionUnresolved {
-            revision: revision.to_owned(),
-            evidence: source.to_string(),
-        }
-    })?;
-    spec.single()
+    revision_spec(repo, revision)?
+        .single()
         .map(gix::Id::detach)
         .ok_or_else(|| TreeError::RevisionUnresolved {
             revision: revision.to_owned(),
             evidence: "the revision names a range rather than one object".to_owned(),
         })
+}
+
+fn revision_spec<'repo>(
+    repo: &'repo gix::Repository,
+    revision: &str,
+) -> Result<gix::revision::Spec<'repo>, TreeError> {
+    refuse_ambiguous_reference(repo, revision)?;
+    let options = gix::revision::spec::parse::Options {
+        refs_hint: gix::revision::spec::parse::RefsHint::Fail,
+        object_kind_hint: None,
+    };
+    gix::revision::Spec::from_bstr(revision, repo, options).map_err(|source| {
+        TreeError::RevisionUnresolved {
+            revision: revision.to_owned(),
+            evidence: source.to_string(),
+        }
+    })
 }
 
 fn refuse_ambiguous_reference(repo: &gix::Repository, revision: &str) -> Result<(), TreeError> {
