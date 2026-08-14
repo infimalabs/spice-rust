@@ -27,10 +27,8 @@ use crate::kill::{
 };
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::policy::PackagePolicy;
-use crate::policy::{
-    PACKAGED_GENERIC_POLICY, Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_policy,
-};
+use crate::policy::{PACKAGED_GENERIC_POLICY, PackagePolicy};
+use crate::policy::{Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_policy};
 use crate::ratchet::Ratchet;
 
 /// Fixed tracked policy path within a selected repository tree.
@@ -64,6 +62,7 @@ const AWK_PROBE: &str = "BEGIN { print \"spice-gate-awk-v1\" }";
 const AWK_PROBE_OUTPUT: &str = "spice-gate-awk-v1";
 const DEFAULT_SKIP: &[&str] = &[".git/", "target/"];
 const RETIRED_FLOORS: &[(&str, u64)] = &[("rust.kill-rate", 1), ("rust.long-lines", 1)];
+#[cfg(not(target_arch = "wasm32"))]
 const PACKAGED_GENERIC_POLICY_SOURCE: &str = "gate packaged generic policy";
 
 mod declaration;
@@ -229,6 +228,7 @@ impl Contract {
     /// tools are acquired by their selected arm after that arm has established
     /// applicability; the strict source-self-hosting loader above retains the
     /// exhaustive legacy probe.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn load_generic(root: &Path) -> Result<Self, ContractError> {
         let policy_path = root.join(POLICY_PATH);
         let baseline_path = root.join(BASELINE_PATH);
@@ -435,6 +435,7 @@ impl Contract {
             .expect("a strict tracked contract carries baseline.toml")
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn baseline_digest(&self) -> Option<Digest> {
         self.baseline.as_ref().map(Baseline::digest)
     }
@@ -491,6 +492,7 @@ fn read_tracked(path: &Path) -> Result<String, ContractError> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_optional_tracked(path: &Path) -> Result<Option<String>, ContractError> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),

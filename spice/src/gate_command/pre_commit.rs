@@ -308,10 +308,10 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         return None;
     }
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
-        eprintln!(
-            "spice: gate::pre-commit-recursion; hidden worker re-entry from staged source {:?} is refused",
-            source.to_string_lossy(),
-        );
+        let refusal: Outcome<()> = configured::recursion_refusal(&source);
+        crate::render::render(&refusal, crate::render::Form::Text)
+            .expect("typed recursion refusal renders as text")
+            .speak();
         return Some(2);
     }
     let Some(progress) = arguments.next() else {
