@@ -179,6 +179,19 @@ share one deadline and process-group cleanup budget. No configured command can
 start until the current executable configuration digest has a durable operator
 grant; index movement, policy movement, or trust revocation stops the battery.
 
+Packaged change selection is repository-neutral. It compiles an applicability
+profile from the immutable staged path inventory and the typed tracked
+`spice-rust.toml`; no installed selector knows this source tree's crate names,
+frontend directories, or source-only authority files. An absent tracked document supplies
+no file-shape or language classes. Within a present document those three class
+lists are required, repository-document omission retains Gate's generic
+`AGENTS.md` default, absent package roots do not narrow Python selection,
+absent generated paths exclude nothing, and absent test paths conservatively
+leave every Python path eligible for test policy. Unknown paths and changes to
+the tracked policy escalate only to arms applicable to that staged repository.
+The richer Spice-workspace selector remains a separate current-source entrypoint
+called explicitly by `cargo xtask verify-action selection`.
+
 ## Git hook selection
 
 Git exposes one effective `core.hooksPath` per worktree, so the two hook systems

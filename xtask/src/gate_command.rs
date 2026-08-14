@@ -47,7 +47,7 @@ pub fn verify_selection_child(output: &mut impl Write) -> Result<bool, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut progress = Vec::new();
-        let report = match spice::change_gate::run(&mut progress) {
+        let report = match spice::change_gate::run_current_source(&mut progress) {
             Ok(report) => report,
             Err(error) => {
                 output

@@ -1,0 +1,358 @@
+//! Repository-neutral applicability derived from one typed tracked policy.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use super::{ALWAYS, ChangeSelectionError, valid_repository_path};
+use crate::GateId;
+
+const CONFIGURATION_GATES: [GateId; 3] = [
+    GateId::ConfigKeyValidity,
+    GateId::ConfigFalseDisable,
+    GateId::ConfigTrackedTrust,
+];
+const PYTHON_HYGIENE: [GateId; 4] = [
+    GateId::Reachability,
+    GateId::SymbolReachability,
+    GateId::PythonUnused,
+    GateId::PrivateInternals,
+];
+const DEFAULT_REPOSITORY_DOCUMENT: &str = "AGENTS.md";
+
+/// Borrowed typed declarations used to compile packaged gate applicability.
+///
+/// An absent tracked configuration has no authored file-class selections. If
+/// `configured` is true, all three file-class lists are required and nonempty,
+/// matching the Gate policy compiler. Optional package roots broaden Python
+/// selection when absent, optional generated paths exclude nothing, optional
+/// test paths conservatively classify every Python path as possibly a test,
+/// and absent repository documents retain Gate's generic `AGENTS.md` default.
+pub struct ChangeSelectionPolicyInputs<'a> {
+    /// Every regular path in the retained staged tree.
+    pub tracked_sources: &'a [String],
+    /// Exact repository-relative files whose bytes define selection policy.
+    pub policy_authorities: &'a [String],
+    /// Whether the staged tree contains a tracked policy document.
+    pub configured: bool,
+    /// Repository-truth documents, or the packaged generic default when absent.
+    pub repository_documents: Option<&'a [String]>,
+    /// Required file-shape suffixes when configured.
+    pub file_shape_suffixes: Option<&'a [String]>,
+    /// Required complexity suffixes when configured.
+    pub complexity_suffixes: Option<&'a [String]>,
+    /// Required magic-number suffixes when configured.
+    pub magic_suffixes: Option<&'a [String]>,
+    /// Optional repository package roots.
+    pub package_roots: &'a [String],
+    /// Optional generated-path selectors.
+    pub generated_paths: &'a [String],
+    /// Optional test-path selectors.
+    pub test_paths: &'a [String],
+}
+
+/// Validated repository-neutral policy used by packaged change selection.
+#[derive(Clone, Debug)]
+pub struct ChangeSelectionPolicy {
+    tracked_sources: Vec<String>,
+    policy_authorities: Vec<String>,
+    configured: bool,
+    repository_documents: Vec<String>,
+    file_shape_suffixes: Vec<String>,
+    complexity_suffixes: Vec<String>,
+    magic_suffixes: Vec<String>,
+    package_roots: Vec<String>,
+    generated_paths: Vec<String>,
+    test_paths: Vec<String>,
+}
+
+impl ChangeSelectionPolicy {
+    /// Compile exact staged paths and typed declarations into one selector policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid path selector, authority path, tracked path, or
+    /// missing/malformed required file-class declaration.
+    pub fn new(inputs: ChangeSelectionPolicyInputs<'_>) -> Result<Self, ChangeSelectionError> {
+        let tracked_sources = exact_paths("tracked source", inputs.tracked_sources)?;
+        let policy_authorities = exact_paths("policy authority", inputs.policy_authorities)?;
+        let repository_documents = match inputs.repository_documents {
+            Some(documents) => exact_paths("repository document", documents)?,
+            None => vec![DEFAULT_REPOSITORY_DOCUMENT.to_owned()],
+        };
+        let file_shape_suffixes = required_suffixes(
+            inputs.configured,
+            "policy.file_shape.source_suffixes",
+            inputs.file_shape_suffixes,
+        )?;
+        let complexity_suffixes = required_suffixes(
+            inputs.configured,
+            "policy.languages.complexity",
+            inputs.complexity_suffixes,
+        )?;
+        let magic_suffixes = required_suffixes(
+            inputs.configured,
+            "policy.languages.magic",
+            inputs.magic_suffixes,
+        )?;
+        Ok(Self {
+            tracked_sources,
+            policy_authorities,
+            configured: inputs.configured,
+            repository_documents,
+            file_shape_suffixes,
+            complexity_suffixes,
+            magic_suffixes,
+            package_roots: selectors("policy.package_roots", inputs.package_roots)?,
+            generated_paths: selectors("policy.generated_paths", inputs.generated_paths)?,
+            test_paths: selectors("policy.test_paths", inputs.test_paths)?,
+        })
+    }
+
+    pub(super) fn applicable_gates(&self, changed_sources: &[String]) -> Vec<GateId> {
+        let mut gates = ALWAYS.into_iter().collect::<BTreeSet<_>>();
+        if !self.tracked_sources.is_empty() || !changed_sources.is_empty() {
+            gates.insert(GateId::LocalPaths);
+        }
+        if self.configured
+            || changed_sources
+                .iter()
+                .any(|path| self.policy_authority(path))
+        {
+            gates.extend(CONFIGURATION_GATES);
+        }
+        for path in &self.tracked_sources {
+            gates.extend(self.gates_for_known_path(path));
+        }
+        for path in changed_sources {
+            gates.extend(self.gates_for_known_path(path));
+        }
+        gates.into_iter().collect()
+    }
+
+    pub(super) fn gates_for_path(&self, path: &str) -> (Vec<GateId>, Option<String>) {
+        if self.policy_authority(path) {
+            return (
+                Vec::new(),
+                Some(format!("{path:?} changes packaged selection policy")),
+            );
+        }
+        if self.generated(path) {
+            return (vec![GateId::LocalPaths], None);
+        }
+        let gates = self.gates_for_known_path(path);
+        if !gates.iter().any(|gate_id| *gate_id != GateId::LocalPaths) {
+            return (
+                Vec::new(),
+                Some(format!(
+                    "{path:?} has no repository-declared packaged policy class"
+                )),
+            );
+        }
+        (gates, None)
+    }
+
+    fn gates_for_known_path(&self, path: &str) -> Vec<GateId> {
+        let mut gates = BTreeSet::new();
+        if contains_exact(&self.tracked_sources, path) {
+            gates.insert(GateId::LocalPaths);
+        }
+        if self.generated(path) {
+            return gates.into_iter().collect();
+        }
+        let repository_document = contains_exact(&self.repository_documents, path);
+        if repository_document {
+            gates.insert(GateId::RepoDocs);
+        }
+        if !repository_document && selected_suffix(path, &self.file_shape_suffixes) {
+            gates.insert(GateId::FileShape);
+        }
+        if selected_suffix(path, &self.complexity_suffixes) {
+            gates.insert(GateId::Complexity);
+        }
+        if selected_suffix(path, &self.magic_suffixes) {
+            gates.insert(GateId::MagicNumbers);
+        }
+
+        let extension = extension(path);
+        match extension.as_str() {
+            "rs" => {
+                if self.rust_workspace() {
+                    gates.extend([GateId::Formatters, GateId::RustTypecheck]);
+                }
+                gates.insert(GateId::MarkdownLinks);
+                gates.extend([GateId::EnvPolicy, GateId::EnvNameLedger]);
+            }
+            "js" | "mjs" | "cjs" => {
+                gates.extend([
+                    GateId::JavascriptUnused,
+                    GateId::EnvPolicy,
+                    GateId::EnvNameLedger,
+                ]);
+            }
+            "md" => {
+                gates.extend([GateId::Taste, GateId::MarkdownLinks]);
+            }
+            "txt" | "rst" => {
+                gates.insert(GateId::Taste);
+            }
+            "py" | "pyi" => {
+                if self.python_project() {
+                    gates.insert(GateId::PythonTypecheck);
+                }
+                if self.python_source(path) {
+                    gates.extend(PYTHON_HYGIENE);
+                    if self.python_project() {
+                        gates.insert(GateId::RepoShape);
+                    }
+                }
+                if self.test_source(path) {
+                    gates.insert(GateId::AssertionFreeTests);
+                }
+                gates.extend([GateId::EnvPolicy, GateId::EnvNameLedger]);
+            }
+            "cs" => {
+                gates.extend([
+                    GateId::CsharpUnusedCandidates,
+                    GateId::EnvPolicy,
+                    GateId::EnvNameLedger,
+                ]);
+            }
+            "sh" | "bash" | "zsh" | "ts" | "tsx" | "jsx" => {
+                gates.extend([GateId::EnvPolicy, GateId::EnvNameLedger]);
+            }
+            "toml" if cargo_manifest(path) && self.rust_workspace() => {
+                gates.extend([GateId::Formatters, GateId::RustTypecheck]);
+            }
+            "toml" if path == "rust-toolchain.toml" && self.rust_workspace() => {
+                gates.extend([GateId::Formatters, GateId::RustTypecheck]);
+            }
+            "toml" if path == "pyproject.toml" && self.python_project() => {
+                gates.extend([GateId::RepoShape, GateId::PythonTypecheck]);
+            }
+            "lock" if path == "Cargo.lock" && self.rust_workspace() => {
+                gates.insert(GateId::RustTypecheck);
+            }
+            _ => {}
+        }
+        gates.into_iter().collect()
+    }
+
+    fn policy_authority(&self, path: &str) -> bool {
+        contains_exact(&self.policy_authorities, path)
+    }
+
+    fn generated(&self, path: &str) -> bool {
+        matches_any(&self.generated_paths, path)
+    }
+
+    fn rust_workspace(&self) -> bool {
+        contains_exact(&self.tracked_sources, "Cargo.toml")
+    }
+
+    fn python_project(&self) -> bool {
+        contains_exact(&self.tracked_sources, "pyproject.toml")
+    }
+
+    fn python_source(&self, path: &str) -> bool {
+        self.package_roots.is_empty() || matches_any(&self.package_roots, path)
+    }
+
+    fn test_source(&self, path: &str) -> bool {
+        self.test_paths.is_empty() || matches_any(&self.test_paths, path)
+    }
+}
+
+fn exact_paths(label: &str, paths: &[String]) -> Result<Vec<String>, ChangeSelectionError> {
+    let mut normalized = paths.to_vec();
+    for path in &normalized {
+        if !valid_repository_path(path) {
+            return Err(ChangeSelectionError::new(format!(
+                "{label} {path:?} is not a normalized repository-relative path"
+            )));
+        }
+    }
+    normalized.sort();
+    normalized.dedup();
+    Ok(normalized)
+}
+
+fn selectors(field: &str, values: &[String]) -> Result<Vec<String>, ChangeSelectionError> {
+    let mut selectors = values
+        .iter()
+        .map(|value| value.trim().trim_end_matches('/').to_owned())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    for selector in &selectors {
+        crate::validate_tracked_path_selector(selector)
+            .map_err(|reason| ChangeSelectionError::new(format!("{field} {reason}")))?;
+    }
+    selectors.sort();
+    selectors.dedup();
+    Ok(selectors)
+}
+
+fn required_suffixes(
+    configured: bool,
+    field: &str,
+    values: Option<&[String]>,
+) -> Result<Vec<String>, ChangeSelectionError> {
+    if !configured {
+        return Ok(Vec::new());
+    }
+    let Some(values) = values else {
+        return Err(ChangeSelectionError::new(format!(
+            "{field} must be declared; no file-class selection is packaged to fall back on"
+        )));
+    };
+    if values.is_empty() {
+        return Err(ChangeSelectionError::new(format!(
+            "{field} must contain at least one file suffix"
+        )));
+    }
+    let mut suffixes = values.to_vec();
+    for suffix in &suffixes {
+        if !suffix.starts_with('.') || suffix.len() == 1 || suffix.contains('/') {
+            return Err(ChangeSelectionError::new(format!(
+                "{field} contains invalid suffix {suffix:?}"
+            )));
+        }
+    }
+    suffixes.sort_by_key(|suffix| suffix.to_ascii_lowercase());
+    suffixes.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    Ok(suffixes)
+}
+
+fn matches_any(selectors: &[String], path: &str) -> bool {
+    selectors.iter().any(|selector| {
+        crate::tracked_path_selector_matches(selector, path)
+            .expect("selection policy retains only compiled path selectors")
+    })
+}
+
+fn selected_suffix(path: &str, suffixes: &[String]) -> bool {
+    let Some(extension) = Path::new(path).extension() else {
+        return false;
+    };
+    let extension = format!(".{}", extension.to_string_lossy().to_ascii_lowercase());
+    suffixes
+        .iter()
+        .any(|suffix| suffix.eq_ignore_ascii_case(&extension))
+}
+
+fn extension(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn cargo_manifest(path: &str) -> bool {
+    Path::new(path).file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
+}
+
+fn contains_exact(values: &[String], expected: &str) -> bool {
+    values
+        .binary_search_by(|candidate| candidate.as_str().cmp(expected))
+        .is_ok()
+}
