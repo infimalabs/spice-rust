@@ -22,7 +22,7 @@ struct Case {
 enum OutputKind {
     Document,
     ChildStream,
-    HookUsage,
+    HookSilent,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -75,8 +75,8 @@ const CASES: &[Case] = &[
     case("gate pre-commit", &["gate", "pre-commit"]),
     Case {
         path: "gate reference-transaction",
-        arguments: &["gate", "reference-transaction"],
-        output: OutputKind::HookUsage,
+        arguments: &["gate", "reference-transaction", "committed"],
+        output: OutputKind::HookSilent,
         expected: ExpectedOutcome::Generic,
     },
     case("gate receipt", &["gate", "receipt"]),
@@ -292,8 +292,13 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
         assert_eq!(text.status.code(), json.status.code(), "{}", case.path);
         assert_exit(case, &text, "text");
         assert_exit(case, &json, "JSON");
-        assert_one_stream(&text, case.path);
-        assert_one_stream(&json, case.path);
+        if case.output != OutputKind::HookSilent {
+            assert_one_stream(&text, case.path);
+            assert_one_stream(&json, case.path);
+        } else {
+            assert!(text.stdout.is_empty() && text.stderr.is_empty());
+            assert!(json.stdout.is_empty() && json.stderr.is_empty());
+        }
         assert_no_placeholder(&text, case.path);
         assert_no_placeholder(&json, case.path);
         assert_expected_outcome(case, &text, &json);
@@ -391,10 +396,10 @@ fn assert_exit(case: &Case, output: &Output, form: &str) {
             "{} {form} did not preserve the selected child exit",
             case.path,
         ),
-        OutputKind::HookUsage => assert_eq!(
+        OutputKind::HookSilent => assert_eq!(
             output.status.code(),
-            Some(2),
-            "{} {form} did not preserve the hook usage exit",
+            Some(0),
+            "{} {form} did not preserve the inert hook exit",
             case.path,
         ),
     }

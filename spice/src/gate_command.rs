@@ -128,7 +128,20 @@ pub(crate) fn pre_commit_worker_entry(
     arguments: impl Iterator<Item = std::ffi::OsString>,
 ) -> Option<i32> {
     let arguments = arguments.collect::<Vec<_>>();
-    reference_transaction::entry(arguments.iter().cloned())
+    let json_count = arguments
+        .iter()
+        .skip(1)
+        .filter(|argument| argument.as_os_str() == std::ffi::OsStr::new("--json"))
+        .count();
+    let reference_arguments = (json_count <= 1).then(|| {
+        arguments
+            .iter()
+            .filter(|argument| argument.as_os_str() != std::ffi::OsStr::new("--json"))
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    reference_arguments
+        .and_then(|arguments| reference_transaction::entry(arguments.into_iter()))
         .or_else(|| pre_commit::worker_entry(arguments.into_iter()))
 }
 
