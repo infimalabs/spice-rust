@@ -65,6 +65,11 @@ admission = [
     "cargo", "metadata", "--no-deps", "--offline", "--format-version", "1",
 ]
 
+# Installed packaged gates run no test process unless the repository names a
+# compiled engine. This source enables the canonical Cargo workspace selector;
+# repository data cannot replace its executable or argument contract.
+test_engines = ["cargo-workspace"]
+
 # Every environment name this workspace defines, spelled once.
 #
 # This is the workspace's own vocabulary: the names Spice writes and the names

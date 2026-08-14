@@ -149,6 +149,11 @@ fn positional(syntax: &'static str, required: bool, trailing: bool) -> Result<Ar
             .last(true)
             .allow_hyphen_values(true)
             .value_parser(OsStringValueParser::new());
+    } else if name == "MESSAGE_FILE" {
+        // Git hook paths are native filesystem operands. On Unix they need
+        // not be UTF-8, so this one typed positional must retain `OsString`
+        // all the way from Clap to `Path`.
+        argument = argument.value_parser(OsStringValueParser::new());
     }
     Ok(argument)
 }

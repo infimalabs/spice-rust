@@ -94,16 +94,21 @@ fn delegated_install(
     }
 }
 
-/// Audit that an activated hook set can reach the installed product.
+/// Audit that the activated hooks and receipt own this exact built product.
 ///
-/// Product currency belongs to the digest-bound installer. This check owns
-/// only the activation invariant: an active hook resolves one executable Spice
-/// target and never an xtask copy or source-build fallback.
+/// The verifier builds `current_binary` before calling this function. The audit
+/// remains side-effect free: it checks the selected hook path, validates every
+/// receipt-owned asset, and compares the installed binary with those freshly
+/// built bytes. The hook hot path does none of this work.
 ///
 /// # Errors
 ///
 /// Returns repository discovery, installed-target, Git, or output failures.
-pub fn audit_entry_point(root: &Path, output: &mut impl Write) -> Result<(), HookActivationError> {
+pub fn audit_entry_point(
+    root: &Path,
+    current_binary: &Path,
+    output: &mut impl Write,
+) -> Result<(), HookActivationError> {
     let repository = spice::repository::Repository::discover(root)
         .map_err(|error| HookActivationError::Repository(error.to_string()))?;
     let hooks = repository.common_dir().join(".spice-install/git-hooks");
@@ -114,20 +119,24 @@ pub fn audit_entry_point(root: &Path, output: &mut impl Write) -> Result<(), Hoo
     ))?
     .unwrap_or_default();
     if configured != hooks.to_string_lossy() {
-        return writeln!(
-            output,
-            "reference-transaction target not activated; core.hooksPath is {configured:?}"
-        )
-        .map_err(HookActivationError::Output);
+        return Err(HookActivationError::ConfigurationDrift {
+            expected: hooks,
+            observed: configured,
+        });
     }
-    let path = repository.common_dir().join(ENTRY_POINT_PATH);
-    if !is_executable(&path)? {
-        return Err(HookActivationError::HookNotExecutable(path));
+    let audit = spice::install::audit_appliance(&repository, current_binary)
+        .map_err(HookActivationError::ApplianceInspect)?;
+    if !audit.is_current() {
+        return Err(HookActivationError::Appliance {
+            state: audit.state(),
+            detail: audit.detail().to_owned(),
+            repair: audit.repair().map(str::to_owned),
+        });
     }
     writeln!(
         output,
-        "reference-transaction target is installed and executable at {}",
-        path.display()
+        "installed Spice appliance is current: {}",
+        audit.detail()
     )
     .map_err(HookActivationError::Output)
 }
@@ -226,6 +235,16 @@ pub enum HookActivationError {
         operation: &'static str,
         detail: String,
     },
+    ConfigurationDrift {
+        expected: PathBuf,
+        observed: String,
+    },
+    Appliance {
+        state: spice::install::ApplianceState,
+        detail: String,
+        repair: Option<String>,
+    },
+    ApplianceInspect(spice::install::InstallError),
     Output(io::Error),
 }
 
@@ -297,6 +316,27 @@ impl fmt::Display for HookActivationError {
                     "installed Spice returned an invalid reply while trying to {operation}: {detail}"
                 )
             }
+            Self::ConfigurationDrift { expected, observed } => write!(
+                formatter,
+                "hook activation failed: expected {}, found {observed}",
+                expected.display()
+            ),
+            Self::Appliance {
+                state,
+                detail,
+                repair,
+            } => write!(
+                formatter,
+                "installed Spice appliance is {}: {detail}; preview repair with `{}` and apply \
+                 its printed digest",
+                state.as_str(),
+                repair
+                    .as_deref()
+                    .unwrap_or("inspect the installed receipt before retrying"),
+            ),
+            Self::ApplianceInspect(error) => {
+                write!(formatter, "inspect installed Spice appliance: {error}")
+            }
             Self::Output(source) => write!(formatter, "hook activation output failed: {source}"),
         }
     }
@@ -309,12 +349,15 @@ impl std::error::Error for HookActivationError {
             | Self::Launch { source, .. }
             | Self::InstalledLaunch { source, .. }
             | Self::Output(source) => Some(source),
+            Self::ApplianceInspect(error) => Some(error),
             Self::Repository(_)
             | Self::HookNotExecutable(_)
             | Self::Exit { .. }
             | Self::InstalledExit { .. }
-            | Self::NonUtf8 { .. } => None,
-            Self::InvalidReply { .. } => None,
+            | Self::NonUtf8 { .. }
+            | Self::ConfigurationDrift { .. }
+            | Self::InvalidReply { .. }
+            | Self::Appliance { .. } => None,
         }
     }
 }
@@ -324,6 +367,24 @@ mod tests {
     use std::io;
 
     use super::{HookActivationError, configured_hooks_path};
+
+    #[test]
+    fn appliance_refusal_names_state_evidence_and_exact_repair() {
+        let error = HookActivationError::Appliance {
+            state: spice::install::ApplianceState::HookTampered,
+            detail: "fixture receipt-bound hook differs".to_owned(),
+            repair: Some("target/debug/spice install".to_owned()),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            concat!(
+                "installed Spice appliance is hook-tampered: ",
+                "fixture receipt-bound hook differs; preview repair with ",
+                "`target/debug/spice install` and apply its printed digest"
+            )
+        );
+    }
 
     #[test]
     fn only_an_unset_hook_path_is_an_inactive_configuration() {

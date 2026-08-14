@@ -14,11 +14,16 @@ use serde::{Deserialize, Serialize};
 use wire::Digest;
 
 use crate::kill::{KillRun, MutantDisposition, SurvivorRate};
-use crate::manifest::GateId;
 
 mod fold;
+mod reports;
 
 use fold::{rate_regressed, subsumption_findings};
+pub use reports::{
+    MutationCoverageFinding, MutationCoverageReport, SubsumptionRelation, SuiteSeamFinding,
+    SuiteSeamReport, TestEvidenceReport, TestEvidenceStanding, TestSubsumptionFinding,
+    TestSubsumptionReport,
+};
 
 /// The one combined test-evidence report schema this build emits.
 pub const TEST_EVIDENCE_REPORT_VERSION: u64 = 1;
@@ -75,7 +80,9 @@ impl TestSelectionEdge {
 }
 
 /// Version of the staged-source test-selection report.
-pub const TEST_SELECTION_REPORT_VERSION: u64 = 1;
+pub const TEST_SELECTION_REPORT_VERSION: u64 = 2;
+
+const CARGO_WORKSPACE_ENGINE: &str = "cargo-workspace";
 
 /// Typed staged-source plan and its exact source-to-test provenance.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -84,6 +91,7 @@ pub struct TestSelectionReport {
     version: u64,
     source: Digest,
     changed_sources: Vec<String>,
+    engines: Vec<String>,
     tests: Vec<String>,
     edges: Vec<TestSelectionEdge>,
     coverage: CoverageCompleteness,
@@ -97,7 +105,25 @@ impl TestSelectionReport {
     /// selection remains encodable but never admits execution as sufficient.
     pub(crate) fn new(
         source: Digest,
+        changed_sources: Vec<String>,
+        tests: Vec<String>,
+        edges: Vec<TestSelectionEdge>,
+        coverage: CoverageCompleteness,
+    ) -> Result<Self, TestEvidenceError> {
+        Self::new_with_engines(
+            source,
+            changed_sources,
+            vec![CARGO_WORKSPACE_ENGINE.to_owned()],
+            tests,
+            edges,
+            coverage,
+        )
+    }
+
+    fn new_with_engines(
+        source: Digest,
         mut changed_sources: Vec<String>,
+        mut engines: Vec<String>,
         mut tests: Vec<String>,
         mut edges: Vec<TestSelectionEdge>,
         coverage: CoverageCompleteness,
@@ -109,6 +135,20 @@ impl TestSelectionReport {
         if let Some(path) = repeated(&changed_sources) {
             return Err(TestEvidenceError::new(format!(
                 "changed build source {path:?} is repeated"
+            )));
+        }
+        for engine in &engines {
+            require_text("selected test engine", engine)?;
+            if engine != CARGO_WORKSPACE_ENGINE {
+                return Err(TestEvidenceError::new(format!(
+                    "unsupported selected test engine {engine:?}"
+                )));
+            }
+        }
+        engines.sort();
+        if let Some(engine) = repeated(&engines) {
+            return Err(TestEvidenceError::new(format!(
+                "selected test engine {engine:?} is repeated"
             )));
         }
         for test in &tests {
@@ -147,7 +187,12 @@ impl TestSelectionReport {
                 )));
             }
         }
-        if matches!(coverage, CoverageCompleteness::Complete) {
+        if engines.is_empty() && (!tests.is_empty() || !edges.is_empty()) {
+            return Err(TestEvidenceError::new(
+                "zero-engine test selection cannot name tests or reach edges",
+            ));
+        }
+        if matches!(coverage, CoverageCompleteness::Complete) && !engines.is_empty() {
             if let Some(source) = changed_sources
                 .iter()
                 .find(|source| !edges.iter().any(|edge| edge.source == **source))
@@ -169,10 +214,26 @@ impl TestSelectionReport {
             version: TEST_SELECTION_REPORT_VERSION,
             source,
             changed_sources,
+            engines,
             tests,
             edges,
             coverage,
         })
+    }
+
+    /// Publish explicit complete evidence that policy selected no test engine.
+    pub fn complete_without_engines(
+        source: Digest,
+        changed_sources: Vec<String>,
+    ) -> Result<Self, TestEvidenceError> {
+        Self::new_with_engines(
+            source,
+            changed_sources,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            CoverageCompleteness::Complete,
+        )
     }
 
     /// Current report schema.
@@ -187,10 +248,16 @@ impl TestSelectionReport {
         &self.source
     }
 
-    /// Sorted changed Rust sources considered by the selector.
+    /// Sorted changed sources considered by the selected engines.
     #[must_use]
     pub fn changed_sources(&self) -> &[String] {
         &self.changed_sources
+    }
+
+    /// Sorted packaged test engines selected for this source.
+    #[must_use]
+    pub fn engines(&self) -> &[String] {
+        &self.engines
     }
 
     /// Sorted package-qualified test targets selected for execution.
@@ -233,9 +300,10 @@ impl TestSelectionReport {
                 report.version
             )));
         }
-        Self::new(
+        Self::new_with_engines(
             report.source,
             report.changed_sources,
+            report.engines,
             report.tests,
             report.edges,
             report.coverage,
@@ -842,409 +910,6 @@ impl TestEvidenceGraph {
             suite_seam: self.suite_seam(),
             mutation_coverage: self.mutation_coverage(),
             test_subsumption: self.test_subsumption(),
-        }
-    }
-}
-
-/// One report surface retaining the shared evidence and all three folds.
-///
-/// The test and mutation executions are copied observations. They retain exact
-/// selected-source, changed-path, test, covered-line, and mutant provenance but
-/// contain no executable, environment, bound, contract, or runner authority.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TestEvidenceReport {
-    version: u64,
-    source: Digest,
-    tests: CanonicalTestExecution,
-    mutation: MutationExecution,
-    waivers: Vec<StandingMutationWaiver>,
-    suite_seam: SuiteSeamReport,
-    mutation_coverage: MutationCoverageReport,
-    test_subsumption: TestSubsumptionReport,
-}
-
-impl TestEvidenceReport {
-    /// Current report schema.
-    #[must_use]
-    pub const fn version(&self) -> u64 {
-        self.version
-    }
-
-    /// Source identity shared by both canonical executions.
-    #[must_use]
-    pub const fn source(&self) -> &Digest {
-        &self.source
-    }
-
-    /// Canonical workspace-test evidence retained by the report.
-    #[must_use]
-    pub const fn tests(&self) -> &CanonicalTestExecution {
-        &self.tests
-    }
-
-    /// Canonical mutation evidence retained by the report.
-    #[must_use]
-    pub const fn mutation(&self) -> &MutationExecution {
-        &self.mutation
-    }
-
-    /// Exact standing mutation waivers applied by the folds.
-    #[must_use]
-    pub fn waivers(&self) -> &[StandingMutationWaiver] {
-        &self.waivers
-    }
-
-    /// Blocking suite-seam fold.
-    #[must_use]
-    pub const fn suite_seam(&self) -> &SuiteSeamReport {
-        &self.suite_seam
-    }
-
-    /// Blocking mutation-coverage fold.
-    #[must_use]
-    pub const fn mutation_coverage(&self) -> &MutationCoverageReport {
-        &self.mutation_coverage
-    }
-
-    /// Advisory test-subsumption fold.
-    #[must_use]
-    pub const fn test_subsumption(&self) -> &TestSubsumptionReport {
-        &self.test_subsumption
-    }
-
-    /// Whether one registered test-evidence instrument admits publication.
-    ///
-    /// Subsumption findings are advisory and admit; unknown subsumption evidence
-    /// does not. IDs outside the test-evidence roster have no decision here.
-    #[must_use]
-    pub fn instrument_admits(&self, gate_id: GateId) -> Option<bool> {
-        match gate_id {
-            GateId::SuiteSeam => Some(self.suite_seam.admits()),
-            GateId::MutationCoverage => Some(self.mutation_coverage.admits()),
-            GateId::TestSubsumption => Some(self.test_subsumption.admits()),
-            _ => None,
-        }
-    }
-
-    /// Encode one stable JSON document containing evidence and every fold.
-    ///
-    /// # Errors
-    ///
-    /// Returns a serialization failure without emitting partial bytes.
-    pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
-        serde_json::to_vec(self)
-    }
-}
-
-/// Common standing vocabulary for the three graph folds.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum TestEvidenceStanding {
-    Clean,
-    Findings,
-    Unknown,
-}
-
-/// One exact changed-source reach edge to a test the execution did not run.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SuiteSeamFinding {
-    test: String,
-    source: String,
-}
-
-impl SuiteSeamFinding {
-    /// Exact test reached by the change but absent from the canonical execution.
-    #[must_use]
-    pub fn test(&self) -> &str {
-        &self.test
-    }
-
-    /// Exact changed production source.
-    #[must_use]
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-}
-
-/// Binary suite-seam fold.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SuiteSeamReport {
-    standing: TestEvidenceStanding,
-    findings: Vec<SuiteSeamFinding>,
-    reason: Option<String>,
-}
-
-impl SuiteSeamReport {
-    /// Registered instrument identity.
-    #[must_use]
-    pub const fn gate_id(&self) -> GateId {
-        GateId::SuiteSeam
-    }
-
-    /// Clean, blocking findings, or unknown coverage.
-    #[must_use]
-    pub const fn standing(&self) -> TestEvidenceStanding {
-        self.standing
-    }
-
-    /// Exact unrun-test/changed-source reach edges.
-    #[must_use]
-    pub fn findings(&self) -> &[SuiteSeamFinding] {
-        &self.findings
-    }
-
-    /// Loud reason retained for unknown evidence.
-    #[must_use]
-    pub fn reason(&self) -> Option<&str> {
-        self.reason.as_deref()
-    }
-
-    /// Only complete coverage with no seam finding admits landing.
-    #[must_use]
-    pub const fn admits(&self) -> bool {
-        matches!(self.standing, TestEvidenceStanding::Clean)
-    }
-
-    fn measured(findings: Vec<SuiteSeamFinding>) -> Self {
-        Self {
-            standing: if findings.is_empty() {
-                TestEvidenceStanding::Clean
-            } else {
-                TestEvidenceStanding::Findings
-            },
-            findings,
-            reason: None,
-        }
-    }
-
-    fn unknown(reason: String) -> Self {
-        Self {
-            standing: TestEvidenceStanding::Unknown,
-            findings: Vec::new(),
-            reason: Some(reason),
-        }
-    }
-}
-
-/// One unwaived confirmed survivor retained by a regressed mutation fold.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MutationCoverageFinding {
-    mutant: String,
-    source: String,
-}
-
-impl MutationCoverageFinding {
-    /// Exact survivor identity.
-    #[must_use]
-    pub fn mutant(&self) -> &str {
-        &self.mutant
-    }
-
-    /// Exact production source from structured mutation inventory evidence.
-    #[must_use]
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-}
-
-/// Differential mutation-coverage fold.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MutationCoverageReport {
-    standing: TestEvidenceStanding,
-    floor: Option<SurvivorRate>,
-    measured: Option<SurvivorRate>,
-    findings: Vec<MutationCoverageFinding>,
-    stale_waivers: Vec<StandingMutationWaiver>,
-    reason: Option<String>,
-}
-
-impl MutationCoverageReport {
-    /// Registered instrument identity.
-    #[must_use]
-    pub const fn gate_id(&self) -> GateId {
-        GateId::MutationCoverage
-    }
-
-    /// Clean, regressed, or unknown mutation evidence.
-    #[must_use]
-    pub const fn standing(&self) -> TestEvidenceStanding {
-        self.standing
-    }
-
-    /// Committed lower-is-better survivor floor.
-    #[must_use]
-    pub const fn floor(&self) -> Option<SurvivorRate> {
-        self.floor
-    }
-
-    /// Current survivor rate after exact standing waivers.
-    #[must_use]
-    pub const fn measured(&self) -> Option<SurvivorRate> {
-        self.measured
-    }
-
-    /// Exact unwaived survivors when and only when the rate regressed.
-    #[must_use]
-    pub fn findings(&self) -> &[MutationCoverageFinding] {
-        &self.findings
-    }
-
-    /// Standing entries that no longer name a current confirmed survivor.
-    #[must_use]
-    pub fn stale_waivers(&self) -> &[StandingMutationWaiver] {
-        &self.stale_waivers
-    }
-
-    /// Loud reason retained for unknown evidence.
-    #[must_use]
-    pub fn reason(&self) -> Option<&str> {
-        self.reason.as_deref()
-    }
-
-    /// Only a proven non-regression admits; stale waiver review remains advisory.
-    #[must_use]
-    pub const fn admits(&self) -> bool {
-        matches!(self.standing, TestEvidenceStanding::Clean)
-    }
-
-    fn from_measurement(
-        floor: SurvivorRate,
-        measured: SurvivorRate,
-        findings: Vec<MutationCoverageFinding>,
-        stale_waivers: Vec<StandingMutationWaiver>,
-    ) -> Self {
-        Self {
-            standing: if findings.is_empty() {
-                TestEvidenceStanding::Clean
-            } else {
-                TestEvidenceStanding::Findings
-            },
-            floor: Some(floor),
-            measured: Some(measured),
-            findings,
-            stale_waivers,
-            reason: None,
-        }
-    }
-
-    fn unknown(reason: String, floor: Option<SurvivorRate>) -> Self {
-        Self {
-            standing: TestEvidenceStanding::Unknown,
-            floor,
-            measured: None,
-            findings: Vec::new(),
-            stale_waivers: Vec::new(),
-            reason: Some(reason),
-        }
-    }
-}
-
-/// Exact coverage-containment relation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SubsumptionRelation {
-    Equal,
-    StrictSubset,
-}
-
-/// One advisory coverage-containment candidate with source provenance.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TestSubsumptionFinding {
-    test: String,
-    contained_by: String,
-    relation: SubsumptionRelation,
-    covered_sources: Vec<CoveredSource>,
-}
-
-impl TestSubsumptionFinding {
-    /// Candidate test whose coverage is contained.
-    #[must_use]
-    pub fn test(&self) -> &str {
-        &self.test
-    }
-
-    /// Deterministic representative whose coverage contains the candidate.
-    #[must_use]
-    pub fn contained_by(&self) -> &str {
-        &self.contained_by
-    }
-
-    /// Equal-feature or strict-subset relation.
-    #[must_use]
-    pub const fn relation(&self) -> SubsumptionRelation {
-        self.relation
-    }
-
-    /// Exact paths and lines covered by the candidate.
-    #[must_use]
-    pub fn covered_sources(&self) -> &[CoveredSource] {
-        &self.covered_sources
-    }
-}
-
-/// Non-blocking test-subsumption fold.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TestSubsumptionReport {
-    standing: TestEvidenceStanding,
-    findings: Vec<TestSubsumptionFinding>,
-    reason: Option<String>,
-}
-
-impl TestSubsumptionReport {
-    /// Registered instrument identity.
-    #[must_use]
-    pub const fn gate_id(&self) -> GateId {
-        GateId::TestSubsumption
-    }
-
-    /// Clean, advisory findings, or unknown coverage.
-    #[must_use]
-    pub const fn standing(&self) -> TestEvidenceStanding {
-        self.standing
-    }
-
-    /// Deterministic advisory coverage-containment candidates.
-    #[must_use]
-    pub fn findings(&self) -> &[TestSubsumptionFinding] {
-        &self.findings
-    }
-
-    /// Loud reason retained for unknown evidence.
-    #[must_use]
-    pub fn reason(&self) -> Option<&str> {
-        self.reason.as_deref()
-    }
-
-    /// Findings are advisory, but unknown coverage never admits a clean report.
-    #[must_use]
-    pub const fn admits(&self) -> bool {
-        !matches!(self.standing, TestEvidenceStanding::Unknown)
-    }
-
-    fn measured(findings: Vec<TestSubsumptionFinding>) -> Self {
-        Self {
-            standing: if findings.is_empty() {
-                TestEvidenceStanding::Clean
-            } else {
-                TestEvidenceStanding::Findings
-            },
-            findings,
-            reason: None,
-        }
-    }
-
-    fn unknown(reason: String) -> Self {
-        Self {
-            standing: TestEvidenceStanding::Unknown,
-            findings: Vec::new(),
-            reason: Some(reason),
         }
     }
 }

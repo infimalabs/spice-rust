@@ -9,6 +9,7 @@ use std::thread;
 
 use super::*;
 
+mod audit;
 mod refresh;
 mod safety;
 

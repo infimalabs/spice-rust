@@ -172,7 +172,7 @@ pub(super) fn exhaustive_selection_report(
     .map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
-fn test_relevant_source(path: &str) -> bool {
+pub(super) fn test_relevant_source(path: &str) -> bool {
     Path::new(path).extension() == Some(OsStr::new("rs"))
         || Path::new(path).file_name() == Some(OsStr::new("Cargo.toml"))
         || workspace_wide_source(path)

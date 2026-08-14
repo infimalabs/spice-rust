@@ -13,7 +13,7 @@ mod tests {
 
     /// The report a current entry point produces, so the order test can pin
     /// that the audit ran without reaching a real repository.
-    const ENTRY_POINT_FIXTURE: &str = "fixture guard matches this build\n";
+    const ENTRY_POINT_FIXTURE: &str = "fixture appliance matches this build\n";
 
     #[derive(Default)]
     struct RefuseDiagnosticWrite {
@@ -288,7 +288,12 @@ mod tests {
         assert!(matches!(error, VerifyError::BatteryRefused));
         assert_eq!(
             runner.calls(),
-            [ENTRY_POINT_LABEL, FORMAT_LABEL, STRUCTURAL_PREFLIGHT_LABEL,]
+            [
+                RESIDENT_BUILD_LABEL,
+                ENTRY_POINT_LABEL,
+                FORMAT_LABEL,
+                STRUCTURAL_PREFLIGHT_LABEL,
+            ]
         );
         assert_eq!(runner.state_accepts(), 0);
         let output = String::from_utf8(output).expect("fixture output is UTF-8");
@@ -308,7 +313,7 @@ mod tests {
         verify_package_with("gate", &runner, &mut output)
             .expect("scoped package verification succeeds");
 
-        assert_eq!(runner.calls(), [ENTRY_POINT_LABEL]);
+        assert!(runner.calls().is_empty());
         let expected_calls = SCOPED_COMMANDS
             .into_iter()
             .map(|command| (command, "gate".to_owned()))
@@ -322,7 +327,6 @@ mod tests {
         )));
         let skipped_actions = VERIFY_ACTIONS
             .iter()
-            .filter(|action| !matches!(action, Action::EntryPoint))
             .map(|action| action.label())
             .collect::<Vec<_>>()
             .join(", ");
@@ -338,8 +342,8 @@ mod tests {
         assert!(output.contains(&format!(
             "[verify] scoped gate arms skipped: {skipped_arms}\n"
         )));
-        assert_eq!(output.matches("stage=start").count(), 4);
-        assert_eq!(output.matches("stage=terminal").count(), 4);
+        assert_eq!(output.matches("stage=start").count(), 3);
+        assert_eq!(output.matches("stage=terminal").count(), 3);
         assert!(!runner.calls().contains(&BROWSER_LABEL));
         assert!(!runner.calls().contains(&BATTERY_LABEL));
         assert!(!runner.calls().contains(&landing::LABEL));
@@ -374,7 +378,7 @@ mod tests {
             error,
             VerifyError::ScopedExit { code: Some(17), .. }
         ));
-        assert_eq!(runner.calls(), [ENTRY_POINT_LABEL]);
+        assert!(runner.calls().is_empty());
         assert_eq!(
             runner.scoped_calls(),
             [(ScopedCommand::Clippy, "gate".to_owned())]
@@ -384,6 +388,10 @@ mod tests {
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
         const GUARDED_ACTIONS: [Action; 13] = [
+            Action::Command(Step::cargo(
+                "cargo build --locked -p spice --bin spice (freshness reference and canvas resident)",
+                &["build", "--locked", "-p", "spice", "--bin", "spice"],
+            )),
             Action::EntryPoint,
             Action::Format,
             Action::Command(Step::cargo(
@@ -425,10 +433,6 @@ mod tests {
             Action::Command(Step::cargo(
                 "cargo xtask app (canvas compiler evidence)",
                 &["xtask", "app"],
-            )),
-            Action::Command(Step::cargo(
-                "cargo build --locked -p spice --bin spice (canvas resident)",
-                &["build", "--locked", "-p", "spice", "--bin", "spice"],
             )),
             Action::Browser,
             Action::WorkspaceTests,
@@ -507,9 +511,10 @@ mod tests {
     }
 
     /// BROWSER-1kKSWhZk removed one former surface, so real Chromium guards
-    /// the final production edge after the app and native resident are built.
+    /// the final production edge after the Canvas app is built. The one native
+    /// resident build is earlier because it also supplies freshness evidence.
     #[test]
-    fn verifier_builds_one_resident_before_the_real_browser_guard() {
+    fn verifier_builds_one_freshness_reference_and_app_before_browser() {
         let browser = VERIFY_ACTIONS
             .iter()
             .position(|action| *action == Action::Browser)
@@ -517,15 +522,17 @@ mod tests {
 
         assert_eq!(browser, 7);
         let predecessor = VERIFY_ACTIONS[browser - 1];
-        assert!(matches!(predecessor, Action::Command(step) if step.label == RESIDENT_BUILD_LABEL));
-        let app_predecessor = VERIFY_ACTIONS[browser - 2];
-        assert!(matches!(app_predecessor, Action::Command(step) if step.label == CANVAS_APP_LABEL));
-        let wasm_predecessor = VERIFY_ACTIONS[browser - 3];
+        assert!(matches!(predecessor, Action::Command(step) if step.label == CANVAS_APP_LABEL));
+        let wasm_predecessor = VERIFY_ACTIONS[browser - 2];
         let is_wasm = match wasm_predecessor {
             Action::Command(step) => step.arguments.contains(&WASM_TARGET),
             _ => false,
         };
         assert!(is_wasm);
+        assert!(
+            matches!(VERIFY_ACTIONS[0], Action::Command(step) if step.label == RESIDENT_BUILD_LABEL)
+        );
+        assert_eq!(VERIFY_ACTIONS[1], Action::EntryPoint);
         assert_eq!(
             BROWSER_RECEIPT,
             b"BROWSER-1kKSWhZk browser coverage complete\n"
@@ -643,9 +650,8 @@ mod tests {
         );
     }
 
-    /// The audit sits in front of the battery to stop it, not to narrate it, so
-    /// a refusal has to end the run before the first build rather than be
-    /// printed and walked past.
+    /// The audit sits immediately after the one build that supplies its current
+    /// bytes, so a refusal must stop every source-verification action.
     ///
     /// Ordering alone would not settle this: an action that reports and admits
     /// occupies the same slot and passes every order assertion here. What is
@@ -653,7 +659,7 @@ mod tests {
     /// reaches the operator verbatim, because the state it names is one no
     /// amount of re-running the battery clears.
     #[test]
-    fn a_stale_published_guard_stops_verify_before_the_first_build() {
+    fn a_stale_installed_appliance_stops_after_the_current_binary_build() {
         let runner = runner(successful_commands());
         runner.set_entry_point(Err("published guard is not this build's".to_owned()));
         let mut output = Vec::new();
@@ -666,13 +672,13 @@ mod tests {
             error.to_string(),
             "[verify] published guard is not this build's"
         );
-        assert_eq!(runner.calls(), labels()[..1]);
+        assert_eq!(runner.calls(), labels()[..2]);
         let output = String::from_utf8(output).expect("labels are UTF-8");
-        assert_eq!(output.matches("stage=start").count(), 1);
-        assert_eq!(output.matches("stage=terminal").count(), 1);
+        assert_eq!(output.matches("stage=start").count(), 2);
+        assert_eq!(output.matches("stage=terminal").count(), 2);
         assert!(output.contains("disposition=error"));
         assert!(output.contains(&format!("identity={ENTRY_POINT_LABEL:?}")));
-        assert!(!output.contains("ordinal=2/13"));
+        assert!(!output.contains("ordinal=3/13"));
     }
 
     #[test]
@@ -701,9 +707,9 @@ mod tests {
         assert!(matches!(error, VerifyError::Launch { .. }));
         assert_eq!(runner.state_accepts(), 0);
         let calls = runner.calls();
-        assert!(calls.contains(&ENTRY_POINT_LABEL));
-        assert!(calls.contains(&FORMAT_LABEL));
-        assert!(!calls.contains(&VERIFY_ACTIONS[2].label()));
+        assert!(calls.contains(&RESIDENT_BUILD_LABEL));
+        assert!(!calls.contains(&ENTRY_POINT_LABEL));
+        assert!(!calls.contains(&FORMAT_LABEL));
         assert!(!calls.contains(&landing::LABEL));
         assert_calls_are_unique(&calls);
     }

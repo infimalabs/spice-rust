@@ -11,6 +11,7 @@ use wire::{Digest, Domain};
 
 use crate::repository::Repository;
 
+mod audit;
 mod binding;
 mod error;
 mod files;
@@ -22,6 +23,7 @@ mod progress;
 mod record;
 mod validation;
 
+pub use audit::{ApplianceAudit, ApplianceState, audit_appliance};
 use binding::{BoundDestination, bind_destination, validate_operation_binding};
 pub use binding::{Generation, ParentObservation};
 pub use error::InstallError;

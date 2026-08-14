@@ -17,17 +17,21 @@ use sill::{
     Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy, WaitStep,
 };
 
+#[cfg(test)]
+use super::ENTRY_POINT_LABEL;
 use super::verify_timing::{self, Conclusion, Disposition, Stage};
 use super::{
-    Action, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, CommandRun, ENTRY_POINT_LABEL,
-    FORMAT_LABEL, ProcessOutput, RunError, Runner, SCOPED_COMMANDS, STRUCTURAL_PREFLIGHT_LABEL,
-    Status, VERIFY_ACTIONS, VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, valid_package_name,
+    Action, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, CommandRun, FORMAT_LABEL,
+    ProcessOutput, RunError, Runner, SCOPED_COMMANDS, STRUCTURAL_PREFLIGHT_LABEL, Status,
+    VERIFY_ACTIONS, VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, valid_package_name,
 };
 
 mod setup;
 
 /// The explicit full-verifier dependency graph, indexed by report ordinal.
 ///
+/// The current Spice executable is built first and its exact bytes are then
+/// checked against the installed receipt before source verification proceeds.
 /// The compiler-evidence chain is serial and retains its warm build root.
 /// Workspace tests reuse that root only after the Canvas app and resident build
 /// have finished, so a Rust-test branch cannot mask a compiler failure or force
@@ -53,8 +57,8 @@ const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[6],
     &[8],
     &[9],
-    &[2, 4, 5, 6, 7, 8],
-    &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    &[0, 3, 5, 6, 7, 8],
+    &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 ];
 
 /// Three is the fleet-safe ceiling for independently ready outer actions.
@@ -852,17 +856,7 @@ fn verify_package_with_control<R: Runner>(
     }
 
     write_scope_inventory(package, output)?;
-    let total = SCOPED_COMMANDS.len() + 1;
-    run_entry_point_serial(
-        runner,
-        output,
-        Stage {
-            ordinal: 1,
-            total,
-            identity: ENTRY_POINT_LABEL,
-            family: "in-process:entry-point-audit",
-        },
-    )?;
+    let total = SCOPED_COMMANDS.len();
     for (index, command) in SCOPED_COMMANDS.into_iter().enumerate() {
         if cancellation.is_cancelled() {
             return Err(VerifyError::Interrupted);
@@ -871,7 +865,7 @@ fn verify_package_with_control<R: Runner>(
         verify_timing::observe(
             output,
             Stage {
-                ordinal: index + 2,
+                ordinal: index + 1,
                 total,
                 identity: &label,
                 family: "child-process:cargo",
@@ -904,30 +898,6 @@ fn verify_package_with_control<R: Runner>(
     Ok(())
 }
 
-fn run_entry_point_serial<R: Runner>(
-    runner: &R,
-    output: &mut impl Write,
-    stage: Stage<'_>,
-) -> Result<(), VerifyError> {
-    verify_timing::observe(
-        output,
-        stage,
-        || runner.entry_point(),
-        |result, output| match result {
-            Ok(report) => {
-                output
-                    .write_all(report.as_bytes())
-                    .map_err(VerifyError::Output)?;
-                Ok(Conclusion::success((), Disposition::Success))
-            }
-            Err(detail) => Ok(Conclusion::failure(
-                VerifyError::EntryPoint(detail),
-                Disposition::Error,
-            )),
-        },
-    )
-}
-
 fn write_scope_inventory(package: &str, output: &mut impl Write) -> Result<(), VerifyError> {
     writeln!(
         output,
@@ -940,7 +910,6 @@ fn write_scope_inventory(package: &str, output: &mut impl Write) -> Result<(), V
     .map_err(VerifyError::Output)?;
     let skipped_actions = VERIFY_ACTIONS
         .iter()
-        .filter(|action| !matches!(action, Action::EntryPoint))
         .map(|action| action.label())
         .collect::<Vec<_>>()
         .join(", ");

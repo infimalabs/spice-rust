@@ -105,7 +105,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 97);
+    assert_eq!(contracts().len(), 98);
 
     let unaccounted = contracts()
         .iter()
@@ -118,7 +118,8 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 97);
+    assert_eq!(landed, 98);
+    assert_eq!(landing(&["gate", "commit-msg"]), Landing::Landed);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);

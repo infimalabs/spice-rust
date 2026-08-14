@@ -19,6 +19,7 @@ use crate::cli::Contract;
 use spice::change_gate::ChangeGateReport;
 use spice::repository::Repository;
 
+mod commit_message;
 mod pre_commit;
 mod reference_transaction;
 
@@ -116,6 +117,13 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
 /// Run the release-scoped native staged-change gate without command recursion.
 pub(crate) fn pre_commit() -> Outcome<ChangeGateReport> {
     pre_commit::run()
+}
+
+pub(crate) use commit_message::Run as CommitMessageRun;
+
+/// Apply the current repository commit-message policy to Git's message file.
+pub(crate) fn commit_message(matches: &clap::ArgMatches) -> CommitMessageRun {
+    commit_message::run(matches)
 }
 
 pub(crate) fn pre_commit_worker_entry(
