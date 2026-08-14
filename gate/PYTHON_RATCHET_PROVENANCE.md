@@ -167,24 +167,26 @@ general compiled classifier that maps an unknown path class to an exhaustive
 battery. Unsupported suffixes commonly no-op. That is a gap in the Python
 design, not behavior for the Rust port to preserve.
 
-Rust already supplies the stronger rule in `gate/src/change_selection.rs`:
+Rust supplies the stronger rule in `gate/src/change_selection.rs`:
 
 - `select_change_gates` is pure and has no repository parameter.
 - It sorts and deduplicates exact changed paths.
 - Known path classes select their canonical arms.
-- Policy authority paths and unknown or unsupported roots add an escalation.
-- Any escalation selects the complete canonical battery.
+- Policy authority paths and unknown or unsupported roots return a typed,
+  path-specific `ChangeSelectionError`.
+- The ordinary report can encode only local selection; it has no complete
+  battery mode.
 
-The selector's own documentation at `gate/src/change_selection.rs:218-222`
-states the invariant directly: an unprovable path class produces a complete
-battery plan rather than omission or success with unknown evidence. The tests
-named `policy_authority_and_unknown_paths_escalate_to_every_battery_arm`
-demonstrate that behavior.
+The tests `policy_and_unknown_changes_refuse_without_manufacturing_applicable_execution`,
+`current_source_classification_gaps_refuse_with_exact_paths`, and
+`current_source_authorities_refuse_and_local_reports_are_canonical` demonstrate
+that behavior at the packaged and current-source boundaries.
 
 This is the desired interpretation of fail-closed selection. Unknown impact
-widens the finite gate plan; it does not make the selector discover the whole
-repository. An exhaustive selected arm may use a repository-wide authority,
-but that work is an explicit result of escalation, outside the selector.
+does not become omission, success, or ambient complete work: the ordinary gate
+stops before policy and workspace tests. The separately named full verifier
+retains complete repository execution; it is an explicit operator/development
+surface rather than a selector-produced fallback.
 
 ## Evidence for study-to-ratchet promotion
 
@@ -236,8 +238,8 @@ Therefore the proven promotion sequence is:
 | Mechanism | Rust authority | Required retained behavior |
 | --- | --- | --- |
 | Single immutable staged source | `spice/src/change_gate.rs:223-342` | Prepare the staging arm once; feed its exact changes and digest into test and policy selection; refuse source movement. |
-| Pure fail-closed policy selection | `gate/src/change_selection.rs` | Keep selection repository-free; unknown/authority paths select every canonical arm. |
-| Local versus exhaustive test reach | `spice/src/change_gate.rs:272-310` | Continue selecting local workspace tests from exact changes and exhaustive reach only after escalation. |
+| Pure fail-closed policy selection | `gate/src/change_selection.rs` | Keep selection repository-free; unknown/authority paths return exact typed refusals. |
+| Local ordinary versus explicit complete reach | `spice/src/change_gate.rs` | Select local workspace tests from exact changes; reserve complete reach for the separately invoked full verifier. |
 | Merge-aware baseline authority | `gate/src/metrics/baseline.rs` | Keep capture of parents, merge base, and clean-merge authorship; it is stronger than the Python single-ref convention. |
 | Typed ratchet policy | `gate/src/ratchet.rs`, `baseline.toml` | Keep shrink-only global floors and typed evidence. The only current standing floor is `rust.mutation-survivors = 0`; do not replace this authority with ad hoc Python JSON. |
 | Typed state and claims | `gate/src/state` | Keep explicit bounds, latches, claims, and accept/reject publication semantics. |
@@ -254,16 +256,16 @@ Therefore the proven promotion sequence is:
    not an unowned correctness gap. A future digest-bound candidate set may make
    the common path cheaper without creating another execution path.
 
-2. **The exhaustive path is implemented.**
-   Unknown and authority changes select all 27 canonical arms. Full verify runs
-   the same complete battery once, keeps repository-wide repair evidence, and
-   emits one compact source-bound summary rather than repeating the report.
+2. **Ordinary exhaustive fallback is removed.**
+   Unknown and authority changes refuse before selected work. Full verify is
+   the separate complete surface: it runs all 27 canonical arms once, keeps
+   repository-wide repair evidence, and emits one compact source-bound summary.
 
 3. **New-file magic evidence follows the governed Rust rule.**
    When no committed baseline contains a file, there is no delta to ratchet and
    `gate/src/metrics/acquire.rs` returns explicit `EvidenceState::NotApplicable`,
    never `Passed`. An explicit empty baseline still exposes new debt. Unknown
-   path classes separately escalate to the exhaustive battery. Treating every
+   path classes refuse ordinary selection before acquisition. Treating every
    absent baseline as Python's empty finding set is intentionally obsolete.
 
 4. **Production state publication (implemented).**
@@ -277,11 +279,11 @@ Therefore the proven promotion sequence is:
    complete-inventory pruning contract. Production regressions cover both
    preservation and accepted latch creation, hold, and healing.
 
-6. **Inherently global arms escalate explicitly.**
+6. **Inherently global arms remain explicit.**
    Repository-document target inventory, reachability, and similar relational
-   policies use their repository authority after exhaustive selection.
-   Authority and unknown changes choose that same complete path; there is no
-   hidden local substitute.
+   policies use their repository authority when selected by a known class or by
+   full verification. Authority and unknown changes refuse the ordinary path;
+   there is no hidden local or complete substitute.
 
 ### Do not copy
 
@@ -297,7 +299,7 @@ Therefore the proven promotion sequence is:
   Rust's typed claims.
 - Silent ledger load/write tolerance such as caught-and-ignored I/O errors.
   Rust publication failures must remain observable refusals.
-- Python's silent unsupported-suffix behavior. Rust's exhaustive escalation is
+- Python's silent unsupported-suffix behavior. Rust's exact ordinary refusal is
   the stronger invariant.
 
 ## Implementation contract
@@ -312,7 +314,7 @@ The current Rust implementation remains faithful while all of these are true:
    hold/heal decisions.
 5. A partial run cannot prune state it did not observe.
 6. New files without a comparable baseline remain explicitly not applicable;
-   unsupported or unknown classes escalate to every canonical arm.
+   unsupported or unknown classes refuse ordinary selection with the exact path.
 7. Full battery/study execution retains repository-wide acquisition and durable
    global repair evidence.
 8. No proposed state becomes durable unless all selected policy and test arms

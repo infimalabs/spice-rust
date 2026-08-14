@@ -153,7 +153,8 @@ Recovery never selects a substitute backend: installed hooks do not search
   foreign selection refuses; no path is guessed.
 - **Break glass.** `git commit --no-verify` is acceptable only for an explicitly
   authorized emergency after equivalent checks are run and recorded by hand.
-  It bypasses every hook and is never recovery or completion evidence.
+  It bypasses `pre-commit` and `commit-msg`, not `reference-transaction`, and is
+  never recovery or completion evidence.
 
 ## Start and operate
 
