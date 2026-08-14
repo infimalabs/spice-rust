@@ -1,5 +1,6 @@
 //! Repository-wide Git hook activation carried by one install plan.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -241,28 +242,33 @@ impl HookActivationPlan {
         &mut self,
         repository: &Repository,
     ) -> Result<(), InstallError> {
-        let Some(prior) = self
-            .mutations
-            .last()
-            .filter(|mutation| mutation.scope == HookConfigurationScope::Local)
-            .map(|mutation| mutation.worktree.clone())
-        else {
+        let previous = self
+            .observations
+            .iter()
+            .map(|observation| observation.worktree.clone())
+            .collect::<BTreeSet<_>>();
+        let current = list_worktrees(repository)?
+            .iter()
+            .map(|worktree| worktree_string(worktree))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let retired = previous.difference(&current).collect::<Vec<_>>();
+        if retired.is_empty() {
             return Ok(());
+        }
+        let introduced = current.difference(&previous).collect::<Vec<_>>();
+        let ([prior], [current]) = (retired.as_slice(), introduced.as_slice()) else {
+            return Err(InstallError::InvalidRecord(
+                "relocated hook worktree topology is ambiguous".to_owned(),
+            ));
         };
-        let mut worktrees = list_worktrees(repository)?;
-        worktrees.sort();
-        let current =
-            worktree_string(worktrees.first().ok_or_else(|| {
-                InstallError::InvalidRecord("Git returned no worktree".to_owned())
-            })?)?;
         for observation in &mut self.observations {
-            if observation.worktree == prior {
-                observation.worktree.clone_from(&current);
+            if observation.worktree == **prior {
+                observation.worktree.clone_from(current);
             }
         }
         for mutation in &mut self.mutations {
-            if mutation.worktree == prior {
-                mutation.worktree.clone_from(&current);
+            if mutation.worktree == **prior {
+                mutation.worktree.clone_from(current);
             }
         }
         self.observations
