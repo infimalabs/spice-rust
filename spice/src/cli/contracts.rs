@@ -2,6 +2,7 @@ use super::*;
 
 #[macro_use]
 mod macros;
+mod reference_transaction;
 
 /// Every current leaf. Parser registration and help are generated from these rows.
 pub(super) const CONTRACTS: &[Contract] = &[
@@ -278,6 +279,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "gate::pre-commit"
     ),
+    reference_transaction::CONTRACT,
     row!(
         ["gate", "receipt"],
         "gate receipt",

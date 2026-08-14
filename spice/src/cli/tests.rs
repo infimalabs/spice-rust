@@ -105,7 +105,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 98);
+    assert_eq!(contracts().len(), 99);
 
     let unaccounted = contracts()
         .iter()
@@ -118,8 +118,9 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 98);
+    assert_eq!(landed, 99);
     assert_eq!(landing(&["gate", "commit-msg"]), Landing::Landed);
+    assert_eq!(landing(&["gate", "reference-transaction"]), Landing::Landed);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -554,6 +555,7 @@ fn tool_postures_follow_the_closed_command_order() {
             ("gate camp".to_owned(), vec!["gate policy executable"]),
             ("gate kill".to_owned(), vec!["gate mutation executable"]),
             ("gate pre-commit".to_owned(), vec!["gate policy executable"],),
+            ("gate reference-transaction".to_owned(), vec!["git"]),
             ("gate receipt".to_owned(), vec!["gate policy executable"],),
             (
                 "proof".to_owned(),
@@ -664,6 +666,53 @@ fn every_registered_leaf_renders_its_exact_usage() {
             contract.path,
         );
     }
+}
+
+#[test]
+fn reference_transaction_contract_names_early_conditional_git() {
+    let contract = contract_at(CONTRACTS, &["gate", "reference-transaction"])
+        .expect("reference-transaction has one registered contract");
+    assert_eq!(
+        contract.syntax,
+        "gate reference-transaction prepared|committed|aborted"
+    );
+    assert_eq!(contract.principal, Principal::Local);
+    assert_eq!(contract.journal, JournalAccess::None);
+    assert_eq!(contract.reply_position, ReplyPositionLaw::Direct);
+    assert!(contract.facts.is_empty());
+    assert_eq!(contract.guards, &[Guard::Daemonless, Guard::Toolful]);
+    assert_eq!(contract.result, ResultClass::Reply);
+    assert_eq!(contract.outcomes, ExitOutcome::ALL);
+    assert_eq!(contract.battery, "gate::reference_transaction");
+
+    let [git] = contract.tools else {
+        panic!("reference-transaction must declare exactly one Git tool")
+    };
+    assert_eq!(git.name, "git");
+    assert_eq!(git.owner, "gate::reference_transaction");
+    assert_eq!(git.mode, ToolMode::Launch);
+    assert_eq!(git.requirement, ToolRequirement::Conditional);
+    assert_eq!(git.source, ToolSource::ReferenceTransactionContract);
+    assert_eq!(git.bounds, ToolBounds::ReferenceTransaction);
+    assert_eq!(git.cancellation, ToolCancellation::ChildOwned);
+    assert_eq!(git.network, ToolNetwork::Permitted);
+
+    for state in ["prepared", "committed", "aborted"] {
+        command()
+            .try_get_matches_from(["spice", "gate", "reference-transaction", state])
+            .unwrap_or_else(|error| panic!("registered state {state:?} refused: {error}"));
+    }
+    assert!(
+        command()
+            .try_get_matches_from(["spice", "gate", "reference-transaction", "unknown"])
+            .is_err()
+    );
+    let mut gate = command()
+        .find_subcommand("gate")
+        .expect("gate branch is generated")
+        .clone();
+    let help = gate.render_help().to_string();
+    assert!(help.contains("reference-transaction"), "{help}");
 }
 
 #[test]

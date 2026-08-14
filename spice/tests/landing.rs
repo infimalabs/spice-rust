@@ -22,6 +22,7 @@ struct Case {
 enum OutputKind {
     Document,
     ChildStream,
+    HookUsage,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -72,6 +73,12 @@ const CASES: &[Case] = &[
     case("gate findings", &["gate", "findings", "file-shape"]),
     case("gate kill", &["gate", "kill"]),
     case("gate pre-commit", &["gate", "pre-commit"]),
+    Case {
+        path: "gate reference-transaction",
+        arguments: &["gate", "reference-transaction"],
+        output: OutputKind::HookUsage,
+        expected: ExpectedOutcome::Generic,
+    },
     case("gate receipt", &["gate", "receipt"]),
     case("proof", &["proof"]),
     case("proof replay", &["proof", "replay"]),
@@ -382,6 +389,12 @@ fn assert_exit(case: &Case, output: &Output, form: &str) {
             output.status.code(),
             Some(0),
             "{} {form} did not preserve the selected child exit",
+            case.path,
+        ),
+        OutputKind::HookUsage => assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{} {form} did not preserve the hook usage exit",
             case.path,
         ),
     }

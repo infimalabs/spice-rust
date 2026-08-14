@@ -221,13 +221,15 @@ impl DoctorToolMode {
 pub enum DoctorToolRequirement {
     /// The command requires this tool.
     Required,
+    /// The command requires this tool only after an input predicate selects it.
+    Conditional,
     /// Absence disables only an optional integration.
     Optional,
 }
 
 impl DoctorToolRequirement {
     /// The complete closed vocabulary.
-    pub const ALL: &[Self] = &[Self::Required, Self::Optional];
+    pub const ALL: &[Self] = &[Self::Required, Self::Conditional, Self::Optional];
 }
 
 /// Authority supplying the exact executable declaration.
@@ -240,6 +242,8 @@ pub enum DoctorToolSource {
     GatePolicyContract,
     /// The compiled current Gate mutation profile supplies the executable.
     GateMutationContract,
+    /// The compiled reference-transaction hook contract supplies Git.
+    ReferenceTransactionContract,
     /// The sealed Proof contract supplies the OCI runtime.
     ProofRuntime,
     /// The sealed Proof battery supplies a program inside the container.
@@ -258,6 +262,7 @@ impl DoctorToolSource {
         Self::CommandOperand,
         Self::GatePolicyContract,
         Self::GateMutationContract,
+        Self::ReferenceTransactionContract,
         Self::ProofRuntime,
         Self::ProofBattery,
         Self::TaskBoundaryContract,
@@ -280,6 +285,8 @@ pub enum DoctorToolBounds {
     TaskBoundary,
     /// The shared adjudication service owns deadline and output bounds.
     Adjudication,
+    /// Parent Git owns the hook lifetime while reference locks may be held.
+    ReferenceTransaction,
     /// Observation never starts the tool.
     NotExecuted,
 }
@@ -292,6 +299,7 @@ impl DoctorToolBounds {
         Self::ProofLimits,
         Self::TaskBoundary,
         Self::Adjudication,
+        Self::ReferenceTransaction,
         Self::NotExecuted,
     ];
 }

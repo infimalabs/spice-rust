@@ -196,6 +196,10 @@ fn tool_observation(
         DoctorToolSource::GateMutationContract => {
             gate_observation("mutation", gate::declared_mutation_tools(), probe)
         }
+        DoctorToolSource::ReferenceTransactionContract => match probe.named(tool.name) {
+            Ok(()) => DoctorObservation::Ready {},
+            Err(reason) => DoctorObservation::Unavailable { reason },
+        },
         DoctorToolSource::ProofRuntime => configuration.proof().container().map_or_else(
             || DoctorObservation::InputRequired {
                 reason: "local proof.container must name the sealed Proof runtime".to_owned(),

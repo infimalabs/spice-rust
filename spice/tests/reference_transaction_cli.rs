@@ -16,16 +16,53 @@ const USAGE: &str = "usage: spice gate reference-transaction <prepared|committed
 #[test]
 fn committed_and_aborted_are_inert_before_repository_access() {
     let scratch = Scratch::directory("inert-states");
+    let marker = scratch.join("git-entered");
+    let git_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", marker.display());
+    let git = scratch.executable("bin/git", git_script.as_bytes());
+    let path = git.parent().expect("sentinel Git has a parent");
     for state in ["committed", "aborted"] {
         let output = Command::new(spice())
             .args(["gate", "reference-transaction", state])
             .current_dir(scratch.path())
+            .env("PATH", path)
             .output()
             .expect("run inert transaction state");
         assert_success(&output, state);
         assert!(output.stdout.is_empty());
         assert!(output.stderr.is_empty());
     }
+    assert!(!marker.exists(), "an inert state launched Git");
+}
+
+#[test]
+fn generated_gate_help_exposes_the_hook_only_leaf() {
+    let scratch = Scratch::repository("generated-help");
+    let output = Command::new(spice())
+        .args(["gate", "--help"])
+        .current_dir(scratch.path())
+        .output()
+        .expect("render generated gate help");
+    assert_success(&output, "generated gate help");
+    assert!(output.stderr.is_empty());
+    let help = String::from_utf8(output.stdout).expect("gate help is UTF-8");
+    assert!(help.contains("reference-transaction"), "{help}");
+}
+
+#[test]
+fn prepared_queue_naming_no_branch_launches_no_git() {
+    let scratch = Scratch::directory("non-branch-queue");
+    let marker = scratch.join("git-entered");
+    let git_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", marker.display());
+    let git = scratch.executable("bin/git", git_script.as_bytes());
+    let output = invoke_prepared_with_path(
+        scratch.path(),
+        "old new AUTO_MERGE\n",
+        git.parent().expect("sentinel Git has a parent"),
+    );
+    assert_success(&output, "non-branch prepared queue");
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    assert!(!marker.exists(), "a non-branch prepared queue launched Git");
 }
 
 #[test]
@@ -157,14 +194,25 @@ fn hook_launcher_has_one_direct_product_path_and_never_enters_cargo() {
 }
 
 fn invoke_prepared(root: &Path, input: &str) -> Output {
-    let mut child = Command::new(spice())
+    invoke_prepared_command(root, input, None)
+}
+
+fn invoke_prepared_with_path(root: &Path, input: &str, path: &Path) -> Output {
+    invoke_prepared_command(root, input, Some(path))
+}
+
+fn invoke_prepared_command(root: &Path, input: &str, path: Option<&Path>) -> Output {
+    let mut command = Command::new(spice());
+    command
         .args(["gate", "reference-transaction", "prepared"])
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("run prepared transaction");
+        .stderr(Stdio::piped());
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let mut child = command.spawn().expect("run prepared transaction");
     child
         .stdin
         .take()
