@@ -25,11 +25,16 @@ pub(super) struct InstallRecord {
     pub(super) installed: Vec<Option<Generation>>,
     pub(super) installed_parents: Vec<Option<Generation>>,
     pub(super) restored: Vec<Option<Generation>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) retired_parents: Vec<Option<Generation>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) restored_retirements: Vec<Option<Generation>>,
 }
 
 pub(super) struct LoadedRecord {
     pub(super) record: InstallRecord,
     pub(super) generation: Generation,
+    pub(super) image: Option<FileImage>,
 }
 
 impl InstallRecord {
@@ -47,6 +52,7 @@ impl InstallRecord {
             .map(|operation| (operation.location, operation.destination.clone()))
             .collect();
         let slots = plan.operations.len();
+        let retirements = plan.retirements.len();
         Ok(Self {
             version: RECORD_VERSION,
             repository,
@@ -59,6 +65,8 @@ impl InstallRecord {
             installed: vec![None; slots],
             installed_parents: vec![None; slots],
             restored: vec![None; slots],
+            retired_parents: vec![None; retirements],
+            restored_retirements: vec![None; retirements],
         })
     }
 
@@ -104,12 +112,20 @@ impl InstallRecord {
         if let Some(activation) = &mut self.plan.hook_activation {
             activation.rebase_main_worktree(repository)?;
         }
+        if let Some(archive) = &mut self.plan.rollback_archive {
+            let mut rollback = archive.decode()?;
+            rollback.record = rebase_rollback_record(&rollback.record, repository)?;
+            *archive = super::RollbackArchive::new(&rollback)?;
+        }
         self.plan_digest = self.plan.digest()?;
         Ok(())
     }
 
     fn validate_with_content(&self, historical: bool) -> Result<(), InstallError> {
-        if self.version != RECORD_VERSION {
+        let migratable = historical
+            && self.version == super::MIGRATABLE_RECORD_VERSION
+            && self.plan.version == super::MIGRATABLE_RECORD_VERSION;
+        if self.version != RECORD_VERSION && !migratable {
             return Err(InstallError::InvalidRecord(format!(
                 "install record version {} is not {RECORD_VERSION}",
                 self.version
@@ -170,6 +186,14 @@ impl InstallRecord {
                 "install generation inventory has the wrong length".to_owned(),
             ));
         }
+        let retirements = self.plan.retirements.len();
+        if self.retired_parents.len() != retirements
+            || self.restored_retirements.len() != retirements
+        {
+            return Err(InstallError::InvalidRecord(
+                "install retirement progress has the wrong length".to_owned(),
+            ));
+        }
         let operation_count = self.plan.operation_count();
         if self.completed > operation_count {
             return Err(InstallError::InvalidRecord(
@@ -200,6 +224,13 @@ impl InstallRecord {
                 "applying record carries reversal generations".to_owned(),
             ));
         }
+        if self.status == InstallStatus::Applying
+            && self.restored_retirements.iter().any(Option::is_some)
+        {
+            return Err(InstallError::InvalidRecord(
+                "applying record carries retirement reversals".to_owned(),
+            ));
+        }
         if matches!(
             self.status,
             InstallStatus::Complete | InstallStatus::Unapplying
@@ -218,6 +249,21 @@ impl InstallRecord {
         repository: &Repository,
     ) -> Result<(), InstallError> {
         self.validate()?;
+        self.repository.validate(repository)?;
+        self.plan.validate_repository_binding(repository)
+    }
+
+    /// Validate only mutable progress and repository bindings before a trusted
+    /// in-process checkpoint. The immutable plan was deeply validated when it
+    /// was built or loaded; re-inflating a large rollback archive for every
+    /// counter write adds no new evidence.
+    fn validate_for_write(&self, repository: &Repository) -> Result<(), InstallError> {
+        self.validate_progress_content()?;
+        if self.repository != self.plan.repository {
+            return Err(InstallError::InvalidRecord(
+                "install record repository does not close over its plan".to_owned(),
+            ));
+        }
         self.repository.validate(repository)?;
         self.plan.validate_repository_binding(repository)
     }
@@ -253,8 +299,8 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
         return Ok(None);
     };
     let generation = observed.generation;
-    let bytes = observed.image.bytes;
-    let mut record: InstallRecord = wire::decode(&bytes).map_err(InstallError::Decode)?;
+    let image = observed.image;
+    let mut record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
     if let Some((_, owner)) = LEGACY_RECORD_VERSIONS
         .iter()
         .find(|(version, _)| *version == record.version)
@@ -265,7 +311,7 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
         });
     }
     let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
-    if canonical != bytes {
+    if canonical != image.bytes {
         return Err(InstallError::InvalidRecord(
             "install record is not canonical".to_owned(),
         ));
@@ -275,14 +321,59 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
         record.rebase_repository(repository)?;
     }
     record.validate_loaded_for_repository(repository)?;
-    Ok(Some(LoadedRecord { record, generation }))
+    let image = (record.version == super::MIGRATABLE_RECORD_VERSION).then_some(image);
+    Ok(Some(LoadedRecord {
+        record,
+        generation,
+        image,
+    }))
+}
+
+pub(super) fn decode_rollback_record(
+    image: &FileImage,
+    repository: &RepositoryIdentity,
+) -> Result<InstallRecord, InstallError> {
+    if image.mode != RECORD_MODE || !image.validate() {
+        return Err(InstallError::InvalidRecord(
+            "migration rollback receipt has an invalid image".to_owned(),
+        ));
+    }
+    let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
+    if record.version != super::MIGRATABLE_RECORD_VERSION
+        || record.plan.version != super::MIGRATABLE_RECORD_VERSION
+        || record.repository != *repository
+        || record.status != InstallStatus::Complete
+        || record.plan.rollback_archive.is_some()
+    {
+        return Err(InstallError::InvalidRecord(
+            "migration rollback receipt is not one complete version-7 installation".to_owned(),
+        ));
+    }
+    record.validate_with_content(true)?;
+    let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
+    if canonical != image.bytes {
+        return Err(InstallError::InvalidRecord(
+            "migration rollback receipt is not canonical".to_owned(),
+        ));
+    }
+    Ok(record)
+}
+
+pub(super) fn rebase_rollback_record(
+    image: &FileImage,
+    repository: &Repository,
+) -> Result<FileImage, InstallError> {
+    let mut record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
+    record.rebase_repository(repository)?;
+    let bytes = wire::encode(&record).map_err(InstallError::Encode)?;
+    Ok(FileImage::new(RECORD_MODE, bytes))
 }
 
 pub(super) fn write_initial_record(
     repository: &Repository,
     record: &InstallRecord,
 ) -> Result<Generation, InstallError> {
-    record.validate_for_repository(repository)?;
+    record.validate_for_write(repository)?;
     let (observed, _) = observe_bound(
         repository.common_dir(),
         &record.plan.record.destination,
@@ -299,7 +390,7 @@ pub(super) fn write_record(
     record: &InstallRecord,
     expected: Generation,
 ) -> Result<Generation, InstallError> {
-    record.validate_for_repository(repository)?;
+    record.validate_for_write(repository)?;
     write_record_bytes(repository, record, Some(expected))
 }
 

@@ -667,7 +667,7 @@ fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
     let sender = sender.clone();
     let cancellation = cancellation.clone();
     thread::Builder::new()
-        .name(format!("verify-action-{}", index + 1))
+        .name(format!("verification-action-{}", index + 1))
         .spawn_scoped(scope, move || {
             let started = Instant::now();
             let mut completion = panic::catch_unwind(AssertUnwindSafe(|| {

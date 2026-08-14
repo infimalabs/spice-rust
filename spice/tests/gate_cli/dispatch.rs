@@ -108,8 +108,9 @@ fn source_override_refuses_its_exact_capability_without_creating_trust() {
         "spice-rust.toml",
         "Spice source gate",
         "cargo",
-        "xtask",
-        "verify-action",
+        "--package",
+        "spice",
+        "gate",
         "selection",
         "spice trust grant",
     ] {
@@ -126,7 +127,7 @@ fn source_override_refuses_its_exact_capability_without_creating_trust() {
 }
 
 #[test]
-fn explicitly_trusted_source_override_runs_one_xtask_leaf_through_the_hook() {
+fn explicitly_trusted_source_override_runs_one_public_spice_leaf_through_the_hook() {
     let repository = source_override_repository();
     let first = run_commit_worker(repository.path());
     let failure = terminal_failure(&first);
@@ -181,7 +182,10 @@ fn explicitly_trusted_source_override_runs_one_xtask_leaf_through_the_hook() {
         3,
         "unexpected source-gate log: {invocation:?}"
     );
-    assert_eq!(fields[0], "xtask verify-action selection");
+    assert_eq!(
+        fields[0],
+        "run --quiet --locked --package spice --bin spice -- gate selection"
+    );
     let staged_source = fields[1]
         .parse::<Digest>()
         .expect("configured source handoff is a canonical digest");

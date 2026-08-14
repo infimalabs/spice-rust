@@ -279,6 +279,17 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "gate::pre-commit"
     ),
+    row!(
+        ["gate", "selection"],
+        "gate selection",
+        Local,
+        None,
+        [],
+        [Daemonless, Toolful],
+        GATE_POLICY_TOOLS,
+        Reply,
+        "gate::selection"
+    ),
     reference_transaction::CONTRACT,
     row!(
         ["gate", "receipt"],

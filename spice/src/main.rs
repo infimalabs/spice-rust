@@ -250,6 +250,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["gate", "commit-msg"] => deliver_commit_message(gate_command::commit_message(leaf), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "pre-commit"] => deliver_commit_gate(&gate_command::pre_commit(), form),
+        ["gate", "selection"] => deliver_commit_gate(&gate_command::selection(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
         ["install"] => match install_command::run(leaf) {
             install_command::Answer::Plan(outcome) => deliver(&outcome, form),

@@ -708,12 +708,11 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
     assert!(
         stdout.contains(concat!(
             "cargo xtask <help|verify [--package PACKAGE]|",
-            "verify-action <selection|battery>|gate [--report] ARM|"
+            "gate [--report] ARM|"
         )),
         "{}",
         streams(&output)
     );
-    assert!(stdout.contains("Neither is a completion verifier"));
     assert!(stdout.contains("gate --report ARM emits one canonical machine report"));
     for gate_id in GateId::BATTERY {
         assert!(
@@ -741,52 +740,6 @@ fn unknown_gate_arm_points_to_the_canonical_inventory() {
         "{}",
         streams(&output)
     );
-}
-
-#[test]
-fn current_source_selection_requires_each_strict_tracked_input_before_work() {
-    for tracked_input in ["spice-rust.toml", "baseline.toml"] {
-        let fixture = Fixture::new();
-        fs::remove_file(fixture.repository.join(tracked_input))
-            .expect("remove strict tracked input");
-        git(&fixture.repository, &["add", "--update", tracked_input]);
-        let programs = fixture.root.join("strict-input-programs");
-        fs::create_dir(&programs).expect("create strict-input program directory");
-        let cargo_marker = fixture.root.join("cargo-invoked");
-        executable(
-            &programs.join("cargo"),
-            &format!(
-                "#!/bin/sh\nprintf invoked > '{}'\nexit 91\n",
-                cargo_marker.display(),
-            ),
-        );
-
-        let output = Command::new(fixture.xtask())
-            .args(["verify-action", "selection"])
-            .current_dir(&fixture.repository)
-            .env(PROCESS_PATH, &programs)
-            .output()
-            .expect("launch current-source selection with a missing strict input");
-
-        assert_eq!(
-            output.status.code(),
-            Some(i32::from(xtask::VERIFY_ACTION_REFUSAL_EXIT)),
-            "{}",
-            streams(&output),
-        );
-        assert!(output.stdout.is_empty(), "{}", streams(&output));
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("gate::contract-refused"), "{stderr}");
-        assert!(stderr.contains(tracked_input), "{stderr}");
-        assert!(
-            !stderr.contains("[change-gate-selection-report]"),
-            "{stderr}"
-        );
-        assert!(
-            !cargo_marker.exists(),
-            "missing {tracked_input} reached selected test execution",
-        );
-    }
 }
 
 struct Fixture {

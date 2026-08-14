@@ -20,7 +20,7 @@ fn unapply_resumes_a_write_interrupted_before_progress_publication() {
     assert_eq!(interrupted.status, InstallStatus::Unapplying);
     assert_eq!(
         interrupted.completed,
-        planned.operations().len() - 1 - INTERRUPTION
+        planned.operation_count() - 1 - INTERRUPTION
     );
     assert_eq!(
         plan(&repository, None).unwrap().digest().unwrap(),

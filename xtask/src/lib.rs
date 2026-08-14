@@ -1,9 +1,8 @@
 //! Repository-local build, verification, and release commands.
 
 use std::io::{self, Write};
-use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
 
@@ -13,8 +12,6 @@ mod app;
 mod build_cache;
 mod develop;
 mod gate_command;
-#[cfg(not(target_arch = "wasm32"))]
-mod hooks;
 mod landing;
 mod proof_image;
 mod release;
@@ -34,8 +31,7 @@ pub use build_cache::{
     BuildCacheRootReport, build_cache, collect_build_cache_at, parse_byte_quantity,
 };
 pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh};
-pub use gate_command::{gate_arm, gate_arm_report, verify_battery_child, verify_selection_child};
-pub use spice::commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
+pub use gate_command::{gate_arm, gate_arm_report};
 use verify_browser::BrowserRun;
 use verify_error::valid_package_name;
 pub use verify_error::{GateArmError, VerifyError};
@@ -45,8 +41,6 @@ const BROWSER_RECEIPT: &[u8] = verify_browser::RECEIPT;
 // off the wasm target; the workspace wasm check compiles this crate too.
 #[cfg(not(target_arch = "wasm32"))]
 pub use develop::refresh_install;
-#[cfg(not(target_arch = "wasm32"))]
-pub use hooks::{HookActivationError, activate_hooks, audit_entry_point};
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,20 +52,6 @@ pub use workspace_tests::{
     run_at as run_workspace_tests_at,
     run_prebuilt_shared_at as run_prebuilt_shared_workspace_tests_at,
 };
-
-/// Apply the repository's native commit-message law to one Git message file.
-///
-/// The boolean answer says whether long body prose was folded in place.
-///
-/// # Errors
-///
-/// Returns an I/O failure or the first commit-message policy refusal.
-pub fn commit_message(
-    path: &Path,
-    policy: &gate::CommitMessagePolicy,
-) -> Result<bool, CommitMessageError> {
-    spice::commit_message::apply(path, policy)
-}
 
 /// Every verification action, in stable report order.
 ///
@@ -188,8 +168,6 @@ const ENTRY_POINT_LABEL: &str = "installed appliance receipt matches current bui
 /// BROWSER-1kKSWhZk removed one of the two former surfaces. This mandatory
 /// action protects the remaining `composer -> mosaic_plane -> mosaic` path.
 const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
-/// Exit spelling for a completed verifier action that refused publication.
-pub const VERIFY_ACTION_REFUSAL_EXIT: u8 = 3;
 const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
 const RESIDENT_BUILD_LABEL: &str =
     "cargo build --locked -p spice --bin spice (freshness reference and canvas resident)";
@@ -619,10 +597,22 @@ impl Runner for SystemRunner {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let current_binary = current_spice_binary()?;
-            let mut report = Vec::new();
-            hooks::audit_entry_point(Path::new("."), &current_binary, &mut report)
+            let repository = spice::repository::Repository::discover(Path::new("."))
                 .map_err(|error| error.to_string())?;
-            String::from_utf8(report).map_err(|error| error.to_string())
+            let audit = spice::install::audit_appliance(&repository, &current_binary)
+                .map_err(|error| error.to_string())?;
+            if !audit.is_current() {
+                return Err(format!(
+                    "installed Spice appliance is {:?}: {}; repair={:?}",
+                    audit.state(),
+                    audit.detail(),
+                    audit.repair(),
+                ));
+            }
+            Ok(format!(
+                "installed Spice appliance is current: {}\n",
+                audit.detail()
+            ))
         }
     }
 

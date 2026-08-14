@@ -355,7 +355,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(preview.digest().as_str(), text_digest);
     assert_eq!(preview.digest(), &preview.plan().digest().unwrap());
     let operation_count = preview.plan().operation_count();
-    assert_eq!(operation_count, 8);
+    assert_eq!(operation_count, 10);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     assert!(fixture.root.join(".git/.spice-rs").is_dir());

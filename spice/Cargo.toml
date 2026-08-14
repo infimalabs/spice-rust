@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 artifact = { path = "../artifact" }
 atomic = { path = "../atomic" }
+base64 = "0.22.1"
 board = { path = "../board" }
 bus = { path = "../bus" }
 canvas = { path = "../canvas" }

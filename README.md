@@ -2,8 +2,8 @@
 
 ## Install and start
 
-Spice is this repository's installed appliance. Preview and apply its
-digest-bound install plan without changing live command or hook authority:
+Spice is this repository's installed appliance. Preview its digest-bound plan,
+then apply that exact filesystem and repository-wide hook-activation authority:
 
 ```sh
 cargo run --locked -p spice -- install
@@ -14,21 +14,21 @@ When the operator explicitly authorizes the authority switch, follow
 [INSTALL.md](INSTALL.md#operator-authorized-authority-switch). That step makes
 the installed Rust appliance the bare `spice` command, moves every linked
 worktree through one recognized hook selection, and activates the installed
-common hooks. Installation alone performs none of those mutations.
+common hooks. Preview alone performs none of those mutations; digest-bound
+apply performs the authorized switch.
 
 The plan publishes the executable, operator skill, and the `pre-commit`,
 `commit-msg`, and `reference-transaction` hooks once under the Git common
 directory's `.spice-install`. Every linked worktree uses those same assets.
-Activation publishes one file more, the `xtask` the `reference-transaction`
-hook execs, and records which guard that copy carries. Run it: a repository
-with the plan applied but activation never run has a `reference-transaction`
-hook whose entry point is absent, and Git aborts every ref update rather than
-degrading to no guard. Nothing republishes that copy afterwards, so a landed
-change to the guard leaves Git enforcing the older one until this command runs
-again; `cargo xtask verify` refuses while that is true and names the command
-above. Activation is repository-wide rather than per-worktree, so it inspects
-every linked worktree first and refuses, before publishing anything or writing
-any configuration, when one selects a `core.hooksPath` it does not recognize.
+Every hook execs that installed Spice binary directly. The same plan records
+the activation and its reversal values; it inspects every linked worktree and
+refuses before writing when one selects a `core.hooksPath` it does not
+recognize. On upgrades from the prior Rust hook installation, all current
+Spice assets publish first, the retired `xtask` copy and guard stamp are removed
+second, and the common hook-path switch remains last. A reversal restores the
+complete prior appliance and its receipt from one digest-bound compressed
+snapshot; prior executables never remain as runnable sidecar files.
+
 Only two are recognized: the tracked `.githooks` a fresh checkout runs, and the
 path being activated. Everything else belongs to another system and is reported
 instead of replaced, which is why the command is safe to run — and why it does
@@ -190,18 +190,18 @@ inventory, and output lane before launch, reports progress every 30 seconds,
 and has a hard 180-second deadline that terminates and reaps the complete
 process group.
 
-`cargo xtask verify-action selection` is the ordinary staged-change gate used
-by the tracked pre-commit hook. It captures the index once, maps every changed
+`cargo run --quiet --locked --package spice --bin spice -- gate selection` is
+the source-development delegate for the ordinary staged-change gate. It builds
+and invokes one public Spice command, captures the index once, maps every changed
 path to canonical Cargo test targets and focused policy arms, and retains the
 path-to-check evidence in one typed report. Known backend, frontend,
 documentation, and configuration changes do not trigger an ambient
 whole-repository selector. A gate/toolchain authority or an unclassified path
 fails closed by selecting every workspace test target and all 27 policy arms.
 
-`cargo xtask verify-action battery` remains the explicit complete policy
-surface. It does not share the full verifier's retained compiler evidence and
-neither action is a completion verifier. The native `spice gate pre-commit`
-command resolves tracked pre-commit policy once in one isolated worker. It runs
+This selection is not a completion verifier; `cargo xtask verify` remains that
+surface. The native `spice gate pre-commit` command resolves tracked pre-commit
+policy once in one isolated worker. It runs
 the packaged selected-change gate exactly once by default, followed by admitted
 configured commands in authored order; `pre_commit_builtins = false` runs only
 configured commands and refuses an empty effective battery. Packaged and
@@ -209,9 +209,9 @@ configured work share the captured source and the fixed 180-second envelope,
 including a 164-second worker allowance and cleanup reserves. A clean worker is
 silent; a refusal names only selected failures plus a private canonical report
 path. The supervisor owns the worker's complete process group, including Cargo,
-rustc, Trunk, parsers, and descendants. The tracked source hook remains a direct
-`cargo xtask verify-action selection` leaf and never redispatches this installed
-command.
+rustc, Trunk, parsers, and descendants. Every tracked hook dispatches directly
+to installed Spice; the authored source-development command above reaches
+`gate selection` and never redispatches the pre-commit dispatcher.
 
 For fast feedback while changing one Cargo package, scope Clippy, all-target
 tests, and doctests to that package:

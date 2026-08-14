@@ -73,6 +73,7 @@ const CASES: &[Case] = &[
     case("gate findings", &["gate", "findings", "file-shape"]),
     case("gate kill", &["gate", "kill"]),
     case("gate pre-commit", &["gate", "pre-commit"]),
+    case("gate selection", &["gate", "selection"]),
     Case {
         path: "gate reference-transaction",
         arguments: &["gate", "reference-transaction", "committed"],

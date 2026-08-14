@@ -12,14 +12,13 @@ use sill::Deadlines;
 const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <help|verify [--package PACKAGE]|verify-action <selection|battery>|",
-    "gate [--report] ARM|app|activate-hooks|",
+    "usage: cargo xtask <help|verify [--package PACKAGE]|",
+    "gate [--report] ARM|app|",
     "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
     "[--free-space-floor BYTES] [--retain-live-worktrees N]|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
-    "stage-target TARGET|",
-    "commit-msg MESSAGE_FILE>"
+    "stage-target TARGET>"
 );
 
 fn help() -> String {
@@ -27,9 +26,6 @@ fn help() -> String {
     format!(
         concat!(
             "{usage}\n\n",
-            "verify-action selection is the ordinary staged-change gate; ",
-            "verify-action battery is its explicit complete policy surface. ",
-            "Neither is a completion verifier.\n\n",
             "For focused arms, gate ARM emits bounded diagnostics only on refusal; ",
             "gate --report ARM emits one canonical machine report.\n\n",
             "gate ARM accepts:\n  {arms}"
@@ -46,11 +42,6 @@ fn main() -> ExitCode {
     let mut output = io::stdout().lock();
     // Dispatch only current spellings; removed command names have no alias arm.
     let result: CommandResult = match command.as_deref() {
-        Some(value) if is_exact_command(value, "verify-action", arguments.len(), 1) => {
-            let action = arguments.next().expect("one verifier action was admitted");
-            drop(output);
-            return run_verify_action(&action, &mut io::stderr().lock());
-        }
         Some(value) if is_exact_command(value, "help", arguments.len(), 0) => {
             writeln!(output, "{}", help()).map_err(Into::into)
         }
@@ -68,10 +59,6 @@ fn main() -> ExitCode {
             run_gate(arguments.collect(), &mut output, &mut io::stderr().lock())
         }
         Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
-        #[cfg(not(target_arch = "wasm32"))]
-        Some(value) if is_exact_command(value, "activate-hooks", arguments.len(), 0) => {
-            run_activate_hooks(&mut output)
-        }
         Some(value) if value == OsStr::new("build-cache") => {
             run_build_cache(arguments.collect(), &mut output)
         }
@@ -85,9 +72,6 @@ fn main() -> ExitCode {
         }
         Some(value) if is_exact_command(value, "stage-target", arguments.len(), 1) => {
             run_stage_target(arguments.next(), &mut output)
-        }
-        Some(value) if is_exact_command(value, "commit-msg", arguments.len(), 1) => {
-            run_commit_message_command(arguments.next())
         }
         _ => {
             eprintln!("{}", help());
@@ -130,25 +114,6 @@ fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandR
         _ => {
             eprintln!("{}", help());
             Err(usage_error().into())
-        }
-    }
-}
-
-fn run_verify_action(action: &OsStr, output: &mut impl io::Write) -> ExitCode {
-    let result = if action == OsStr::new("selection") {
-        xtask::verify_selection_child(output)
-    } else if action == OsStr::new("battery") {
-        xtask::verify_battery_child(output)
-    } else {
-        eprintln!("{}", help());
-        return ExitCode::from(USAGE_EXIT);
-    };
-    match result {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::from(xtask::VERIFY_ACTION_REFUSAL_EXIT),
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::FAILURE
         }
     }
 }
@@ -217,11 +182,6 @@ fn run_gate(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn run_activate_hooks(output: &mut impl io::Write) -> CommandResult {
-    xtask::activate_hooks(Path::new("."), output).map_err(Into::into)
-}
-
 fn run_build_cache(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
     let Some(request) = build_cache_request(&arguments) else {
         eprintln!("{}", help());
@@ -243,24 +203,6 @@ fn run_stage_target(argument: Option<OsString>, output: &mut impl io::Write) -> 
             .map(|_| ())
             .map_err(Into::into)
     })
-}
-
-fn run_commit_message_command(argument: Option<OsString>) -> CommandResult {
-    let path = argument.expect("one commit-message path was admitted");
-    match run_commit_message(Path::new(&path)) {
-        Ok(true) => {
-            eprintln!(
-                concat!(
-                    "spice commit-msg: auto-folded commit message body lines; ",
-                    "keep body prose wrapped at {} chars"
-                ),
-                xtask::COMMIT_MESSAGE_WRAP_LIMIT
-            );
-            Ok(())
-        }
-        Ok(false) => Ok(()),
-        Err(error) => Err(error),
-    }
 }
 
 #[derive(Debug)]
@@ -553,25 +495,19 @@ fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
     env::var_os(name)
 }
 
-fn run_commit_message(path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
-    let repository = spice::repository::Repository::discover(Path::new("."))?;
-    let resolved = spice::config::load_repository(&repository, &[])?;
-    Ok(xtask::commit_message(
-        path,
-        resolved.root().policy().commit_message(),
-    )?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::help;
 
     #[test]
-    fn help_exposes_the_ordinary_selection_and_explicit_battery_actions() {
+    fn help_omits_retired_hook_runtime_commands() {
         let help = help();
-        assert!(help.contains("verify-action selection"));
-        assert!(help.contains("verify-action battery"));
-        assert!(help.contains("Neither is a completion verifier"));
+        for retired in ["verify-action", "activate-hooks", "commit-msg"] {
+            assert!(
+                !help.contains(retired),
+                "retired command remained in help: {retired}"
+            );
+        }
     }
 
     #[test]

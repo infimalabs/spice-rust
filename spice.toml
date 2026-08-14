@@ -73,8 +73,8 @@ admission = [
 # The predecessor-owned hook reaches Rust from outside the Rust configured-step
 # recursion boundary, so this bridge may enter `spice gate pre-commit`. Once the
 # installed Rust appliance owns the hook, Rust reads only spice-rust.toml and
-# its configured edge uses the direct xtask leaf instead of redispatching that
-# same command under SPICE_RS_PRE_COMMIT_SOURCE.
+# its configured edge builds and invokes `spice gate selection` instead of
+# redispatching that same command under SPICE_RS_PRE_COMMIT_SOURCE.
 pre_commit = [
     { label = "Rust gate", run = ["cargo", "run", "--locked", "--package", "spice", "--", "gate", "pre-commit"] },
 ]

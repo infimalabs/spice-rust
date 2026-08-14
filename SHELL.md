@@ -31,11 +31,11 @@ Caller: Repository installer operator, `README.md`, and `INSTALL.md`.
 
 Disposition: Ported to Rust and deleted.
 
-Reason: `cargo xtask activate-hooks` verifies the installed common hooks,
-publishes the executable those hooks exec, clears linked-worktree overrides,
-activates the common path, and checks the result. `cargo xtask verify` refuses
-when the published guard is not the running build's, because publication
-happens at activation and nothing else refreshes it.
+Reason: installed `spice install` owns one digest-bound asset and activation
+plan. It verifies every linked-worktree selection, publishes the executable and
+hooks, retires obsolete hook-runtime files, clears admitted worktree overrides,
+switches the common path last, and records exact reversal state. The verifier
+audits that receipt against the freshly built Spice binary.
 
 ## `scripts/verify.sh`
 

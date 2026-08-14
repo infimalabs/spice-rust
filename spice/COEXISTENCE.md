@@ -162,10 +162,10 @@ command while its own `policy.pre_commit_builtins` setting is false. That
 command is owned by the predecessor hook and enters Rust from outside the Rust
 configured-command recursion boundary; it is not a shared configuration read.
 The Rust document carries the distinct self-hosting override: its built-ins are
-disabled and its sole `Spice source gate` command is exactly `cargo xtask
-verify-action selection`. A Rust configured command receives
+disabled and its sole `Spice source gate` command builds and invokes exactly
+`spice gate selection` through Cargo. A Rust configured command receives
 `SPICE_RS_PRE_COMMIT_SOURCE`, so pointing that edge back at `spice gate
-pre-commit` would be recursive and is refused. The xtask selection command is
+pre-commit` would be recursive and is refused. The product selection command is
 the direct current-source leaf and does not redispatch. Machine-local
 configuration is also separate; Rust reads only `.spice-rs/config.toml`.
 
@@ -180,9 +180,10 @@ One retained staged seal supplies every step with the same
 digest and a `SPICE_RS_PRE_COMMIT_PATHS` JSON array containing only the staged
 paths selected by that step's authored scopes. The source variable is also the
 recursion tripwire: a configured command cannot redispatch `spice gate
-pre-commit`. The tracked `cargo xtask verify-action selection` hook remains a
-direct current-source `change_gate` leaf, so it is permitted under that source
-override without re-entering the installed dispatcher. The child environment
+pre-commit`. The tracked hook enters that installed dispatcher directly; its
+configured Cargo delegate builds and invokes the public `gate selection` leaf,
+so it is permitted under that source override without re-entering the
+dispatcher. The child environment
 is captured once, strips Git's local
 repository variables and indexed `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*`
 overrides, then replaces both Spice-owned values with the captured authority.
@@ -204,9 +205,9 @@ lists are required, repository-document omission retains Gate's generic
 absent generated paths exclude nothing, and absent test paths conservatively
 leave every Python path eligible for test policy. Unknown paths and changes to
 the tracked policy refuse before any selected arm or workspace test begins.
-The richer Spice-workspace selector remains a separate current-source entrypoint
-called explicitly by `cargo xtask verify-action selection`; complete policy
-execution remains explicit through `verify-action battery` or the full verifier.
+The richer Spice-workspace selector remains the separate public current-source
+entrypoint `spice gate selection`; completion evidence remains the full
+verifier.
 
 ## Git hook selection
 
@@ -223,8 +224,8 @@ worktree's effective and worktree-local selection before any asset write, and
 `spice/src/install/error.rs#ForeignHookPath` refuses to seize a worktree
 configured for Python. Apply publishes the executable hook assets first and
 switches the common absolute `core.hooksPath` last; unapply restores the exact
-prior values from the same receipt. `cargo xtask activate-hooks` delegates to
-that installed preview/apply surface and owns no Git configuration mutation.
+prior values from the same receipt. No second activation command or Git
+configuration implementation remains.
 Hook choice is therefore an operator selection, not a cross-delivery path.
 
 ## Validation boundary

@@ -64,7 +64,7 @@ enabled = true
 # exact argv inert until an operator grants the digest of these tracked bytes.
 pre_commit_builtins = false
 pre_commit = [
-    { label = "Spice source gate", run = ["cargo", "xtask", "verify-action", "selection"] },
+    { label = "Spice source gate", run = ["cargo", "run", "--quiet", "--locked", "--package", "spice", "--bin", "spice", "--", "gate", "selection"] },
 ]
 
 # The native Git publisher runs this cheap repository load over every

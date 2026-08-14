@@ -280,6 +280,7 @@ impl HookActivationPlan {
 pub(super) fn plan(
     repository: &Repository,
     installed: Option<&InstallPlan>,
+    migration: bool,
 ) -> Result<HookActivationPlan, InstallError> {
     let hooks = installed_git_hooks(repository);
     let hooks_path = hooks
@@ -328,7 +329,13 @@ pub(super) fn plan(
                 scope: HookConfigurationScope::Worktree,
                 previous: inherited.map_or_else(
                     || worktree_local.clone(),
-                    |mutation| mutation.previous.clone(),
+                    |mutation| {
+                        if migration {
+                            worktree_local.clone()
+                        } else {
+                            mutation.previous.clone()
+                        }
+                    },
                 ),
                 superseded: inherited.map(|_| worktree_local.clone()),
                 generated: Vec::new(),
@@ -345,7 +352,16 @@ pub(super) fn plan(
     mutations.push(HookConfigurationMutation {
         worktree: main,
         scope: HookConfigurationScope::Local,
-        previous: inherited.map_or_else(|| local.clone(), |mutation| mutation.previous.clone()),
+        previous: inherited.map_or_else(
+            || local.clone(),
+            |mutation| {
+                if migration {
+                    local.clone()
+                } else {
+                    mutation.previous.clone()
+                }
+            },
+        ),
         superseded: inherited.map(|_| local.clone()),
         generated: vec![hooks_path.clone()],
     });
@@ -365,7 +381,7 @@ pub(super) fn topology_changed(
     let Some(prior) = installed.hook_activation() else {
         return Ok(false);
     };
-    let current = plan(repository, Some(installed))?;
+    let current = plan(repository, Some(installed), false)?;
     let same_worktrees = current
         .observations
         .iter()
