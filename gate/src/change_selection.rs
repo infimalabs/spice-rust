@@ -5,19 +5,26 @@
 //! exact changed paths and the source digest they came from. Changes to an
 //! authority that can alter the selector itself, or a path class this build
 //! does not understand, refuse selection before any selected work can begin.
+//! The explicit xtask current-source selector retains its richer source-tree
+//! knowledge in a separate module under the same local-only contract.
 
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use wire::Digest;
 
 use crate::GateId;
 
+mod current_source;
+mod policy;
+
+pub use current_source::select_current_source_change_gates;
+pub use policy::{ChangeSelectionPolicy, ChangeSelectionPolicyInputs};
+
 /// Current staged-change policy-selection schema.
-pub const CHANGE_SELECTION_REPORT_VERSION: u64 = 1;
+pub const CHANGE_SELECTION_REPORT_VERSION: u64 = 2;
 
 /// The bounded execution mode admitted by the ordinary gate.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -64,6 +71,7 @@ pub struct ChangeSelectionReport {
     source: Digest,
     mode: ChangeSelectionMode,
     changed_sources: Vec<String>,
+    applicable_gate_ids: Vec<GateId>,
     gate_ids: Vec<GateId>,
     edges: Vec<ChangeSelectionEdge>,
 }
@@ -91,6 +99,12 @@ impl ChangeSelectionReport {
     #[must_use]
     pub fn changed_sources(&self) -> &[String] {
         &self.changed_sources
+    }
+
+    /// Canonical packaged arms applicable to this repository and policy.
+    #[must_use]
+    pub fn applicable_gate_ids(&self) -> &[GateId] {
+        &self.applicable_gate_ids
     }
 
     /// Canonically ordered synchronous battery arms owed by the change.
@@ -144,19 +158,19 @@ impl ChangeSelectionReport {
                 "change selection contains an invalid repository-relative path",
             ));
         }
-        if self.gate_ids.is_empty()
-            || !self.gate_ids.windows(2).all(|pair| pair[0] < pair[1])
-            || self
-                .gate_ids
-                .iter()
-                .any(|gate_id| !GateId::BATTERY.contains(gate_id))
+        validate_gate_inventory("applicable", &self.applicable_gate_ids)?;
+        validate_gate_inventory("selected", &self.gate_ids)?;
+        if self
+            .gate_ids
+            .iter()
+            .any(|gate_id| !self.applicable_gate_ids.contains(gate_id))
         {
             return Err(ChangeSelectionError::new(
-                "change selection requires unique canonical battery arms in manifest order",
+                "change selection names an arm inapplicable to this repository",
             ));
         }
         for required in ALWAYS {
-            if !self.gate_ids.contains(&required) {
+            if !self.applicable_gate_ids.contains(&required) || !self.gate_ids.contains(&required) {
                 return Err(ChangeSelectionError::new(format!(
                     "change selection omitted always-on arm {required}"
                 )));
@@ -186,18 +200,42 @@ impl ChangeSelectionReport {
                 "changed source {path:?} has no policy-selection edge"
             )));
         }
+        if !self.changed_sources.is_empty()
+            && let Some(gate_id) = self
+                .gate_ids
+                .iter()
+                .find(|gate_id| !self.edges.iter().any(|edge| edge.gate_id == **gate_id))
+        {
+            return Err(ChangeSelectionError::new(format!(
+                "selected arm {gate_id} has no changed-source policy edge"
+            )));
+        }
         Ok(())
     }
 }
 
-/// Select every canonical policy arm owed by exact staged paths.
+/// Select every applicable packaged policy arm owed by exact staged paths.
 ///
-/// This function is pure and intentionally has no repository parameter. A path
-/// class this build cannot prove is safe refuses rather than omitting evidence
-/// or silently broadening the ordinary gate into a complete verifier.
+/// This function is pure and intentionally has no repository parameter. The
+/// supplied policy was compiled from the same retained staged tree. A path it
+/// cannot prove local refuses rather than omitting evidence or broadening the
+/// ordinary gate into a complete verifier.
 pub fn select_change_gates(
     source: Digest,
     changed_sources: &[String],
+    policy: &ChangeSelectionPolicy,
+) -> Result<ChangeSelectionReport, ChangeSelectionError> {
+    let applicable = policy.applicable_gates(changed_sources);
+    select_with(source, changed_sources, applicable, |path| {
+        policy.gates_for_path(path)
+    })
+}
+
+fn select_with(
+    source: Digest,
+    changed_sources: &[String],
+    applicable_gate_ids: Vec<GateId>,
+    mut gates_for_path: impl FnMut(&str) -> Result<Vec<GateId>, ChangeSelectionError>,
 ) -> Result<ChangeSelectionReport, ChangeSelectionError> {
     let mut changed_sources = changed_sources.to_vec();
     changed_sources.sort();
@@ -211,6 +249,8 @@ pub fn select_change_gates(
         )));
     }
 
+    validate_gate_inventory("applicable", &applicable_gate_ids)?;
+    let applicable = applicable_gate_ids.iter().copied().collect::<BTreeSet<_>>();
     let mut selected = ALWAYS.into_iter().collect::<BTreeSet<_>>();
     let mut edges = Vec::new();
     for path in &changed_sources {
@@ -218,6 +258,7 @@ pub fn select_change_gates(
         let gates = ALWAYS
             .into_iter()
             .chain(gates)
+            .filter(|gate_id| applicable.contains(gate_id))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -237,6 +278,7 @@ pub fn select_change_gates(
         source,
         mode: ChangeSelectionMode::Local,
         changed_sources,
+        applicable_gate_ids,
         gate_ids,
         edges,
     };
@@ -245,212 +287,6 @@ pub fn select_change_gates(
 }
 
 const ALWAYS: [GateId; 3] = [GateId::MergeIntegrity, GateId::PlanPhase, GateId::Staging];
-const RUST: [GateId; 5] = [
-    GateId::Formatters,
-    GateId::EnvPolicy,
-    GateId::Complexity,
-    GateId::MagicNumbers,
-    GateId::MarkdownLinks,
-];
-const JAVASCRIPT: [GateId; 5] = [
-    GateId::JavascriptUnused,
-    GateId::EnvPolicy,
-    GateId::EnvNameLedger,
-    GateId::Complexity,
-    GateId::MagicNumbers,
-];
-const DOCUMENTATION: [GateId; 3] = [GateId::RepoDocs, GateId::Taste, GateId::MarkdownLinks];
-const PYTHON: [GateId; 10] = [
-    GateId::PythonTypecheck,
-    GateId::EnvPolicy,
-    GateId::EnvNameLedger,
-    GateId::Complexity,
-    GateId::MagicNumbers,
-    GateId::Reachability,
-    GateId::SymbolReachability,
-    GateId::PythonUnused,
-    GateId::AssertionFreeTests,
-    GateId::PrivateInternals,
-];
-const CSHARP: [GateId; 3] = [
-    GateId::CsharpUnusedCandidates,
-    GateId::Complexity,
-    GateId::MagicNumbers,
-];
-const SHELL: [GateId; 4] = [
-    GateId::EnvPolicy,
-    GateId::EnvNameLedger,
-    GateId::Complexity,
-    GateId::MagicNumbers,
-];
-
-fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
-    if selector_authority(path) {
-        return Err(ChangeSelectionError::new(format!(
-            "{path:?} changes gate or toolchain selection authority"
-        )));
-    }
-
-    let mut gates = BTreeSet::from([GateId::LocalPaths, GateId::FileShape]);
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    gates.extend(class_gates(path, extension.as_str())?);
-    Ok(gates.into_iter().collect())
-}
-
-fn class_gates(path: &str, extension: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
-    match extension {
-        "rs" => rust_gates(path),
-        "js" | "mjs" | "cjs" => Ok(with_frontend(path, &JAVASCRIPT)),
-        "html" | "css" => Ok(with_frontend(path, &[])),
-        "md" | "txt" | "rst" => Ok(DOCUMENTATION.to_vec()),
-        "py" | "pyi" => Ok(PYTHON.to_vec()),
-        "cs" => Ok(CSHARP.to_vec()),
-        "sh" | "bash" | "zsh" => Ok(SHELL.to_vec()),
-        "toml" | "json" | "yaml" | "yml" | "lock" => configuration_gates(path),
-        "" if known_extensionless(path) => Ok(vec![GateId::RepoShape]),
-        _ if frontend_path(path) => Ok(vec![GateId::CanvasWebTypecheck]),
-        _ => Err(ChangeSelectionError::new(format!(
-            "{path:?} has no compiled change-local policy class"
-        ))),
-    }
-}
-
-fn rust_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
-    if !known_workspace_rust_source(path) {
-        return Err(ChangeSelectionError::new(format!(
-            "{path:?} is Rust source outside every compiled workspace root"
-        )));
-    }
-    Ok(RUST.to_vec())
-}
-
-fn configuration_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
-    if Path::new(path).file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
-        && !known_workspace_manifest(path)
-    {
-        return Err(ChangeSelectionError::new(format!(
-            "{path:?} is a package manifest outside every compiled workspace root"
-        )));
-    }
-    let mut gates = vec![GateId::RepoShape];
-    if frontend_path(path) || matches!(path, "package.json" | "package-lock.json") {
-        gates.push(GateId::CanvasWebTypecheck);
-    }
-    Ok(gates)
-}
-
-fn with_frontend(path: &str, base: &[GateId]) -> Vec<GateId> {
-    let mut gates = base.to_vec();
-    if frontend_path(path) {
-        gates.push(GateId::CanvasWebTypecheck);
-    }
-    gates
-}
-
-fn known_workspace_rust_source(path: &str) -> bool {
-    let mut components = path.split('/');
-    let Some(root) = components.next() else {
-        return false;
-    };
-    if matches!(root, "src" | "tests" | "examples" | "benches") {
-        return true;
-    }
-    if !known_workspace_package_root(root) {
-        return false;
-    }
-    match components.next() {
-        Some("src" | "tests" | "examples" | "benches") => true,
-        Some("build.rs") => components.next().is_none(),
-        Some("build") => root == "fold",
-        _ => false,
-    }
-}
-
-fn known_workspace_manifest(path: &str) -> bool {
-    let mut components = path.split('/');
-    let Some(root) = components.next() else {
-        return false;
-    };
-    components.next() == Some("Cargo.toml")
-        && components.next().is_none()
-        && known_workspace_package_root(root)
-}
-
-fn known_workspace_package_root(root: &str) -> bool {
-    matches!(
-        root,
-        "app"
-            | "artifact"
-            | "atomic"
-            | "board"
-            | "bus"
-            | "canvas"
-            | "consent"
-            | "dialect"
-            | "dist"
-            | "fold"
-            | "gate"
-            | "journal"
-            | "lane"
-            | "listen"
-            | "proof"
-            | "sill"
-            | "spice"
-            | "steer"
-            | "tape"
-            | "taste"
-            | "vendor"
-            | "wire"
-            | "xtask"
-    )
-}
-
-fn selector_authority(path: &str) -> bool {
-    matches!(
-        path,
-        ".cargo/config.toml"
-            | ".githooks/pre-commit"
-            | "spice-rust.toml"
-            | "baseline.toml"
-            | "rust-toolchain.toml"
-            | "Cargo.lock"
-            | "Cargo.toml"
-            | "gate/src/battery/manifest.toml"
-            | "gate/src/change_selection.rs"
-            | "gate/src/lib.rs"
-            | "gate/src/manifest.rs"
-            | "gate/src/test_evidence.rs"
-            | "gate/src/workspace_tests.rs"
-            | "spice/src/change_gate.rs"
-            | "spice/src/cli.rs"
-            | "spice/src/cli/contracts.rs"
-            | "spice/src/cli/mounts.rs"
-            | "spice/src/cli/syntax.rs"
-            | "spice/src/gate.rs"
-            | "spice/src/gate_command.rs"
-            | "spice/src/install/git-hooks/pre-commit"
-            | "spice/src/install/git_hooks.rs"
-            | "spice/src/lib.rs"
-            | "spice/src/main.rs"
-            | "xtask/src/lib.rs"
-            | "xtask/src/main.rs"
-    ) || path.starts_with("gate/src/workspace_tests/")
-        || path.starts_with("spice/src/gate_command/pre_commit")
-}
-
-fn frontend_path(path: &str) -> bool {
-    path.starts_with("app/") || path.starts_with("canvas/") || path.starts_with("package")
-}
-
-fn known_extensionless(path: &str) -> bool {
-    matches!(path, ".gitignore" | ".gitattributes" | "LICENSE")
-        || path.starts_with(".githooks/")
-        || path.starts_with("spice/src/install/git-hooks/")
-}
 
 fn valid_repository_path(path: &str) -> bool {
     valid_text(path)
@@ -470,6 +306,21 @@ fn validate_sorted_unique(label: &str, values: &[String]) -> Result<(), ChangeSe
         Err(ChangeSelectionError::new(format!(
             "{label} inventory must be sorted and unique"
         )))
+    }
+}
+
+fn validate_gate_inventory(label: &str, gate_ids: &[GateId]) -> Result<(), ChangeSelectionError> {
+    if gate_ids.is_empty()
+        || !gate_ids.windows(2).all(|pair| pair[0] < pair[1])
+        || gate_ids
+            .iter()
+            .any(|gate_id| !GateId::BATTERY.contains(gate_id))
+    {
+        Err(ChangeSelectionError::new(format!(
+            "change selection requires unique canonical {label} arms in manifest order"
+        )))
+    } else {
+        Ok(())
     }
 }
 
@@ -502,216 +353,5 @@ impl fmt::Display for ChangeSelectionError {
 impl Error for ChangeSelectionError {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn selection(paths: &[&str]) -> ChangeSelectionReport {
-        select_change_gates(
-            Digest::compute(wire::Domain::GateTree, b"change selection fixture"),
-            &paths
-                .iter()
-                .map(|path| (*path).to_owned())
-                .collect::<Vec<_>>(),
-        )
-        .expect("select representative changes")
-    }
-
-    fn refusal(path: &str) -> ChangeSelectionError {
-        select_change_gates(
-            Digest::compute(wire::Domain::GateTree, b"change selection refusal"),
-            &[path.to_owned()],
-        )
-        .expect_err("unclassified or authoritative paths must refuse")
-    }
-
-    fn contains(report: &ChangeSelectionReport, gates: &[GateId]) {
-        for gate in gates {
-            assert!(
-                report.gate_ids().contains(gate),
-                "{} is absent from {:?}",
-                gate,
-                report.gate_ids(),
-            );
-        }
-    }
-
-    #[test]
-    fn backend_frontend_docs_and_config_select_their_canonical_checks() {
-        let backend = selection(&["journal/src/lib.rs"]);
-        assert_eq!(backend.mode(), ChangeSelectionMode::Local);
-        contains(
-            &backend,
-            &[
-                GateId::Formatters,
-                GateId::EnvPolicy,
-                GateId::FileShape,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-                GateId::MarkdownLinks,
-            ],
-        );
-
-        let frontend = selection(&["app/browser/canvas-coordinator.mjs"]);
-        assert_eq!(frontend.mode(), ChangeSelectionMode::Local);
-        contains(
-            &frontend,
-            &[
-                GateId::CanvasWebTypecheck,
-                GateId::JavascriptUnused,
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-            ],
-        );
-
-        let documentation = selection(&["DEVELOPMENT.md"]);
-        contains(
-            &documentation,
-            &[GateId::RepoDocs, GateId::Taste, GateId::MarkdownLinks],
-        );
-
-        let configuration = selection(&["gate/Cargo.toml"]);
-        contains(
-            &configuration,
-            &[GateId::RepoShape, GateId::LocalPaths, GateId::FileShape],
-        );
-    }
-
-    #[test]
-    fn classification_gaps_refuse_with_the_exact_path_and_condition() {
-        for (path, condition) in [
-            (
-                "assets/opaque.bin",
-                "has no compiled change-local policy class",
-            ),
-            (
-                "tools/outside.rs",
-                "is Rust source outside every compiled workspace root",
-            ),
-            (
-                "gate/tools/outside.rs",
-                "is Rust source outside every compiled workspace root",
-            ),
-            (
-                "tools/component/Cargo.toml",
-                "is a package manifest outside every compiled workspace root",
-            ),
-        ] {
-            assert_eq!(refusal(path).detail(), format!("{path:?} {condition}"));
-        }
-    }
-
-    #[test]
-    fn selector_command_and_hook_authorities_refuse_with_the_exact_path() {
-        for path in [
-            ".cargo/config.toml",
-            ".githooks/pre-commit",
-            "Cargo.lock",
-            "Cargo.toml",
-            "baseline.toml",
-            "rust-toolchain.toml",
-            "spice-rust.toml",
-            "gate/src/battery/manifest.toml",
-            "gate/src/change_selection.rs",
-            "gate/src/lib.rs",
-            "gate/src/manifest.rs",
-            "gate/src/test_evidence.rs",
-            "gate/src/workspace_tests.rs",
-            "gate/src/workspace_tests/selection.rs",
-            "gate/src/workspace_tests/source_reach.rs",
-            "spice/src/change_gate.rs",
-            "spice/src/cli.rs",
-            "spice/src/cli/contracts.rs",
-            "spice/src/cli/mounts.rs",
-            "spice/src/cli/syntax.rs",
-            "spice/src/gate.rs",
-            "spice/src/gate_command.rs",
-            "spice/src/gate_command/pre_commit.rs",
-            "spice/src/install/git-hooks/pre-commit",
-            "spice/src/install/git_hooks.rs",
-            "spice/src/lib.rs",
-            "spice/src/main.rs",
-            "xtask/src/lib.rs",
-            "xtask/src/main.rs",
-        ] {
-            assert_eq!(
-                refusal(path).detail(),
-                format!("{path:?} changes gate or toolchain selection authority"),
-                "selector authority did not refuse precisely: {path}",
-            );
-        }
-    }
-
-    #[test]
-    fn old_and_new_cross_class_paths_retain_both_policy_families() {
-        let report = selection(&[
-            "README.fixture.md",
-            "app/browser/renamed.mjs",
-            "app/src/renamed.rs",
-            "wire/src/renamed.rs",
-        ]);
-
-        assert_eq!(report.mode(), ChangeSelectionMode::Local);
-        assert_eq!(
-            report.gate_ids(),
-            BTreeSet::from([
-                GateId::MergeIntegrity,
-                GateId::PlanPhase,
-                GateId::Staging,
-                GateId::LocalPaths,
-                GateId::FileShape,
-                GateId::RepoDocs,
-                GateId::Taste,
-                GateId::MarkdownLinks,
-                GateId::CanvasWebTypecheck,
-                GateId::JavascriptUnused,
-                GateId::EnvPolicy,
-                GateId::EnvNameLedger,
-                GateId::Complexity,
-                GateId::MagicNumbers,
-                GateId::Formatters,
-            ])
-            .into_iter()
-            .collect::<Vec<_>>(),
-        );
-        contains(
-            &report,
-            &[
-                GateId::RepoDocs,
-                GateId::Taste,
-                GateId::Formatters,
-                GateId::CanvasWebTypecheck,
-                GateId::JavascriptUnused,
-            ],
-        );
-        for path in report.changed_sources() {
-            assert!(report.edges().iter().any(|edge| edge.source() == path));
-        }
-    }
-
-    #[test]
-    fn local_report_round_trips_canonically_and_cannot_decode_exhaustive_mode() {
-        let report = selection(&["README.md", "wire/src/lib.rs"]);
-        let encoded = report.encode().expect("encode local selection");
-        assert_eq!(
-            ChangeSelectionReport::decode(&encoded).expect("decode canonical local selection"),
-            report,
-        );
-
-        let encoded = String::from_utf8(encoded).expect("selection JSON is UTF-8");
-        let exhaustive = encoded.replace("\"mode\":\"local\"", "\"mode\":\"exhaustive\"");
-        let error = ChangeSelectionReport::decode(exhaustive.as_bytes())
-            .expect_err("ordinary reports cannot retain exhaustive authority");
-        assert!(error.detail().contains("invalid change selection"));
-    }
-
-    #[test]
-    fn every_changed_path_and_always_on_arm_retains_provenance() {
-        let report = selection(&["README.md", "wire/src/lib.rs"]);
-        for gate_id in ALWAYS {
-            assert!(report.gate_ids().contains(&gate_id));
-        }
-        for path in report.changed_sources() {
-            assert!(report.edges().iter().any(|edge| edge.source() == path));
-        }
-    }
-}
+#[path = "change_selection/tests.rs"]
+mod tests;

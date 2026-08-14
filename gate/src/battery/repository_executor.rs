@@ -265,6 +265,11 @@ impl<'trace> RepositoryExecutor<'trace> {
             .map_err(|error| BatteryError::new(error.to_string()))
     }
 
+    /// Every regular path retained by this selected tree.
+    pub(super) fn paths(&self) -> &[String] {
+        self.tree.paths()
+    }
+
     /// Run the canonical mutation profile against this executor's selected tree.
     pub(super) fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
         self.contract.execute_kill(self.tree.root())

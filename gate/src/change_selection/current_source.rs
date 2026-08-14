@@ -1,0 +1,234 @@
+//! Explicit current-source selector retained for the xtask development rim.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use super::{ChangeSelectionError, ChangeSelectionReport, select_with};
+use crate::GateId;
+use wire::Digest;
+
+const RUST: [GateId; 5] = [
+    GateId::Formatters,
+    GateId::EnvPolicy,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+    GateId::MarkdownLinks,
+];
+const JAVASCRIPT: [GateId; 5] = [
+    GateId::JavascriptUnused,
+    GateId::EnvPolicy,
+    GateId::EnvNameLedger,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+];
+const DOCUMENTATION: [GateId; 3] = [GateId::RepoDocs, GateId::Taste, GateId::MarkdownLinks];
+const PYTHON: [GateId; 10] = [
+    GateId::PythonTypecheck,
+    GateId::EnvPolicy,
+    GateId::EnvNameLedger,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+    GateId::Reachability,
+    GateId::SymbolReachability,
+    GateId::PythonUnused,
+    GateId::AssertionFreeTests,
+    GateId::PrivateInternals,
+];
+const CSHARP: [GateId; 3] = [
+    GateId::CsharpUnusedCandidates,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+];
+const SHELL: [GateId; 4] = [
+    GateId::EnvPolicy,
+    GateId::EnvNameLedger,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+];
+
+/// Select the richer Spice-source battery from its explicit xtask override.
+///
+/// This is intentionally separate from [`super::select_change_gates`]: these
+/// path names describe this source repository and must never become packaged
+/// applicability for an installed appliance.
+pub fn select_current_source_change_gates(
+    source: Digest,
+    changed_sources: &[String],
+) -> Result<ChangeSelectionReport, ChangeSelectionError> {
+    select_with(
+        source,
+        changed_sources,
+        GateId::BATTERY.to_vec(),
+        gates_for_path,
+    )
+}
+
+fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+    if selector_authority(path) {
+        return Err(ChangeSelectionError::new(format!(
+            "{path:?} changes gate or toolchain selection authority"
+        )));
+    }
+
+    let mut gates = BTreeSet::from([GateId::LocalPaths, GateId::FileShape]);
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    gates.extend(class_gates(path, extension.as_str())?);
+    Ok(gates.into_iter().collect())
+}
+
+fn class_gates(path: &str, extension: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+    match extension {
+        "rs" => rust_gates(path),
+        "js" | "mjs" | "cjs" => Ok(with_frontend(path, &JAVASCRIPT)),
+        "html" | "css" => Ok(with_frontend(path, &[])),
+        "md" | "txt" | "rst" => Ok(DOCUMENTATION.to_vec()),
+        "py" | "pyi" => Ok(PYTHON.to_vec()),
+        "cs" => Ok(CSHARP.to_vec()),
+        "sh" | "bash" | "zsh" => Ok(SHELL.to_vec()),
+        "toml" | "json" | "yaml" | "yml" | "lock" => configuration_gates(path),
+        "" if known_extensionless(path) => Ok(vec![GateId::RepoShape]),
+        _ if frontend_path(path) => Ok(vec![GateId::CanvasWebTypecheck]),
+        _ => Err(ChangeSelectionError::new(format!(
+            "{path:?} has no compiled change-local policy class"
+        ))),
+    }
+}
+
+fn rust_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+    if !known_workspace_rust_source(path) {
+        return Err(ChangeSelectionError::new(format!(
+            "{path:?} is Rust source outside every compiled workspace root"
+        )));
+    }
+    Ok(RUST.to_vec())
+}
+
+fn configuration_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+    if Path::new(path).file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
+        && !known_workspace_manifest(path)
+    {
+        return Err(ChangeSelectionError::new(format!(
+            "{path:?} is a package manifest outside every compiled workspace root"
+        )));
+    }
+    let mut gates = vec![GateId::RepoShape];
+    if frontend_path(path) || matches!(path, "package.json" | "package-lock.json") {
+        gates.push(GateId::CanvasWebTypecheck);
+    }
+    Ok(gates)
+}
+
+fn with_frontend(path: &str, base: &[GateId]) -> Vec<GateId> {
+    let mut gates = base.to_vec();
+    if frontend_path(path) {
+        gates.push(GateId::CanvasWebTypecheck);
+    }
+    gates
+}
+
+fn known_workspace_rust_source(path: &str) -> bool {
+    let mut components = path.split('/');
+    let Some(root) = components.next() else {
+        return false;
+    };
+    if matches!(root, "src" | "tests" | "examples" | "benches") {
+        return true;
+    }
+    if !known_workspace_package_root(root) {
+        return false;
+    }
+    match components.next() {
+        Some("src" | "tests" | "examples" | "benches") => true,
+        Some("build.rs") => components.next().is_none(),
+        Some("build") => root == "fold",
+        _ => false,
+    }
+}
+
+fn known_workspace_manifest(path: &str) -> bool {
+    let mut components = path.split('/');
+    let Some(root) = components.next() else {
+        return false;
+    };
+    components.next() == Some("Cargo.toml")
+        && components.next().is_none()
+        && known_workspace_package_root(root)
+}
+
+fn known_workspace_package_root(root: &str) -> bool {
+    matches!(
+        root,
+        "app"
+            | "artifact"
+            | "atomic"
+            | "board"
+            | "bus"
+            | "canvas"
+            | "consent"
+            | "dialect"
+            | "dist"
+            | "fold"
+            | "gate"
+            | "journal"
+            | "lane"
+            | "listen"
+            | "proof"
+            | "sill"
+            | "spice"
+            | "steer"
+            | "tape"
+            | "taste"
+            | "vendor"
+            | "wire"
+            | "xtask"
+    )
+}
+
+fn selector_authority(path: &str) -> bool {
+    matches!(
+        path,
+        ".cargo/config.toml"
+            | ".githooks/pre-commit"
+            | "spice-rust.toml"
+            | "baseline.toml"
+            | "rust-toolchain.toml"
+            | "Cargo.lock"
+            | "Cargo.toml"
+            | "gate/src/battery/manifest.toml"
+            | "gate/src/change_selection.rs"
+            | "gate/src/lib.rs"
+            | "gate/src/manifest.rs"
+            | "gate/src/test_evidence.rs"
+            | "gate/src/workspace_tests.rs"
+            | "spice/src/change_gate.rs"
+            | "spice/src/cli.rs"
+            | "spice/src/cli/contracts.rs"
+            | "spice/src/cli/mounts.rs"
+            | "spice/src/cli/syntax.rs"
+            | "spice/src/gate.rs"
+            | "spice/src/gate_command.rs"
+            | "spice/src/install/git-hooks/pre-commit"
+            | "spice/src/install/git_hooks.rs"
+            | "spice/src/lib.rs"
+            | "spice/src/main.rs"
+            | "xtask/src/gate_command.rs"
+            | "xtask/src/lib.rs"
+            | "xtask/src/main.rs"
+    ) || path.starts_with("gate/src/change_selection/")
+        || path.starts_with("gate/src/workspace_tests/")
+        || path.starts_with("spice/src/gate_command/pre_commit")
+}
+
+fn frontend_path(path: &str) -> bool {
+    path.starts_with("app/") || path.starts_with("canvas/") || path.starts_with("package")
+}
+
+fn known_extensionless(path: &str) -> bool {
+    matches!(path, ".gitignore" | ".gitattributes" | "LICENSE")
+        || path.starts_with(".githooks/")
+        || path.starts_with("spice/src/install/git-hooks/")
+}

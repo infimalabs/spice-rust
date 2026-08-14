@@ -164,7 +164,7 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
     let authority = run_commit_worker(repository.path());
     assert_selection_refusal(
         &authority,
-        "\"spice-rust.toml\" changes gate or toolchain selection authority",
+        "\"spice-rust.toml\" changes packaged selection policy",
         &authority_marker,
     );
 }

@@ -63,7 +63,8 @@ pub use camp::{
 };
 pub use change_selection::{
     CHANGE_SELECTION_REPORT_VERSION, ChangeSelectionEdge, ChangeSelectionError,
-    ChangeSelectionMode, ChangeSelectionReport, select_change_gates,
+    ChangeSelectionMode, ChangeSelectionPolicy, ChangeSelectionPolicyInputs, ChangeSelectionReport,
+    select_change_gates, select_current_source_change_gates,
 };
 pub use config::{Config, WalkConfig};
 #[cfg(not(target_arch = "wasm32"))]

@@ -95,6 +95,12 @@ impl BatteryCapture<'_> {
         self.executor.verify_source()
     }
 
+    /// Every regular path retained by this exact selected source.
+    #[must_use]
+    pub fn paths(&self) -> &[String] {
+        self.executor.paths()
+    }
+
     /// Capture one repository into a complete, runnable battery.
     ///
     /// `claim`, `actor`, `rim`, and `hygiene` are the caller's observations of

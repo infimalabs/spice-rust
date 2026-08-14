@@ -4,6 +4,7 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Write as _;
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -20,7 +21,7 @@ use sill::Environment;
 use crate::repository::Repository;
 
 /// Current combined ordinary-change-gate report schema.
-pub const CHANGE_GATE_REPORT_VERSION: u64 = 2;
+pub const CHANGE_GATE_REPORT_VERSION: u64 = 3;
 
 struct SharedProgress<'a, W: Write + Send + ?Sized> {
     inner: Arc<Mutex<&'a mut W>>,
@@ -78,6 +79,16 @@ impl ChangePolicyReport {
         source: &wire::Digest,
         reports: &[FocusedArmReport],
     ) -> Result<Self, ChangeGateError> {
+        Ok(Self::Focused {
+            source: source.clone(),
+            results: Self::summaries(source, reports)?,
+        })
+    }
+
+    fn summaries(
+        source: &wire::Digest,
+        reports: &[FocusedArmReport],
+    ) -> Result<Vec<PolicyArmSummary>, ChangeGateError> {
         let mut results = Vec::with_capacity(reports.len());
         for report in reports {
             if report.context().source() != source {
@@ -95,10 +106,7 @@ impl ChangePolicyReport {
             let digest = wire::Digest::compute(wire::Domain::GateFocusedReport, &encoded);
             results.push(PolicyArmSummary::from_result(report.result(), digest));
         }
-        Ok(Self::Focused {
-            source: source.clone(),
-            results,
-        })
+        Ok(results)
     }
 
     /// Number of canonical policy arms retained by this report.
@@ -395,10 +403,42 @@ struct ChangeGateExecution {
 /// Returns repository/environment faults, selected-source movement, incomplete
 /// test reach, or canonical focused-arm acquisition failures.
 pub fn run(progress: &mut (impl Write + Send)) -> Result<ChangeGateReport, ChangeGateError> {
+    run_with_selection(progress, SelectionSurface::Packaged)
+}
+
+/// Execute the richer current-source selector from the explicit xtask rim.
+///
+/// # Errors
+///
+/// Returns the same staged selection, test, or policy failures as [`run`].
+pub fn run_current_source(
+    progress: &mut (impl Write + Send),
+) -> Result<ChangeGateReport, ChangeGateError> {
+    run_with_selection(progress, SelectionSurface::CurrentSource)
+}
+
+#[derive(Clone, Copy)]
+enum SelectionSurface {
+    Packaged,
+    CurrentSource,
+}
+
+fn run_with_selection(
+    progress: &mut (impl Write + Send),
+    surface: SelectionSurface,
+) -> Result<ChangeGateReport, ChangeGateError> {
     let mut anchor = crate::gate::prepare_arm(Selector::staged(), GateId::Staging)
         .map_err(ChangeGateError::gate)?;
-    let selection = gate::select_change_gates(anchor.source().clone(), anchor.changes())
-        .map_err(|error| ChangeGateError::refusal("change-selection-refused", error))?;
+    let selection = match surface {
+        SelectionSurface::Packaged => {
+            let policy = packaged_selection_policy(anchor.root(), anchor.paths())?;
+            gate::select_change_gates(anchor.source().clone(), anchor.changes(), &policy)
+        }
+        SelectionSurface::CurrentSource => {
+            gate::select_current_source_change_gates(anchor.source().clone(), anchor.changes())
+        }
+    }
+    .map_err(|error| ChangeGateError::refusal("change-selection-refused", error))?;
     publish_selection(progress, &selection)?;
 
     let repository = Repository::discover(Path::new(".")).map_err(|error| {
@@ -485,6 +525,44 @@ fn publish_selection(
         .flush()
         .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
     Ok(())
+}
+
+fn packaged_selection_policy(
+    root: &Path,
+    tracked_sources: &[String],
+) -> Result<gate::ChangeSelectionPolicy, ChangeGateError> {
+    const TRACKED_POLICY: &str = "spice-rust.toml";
+
+    let path = root.join(TRACKED_POLICY);
+    let tracked = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(ChangeGateError::environment(
+                "change-selection-policy-unavailable",
+                format!("{}: {error}", path.display()),
+            ));
+        }
+    };
+    let document = tracked
+        .as_deref()
+        .map(|text| crate::config::Document::new(TRACKED_POLICY, text));
+    let resolved = crate::config::resolve(crate::config::Inputs::new(document, None, &[]))
+        .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))?;
+    let policy = resolved.root().policy();
+    gate::ChangeSelectionPolicy::new(gate::ChangeSelectionPolicyInputs {
+        tracked_sources,
+        policy_authorities: &[TRACKED_POLICY.to_owned(), "baseline.toml".to_owned()],
+        configured: tracked.is_some(),
+        repository_documents: policy.repo_truth().docs(),
+        file_shape_suffixes: policy.file_shape().source_suffixes(),
+        complexity_suffixes: policy.languages().complexity(),
+        magic_suffixes: policy.languages().magic(),
+        package_roots: policy.package_roots(),
+        generated_paths: policy.generated_paths(),
+        test_paths: policy.test_paths(),
+    })
+    .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))
 }
 
 fn run_policy_and_tests<W: Write + Send + ?Sized>(
@@ -643,28 +721,5 @@ impl fmt::Display for ChangeGateError {
 impl Error for ChangeGateError {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn report_rejects_missing_and_source_mismatched_policy_evidence() {
-        let source = wire::Digest::compute(wire::Domain::GateTree, b"change gate report");
-        let selection = gate::select_change_gates(source.clone(), &[]).expect("empty selection");
-        let tests = gate::TestEvidenceGraph::select_tests(
-            source,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            gate::CoverageCompleteness::Complete,
-        )
-        .expect("empty test selection");
-
-        let policy = ChangePolicyReport::Focused {
-            source: selection.source().clone(),
-            results: Vec::new(),
-        };
-        let error = ChangeGateReport::new(selection, tests, policy)
-            .expect_err("selected always-on arms require focused evidence");
-        assert_eq!(error.reason(), "gate::change-gate-policy-incomplete");
-    }
-}
+#[path = "change_gate_tests.rs"]
+mod tests;

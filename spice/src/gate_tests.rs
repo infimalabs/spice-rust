@@ -90,7 +90,7 @@ fn staged_renames_retain_both_owners_independent_of_git_rename_configuration() {
             .expect("capture both sides of staged renames");
         assert_eq!(changes, expected, "diff.renames={rename_detection}");
 
-        let selection = ::gate::select_change_gates(
+        let selection = ::gate::select_current_source_change_gates(
             Digest::compute(wire::Domain::GateTree, b"staged rename fixture"),
             &changes,
         )

@@ -355,9 +355,12 @@ fn cancellation_terminates_and_reaps_the_configured_process_tree() {
     let pid_for_thread = pid.clone();
     let cancellation = thread::spawn(move || {
         for _ in 0..200 {
-            if pid_for_thread.exists() {
+            let descendant = fs::read_to_string(&pid_for_thread)
+                .ok()
+                .and_then(|text| text.trim().parse::<u32>().ok());
+            if let Some(descendant) = descendant {
                 canceller.cancel();
-                return;
+                return descendant;
             }
             thread::sleep(Duration::from_millis(5));
         }
@@ -374,7 +377,7 @@ fn cancellation_terminates_and_reaps_the_configured_process_tree() {
         &mut || Ok(()),
     )
     .expect("cancellation is report evidence");
-    cancellation.join().expect("canceller completes");
+    let descendant = cancellation.join().expect("canceller completes");
 
     assert!(
         report.steps()[0]
@@ -384,11 +387,6 @@ fn cancellation_terminates_and_reaps_the_configured_process_tree() {
         "{}",
         report.refusal_evidence(),
     );
-    let descendant = fs::read_to_string(pid)
-        .expect("cancelled step published descendant")
-        .trim()
-        .parse::<u32>()
-        .expect("descendant pid is numeric");
     wait_absent(descendant);
 }
 
