@@ -23,6 +23,139 @@ fn version_7_upgrade_retires_legacy_runtime_after_publication_and_rolls_back_exa
     resume_and_reverse(fixture, &migration);
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RetirementTamper {
+    Bytes,
+    Mode,
+    Removed,
+    Invented,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct InstalledState {
+    receipt: Vec<u8>,
+    operations: Vec<Option<ObservedFile>>,
+    retirements: Vec<Option<ObservedFile>>,
+    hooks: Vec<String>,
+}
+
+#[test]
+fn resealed_retirement_images_must_match_their_exact_plan_witnesses() {
+    for tamper in [
+        RetirementTamper::Bytes,
+        RetirementTamper::Mode,
+        RetirementTamper::Removed,
+        RetirementTamper::Invented,
+    ] {
+        retirement_tamper_refuses_inertly(tamper);
+    }
+}
+
+fn retirement_tamper_refuses_inertly(tamper: RetirementTamper) {
+    let fixture = version_7_fixture();
+    if matches!(tamper, RetirementTamper::Invented) {
+        fs::remove_file(&fixture.legacy_guard).expect("remove absent-image fixture sidecar");
+    }
+    let migration =
+        plan(&fixture.repository, Some(&fixture.binary)).expect("derive migration to tamper");
+    let migrated = apply(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &migration.digest().unwrap(),
+    )
+    .expect("apply migration before receipt tampering");
+    assert_eq!(migrated.status(), InstallStatus::Complete);
+
+    let mut record = read_record(&fixture.repository)
+        .unwrap()
+        .expect("migrated receipt exists")
+        .record;
+    let mut rollback = record
+        .plan
+        .rollback_state()
+        .expect("decode rollback before tampering")
+        .expect("migration retains rollback state");
+    match tamper {
+        RetirementTamper::Bytes => {
+            let image = rollback.retirements[0]
+                .as_ref()
+                .expect("xtask rollback image exists");
+            let mut bytes = image.bytes().to_vec();
+            bytes[0] ^= 0xff;
+            rollback.retirements[0] = Some(FileImage::new(image.mode(), bytes));
+        }
+        RetirementTamper::Mode => {
+            let image = rollback.retirements[0]
+                .as_ref()
+                .expect("xtask rollback image exists");
+            rollback.retirements[0] = Some(FileImage::new(0o700, image.bytes().to_vec()));
+        }
+        RetirementTamper::Removed => rollback.retirements[0] = None,
+        RetirementTamper::Invented => {
+            assert!(record.plan.retirements[1].superseded.is_none());
+            assert!(rollback.retirements[1].is_none());
+            rollback.retirements[1] = Some(FileImage::new(DATA_MODE, b"invented\n".to_vec()));
+        }
+    }
+    record.plan.rollback_archive =
+        Some(RollbackArchive::new(&rollback).expect("reseal coherent tampered rollback archive"));
+    record.plan_digest = record
+        .plan
+        .digest()
+        .expect("resealed plan has a coherent digest");
+    fs::write(
+        record_path(&fixture.repository).unwrap(),
+        wire::encode(&record).expect("encode coherent tampered receipt"),
+    )
+    .expect("publish coherent tampered receipt");
+
+    let before = installed_state(&fixture.repository, &migration);
+    let preview = plan(&fixture.repository, Some(&fixture.binary))
+        .expect_err("preview must refuse the mismatched retirement image");
+    assert_retirement_witness_refusal(&preview);
+    assert_eq!(installed_state(&fixture.repository, &migration), before);
+
+    let audit = audit_appliance(&fixture.repository, &fixture.binary)
+        .expect("audit classifies the invalid receipt");
+    assert_eq!(audit.state(), ApplianceState::StaleReceipt);
+    assert!(
+        audit
+            .detail()
+            .contains("does not match its retirement witnesses"),
+        "{audit:?}"
+    );
+    assert_eq!(installed_state(&fixture.repository, &migration), before);
+
+    let reversal = unapply(&fixture.repository)
+        .expect_err("unapply must refuse the mismatched retirement image");
+    assert_retirement_witness_refusal(&reversal);
+    assert_eq!(installed_state(&fixture.repository, &migration), before);
+}
+
+fn assert_retirement_witness_refusal(error: &InstallError) {
+    assert!(
+        matches!(error, InstallError::InvalidRecord(detail)
+            if detail == "migration rollback archive does not match its retirement witnesses"),
+        "{error:?}"
+    );
+}
+
+fn installed_state(repository: &Repository, migration: &InstallPlan) -> InstalledState {
+    InstalledState {
+        receipt: fs::read(record_path(repository).unwrap()).expect("read receipt state"),
+        operations: images(repository, migration),
+        retirements: migration
+            .retirements
+            .iter()
+            .map(|retirement| observe(&retirement.destination(repository)).unwrap())
+            .collect(),
+        hooks: git_values(
+            repository.worktree_root(),
+            &["config", "--local", "--get-all", "core.hooksPath"],
+        ),
+    }
+}
+
 fn version_7_fixture() -> MigrationFixture {
     let scratch = Scratch::new("version-7-migration");
     let repository = scratch.repository();

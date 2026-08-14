@@ -1,0 +1,398 @@
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use wire::{Digest, Domain};
+
+use crate::repository::Repository;
+
+use super::{Generation, InstallError, InstallPlan};
+
+/// One Spice-owned asset in canonical installation order.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Asset {
+    /// Retired version-5 asset retained only so its record can name its owner.
+    Exclusions,
+    GitPreCommit,
+    GitCommitMessage,
+    GitReferenceTransaction,
+    HookEntry,
+    HookStatic,
+    Skill,
+    Binary,
+}
+
+/// Root against which an operation's relative path resolves.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Location {
+    /// Retired: no operation resolves here, and none can.
+    ///
+    /// An install identifies its repository by common directory alone, which
+    /// `RepositoryIdentity::capture` enforces by capturing no worktree at
+    /// all. A worktree-relative destination is therefore unresolvable from the
+    /// record that owns it: one record serves every linked worktree, so the
+    /// root this variant names is whichever worktree happened to run install
+    /// rather than a place the record can rediscover later. Current appliance
+    /// assets therefore live exclusively below [`Self::CommonGit`].
+    Worktree,
+    CommonGit,
+}
+
+impl Location {
+    pub(super) fn root(self, repository: &Repository) -> &Path {
+        match self {
+            Self::Worktree => repository.worktree_root(),
+            Self::CommonGit => repository.common_dir(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RepositoryIdentity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) worktree: Option<PathBuf>,
+    pub(super) common_git: PathBuf,
+}
+
+impl RepositoryIdentity {
+    pub(super) fn capture(repository: &Repository) -> Self {
+        Self {
+            worktree: None,
+            common_git: repository.common_dir().to_path_buf(),
+        }
+    }
+
+    pub(super) fn validate(&self, repository: &Repository) -> Result<(), InstallError> {
+        if self.worktree.is_none() && self.common_git == repository.common_dir() {
+            Ok(())
+        } else {
+            Err(InstallError::InvalidRecord(
+                "install record belongs to another repository".to_owned(),
+            ))
+        }
+    }
+}
+
+/// Complete bytes, mode, and content identity of one regular file.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileImage {
+    pub(super) mode: u32,
+    pub(super) bytes: Vec<u8>,
+    pub(super) digest: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ObservedFile {
+    pub(super) image: FileImage,
+    pub(super) generation: Generation,
+}
+
+impl ObservedFile {
+    pub(super) fn generated(&self) -> GeneratedImage {
+        self.image.generated()
+    }
+}
+
+pub(super) fn images_match(
+    observed: Option<&ObservedFile>,
+    expected: Option<&ObservedFile>,
+) -> bool {
+    // Durable drift belongs to the complete file image. A generation is only
+    // an immediate compare-and-swap guard for the mutation that follows.
+    match (observed, expected) {
+        (None, None) => true,
+        (Some(observed), Some(expected)) => observed.image == expected.image,
+        _ => false,
+    }
+}
+
+impl FileImage {
+    pub(super) fn new(mode: u32, bytes: Vec<u8>) -> Self {
+        let digest = Digest::compute(Domain::InstallArtifact, &bytes);
+        Self {
+            mode,
+            bytes,
+            digest,
+        }
+    }
+
+    /// Installed permission bits.
+    #[must_use]
+    pub const fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    /// Exact file bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Content identity of the file bytes.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    pub(super) fn validate(&self) -> bool {
+        self.mode <= 0o777 && self.digest == Digest::compute(Domain::InstallArtifact, &self.bytes)
+    }
+
+    pub(super) fn generated(&self) -> GeneratedImage {
+        GeneratedImage {
+            mode: self.mode,
+            digest: self.digest.clone(),
+        }
+    }
+}
+
+/// Mode and content identity of bytes an install operation will publish.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedImage {
+    pub(super) mode: u32,
+    pub(super) digest: Digest,
+}
+
+impl GeneratedImage {
+    pub(super) fn new(mode: u32, bytes: &[u8]) -> Self {
+        Self {
+            mode,
+            digest: Digest::compute(Domain::InstallArtifact, bytes),
+        }
+    }
+
+    /// Installed permission bits.
+    #[must_use]
+    pub const fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    /// Identity of the exact bytes selected by the plan.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    pub(super) fn validate(&self) -> bool {
+        self.mode <= 0o777
+    }
+}
+
+/// One exact file replacement and the state it observed before installation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Operation {
+    pub(super) asset: Asset,
+    pub(super) location: Location,
+    pub(super) path: String,
+    pub(super) destination: String,
+    pub(super) parent: super::ParentObservation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) previous: Option<ObservedFile>,
+    pub(super) generated: GeneratedImage,
+    /// Installed image this operation replaces, when it refreshes a completed
+    /// install rather than introducing one.
+    ///
+    /// `previous` never moves: it stays the pre-install state a reversal
+    /// restores, so refreshing repeatedly still uninstalls to the tree the
+    /// first apply found. What a refresh needs beyond that is the image it
+    /// expects to *find* in place, which is the superseded build's output
+    /// rather than `previous`. Absent for a first install, and skipped from the
+    /// canonical bytes then, so plans that introduce an install keep the digest
+    /// they had before refreshing existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) superseded: Option<GeneratedImage>,
+    pub(super) introduced_parents: Vec<String>,
+}
+
+/// One legacy side-channel path removed after every live Spice asset exists.
+///
+/// Retirements are deliberately separate from [`Operation`]: they publish no
+/// current asset and therefore never re-enter the install inventory. The exact
+/// prior image remains in the receipt so reversal can restore a complete
+/// pre-migration installation rather than a mixture.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Retirement {
+    pub(super) path: String,
+    pub(super) destination: String,
+    pub(super) parent: super::ParentObservation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) previous: Option<ObservedFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) observed: Option<ObservedFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) superseded: Option<GeneratedImage>,
+}
+
+impl Retirement {
+    /// Retired repository-relative path.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Exact prior image restored by reversal, if one existed.
+    #[must_use]
+    pub const fn previous(&self) -> Option<&FileImage> {
+        match self.previous.as_ref() {
+            Some(previous) => Some(&previous.image),
+            None => None,
+        }
+    }
+
+    pub(super) fn destination(&self, repository: &Repository) -> PathBuf {
+        repository.common_dir().join(&self.destination)
+    }
+
+    pub(super) fn expects_in_place(&self, observed: Option<&ObservedFile>) -> bool {
+        self.superseded.as_ref().map_or_else(
+            || images_match(observed, self.observed.as_ref()),
+            |superseded| observed.is_some_and(|observed| &observed.generated() == superseded),
+        )
+    }
+}
+
+impl Operation {
+    /// Kind of asset this operation owns.
+    #[must_use]
+    pub const fn asset(&self) -> Asset {
+        self.asset
+    }
+
+    /// Root against which [`Self::path`] resolves.
+    #[must_use]
+    pub const fn location(&self) -> Location {
+        self.location
+    }
+
+    /// Repository-relative destination spelling.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Prior regular-file image, or absence when this install introduces it.
+    #[must_use]
+    pub const fn previous(&self) -> Option<&FileImage> {
+        match self.previous.as_ref() {
+            Some(previous) => Some(&previous.image),
+            None => None,
+        }
+    }
+
+    /// Exact image this install places.
+    #[must_use]
+    pub const fn generated(&self) -> &GeneratedImage {
+        &self.generated
+    }
+
+    /// Installed image a refresh replaces, absent when this install introduces it.
+    #[must_use]
+    pub const fn superseded(&self) -> Option<&GeneratedImage> {
+        self.superseded.as_ref()
+    }
+
+    /// Whether `observed` is the exact state this operation may publish over.
+    ///
+    /// A first install may publish only over the image it planned against. A
+    /// refresh may publish only over the build it supersedes, because the
+    /// destination already holds an installed image rather than `previous`.
+    pub(super) fn expects_in_place(&self, observed: Option<&ObservedFile>) -> bool {
+        match &self.superseded {
+            Some(superseded) => {
+                observed.is_some_and(|observed| &observed.generated() == superseded)
+            }
+            None => images_match(observed, self.previous.as_ref()),
+        }
+    }
+
+    /// Parent directories absent when the plan was derived, outermost first.
+    #[must_use]
+    pub fn introduced_parents(&self) -> &[String] {
+        &self.introduced_parents
+    }
+
+    pub(super) fn destination(&self, repository: &Repository) -> PathBuf {
+        self.location.root(repository).join(&self.destination)
+    }
+}
+
+/// One side-effect-free install preview and the exact identity admitted by apply.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallPreview {
+    pub(super) digest: Digest,
+    pub(super) plan: InstallPlan,
+}
+
+impl InstallPreview {
+    /// Bind a canonical plan to its dedicated-domain identity.
+    pub fn from_plan(plan: InstallPlan) -> Result<Self, InstallError> {
+        let digest = plan.digest()?;
+        Ok(Self { digest, plan })
+    }
+
+    /// Exact canonical plan identity accepted by `install --apply`.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    /// Side-effect-free canonical installation plan.
+    #[must_use]
+    pub const fn plan(&self) -> &InstallPlan {
+        &self.plan
+    }
+}
+
+/// Durable progress state for apply and reversal.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallStatus {
+    Applying,
+    Complete,
+    Unapplying,
+    Uninstalled,
+}
+
+/// Current strict installation receipt.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallReceipt {
+    pub(super) plan: InstallPlan,
+    pub(super) digest: Digest,
+    pub(super) status: InstallStatus,
+    pub(super) completed: usize,
+}
+
+impl InstallReceipt {
+    /// Exact plan retained for reversal and repeat application.
+    #[must_use]
+    pub const fn plan(&self) -> &InstallPlan {
+        &self.plan
+    }
+
+    /// Plan identity admitted by apply.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    /// Durable progress state.
+    #[must_use]
+    pub const fn status(&self) -> InstallStatus {
+        self.status
+    }
+
+    /// Operations durably acknowledged in the current direction.
+    #[must_use]
+    pub const fn completed(&self) -> usize {
+        self.completed
+    }
+}
