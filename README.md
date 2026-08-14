@@ -3,40 +3,30 @@
 ## Install and start
 
 Spice is this repository's installed appliance. Preview its digest-bound plan,
-then apply that exact filesystem and repository-wide hook-activation authority:
+then apply that exact filesystem and repository-wide hook authority:
 
 ```sh
 cargo run --locked -p spice -- install
 cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
 ```
 
-When the operator explicitly authorizes the authority switch, follow
-[INSTALL.md](INSTALL.md#operator-authorized-authority-switch). That step makes
-the installed Rust appliance the bare `spice` command, moves every linked
-worktree through one recognized hook selection, and activates the installed
-common hooks. Preview alone performs none of those mutations; digest-bound
-apply performs the authorized switch.
+Follow [INSTALL.md](INSTALL.md#operator-authorized-authority-switch) for the
+operator-authorized switch. Preview is read-only. Apply first publishes the
+executable, skill, and three hooks under the Git common directory's
+`.spice-install`; after validating every linked worktree, it changes the common
+hook path last. Admission permits an absent selection, or one repeated effective
+value naming tracked `.githooks`, the target installed path, or the intact
+receipt's prior installed path. Conflicting or foreign values refuse before any
+write. Admitted worktree overrides are cleared so every linked worktree uses the
+same absolute two-line launchers.
 
-The plan publishes the executable, operator skill, and the `pre-commit`,
-`commit-msg`, and `reference-transaction` hooks once under the Git common
-directory's `.spice-install`. Every linked worktree uses those same assets.
-Every hook execs that installed Spice binary directly. The same plan records
-the activation and its reversal values; it inspects every linked worktree and
-refuses before writing when one selects a `core.hooksPath` it does not
-recognize. On upgrades from the prior Rust hook installation, all current
-Spice assets publish first, the retired `xtask` copy and guard stamp are removed
-second, and the common hook-path switch remains last. A reversal restores the
-complete prior appliance and its receipt from one digest-bound compressed
-snapshot; prior executables never remain as runnable sidecar files.
+The receipt records exact reversal values. Digest-bound unapply restores the
+prior appliance and receipt from one compressed snapshot and removes the new
+generation without leaving runnable sidecars. The switch gives Rust the bare
+`spice` command and common hooks; predecessor process/state retirement remains a
+separate operator decision.
 
-Only two are recognized: the tracked `.githooks` a fresh checkout runs, and the
-path being activated. Everything else belongs to another system and is reported
-instead of replaced, which is why the command is safe to run — and why it does
-nothing on a repository whose worktrees select the predecessor's `.spice/hooks`
-until an operator moves them across. What it does clear, once that inspection
-passes, is a recognized worktree-scoped override, so run it only when the whole
-repository is meant to run these hooks. Build this lane's Canvas app, then start
-Spice with:
+Build this lane's Canvas app, then start Spice with:
 
 ```sh
 cargo xtask app
@@ -77,91 +67,26 @@ URLs, and replies. `--open` appends it as a URL fragment, outside the HTTP
 origin. Wildcard binds publish loopback; for a VPN browser, replace
 `127.0.0.1` with the host's VPN address, keep the port, and append `#TOKEN`.
 
-This appliance installs beside the Python predecessor for reversible
-preparation. Coexistence is not a permanent command-routing contract: the
-operator-authorized switch gives the Rust appliance the bare `spice` name and
-the repository's single hook path. Retirement remains separate; the switch
-does not stop predecessor processes or delete predecessor state.
+Activation refuses unless all three installed hooks are executable. Pre-commit
+runs the ordinary staged selector: recognized paths execute only their affected
+Cargo targets and local policy arms. A selector/toolchain authority path, an
+unclassified path, or a Rust/manifest path outside the workspace refuses with
+that path before policy or tests run. There is no exhaustive fallback in the
+ordinary hook. `cargo xtask verify` alone owns the complete 13-action graph and
+all 27 policy arms.
 
-Activation refuses unless all three hooks are executable. Pre-commit runs the
-staged selector: known paths execute affected Cargo targets and policy arms;
-unknown or authority paths select every target and all 27 arms. It is not
-completion evidence. `cargo xtask verify` remains the full 13-action graph over
-formatting, Clippy, native/WASM/Canvas builds, browser and workspace tests,
-doctests, the complete battery, and contract landing.
+Every verifier child runs in a bounded process group. The scheduler re-observes
+peer Cargo pressure after its serialized test prebuild, caps local workers and
+Cargo jobs, and fails closed to one of each when pressure cannot be read. The
+test phase is bounded at 180 seconds and the supervising command at 300 seconds;
+failure or interruption cancels and reaps siblings before returning. See
+[DEVELOPMENT.md](DEVELOPMENT.md) and
+[gate/THROUGHPUT_AUDIT.md](gate/THROUGHPUT_AUDIT.md) for execution and measured
+fleet details.
 
-Verification uses an explicit dependency graph. The warm compiler-evidence
-chain remains serial through native Clippy, Wasm Clippy, the Wasm workspace
-check, and the prebuilt Canvas app. The native resident build follows that
-chain while the selected-root Cargo cache is still warm. Browser verification
-then consumes that exact resident through `SPICE_CANVAS_BINARY`, so it performs
-no Cargo build while the Rust test branch runs. Deterministic workspace tests
-wait until those Cargo build stages are finished, prebuild all test binaries
-once in the native compiler output root at an explicit supervised setup
-boundary, and then start the Canvas and package-shard actions together against
-that same selected-root cache. Documentation and doctests follow the workspace
-tests so the native Cargo root is not forced into competing test and
-documentation publication work. The canonical battery consumes its completed
-browser, workspace-test, and compiler evidence alongside that documentation
-tail; contract landing still waits for every action before crossing the final
-barrier.
-
-The outer scheduler has a hard ceiling of three actions. It counts peer Cargo
-processes, reduces that ceiling from three to two to one as peer pressure
-rises, and sets the local worker count no higher than the logical CPUs left
-after those peers. One worker remains the progress floor when peers already
-saturate that budget. The scheduler sets `CARGO_BUILD_JOBS` to the logical-CPU
-budget divided across the peer and local participants; an unavailable peer
-probe fails closed to one worker, one Cargo job, and one test shard. After the
-serialized workspace-test prebuild, it observes peer Cargo pressure once more
-and publishes the resulting budget before launching Canvas and test shards.
-This lets a transient cold-build burst release capacity at the stable cache
-boundary while applying the same constraints to peers that remain. After
-reserving every possible concurrent outer sibling's Cargo grant, the scheduler
-gives the workspace-test coordinator the remaining logical-CPU slots. In the
-full verifier that branch may use the coordinator's four-lane ceiling when no
-peer Cargo process exists, is capped at two lanes with one peer, and collapses
-to one lane with two or more peers. An unreadable observation uses the same
-single deterministic degraded mode: one outer worker, one Cargo job, and one
-workspace lane. That preserves zero-peer throughput while retaining
-deterministic Canvas and fleet headroom as peer pressure rises.
-Full-verifier lanes share the selected root and completed Cargo build cache only
-after the one prebuild has published the test binaries they execute. Each lane
-keeps a separate target-publication path so concurrent same-package shards
-cannot replace one another's final binaries. Concurrent standalone coordinator
-callers still receive separate Cargo output lanes and retain the coordinator's
-four-lane ceiling; later shards recycle the lane whose prior process group
-already exited, so package or target count cannot create an unbounded process,
-CPU, or compiler-cache fan-out.
-
-The complete verifier runs inside one supervised child process. Its test-phase
-timer starts only after the shared workspace-test prebuild has completed, when
-Canvas and the workspace-test coordinator launch; cold compiler setup is
-serialized for low contention and does not consume the actual test budget. At
-180 seconds of test-phase runtime the child-owned scheduler
-stops new work and cancels and reaps every independently grouped action. The
-parent supervisor waits until 296 seconds before treating the verifier child
-itself as non-cooperative, then reserves one second each for final termination,
-reap, and output drain. The resulting worst case is 299 seconds, so entry-point
-audit, battery, landing, sibling termination, reap, and output recovery all
-remain inside the hard five-minute wall envelope.
-
-The parent flushes bounded `[verify]` records live and emits deferred bytes once
-without weakening timeout or cleanup.
-
-Every external action runs in a new process group under bounded output,
-runtime, termination, and reap deadlines. The first failure or an operator
-interrupt cancels and reaps every running sibling before verification returns;
-contract landing cannot start afterward. Verification emits flushed start and
-terminal lifecycle records for every child-process and in-process action,
-including its exact identity, monotonic elapsed time, responsible family, and
-exit disposition. A still-running action reports every 30 seconds; terminal
-records and cleanup faults are rendered in stable action order even when work
-finishes out of order. The native commit-msg hook preserves the current fixed
-message-hygiene law and additionally requires every committed `Spice-Origin`
-line to use the exact v1 grammar. The native reference-transaction hook refuses
-a current-branch update that would abandon commits already merged into its
-upstream.
+The native `commit-msg` hook enforces message hygiene and exact v1
+`Spice-Origin` grammar. The `reference-transaction` hook refuses a
+current-branch update that would abandon commits already merged upstream.
 
 ## Workspace verification
 
@@ -173,31 +98,20 @@ cargo xtask verify
 ```
 
 The command discovers the repository from the current directory and runs the
-one canonical verifier; there is no wrapper or second suite. Its workspace Rust
-tests are packed deterministically by source weight across the minimum
-per-package shard count, keeping every shard at no more than 8 targets while
-spreading larger integration targets across lanes. Batches of at least 3 targets
-start largest-first, with equal sizes favoring the package that has the larger
-complete target inventory so its final batch cannot pin the tail. One- and
-two-target tail batches retain stable metadata order because their measured Cargo
-startup cost dominates cardinality. Execution uses no more than the
-scheduler-granted workers. Subject to the logical-CPU reservation, the full
-verifier grants up to four workspace lanes over the native selected root with no
-Cargo peers, up to two with one peer, and one with two or more peers; the
-coordinator's reusable safety ceiling remains four owned process groups. Every
-shard prints its package, target
-inventory, and output lane before launch, reports progress every 30 seconds,
-and has a hard 180-second deadline that terminates and reaps the complete
-process group.
+one canonical verifier; there is no wrapper or second completion suite. It
+prebuilds workspace tests once, packs targets deterministically into bounded
+shards, and launches no more lanes than the scheduler grants. Each shard owns a
+separate publication path and bounded process group.
 
 `cargo run --quiet --locked --package spice --bin spice -- gate selection` is
 the source-development delegate for the ordinary staged-change gate. It builds
 and invokes one public Spice command, captures the index once, maps every changed
 path to canonical Cargo test targets and focused policy arms, and retains the
 path-to-check evidence in one typed report. Known backend, frontend,
-documentation, and configuration changes do not trigger an ambient
-whole-repository selector. A gate/toolchain authority or an unclassified path
-fails closed by selecting every workspace test target and all 27 policy arms.
+documentation, and configuration paths select only their local evidence. A
+selector/toolchain authority path, an unclassified path, or an out-of-workspace
+Rust/manifest path returns a deterministic path-specific refusal before any
+selected policy or test execution.
 
 This selection is not a completion verifier; `cargo xtask verify` remains that
 surface. The native `spice gate pre-commit` command resolves tracked pre-commit
