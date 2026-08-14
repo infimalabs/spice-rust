@@ -35,6 +35,29 @@ fn committed_and_aborted_are_inert_before_repository_access() {
 }
 
 #[test]
+fn global_json_inert_state_still_uses_the_early_hook_path() {
+    let scratch = Scratch::directory("json-inert-state");
+    let marker = scratch.join("git-entered");
+    let git_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", marker.display());
+    let git = scratch.executable("bin/git", git_script.as_bytes());
+    for arguments in [
+        ["--json", "gate", "reference-transaction", "committed"],
+        ["gate", "reference-transaction", "aborted", "--json"],
+    ] {
+        let output = Command::new(spice())
+            .args(arguments)
+            .current_dir(scratch.path())
+            .env("PATH", git.parent().expect("sentinel Git has a parent"))
+            .output()
+            .expect("run JSON inert transaction state");
+        assert_success(&output, "JSON inert state");
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+    assert!(!marker.exists(), "a JSON inert state launched Git");
+}
+
+#[test]
 fn generated_gate_help_exposes_the_hook_only_leaf() {
     let scratch = Scratch::repository("generated-help");
     let output = Command::new(spice())
