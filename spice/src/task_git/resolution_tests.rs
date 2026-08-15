@@ -286,6 +286,46 @@ fn moved_baseline_and_out_of_footprint_resolution_refuse() {
 }
 
 #[test]
+fn source_evidence_cannot_authorize_a_merge_only_peer_path_rewrite() {
+    let claim = ClaimFixture::new(250, ClaimDisposition::Active);
+    let actor = claim.actor.to_string();
+    let meta = claim.metadata(&actor);
+    let fixture = Fixture::new("peer-path-authorship");
+    fs::write(fixture.peer.join("peer.txt"), "peer\n").expect("write peer-owned path");
+    git(&fixture.peer, &["add", "peer.txt"]);
+    let (agent, _) = fixture.pause(meta);
+    fixture.resolve();
+    fs::write(fixture.agent.join("peer.txt"), "clobbered\n")
+        .expect("rewrite non-conflicting peer path");
+    git(&fixture.agent, &["add", "peer.txt"]);
+    let evidence_called = Cell::new(false);
+
+    let refusal = publish_claimed(&fixture.repository(), meta, &claim.active(), || {
+        evidence_called.set(true);
+        Ok(())
+    })
+    .expect_err("source-valid peer rewrite remains outside the task footprint");
+
+    assert_eq!(refusal.reason(), "git::landing-out-of-scope");
+    assert!(
+        refusal.detail().contains("rewrites-baseline peer.txt"),
+        "the refusal names the baseline path whose authorship is missing: {refusal}"
+    );
+    assert!(
+        !evidence_called.get(),
+        "tree validity cannot replace landing-path authorship"
+    );
+    assert_eq!(output(&fixture.agent, &["rev-parse", "HEAD"]), agent);
+    assert_eq!(output(&fixture.agent, &["show", ":peer.txt"]), "clobbered");
+    assert!(
+        git_state_path(&fixture.agent, "MERGE_HEAD")
+            .expect("merge path")
+            .exists(),
+        "the refused resolution remains recoverable"
+    );
+}
+
+#[test]
 fn post_evidence_index_ref_and_configuration_movement_refuse_before_commit() {
     for (ordinal, name) in ["index", "ref", "configuration"].into_iter().enumerate() {
         let claim = ClaimFixture::new(300 + ordinal as i64, ClaimDisposition::Active);
