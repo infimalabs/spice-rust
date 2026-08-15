@@ -372,9 +372,12 @@ fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bo
 /// Allocation and stealing agree on all of this and disagree on possession
 /// alone, so possession is the only thing either caller states for itself.
 fn workable(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
+    !entry.project().visibility().is_hidden() && operational(entry, actor, completed)
+}
+
+fn operational(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
     let workflow = entry.workflow();
-    !entry.project().visibility().is_hidden()
-        && workflow.status == "pending"
+    workflow.status == "pending"
         && workflow.completion.is_none()
         && workflow.deferral.is_none()
         && workflow
@@ -399,6 +402,20 @@ fn unheld(entry: &Entry) -> bool {
 #[must_use]
 pub fn eligible_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
     workable(entry, actor, &satisfied_tasks(entries)) && unheld(entry)
+}
+
+/// Whether one exact task may be captured, including parked `.oops` triage.
+///
+/// Hidden rows remain unavailable to allocator selection. The one exception is
+/// an explicitly named `.oops` row: a lane may hold it while investigating,
+/// but promotion is still required before dependencies or completion move.
+#[must_use]
+pub fn capturable_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
+    let completed = satisfied_tasks(entries);
+    let public = workable(entry, actor, &completed);
+    let oops = entry.project().visibility().hidden_stem() == Some("oops")
+        && operational(entry, actor, &completed);
+    (public || oops) && unheld(entry)
 }
 
 /// Whether one named entry is eligible through the lineage's current task scope.

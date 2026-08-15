@@ -694,6 +694,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::TaskDelete,
     BodyShape::TaskNote,
     BodyShape::TaskDefer,
+    BodyShape::TaskWake,
     BodyShape::TaskRef,
     BodyShape::TaskDepends,
     BodyShape::TaskPhase,

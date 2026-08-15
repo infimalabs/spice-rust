@@ -117,6 +117,10 @@ fn create_task<B: serde::Serialize>(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let parked = referenced_oops(&snapshot.entries, add.depends.iter());
+    if !parked.is_empty() {
+        return oops_dependency_refusal(&parked);
+    }
     let origin =
         match resolve_creation_origin(add.origin.as_ref(), command.actor(), &snapshot, None) {
             Ok(origin) => origin,
@@ -406,19 +410,143 @@ pub(super) fn task_defer(
 pub(super) fn task_wake(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    task: &TaskRef,
+    wake: &TaskWake,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    if let Some(project) = wake.into.as_deref() {
+        return promote_oops(bus, command, wake, project, projects, allocation);
+    }
     change_deferral(
         bus,
         command,
-        &task.task,
+        &wake.task,
         None,
-        task.clone(),
+        wake.clone(),
         projects,
         allocation,
     )
+}
+
+fn promote_oops(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    wake: &TaskWake,
+    requested: &str,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.handle() == &wake.task)
+    else {
+        return refusal(
+            "task::unknown",
+            Some(wake.task.to_string()),
+            "read board and name one current task handle",
+        );
+    };
+    if !is_oops(entry) {
+        return refusal(
+            "task::promotion-refused",
+            Some(format!("{} project={}", entry.handle(), entry.project())),
+            "use --into only to promote a task currently parked in .oops",
+        );
+    }
+    if entry.workflow().completion.is_some() {
+        return refusal(
+            "task::settled",
+            Some(wake.task.to_string()),
+            "promote only pending .oops work",
+        );
+    }
+    let project = match projects.admit_manual_creation(requested) {
+        Ok(project) => project,
+        Err(error) => {
+            return refusal(
+                "task::promotion-project-refused",
+                Some(error.to_string()),
+                "name a public project this board admits for manual filing",
+            );
+        }
+    };
+    let mut statement = entry.statement().clone();
+    statement.project = project.as_str().to_owned();
+    let mut workflow = entry.workflow().clone();
+    workflow.deferral = None;
+    let post = match Entry::new(
+        statement.clone(),
+        workflow.clone(),
+        entry.claim().cloned(),
+        entry.lease().cloned(),
+        projects,
+    ) {
+        Ok(post) => post,
+        Err(error) => {
+            return refusal(
+                "task::promotion-refused",
+                Some(error.to_string()),
+                "promote the parked row into a valid public project",
+            );
+        }
+    };
+    let next = next_action(&snapshot, &post, false);
+    let at = match current_instant() {
+        Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let origin = match task_origin(entry.born()) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
+    guard(&mut write, command.expected().to_vec());
+    let woken = match write.fact(
+        body::TaskWoken {
+            task: entry.born().clone(),
+        },
+        FactCause::Root,
+    ) {
+        Ok(fact) => fact,
+        Err(error) => return store_fault("task::promotion-wake-build", &error.to_string()),
+    };
+    let revision = u32::try_from(entry.statement().revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    let edited = match write.fact(
+        body::TaskEdited {
+            task: entry.born().clone(),
+            revision,
+        },
+        FactCause::Pending(woken),
+    ) {
+        Ok(fact) => fact,
+        Err(error) => return store_fault("task::promotion-edit-build", &error.to_string()),
+    };
+    write.workflow_head(entry.born().clone(), woken, move |_| workflow);
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
+    let answer = wire::intent::TaskAnswer {
+        task: post.handle().clone(),
+        status: "promoted".to_owned(),
+        learning: None,
+        next,
+    };
+    if let Err(error) = write.command_result(
+        request(command, wake.clone()),
+        command.epoch(),
+        answer.clone(),
+    ) {
+        return store_fault("task::promotion-receipt", &error.to_string());
+    }
+    committed(bus, write, CommandAnswer::Task(answer))
 }
 
 fn change_deferral<B: serde::Serialize + Clone>(
@@ -441,6 +569,15 @@ fn change_deferral<B: serde::Serialize + Clone>(
             "read board and name one current task handle",
         );
     };
+    if deferral.is_none() && is_oops(entry) {
+        return refusal(
+            "task::promotion-required",
+            Some(oops_state(entry)),
+            &format!(
+                "promote the parked row first with spice task wake {task} --into PUBLIC_PROJECT",
+            ),
+        );
+    }
     // Settled is the question, not completed. A withdrawn task carries the same
     // completion instant and never becomes workable again, so deferring one is
     // meaningless and waking one would promise a return the allocator cannot
@@ -639,6 +776,13 @@ pub(super) fn task_depends(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let parked = referenced_oops(
+        &snapshot.entries,
+        std::iter::once(&depends.task).chain(depends.after.iter()),
+    );
+    if !parked.is_empty() {
+        return oops_dependency_refusal(&parked);
+    }
     let Some(entry) = snapshot
         .entries
         .iter()
@@ -657,30 +801,10 @@ pub(super) fn task_depends(
             "edit dependencies only while the task is pending",
         );
     }
-    let mut statement = entry.statement().clone();
-    for after in &depends.after {
-        let Some(prerequisite) = snapshot
-            .entries
-            .iter()
-            .find(|candidate| candidate.handle() == after)
-        else {
-            return refusal(
-                "task::dependency-unknown",
-                Some(after.to_string()),
-                "read board and name an existing prerequisite",
-            );
-        };
-        if prerequisite.born() == entry.born()
-            || statement.dependencies.contains(prerequisite.born())
-        {
-            return refusal(
-                "task::dependency-refused",
-                Some(format!("{} after {after}", depends.task)),
-                "name a distinct dependency edge that is not already present",
-            );
-        }
-        statement.dependencies.push(prerequisite.born().clone());
-    }
+    let statement = match dependency_statement(&snapshot.entries, entry, depends) {
+        Ok(statement) => statement,
+        Err(outcome) => return outcome,
+    };
     let post = match Entry::new(
         statement.clone(),
         entry.workflow().clone(),
@@ -739,6 +863,43 @@ pub(super) fn task_depends(
         return store_fault("task::depends-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
+}
+
+fn dependency_statement(
+    entries: &[Entry],
+    entry: &Entry,
+    depends: &TaskDepends,
+) -> Result<TaskHead, Outcome<CommandAnswer>> {
+    let prerequisites = depends
+        .after
+        .iter()
+        .map(|after| entries.iter().find(|candidate| candidate.handle() == after))
+        .collect::<Vec<_>>();
+    let mut resolved = Vec::with_capacity(depends.after.len());
+    for (after, prerequisite) in depends.after.iter().zip(prerequisites) {
+        let Some(prerequisite) = prerequisite else {
+            return Err(refusal(
+                "task::dependency-unknown",
+                Some(after.to_string()),
+                "read board and name an existing prerequisite",
+            ));
+        };
+        resolved.push(prerequisite);
+    }
+    let mut statement = entry.statement().clone();
+    for (after, prerequisite) in depends.after.iter().zip(resolved) {
+        if prerequisite.born() == entry.born()
+            || statement.dependencies.contains(prerequisite.born())
+        {
+            return Err(refusal(
+                "task::dependency-refused",
+                Some(format!("{} after {after}", depends.task)),
+                "name a distinct dependency edge that is not already present",
+            ));
+        }
+        statement.dependencies.push(prerequisite.born().clone());
+    }
+    Ok(statement)
 }
 
 /// Replace an unsettled task statement in place, at a fresh revision.
@@ -862,6 +1023,16 @@ fn corrected_statement(
         statement.tags.push(board::priority_tag(declared));
     }
     if let Some(requested) = &edit.project {
+        if is_oops(entry) {
+            return Err(refusal(
+                "task::promotion-required",
+                Some(oops_state(entry)),
+                &format!(
+                    "promote the parked row with spice task wake {} --into {requested}",
+                    entry.handle(),
+                ),
+            ));
+        }
         // The destination goes through the same door `task add` uses. A
         // correction that reached further than creation would make this the way
         // to put a manually filed row on a resident-owned route.
@@ -887,6 +1058,60 @@ fn corrected_statement(
         statement.project = project.as_str().to_owned();
     }
     Ok(statement)
+}
+
+pub(super) fn is_oops(entry: &Entry) -> bool {
+    entry.project().visibility().hidden_stem() == Some("oops")
+}
+
+pub(super) fn oops_state(entry: &Entry) -> String {
+    let claim = match entry.claim().map(|claim| claim.disposition) {
+        Some(ClaimDisposition::Active) => "active",
+        Some(ClaimDisposition::Freed) => "freed",
+        Some(ClaimDisposition::Lapsed) => "lapsed",
+        None => "none",
+    };
+    format!(
+        "{} project={} status={} claim={claim}",
+        entry.handle(),
+        entry.project(),
+        entry.workflow().status,
+    )
+}
+
+fn oops_dependency_refusal(entries: &[&Entry]) -> Outcome<CommandAnswer> {
+    let offenders = entries
+        .iter()
+        .map(|entry| oops_state(entry))
+        .collect::<Vec<_>>()
+        .join("; ");
+    refusal(
+        "task::dependency-oops-refused",
+        Some(offenders.clone()),
+        &format!(
+            "parked dependency endpoint(s): {offenders}; promote every parked row first with spice task wake HANDLE --into PUBLIC_PROJECT",
+        ),
+    )
+}
+
+fn referenced_oops<'a, 'b>(
+    entries: &'a [Entry],
+    handles: impl IntoIterator<Item = &'b TaskHandle>,
+) -> Vec<&'a Entry> {
+    let mut parked = Vec::new();
+    for born in handles.into_iter().filter_map(|handle| handle.born().ok()) {
+        let Some(entry) = entries.iter().find(|entry| entry.born() == &born) else {
+            continue;
+        };
+        if is_oops(entry)
+            && !parked
+                .iter()
+                .any(|seen: &&Entry| seen.born() == entry.born())
+        {
+            parked.push(entry);
+        }
+    }
+    parked
 }
 
 /// Write one corrected statement as a fresh revision attributed to its editor.

@@ -375,7 +375,7 @@ fn claim_selection<'a>(
             "steal only a ready, pending task",
         ),
         _ => (
-            board::eligible_entry(&snapshot.entries, entry, command.actor()),
+            board::capturable_entry(&snapshot.entries, entry, command.actor()),
             "claim::capture-ineligible",
             "capture only an unclaimed, ready, pending task",
         ),

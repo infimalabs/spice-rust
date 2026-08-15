@@ -279,6 +279,13 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
+    /// Exact workflow and defer disposition, plus the statement head when a
+    /// parked wake also promotes the task into another project.
+    pub const WAKE: Self = Self {
+        required: &[WitnessKind::Workflow, WitnessKind::Deferral],
+        optional: &[WitnessKind::Task],
+        authority: Authority::Connected,
+    };
     /// Exact task statement and workflow heads of both tasks and the absence
     /// of the edge; no board barrier.
     pub const DEPENDS: Self = Self {
@@ -710,7 +717,8 @@ impl CommandKind {
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,
             Self::TaskNote => Law::NOTE,
-            Self::TaskDefer | Self::TaskWake => Law::DEFER,
+            Self::TaskDefer => Law::DEFER,
+            Self::TaskWake => Law::WAKE,
             Self::TaskDepends => Law::DEPENDS,
             Self::TaskPhase | Self::TaskDone => Law::PROGRESS,
             Self::TaskReview => Law::REVIEW,
