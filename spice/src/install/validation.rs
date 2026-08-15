@@ -1,5 +1,163 @@
 use super::*;
 
+pub(super) fn validate_plan(
+    plan: &InstallPlan,
+    content: GeneratedContentAuthority,
+) -> Result<(), InstallError> {
+    let migratable = validate_plan_version(plan, content)?;
+    validate_operation_inventory(plan, content)?;
+    validate_retirement_inventory(plan, migratable)?;
+    validate_plan_destinations(plan, content)
+}
+
+fn validate_plan_version(
+    plan: &InstallPlan,
+    content: GeneratedContentAuthority,
+) -> Result<bool, InstallError> {
+    let migratable = content == GeneratedContentAuthority::HistoricalReceipt
+        && plan.version == MIGRATABLE_RECORD_VERSION;
+    if plan.version != PLAN_VERSION && !migratable {
+        return Err(InstallError::InvalidRecord(format!(
+            "install plan version {} is not {PLAN_VERSION}",
+            plan.version
+        )));
+    }
+    Ok(migratable)
+}
+
+fn validate_operation_inventory(
+    plan: &InstallPlan,
+    content: GeneratedContentAuthority,
+) -> Result<(), InstallError> {
+    let expected = [
+        Asset::GitPreCommit,
+        Asset::GitCommitMessage,
+        Asset::GitReferenceTransaction,
+        Asset::HookEntry,
+        Asset::HookStatic,
+        Asset::Skill,
+    ];
+    if plan.operations.len() != expected.len() && plan.operations.len() != expected.len() + 1 {
+        return Err(InstallError::InvalidRecord(
+            "install plan has an incomplete or extra operation inventory".to_owned(),
+        ));
+    }
+    if plan
+        .operations
+        .iter()
+        .zip(expected)
+        .any(|(operation, asset)| operation.asset != asset)
+    {
+        return Err(InstallError::InvalidRecord(
+            "install plan operation order is not canonical".to_owned(),
+        ));
+    }
+    if plan.operations.len() > expected.len()
+        && plan.operations.last().map(|operation| operation.asset) != Some(Asset::Binary)
+    {
+        return Err(InstallError::InvalidRecord(
+            "optional binary is not the final operation".to_owned(),
+        ));
+    }
+    if plan.hook_activation.is_some()
+        != plan
+            .operations
+            .last()
+            .is_some_and(|operation| operation.asset == Asset::Binary)
+    {
+        return Err(InstallError::InvalidRecord(
+            "hook activation and installed executable must be planned together".to_owned(),
+        ));
+    }
+    if let Some(activation) = &plan.hook_activation {
+        activation.validate(content == GeneratedContentAuthority::HistoricalReceipt)?;
+    }
+    Ok(())
+}
+
+fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result<(), InstallError> {
+    if migratable {
+        if !plan.retirements.is_empty() || plan.rollback_archive.is_some() {
+            return Err(InstallError::InvalidRecord(
+                "version-7 install plan carries version-8 migration state".to_owned(),
+            ));
+        }
+    } else {
+        let expected = [RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
+        if plan.retirements.len() != expected.len()
+            || plan
+                .retirements
+                .iter()
+                .zip(expected)
+                .any(|(retirement, path)| retirement.path != path)
+        {
+            return Err(InstallError::InvalidRecord(
+                "install retirement inventory is not exact and ordered".to_owned(),
+            ));
+        }
+    }
+    if plan
+        .retirements
+        .iter()
+        .any(|retirement| retirement.rollback.is_some())
+        && plan.rollback_archive.is_none()
+    {
+        return Err(InstallError::InvalidRecord(
+            "install retirement rollback witness has no rollback archive".to_owned(),
+        ));
+    }
+    if plan.retirements.iter().any(|retirement| {
+        matches!(
+            (&retirement.rollback, &retirement.superseded),
+            (Some(rollback), Some(superseded)) if rollback != superseded
+        )
+    }) {
+        return Err(InstallError::InvalidRecord(
+            RETIREMENT_WITNESS_MISMATCH.to_owned(),
+        ));
+    }
+    if let Some(rollback) = plan.rollback_state()? {
+        plan.validate_rollback_state(&rollback)?;
+    }
+    Ok(())
+}
+
+fn validate_plan_destinations(
+    plan: &InstallPlan,
+    content: GeneratedContentAuthority,
+) -> Result<(), InstallError> {
+    if plan.repository.worktree.is_some() || !plan.repository.common_git.is_absolute() {
+        return Err(InstallError::InvalidRecord(
+            "install repository identity is not common-directory scoped".to_owned(),
+        ));
+    }
+    validate_relative(&plan.record.destination)?;
+    let mut introduced = BTreeSet::new();
+    let mut destinations = BTreeSet::new();
+    for operation in &plan.operations {
+        validate_operation(
+            operation,
+            &mut introduced,
+            content,
+            &plan.repository.common_git,
+        )?;
+        if !destinations.insert((operation.location, operation.destination.clone())) {
+            return Err(InstallError::InvalidRecord(
+                "install plan duplicates a physical destination".to_owned(),
+            ));
+        }
+    }
+    for retirement in &plan.retirements {
+        validate_retirement(retirement)?;
+        if !destinations.insert((Location::CommonGit, retirement.destination.clone())) {
+            return Err(InstallError::InvalidRecord(
+                "install plan duplicates a retirement destination".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_operation(
     operation: &Operation,
     introduced: &mut BTreeSet<(Location, String)>,
