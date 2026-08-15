@@ -967,7 +967,7 @@ pub(super) fn configure_mutation_rendezvous(
         .expect("install mutation rendezvous is configured once at startup");
 }
 
-fn temporary_name() -> OsString {
+pub(super) fn temporary_name() -> OsString {
     OsString::from(format!(
         ".spice-install-{}-{}.tmp",
         std::process::id(),
