@@ -128,6 +128,7 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         InstallError::PathShape(_)
         | InstallError::PathOutsideRoot(_)
         | InstallError::ParentChanged(_)
+        | InstallError::GenerationChanged(_)
         | InstallError::BinaryNotRegular(_)
         | InstallError::BinaryEmpty(_)
         | InstallError::HookPathUnrepresentable { .. }
@@ -203,6 +204,7 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::Drift { .. } => "install::drift",
         InstallError::PathOutsideRoot(_) => "install::path-outside-root",
         InstallError::ParentChanged(_) => "install::parent-changed",
+        InstallError::GenerationChanged(_) => "install::generation-changed",
         InstallError::State(_) => "install::state-refused",
         _ => "install::input-refused",
     }
@@ -226,6 +228,10 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         ),
         InstallError::ParentChanged(path) => format!(
             "inspect the changed destination parent with `{}`; rerun this executable's `install` preview and use only its newly printed digest",
+            inspect_path(path),
+        ),
+        InstallError::GenerationChanged(path) => format!(
+            "inspect the concurrently changed install receipt with `{}`; keep the completed direction and rerun this executable's `install` preview before retrying",
             inspect_path(path),
         ),
         InstallError::BinaryNotRegular(path) | InstallError::BinaryEmpty(path) => format!(
