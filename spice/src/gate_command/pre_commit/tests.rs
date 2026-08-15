@@ -170,7 +170,7 @@ fn last_phase_prefers_later_selected_test_progress() {
     fs::write(
         &files.progress,
         concat!(
-            "[change-gate-policy] gate=repo-docs\n",
+            "[change-gate-policy] gate=repo-docs disposition=reused evidence=gate-v1-fixture\n",
             "[rust-test] stage=progress shard=2/4 package=\"spice\" last_test=\"fixture\"\n",
         ),
     )
@@ -179,6 +179,18 @@ fn last_phase_prefers_later_selected_test_progress() {
         last_phase(&files.progress),
         "selected-tests stage=progress shard=2/4 package=\"spice\" last_test=\"fixture\""
     );
+    files.cleanup().expect("remove progress worker files");
+}
+
+#[test]
+fn last_phase_accepts_policy_disposition_evidence_after_the_gate_token() {
+    let files = WorkerFiles::create().expect("create progress worker files");
+    fs::write(
+        &files.progress,
+        "[change-gate-policy] gate=rust-typecheck disposition=executed\n",
+    )
+    .expect("write policy progress evidence");
+    assert_eq!(last_phase(&files.progress), "arm gate=rust-typecheck");
     files.cleanup().expect("remove progress worker files");
 }
 

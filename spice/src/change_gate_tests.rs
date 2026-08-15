@@ -56,3 +56,26 @@ fn malformed_staged_policy_refuses_before_any_compiled_inventory_is_selected() {
     assert!(error.detail().contains("configuration"), "{error}");
     fs::remove_dir_all(root).expect("remove malformed-policy fixture");
 }
+
+#[test]
+fn policy_execution_plan_interleaves_reused_and_executed_arms_in_selected_order() {
+    let selected = [
+        GateId::MergeIntegrity,
+        GateId::Staging,
+        GateId::Formatters,
+        GateId::RustTypecheck,
+        GateId::MagicNumbers,
+    ];
+    let reusable = [GateId::Formatters, GateId::MagicNumbers];
+
+    assert_eq!(
+        plan_policy_execution(&selected, &reusable),
+        [
+            PolicyExecutionDisposition::Execute,
+            PolicyExecutionDisposition::Execute,
+            PolicyExecutionDisposition::Reuse,
+            PolicyExecutionDisposition::Execute,
+            PolicyExecutionDisposition::Reuse,
+        ],
+    );
+}

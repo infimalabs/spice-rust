@@ -21,6 +21,10 @@ mod current_source;
 mod policy;
 mod reach;
 
+pub(crate) use current_source::{
+    gates_for_path as current_source_gates_for_path, known_workspace_rust_source,
+    selector_authority as current_source_selector_authority,
+};
 pub use current_source::{
     select_current_source_change_gates, select_current_source_change_gates_with_full_verifier,
 };
@@ -331,7 +335,7 @@ fn select_with(
 
 const ALWAYS: [GateId; 3] = [GateId::MergeIntegrity, GateId::PlanPhase, GateId::Staging];
 
-fn valid_repository_path(path: &str) -> bool {
+pub(crate) fn valid_repository_path(path: &str) -> bool {
     valid_text(path)
         && !path.starts_with('/')
         && !path.starts_with("./")

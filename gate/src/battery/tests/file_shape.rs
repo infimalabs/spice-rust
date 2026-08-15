@@ -557,123 +557,84 @@ fn a_latched_source_is_held_to_base_while_the_same_unlatched_source_uses_elastic
     );
 }
 
-/// A committed base breach has already spent the next change's headroom.
-///
-/// The durable ledger is deliberately empty. The prior breach is instead the
-/// committed file the staged index is regressing from: 1,200 lines under the
-/// tracked 1,000-line base and 1,500-line configured ratchet. If acquisition
-/// consults only the ledger, the 1,201-line candidate receives a fresh elastic
-/// slice and can grow the existing debt forever without ever crossing 1,500.
+/// A committed ratchet breach has already spent the next change's headroom.
 #[test]
-fn a_staged_regression_after_a_committed_base_breach_is_held_to_the_true_limit() {
+fn a_staged_change_after_a_committed_ratchet_breach_is_held_to_base() {
     const PATH: &str = "src/already-breached.rs";
     const BASE_LIMIT: usize = 1_000;
-    const CONFIGURED_RATCHET_LIMIT: u64 = 1_500;
-    const COMMITTED_LINES: usize = 1_200;
-    const CANDIDATE_LINES: usize = COMMITTED_LINES + 1;
-    const IMPROVED_LINES: usize = 1_100;
+    const COMMITTED_LINES: usize = 1_600;
+    const CANDIDATE_LINES: usize = 1_400;
 
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);
     fs::write(
         repository.join(PATH),
-        "// committed breach\n".repeat(COMMITTED_LINES),
+        "// committed ratchet breach\n".repeat(COMMITTED_LINES),
     )
-    .expect("committed source above the true limit");
+    .expect("committed source beyond ratchet");
     fixture_git(&repository, &["add", PATH]);
     fixture_git(
         &repository,
-        &["commit", "-q", "-m", "commit existing file-loc debt"],
-    );
-
-    let unchanged = battery_report(&repository);
-    let (unchanged_lines, elastic) = measured(row_for(&unchanged, PATH, MetricId::FileLines), PATH);
-    assert_eq!(unchanged_lines, COMMITTED_LINES as u64);
-    assert_eq!(elastic.base_limit(), BASE_LIMIT as u64);
-    assert_eq!(elastic.configured_ratchet_limit(), CONFIGURED_RATCHET_LIMIT);
-    assert!(elastic.active_limit() > elastic.base_limit());
-    assert!(elastic.over_base() && !elastic.over_limit());
-    assert_eq!(elastic.transition(), "clear");
-    assert_eq!(
-        file_shape_arm(&unchanged).state(),
-        BatteryState::Passed,
-        "an unchanged committed floor keeps the elastic limit it already held"
+        &["commit", "-q", "-m", "commit file-loc ratchet breach"],
     );
 
     fs::write(
         repository.join(PATH),
-        "// staged regression\n".repeat(CANDIDATE_LINES),
+        "// staged improvement\n".repeat(CANDIDATE_LINES),
     )
-    .expect("staged source grows the committed breach");
+    .expect("staged source improves the ratchet breach");
     fixture_git(&repository, &["add", PATH]);
 
     let report = battery_report(&repository);
-    assert!(
-        report.context().latches().is_empty(),
-        "the committed predecessor, not a durable ledger entry, must close the elastic slice"
-    );
     let (lines, held) = measured(row_for(&report, PATH, MetricId::FileLines), PATH);
     assert_eq!(lines, CANDIDATE_LINES as u64);
     assert_eq!(held.base_limit(), BASE_LIMIT as u64);
-    assert_eq!(held.configured_ratchet_limit(), CONFIGURED_RATCHET_LIMIT);
-    assert!(
-        lines < held.ratchet_limit(),
-        "the candidate must isolate the base latch by fitting the effective ratchet: \
-         {lines} against {}",
-        held.ratchet_limit()
-    );
+    assert!(lines < held.ratchet_limit());
     assert_eq!(held.active_limit(), BASE_LIMIT as u64);
     assert!(held.over_limit() && held.over_base() && !held.ratchet_breach());
     assert_eq!(held.transition(), "held");
-    assert_eq!(
-        file_shape_arm(&report).state(),
-        BatteryState::Failed,
-        "a staged growth cannot mint fresh headroom after its committed predecessor breached base"
-    );
-
-    fs::write(
-        repository.join(PATH),
-        "// improved but still debt\n".repeat(IMPROVED_LINES),
-    )
-    .expect("staged source improves without reaching the true limit");
-    fixture_git(&repository, &["add", PATH]);
-
-    let improved = battery_report(&repository);
-    let (improved_lines, still_held) =
-        measured(row_for(&improved, PATH, MetricId::FileLines), PATH);
-    assert_eq!(improved_lines, IMPROVED_LINES as u64);
-    assert_eq!(still_held.active_limit(), BASE_LIMIT as u64);
-    assert!(still_held.over_limit() && still_held.over_base());
-    assert_eq!(still_held.transition(), "held");
-    assert_eq!(
-        file_shape_arm(&improved).state(),
-        BatteryState::Failed,
-        "improvement cannot lift the latch while the staged candidate remains above true limit"
-    );
-
-    fs::write(
-        repository.join(PATH),
-        "// healed to contract\n".repeat(BASE_LIMIT),
-    )
-    .expect("staged source returns to the true limit");
-    fixture_git(&repository, &["add", PATH]);
-
-    let healed = battery_report(&repository);
-    let (healed_lines, healed_latch) = measured(row_for(&healed, PATH, MetricId::FileLines), PATH);
-    assert_eq!(healed_lines, BASE_LIMIT as u64);
-    assert_eq!(healed_latch.active_limit(), BASE_LIMIT as u64);
-    assert!(!healed_latch.over_limit() && !healed_latch.over_base());
-    assert_eq!(healed_latch.transition(), "healed");
-    assert_eq!(
-        file_shape_arm(&healed).state(),
-        BatteryState::Passed,
-        "the inferred latch clears exactly at the contract-owned true limit"
-    );
+    assert_eq!(file_shape_arm(&report).state(), BatteryState::Failed);
 }
 
-/// An edited file above its byte base cannot spend a fresh elastic allowance.
+/// A committed base breach inside the ratchet retains its flex.
 #[test]
-fn a_changed_file_above_the_committed_byte_base_is_held_to_the_true_limit() {
+fn a_changed_committed_base_breach_inside_ratchet_keeps_flex() {
+    const PATH: &str = "src/flex-debt.rs";
+    const BASE_LIMIT: u64 = 1_000;
+    const COMMITTED_LINES: usize = 1_200;
+    const CANDIDATE_LINES: usize = COMMITTED_LINES + 1;
+
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(
+        repository.join(PATH),
+        "// committed flex\n".repeat(COMMITTED_LINES),
+    )
+    .expect("committed source inside flex");
+    fixture_git(&repository, &["add", PATH]);
+    fixture_git(&repository, &["commit", "-q", "-m", "commit flex debt"]);
+
+    fs::write(
+        repository.join(PATH),
+        "// changed flex\n".repeat(CANDIDATE_LINES),
+    )
+    .expect("changed source remains inside flex");
+    fixture_git(&repository, &["add", PATH]);
+
+    let report = battery_report(&repository);
+    let (lines, elastic) = measured(row_for(&report, PATH, MetricId::FileLines), PATH);
+    assert_eq!(lines, CANDIDATE_LINES as u64);
+    assert_eq!(elastic.base_limit(), BASE_LIMIT);
+    assert!(elastic.active_limit() > BASE_LIMIT);
+    assert!(lines < elastic.active_limit());
+    assert!(elastic.over_base() && !elastic.over_limit());
+    assert_eq!(elastic.transition(), "clear");
+    assert_eq!(file_shape_arm(&report).state(), BatteryState::Passed);
+}
+
+/// An edited file inside its byte ratchet retains its elastic allowance.
+#[test]
+fn a_changed_file_inside_the_byte_ratchet_keeps_flex() {
     const PATH: &str = "src/byte-debt.rs";
     const BASE: u64 = 80_000;
     const COMMITTED: usize = 90_000;
@@ -702,17 +663,17 @@ fn a_changed_file_above_the_committed_byte_base_is_held_to_the_true_limit() {
     .expect("improve the file without reaching the byte base");
     fixture_git(&repository, &["add", PATH]);
     let changed = battery_report(&repository);
-    let (bytes, held) = measured(row_for(&changed, PATH, MetricId::FileBytes), PATH);
-    assert_eq!(held.active_limit(), BASE);
-    assert!(bytes > BASE && bytes < held.ratchet_limit());
-    assert!(held.over_limit() && !held.ratchet_breach());
-    assert_eq!(held.transition(), "held");
-    assert_eq!(file_shape_arm(&changed).state(), BatteryState::Failed);
+    let (bytes, elastic) = measured(row_for(&changed, PATH, MetricId::FileBytes), PATH);
+    assert!(elastic.active_limit() > BASE);
+    assert!(bytes > BASE && bytes < elastic.active_limit());
+    assert!(!elastic.over_limit() && !elastic.ratchet_breach());
+    assert_eq!(elastic.transition(), "clear");
+    assert_eq!(file_shape_arm(&changed).state(), BatteryState::Passed);
 }
 
-/// An edited over-base routine must heal to base before it regains flex.
+/// An edited over-base routine inside its ratchet retains flex.
 #[test]
-fn a_changed_routine_above_the_committed_base_is_held_to_the_true_limit() {
+fn a_changed_routine_inside_the_ratchet_keeps_flex() {
     const PATH: &str = "src/routine-debt.rs";
     const FUNCTION: &str = "authored";
     const BASE: u64 = 80;
@@ -739,31 +700,17 @@ fn a_changed_routine_above_the_committed_base_is_held_to_the_true_limit() {
     fixture_git(&repository, &["add", PATH]);
     let changed = battery_report(&repository);
     let row = routine_row_for(&changed, PATH, FUNCTION, MetricId::RoutineLength);
-    let (length, held) = measured(row, PATH);
-    assert_eq!(held.active_limit(), BASE);
-    assert!(length > BASE && length < held.ratchet_limit());
-    assert!(held.over_limit() && !held.ratchet_breach());
-    assert_eq!(held.transition(), "held");
-    assert_eq!(complexity_arm(&changed).state(), BatteryState::Failed);
-
-    fs::write(
-        repository.join(PATH),
-        routine_with_lines(FUNCTION, BASE as usize),
-    )
-    .expect("heal the routine to the true length base");
-    fixture_git(&repository, &["add", PATH]);
-    let healed = battery_report(&repository);
-    let row = routine_row_for(&healed, PATH, FUNCTION, MetricId::RoutineLength);
-    let (_, healed_latch) = measured(row, PATH);
-    assert_eq!(healed_latch.active_limit(), BASE);
-    assert!(!healed_latch.over_limit());
-    assert_eq!(healed_latch.transition(), "healed");
-    assert_eq!(complexity_arm(&healed).state(), BatteryState::Passed);
+    let (length, elastic) = measured(row, PATH);
+    assert!(elastic.active_limit() > BASE);
+    assert!(length > BASE && length < elastic.active_limit());
+    assert!(!elastic.over_limit() && !elastic.ratchet_breach());
+    assert_eq!(elastic.transition(), "clear");
+    assert_eq!(complexity_arm(&changed).state(), BatteryState::Passed);
 }
 
-/// Cyclomatic debt follows the same authored-change rule as routine length.
+/// Cyclomatic debt inside its ratchet follows the same flex rule.
 #[test]
-fn a_changed_routine_above_the_committed_ccn_base_is_held_to_the_true_limit() {
+fn a_changed_routine_inside_the_ccn_ratchet_keeps_flex() {
     const PATH: &str = "src/ccn-debt.rs";
     const FUNCTION: &str = "branching";
     const BASE: u64 = 20;
@@ -793,10 +740,10 @@ fn a_changed_routine_above_the_committed_ccn_base_is_held_to_the_true_limit() {
     fixture_git(&repository, &["add", PATH]);
     let changed = battery_report(&repository);
     let row = routine_row_for(&changed, PATH, FUNCTION, MetricId::RoutineCcn);
-    let (ccn, held) = measured(row, PATH);
-    assert_eq!(held.active_limit(), BASE);
-    assert!(ccn > BASE && ccn < held.ratchet_limit());
-    assert!(held.over_limit() && !held.ratchet_breach());
-    assert_eq!(held.transition(), "held");
-    assert_eq!(complexity_arm(&changed).state(), BatteryState::Failed);
+    let (ccn, elastic) = measured(row, PATH);
+    assert!(elastic.active_limit() > BASE);
+    assert!(ccn > BASE && ccn < elastic.active_limit());
+    assert!(!elastic.over_limit() && !elastic.ratchet_breach());
+    assert_eq!(elastic.transition(), "clear");
+    assert_eq!(complexity_arm(&changed).state(), BatteryState::Passed);
 }

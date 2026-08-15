@@ -31,6 +31,8 @@ pub mod names;
 pub mod policy;
 pub mod ratchet;
 pub mod report;
+#[cfg(not(target_arch = "wasm32"))]
+mod semantic_closure;
 pub mod state;
 #[cfg(not(target_arch = "wasm32"))]
 mod structural;
@@ -108,6 +110,11 @@ pub use input::{
 };
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use semantic_closure::{
+    GATE_SEMANTIC_CLOSURE_VERSION, GateArmClosure, GateClosureComparison, GateClosureSource,
+    GateDependencyMode, GateSemanticClosure, GateSourceClass, GateSourceDependency,
 };
 // Projection is consumed only by native hygiene acquisition, but the shared
 // jurisdiction module is deliberately type-checked on the browser target too.
@@ -192,7 +199,7 @@ pub use toolchain::{
     ToolchainSource, VerifierCompilerContract, VerifierCompilerEvidence,
     VerifierCompilerProcessEvidence, VerifierCompilerRun, VerifierCompilerStage, acquire_toolchain,
     admit_verifier_compiler_receipt, encode_verifier_compiler_receipt, formatter_edition,
-    formatter_sources,
+    formatter_sources, semantic_verifier_compiler_authorities,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

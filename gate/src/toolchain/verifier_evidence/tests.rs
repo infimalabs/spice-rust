@@ -597,6 +597,79 @@ fn canonical_receipt_crosses_capture_roots_without_leaking_environment_values() 
 }
 
 #[test]
+fn semantic_compiler_authority_crosses_source_commits_but_not_contract_or_worktree_drift() {
+    let producers = [
+        contract(GateId::RustTypecheck),
+        contract(GateId::CanvasWebTypecheck),
+    ];
+    let evidence = producers.iter().map(complete_evidence).collect::<Vec<_>>();
+    let receipt = encode_verifier_compiler_receipt(&evidence, AUTHORITY).expect("encode receipt");
+    let retained =
+        semantic_verifier_compiler_authorities(&receipt, &producers[0].source, AUTHORITY)
+            .expect("inspect semantic compiler authorities");
+    assert_eq!(
+        retained,
+        producers
+            .iter()
+            .map(|contract| (contract.gate_id(), contract.semantic_authority()))
+            .collect::<Vec<_>>(),
+    );
+
+    for producer in &producers {
+        let mut next_commit = producer.clone();
+        next_commit.source = source(b"different selected tree on a later commit");
+        next_commit.selection_root = PathBuf::from("/different/private/selection");
+        assert_eq!(
+            producer.semantic_authority(),
+            next_commit.semantic_authority(),
+            "source and private materialization roots are not compiler contracts",
+        );
+
+        let mut different_worktree = producer.clone();
+        different_worktree.repository = PathBuf::from("/different/worktree");
+        assert_ne!(
+            producer.semantic_authority(),
+            different_worktree.semantic_authority(),
+        );
+
+        let mut different_tool = producer.clone();
+        different_tool.tools[0] = tool("cargo", "/different/cargo");
+        assert_ne!(
+            producer.semantic_authority(),
+            different_tool.semantic_authority(),
+        );
+
+        let mut different_environment = producer.clone();
+        different_environment.environment.push((
+            OsString::from("RUSTFLAGS"),
+            OsString::from("--cfg=contract_drift"),
+        ));
+        different_environment.environment.sort();
+        assert_ne!(
+            producer.semantic_authority(),
+            different_environment.semantic_authority(),
+        );
+    }
+
+    assert!(
+        semantic_verifier_compiler_authorities(
+            &receipt,
+            &source(b"foreign retained source"),
+            AUTHORITY,
+        )
+        .is_err(),
+    );
+    assert!(
+        semantic_verifier_compiler_authorities(
+            &receipt,
+            &producers[0].source,
+            b"foreign worktree authority",
+        )
+        .is_err(),
+    );
+}
+
+#[test]
 fn missing_partial_duplicate_and_stale_receipts_fail_closed() {
     let producers = [
         contract(GateId::RustTypecheck),

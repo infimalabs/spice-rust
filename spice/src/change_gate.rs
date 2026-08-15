@@ -11,7 +11,7 @@ use std::thread;
 
 use gate::{
     ArmDisposition, ArmFamily, BatteryArmResult, BatteryManifest, BatteryState,
-    ChangeSelectionReport, FocusedArmReport, GateId, Selector, StateRunScope, TestSelectionReport,
+    ChangeSelectionReport, GateId, Selector, StateRunScope, TestSelectionReport,
 };
 use serde::{Deserialize, Serialize};
 use sill::Environment;
@@ -39,38 +39,11 @@ pub enum ChangePolicyReport {
 }
 
 impl ChangePolicyReport {
-    fn focused(
-        source: &wire::Digest,
-        reports: &[FocusedArmReport],
-    ) -> Result<Self, ChangeGateError> {
-        Ok(Self::Focused {
+    fn focused_summaries(source: &wire::Digest, results: Vec<PolicyArmSummary>) -> Self {
+        Self::Focused {
             source: source.clone(),
-            results: Self::summaries(source, reports)?,
-        })
-    }
-
-    fn summaries(
-        source: &wire::Digest,
-        reports: &[FocusedArmReport],
-    ) -> Result<Vec<PolicyArmSummary>, ChangeGateError> {
-        let mut results = Vec::with_capacity(reports.len());
-        for report in reports {
-            if report.context().source() != source {
-                return Err(ChangeGateError::refusal(
-                    "change-gate-source-moved",
-                    format!(
-                        "staged source changed while summarizing focused arm {}",
-                        report.gate_id(),
-                    ),
-                ));
-            }
-            let encoded = report.encode().map_err(|error| {
-                ChangeGateError::protocol("change-gate-focused-policy-unencodable", error)
-            })?;
-            let digest = wire::Digest::compute(wire::Domain::GateFocusedReport, &encoded);
-            results.push(PolicyArmSummary::from_result(report.result(), digest));
+            results,
         }
-        Ok(results)
     }
 
     /// Number of canonical policy arms retained by this report.
@@ -550,6 +523,7 @@ fn run_with_selection(
     let repository = Repository::discover(Path::new(".")).map_err(|error| {
         ChangeGateError::environment("change-gate-repository-unresolved", error)
     })?;
+    let semantic = probe_semantic_evidence(&repository, &anchor, surface, progress)?;
     let execution = ChangeGateExecution {
         selected_root: anchor.root().to_path_buf(),
         writable_root: repository.worktree_root().to_path_buf(),
@@ -567,6 +541,7 @@ fn run_with_selection(
         &selection,
         &source,
         surface,
+        semantic.as_ref(),
         execution,
         &mut shared_progress,
     )?;
@@ -593,6 +568,72 @@ fn run_with_selection(
         anchor.reject_state().map_err(ChangeGateError::gate)?;
     }
     Ok(report)
+}
+
+fn probe_semantic_evidence(
+    repository: &Repository,
+    anchor: &crate::gate::PreparedArm<'_>,
+    surface: SelectionSurface,
+    progress: &mut impl Write,
+) -> Result<Option<crate::gate::AdmittedSemanticVerifierEvidence>, ChangeGateError> {
+    if matches!(surface, SelectionSurface::Packaged) {
+        return Ok(None);
+    }
+    match crate::gate::admit_semantic_full_verifier_evidence(repository, Selector::staged())
+        .map_err(ChangeGateError::gate)?
+    {
+        crate::gate::SemanticFullVerifierAdmission::Unavailable { detail } => {
+            writeln!(
+                progress,
+                "[change-gate-semantic] disposition=unavailable detail={detail:?}",
+            )
+            .map_err(|error| {
+                ChangeGateError::environment("change-gate-progress-unavailable", error)
+            })?;
+            progress.flush().map_err(|error| {
+                ChangeGateError::environment("change-gate-progress-unavailable", error)
+            })?;
+            Ok(None)
+        }
+        crate::gate::SemanticFullVerifierAdmission::Admitted(admitted) => {
+            let anchor_context = anchor.context().map_err(ChangeGateError::gate)?;
+            if admitted.source() != anchor.source() || admitted.context() != &anchor_context {
+                return Err(ChangeGateError::refusal(
+                    "change-gate-source-moved",
+                    concat!(
+                        "staged source or captured gate authority changed while comparing ",
+                        "semantic verifier evidence"
+                    ),
+                ));
+            }
+            writeln!(
+                progress,
+                concat!(
+                    "[change-gate-semantic] disposition=admitted evidence={} ",
+                    "reusable={} invalidated={} changed_sources={}"
+                ),
+                admitted.digest(),
+                admitted.reusable_gate_ids().len(),
+                admitted.invalidated_gate_ids().len(),
+                admitted.changed_sources().len(),
+            )
+            .map_err(|error| {
+                ChangeGateError::environment("change-gate-progress-unavailable", error)
+            })?;
+            progress.flush().map_err(|error| {
+                ChangeGateError::environment("change-gate-progress-unavailable", error)
+            })?;
+            for detail in admitted.diagnostics() {
+                writeln!(progress, "[change-gate-semantic-refusal] detail={detail:?}",).map_err(
+                    |error| ChangeGateError::environment("change-gate-progress-unavailable", error),
+                )?;
+            }
+            progress.flush().map_err(|error| {
+                ChangeGateError::environment("change-gate-progress-unavailable", error)
+            })?;
+            Ok(Some(*admitted))
+        }
+    }
 }
 
 fn select_changes(
@@ -702,6 +743,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     surface: SelectionSurface,
+    semantic: Option<&crate::gate::AdmittedSemanticVerifierEvidence>,
     execution: ChangeGateExecution,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<(TestSelectionReport, ChangePolicyReport), ChangeGateError> {
@@ -726,8 +768,8 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
                 &mut test_progress,
             )
         });
-        let policy = run_focused_policy(anchor, selection, source, surface, progress)
-            .and_then(|reports| ChangePolicyReport::focused(source, &reports));
+        let policy = run_focused_policy(anchor, selection, source, surface, semantic, progress)
+            .map(|results| ChangePolicyReport::focused_summaries(source, results));
         let tests = test_worker.join().map_err(|_| {
             ChangeGateError::environment(
                 "change-gate-test-worker-panicked",
@@ -746,15 +788,60 @@ fn run_focused_policy(
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     surface: SelectionSurface,
+    semantic: Option<&crate::gate::AdmittedSemanticVerifierEvidence>,
     progress: &mut impl Write,
-) -> Result<Vec<FocusedArmReport>, ChangeGateError> {
+) -> Result<Vec<PolicyArmSummary>, ChangeGateError> {
     let state_run = anchor.state_run();
     let mut policy = Vec::with_capacity(selection.reach().len());
-    for reach in selection.reach() {
+    let reusable = semantic
+        .map(crate::gate::AdmittedSemanticVerifierEvidence::reusable_gate_ids)
+        .unwrap_or_default();
+    let plan = plan_policy_execution(selection.gate_ids(), &reusable);
+    for (reach, disposition) in selection.reach().iter().zip(plan) {
         let gate_id = reach.gate_id();
-        writeln!(progress, "[change-gate-policy] gate={}", gate_id.as_str()).map_err(|error| {
-            ChangeGateError::environment("change-gate-progress-unavailable", error)
-        })?;
+        if disposition == PolicyExecutionDisposition::Reuse {
+            let semantic = semantic.ok_or_else(|| {
+                ChangeGateError::protocol(
+                    "change-gate-semantic-incomplete",
+                    "semantic execution plan selected reuse without admitted evidence",
+                )
+            })?;
+            let result = semantic.result(gate_id).ok_or_else(|| {
+                ChangeGateError::protocol(
+                    "change-gate-semantic-incomplete",
+                    format!(
+                        "semantic evidence omitted selected arm {}",
+                        gate_id.as_str()
+                    ),
+                )
+            })?;
+            let authority = semantic.authority(gate_id).ok_or_else(|| {
+                ChangeGateError::protocol(
+                    "change-gate-semantic-incomplete",
+                    format!("semantic evidence omitted {} authority", gate_id.as_str()),
+                )
+            })?;
+            writeln!(
+                progress,
+                "[change-gate-policy] gate={} disposition=reused evidence={}",
+                gate_id.as_str(),
+                semantic.digest(),
+            )
+            .map_err(|error| {
+                ChangeGateError::environment("change-gate-progress-unavailable", error)
+            })?;
+            progress.flush().map_err(|error| {
+                ChangeGateError::environment("change-gate-progress-unavailable", error)
+            })?;
+            policy.push(PolicyArmSummary::from_result(result, authority.clone()));
+            continue;
+        }
+        writeln!(
+            progress,
+            "[change-gate-policy] gate={} disposition=executed",
+            gate_id.as_str(),
+        )
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
         progress.flush().map_err(|error| {
             ChangeGateError::environment("change-gate-progress-unavailable", error)
         })?;
@@ -775,9 +862,37 @@ fn run_focused_policy(
                 ),
             ));
         }
-        policy.push(report);
+        let encoded = report.encode().map_err(|error| {
+            ChangeGateError::protocol("change-gate-focused-policy-unencodable", error)
+        })?;
+        policy.push(PolicyArmSummary::from_result(
+            report.result(),
+            wire::Digest::compute(wire::Domain::GateFocusedReport, &encoded),
+        ));
     }
     Ok(policy)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PolicyExecutionDisposition {
+    Reuse,
+    Execute,
+}
+
+fn plan_policy_execution(
+    selected: &[GateId],
+    reusable: &[GateId],
+) -> Vec<PolicyExecutionDisposition> {
+    selected
+        .iter()
+        .map(|gate_id| {
+            if reusable.binary_search(gate_id).is_ok() {
+                PolicyExecutionDisposition::Reuse
+            } else {
+                PolicyExecutionDisposition::Execute
+            }
+        })
+        .collect()
 }
 
 #[expect(
