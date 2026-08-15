@@ -44,7 +44,7 @@ use wire::{Digest, Domain};
 use super::analyze::{self, Analysis};
 use super::{
     ArmObservation, ArmOutcome, ArmTiming, ProbeFailure, TOOLCHAIN_ARMS, ToolEvidence,
-    ToolRequirement, ToolchainDeclaration, ToolchainError, VerifierCompilerEvidence,
+    ToolRequirement, ToolchainDeclaration, ToolchainError, TreeInput, VerifierCompilerEvidence,
     contracted_version,
 };
 use crate::GateId;
@@ -134,6 +134,12 @@ impl RimCapture {
     pub fn changes(&self) -> &[String] {
         &self.changes
     }
+
+    /// Replace the changed-path view with one validated selected-arm reach.
+    pub(crate) fn with_changes(mut self, changes: Vec<String>) -> Self {
+        self.changes = changes;
+        self
+    }
 }
 
 /// A directory that cannot anchor one rim's search path.
@@ -164,6 +170,7 @@ pub struct ToolchainSource<'a> {
     root: &'a Path,
     repository: &'a Path,
     rim: RimCapture,
+    formatter_reach: Option<Vec<String>>,
     baselines: Option<&'a BaselineCapture>,
     identity: Option<&'a Digest>,
     verifier_environment: &'a [(OsString, OsString)],
@@ -183,6 +190,7 @@ impl<'a> ToolchainSource<'a> {
             root: tree.root(),
             repository: tree.repository(),
             rim,
+            formatter_reach: None,
             baselines: None,
             identity: None,
             verifier_environment: &[],
@@ -193,6 +201,10 @@ impl<'a> ToolchainSource<'a> {
 
     /// Capture one selected tree with the parents that can prove merge authorship.
     #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "source, ancestry, verifier, rim, and reach are independent captured authorities"
+    )]
     pub(crate) fn capture_with_baselines(
         tree: &'a SelectedTree,
         rim: RimCapture,
@@ -201,11 +213,13 @@ impl<'a> ToolchainSource<'a> {
         verifier_environment: &'a [(OsString, OsString)],
         verifier_evidence: &'a [VerifierCompilerEvidence],
         verifier_evidence_required: bool,
+        formatter_reach: Option<&[String]>,
     ) -> Self {
         Self {
             root: tree.root(),
             repository: tree.repository(),
             rim,
+            formatter_reach: formatter_reach.map(<[String]>::to_vec),
             baselines: Some(baselines),
             identity: Some(identity),
             verifier_environment,
@@ -256,6 +270,11 @@ impl<'a> ToolchainSource<'a> {
     #[must_use]
     pub fn changes(&self) -> &[String] {
         self.rim.changes()
+    }
+
+    /// Validated authored paths for a focused formatter arm, when narrowed.
+    fn formatter_reach(&self) -> Option<&[String]> {
+        self.formatter_reach.as_deref()
     }
 
     /// Whether this pending merge inherited one selected path verbatim.
@@ -333,6 +352,7 @@ fn observe_declaration(
     source: &ToolchainSource<'_>,
     contract: &Contract,
 ) -> ArmObservation {
+    let declaration = scoped_declaration(declaration, source);
     observe(
         declaration,
         source,
@@ -350,12 +370,23 @@ pub(crate) fn acquire_toolchain_arm(
         .into_iter()
         .find(|declaration| declaration.id == gate_id)
         .ok_or(ToolchainError::ForeignGate(gate_id))?;
+    let declaration = scoped_declaration(declaration, source);
     Ok(observe(
         declaration,
         source,
         contract.bounds(),
         contract.environment_names(),
     ))
+}
+
+fn scoped_declaration(
+    mut declaration: ToolchainDeclaration,
+    source: &ToolchainSource<'_>,
+) -> ToolchainDeclaration {
+    if declaration.id == GateId::Formatters && source.formatter_reach().is_some() {
+        declaration.jurisdiction.input = TreeInput::SelectedChanges;
+    }
+    declaration
 }
 
 /// Probe and validate the exact declared tools a reusable verifier contract
@@ -378,7 +409,9 @@ pub(crate) fn acquire_verifier_tools(
             gate_id.as_str()
         ));
     }
-    if let Some(analysis) = analyze::before_tools(declaration, source.root()) {
+    if let Some(analysis) =
+        analyze::before_tools(declaration, source.root(), source.formatter_reach())
+    {
         return if analysis.outcome == ArmOutcome::NotApplicable {
             Ok(Err(analysis.reason))
         } else {
@@ -402,7 +435,9 @@ fn observe(
     bounds: &Bounds,
     environment_names: &[String],
 ) -> ArmObservation {
-    if let Some(analysis) = analyze::before_tools(declaration, source.root()) {
+    if let Some(analysis) =
+        analyze::before_tools(declaration, source.root(), source.formatter_reach())
+    {
         return observation(declaration, analysis, Vec::new());
     }
     let tools: Vec<ToolEvidence> = declaration
@@ -442,6 +477,7 @@ fn observation(
 ) -> ArmObservation {
     ArmObservation {
         gate_id: declaration.id,
+        tree_input: declaration.jurisdiction.input,
         outcome: analysis.outcome,
         reason: analysis.reason,
         tools,
@@ -490,6 +526,7 @@ fn examine(
             GateId::Formatters => analyze::formatters(
                 declaration,
                 source.root,
+                source.formatter_reach(),
                 bounds,
                 &resolved_programs(declaration, tools),
             ),

@@ -77,6 +77,7 @@ impl ProbeFixture {
                 Vec::new(),
             )
             .expect("the fixture rim directory is absolute"),
+            formatter_reach: None,
             baselines: None,
             identity: None,
             verifier_environment: &[],

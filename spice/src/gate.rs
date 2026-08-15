@@ -12,10 +12,10 @@ use std::path::Path;
 use std::process::Command;
 
 use ::gate::{
-    ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
-    FocusedArmReport, GateId, HygieneConfiguration, KillRun, RepositoryExecutionEvent, RimCapture,
-    Selector, StateRunScope, VerifierCompilerContract, VerifierCompilerEvidence,
-    admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
+    ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport,
+    ChangeSelectionReport, ClaimCapture, FocusedArmReport, GateId, HygieneConfiguration, KillRun,
+    RepositoryExecutionEvent, RimCapture, Selector, StateRunScope, VerifierCompilerContract,
+    VerifierCompilerEvidence, admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
 };
 use wire::Digest;
 
@@ -407,6 +407,30 @@ pub fn prepare_arm_in_state_strict(
     prepare_arm_in_state_with_mode(selector, gate_id, state_run, InputMode::Strict)
 }
 
+/// Capture one generic installed arm with its validated authored reach in an
+/// existing state transaction.
+pub fn prepare_arm_in_state_reached(
+    selector: Selector,
+    selection: &ChangeSelectionReport,
+    gate_id: GateId,
+    state_run: ::gate::BatteryStateRun,
+) -> Result<PreparedArm<'static>, RunError> {
+    capture_reached_in_state(selector, InputMode::Generic, selection, gate_id, state_run)
+        .map(|capture| PreparedArm { capture, gate_id })
+}
+
+/// Capture one strict current-source arm with its validated authored reach in
+/// an existing state transaction.
+pub fn prepare_arm_in_state_reached_strict(
+    selector: Selector,
+    selection: &ChangeSelectionReport,
+    gate_id: GateId,
+    state_run: ::gate::BatteryStateRun,
+) -> Result<PreparedArm<'static>, RunError> {
+    capture_reached_in_state(selector, InputMode::Strict, selection, gate_id, state_run)
+        .map(|capture| PreparedArm { capture, gate_id })
+}
+
 fn prepare_arm_in_state_with_mode(
     selector: Selector,
     gate_id: GateId,
@@ -688,6 +712,23 @@ fn capture_in_state(
     capture_inner(selector, input_mode, Some(gate_id), None, Some(state_run))
 }
 
+fn capture_reached_in_state(
+    selector: Selector,
+    input_mode: InputMode,
+    selection: &ChangeSelectionReport,
+    gate_id: GateId,
+    state_run: ::gate::BatteryStateRun,
+) -> Result<BatteryCapture<'static>, RunError> {
+    capture_inner_with_reach(
+        selector,
+        input_mode,
+        Some(gate_id),
+        None,
+        Some(state_run),
+        Some(selection),
+    )
+}
+
 fn capture<'trace>(
     selector: Selector,
     input_mode: InputMode,
@@ -703,6 +744,17 @@ fn capture_inner<'trace>(
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     state_run: Option<::gate::BatteryStateRun>,
+) -> Result<BatteryCapture<'trace>, RunError> {
+    capture_inner_with_reach(selector, input_mode, selected, trace, state_run, None)
+}
+
+fn capture_inner_with_reach<'trace>(
+    selector: Selector,
+    input_mode: InputMode,
+    selected: Option<GateId>,
+    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+    state_run: Option<::gate::BatteryStateRun>,
+    selection: Option<&ChangeSelectionReport>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
     let directory = env::current_dir()
         .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
@@ -726,6 +778,35 @@ fn capture_inner<'trace>(
     let claim = ClaimCapture::Idle;
     let hygiene = HygieneConfiguration::current();
     let root = repository.worktree_root();
+    if let Some(selection) = selection {
+        let Some(gate_id) = selected else {
+            return Err(RunError::refusal(
+                "gate::reach-refused",
+                "authored reach requires one selected arm",
+            ));
+        };
+        if trace.is_some() {
+            return Err(RunError::refusal(
+                "gate::reach-refused",
+                "authored reach requires an untraced selected arm",
+            ));
+        }
+        let state_run = state_run.ok_or_else(|| {
+            RunError::refusal(
+                "gate::reach-refused",
+                "authored reach requires an enclosing state transaction",
+            )
+        })?;
+        return match input_mode {
+            InputMode::Generic => BatteryCapture::capture_generic_arm_in_state_reached(
+                root, &selector, claim, actor, rim, hygiene, selection, gate_id, state_run,
+            ),
+            InputMode::Strict => BatteryCapture::capture_arm_in_state_reached(
+                root, &selector, claim, actor, rim, hygiene, selection, gate_id, state_run,
+            ),
+        }
+        .map_err(|error| RunError::refusal("gate::capture-refused", error));
+    }
     match (input_mode, selected, trace, state_run) {
         (InputMode::Generic, Some(gate_id), None, Some(state_run)) => {
             BatteryCapture::capture_generic_arm_in_state(

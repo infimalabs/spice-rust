@@ -518,16 +518,23 @@ impl SelectionSurface {
 
     fn prepare_arm_in_state(
         self,
+        selection: &ChangeSelectionReport,
         gate_id: GateId,
         state_run: ::gate::BatteryStateRun,
     ) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
         match self {
-            Self::Packaged => {
-                crate::gate::prepare_arm_in_state(Selector::staged(), gate_id, state_run)
-            }
-            Self::CurrentSource => {
-                crate::gate::prepare_arm_in_state_strict(Selector::staged(), gate_id, state_run)
-            }
+            Self::Packaged => crate::gate::prepare_arm_in_state_reached(
+                Selector::staged(),
+                selection,
+                gate_id,
+                state_run,
+            ),
+            Self::CurrentSource => crate::gate::prepare_arm_in_state_reached_strict(
+                Selector::staged(),
+                selection,
+                gate_id,
+                state_run,
+            ),
         }
     }
 }
@@ -719,7 +726,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
                 &mut test_progress,
             )
         });
-        let policy = run_focused_policy(anchor, selection.gate_ids(), source, surface, progress)
+        let policy = run_focused_policy(anchor, selection, source, surface, progress)
             .and_then(|reports| ChangePolicyReport::focused(source, &reports));
         let tests = test_worker.join().map_err(|_| {
             ChangeGateError::environment(
@@ -736,25 +743,26 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
 
 fn run_focused_policy(
     anchor: &mut crate::gate::PreparedArm<'_>,
-    gate_ids: &[GateId],
+    selection: &ChangeSelectionReport,
     source: &wire::Digest,
     surface: SelectionSurface,
     progress: &mut impl Write,
 ) -> Result<Vec<FocusedArmReport>, ChangeGateError> {
     let state_run = anchor.state_run();
-    let mut policy = Vec::with_capacity(gate_ids.len());
-    for gate_id in gate_ids {
+    let mut policy = Vec::with_capacity(selection.reach().len());
+    for reach in selection.reach() {
+        let gate_id = reach.gate_id();
         writeln!(progress, "[change-gate-policy] gate={}", gate_id.as_str()).map_err(|error| {
             ChangeGateError::environment("change-gate-progress-unavailable", error)
         })?;
         progress.flush().map_err(|error| {
             ChangeGateError::environment("change-gate-progress-unavailable", error)
         })?;
-        let report = if *gate_id == GateId::Staging {
+        let report = if gate_id == GateId::Staging {
             anchor.execute().map_err(ChangeGateError::gate)?
         } else {
             surface
-                .prepare_arm_in_state(*gate_id, state_run.clone())
+                .prepare_arm_in_state(selection, gate_id, state_run.clone())
                 .and_then(|mut prepared| prepared.execute())
                 .map_err(ChangeGateError::gate)?
         };

@@ -56,7 +56,11 @@ fn formatter_invocation(
     }
 }
 
-/// Run the declared formatter check over the complete selected tree.
+/// Run the declared formatter check over its authorized source inventory.
+///
+/// A validated focused arm supplies exact authored paths; an exhaustive or
+/// legacy capture supplies no narrowing and therefore walks the complete
+/// selected tree.
 ///
 /// One finding per differing file and no locus within it, because
 /// [`FindingDetail::Formatting`] records that the file is not canonical and no
@@ -64,10 +68,11 @@ fn formatter_invocation(
 pub(in crate::toolchain) fn formatters(
     declaration: ToolchainDeclaration,
     root: &Path,
+    reached: Option<&[String]>,
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
 ) -> Analysis {
-    let sources = match formatter_sources(root) {
+    let sources = match formatter_inputs(root, reached) {
         Ok(sources) => sources,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -144,6 +149,22 @@ pub(in crate::toolchain) fn formatters(
         );
     }
     Analysis::scanned(declaration.id, sources.len(), findings)
+}
+
+pub(super) fn formatter_inputs(
+    root: &Path,
+    reached: Option<&[String]>,
+) -> Result<Vec<String>, String> {
+    Ok(match reached {
+        Some(reached) => reached
+            .iter()
+            .filter(|path| !built(path))
+            .filter(|path| extension(path).is_some_and(|found| found == RUST_EXTENSION))
+            .filter(|path| root.join(path).is_file())
+            .cloned()
+            .collect::<Vec<_>>(),
+        None => formatter_sources(root)?,
+    })
 }
 
 /// One finding per file the formatter named as differing from canonical form.
@@ -254,3 +275,6 @@ pub(in crate::toolchain) fn formatter_edition(root: &Path) -> Result<String, Str
                 .to_owned()
         })
 }
+
+#[cfg(test)]
+mod tests;

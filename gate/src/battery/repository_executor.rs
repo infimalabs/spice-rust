@@ -10,13 +10,13 @@ use super::{
     ArmEvidence, ArmExecution, ArmFamily, BatteryContext, BatteryError, BatteryExecutor,
     BatteryInputs, BatteryStateRun, CompiledArm, inline_evidence,
 };
-use crate::GateId;
 use crate::core::{
     ActorCapture, CORE_GATE_IDS, ClaimCapture, CoreSource, acquire_core_arm, evaluate_core,
     evaluate_core_arm,
 };
 use crate::hygiene::{
     HYGIENE_ARMS, HygieneConfiguration, HygieneSource, acquire_hygiene, acquire_hygiene_arm,
+    acquire_hygiene_arm_reached,
 };
 use crate::input::Contract;
 use crate::metrics::{
@@ -31,6 +31,7 @@ use crate::toolchain::{
     measure_toolchain_arm,
 };
 use crate::tree::{SelectedTree, Selector};
+use crate::{ChangeReachMode, ChangeReachObject, ChangeSelectionReport, GateId};
 
 const FAMILY_COUNT: usize = 4;
 
@@ -119,6 +120,7 @@ pub struct RepositoryExecutor<'trace> {
     verifier_evidence: Vec<VerifierCompilerEvidence>,
     verifier_evidence_required: bool,
     selected: Option<GateId>,
+    reached_paths: Option<Vec<String>>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 }
 
@@ -165,9 +167,14 @@ impl<'trace> RepositoryExecutor<'trace> {
         state_run: &BatteryStateRun,
         input_mode: InputMode,
         selected: Option<GateId>,
+        selection: Option<&ChangeSelectionReport>,
         mut trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
+        let reached_paths = path_local_reach(selected, selection)?;
+        let rim = reached_paths
+            .as_ref()
+            .map_or(rim.clone(), |paths| rim.clone().with_changes(paths.clone()));
         let tree = selector.materialize(&repository).map_err(|error| {
             BatteryError::new(format!("cannot capture battery source: {error}"))
         })?;
@@ -196,6 +203,8 @@ impl<'trace> RepositoryExecutor<'trace> {
             latches,
             &rim,
             selected,
+            reached_paths.as_deref(),
+            selection.map(ChangeSelectionReport::source),
             &mut trace,
         )?;
         let (metrics, metric_bounds, metric_observations) = match selected {
@@ -211,8 +220,15 @@ impl<'trace> RepositoryExecutor<'trace> {
             }
             Some(gate_id) if STRUCTURAL_ARMS.iter().any(|arm| arm.id() == gate_id) => {
                 record_capture_analyses(&mut trace, ArmFamily::Metrics, [gate_id]);
-                let (evidence, bounds, observations) =
-                    metrics_arm(&tree, &contract, &baselines, &actor, latches, gate_id);
+                let (evidence, bounds, observations) = metrics_arm(
+                    &tree,
+                    &contract,
+                    &baselines,
+                    &actor,
+                    latches,
+                    gate_id,
+                    reached_paths.as_deref(),
+                );
                 (Some(evidence), bounds, observations)
             }
             Some(_) => (None, Vec::new(), Vec::new()),
@@ -236,6 +252,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             verifier_evidence: Vec::new(),
             verifier_evidence_required: false,
             selected,
+            reached_paths,
             trace,
         })
     }
@@ -436,6 +453,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             &self.verifier_environment,
             &self.verifier_evidence,
             self.verifier_evidence_required,
+            self.reached_paths.as_deref(),
         );
         if let Some(gate_id) = self.selected {
             let observation = acquire_toolchain_arm(&source, &self.contract, gate_id)
@@ -470,8 +488,13 @@ impl<'trace> RepositoryExecutor<'trace> {
         let source = HygieneSource::capture(&self.tree, &self.contract)
             .map_err(|error| error.to_string())?;
         if let Some(gate_id) = self.selected {
-            let report = acquire_hygiene_arm(&source, &self.hygiene, gate_id)
-                .map_err(|error| error.to_string())?;
+            let report = match &self.reached_paths {
+                Some(reached) => {
+                    acquire_hygiene_arm_reached(&source, &self.hygiene, gate_id, reached)
+                }
+                None => acquire_hygiene_arm(&source, &self.hygiene, gate_id),
+            }
+            .map_err(|error| error.to_string())?;
             return Ok(vec![ArmEvidence::Hygiene { report }]);
         }
         let report = acquire_hygiene(&source, &self.hygiene).map_err(|error| error.to_string())?;
@@ -552,16 +575,35 @@ fn capture_core(
     latches: &[LatchEntry],
     rim: &RimCapture,
     selected: Option<GateId>,
+    reached: Option<&[String]>,
+    expected_source: Option<&Digest>,
     trace: &mut Option<&mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 ) -> Result<CapturedCore, BatteryError> {
     let source = match selected {
-        Some(gate_id) => {
-            CoreSource::capture_arm(tree, contract, claim, actor.clone(), latches, gate_id)
-        }
+        Some(gate_id) => CoreSource::capture_arm(
+            tree,
+            contract,
+            claim,
+            actor.clone(),
+            latches,
+            gate_id,
+            reached,
+        ),
         None => CoreSource::capture(tree, contract, claim, actor.clone(), latches),
     }
     .map_err(|error| BatteryError::new(format!("cannot identify battery source: {error}")))?;
-    let baselines = capture_baselines(repository, contract, rim, source.clean_merge_tree());
+    if expected_source.is_some_and(|expected| expected != source.digest()) {
+        return Err(BatteryError::new(
+            "selected-arm reach authority names a different immutable source",
+        ));
+    }
+    let baselines = capture_baselines(
+        repository,
+        contract,
+        rim,
+        reached,
+        source.clean_merge_tree(),
+    );
     let (evidence, bounds, observations) = match selected {
         None => {
             record_capture_analyses(trace, ArmFamily::Core, CORE_GATE_IDS);
@@ -588,8 +630,12 @@ fn capture_baselines(
     repository: &Path,
     contract: &Contract,
     rim: &RimCapture,
+    reached: Option<&[String]>,
     clean_merge_tree: Option<(&str, &str, &str)>,
 ) -> BaselineCapture {
+    if let Some(reached) = reached {
+        return BaselineCapture::capture_with_paths(repository, &[], reached, clean_merge_tree);
+    }
     let classes = contract.rule_policy().document().file_classes();
     let mut suffixes = classes.magic().to_vec();
     suffixes.extend(classes.file_shape().iter().cloned());
@@ -643,12 +689,16 @@ fn metrics_arm(
     actor: &ActorCapture,
     latches: &[LatchEntry],
     gate_id: GateId,
+    reached: Option<&[String]>,
 ) -> (
     Result<Vec<ArmEvidence>, String>,
     Vec<BoundDecision>,
     Vec<LatchObservation>,
 ) {
-    let source = match MetricSource::capture(tree, contract, baselines, actor, latches) {
+    let source = match reached.map_or_else(
+        || MetricSource::capture(tree, contract, baselines, actor, latches),
+        |paths| MetricSource::capture_reached(tree, contract, baselines, actor, latches, paths),
+    ) {
         Ok(source) => source,
         Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
     };
@@ -726,6 +776,69 @@ fn record_capture_analyses(
             trace(RepositoryExecutionEvent::AnalysisInvoked { gate_id, family });
         }
     }
+}
+
+const PATH_LOCAL_ARMS: [GateId; 10] = [
+    GateId::RepoDocs,
+    GateId::Formatters,
+    GateId::LocalPaths,
+    GateId::Taste,
+    GateId::EnvPolicy,
+    GateId::FileShape,
+    GateId::Complexity,
+    GateId::MagicNumbers,
+    GateId::MarkdownLinks,
+    GateId::AssertionFreeTests,
+];
+
+fn path_local_reach(
+    selected: Option<GateId>,
+    selection: Option<&ChangeSelectionReport>,
+) -> Result<Option<Vec<String>>, BatteryError> {
+    let Some(selection) = selection else {
+        return Ok(None);
+    };
+    let Some(gate_id) = selected else {
+        return Err(BatteryError::new(
+            "object reach cannot be supplied to a complete battery capture",
+        ));
+    };
+    let reach = selection.reach_for(gate_id).ok_or_else(|| {
+        BatteryError::new(format!(
+            "selected arm {gate_id} has no validated object reach authority"
+        ))
+    })?;
+    if !PATH_LOCAL_ARMS.contains(&gate_id)
+        || matches!(reach.mode(), ChangeReachMode::Exhaustive { .. })
+    {
+        return Ok(None);
+    }
+    let mut paths = Vec::new();
+    for object in reach.objects() {
+        let ChangeReachObject::Path { path } = object else {
+            return Err(BatteryError::new(format!(
+                "focused path-local arm {gate_id} received non-path reach object {object:?}"
+            )));
+        };
+        paths.push(path.clone());
+    }
+    if paths.is_empty() {
+        return Err(BatteryError::new(format!(
+            "focused path-local arm {gate_id} received empty authored reach"
+        )));
+    }
+    let direct = selection
+        .edges()
+        .iter()
+        .filter(|edge| edge.gate_id() == gate_id)
+        .map(|edge| edge.source().to_owned())
+        .collect::<Vec<_>>();
+    if paths != direct {
+        return Err(BatteryError::new(format!(
+            "focused path-local arm {gate_id} reach does not equal its direct authored path selection"
+        )));
+    }
+    Ok(Some(paths))
 }
 
 const fn family_index(family: ArmFamily) -> usize {
