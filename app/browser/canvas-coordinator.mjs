@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { access, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import { buildResident } from "./canvas-fixture.mjs";
+import { auditOwnership } from "./canvas-process-ownership.mjs";
 import {
   assertShardInventory,
   assertShardMutationGuard,
@@ -46,34 +47,6 @@ function invocation(arguments_) {
     prebuiltApp: prebuiltFlags.length === 1,
     receipt: coveragePath(arguments_.filter((argument) => argument !== PREBUILT_APP_FLAG)),
   };
-}
-
-function alive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
-}
-
-async function absent(path) {
-  try {
-    await access(path);
-    return false;
-  } catch (error) {
-    return error.code === "ENOENT";
-  }
-}
-
-function pgrepPath(path) {
-  try {
-    return execFileSync("pgrep", ["-f", path], { encoding: "utf8" })
-      .trim().split("\n").filter(Boolean).map(Number);
-  } catch (error) {
-    if (error.status === 1) return [];
-    throw error;
-  }
 }
 
 function bounded(event, milliseconds) {
@@ -174,17 +147,9 @@ async function runShard(shard) {
     assert.ok(state.ownership, `${shard.name} reports its exact descendant and fixture ownership`);
   }
   if (state.ownership) {
-    const pids = state.ownership.pids.filter((pid) => pid !== process.pid);
-    assert.deepEqual(pids.filter(alive), [], `${shard.name} leaves no captured process alive`);
-    assert.equal(await absent(state.ownership.fixture), true, `${shard.name} removes its fixture`);
-    assert.equal(await absent(state.ownership.linkedRoot), true, `${shard.name} removes its lanes`);
-    assert.deepEqual(
-      [...pgrepPath(state.ownership.fixture), ...pgrepPath(state.ownership.linkedRoot)],
-      [],
-      `${shard.name} leaves no process matched by either exact fixture path`,
-    );
+    const pids = await auditOwnership(shard.name, state.ownership);
     process.stdout.write(
-      `canvas ownership audit name=${shard.name} pids=${pids.join(",")} fixture=absent lanes=absent pgrep=clean\n`,
+      `canvas ownership audit name=${shard.name} pids=${pids.join(",")} fixture=absent lanes=absent process_table=clean\n`,
     );
   }
   return { shard: shard.name, elapsedMs, ...state.summary, scenarios: state.scenarios };
