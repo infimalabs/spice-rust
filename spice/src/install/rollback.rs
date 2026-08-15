@@ -35,6 +35,18 @@ pub(super) struct RollbackState {
 }
 
 impl RollbackArchive {
+    pub(super) const fn format(&self) -> u16 {
+        self.format
+    }
+
+    pub(super) const fn uncompressed_bytes(&self) -> u64 {
+        self.uncompressed_bytes
+    }
+
+    pub(super) const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
     pub(super) fn new(state: &RollbackState) -> Result<Self, InstallError> {
         let bytes = encode_state(state)?;
         let uncompressed_bytes = u64::try_from(bytes.len()).map_err(|_| {

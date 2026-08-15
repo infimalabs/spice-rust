@@ -24,6 +24,124 @@ fn version_7_upgrade_retires_legacy_runtime_after_publication_and_rolls_back_exa
 }
 
 #[test]
+fn large_rollback_archive_stays_private_to_bounded_public_replies() {
+    const PRIVATE_MINIMUM: usize = 1024 * 1024;
+    const PUBLIC_MAXIMUM: usize = 64 * 1024;
+
+    let mut fixture = version_7_fixture();
+    let compact_migration =
+        plan(&fixture.repository, Some(&fixture.binary)).expect("derive compact migration");
+    let compact_public = wire::encode(
+        &InstallPreview::from_plan(compact_migration).expect("project compact migration"),
+    )
+    .expect("compact public migration encodes");
+    fixture.xtask_bytes = deterministic_bytes(2 * PRIVATE_MINIMUM);
+    fs::write(&fixture.legacy_xtask, &fixture.xtask_bytes).expect("publish large legacy xtask");
+    set_test_mode(&fixture.legacy_xtask, EXECUTABLE_MODE);
+
+    let migration =
+        plan(&fixture.repository, Some(&fixture.binary)).expect("derive large migration");
+    let archive = migration
+        .rollback_archive
+        .as_ref()
+        .expect("large migration owns rollback archive");
+    let private_plan = migration
+        .canonical_bytes()
+        .expect("large private migration plan encodes");
+    assert!(private_plan.len() > PRIVATE_MINIMUM);
+
+    let preview = InstallPreview::from_plan(migration.clone()).expect("project large preview");
+    let summary = preview
+        .plan()
+        .rollback_archive()
+        .expect("public plan reports rollback metadata");
+    assert_eq!(summary.format(), archive.format());
+    assert_eq!(summary.uncompressed_bytes(), archive.uncompressed_bytes());
+    assert_eq!(summary.digest(), archive.digest());
+    assert_public_install_value(&preview, PUBLIC_MAXIMUM);
+    assert_eq!(
+        wire::encode(&preview)
+            .expect("large public migration encodes")
+            .len(),
+        compact_public.len(),
+        "public projection size must not grow with rollback payload size",
+    );
+    let stage_indices = preview
+        .plan()
+        .operations()
+        .iter()
+        .map(InstallOperationSummary::index)
+        .chain(
+            preview
+                .plan()
+                .retirements()
+                .iter()
+                .map(InstallRetirementSummary::index),
+        )
+        .chain(
+            preview
+                .plan()
+                .hook_activation()
+                .map(HookActivationSummary::index),
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stage_indices,
+        (0..preview.plan().operation_count()).collect::<Vec<_>>()
+    );
+    assert!(
+        preview
+            .plan()
+            .operations()
+            .iter()
+            .all(|stage| stage.kind() == InstallStageKind::FilePublication)
+    );
+    assert!(
+        preview
+            .plan()
+            .retirements()
+            .iter()
+            .all(|stage| stage.kind() == InstallStageKind::Retirement)
+    );
+    assert_eq!(
+        preview
+            .plan()
+            .hook_activation()
+            .map(HookActivationSummary::kind),
+        Some(InstallStageKind::HookActivation),
+    );
+
+    let digest = migration.digest().expect("large migration has a digest");
+    assert_eq!(preview.digest(), &digest);
+    let applied =
+        apply(&fixture.repository, Some(&fixture.binary), &digest).expect("apply large migration");
+    assert_eq!(applied.status(), InstallStatus::Complete);
+    assert_eq!(applied.completed(), migration.operation_count());
+    assert_eq!(applied.plan(), preview.plan());
+    assert_public_install_value(&applied, PUBLIC_MAXIMUM);
+    let repeated =
+        apply(&fixture.repository, Some(&fixture.binary), &digest).expect("repeat large migration");
+    assert_eq!(repeated, applied);
+    assert_public_install_value(&repeated, PUBLIC_MAXIMUM);
+
+    let private_record =
+        fs::read(record_path(&fixture.repository).unwrap()).expect("read large private receipt");
+    assert!(private_record.len() > PRIVATE_MINIMUM);
+    let private_document: serde_json::Value =
+        serde_json::from_slice(&private_record).expect("private receipt is JSON");
+    assert!(private_document["plan"]["rollback_archive"]["payload"].is_string());
+
+    let removed = unapply(&fixture.repository).expect("reverse large migration");
+    assert_eq!(removed.status(), InstallStatus::Uninstalled);
+    assert_public_install_value(&removed, PUBLIC_MAXIMUM);
+    assert_eq!(
+        fs::read(&fixture.legacy_xtask).expect("read restored large legacy xtask"),
+        fixture.xtask_bytes,
+    );
+    assert_eq!(mode(&fixture.legacy_xtask), EXECUTABLE_MODE);
+}
+
+#[test]
 fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
     let fixture = version_7_fixture();
     let migration = preview_migration(&fixture);
@@ -495,4 +613,48 @@ fn reverse_and_assert_version_7(fixture: &MigrationFixture) {
             .bytes,
         fixture.prior_record
     );
+}
+
+fn deterministic_bytes(length: usize) -> Vec<u8> {
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    (0..length)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect()
+}
+
+fn assert_public_install_value(value: &impl Serialize, maximum: usize) {
+    let bytes = wire::encode(value).expect("public install value encodes");
+    assert!(
+        bytes.len() <= maximum,
+        "public install value grew to {} bytes",
+        bytes.len(),
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("public install value is JSON");
+    assert_no_private_install_key(&value);
+}
+
+fn assert_no_private_install_key(value: &serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (name, value) in fields {
+                assert!(
+                    !matches!(name.as_str(), "payload" | "bytes" | "repository"),
+                    "public install value exposed private field {name:?}",
+                );
+                assert_no_private_install_key(value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                assert_no_private_install_key(value);
+            }
+        }
+        _ => {}
+    }
 }

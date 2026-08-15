@@ -21,6 +21,7 @@ mod hook_activation;
 mod model;
 mod path;
 mod progress;
+mod projection;
 mod record;
 mod rollback;
 mod validation;
@@ -46,11 +47,13 @@ use validation::{asset_contract, fixed_content_differs_from_current_build, valid
 pub use hook_activation::{
     HookActivationPlan, HookConfigurationMutation, HookConfigurationScope, HookWorktreeObservation,
 };
-pub use model::{
-    Asset, FileImage, GeneratedImage, InstallPreview, InstallReceipt, InstallStatus, Location,
-    Operation, Retirement,
-};
+pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, RepositoryIdentity};
+pub use projection::{
+    HookActivationSummary, InstallOperationSummary, InstallPlanSummary, InstallPreview,
+    InstallReceipt, InstallRetirementSummary, InstallStageKind, InstallStatus,
+    RollbackArchiveSummary,
+};
 
 const PLAN_VERSION: u16 = 8;
 const RECORD_VERSION: u16 = 8;
@@ -109,6 +112,14 @@ pub fn configure_test_mutation_rendezvous(
     path: Option<std::ffi::OsString>,
 ) {
     handle::configure_mutation_rendezvous(control, action, path);
+}
+
+/// Rewrites one complete debug fixture receipt into the immediately previous
+/// schema so process tests can exercise the production migration boundary.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn publish_test_version_7_receipt(repository: &Repository) -> Result<(), InstallError> {
+    record::publish_test_version_7_receipt(repository)
 }
 
 /// Side-effect-free canonical installation plan.

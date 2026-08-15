@@ -66,9 +66,9 @@ fn installed_spice_repairs_relocation_with_a_surviving_earlier_linked_worktree()
         .hook_activation()
         .expect("relocation repair carries hook activation");
     let worktrees = activation
-        .observations()
+        .worktrees()
         .iter()
-        .map(|observation| observation.worktree())
+        .map(String::as_str)
         .collect::<Vec<_>>();
     let canonical_linked = fs::canonicalize(&fixture.linked).expect("canonicalize linked worktree");
     let canonical_moved = fs::canonicalize(&fixture.moved).expect("canonicalize moved worktree");

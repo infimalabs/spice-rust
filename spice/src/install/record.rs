@@ -1,14 +1,17 @@
 use std::path::PathBuf;
 
+#[cfg(debug_assertions)]
+use std::fs;
+
 use serde::{Deserialize, Serialize};
 use wire::Digest;
 
 use super::binding::bind_destination;
 use super::files::{observe_bound, publish_bound};
 use super::{
-    FileImage, Generation, InstallError, InstallPlan, InstallReceipt, InstallStatus,
-    LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION, Repository,
-    RepositoryIdentity,
+    FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
+    InstallStatus, LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
+    Repository, RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -351,7 +354,7 @@ impl InstallRecord {
 
     pub(super) fn receipt(&self) -> InstallReceipt {
         InstallReceipt {
-            plan: self.plan.clone(),
+            plan: InstallPlanSummary::from_plan(&self.plan),
             digest: self.plan_digest.clone(),
             status: self.status,
             completed: self.completed,
@@ -535,4 +538,29 @@ pub(super) fn record_path(repository: &Repository) -> Result<PathBuf, InstallErr
         .map_err(InstallError::State)?
         .runtime()
         .join(RECORD_NAME))
+}
+
+#[cfg(debug_assertions)]
+pub(super) fn publish_test_version_7_receipt(repository: &Repository) -> Result<(), InstallError> {
+    let mut record = read_record(repository)?
+        .ok_or_else(|| InstallError::InvalidRecord("test fixture receipt is absent".to_owned()))?
+        .record;
+    if record.status != InstallStatus::Complete {
+        return Err(InstallError::InvalidRecord(
+            "test fixture receipt is not complete".to_owned(),
+        ));
+    }
+    record.version = super::MIGRATABLE_RECORD_VERSION;
+    record.plan.version = super::MIGRATABLE_RECORD_VERSION;
+    record.plan.retirements.clear();
+    record.plan.rollback_archive = None;
+    record.retired_parents.clear();
+    record.restored_retirements.clear();
+    record.completed = record.plan.operation_count();
+    record.plan_digest = record.plan.digest()?;
+    record.validate_with_content(true)?;
+    let bytes = wire::encode(&record).map_err(InstallError::Encode)?;
+    let path = record_path(repository)?;
+    fs::write(&path, bytes)
+        .map_err(|source| InstallError::io("publish version-7 test receipt", path, source))
 }
