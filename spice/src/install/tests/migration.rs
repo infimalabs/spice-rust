@@ -153,6 +153,7 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
     refresh_repaired_appliance(fixture, &other);
 }
 
+/// Publish the historical receipt shape that exercises forward-only repair.
 fn publish_pre_witness_v8(fixture: &MigrationFixture, migration: &InstallPlan) -> Digest {
     let migrated = apply(
         &fixture.repository,

@@ -19,6 +19,7 @@ pub(in super::super) fn configure_mutation_rendezvous(
         .expect("install mutation rendezvous is configured once at startup");
 }
 
+/// Mint the publication name shared by the handle and file-maintenance layers.
 pub(in super::super) fn temporary_name() -> OsString {
     OsString::from(format!(
         ".spice-install-{}-{}.tmp",

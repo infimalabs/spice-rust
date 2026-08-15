@@ -185,6 +185,7 @@ pub(super) fn git_output(root: &Path, arguments: &[&str]) -> std::process::Outpu
     output
 }
 
+/// Build an isolated fixture command without inheriting an outer gate selection.
 pub(super) fn fixture_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     command
