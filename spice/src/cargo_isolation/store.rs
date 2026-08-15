@@ -39,6 +39,7 @@ struct Layout {
     packages: PathBuf,
     generations: PathBuf,
     homes: PathBuf,
+    pins: PathBuf,
     locks: PathBuf,
 }
 
@@ -49,6 +50,7 @@ impl Layout {
             packages: root.join("packages"),
             generations: root.join("generations"),
             homes: root.join("homes"),
+            pins: root.join("pins"),
             locks: root.join("locks"),
             root,
         }
@@ -62,6 +64,7 @@ impl Layout {
             &layout.packages,
             &layout.generations,
             &layout.homes,
+            &layout.pins,
             &layout.locks,
         ] {
             create_private_directory(directory)?;
@@ -99,6 +102,7 @@ impl Layout {
             &layout.packages,
             &layout.generations,
             &layout.homes,
+            &layout.pins,
             &layout.locks,
         ] {
             require_directory_mode(directory, 0o700)?;
@@ -221,6 +225,7 @@ impl Inspection {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CleanupReport {
     removed_temporaries: usize,
+    removed_pins: usize,
     removed_generations: usize,
     removed_packages: usize,
     retained_uncertain: Vec<String>,
@@ -231,6 +236,11 @@ impl CleanupReport {
     #[must_use]
     pub const fn removed_temporaries(&self) -> usize {
         self.removed_temporaries
+    }
+
+    #[must_use]
+    pub const fn removed_pins(&self) -> usize {
+        self.removed_pins
     }
 
     #[must_use]
@@ -272,12 +282,18 @@ pub(super) fn prepare(
     let (manifest, reused_generation) =
         ensure_generation(&layout, &worktree, &lock_bytes, &generation, host)?;
     let home = ensure_home(&layout, &worktree, lane, &manifest)?;
+    let pin = if lane.is_none() {
+        Some(pins::GenerationPin::acquire(&layout, &generation)?)
+    } else {
+        None
+    };
     Ok(PreparedHome {
         home,
         generation,
         store: layout.root,
         cargo: host.cargo().to_path_buf(),
         reused_generation,
+        _pin: pin,
     })
 }
 
@@ -1328,6 +1344,9 @@ fn remove_read_only_tree(path: &Path) -> Result<(), IsolationError> {
 }
 
 mod maintenance;
+mod pins;
+
+pub(super) use pins::GenerationPin;
 
 pub(super) fn inspect(host: &Host) -> Result<Inspection, IsolationError> {
     maintenance::inspect(host)

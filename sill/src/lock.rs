@@ -195,6 +195,35 @@ impl Possession {
     pub(crate) fn retain_until_last_close(&mut self) {
         self.unlock_on_drop = false;
     }
+
+    /// Arrange for one command and its descendants to retain this possession
+    /// if the parent drops or exits first.
+    ///
+    /// The child inherits only this already validated lock descriptor. Normal
+    /// close-on-exec behavior remains in force for every other descriptor.
+    #[cfg(unix)]
+    pub fn retain_through_child(&mut self, command: &mut std::process::Command) {
+        use std::os::fd::AsRawFd as _;
+        use std::os::unix::process::CommandExt as _;
+
+        let descriptor = self.file.as_raw_fd();
+        self.retain_until_last_close();
+        // SAFETY: `fcntl` is async-signal-safe, and the closure touches only a
+        // copied descriptor integer between fork and exec. Clearing CLOEXEC in
+        // the child leaves the parent's descriptor flags unchanged.
+        unsafe {
+            command.pre_exec(move || {
+                let flags = platform::fcntl(descriptor, platform::F_GETFD);
+                if flags == -1
+                    || platform::fcntl(descriptor, platform::F_SETFD, flags & !platform::FD_CLOEXEC)
+                        == -1
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
 }
 
 /// One record covering every byte the file already spans, ready to be written whole.
@@ -467,6 +496,7 @@ mod platform {
     use std::os::raw::c_int;
 
     pub const F_GETFD: c_int = 1;
+    pub const F_SETFD: c_int = 2;
     pub const FD_CLOEXEC: c_int = 1;
     pub const LOCK_SH: c_int = 1;
     pub const LOCK_EX: c_int = 2;

@@ -19,6 +19,7 @@ fn inspect_layout(layout: &Layout) -> Result<Inspection, IsolationError> {
         issues: Vec::new(),
     };
     inspect_owned_records(layout, &mut inspection)?;
+    pins::inspect(layout, &mut inspection.issues)?;
     measure_tree(&layout.root, &mut inspection)?;
     Ok(inspection)
 }
@@ -184,13 +185,20 @@ pub(super) fn cleanup_with_grace(
     let _lock = acquire_lock(&layout, "store-mutation")?;
     let mut report = CleanupReport {
         removed_temporaries: 0,
+        removed_pins: 0,
         removed_generations: 0,
         removed_packages: 0,
         retained_uncertain: Vec::new(),
         after: inspect_layout(&layout)?,
     };
     reclaim_temporaries(&layout, grace, &mut report)?;
-    let referenced = referenced_generations(&layout, &mut report.retained_uncertain)?;
+    let mut referenced = referenced_generations(&layout, &mut report.retained_uncertain)?;
+    pins::retain_active(
+        &layout,
+        &mut referenced,
+        &mut report.retained_uncertain,
+        &mut report.removed_pins,
+    )?;
     let packages = reclaim_generations(&layout, &referenced, grace, &mut report)?;
     reclaim_packages(&layout, &packages, grace, &mut report)?;
     report.after = inspect_layout(&layout)?;

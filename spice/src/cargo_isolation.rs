@@ -178,13 +178,14 @@ impl Host {
 }
 
 /// One admitted isolated home and immutable lockfile generation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct PreparedHome {
     home: PathBuf,
     generation: String,
     store: PathBuf,
     cargo: PathBuf,
     reused_generation: bool,
+    _pin: Option<store::GenerationPin>,
 }
 
 impl PreparedHome {
@@ -216,6 +217,28 @@ impl PreparedHome {
     #[must_use]
     pub const fn reused_generation(&self) -> bool {
         self.reused_generation
+    }
+
+    /// Arrange for a manual Cargo child to retain this generation pin even if
+    /// its supervising wrapper exits first.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a prepared home that lacks its required manual-reader pin or a
+    /// descriptor whose inheritance contract cannot be installed.
+    pub fn retain_pin_for_child(
+        &mut self,
+        command: &mut std::process::Command,
+    ) -> Result<(), IsolationError> {
+        self._pin
+            .as_mut()
+            .ok_or_else(|| {
+                IsolationError::new(
+                    "cargo-isolation::pin-unavailable",
+                    "prepared manual Cargo home carries no reader pin",
+                )
+            })?
+            .retain_for_child(command)
     }
 
     /// Machine-safe summary that retains non-UTF-8 paths as hexadecimal bytes.

@@ -128,7 +128,7 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, (Outcome<()>, i32
         )
     })?;
     let host = host().map_err(isolation_rejection)?;
-    let prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
+    let mut prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
     let mut command = Command::new(prepared.cargo());
     command
         .args(arguments)
@@ -141,6 +141,9 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, (Outcome<()>, i32
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
     }
+    prepared
+        .retain_pin_for_child(&mut command)
+        .map_err(isolation_rejection)?;
     let mut child = command.spawn().map_err(|error| {
         let code = match error.kind() {
             io::ErrorKind::NotFound => 127,

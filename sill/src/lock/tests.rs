@@ -21,6 +21,35 @@ fn possession_is_exclusive_and_release_is_automatic() {
     fs::remove_file(path).expect("remove test lock file");
 }
 
+#[cfg(unix)]
+#[test]
+fn explicit_child_inheritance_retains_possession_until_the_child_exits() {
+    let path = unique_lock_path("child-inheritance");
+    let lock = LockFile::new(
+        LockName::new("child-inheritance").expect("valid name"),
+        &path,
+    );
+    let mut possession = acquired(lock.try_acquire().expect("parent acquisition"));
+    let mut command = process::Command::new("/usr/bin/tail");
+    command.args(["-f", "/dev/null"]);
+    possession.retain_through_child(&mut command);
+    let mut child = command.spawn().expect("spawn inheriting child");
+
+    drop(possession);
+    assert_eq!(
+        lock.availability().expect("probe inherited possession"),
+        super::Availability::Held,
+    );
+
+    child.kill().expect("stop inheriting child");
+    child.wait().expect("reap inheriting child");
+    assert_eq!(
+        lock.availability().expect("probe released possession"),
+        super::Availability::Available,
+    );
+    fs::remove_file(path).expect("remove test lock file");
+}
+
 #[test]
 fn lock_names_are_single_safe_path_components() {
     for name in [

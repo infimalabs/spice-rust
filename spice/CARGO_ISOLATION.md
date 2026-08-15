@@ -23,6 +23,14 @@ grace, retains all generations if any home has uncertain liveness, and reports
 malformed links, records, modes, file types, or digests rather than repairing or
 deleting them.
 
+Each `spice dev cargo` process holds a unique kernel-backed reader pin from
+before store preparation unlocks until its native Cargo child exits. Cleanup
+retains every actively pinned generation, removes unlocked records left by a
+crashed wrapper, and retains all generations if a pin cannot be classified.
+Resident occupants need no transient pin: their lane-specific home remains the
+current reference for the one process group that can occupy that lane, and a
+replacement cannot advance the same home until the seat is vacant.
+
 ## Reproducing the benchmark
 
 The following measurements were recorded on 2026-08-14 on arm64 macOS using

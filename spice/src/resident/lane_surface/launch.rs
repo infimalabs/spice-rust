@@ -189,6 +189,11 @@ fn launch_environment(
     let inbox = paths.inbox_for_repository(repository)?;
     let cargo_host = crate::cargo_command::host()
         .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
+    // The lane-specific home is the resident reader pin: one occupied seat
+    // admits one process group, and a replacement occupant cannot prepare the
+    // same lane home until that seat is vacant. Manual Cargo children can
+    // overlap a home advance, so their preparer additionally holds a kernel
+    // pin for the exact child lifetime.
     let cargo_home = spice::cargo_isolation::prepare_lane(repository, lane, &cargo_host)
         .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
     let native_shell = crate::bootstrap_environment("SHELL").ok_or_else(|| {
