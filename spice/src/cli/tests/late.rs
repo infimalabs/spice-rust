@@ -73,6 +73,19 @@ fn selected_leaf_recovers_the_same_contract_row() {
     );
 }
 
+#[test]
+fn task_wake_accepts_one_explicit_public_promotion_target() {
+    let matches = command()
+        .try_get_matches_from(["spice", "task", "wake", "OOPS-aBcD", "--into", "board.test"])
+        .expect("wake promotion syntax parses");
+    let task = matches.subcommand_matches("task").expect("task command");
+    let wake = task.subcommand_matches("wake").expect("wake command");
+    assert_eq!(
+        wake.get_one::<String>("into").map(String::as_str),
+        Some("board.test"),
+    );
+}
+
 /// The renderer flag is recognised wherever spice's own words are.
 ///
 /// A position spice fails to recognise silently renders a sentence to a

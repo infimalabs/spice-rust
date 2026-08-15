@@ -448,10 +448,18 @@ fn client_wake(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     mutate_task(repository, contract, matches, |task, heads| {
-        let body = TaskRef { task: task.clone() };
+        let into = matches.get_one::<String>("into").cloned();
+        let mut expected = vec![workflow_witness(heads), deferral_witness(heads)];
+        if into.is_some() {
+            expected.push(statement_witness(heads));
+        }
+        let body = TaskWake {
+            task: task.clone(),
+            into,
+        };
         Ok((
             CommandKind::TaskWake,
-            vec![workflow_witness(heads), deferral_witness(heads)],
+            expected,
             serde_json::to_value(body).expect("typed intent encodes"),
         ))
     })
@@ -1209,9 +1217,7 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskDefer(defer) => {
             task_defer(bus, command, defer, projects, allocation)
         }
-        wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::TaskWake => {
-            task_wake(bus, command, task, projects, allocation)
-        }
+        wire::intent::Intent::TaskWake(wake) => task_wake(bus, command, wake, projects, allocation),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
             claim_free(bus, command, task, projects, allocation)
         }

@@ -12,8 +12,8 @@ use super::{
     LaneRead, LaneRecall, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
     RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox,
     SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends,
-    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer,
-    TasteProposalAdd, TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
+    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TaskWake,
+    TasteAnswer, TasteProposalAdd, TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -45,6 +45,8 @@ pub enum BodyShape {
     TaskNote,
     /// [`TaskDefer`]
     TaskDefer,
+    /// [`TaskWake`]
+    TaskWake,
     /// [`TaskRef`]
     TaskRef,
     /// [`TaskDepends`]
@@ -386,7 +388,7 @@ impl CommandKind {
             Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
             Self::TaskDefer => Binding::of(B::TaskDefer, A::Task),
-            Self::TaskWake => Binding::of(B::TaskRef, A::Task),
+            Self::TaskWake => Binding::of(B::TaskWake, A::Task),
             Self::TaskDepends => Binding::of(B::TaskDepends, A::Task),
             Self::TaskPhase => Binding::of(B::TaskPhase, A::Task),
             Self::TaskDone => Binding::of(B::TaskDone, A::Task),
@@ -471,6 +473,8 @@ pub enum Intent {
     TaskNote(TaskNote),
     /// [`BodyShape::TaskDefer`]
     TaskDefer(TaskDefer),
+    /// [`BodyShape::TaskWake`]
+    TaskWake(TaskWake),
     /// [`BodyShape::TaskRef`]
     TaskRef(TaskRef),
     /// [`BodyShape::TaskDepends`]
@@ -551,6 +555,7 @@ impl Intent {
             | Self::TaskDelete(_)
             | Self::TaskNote(_)
             | Self::TaskDefer(_)
+            | Self::TaskWake(_)
             | Self::TaskRef(_)
             | Self::TaskDepends(_)
             | Self::TaskPhase(_)
@@ -599,6 +604,7 @@ impl Intent {
             Self::TaskDelete(_) => BodyShape::TaskDelete,
             Self::TaskNote(_) => BodyShape::TaskNote,
             Self::TaskDefer(_) => BodyShape::TaskDefer,
+            Self::TaskWake(_) => BodyShape::TaskWake,
             Self::TaskRef(_) => BodyShape::TaskRef,
             Self::TaskDepends(_) => BodyShape::TaskDepends,
             Self::TaskPhase(_) => BodyShape::TaskPhase,
@@ -672,6 +678,7 @@ impl BodyShape {
                 | Self::TaskDelete
                 | Self::TaskNote
                 | Self::TaskDefer
+                | Self::TaskWake
                 | Self::TaskRef
                 | Self::TaskDepends
                 | Self::TaskPhase
@@ -701,7 +708,6 @@ impl BodyShape {
                 | Self::TaskDelete
                 | Self::TaskNote
                 | Self::TaskDefer
-                | Self::TaskRef
         ) {
             self.decode_board_query_body(bytes)
         } else {
@@ -724,13 +730,14 @@ impl BodyShape {
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
             Self::TaskDefer => Intent::TaskDefer(crate::decode(bytes)?),
-            Self::TaskRef => Intent::TaskRef(crate::decode(bytes)?),
             _ => unreachable!("board body partition is closed"),
         })
     }
 
     fn decode_board_transition_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
+            Self::TaskWake => Intent::TaskWake(crate::decode(bytes)?),
+            Self::TaskRef => Intent::TaskRef(crate::decode(bytes)?),
             Self::TaskDepends => Intent::TaskDepends(crate::decode(bytes)?),
             Self::TaskPhase => Intent::TaskPhase(crate::decode(bytes)?),
             Self::TaskDone => Intent::TaskDone(crate::decode(bytes)?),

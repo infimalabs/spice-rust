@@ -1024,7 +1024,10 @@ fn claim_gate_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHand
             Actor::Operator,
             CommandKind::TaskWake,
             vec![workflow_witness(heads), deferral_witness(heads)],
-            &TaskRef { task: task.clone() },
+            &TaskWake {
+                task: task.clone(),
+                into: None,
+            },
         ));
     }
 
