@@ -14,6 +14,10 @@ pub(crate) enum Answer {
 
 pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
     #[cfg(debug_assertions)]
+    spice::install::configure_test_maintenance_now(crate::bootstrap_environment(
+        spice::install::TEST_PAUSE_ACTION,
+    ));
+    #[cfg(debug_assertions)]
     spice::install::configure_test_mutation_rendezvous(
         crate::bootstrap_environment(spice::install::TEST_PAUSE_CONTROL),
         crate::bootstrap_environment(spice::install::TEST_PAUSE_ACTION),
@@ -38,6 +42,9 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             return request.fault("install::repository-unresolved", error.to_string());
         }
     };
+    if let Err(error) = spice::install::reclaim_temporary_records(&repository) {
+        return request.install_failure(error);
+    }
 
     match request {
         Request::Plan => {
@@ -97,6 +104,13 @@ impl Request {
             Self::Apply(_) | Self::Unapply => Answer::Receipt(Outcome::Fault(fault)),
         }
     }
+
+    fn install_failure(self, error: InstallError) -> Answer {
+        match self {
+            Self::Plan => Answer::Plan(failure(error)),
+            Self::Apply(_) | Self::Unapply => Answer::Receipt(failure(error)),
+        }
+    }
 }
 
 fn executable<B>() -> Result<PathBuf, Outcome<B>> {
@@ -128,6 +142,7 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         InstallError::PathShape(_)
         | InstallError::PathOutsideRoot(_)
         | InstallError::ParentChanged(_)
+        | InstallError::GenerationChanged(_)
         | InstallError::BinaryNotRegular(_)
         | InstallError::BinaryEmpty(_)
         | InstallError::HookPathUnrepresentable { .. }
@@ -203,6 +218,7 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::Drift { .. } => "install::drift",
         InstallError::PathOutsideRoot(_) => "install::path-outside-root",
         InstallError::ParentChanged(_) => "install::parent-changed",
+        InstallError::GenerationChanged(_) => "install::generation-changed",
         InstallError::State(_) => "install::state-refused",
         _ => "install::input-refused",
     }
@@ -226,6 +242,10 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         ),
         InstallError::ParentChanged(path) => format!(
             "inspect the changed destination parent with `{}`; rerun this executable's `install` preview and use only its newly printed digest",
+            inspect_path(path),
+        ),
+        InstallError::GenerationChanged(path) => format!(
+            "inspect the concurrently changed install receipt with `{}`; keep the completed direction and rerun this executable's `install` preview before retrying",
             inspect_path(path),
         ),
         InstallError::BinaryNotRegular(path) | InstallError::BinaryEmpty(path) => format!(

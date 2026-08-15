@@ -19,6 +19,7 @@ mod fold;
 mod git_hooks;
 mod handle;
 mod hook_activation;
+mod maintenance;
 mod model;
 mod path;
 mod progress;
@@ -42,10 +43,7 @@ use progress::{
 use record::record_path;
 use record::{RefreshRecord, read_record, read_record_for_refresh};
 use rollback::{RollbackArchive, RollbackState, rollback_image_matches};
-use validation::{
-    asset_contract, fixed_content_differs_from_current_build, validate_operation,
-    validate_retirement,
-};
+use validation::{asset_contract, fixed_content_differs_from_current_build};
 
 pub use fold::{
     HookActivationSummary, InstallOperationSummary, InstallPlanSummary, InstallPreview,
@@ -54,6 +52,9 @@ pub use fold::{
 };
 pub use hook_activation::{
     HookActivationPlan, HookConfigurationMutation, HookConfigurationScope, HookWorktreeObservation,
+};
+pub use maintenance::{
+    InstallTempInspection, inspect_temporary_records, reclaim_temporary_records,
 };
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, RepositoryIdentity};
@@ -105,7 +106,6 @@ pub const TEST_PAUSE_PATH: &str = "SPICE_INSTALL_TEST_PAUSE_PATH"; // env-policy
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub const TEST_EXECUTABLE: &str = "SPICE_INSTALL_TEST_EXECUTABLE"; // env-policy: allow
-
 /// Configures the process-test mutation rendezvous before installation starts.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
@@ -115,6 +115,13 @@ pub fn configure_test_mutation_rendezvous(
     path: Option<std::ffi::OsString>,
 ) {
     handle::configure_mutation_rendezvous(control, action, path);
+}
+
+/// Configures the process-test clock used by temporary-record maintenance.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn configure_test_maintenance_now(now: Option<std::ffi::OsString>) {
+    maintenance::configure_test_now(now);
 }
 
 /// Rewrites one complete debug fixture receipt into the immediately previous
@@ -217,152 +224,7 @@ impl InstallPlan {
         &self,
         content: GeneratedContentAuthority,
     ) -> Result<(), InstallError> {
-        let migratable = self.validate_version(content)?;
-        self.validate_operation_inventory(content)?;
-        self.validate_retirement_inventory(migratable)?;
-        self.validate_destinations(content)
-    }
-
-    fn validate_version(&self, content: GeneratedContentAuthority) -> Result<bool, InstallError> {
-        let migratable = content == GeneratedContentAuthority::HistoricalReceipt
-            && self.version == MIGRATABLE_RECORD_VERSION;
-        if self.version != PLAN_VERSION && !migratable {
-            return Err(InstallError::InvalidRecord(format!(
-                "install plan version {} is not {PLAN_VERSION}",
-                self.version
-            )));
-        }
-        Ok(migratable)
-    }
-
-    fn validate_operation_inventory(
-        &self,
-        content: GeneratedContentAuthority,
-    ) -> Result<(), InstallError> {
-        let expected = [
-            Asset::GitPreCommit,
-            Asset::GitCommitMessage,
-            Asset::GitReferenceTransaction,
-            Asset::HookEntry,
-            Asset::HookStatic,
-            Asset::Skill,
-        ];
-        if self.operations.len() != expected.len() && self.operations.len() != expected.len() + 1 {
-            return Err(InstallError::InvalidRecord(
-                "install plan has an incomplete or extra operation inventory".to_owned(),
-            ));
-        }
-        for (operation, asset) in self.operations.iter().zip(expected) {
-            if operation.asset != asset {
-                return Err(InstallError::InvalidRecord(
-                    "install plan operation order is not canonical".to_owned(),
-                ));
-            }
-        }
-        if self.operations.len() > expected.len()
-            && self.operations.last().map(|operation| operation.asset) != Some(Asset::Binary)
-        {
-            return Err(InstallError::InvalidRecord(
-                "optional binary is not the final operation".to_owned(),
-            ));
-        }
-        if self.hook_activation.is_some()
-            != self
-                .operations
-                .last()
-                .is_some_and(|operation| operation.asset == Asset::Binary)
-        {
-            return Err(InstallError::InvalidRecord(
-                "hook activation and installed executable must be planned together".to_owned(),
-            ));
-        }
-        if let Some(activation) = &self.hook_activation {
-            activation.validate(content == GeneratedContentAuthority::HistoricalReceipt)?;
-        }
-        Ok(())
-    }
-
-    fn validate_retirement_inventory(&self, migratable: bool) -> Result<(), InstallError> {
-        if migratable {
-            if !self.retirements.is_empty() || self.rollback_archive.is_some() {
-                return Err(InstallError::InvalidRecord(
-                    "version-7 install plan carries version-8 migration state".to_owned(),
-                ));
-            }
-        } else {
-            let expected = [RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
-            if self.retirements.len() != expected.len()
-                || self
-                    .retirements
-                    .iter()
-                    .zip(expected)
-                    .any(|(retirement, path)| retirement.path != path)
-            {
-                return Err(InstallError::InvalidRecord(
-                    "install retirement inventory is not exact and ordered".to_owned(),
-                ));
-            }
-        }
-        if self
-            .retirements
-            .iter()
-            .any(|retirement| retirement.rollback.is_some())
-            && self.rollback_archive.is_none()
-        {
-            return Err(InstallError::InvalidRecord(
-                "install retirement rollback witness has no rollback archive".to_owned(),
-            ));
-        }
-        if self.retirements.iter().any(|retirement| {
-            matches!(
-                (&retirement.rollback, &retirement.superseded),
-                (Some(rollback), Some(superseded)) if rollback != superseded
-            )
-        }) {
-            return Err(InstallError::InvalidRecord(
-                RETIREMENT_WITNESS_MISMATCH.to_owned(),
-            ));
-        }
-        if let Some(rollback) = self.rollback_state()? {
-            self.validate_rollback_state(&rollback)?;
-        }
-        Ok(())
-    }
-
-    fn validate_destinations(
-        &self,
-        content: GeneratedContentAuthority,
-    ) -> Result<(), InstallError> {
-        if self.repository.worktree.is_some() || !self.repository.common_git.is_absolute() {
-            return Err(InstallError::InvalidRecord(
-                "install repository identity is not common-directory scoped".to_owned(),
-            ));
-        }
-        validate_relative(&self.record.destination)?;
-        let mut introduced = BTreeSet::new();
-        let mut destinations = BTreeSet::new();
-        for operation in &self.operations {
-            validate_operation(
-                operation,
-                &mut introduced,
-                content,
-                &self.repository.common_git,
-            )?;
-            if !destinations.insert((operation.location, operation.destination.clone())) {
-                return Err(InstallError::InvalidRecord(
-                    "install plan duplicates a physical destination".to_owned(),
-                ));
-            }
-        }
-        for retirement in &self.retirements {
-            validate_retirement(retirement)?;
-            if !destinations.insert((Location::CommonGit, retirement.destination.clone())) {
-                return Err(InstallError::InvalidRecord(
-                    "install plan duplicates a retirement destination".to_owned(),
-                ));
-            }
-        }
-        Ok(())
+        validation::validate_plan(self, content)
     }
 
     fn rollback_state(&self) -> Result<Option<RollbackState>, InstallError> {

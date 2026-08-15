@@ -27,6 +27,10 @@ pub(crate) fn inspect(
     environment: &[(SpiceVariable, bool)],
     search_path: Option<&OsStr>,
 ) -> Outcome<DoctorReport<Root>> {
+    #[cfg(debug_assertions)]
+    spice::install::configure_test_maintenance_now(crate::bootstrap_environment(
+        spice::install::TEST_PAUSE_ACTION,
+    ));
     let repository = match Repository::discover(working) {
         Ok(repository) => repository,
         Err(error) => {
