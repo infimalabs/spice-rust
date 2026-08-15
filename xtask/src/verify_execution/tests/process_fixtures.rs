@@ -437,9 +437,33 @@ fn assert_processes_gone(path: &std::path::Path, label: &str) {
 }
 
 #[cfg(unix)]
+fn assert_process_stops_within(pid: u32, label: &str, deadline: Duration) {
+    let started = Instant::now();
+    while process_is_running(pid) {
+        assert!(
+            started.elapsed() < deadline,
+            "{label} process {pid} remained alive after the {deadline:?} bounded observation"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(unix)]
 fn process_exists(pid: u32) -> bool {
     Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "pid="])
         .output()
         .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
+}
+
+#[cfg(unix)]
+fn process_is_running(pid: u32) -> bool {
+    Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "stat="])
+        .output()
+        .is_ok_and(|output| {
+            output.status.success()
+                && !output.stdout.trim_ascii_start().starts_with(b"Z")
+                && !output.stdout.trim_ascii().is_empty()
+        })
 }

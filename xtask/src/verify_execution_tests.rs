@@ -29,8 +29,38 @@ mod tests {
         "verify_execution::tests::non_cooperative_in_process_verifier_fixture";
     const DETACHED_WORKSPACE_SHARD_TEST: &str =
         "verify_execution::tests::detached_workspace_shard_fixture";
+    const DETACHED_FIXTURE_LIFETIME_EXTENSION: &str = "lifetime-ms";
+    const DETACHED_FIXTURE_DEFAULT_LIFETIME: Duration = Duration::from_secs(600);
     const SUPERVISOR_PID_MARKER: &str = "verifier-supervisor-fixture pid=";
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    fn detached_fixture_lifetime(value: Option<&str>) -> Duration {
+        let Some(value) = value else {
+            return DETACHED_FIXTURE_DEFAULT_LIFETIME;
+        };
+        let milliseconds = value
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|milliseconds| *milliseconds > 0)
+            .unwrap_or_else(|| {
+                panic!(
+                    "detached fixture lifetime must be a positive integer number of milliseconds"
+                )
+            });
+        Duration::from_millis(milliseconds)
+    }
+
+    fn read_detached_fixture_lifetime(identity_path: &std::path::Path) -> Duration {
+        let path = identity_path.with_extension(DETACHED_FIXTURE_LIFETIME_EXTENSION);
+        match fs::read_to_string(&path) {
+            Ok(value) => detached_fixture_lifetime(Some(&value)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                detached_fixture_lifetime(None)
+            }
+            Err(error) => panic!("detached fixture lifetime {path:?} cannot be read: {error}"),
+        }
+    }
 
     struct TimedRunner {
         delays: BTreeMap<&'static str, Duration>,
@@ -753,6 +783,11 @@ mod tests {
         reason = "the isolated fixture reads its one injected identity path at the process rim"
     )]
     fn detached_workspace_shard_fixture() {
+        let started = Instant::now();
+        let identity_path = std::env::var_os("DETACHED_IDENTITY_FILE")
+            .map(PathBuf::from)
+            .expect("fixture identity path is present");
+        let lifetime = read_detached_fixture_lifetime(&identity_path);
         // SAFETY: this single-threaded fixture process exists only to prove that
         // a workspace-test descendant can leave its action's process group.
         let session = unsafe { libc::setsid() };
@@ -762,14 +797,67 @@ mod tests {
         let group = unsafe { libc::getpgrp() };
         // SAFETY: a zero PID asks for the calling fixture's session.
         let observed_session = unsafe { libc::getsid(0) };
-        let identity_path = std::env::var_os("DETACHED_IDENTITY_FILE")
-            .map(PathBuf::from)
-            .expect("fixture identity path is present");
         fs::write(identity_path, format!("{pid} {group} {observed_session}\n"))
             .expect("fixture identity publishes");
-        loop {
-            thread::sleep(Duration::from_secs(1));
-        }
+        thread::sleep(lifetime.saturating_sub(started.elapsed()));
+    }
+
+    #[test]
+    fn detached_fixture_lifetime_has_one_default_and_accepts_milliseconds() {
+        assert_eq!(
+            detached_fixture_lifetime(None),
+            DETACHED_FIXTURE_DEFAULT_LIFETIME
+        );
+        assert_eq!(
+            detached_fixture_lifetime(Some("25")),
+            Duration::from_millis(25)
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "detached fixture lifetime must be a positive integer number of milliseconds"
+    )]
+    fn detached_fixture_lifetime_rejects_a_malformed_injection() {
+        let _ = detached_fixture_lifetime(Some("soon"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detached_workspace_fixture_self_terminates_after_its_parent_exits() {
+        let identity_file = fixture_pid_file("detached-self-deadline");
+        let lifetime_file = identity_file.with_extension(DETACHED_FIXTURE_LIFETIME_EXTENSION);
+        fs::write(&lifetime_file, "250\n").expect("write injected fixture lifetime");
+        let executable = std::env::current_exe().expect("resolve fixture test executable");
+        let parent = Command::new("/bin/sh")
+            .args([
+                "-c",
+                concat!(
+                    "\"$TEST_EXECUTABLE\" --ignored --exact ",
+                    "\"$DETACHED_WORKSPACE_SHARD_TEST\" --nocapture --test-threads=1 ",
+                    "</dev/null >/dev/null 2>&1 &"
+                ),
+            ])
+            .env("TEST_EXECUTABLE", executable)
+            .env(
+                "DETACHED_WORKSPACE_SHARD_TEST",
+                DETACHED_WORKSPACE_SHARD_TEST,
+            )
+            .env("DETACHED_IDENTITY_FILE", &identity_file)
+            .status()
+            .expect("launch detached fixture through its short-lived parent");
+        assert!(parent.success(), "short-lived fixture parent exits cleanly");
+
+        wait_for_path(&identity_file);
+        let identity = read_pids(&identity_file);
+        assert_eq!(identity.len(), 3, "fixture publishes PID, PGID, and SID");
+        assert_process_stops_within(
+            identity[0],
+            "self-deadlined detached workspace fixture",
+            Duration::from_secs(2),
+        );
+        fs::remove_file(identity_file).expect("remove self-deadline fixture identity");
+        fs::remove_file(lifetime_file).expect("remove injected fixture lifetime");
     }
 
     #[test]
