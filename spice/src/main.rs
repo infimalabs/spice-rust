@@ -18,6 +18,7 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 #[cfg(not(target_arch = "wasm32"))]
 mod board_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod cargo_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod command_client;
 #[cfg(not(target_arch = "wasm32"))]
@@ -267,6 +268,13 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
 #[cfg(not(target_arch = "wasm32"))]
 fn dispatch_native_policy_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
     match contract.path {
+        ["dev", "cargo"] => match cargo_command::run(leaf) {
+            cargo_command::RunResult::Child(status) => terminate_child(status),
+            cargo_command::RunResult::Rejected { outcome, code } => {
+                deliver_with_code(&outcome, form, code)
+            }
+        },
+        ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
         ["consent"] => deliver(&consent_command::read(contract), form),
         ["consent", "allow"] => deliver(
             &consent_command::decide(leaf, contract, wire::Answer::Granted),

@@ -43,7 +43,7 @@ struct EnvironmentPolicy {
 /// shared-output authority while compiling tests from an immutable selected
 /// tree. The generated-hook process fixture contributes three private log and
 /// exit-control names. Those references oblige the ledger to account all
-/// eighteen names. They are named here rather than added to [`SpiceVariable`],
+/// nineteen names. They are named here rather than added to [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
 /// would claim ownership Spice does not have.
 ///
@@ -59,6 +59,7 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_INDEX_FILE",                      // env-policy: allow
     "GIT_WORK_TREE",                       // env-policy: allow
     "SPICE_CANVAS_BINARY",                 // env-policy: allow
+    "SPICE_FIXTURE_RERUN",                 // env-policy: allow
     "SPICE_HOOKS",                         // env-policy: allow
     "SPICE_HOOK_ARGV_LOG",                 // env-policy: allow
     "SPICE_HOOK_EXIT_CODE",                // env-policy: allow

@@ -194,6 +194,10 @@ fn tool_observation(
         DoctorToolSource::CommandOperand => DoctorObservation::InputRequired {
             reason: "the caller supplies this executable at invocation".to_owned(),
         },
+        DoctorToolSource::BootstrapEnvironment => match probe.named(tool.name) {
+            Ok(()) => DoctorObservation::Ready {},
+            Err(reason) => DoctorObservation::Unavailable { reason },
+        },
         DoctorToolSource::GatePolicyContract => {
             gate_observation("policy", gate::declared_tools(), probe)
         }

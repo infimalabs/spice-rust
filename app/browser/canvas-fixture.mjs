@@ -239,6 +239,21 @@ export async function configureFixture(
   );
   const noCardWorktree = noCardMember === null ? "" : `lane-${noCardMember}`;
   await execute("git", ["init", "--quiet"], { cwd: fixture });
+  await writeFile(join(fixture, "Cargo.toml"), [
+    "[package]",
+    'name = "canvas-fixture"',
+    'version = "0.0.0"',
+    'edition = "2024"',
+    "",
+  ].join("\n"));
+  await writeFile(join(fixture, "Cargo.lock"), [
+    "version = 4",
+    "",
+    "[[package]]",
+    'name = "canvas-fixture"',
+    'version = "0.0.0"',
+    "",
+  ].join("\n"));
   await mkdir(join(fixture, "dist"), { recursive: true });
   await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
@@ -311,7 +326,11 @@ export async function configureFixture(
     ["dist/stage-app", ".spice-tool-trigger", ".spice-prose-trigger", VENDOR_PID_LEDGER, ""]
       .join("\n"),
   );
-  await execute("git", ["add", ".gitignore", "fake-claude", "spice-rust.toml"], { cwd: fixture });
+  await execute(
+    "git",
+    ["add", ".gitignore", "Cargo.lock", "Cargo.toml", "fake-claude", "spice-rust.toml"],
+    { cwd: fixture },
+  );
   await execute("git", [
     "-c", "user.name=Canvas Fixture",
     "-c", "user.email=canvas@example.invalid",

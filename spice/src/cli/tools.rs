@@ -48,6 +48,17 @@ pub(super) const CALLER_COMMAND: &[ExternalTool] = &[ExternalTool {
     network: ToolNetwork::ChildOwned,
 }];
 
+pub(super) const NATIVE_CARGO_TOOL: &[ExternalTool] = &[ExternalTool {
+    name: "cargo",
+    owner: "cargo_isolation::dev_cargo",
+    mode: ToolMode::Launch,
+    requirement: ToolRequirement::Required,
+    source: ToolSource::BootstrapEnvironment,
+    bounds: ToolBounds::ChildOwned,
+    cancellation: ToolCancellation::ChildOwned,
+    network: ToolNetwork::Denied,
+}];
+
 pub(super) const GATE_POLICY_TOOLS: &[ExternalTool] = &[ExternalTool {
     name: "gate policy executable",
     owner: "gate::Contract",
@@ -231,6 +242,12 @@ fn validate_source_posture(path: &str, tool: &ExternalTool, violations: &mut Vec
             ToolBounds::ChildOwned,
             ToolCancellation::ChildOwned,
             ToolNetwork::ChildOwned,
+        ),
+        ToolSource::BootstrapEnvironment => (
+            ToolMode::Launch,
+            ToolBounds::ChildOwned,
+            ToolCancellation::ChildOwned,
+            ToolNetwork::Denied,
         ),
         ToolSource::GatePolicyContract | ToolSource::GateMutationContract => (
             ToolMode::Launch,

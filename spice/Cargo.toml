@@ -10,6 +10,7 @@ publish.workspace = true
 artifact = { path = "../artifact" }
 atomic = { path = "../atomic" }
 base64 = "0.22.1"
+blake3 = "1.8.5"
 board = { path = "../board" }
 bus = { path = "../bus" }
 canvas = { path = "../canvas" }
@@ -28,6 +29,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_path_to_error = "0.1.20"
 sha1 = "0.10.7"
+sha2 = "0.10.9"
 shell-words = "1.1.1"
 sill = { path = "../sill" }
 steer = { path = "../steer" }

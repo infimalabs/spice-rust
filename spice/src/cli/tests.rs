@@ -105,7 +105,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 100);
+    assert_eq!(contracts().len(), 102);
 
     let unaccounted = contracts()
         .iter()
@@ -118,7 +118,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 100);
+    assert_eq!(landed, 102);
     assert_eq!(landing(&["gate", "commit-msg"]), Landing::Landed);
     assert_eq!(landing(&["gate", "reference-transaction"]), Landing::Landed);
     assert_eq!(landing(&["gate", "selection"]), Landing::Landed);
@@ -550,6 +550,7 @@ fn tool_postures_follow_the_closed_command_order() {
         declared,
         vec![
             ("doctor".to_owned(), vec!["rtk"]),
+            ("dev cargo".to_owned(), vec!["cargo"]),
             ("lock run".to_owned(), vec!["CMD"]),
             ("gate".to_owned(), vec!["gate policy executable"]),
             ("gate findings".to_owned(), vec!["gate policy executable"]),
@@ -575,7 +576,8 @@ fn tool_postures_follow_the_closed_command_order() {
             ("run".to_owned(), vec!["CMD"]),
         ]
     );
-    assert!(posture_violations(contracts()).is_empty());
+    let violations = posture_violations(contracts());
+    assert!(violations.is_empty(), "{violations:?}");
 }
 
 #[test]

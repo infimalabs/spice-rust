@@ -474,6 +474,7 @@ fn configure_vendors(fixture: &Fixture) -> VendorFixture {
     )
     .expect("Codex Git pointer");
     fs::write(codex_git.join("commondir"), "../..\n").expect("Codex common pointer");
+    copy_cargo_fixture(fixture, &codex_worktree);
 
     let claude_control = fixture.cleanup.join("claude-control");
     let codex_control = fixture.cleanup.join("codex-control");
