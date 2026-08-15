@@ -316,6 +316,106 @@ fn static_dependency_reach_is_transitive_and_dynamic_edges_fail_closed() {
 }
 
 #[test]
+fn cargo_dynamic_compiler_targets_refuse_compilers_without_contaminating_independent_arms() {
+    let fixture = Fixture::new("cargo-dynamic-inputs");
+    fixture.write(
+        "fold/Cargo.toml",
+        "[package]\nname = \"fold\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    );
+    fixture.write(
+        "fold/build.rs",
+        "fn main() { let _ = std::fs::read(\"schema.json\"); }\n",
+    );
+    fixture.write("fold/schema.json", "{\"version\":1}\n");
+    fixture.write(
+        "artifact/Cargo.toml",
+        concat!(
+            "[package]\nname = \"artifact\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+            "[lib]\nproc-macro = true\n",
+        ),
+    );
+    fixture.write("artifact/src/lib.rs", "pub fn expand() {}\n");
+    fixture.write("README.md", "first\n");
+    let paths = [
+        "README.md",
+        "artifact/Cargo.toml",
+        "artifact/src/lib.rs",
+        "fold/Cargo.toml",
+        "fold/build.rs",
+        "fold/schema.json",
+    ];
+    let first = fixture.closure(&paths);
+
+    for (path, kind) in [
+        ("fold/build.rs", "build script"),
+        ("artifact/src/lib.rs", "procedural-macro"),
+    ] {
+        let source = first
+            .sources()
+            .iter()
+            .find(|source| source.path() == path)
+            .expect("dynamic compiler boundary");
+        assert_eq!(source.class(), GateSourceClass::DynamicEdge);
+        assert!(source.gates().contains(&GateId::RustTypecheck));
+        assert!(source.gates().contains(&GateId::CanvasWebTypecheck));
+        assert!(
+            source
+                .diagnostic()
+                .is_some_and(|detail| detail.contains(kind))
+        );
+    }
+
+    fixture.write("fold/schema.json", "{\"version\":2}\n");
+    fixture.write("README.md", "second\n");
+    let second = fixture.closure(&paths);
+    let comparison = first
+        .compare(&second)
+        .expect("dynamic Cargo inputs compare");
+    assert!(comparison.invalidated().contains(&GateId::RustTypecheck));
+    assert!(
+        comparison
+            .invalidated()
+            .contains(&GateId::CanvasWebTypecheck),
+    );
+    assert!(comparison.reusable().contains(&GateId::Complexity));
+    assert!(comparison.reusable().contains(&GateId::MagicNumbers));
+    assert!(
+        comparison
+            .diagnostics()
+            .iter()
+            .any(|detail| { detail.contains("Cargo/rustc-discovered dependency evidence") })
+    );
+}
+
+#[test]
+fn disabled_cargo_build_target_does_not_create_a_dynamic_boundary() {
+    let fixture = Fixture::new("disabled-build-target");
+    fixture.write(
+        "fold/Cargo.toml",
+        concat!(
+            "[package]\nname = \"fold\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+            "build = false\n",
+        ),
+    );
+    fixture.write("fold/build.rs", "fn main() {}\n");
+    let closure = fixture.closure(&["fold/Cargo.toml", "fold/build.rs"]);
+    let build = closure
+        .sources()
+        .iter()
+        .find(|source| source.path() == "fold/build.rs")
+        .expect("disabled build target source");
+
+    assert_eq!(build.class(), GateSourceClass::Known);
+    assert!(
+        closure
+            .compare(&closure)
+            .expect("disabled build target compares")
+            .reusable()
+            .contains(&GateId::RustTypecheck),
+    );
+}
+
+#[test]
 fn syntax_dependency_reach_carries_transitive_exact_generated_inputs() {
     let fixture = Fixture::new("transitive-dependencies");
     fixture.write("gate/src/root.rs", "include!(\"generated/middle.rs\");\n");
