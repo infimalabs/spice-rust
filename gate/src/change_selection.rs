@@ -19,12 +19,18 @@ use crate::GateId;
 
 mod current_source;
 mod policy;
+mod reach;
 
 pub use current_source::select_current_source_change_gates;
 pub use policy::{ChangeSelectionPolicy, ChangeSelectionPolicyInputs};
+pub use reach::{
+    ChangeArmReach, ChangeReachAuthority, ChangeReachEdge, ChangeReachMode, ChangeReachObject,
+    ChangeReachOrigin,
+};
+use reach::{direct_reach, validate_reach};
 
 /// Current staged-change policy-selection schema.
-pub const CHANGE_SELECTION_REPORT_VERSION: u64 = 2;
+pub const CHANGE_SELECTION_REPORT_VERSION: u64 = 3;
 
 /// The bounded execution mode admitted by the ordinary gate.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,6 +80,7 @@ pub struct ChangeSelectionReport {
     applicable_gate_ids: Vec<GateId>,
     gate_ids: Vec<GateId>,
     edges: Vec<ChangeSelectionEdge>,
+    reach: Vec<ChangeArmReach>,
 }
 
 impl ChangeSelectionReport {
@@ -117,6 +124,32 @@ impl ChangeSelectionReport {
     #[must_use]
     pub fn edges(&self) -> &[ChangeSelectionEdge] {
         &self.edges
+    }
+
+    /// Canonically ordered object reach for every selected arm.
+    #[must_use]
+    pub fn reach(&self) -> &[ChangeArmReach] {
+        &self.reach
+    }
+
+    /// Exact object reach for one selected arm, when selected.
+    #[must_use]
+    pub fn reach_for(&self, gate_id: GateId) -> Option<&ChangeArmReach> {
+        self.reach
+            .binary_search_by_key(&gate_id, ChangeArmReach::gate_id)
+            .ok()
+            .map(|index| &self.reach[index])
+    }
+
+    /// Replace direct path reach with a dependency-expanded canonical plan.
+    ///
+    /// The report remains the admission boundary: replacement must still cover
+    /// every selected arm exactly once, prove every object from one selected
+    /// source, and retain all original path-to-arm provenance.
+    pub fn with_reach(mut self, reach: Vec<ChangeArmReach>) -> Result<Self, ChangeSelectionError> {
+        self.reach = reach;
+        self.validate()?;
+        Ok(self)
     }
 
     /// Canonical JSON bytes for this selection.
@@ -210,6 +243,12 @@ impl ChangeSelectionReport {
                 "selected arm {gate_id} has no changed-source policy edge"
             )));
         }
+        validate_reach(
+            &self.reach,
+            &self.changed_sources,
+            &self.gate_ids,
+            &self.edges,
+        )?;
         Ok(())
     }
 }
@@ -273,6 +312,7 @@ fn select_with(
     let gate_ids = selected.into_iter().collect::<Vec<_>>();
     edges.sort();
     edges.dedup();
+    let reach = direct_reach(&changed_sources, &gate_ids, &edges);
     let report = ChangeSelectionReport {
         version: CHANGE_SELECTION_REPORT_VERSION,
         source,
@@ -281,6 +321,7 @@ fn select_with(
         applicable_gate_ids,
         gate_ids,
         edges,
+        reach,
     };
     report.validate()?;
     Ok(report)
