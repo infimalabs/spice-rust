@@ -348,13 +348,17 @@ fn installation_with_temporary_evidence(
         ));
     }
     if temporary.reclaimable_count() != 0 {
-        return DoctorObservation::InputRequired {
-            reason: format!(
-                "{} stale install publication file(s) totaling {} bytes are safely reclaimable; run spice install once; {}",
-                temporary.reclaimable_count(),
-                temporary.reclaimable_bytes(),
-                receipt_diagnosis(&receipt),
-            ),
+        let receipt_unavailable = matches!(receipt, DoctorObservation::Unavailable { .. });
+        let reason = format!(
+            "{} stale install publication file(s) totaling {} bytes are safely reclaimable; run spice install once; {}",
+            temporary.reclaimable_count(),
+            temporary.reclaimable_bytes(),
+            receipt_diagnosis(&receipt),
+        );
+        return if receipt_unavailable {
+            unavailable(reason)
+        } else {
+            DoctorObservation::InputRequired { reason }
         };
     }
     receipt
