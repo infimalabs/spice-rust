@@ -35,7 +35,10 @@ use crate::manifest::GateId;
 #[path = "verifier_receipt.rs"]
 mod receipt;
 
-pub use receipt::{admit_verifier_compiler_receipt, encode_verifier_compiler_receipt};
+pub use receipt::{
+    admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
+    semantic_verifier_compiler_authorities,
+};
 
 #[cfg(test)]
 use receipt::VerifierCompilerReceiptSet;
@@ -224,6 +227,18 @@ impl VerifierCompilerContract {
     #[must_use]
     pub const fn gate_id(&self) -> GateId {
         self.gate_id
+    }
+
+    /// Source-independent identity of this gate's compiler/tool/environment contract.
+    #[must_use]
+    pub fn semantic_authority(&self) -> Digest {
+        compiler_semantic_authority(
+            self.gate_id,
+            &self.manifest,
+            &self.repository,
+            &self.tools,
+            &self.environment,
+        )
     }
 
     /// Selected source and Cargo output roots this native Rust compiler contract
@@ -787,6 +802,24 @@ impl VerifierCompilerEvidence {
         })
     }
 
+    /// Gate arm whose successful compiler execution this evidence proves.
+    #[must_use]
+    pub const fn gate_id(&self) -> GateId {
+        self.gate_id
+    }
+
+    /// Source-independent identity of the compiler contract this evidence completed.
+    #[must_use]
+    pub fn semantic_authority(&self) -> Digest {
+        compiler_semantic_authority(
+            self.gate_id,
+            &self.manifest,
+            &self.repository,
+            &self.tools,
+            &self.environment,
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn corrupt_source_for_test(&mut self) {
         self.source = Digest::compute(Domain::GateTree, b"stale verifier source fixture");
@@ -812,6 +845,55 @@ impl VerifierCompilerEvidence {
         }
         Digest::compute(Domain::GateReceipt, &bytes)
     }
+}
+
+pub(super) fn compiler_semantic_authority(
+    gate_id: GateId,
+    manifest: &Digest,
+    repository: &Path,
+    tools: &[ToolEvidence],
+    environment: &[(OsString, OsString)],
+) -> Digest {
+    let environment = contract_environment(gate_id, environment.to_vec(), repository);
+    let mut bytes = Vec::new();
+    frame(&mut bytes, b"gate/verifier-compiler-semantic-authority/v1");
+    frame(&mut bytes, gate_id.as_str().as_bytes());
+    frame(&mut bytes, manifest.as_str().as_bytes());
+    let repository_identity =
+        Digest::compute(Domain::GateReceipt, repository.as_os_str().as_bytes());
+    frame(&mut bytes, repository_identity.as_str().as_bytes());
+    let mut tool_bytes = Vec::new();
+    for tool in tools {
+        frame(
+            &mut tool_bytes,
+            &wire::encode(tool).expect("tool evidence is encodable"),
+        );
+    }
+    let tools = Digest::compute(Domain::GateReceipt, &tool_bytes);
+    frame(&mut bytes, tools.as_str().as_bytes());
+    let mut environment_bytes = Vec::new();
+    for (name, value) in &environment {
+        frame(&mut environment_bytes, name.as_bytes());
+        frame(&mut environment_bytes, value.as_bytes());
+    }
+    let environment = Digest::compute(Domain::GateReceipt, &environment_bytes);
+    frame(&mut bytes, environment.as_str().as_bytes());
+    for stage in expected_stages(gate_id) {
+        frame(&mut bytes, stage.tag().as_bytes());
+        let mut target_bytes = Vec::new();
+        for target in stage.targets() {
+            frame(&mut target_bytes, target.as_bytes());
+        }
+        let targets = Digest::compute(Domain::GateReceipt, &target_bytes);
+        frame(&mut bytes, targets.as_str().as_bytes());
+        let mut argument_bytes = Vec::new();
+        for argument in stage_arguments(*stage, repository) {
+            frame(&mut argument_bytes, argument.as_os_str().as_bytes());
+        }
+        let arguments = Digest::compute(Domain::GateReceipt, &argument_bytes);
+        frame(&mut bytes, arguments.as_str().as_bytes());
+    }
+    Digest::compute(Domain::GateReceipt, &bytes)
 }
 
 fn expected_stages(gate_id: GateId) -> &'static [VerifierCompilerStage] {

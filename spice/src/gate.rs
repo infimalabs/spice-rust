@@ -45,7 +45,9 @@ pub use finding_source::{
     validate_gate_finding_source,
 };
 pub use full_verifier_evidence::{
-    AdmittedFullVerifierEvidence, FullVerifierEvidence, admit_full_verifier_evidence,
+    AdmittedFullVerifierEvidence, AdmittedSemanticVerifierEvidence, FullVerifierEvidence,
+    SemanticFullVerifierAdmission, admit_full_verifier_evidence,
+    admit_semantic_full_verifier_evidence,
 };
 
 /// One staged battery capture retained across the full verifier's actions.
@@ -93,6 +95,19 @@ impl PreparedArm<'_> {
     #[must_use]
     pub fn paths(&self) -> &[String] {
         self.capture.paths()
+    }
+
+    /// Tracked generated-path selectors captured from this selected tree.
+    #[must_use]
+    pub fn generated_paths(&self) -> &[String] {
+        self.capture.generated_paths()
+    }
+
+    /// Complete immutable authority context captured for this focused arm.
+    pub fn context(&self) -> Result<::gate::BatteryContext, RunError> {
+        self.capture
+            .context()
+            .map_err(|error| RunError::refusal("gate::context-refused", error))
     }
 
     /// Prove the live selected source has not moved since this preparation.
@@ -162,6 +177,35 @@ impl PreparedBattery<'_> {
     #[must_use]
     pub fn paths(&self) -> &[String] {
         self.capture.paths()
+    }
+
+    /// Tracked generated-path selectors captured from this selected tree.
+    #[must_use]
+    pub fn generated_paths(&self) -> &[String] {
+        self.capture.generated_paths()
+    }
+
+    /// Complete immutable authority context captured for this battery.
+    pub fn context(&self) -> Result<::gate::BatteryContext, RunError> {
+        self.capture
+            .context()
+            .map_err(|error| RunError::refusal("gate::context-refused", error))
+    }
+
+    /// Source-independent compiler authorities for semantic receipt comparison.
+    pub fn semantic_compiler_authorities(
+        &mut self,
+        cargo_jobs: usize,
+    ) -> Result<Vec<(GateId, Digest)>, RunError> {
+        let mut authorities = Vec::new();
+        for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
+            if let Some(contract) =
+                self.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
+            {
+                authorities.push((gate_id, contract.semantic_authority()));
+            }
+        }
+        Ok(authorities)
     }
 
     /// Execute the existing canonical mutation profile over the retained source.
@@ -332,6 +376,16 @@ impl PreparedBattery<'_> {
     ) -> Result<BatteryReceipt, RunError> {
         self.capture
             .admit_receipt_after_state(receipt, state)
+            .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
+    }
+
+    /// Re-admit a receipt's global authorities before per-arm semantic comparison.
+    pub fn admit_battery_receipt_for_semantic_comparison(
+        &self,
+        receipt: &[u8],
+    ) -> Result<BatteryReceipt, RunError> {
+        self.capture
+            .admit_receipt_for_semantic_comparison(receipt)
             .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
     }
 

@@ -282,6 +282,97 @@ pub fn admit_verifier_compiler_receipt(
         .collect()
 }
 
+/// Inspect a canonical source-bound compiler receipt for semantic arm authorities.
+///
+/// This validates the original worktree provenance, source, manifest, stage
+/// inventory, process seals, and clean exits without pretending its old source
+/// root is the current one. The returned authority can therefore be compared
+/// with a fresh source-independent contract before one arm is reused.
+pub fn semantic_verifier_compiler_authorities(
+    document: &[u8],
+    source: &Digest,
+    authority: &[u8],
+) -> Result<Vec<(GateId, Digest)>, String> {
+    if authority.is_empty() {
+        return Err("verifier compiler receipt authority is empty".to_owned());
+    }
+    let receipt: VerifierCompilerReceiptSet = wire::decode(document)
+        .map_err(|error| format!("verifier compiler receipt could not decode: {error}"))?;
+    let canonical = wire::encode(&receipt)
+        .map_err(|error| format!("verifier compiler receipt could not encode: {error}"))?;
+    if canonical != document {
+        return Err("verifier compiler receipt is not canonical".to_owned());
+    }
+    if receipt.version != RECEIPT_VERSION
+        || receipt.authority_seal != receipt.compute_authority_seal(authority)
+    {
+        return Err("verifier compiler receipt has unsupported or untrusted provenance".to_owned());
+    }
+    let mut authorities = Vec::with_capacity(receipt.evidence.len());
+    for evidence in &receipt.evidence {
+        if evidence.source != *source
+            || evidence.manifest != super::manifest_identity()
+            || evidence.seal != evidence.compute_seal()
+        {
+            return Err(format!(
+                "{} compiler receipt has stale or invalid arm evidence",
+                evidence.gate_id.as_str(),
+            ));
+        }
+        let expected = expected_stages(evidence.gate_id);
+        if evidence.processes.len() != expected.len() {
+            return Err(format!(
+                "{} compiler receipt has an incomplete stage inventory",
+                evidence.gate_id.as_str(),
+            ));
+        }
+        for stage in expected {
+            let matching = evidence
+                .processes
+                .iter()
+                .filter(|process| process.stage == *stage)
+                .collect::<Vec<_>>();
+            if matching.len() != 1
+                || matching[0].targets != strings_identity(stage.targets())
+                || matching[0].exit_code != 0
+                || matching[0].seal != matching[0].compute_seal()
+            {
+                return Err(format!(
+                    "{} compiler receipt has invalid {} process evidence",
+                    evidence.gate_id.as_str(),
+                    stage.tag(),
+                ));
+            }
+        }
+        let mut bytes = Vec::new();
+        frame(&mut bytes, b"gate/verifier-compiler-semantic-authority/v1");
+        frame(&mut bytes, evidence.gate_id.as_str().as_bytes());
+        frame(&mut bytes, evidence.manifest.as_str().as_bytes());
+        frame(&mut bytes, evidence.repository.as_str().as_bytes());
+        frame(&mut bytes, evidence.tools.as_str().as_bytes());
+        frame(&mut bytes, evidence.environment.as_str().as_bytes());
+        for stage in expected {
+            let process = evidence
+                .processes
+                .iter()
+                .find(|process| process.stage == *stage)
+                .expect("complete stage inventory was checked");
+            frame(&mut bytes, stage.tag().as_bytes());
+            frame(&mut bytes, process.targets.as_str().as_bytes());
+            frame(&mut bytes, process.arguments.as_str().as_bytes());
+        }
+        authorities.push((
+            evidence.gate_id,
+            Digest::compute(Domain::GateReceipt, &bytes),
+        ));
+    }
+    authorities.sort_by_key(|(gate_id, _)| *gate_id);
+    if authorities.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err("verifier compiler receipt repeats a semantic arm".to_owned());
+    }
+    Ok(authorities)
+}
+
 fn tools_identity(tools: &[ToolEvidence]) -> Digest {
     let mut bytes = Vec::new();
     for tool in tools {

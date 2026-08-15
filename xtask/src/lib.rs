@@ -926,18 +926,15 @@ impl Runner for SystemRunner {
             .collect::<Result<Vec<_>, _>>()?;
         let repository = spice::repository::Repository::discover(Path::new("."))
             .map_err(|error| error.to_string())?;
-        let transition = state
-            .battery
-            .as_ref()
-            .ok_or_else(|| "full verifier battery capture is unavailable".to_owned())?
-            .accept_state()
-            .map_err(|error| error.to_string())?;
         let artifact = spice::gate::FullVerifierEvidence::mint(
             &repository,
             state.cargo_jobs.unwrap_or(1),
             &receipt,
             &evidence,
-            &transition,
+            state
+                .battery
+                .as_ref()
+                .ok_or_else(|| "full verifier battery capture is unavailable".to_owned())?,
         )?;
         state.full_verifier_battery_receipt = None;
         state.full_verifier_evidence = Some(artifact);

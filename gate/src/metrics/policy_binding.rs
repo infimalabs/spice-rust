@@ -49,12 +49,16 @@ impl ResolvedMetricRule {
         &self.binding
     }
 
-    /// Whether an edited value inherited debt that already spent flex.
+    /// Whether an edited value inherited debt beyond the configured flex ceiling.
     #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
-    pub(crate) fn changed_committed_breach(&self, committed: Option<u64>, value: u64) -> bool {
+    pub(crate) fn changed_committed_ratchet_breach(
+        &self,
+        committed: Option<u64>,
+        value: u64,
+    ) -> bool {
         committed.is_some_and(|committed| {
-            !self.unlimited && committed > self.base_limit && committed != value
+            !self.unlimited && committed > self.ratchet_limit && committed != value
         })
     }
 }
@@ -230,13 +234,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn changed_committed_debt_remains_a_host_acquisition_decision() {
+    fn only_changed_committed_debt_beyond_ratchet_is_inherited() {
         let bounded = rule(false);
-        assert!(bounded.changed_committed_breach(Some(101), 100));
-        assert!(!bounded.changed_committed_breach(None, 100));
-        assert!(!bounded.changed_committed_breach(Some(100), 99));
-        assert!(!bounded.changed_committed_breach(Some(101), 101));
-        assert!(!rule(true).changed_committed_breach(Some(101), 100));
+        assert!(bounded.changed_committed_ratchet_breach(Some(151), 149));
+        assert!(!bounded.changed_committed_ratchet_breach(Some(150), 149));
+        assert!(!bounded.changed_committed_ratchet_breach(Some(101), 100));
+        assert!(!bounded.changed_committed_ratchet_breach(None, 100));
+        assert!(!bounded.changed_committed_ratchet_breach(Some(151), 151));
+        assert!(!rule(true).changed_committed_ratchet_breach(Some(151), 149));
     }
 
     fn rule(unlimited: bool) -> ResolvedMetricRule {

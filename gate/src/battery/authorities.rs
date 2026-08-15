@@ -64,7 +64,6 @@ fn authorities_match_after_state(
     state: &StateReceipt,
 ) -> bool {
     state.accepted()
-        && state.before() == prior.state()
         && state.after() == durable
         && prior.source() == current.source()
         && prior.actor() == current.actor()
@@ -105,6 +104,11 @@ pub struct BatteryCapture<'trace> {
 }
 
 impl BatteryCapture<'_> {
+    /// Snapshot the complete current authority context without executing an arm.
+    pub fn context(&self) -> Result<super::BatteryContext, BatteryError> {
+        self.authorities.inputs()?.snapshot()
+    }
+
     /// Re-admit one retained complete receipt against this exact fresh capture.
     ///
     /// Receipt decoding proves the retained document is canonical and complete;
@@ -130,6 +134,53 @@ impl BatteryCapture<'_> {
         state: &StateReceipt,
     ) -> Result<BatteryReceipt, BatteryError> {
         self.admit_receipt_inner(document, Some(state))
+    }
+
+    /// Re-admit a retained receipt for per-arm semantic comparison.
+    ///
+    /// The old source and state identities are deliberately not compared here;
+    /// callers must compare independently derived per-arm source and state
+    /// authorities before reusing any result. Every source-independent global
+    /// authority and the current baseline remain exact. Tool identities are
+    /// intentionally left to the consumer's per-arm declared-tool comparison.
+    pub fn admit_receipt_for_semantic_comparison(
+        &self,
+        document: &[u8],
+    ) -> Result<BatteryReceipt, BatteryError> {
+        if self.selected.is_some() {
+            return Err(BatteryError::new(
+                "semantic battery receipt admission requires a complete capture",
+            ));
+        }
+        let receipt = BatteryReceipt::verify(document)
+            .map_err(|error| BatteryError::new(format!("battery receipt refused: {error}")))?;
+        if !receipt.run().admits() {
+            return Err(BatteryError::new(
+                "semantic battery receipt does not carry an admitted complete run",
+            ));
+        }
+        let current = self.authorities.inputs()?.snapshot()?;
+        let prior = receipt.run().context();
+        if prior.actor() != current.actor()
+            || prior.scope() != current.scope()
+            || prior.configuration() != current.configuration()
+            || prior.policy() != current.policy()
+        {
+            return Err(BatteryError::new(
+                "semantic battery receipt does not match current non-source authorities",
+            ));
+        }
+        let baseline = self.executor.contract().baseline_digest().ok_or_else(|| {
+            BatteryError::new(format!(
+                "semantic battery receipt requires lower-is-better state at {BASELINE_PATH:?}"
+            ))
+        })?;
+        if receipt.baseline() != &baseline {
+            return Err(BatteryError::new(
+                "semantic battery receipt does not match the current baseline authority",
+            ));
+        }
+        Ok(receipt)
     }
 
     fn admit_receipt_inner(
@@ -189,6 +240,12 @@ impl BatteryCapture<'_> {
     #[must_use]
     pub fn paths(&self) -> &[String] {
         self.executor.paths()
+    }
+
+    /// Tracked generated-path selectors captured from this selected tree.
+    #[must_use]
+    pub fn generated_paths(&self) -> &[String] {
+        self.executor.contract().shape().generated_paths()
     }
 
     /// Capture one repository into a complete, runnable battery.
@@ -1052,41 +1109,36 @@ mod transition_tests {
 
     #[test]
     fn retained_authorities_cross_only_their_exact_accepted_state_transition() {
-        let before = digest(b"before ledger");
+        let durable_before = digest(b"durable before ledger");
+        let judged = digest(b"run-start normalized ledger");
         let after = digest(b"after ledger");
         let normalized = digest(b"normalized after ledger");
-        let prior = context(b"source", &before);
+        let prior = context(b"source", &judged);
         let current = context(b"source", &normalized);
 
         assert!(authorities_match_after_state(
             &prior,
             &current,
             &after,
-            &state_receipt(&before, &after, true),
+            &state_receipt(&durable_before, &after, true),
         ));
         assert!(!authorities_match_after_state(
             &prior,
             &current,
             &after,
-            &state_receipt(&before, &after, false),
+            &state_receipt(&durable_before, &after, false),
         ));
         assert!(!authorities_match_after_state(
             &prior,
             &current,
             &after,
-            &state_receipt(&digest(b"foreign before"), &after, true),
-        ));
-        assert!(!authorities_match_after_state(
-            &prior,
-            &current,
-            &after,
-            &state_receipt(&before, &digest(b"foreign after"), true),
+            &state_receipt(&durable_before, &digest(b"foreign after"), true),
         ));
         assert!(!authorities_match_after_state(
             &prior,
             &context(b"changed source", &normalized),
             &after,
-            &state_receipt(&before, &after, true),
+            &state_receipt(&durable_before, &after, true),
         ));
         let mut changed_projection =
             serde_json::to_value(&current).expect("serialize current context fixture");
@@ -1100,7 +1152,7 @@ mod transition_tests {
             &prior,
             &changed_projection,
             &after,
-            &state_receipt(&before, &after, true),
+            &state_receipt(&durable_before, &after, true),
         ));
     }
 

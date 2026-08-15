@@ -241,6 +241,7 @@ pub use verifier_evidence::{
     PreparedVerifierCompiler, VerifierCompilerContract, VerifierCompilerEvidence,
     VerifierCompilerProcessEvidence, VerifierCompilerRun, VerifierCompilerStage,
     admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
+    semantic_verifier_compiler_authorities,
 };
 
 /// Stable selected-source and Cargo output roots completed by native analysis.

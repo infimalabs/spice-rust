@@ -3,14 +3,20 @@
 use std::fs;
 use std::io::{self, Write as _};
 
-use ::gate::{BatteryReceipt, Selector, StateReceipt, VerifierCompilerEvidence};
+use ::gate::{
+    BatteryReceipt, GateSemanticClosure, Selector, StateReceipt, VerifierCompilerEvidence,
+};
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
-use super::{RunError, prepare_strict};
+use super::{PreparedBattery, RunError, prepare_strict};
 use crate::repository::Repository;
 
-const FULL_VERIFIER_EVIDENCE_VERSION: u64 = 2;
+mod semantic;
+
+pub use semantic::{AdmittedSemanticVerifierEvidence, SemanticFullVerifierAdmission};
+
+const FULL_VERIFIER_EVIDENCE_VERSION: u64 = 3;
 const AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/compiler-evidence/v1";
 const PREPARED_AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/prepared-compiler-evidence/v1";
 
@@ -23,6 +29,7 @@ pub struct FullVerifierEvidence {
     battery: String,
     compiler: String,
     state: String,
+    semantic: String,
 }
 
 impl FullVerifierEvidence {
@@ -32,17 +39,36 @@ impl FullVerifierEvidence {
         cargo_jobs: usize,
         battery: &BatteryReceipt,
         compiler: &[VerifierCompilerEvidence],
-        state: &StateReceipt,
+        prepared: &PreparedBattery<'_>,
     ) -> Result<Self, String> {
         if !battery.run().admits() {
             return Err("full-verifier evidence requires an admitted battery receipt".to_owned());
         }
-        if !state.accepted() || state.before() != battery.state() {
+        if &prepared.context().map_err(|error| error.to_string())? != battery.run().context() {
             return Err(
-                "full-verifier evidence requires the battery's exact accepted state transition"
+                "full-verifier evidence requires the prepared battery's exact authority context"
                     .to_owned(),
             );
         }
+        if prepared.source() != battery.tree() {
+            return Err(
+                "full-verifier evidence preparation names a different selected source".to_owned(),
+            );
+        }
+        let closure = GateSemanticClosure::capture(
+            prepared.source().clone(),
+            prepared.root(),
+            prepared.paths(),
+            prepared.changes(),
+            prepared.generated_paths(),
+        )?;
+        let semantic = semantic::SemanticEvidence::mint(repository, closure, battery, compiler)?;
+        let semantic = String::from_utf8(
+            semantic
+                .encode()
+                .map_err(|error| format!("encode semantic evidence: {error}"))?,
+        )
+        .map_err(|error| format!("semantic evidence is not UTF-8: {error}"))?;
         let battery = String::from_utf8(
             battery
                 .encode()
@@ -54,6 +80,12 @@ impl FullVerifierEvidence {
                 .map_err(|error| format!("encode compiler receipt: {error}"))?,
         )
         .map_err(|error| format!("compiler receipt is not UTF-8: {error}"))?;
+        let state = prepared
+            .accept_state()
+            .map_err(|error| format!("accept full-verifier battery state: {error}"))?;
+        if !state.accepted() {
+            return Err("full-verifier evidence requires an accepted state transition".to_owned());
+        }
         let state = String::from_utf8(
             state
                 .encode()
@@ -66,6 +98,7 @@ impl FullVerifierEvidence {
             battery,
             compiler,
             state,
+            semantic,
         };
         evidence.validate_shape()?;
         Ok(evidence)
@@ -100,6 +133,7 @@ impl FullVerifierEvidence {
             || self.battery.is_empty()
             || self.compiler.is_empty()
             || self.state.is_empty()
+            || self.semantic.is_empty()
         {
             return Err("full-verifier evidence is partial".to_owned());
         }
@@ -182,7 +216,19 @@ pub fn admit_full_verifier_evidence(
     let Ok(evidence) = FullVerifierEvidence::decode(&document) else {
         return Ok(None);
     };
+    let Ok(semantic) = semantic::SemanticEvidence::decode(evidence.semantic.as_bytes()) else {
+        return Ok(None);
+    };
     let Ok(mut prepared) = prepare_strict(selector) else {
+        return Ok(None);
+    };
+    let Ok(current_closure) = GateSemanticClosure::capture(
+        prepared.source().clone(),
+        prepared.root(),
+        prepared.paths(),
+        prepared.changes(),
+        prepared.generated_paths(),
+    ) else {
         return Ok(None);
     };
     let Ok(state) = StateReceipt::decode(evidence.state.as_bytes()) else {
@@ -193,12 +239,15 @@ pub fn admit_full_verifier_evidence(
     else {
         return Ok(None);
     };
-    if prepared
-        .admit_verifier_compiler_receipt(
-            evidence.compiler.as_bytes(),
-            evidence.cargo_jobs,
-            &compiler_authority(repository),
-        )
+    let Ok(compiler) = prepared.admit_verifier_compiler_receipt(
+        evidence.compiler.as_bytes(),
+        evidence.cargo_jobs,
+        &compiler_authority(repository),
+    ) else {
+        return Ok(None);
+    };
+    if semantic
+        .validate_exact(repository, &battery, &compiler, &current_closure)
         .is_err()
     {
         return Ok(None);
@@ -208,6 +257,58 @@ pub fn admit_full_verifier_evidence(
         evidence: Digest::compute(Domain::GateReceipt, &document),
         battery,
     }))
+}
+
+/// Re-admit individual green arms when their semantic input closures are unchanged.
+pub fn admit_semantic_full_verifier_evidence(
+    repository: &Repository,
+    selector: Selector,
+) -> Result<SemanticFullVerifierAdmission, RunError> {
+    let paths = repository
+        .admit_state()
+        .map_err(|error| RunError::fault("gate::full-verifier-state-unavailable", error))?;
+    let document = match fs::read(paths.full_verifier_evidence()) {
+        Ok(document) => document,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(SemanticFullVerifierAdmission::Unavailable {
+                detail: "no full-verifier evidence is published for this worktree".to_owned(),
+            });
+        }
+        Err(error) => {
+            return Err(RunError::fault(
+                "gate::full-verifier-evidence-unavailable",
+                error,
+            ));
+        }
+    };
+    let evidence = match FullVerifierEvidence::decode(&document) {
+        Ok(evidence) => evidence,
+        Err(detail) => return Ok(SemanticFullVerifierAdmission::Unavailable { detail }),
+    };
+    let mut prepared = match prepare_strict(selector) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return Ok(SemanticFullVerifierAdmission::Unavailable {
+                detail: error.to_string(),
+            });
+        }
+    };
+    let semantic = match semantic::SemanticEvidence::decode(evidence.semantic.as_bytes()) {
+        Ok(semantic) => semantic,
+        Err(detail) => return Ok(SemanticFullVerifierAdmission::Unavailable { detail }),
+    };
+    match semantic.admit(
+        repository,
+        &mut prepared,
+        evidence.cargo_jobs,
+        evidence.battery.as_bytes(),
+        evidence.compiler.as_bytes(),
+        evidence.state.as_bytes(),
+        Digest::compute(Domain::GateReceipt, &document),
+    ) {
+        Ok(admitted) => Ok(SemanticFullVerifierAdmission::Admitted(Box::new(admitted))),
+        Err(detail) => Ok(SemanticFullVerifierAdmission::Unavailable { detail }),
+    }
 }
 
 fn compiler_authority(repository: &Repository) -> Vec<u8> {
@@ -247,6 +348,7 @@ mod tests {
             battery: "battery".to_owned(),
             compiler: "compiler".to_owned(),
             state: "state".to_owned(),
+            semantic: "semantic".to_owned(),
         };
         let canonical = complete.encode().expect("encode complete fixture");
         assert_eq!(
@@ -268,6 +370,10 @@ mod tests {
             },
             FullVerifierEvidence {
                 state: String::new(),
+                ..complete.clone()
+            },
+            FullVerifierEvidence {
+                semantic: String::new(),
                 ..complete.clone()
             },
             FullVerifierEvidence {
@@ -295,6 +401,10 @@ mod tests {
         let second = Repository::discover(&second).expect("discover second worktree");
 
         assert_ne!(compiler_authority(&first), compiler_authority(&second));
+        assert_ne!(
+            semantic::worktree_authority(&first),
+            semantic::worktree_authority(&second),
+        );
     }
 
     struct Scratch {

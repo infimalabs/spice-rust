@@ -888,6 +888,7 @@ fn last_phase(path: &Path) -> String {
                 .ok()
                 .or_else(|| {
                     line.strip_prefix("[change-gate-policy] gate=")
+                        .and_then(|progress| progress.split_whitespace().next())
                         .filter(|gate| GateId::BATTERY.iter().any(|known| known.as_str() == *gate))
                         .map(|gate| format!("arm gate={gate}"))
                 })

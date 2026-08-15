@@ -41,7 +41,7 @@ fn bounded_evidence(
         &PolicyContext::new().with_path(path),
     )
     .map_err(|error| format!("{name} bound did not resolve for {path:?}: {error}"))?;
-    let committed_over_base = rule.changed_committed_breach(committed, value);
+    let committed_over_ratchet = rule.changed_committed_ratchet_breach(committed, value);
     let binding = MetricStateBinding::new(
         metric,
         key.clone(),
@@ -56,7 +56,7 @@ fn bounded_evidence(
         .actor
         .actor_inputs(path)
         .map_err(|error| format!("actor provenance for selected source {path:?}: {error}"))?;
-    let latched = source.latches.contains(binding.entry()) || committed_over_base;
+    let latched = source.latches.contains(binding.entry()) || committed_over_ratchet;
     let (decision, observation) = binding
         .observe_decision(latched, &actor_inputs)
         .map_err(|error| format!("active {name} bound for {path:?}: {error}"))?;
@@ -103,7 +103,7 @@ fn bound_routine(
             metric.as_str()
         )
     })?;
-    let committed_over_base = rule.changed_committed_breach(committed, value);
+    let committed_over_ratchet = rule.changed_committed_ratchet_breach(committed, value);
     let binding = MetricStateBinding::new(
         metric,
         key,
@@ -118,7 +118,7 @@ fn bound_routine(
         .actor
         .actor_inputs(path)
         .map_err(|error| format!("actor provenance for {path:?}: {error}"))?;
-    let latched = source.latches.contains(binding.entry()) || committed_over_base;
+    let latched = source.latches.contains(binding.entry()) || committed_over_ratchet;
     let (decision, observation) =
         binding
             .observe_decision(latched, &actor_inputs)

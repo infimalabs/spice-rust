@@ -87,7 +87,7 @@ pub fn select_current_source_change_gates_with_full_verifier(
     })
 }
 
-fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+pub(crate) fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
     if selector_authority(path) {
         return Err(ChangeSelectionError::new(format!(
             "{path:?} changes gate or toolchain selection authority"
@@ -154,7 +154,7 @@ fn with_frontend(path: &str, base: &[GateId]) -> Vec<GateId> {
     gates
 }
 
-fn known_workspace_rust_source(path: &str) -> bool {
+pub(crate) fn known_workspace_rust_source(path: &str) -> bool {
     let mut components = path.split('/');
     let Some(root) = components.next() else {
         return false;
@@ -212,7 +212,7 @@ fn known_workspace_package_root(root: &str) -> bool {
     )
 }
 
-fn selector_authority(path: &str) -> bool {
+pub(crate) fn selector_authority(path: &str) -> bool {
     matches!(
         path,
         ".cargo/config.toml"
@@ -226,6 +226,7 @@ fn selector_authority(path: &str) -> bool {
             | "gate/src/change_selection.rs"
             | "gate/src/lib.rs"
             | "gate/src/manifest.rs"
+            | "gate/src/semantic_closure.rs"
             | "gate/src/test_evidence.rs"
             | "gate/src/workspace_tests.rs"
             | "spice/src/change_gate.rs"
@@ -234,6 +235,7 @@ fn selector_authority(path: &str) -> bool {
             | "spice/src/cli/mounts.rs"
             | "spice/src/cli/syntax.rs"
             | "spice/src/gate.rs"
+            | "spice/src/gate/full_verifier_evidence.rs"
             | "spice/src/gate_command.rs"
             | "spice/src/install/git-hooks/pre-commit"
             | "spice/src/install/git_hooks.rs"
@@ -245,6 +247,7 @@ fn selector_authority(path: &str) -> bool {
     ) || path.starts_with("gate/src/change_selection/")
         || path.starts_with("gate/src/test_evidence/")
         || path.starts_with("gate/src/workspace_tests/")
+        || path.starts_with("spice/src/gate/full_verifier_evidence/")
         || path.starts_with("spice/src/gate_command/pre_commit")
 }
 
