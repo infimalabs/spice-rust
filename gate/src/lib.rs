@@ -62,9 +62,10 @@ pub use camp::{
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 pub use change_selection::{
-    CHANGE_SELECTION_REPORT_VERSION, ChangeSelectionEdge, ChangeSelectionError,
-    ChangeSelectionMode, ChangeSelectionPolicy, ChangeSelectionPolicyInputs, ChangeSelectionReport,
-    select_change_gates, select_current_source_change_gates,
+    CHANGE_SELECTION_REPORT_VERSION, ChangeArmReach, ChangeReachAuthority, ChangeReachEdge,
+    ChangeReachMode, ChangeReachObject, ChangeReachOrigin, ChangeSelectionEdge,
+    ChangeSelectionError, ChangeSelectionMode, ChangeSelectionPolicy, ChangeSelectionPolicyInputs,
+    ChangeSelectionReport, select_change_gates, select_current_source_change_gates,
 };
 pub use config::{Config, WalkConfig};
 #[cfg(not(target_arch = "wasm32"))]

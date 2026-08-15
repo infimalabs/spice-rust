@@ -457,3 +457,242 @@ fn every_changed_path_and_always_on_arm_retains_provenance() {
         assert!(report.edges().iter().any(|edge| edge.source() == path));
     }
 }
+
+#[test]
+fn every_selected_family_publishes_exact_object_reach() {
+    let changed = strings(&[
+        "README.fixture.md",
+        "tools/reach_fixture.py",
+        "wire/src/lib.rs",
+    ]);
+    let report = select_current_source_change_gates(source(), &changed)
+        .expect("mixed source classes retain object reach");
+
+    assert_eq!(report.reach().len(), report.gate_ids().len());
+    for gate_id in report.gate_ids() {
+        let reach = report
+            .reach_for(*gate_id)
+            .expect("every selected arm has one reach record");
+        assert_eq!(reach.gate_id(), *gate_id);
+        assert_eq!(reach.mode(), &ChangeReachMode::Focused);
+        assert!(!reach.objects().is_empty());
+        assert!(!reach.provenance().is_empty());
+    }
+    assert_always_on_reach(&report, &changed);
+    assert_path_reach(&report, GateId::Formatters, "wire/src/lib.rs");
+    assert_path_reach(&report, GateId::Complexity, "wire/src/lib.rs");
+    assert_path_reach(&report, GateId::Reachability, "tools/reach_fixture.py");
+}
+
+fn assert_always_on_reach(report: &ChangeSelectionReport, changed: &[String]) {
+    for gate_id in ALWAYS {
+        let reach = report.reach_for(gate_id).expect("always-on reach exists");
+        assert_eq!(reach.objects(), [ChangeReachObject::Repository]);
+        assert!(reach.provenance().iter().any(|edge| {
+            edge.object() == &ChangeReachObject::Repository
+                && edge.origin() == &ChangeReachOrigin::Always
+        }));
+        for source in changed {
+            assert!(reach.provenance().iter().any(|edge| {
+                matches!(
+                    edge.origin(),
+                    ChangeReachOrigin::Changed { source: observed } if observed == source
+                )
+            }));
+        }
+    }
+}
+
+fn assert_path_reach(report: &ChangeSelectionReport, gate_id: GateId, path: &str) {
+    let reach = report.reach_for(gate_id).expect("path arm reach exists");
+    let object = ChangeReachObject::Path {
+        path: path.to_owned(),
+    };
+    assert!(reach.objects().contains(&object));
+    assert!(reach.provenance().iter().any(|edge| {
+        edge.object() == &object
+            && matches!(
+                edge.origin(),
+                ChangeReachOrigin::Changed { source } if source == path
+            )
+    }));
+}
+
+#[test]
+fn reach_wire_rejects_missing_duplicate_unsorted_and_unproven_inventory() {
+    let report = reach_mutation_fixture();
+    assert_mutation_refused(&report, "cover each selected arm once", |document| {
+        document["reach"].as_array_mut().unwrap().pop();
+    });
+    assert_mutation_refused(&report, "cover each selected arm once", |document| {
+        let reach = document["reach"].as_array_mut().unwrap();
+        reach.push(reach[0].clone());
+    });
+    assert_mutation_refused(&report, "sorted, and unique", |document| {
+        let reach = reach_record(document, "complexity");
+        reach["objects"].as_array_mut().unwrap().reverse();
+    });
+    assert_mutation_refused(&report, "unproven reach object", |document| {
+        let reach = reach_record(document, "complexity");
+        reach["objects"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"kind": "check", "check": "unproven"}));
+    });
+    assert_mutation_refused(&report, "unproven reach object", |document| {
+        let reach = reach_record(document, "complexity");
+        let object = serde_json::json!({"kind": "check", "check": "cyclic"});
+        reach["objects"]
+            .as_array_mut()
+            .unwrap()
+            .push(object.clone());
+        reach["provenance"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "object": object.clone(),
+                "origin": {
+                    "origin": "dependency",
+                    "source": "wire/src/lib.rs",
+                    "via": object
+                }
+            }));
+    });
+}
+
+#[test]
+fn reach_wire_rejects_foreign_stale_and_unowned_exhaustive_provenance() {
+    let report = reach_mutation_fixture();
+    assert_mutation_refused(&report, "foreign reach object", |document| {
+        let reach = reach_record(document, "complexity");
+        let provenance = reach["provenance"].as_array_mut().unwrap();
+        let mut edge = provenance.last().unwrap().clone();
+        edge["object"] = serde_json::json!({"kind": "check", "check": "foreign"});
+        provenance.push(edge);
+    });
+    assert_mutation_refused(&report, "unchanged source", |document| {
+        let reach = reach_record(document, "complexity");
+        reach["provenance"][0]["origin"]["source"] = serde_json::json!("stale.rs");
+    });
+    assert_mutation_refused(&report, "did not select arm complexity", |document| {
+        let reach = reach_record(document, "complexity");
+        reach["provenance"][0]["origin"]["source"] = serde_json::json!("README.fixture.md");
+    });
+    assert_mutation_refused(&report, "direct path reach", |document| {
+        let reach = reach_record(document, "complexity");
+        reach["provenance"][0]["origin"]["source"] = serde_json::json!("wire/src/lib.rs");
+    });
+    assert_mutation_refused(&report, "unknown variant", |document| {
+        let reach = reach_record(document, "complexity");
+        reach["mode"] = serde_json::json!({
+            "mode": "exhaustive",
+            "authority": "unknown-authority",
+            "reason": "workspace policy changed"
+        });
+    });
+    assert_mutation_refused(&report, "exhaustive reach reason", |document| {
+        let reach = reach_record(document, "complexity");
+        reach["mode"] = serde_json::json!({
+            "mode": "exhaustive",
+            "authority": "workspace",
+            "reason": ""
+        });
+    });
+}
+
+#[test]
+fn dependency_expansion_revalidates_path_package_target_and_check_reach() {
+    let tracked = strings(&["Cargo.toml", "wire/Cargo.toml", "wire/src/lib.rs"]);
+    let policy = policy(&tracked, false, None, &[], &[], &[]);
+    let report = selection(&["wire/src/lib.rs"], &policy);
+    let source = "wire/src/lib.rs";
+    let path = ChangeReachObject::Path {
+        path: source.to_owned(),
+    };
+    let package = ChangeReachObject::Package {
+        package: "wire".to_owned(),
+    };
+    let target = ChangeReachObject::Target {
+        package: "wire".to_owned(),
+        target: "lib:wire".to_owned(),
+    };
+    let check = ChangeReachObject::Check {
+        check: "cargo-check".to_owned(),
+    };
+    let objects = vec![path.clone(), package.clone(), target.clone(), check.clone()];
+    let provenance = vec![
+        ChangeReachEdge::changed(source, path.clone()),
+        ChangeReachEdge::dependency(source, path, package.clone()),
+        ChangeReachEdge::dependency(source, package, target.clone()),
+        ChangeReachEdge::dependency(source, target, check),
+    ];
+    let reach = report
+        .reach()
+        .iter()
+        .map(|reach| {
+            if reach.gate_id() == GateId::RustTypecheck {
+                ChangeArmReach::exhaustive(
+                    reach.gate_id(),
+                    ChangeReachAuthority::Workspace,
+                    "workspace build policy changed",
+                    objects.clone(),
+                    provenance.clone(),
+                )
+            } else {
+                reach.clone()
+            }
+        })
+        .collect();
+
+    let expanded = report
+        .with_reach(reach)
+        .expect("dependency reach validates");
+    let rust = expanded
+        .reach_for(GateId::RustTypecheck)
+        .expect("Rust reach remains selected");
+    assert_eq!(
+        rust.mode(),
+        &ChangeReachMode::Exhaustive {
+            authority: ChangeReachAuthority::Workspace,
+            reason: "workspace build policy changed".to_owned(),
+        }
+    );
+    assert_eq!(rust.objects(), objects);
+    let encoded = expanded.encode().expect("expanded reach encodes");
+    assert_eq!(
+        ChangeSelectionReport::decode(&encoded).expect("expanded reach decodes"),
+        expanded,
+    );
+}
+
+fn reach_mutation_fixture() -> ChangeSelectionReport {
+    select_current_source_change_gates(
+        source(),
+        &strings(&["README.fixture.md", "tape/src/lib.rs", "wire/src/lib.rs"]),
+    )
+    .expect("mixed changed paths retain mutable wire fixture")
+}
+
+fn assert_mutation_refused(
+    report: &ChangeSelectionReport,
+    expected: &str,
+    mutate: impl FnOnce(&mut serde_json::Value),
+) {
+    let mut document = serde_json::to_value(report).expect("encode reach mutation fixture");
+    mutate(&mut document);
+    let bytes = serde_json::to_vec(&document).expect("encode mutated reach document");
+    let error = ChangeSelectionReport::decode(&bytes).expect_err("mutated reach must refuse");
+    assert!(error.detail().contains(expected), "{error}");
+}
+
+fn reach_record<'a>(
+    document: &'a mut serde_json::Value,
+    gate_id: &str,
+) -> &'a mut serde_json::Value {
+    document["reach"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|reach| reach["gate_id"] == gate_id)
+        .expect("fixture selects requested reach record")
+}
