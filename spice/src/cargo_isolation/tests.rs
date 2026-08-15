@@ -431,6 +431,79 @@ fn recognized_interrupted_temporaries_are_reclaimed_but_live_generation_is_not()
 }
 
 #[test]
+fn manual_reader_pins_coexist_and_unlocked_crash_residue_is_reclaimed() {
+    let fixture = Fixture::new();
+    let host = fixture.host();
+    let first = store::prepare(&fixture.repository, None, &host).expect("prepare first reader");
+    let second = store::prepare(&fixture.repository, None, &host).expect("prepare second reader");
+    let pins = first.store().join("pins");
+    let active = fs::read_dir(&pins)
+        .expect("read active reader pins")
+        .map(|entry| entry.expect("read active reader pin").path())
+        .collect::<Vec<_>>();
+    assert_eq!(active.len(), 2, "each manual reader owns one pin");
+
+    let abandoned = pins.join("reader-00000000000040008000000000000000.lock");
+    fs::copy(&active[0], &abandoned).expect("copy a valid crashed-reader record");
+    fs::set_permissions(&abandoned, fs::Permissions::from_mode(0o600))
+        .expect("seal crashed-reader record");
+    let cleanup = store::cleanup_with_grace(&host, std::time::Duration::ZERO)
+        .expect("cleanup probes reader pins");
+    assert_eq!(cleanup.removed_pins(), 1);
+    assert!(
+        first
+            .store()
+            .join("generations")
+            .join(first.generation())
+            .exists(),
+        "active readers retain their generation",
+    );
+
+    drop(first);
+    drop(second);
+    assert_eq!(
+        fs::read_dir(pins)
+            .expect("read released reader pins")
+            .count(),
+        0,
+        "normal reader exit removes its owned pin",
+    );
+}
+
+#[test]
+fn uncertain_reader_pin_is_not_followed_and_retains_every_generation() {
+    let fixture = Fixture::new();
+    let host = fixture.host();
+    let prepared = store::prepare(&fixture.repository, None, &host).expect("prepare generation");
+    let generation = prepared
+        .store()
+        .join("generations")
+        .join(prepared.generation());
+    let home = prepared.home().to_path_buf();
+    let pins = prepared.store().join("pins");
+    drop(prepared);
+    make_writable(&home);
+    fs::remove_dir_all(&home).expect("remove the generation's home reference");
+
+    let outside = fixture.root.join("unowned-pin-target");
+    fs::write(&outside, b"outside stays untouched").expect("write unowned pin target");
+    let uncertain = pins.join("reader-00000000000040008000000000000000.lock");
+    std::os::unix::fs::symlink(&outside, &uncertain).expect("install uncertain reader pin");
+
+    let cleanup = store::cleanup_with_grace(&host, std::time::Duration::ZERO)
+        .expect("cleanup retains generations under uncertain pin liveness");
+    assert!(generation.exists(), "uncertain liveness retains generation");
+    assert_eq!(cleanup.removed_generations(), 0);
+    assert!(!cleanup.retained_uncertain().is_empty());
+    assert_eq!(
+        fs::read(&outside).expect("read unowned pin target"),
+        b"outside stays untouched",
+        "cleanup never follows the unowned pin path",
+    );
+    assert!(uncertain.is_symlink(), "uncertain pin itself is retained");
+}
+
+#[test]
 fn non_utf8_worktree_identity_is_encoded_without_aliasing() {
     let mut name = b"worktree-".to_vec();
     name.push(0xff);

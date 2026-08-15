@@ -2,7 +2,7 @@ use std::fs;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const FIXTURE_RERUN_VARIABLE: &str = "SPICE_FIXTURE_RERUN"; // env-policy: allow
 
@@ -13,6 +13,10 @@ struct Fixture {
     second: PathBuf,
     cargo: PathBuf,
     seed_count: PathBuf,
+    hold: PathBuf,
+    ready: PathBuf,
+    release: PathBuf,
+    finished: PathBuf,
 }
 
 impl Fixture {
@@ -28,44 +32,22 @@ impl Fixture {
         let second = root.join("second");
         let cargo = root.join("native-cargo");
         let seed_count = root.join("seed-count");
-        fs::create_dir_all(dependency.join("src")).expect("create real dependency fixture");
+        let hold = root.join("hold-build-script");
+        let ready = root.join("build-script-ready");
+        let release = root.join("release-build-script");
+        let finished = root.join("build-script-finished");
+        fs::create_dir(&root).expect("create real-process fixture root");
         fs::create_dir(&bootstrap).expect("create real bootstrap Cargo home");
         fs::create_dir_all(first.join("src")).expect("create real first worktree");
-        fs::write(
-            dependency.join("Cargo.toml"),
-            concat!(
-                "[package]\n",
-                "name = \"fixture-dependency\"\n",
-                "version = \"1.0.0\"\n",
-                "edition = \"2024\"\n",
-                "build = \"build.rs\"\n",
-            ),
-        )
-        .expect("write real dependency manifest");
-        fs::write(
-            dependency.join("src/lib.rs"),
-            "pub fn answer() -> u8 { 42 }\n",
-        )
-        .expect("write real dependency source");
-        fs::write(
-            dependency.join("template.rs"),
-            "pub const COPIED: u8 = 42;\n",
-        )
-        .expect("write copied build-script input");
-        fs::write(
-            dependency.join("build.rs"),
-            concat!(
-                "fn main() {\n",
-                "    println!(\"cargo:rerun-if-env-changed=SPICE_FIXTURE_RERUN\");\n",
-                "    let output = std::path::PathBuf::from(std::env::var_os(\"OUT_DIR\").unwrap());\n",
-                "    std::fs::copy(\"template.rs\", output.join(\"copied.rs\")).unwrap();\n",
-                "    std::thread::sleep(std::time::Duration::from_millis(300));\n",
-                "}\n",
-            ),
-        )
-        .expect("write real dependency build script");
-        initialize_repository(&dependency);
-        let revision = git_output(&dependency, &["rev-parse", "HEAD"]);
+        let revision = initialize_dependency(
+            &dependency,
+            BuildScriptSignals {
+                hold: &hold,
+                ready: &ready,
+                release: &release,
+                finished: &finished,
+            },
+        );
 
         fs::write(
             first.join("Cargo.toml"),
@@ -132,6 +114,10 @@ impl Fixture {
             second,
             cargo,
             seed_count,
+            hold,
+            ready,
+            release,
+            finished,
         }
     }
 
@@ -158,6 +144,82 @@ impl Fixture {
             .env_remove("CARGO_BUILD_BUILD_DIR");
         command
     }
+
+    fn cargo_metadata(&self, worktree: &Path) -> Output {
+        self.spice(worktree)
+            .args([
+                "dev",
+                "cargo",
+                "--",
+                "metadata",
+                "--locked",
+                "--offline",
+                "--format-version",
+                "1",
+                "--no-deps",
+            ])
+            .output()
+            .expect("run metadata through refreshed private home")
+    }
+}
+
+struct BuildScriptSignals<'a> {
+    hold: &'a Path,
+    ready: &'a Path,
+    release: &'a Path,
+    finished: &'a Path,
+}
+
+fn initialize_dependency(dependency: &Path, signals: BuildScriptSignals<'_>) -> String {
+    fs::create_dir_all(dependency.join("src")).expect("create real dependency fixture");
+    fs::write(
+        dependency.join("Cargo.toml"),
+        concat!(
+            "[package]\n",
+            "name = \"fixture-dependency\"\n",
+            "version = \"1.0.0\"\n",
+            "edition = \"2024\"\n",
+            "build = \"build.rs\"\n",
+        ),
+    )
+    .expect("write real dependency manifest");
+    fs::write(
+        dependency.join("src/lib.rs"),
+        "pub fn answer() -> u8 { 42 }\n",
+    )
+    .expect("write real dependency source");
+    fs::write(
+        dependency.join("template.rs"),
+        "pub const COPIED: u8 = 42;\n",
+    )
+    .expect("write copied build-script input");
+    fs::write(
+        dependency.join("build.rs"),
+        format!(
+            concat!(
+                "fn main() {{\n",
+                "    println!(\"cargo:rerun-if-env-changed=SPICE_FIXTURE_RERUN\");\n",
+                "    if std::path::Path::new({hold:?}).exists() {{\n",
+                "        std::fs::write({ready:?}, b\"ready\").unwrap();\n",
+                "        while !std::path::Path::new({release:?}).exists() {{\n",
+                "            std::thread::sleep(std::time::Duration::from_millis(10));\n",
+                "        }}\n",
+                "    }}\n",
+                "    let output = std::path::PathBuf::from(std::env::var_os(\"OUT_DIR\").unwrap());\n",
+                "    std::fs::copy(\"template.rs\", output.join(\"copied.rs\")).unwrap();\n",
+                "    std::fs::write({finished:?}, b\"finished\").unwrap();\n",
+                "    std::thread::sleep(std::time::Duration::from_millis(300));\n",
+                "}}\n",
+            ),
+            hold = signals.hold.to_str().expect("UTF-8 hold path"),
+            ready = signals.ready.to_str().expect("UTF-8 readiness path"),
+            release = signals.release.to_str().expect("UTF-8 release path"),
+            finished = signals.finished.to_str().expect("UTF-8 finished path"),
+        ),
+    )
+    .expect("write real dependency build script");
+    initialize_repository(dependency);
+    git_output(dependency, &["rev-parse", "HEAD"])
 }
 
 impl Drop for Fixture {
@@ -207,6 +269,59 @@ fn linked_worktrees_run_genuine_cargo_without_a_shared_home_lock() {
     assert_clean_pair(&warm);
     assert_eq!(seed_count(&fixture), 1, "warm launches reuse generation");
     assert_shared_generation(&fixture);
+}
+
+#[test]
+fn cleanup_pins_the_generation_of_a_live_cargo_child_across_home_advance() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.hold, b"hold").expect("arm blocking dependency build script");
+    let mut first = fixture
+        .cargo_check(&fixture.first)
+        .spawn()
+        .expect("launch Cargo on generation A");
+    wait_for_path(&fixture.ready);
+    first.kill().expect("crash the generation A wrapper");
+    assert!(!first.wait().expect("reap crashed wrapper").success());
+
+    let store = fixture.bootstrap.join("spice/source-store-v2");
+    let generation_a = only_directory(&store.join("generations"));
+    let mut refreshed = b"# generation B\n".to_vec();
+    refreshed.extend(fs::read(fixture.first.join("Cargo.lock")).expect("read generation A lock"));
+    fs::write(fixture.first.join("Cargo.lock"), refreshed).expect("advance exact lock bytes");
+    assert_success(fixture.cargo_metadata(&fixture.first));
+    let generations = directory_paths(&store.join("generations"));
+    assert_eq!(generations.len(), 2);
+    let generation_b = generations
+        .into_iter()
+        .find(|path| path != &generation_a)
+        .expect("generation B was published");
+
+    fs::File::open(&generation_a)
+        .expect("open generation A for deterministic aging")
+        .set_times(
+            fs::FileTimes::new().set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1)),
+        )
+        .expect("age generation A beyond cleanup grace");
+    assert_success(
+        fixture
+            .spice(&fixture.first)
+            .args(["dev", "cargo-store", "--cleanup"])
+            .output()
+            .expect("clean while Cargo A is live"),
+    );
+    assert!(
+        generation_a.exists(),
+        "the child-inherited pin retains generation A after its wrapper crashes",
+    );
+    assert!(generation_b.exists());
+
+    fs::write(&fixture.release, b"release").expect("release Cargo A source read");
+    wait_for_path(&fixture.finished);
+    wait_for_reclamation(&fixture, &generation_a);
+    assert!(
+        generation_b.exists(),
+        "the current home retains generation B"
+    );
 }
 
 fn run_together(fixture: &Fixture) -> [Output; 2] {
@@ -283,6 +398,51 @@ fn seed_count(fixture: &Fixture) -> usize {
         .expect("read real seed counter")
         .lines()
         .count()
+}
+
+fn wait_for_path(path: &Path) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !path.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {path:?}",
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_reclamation(fixture: &Fixture, generation: &Path) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while generation.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out reclaiming {generation:?}",
+        );
+        assert_success(
+            fixture
+                .spice(&fixture.first)
+                .args(["dev", "cargo-store", "--cleanup"])
+                .output()
+                .expect("clean after Cargo A exits"),
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn only_directory(path: &Path) -> PathBuf {
+    let paths = directory_paths(path);
+    assert_eq!(paths.len(), 1, "expected one directory below {path:?}");
+    paths.into_iter().next().expect("one directory")
+}
+
+fn directory_paths(path: &Path) -> Vec<PathBuf> {
+    let mut paths = fs::read_dir(path)
+        .expect("read owned directories")
+        .map(|entry| entry.expect("read owned directory").path())
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 fn native_cargo() -> PathBuf {
