@@ -598,7 +598,7 @@ fn a_staged_change_after_a_committed_ratchet_breach_is_held_to_base() {
 
 /// A committed base breach inside the ratchet retains its flex.
 #[test]
-fn a_changed_committed_base_breach_inside_ratchet_keeps_flex() {
+fn a_changed_committed_base_breach_inside_ratchet_keeps_headroom() {
     const PATH: &str = "src/flex-debt.rs";
     const BASE_LIMIT: u64 = 1_000;
     const COMMITTED_LINES: usize = 1_200;
@@ -634,7 +634,7 @@ fn a_changed_committed_base_breach_inside_ratchet_keeps_flex() {
 
 /// An edited file inside its byte ratchet retains its elastic allowance.
 #[test]
-fn a_changed_file_inside_the_byte_ratchet_keeps_flex() {
+fn a_changed_file_inside_the_byte_ratchet_keeps_headroom() {
     const PATH: &str = "src/byte-debt.rs";
     const BASE: u64 = 80_000;
     const COMMITTED: usize = 90_000;
@@ -673,7 +673,7 @@ fn a_changed_file_inside_the_byte_ratchet_keeps_flex() {
 
 /// An edited over-base routine inside its ratchet retains flex.
 #[test]
-fn a_changed_routine_inside_the_ratchet_keeps_flex() {
+fn a_changed_routine_inside_the_ratchet_keeps_headroom() {
     const PATH: &str = "src/routine-debt.rs";
     const FUNCTION: &str = "authored";
     const BASE: u64 = 80;
@@ -710,7 +710,7 @@ fn a_changed_routine_inside_the_ratchet_keeps_flex() {
 
 /// Cyclomatic debt inside its ratchet follows the same flex rule.
 #[test]
-fn a_changed_routine_inside_the_ccn_ratchet_keeps_flex() {
+fn a_changed_routine_inside_the_ccn_ratchet_keeps_headroom() {
     const PATH: &str = "src/ccn-debt.rs";
     const FUNCTION: &str = "branching";
     const BASE: u64 = 20;

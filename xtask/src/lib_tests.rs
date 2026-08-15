@@ -11,9 +11,9 @@ mod tests {
         Launch,
     }
 
-    /// The report a current entry point produces, so the order test can pin
-    /// that the audit ran without reaching a real repository.
-    const ENTRY_POINT_FIXTURE: &str = "fixture appliance matches this build\n";
+    /// The report a source-development entry point produces, so the order test
+    /// can pin the policy action without reaching a real repository.
+    const ENTRY_POINT_FIXTURE: &str = "fixture automatic publisher owns installation\n";
 
     #[derive(Default)]
     struct RefuseDiagnosticWrite {
@@ -662,8 +662,24 @@ mod tests {
         );
     }
 
-    /// The audit sits immediately after the one build that supplies its current
-    /// bytes, so a refusal must stop every source-verification action.
+    #[test]
+    fn source_policy_suppresses_digest_churn_without_weakening_the_default_audit() {
+        let suppressed = entry_point_with_policy(true, || {
+            panic!("automatic publication must not inspect a concurrently moving receipt")
+        })
+        .expect("the source repository delegates publication");
+        assert!(suppressed.is_empty());
+
+        let stale = entry_point_with_policy(false, || {
+            Err("another build; repair=target/debug/spice install".to_owned())
+        })
+        .expect_err("the default installed-client audit remains strict");
+        assert_eq!(stale, "another build; repair=target/debug/spice install");
+    }
+
+    /// With suppression disabled, the audit sits immediately after the one
+    /// build that supplies its current bytes, so a refusal must stop every
+    /// later verification action.
     ///
     /// Ordering alone would not settle this: an action that reports and admits
     /// occupies the same slot and passes every order assertion here. What is
@@ -671,7 +687,7 @@ mod tests {
     /// reaches the operator verbatim, because the state it names is one no
     /// amount of re-running the battery clears.
     #[test]
-    fn a_stale_installed_appliance_stops_after_the_current_binary_build() {
+    fn default_policy_still_stops_after_a_stale_appliance_audit() {
         let runner = runner(successful_commands());
         runner.set_entry_point(Err("published guard is not this build's".to_owned()));
         let mut output = Vec::new();

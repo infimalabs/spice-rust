@@ -21,6 +21,7 @@ mod current_source;
 mod policy;
 mod reach;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use current_source::{
     gates_for_path as current_source_gates_for_path, known_workspace_rust_source,
     selector_authority as current_source_selector_authority,

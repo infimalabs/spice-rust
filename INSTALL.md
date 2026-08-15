@@ -9,6 +9,23 @@ nor apply stops, drains, imports, or deletes the other system, and neither
 system is a precondition for the other. Retirement remains a separate
 destructive decision.
 
+## Development task boundary
+
+Ordinary work in the Spice source repository ends when the validated commit is
+landed. Its tracked policy sets
+`policy.suppress_install_apply_guidance = true`, so `cargo xtask verify` does
+not compare that worktree build with the shared installed appliance and does
+not print a repair preview. Normal task completion contains no install step or
+per-digest authorization request. The supervising loop calls `cargo xtask
+install` after landing and is the sole automatic publisher.
+
+That option changes only repository-local verification guidance. It does not
+add a digestless apply path, authorize authored input, or weaken `spice install
+--apply=DIGEST`. Every installed client and every manual initial, repair,
+migration, or relocation workflow below retains exact-plan authorization.
+When the operator explicitly requests one of those manual workflows, that
+request—not ordinary task completion—places it in scope.
+
 Run the commands below from the worktree being installed. Paths stay explicit
 during preparation. Do not use the bare `spice` name for this appliance until
 the operator-authorized authority switch below has established its exact

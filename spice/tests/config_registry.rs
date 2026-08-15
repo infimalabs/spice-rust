@@ -21,6 +21,7 @@ enabled = true
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+suppress_install_apply_guidance = true
 pre_commit_builtins = false
 pre_commit = [
     { label = "Rust gate", run = ["gate/pre-commit", "--fixture"], scopes = { paths = ["src/**", "tests/**"] } },
@@ -248,6 +249,7 @@ fn root_is_exactly_the_sixteen_typed_domains() {
     assert_eq!(round_trip, root);
     assert_eq!(decode("").expect("empty root"), Root::default());
     assert!(Root::default().policy().pre_commit_builtins());
+    assert!(!Root::default().policy().suppress_install_apply_guidance());
     assert!(Root::default().policy().pre_commit().is_empty());
     assert!(root.proof().container().is_some());
     assert!(root.proof().runner().is_some());
@@ -278,6 +280,7 @@ fn root_is_exactly_the_sixteen_typed_domains() {
         root.policy().env_names(),
         ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     );
+    assert!(root.policy().suppress_install_apply_guidance());
     assert!(!root.policy().pre_commit_builtins());
     let [pre_commit] = root.policy().pre_commit() else {
         panic!("the complete root must carry one pre-commit command");
@@ -290,6 +293,10 @@ fn root_is_exactly_the_sixteen_typed_domains() {
         panic!("a root must encode as a table");
     };
     assert_eq!(table["policy"]["pre_commit_builtins"].as_bool(), Some(true));
+    assert_eq!(
+        table["policy"]["suppress_install_apply_guidance"].as_bool(),
+        Some(false)
+    );
     assert_eq!(
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
@@ -503,6 +510,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "tasks.project_max_depth",
     "judge.enabled",
     "policy.env_names",
+    "policy.suppress_install_apply_guidance",
     "policy.pre_commit_builtins",
     "policy.pre_commit[].label",
     "policy.pre_commit[].run",
