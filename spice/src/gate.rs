@@ -31,11 +31,21 @@ enum InputMode {
     Strict,
 }
 
+mod capture;
+mod environment;
 mod finding_source;
+mod full_verifier_evidence;
+
+use environment::verifier_environment;
+#[cfg(test)]
+use environment::{SHELL_LAST_COMMAND, verifier_environment_from};
 
 pub use finding_source::{
     GateFindingAnchor, capture_gate_finding_anchor, require_gate_finding_source_forward,
     validate_gate_finding_source,
+};
+pub use full_verifier_evidence::{
+    AdmittedFullVerifierEvidence, FullVerifierEvidence, admit_full_verifier_evidence,
 };
 
 /// One staged battery capture retained across the full verifier's actions.
@@ -243,6 +253,13 @@ impl PreparedBattery<'_> {
         Ok(evidence)
     }
 
+    /// Re-admit one complete battery receipt against this fresh strict capture.
+    pub fn admit_battery_receipt(&self, receipt: &[u8]) -> Result<BatteryReceipt, RunError> {
+        self.capture
+            .admit_receipt(receipt)
+            .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
+    }
+
     /// Execute this retained capture with any completed compiler evidence.
     ///
     /// # Errors
@@ -264,12 +281,58 @@ impl PreparedBattery<'_> {
         result.map_err(|error| RunError::refusal("gate::battery-refused", error))
     }
 
+    /// Execute the complete battery and bind its report to this capture.
+    pub fn execute_receipt(
+        &mut self,
+        evidence: &[VerifierCompilerEvidence],
+    ) -> Result<BatteryReceipt, RunError> {
+        let report = self.execute(evidence)?;
+        self.capture
+            .mint_receipt(report)
+            .map_err(|error| RunError::fault("gate::battery-receipt-unavailable", error))
+    }
+
+    /// Rebind stable-source compiler proof to this retained battery capture and
+    /// execute with required evidence.
+    ///
+    /// The stable private mirror exists only to preserve Cargo fingerprints;
+    /// the receipt boundary reconstructs opaque process tokens against this
+    /// capture's exact source, repository, environment, tools, and stages. A
+    /// missing or mismatched proof refuses instead of falling back to compilers
+    /// whose stable source locks are still held by the verifier.
+    ///
+    /// # Errors
+    ///
+    /// Refuses incomplete, stale, mismatched, noncanonical, or untrusted
+    /// compiler evidence and all ordinary battery receipt failures.
+    pub fn execute_prepared_compiler_receipt(
+        &mut self,
+        evidence: &[VerifierCompilerEvidence],
+        cargo_jobs: usize,
+    ) -> Result<BatteryReceipt, RunError> {
+        let authority = full_verifier_evidence::prepared_compiler_authority(self.source());
+        let receipt = encode_verifier_compiler_receipt(evidence, &authority)
+            .map_err(|error| RunError::fault("gate::verifier-receipt-unavailable", error))?;
+        let evidence = self.admit_verifier_compiler_receipt(&receipt, cargo_jobs, &authority)?;
+        self.execute_receipt(&evidence)
+    }
+
     /// Publish the exhaustive state transaction after the enclosing verifier accepts.
-    pub fn accept_state(&self) -> Result<(), RunError> {
+    pub fn accept_state(&self) -> Result<::gate::StateReceipt, RunError> {
         self.capture
             .accept_state(StateRunScope::Exhaustive)
-            .map(|_| ())
             .map_err(|error| RunError::refusal("gate::state-publication-refused", error))
+    }
+
+    /// Re-admit a complete battery receipt across its exact accepted state transition.
+    pub fn admit_battery_receipt_after_state(
+        &self,
+        receipt: &[u8],
+        state: &::gate::StateReceipt,
+    ) -> Result<BatteryReceipt, RunError> {
+        self.capture
+            .admit_receipt_after_state(receipt, state)
+            .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
     }
 
     /// Discard the exhaustive state transaction after refusal or interruption.
@@ -583,16 +646,6 @@ fn prepare_traced_with_mode<'trace>(
     })
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the canonical gate command rim owns full-verifier environment acquisition"
-)]
-fn verifier_environment() -> Vec<(OsString, OsString)> {
-    let mut environment = env::vars_os().collect::<Vec<_>>();
-    environment.sort();
-    environment
-}
-
 /// Execute the canonical battery over one selected source.
 ///
 /// # Errors
@@ -719,7 +772,7 @@ fn capture_reached_in_state(
     gate_id: GateId,
     state_run: ::gate::BatteryStateRun,
 ) -> Result<BatteryCapture<'static>, RunError> {
-    capture_inner_with_reach(
+    capture::capture_inner_with_reach(
         selector,
         input_mode,
         Some(gate_id),
@@ -745,132 +798,7 @@ fn capture_inner<'trace>(
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     state_run: Option<::gate::BatteryStateRun>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
-    capture_inner_with_reach(selector, input_mode, selected, trace, state_run, None)
-}
-
-fn capture_inner_with_reach<'trace>(
-    selector: Selector,
-    input_mode: InputMode,
-    selected: Option<GateId>,
-    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
-    state_run: Option<::gate::BatteryStateRun>,
-    selection: Option<&ChangeSelectionReport>,
-) -> Result<BatteryCapture<'trace>, RunError> {
-    let directory = env::current_dir()
-        .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
-    let repository = Repository::discover(&directory)
-        .map_err(|error| RunError::fault("gate::repository-unresolved", error))?;
-    repository.admit_state().map_err(|error| match error {
-        StateError::Filesystem { .. } => RunError::fault("gate::state-unavailable", error),
-        _ => RunError::refusal("gate::state-refused", error),
-    })?;
-    let actor = acting_actor(repository.worktree_root())?;
-    let changes = selected_changes(repository.worktree_root(), &selector)?;
-    let rim = RimCapture::new(directory, search_path(), changes)
-        .map_err(|error| RunError::refusal("gate::rim-refused", error))?;
-    let actor = ActorCapture::Acting {
-        actor,
-        // BatteryStateRun supplies the fixed clock and active claims from the
-        // exact authority every focused capture shares. The command rim makes
-        // no competing claim observation of its own.
-        bound_claims: Vec::new(),
-    };
-    let claim = ClaimCapture::Idle;
-    let hygiene = HygieneConfiguration::current();
-    let root = repository.worktree_root();
-    if let Some(selection) = selection {
-        let Some(gate_id) = selected else {
-            return Err(RunError::refusal(
-                "gate::reach-refused",
-                "authored reach requires one selected arm",
-            ));
-        };
-        if trace.is_some() {
-            return Err(RunError::refusal(
-                "gate::reach-refused",
-                "authored reach requires an untraced selected arm",
-            ));
-        }
-        let state_run = state_run.ok_or_else(|| {
-            RunError::refusal(
-                "gate::reach-refused",
-                "authored reach requires an enclosing state transaction",
-            )
-        })?;
-        return match input_mode {
-            InputMode::Generic => BatteryCapture::capture_generic_arm_in_state_reached(
-                root, &selector, claim, actor, rim, hygiene, selection, gate_id, state_run,
-            ),
-            InputMode::Strict => BatteryCapture::capture_arm_in_state_reached(
-                root, &selector, claim, actor, rim, hygiene, selection, gate_id, state_run,
-            ),
-        }
-        .map_err(|error| RunError::refusal("gate::capture-refused", error));
-    }
-    match (input_mode, selected, trace, state_run) {
-        (InputMode::Generic, Some(gate_id), None, Some(state_run)) => {
-            BatteryCapture::capture_generic_arm_in_state(
-                root, &selector, claim, actor, rim, hygiene, gate_id, state_run,
-            )
-        }
-        (InputMode::Strict, Some(gate_id), None, Some(state_run)) => {
-            BatteryCapture::capture_arm_in_state(
-                root, &selector, claim, actor, rim, hygiene, gate_id, state_run,
-            )
-        }
-        (InputMode::Generic, Some(gate_id), Some(trace), None) => {
-            BatteryCapture::capture_generic_arm_traced(
-                root, &selector, claim, actor, rim, hygiene, gate_id, trace,
-            )
-        }
-        (InputMode::Strict, Some(gate_id), Some(trace), None) => {
-            BatteryCapture::capture_arm_traced(
-                root, &selector, claim, actor, rim, hygiene, gate_id, trace,
-            )
-        }
-        (InputMode::Generic, Some(gate_id), None, None) => BatteryCapture::capture_generic_arm(
-            root, &selector, claim, actor, rim, hygiene, gate_id,
-        ),
-        (InputMode::Strict, Some(gate_id), None, None) => {
-            BatteryCapture::capture_arm(root, &selector, claim, actor, rim, hygiene, gate_id)
-        }
-        (InputMode::Generic, None, Some(trace), None) => BatteryCapture::capture_generic_traced(
-            root, &selector, claim, actor, rim, hygiene, trace,
-        ),
-        (InputMode::Strict, None, Some(trace), None) => {
-            BatteryCapture::capture_traced(root, &selector, claim, actor, rim, hygiene, trace)
-        }
-        (InputMode::Generic, None, None, None) => {
-            BatteryCapture::capture_generic(root, &selector, claim, actor, rim, hygiene)
-        }
-        (InputMode::Strict, None, None, None) => {
-            BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene)
-        }
-        (InputMode::Generic, None, Some(trace), Some(state_run)) => {
-            BatteryCapture::capture_generic_in_state_traced(
-                root, &selector, claim, actor, rim, hygiene, state_run, trace,
-            )
-        }
-        (InputMode::Strict, None, Some(trace), Some(state_run)) => {
-            BatteryCapture::capture_in_state_traced(
-                root, &selector, claim, actor, rim, hygiene, state_run, trace,
-            )
-        }
-        (_, None, None, Some(_)) | (_, Some(_), Some(_), Some(_)) => {
-            unreachable!("only complete shared-state captures are traced")
-        }
-    }
-    .map_err(|error| {
-        let detail = error.detail();
-        let reason = if detail.starts_with("cannot load captured battery contract:") {
-            "gate::contract-refused"
-        } else if detail.starts_with("cannot capture battery source:") {
-            "gate::selection-refused"
-        } else {
-            "gate::capture-refused"
-        };
-        RunError::refusal(reason, detail)
-    })
+    capture::capture_inner_with_reach(selector, input_mode, selected, trace, state_run, None)
 }
 
 #[expect(

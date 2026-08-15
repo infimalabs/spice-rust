@@ -55,6 +55,10 @@ pub fn cargo_workspace_tests_applicable(
 /// Targets are source-weight balanced across the minimum shard count so one
 /// cluster of larger integration targets cannot pin the coordinator tail.
 const TARGETS_PER_SHARD: usize = 8;
+/// The full verifier's prebuilt branch pays no compiler cost per shard, so use
+/// finer work units there to keep one long integration-target cluster from
+/// pinning a worker while the fixed four-lane test-phase budget expires.
+const FULL_VERIFIER_TARGETS_PER_SHARD: usize = 4;
 /// Below three targets, observed Cargo startup and publication time outweighs
 /// target cardinality, so these tail batches retain stable metadata order.
 const CARGO_STARTUP_DOMINATED_TARGET_LIMIT: usize = 2;
@@ -299,8 +303,13 @@ fn run_at_with_prebuild(
     if prebuild && policy.shared_outputs {
         prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)?;
     }
-    let shards = partition(&inventory);
-    validate_partition(&inventory, &shards)?;
+    let targets_per_shard = if prebuild {
+        TARGETS_PER_SHARD
+    } else {
+        FULL_VERIFIER_TARGETS_PER_SHARD
+    };
+    let shards = partition_with_target_limit(&inventory, targets_per_shard);
+    validate_partition_with_target_limit(&inventory, &shards, targets_per_shard)?;
     let policy = policy.for_shards(shards.len());
     Coordinator::new(
         shards,
@@ -805,6 +814,14 @@ fn inventory_from_metadata(
 include!("workspace_tests/source_reach.rs");
 
 fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
+    partition_with_target_limit(inventory, TARGETS_PER_SHARD)
+}
+
+fn partition_with_target_limit(
+    inventory: &Inventory,
+    targets_per_shard: usize,
+) -> Vec<PackageInventory> {
+    debug_assert!(targets_per_shard > 0);
     let package_target_counts = inventory
         .packages
         .iter()
@@ -813,7 +830,7 @@ fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
     let mut shards = inventory
         .packages
         .iter()
-        .flat_map(partition_package)
+        .flat_map(|package| partition_package(package, targets_per_shard))
         .collect::<Vec<_>>();
     shards.sort_by(|left, right| {
         let left_startup_dominated = left.targets.len() <= CARGO_STARTUP_DOMINATED_TARGET_LIMIT;
@@ -839,8 +856,11 @@ fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
     shards
 }
 
-fn partition_package(package: &PackageInventory) -> Vec<PackageInventory> {
-    let shard_count = package.targets.len().div_ceil(TARGETS_PER_SHARD);
+fn partition_package(
+    package: &PackageInventory,
+    targets_per_shard: usize,
+) -> Vec<PackageInventory> {
+    let shard_count = package.targets.len().div_ceil(targets_per_shard);
     let mut weighted_targets = package
         .targets
         .iter()
@@ -853,7 +873,7 @@ fn partition_package(package: &PackageInventory) -> Vec<PackageInventory> {
     let mut weights_by_shard = vec![0_u64; shard_count];
     for (weight, target) in weighted_targets {
         let index = (0..shard_count)
-            .filter(|index| targets_by_shard[*index].len() < TARGETS_PER_SHARD)
+            .filter(|index| targets_by_shard[*index].len() < targets_per_shard)
             .min_by_key(|index| {
                 (
                     weights_by_shard[*index],
@@ -902,7 +922,15 @@ fn validate_partition(
     inventory: &Inventory,
     shards: &[PackageInventory],
 ) -> Result<(), WorkspaceTestError> {
-    let expected_shards = partition(inventory);
+    validate_partition_with_target_limit(inventory, shards, TARGETS_PER_SHARD)
+}
+
+fn validate_partition_with_target_limit(
+    inventory: &Inventory,
+    shards: &[PackageInventory],
+    targets_per_shard: usize,
+) -> Result<(), WorkspaceTestError> {
+    let expected_shards = partition_with_target_limit(inventory, targets_per_shard);
     let expected_packages = counts(expected_shards.iter().map(|package| package.id.clone()));
     let actual_packages = counts(shards.iter().map(|package| package.id.clone()));
     let expected_targets = counts(inventory.packages.iter().flat_map(|package| {

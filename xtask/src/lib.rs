@@ -4,7 +4,7 @@ use std::io::{self, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use sill::CancellationToken;
 
@@ -375,6 +375,9 @@ trait Runner: Sync {
     fn accept_battery_state(&self) -> Result<(), String> {
         Ok(())
     }
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+        Ok(())
+    }
     fn landing(&self) -> Result<landing::Report, landing::Error>;
 }
 
@@ -423,9 +426,12 @@ fn encode_battery_admission(report: &gate::BatteryReport) -> Result<Vec<u8>, Str
 #[cfg(not(target_arch = "wasm32"))]
 struct SystemState {
     battery: Option<spice::gate::PreparedBattery<'static>>,
-    compiler_contracts: Vec<gate::VerifierCompilerContract>,
+    compiler_contracts: Vec<Arc<gate::PreparedVerifierCompiler>>,
     compiler_processes: Vec<gate::VerifierCompilerProcessEvidence>,
     native_workspace: Option<gate::RustAnalysisWorkspace>,
+    cargo_jobs: Option<usize>,
+    full_verifier_battery_receipt: Option<gate::BatteryReceipt>,
+    full_verifier_evidence: Option<spice::gate::FullVerifierEvidence>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -443,6 +449,9 @@ impl SystemRunner {
             compiler_contracts: Vec::new(),
             compiler_processes: Vec::new(),
             native_workspace: None,
+            cargo_jobs: None,
+            full_verifier_battery_receipt: None,
+            full_verifier_evidence: None,
         }))
     }
 
@@ -452,6 +461,9 @@ impl SystemRunner {
             compiler_contracts: Vec::new(),
             compiler_processes: Vec::new(),
             native_workspace: None,
+            cargo_jobs: None,
+            full_verifier_battery_receipt: None,
+            full_verifier_evidence: None,
         })
     }
 
@@ -484,7 +496,7 @@ impl SystemRunner {
         &self,
         stage: gate::VerifierCompilerStage,
         cargo_jobs: usize,
-    ) -> Result<gate::VerifierCompilerContract, RunError> {
+    ) -> Result<Arc<gate::PreparedVerifierCompiler>, RunError> {
         let gate_id = match stage {
             gate::VerifierCompilerStage::NativeClippy => gate::GateId::RustTypecheck,
             gate::VerifierCompilerStage::CanvasCheck | gate::VerifierCompilerStage::CanvasApp => {
@@ -492,6 +504,16 @@ impl SystemRunner {
             }
         };
         let mut state = self.state()?;
+        match state.cargo_jobs {
+            Some(current) if current != cargo_jobs.max(1) => {
+                return Err(RunError::Cleanup(format!(
+                    "full verifier Cargo job cap changed from {current} to {}",
+                    cargo_jobs.max(1),
+                )));
+            }
+            Some(_) => {}
+            None => state.cargo_jobs = Some(cargo_jobs.max(1)),
+        }
         if !state
             .compiler_contracts
             .iter()
@@ -502,8 +524,10 @@ impl SystemRunner {
             })?;
             let contract = battery
                 .verifier_compiler_contract(gate_id, cargo_jobs)
-                .map_err(|error| RunError::Launch(io::Error::other(error.to_string())))?;
-            state.compiler_contracts.push(contract);
+                .map_err(|error| RunError::Launch(io::Error::other(error.to_string())))?
+                .prepare_stable()
+                .map_err(RunError::Launch)?;
+            state.compiler_contracts.push(Arc::new(contract));
         }
         state
             .compiler_contracts
@@ -835,6 +859,8 @@ impl Runner for SystemRunner {
                 return Ok(BatteryRun::Cancelled);
             }
             let mut state = self.state()?;
+            state.full_verifier_battery_receipt = None;
+            state.full_verifier_evidence = None;
             let evidence = match state
                 .compiler_contracts
                 .iter()
@@ -844,7 +870,8 @@ impl Runner for SystemRunner {
                 Ok(evidence) => evidence,
                 Err(error) => return Ok(BatteryRun::Error(error)),
             };
-            let report = match state
+            let cargo_jobs = state.cargo_jobs.unwrap_or(1);
+            let receipt = match state
                 .battery
                 .as_mut()
                 .ok_or_else(|| {
@@ -852,20 +879,24 @@ impl Runner for SystemRunner {
                         "full verifier battery capture is unavailable",
                     ))
                 })?
-                .execute(&evidence)
+                .execute_prepared_compiler_receipt(&evidence, cargo_jobs)
             {
-                Ok(report) => report,
+                Ok(receipt) => receipt,
                 Err(error) => return Ok(BatteryRun::Error(error.to_string())),
             };
             if cancellation.is_cancelled() {
                 Ok(BatteryRun::Cancelled)
-            } else if report.admits() {
-                match encode_battery_admission(&report) {
-                    Ok(document) => Ok(BatteryRun::Admitted(document)),
-                    Err(error) => Ok(BatteryRun::Error(error.to_string())),
-                }
+            } else if receipt.run().admits() {
+                let admission = match encode_battery_admission(receipt.run()) {
+                    Ok(document) => document,
+                    Err(error) => return Ok(BatteryRun::Error(error)),
+                };
+                state.full_verifier_battery_receipt = Some(receipt);
+                Ok(BatteryRun::Admitted(admission))
             } else {
-                Ok(BatteryRun::Refused(report.refusal_fold().into_bytes()))
+                Ok(BatteryRun::Refused(
+                    receipt.run().refusal_fold().into_bytes(),
+                ))
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -879,20 +910,78 @@ impl Runner for SystemRunner {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn accept_battery_state(&self) -> Result<(), String> {
-        let state = self.state().map_err(|error| match error {
+        let mut state = self.state().map_err(|error| match error {
             RunError::Launch(error) => error.to_string(),
             RunError::Cleanup(detail) => detail,
         })?;
-        state
+        let receipt = state
+            .full_verifier_battery_receipt
+            .as_ref()
+            .ok_or_else(|| "full verifier completed without a battery receipt".to_owned())?
+            .clone();
+        let evidence = state
+            .compiler_contracts
+            .iter()
+            .map(|contract| contract.complete(&state.compiler_processes))
+            .collect::<Result<Vec<_>, _>>()?;
+        let repository = spice::repository::Repository::discover(Path::new("."))
+            .map_err(|error| error.to_string())?;
+        let transition = state
             .battery
             .as_ref()
             .ok_or_else(|| "full verifier battery capture is unavailable".to_owned())?
             .accept_state()
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        let artifact = spice::gate::FullVerifierEvidence::mint(
+            &repository,
+            state.cargo_jobs.unwrap_or(1),
+            &receipt,
+            &evidence,
+            &transition,
+        )?;
+        state.full_verifier_battery_receipt = None;
+        state.full_verifier_evidence = Some(artifact);
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+        let evidence = {
+            let mut state = self.state().map_err(|error| match error {
+                RunError::Launch(error) => error.to_string(),
+                RunError::Cleanup(detail) => detail,
+            })?;
+            let evidence = state
+                .full_verifier_evidence
+                .clone()
+                .ok_or_else(|| "full verifier completed without reusable evidence".to_owned())?;
+            for contract in &mut state.compiler_contracts {
+                Arc::get_mut(contract)
+                    .ok_or_else(|| {
+                        "full verifier compiler source still has a live process owner".to_owned()
+                    })?
+                    .release()
+                    .map_err(|error| {
+                        format!(
+                            "full verifier compiler source could not return to its idle state: \
+                             {error}"
+                        )
+                    })?;
+            }
+            evidence
+        };
+        let repository = spice::repository::Repository::discover(Path::new("."))
+            .map_err(|error| error.to_string())?;
+        evidence.publish(&repository)
     }
 
     #[cfg(target_arch = "wasm32")]
     fn accept_battery_state(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
         Ok(())
     }
 

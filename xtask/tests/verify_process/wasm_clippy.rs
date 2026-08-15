@@ -34,6 +34,10 @@ fn install_wasm_programs(fixture: &Fixture) -> WasmPrograms {
                 "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
                 "  exit 0\n",
                 "fi\n",
+                "if [ \"$1\" = metadata ]; then\n",
+                "  printf '%s\\n' '{metadata}'\n",
+                "  exit 0\n",
+                "fi\n",
                 "if [ \"$*\" = \"clippy --locked -p app --target ",
                 "wasm32-unknown-unknown -- -D warnings\" ]; then\n",
                 "  {path_name}=${{{path_name}#*:}}\n",
@@ -43,6 +47,7 @@ fn install_wasm_programs(fixture: &Fixture) -> WasmPrograms {
                 "exit 0\n",
             ),
             cargo_log = cargo_log.display(),
+            metadata = wasm_fixture_metadata(),
             path_name = PROCESS_PATH,
         ),
     );
@@ -65,6 +70,24 @@ fn install_wasm_programs(fixture: &Fixture) -> WasmPrograms {
         launcher,
         cargo_log,
     }
+}
+
+fn wasm_fixture_metadata() -> String {
+    serde_json::json!({
+        "packages": [{
+            "id": "app 0.0.0 (path+file:///fixture)",
+            "name": "app",
+            "manifest_path": "Cargo.toml",
+            "targets": [{
+                "name": "app",
+                "kind": ["lib"],
+                "src_path": "src/lib.rs",
+                "test": true,
+            }],
+        }],
+        "workspace_members": ["app 0.0.0 (path+file:///fixture)"],
+    })
+    .to_string()
 }
 
 fn assert_wasm_refusal(cargo_log: &Path, output: &std::process::Output) {
@@ -91,6 +114,8 @@ fn assert_wasm_refusal(cargo_log: &Path, output: &std::process::Output) {
         actions.iter().all(|action| {
             *action == "--version"
                 || *action == "build --locked -p spice --bin spice"
+                || *action == "metadata --locked --format-version 1 --no-deps"
+                || *action == "test --locked --workspace --all-targets --no-run"
                 || action.starts_with("clippy ")
         }),
         "unexpected Cargo action while the battery ran concurrently: {actions:?}",

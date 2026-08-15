@@ -66,6 +66,7 @@ pub use change_selection::{
     ChangeReachMode, ChangeReachObject, ChangeReachOrigin, ChangeSelectionEdge,
     ChangeSelectionError, ChangeSelectionMode, ChangeSelectionPolicy, ChangeSelectionPolicyInputs,
     ChangeSelectionReport, select_change_gates, select_current_source_change_gates,
+    select_current_source_change_gates_with_full_verifier,
 };
 pub use config::{Config, WalkConfig};
 #[cfg(not(target_arch = "wasm32"))]
@@ -108,6 +109,10 @@ pub use input::{
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
 };
+// Projection is consumed only by native hygiene acquisition, but the shared
+// jurisdiction module is deliberately type-checked on the browser target too.
+#[cfg(target_arch = "wasm32")]
+const _: fn(&Jurisdiction, &[String]) -> Jurisdiction = Jurisdiction::select_paths;
 pub use kill::{
     AttemptEvidence, AttemptKind, Kill, KillBounds, KillError, KillRun, MutantDisposition,
     MutantEvidence, MutationBattery, MutationInventory, MutationMovement, MutationTool,
@@ -183,10 +188,11 @@ pub use toolchain::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use toolchain::{
-    RimCapture, RimDirectoryError, RustAnalysisWorkspace, ToolchainSource,
-    VerifierCompilerContract, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
-    VerifierCompilerRun, VerifierCompilerStage, acquire_toolchain, admit_verifier_compiler_receipt,
-    encode_verifier_compiler_receipt, formatter_edition, formatter_sources,
+    PreparedVerifierCompiler, RimCapture, RimDirectoryError, RustAnalysisWorkspace,
+    ToolchainSource, VerifierCompilerContract, VerifierCompilerEvidence,
+    VerifierCompilerProcessEvidence, VerifierCompilerRun, VerifierCompilerStage, acquire_toolchain,
+    admit_verifier_compiler_receipt, encode_verifier_compiler_receipt, formatter_edition,
+    formatter_sources,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

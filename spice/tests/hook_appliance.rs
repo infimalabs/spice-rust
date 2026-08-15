@@ -68,7 +68,12 @@ fn assert_installed_launchers(fixture: &Fixture, installed: &Path, hooks: &Path)
         ("reference-transaction", "reference-transaction"),
     ] {
         let launcher = fs::read_to_string(hooks.join(name)).expect("read installed hook launcher");
-        assert_eq!(launcher.lines().count(), 2);
+        if name == "pre-commit" {
+            assert!(launcher.contains("unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n"));
+            assert!(launcher.contains("PATH=${PATH#\"$git_exec_path\":}; export PATH"));
+        } else {
+            assert_eq!(launcher.lines().count(), 2);
+        }
         assert!(launcher.contains(&format!(" gate {leaf} \"$@\"")));
         assert!(!launcher.contains("cargo") && !launcher.contains("xtask"));
     }

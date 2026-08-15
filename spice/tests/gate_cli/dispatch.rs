@@ -34,7 +34,7 @@ fn packaged_built_in_runs_before_configured_trust_admission() {
 }
 
 #[test]
-fn disabled_built_ins_reach_only_the_configured_battery() {
+fn disabled_built_ins_probe_evidence_then_reach_only_the_configured_battery() {
     let repository = dispatch_repository(Some(false));
 
     let boundary = run_commit_worker(repository.path());
@@ -43,13 +43,16 @@ fn disabled_built_ins_reach_only_the_configured_battery() {
         terminal_failure_reason(&boundary),
         "gate::pre-commit-configuration-untrusted"
     );
-    assert!(!boundary.progress.contains("test-selection"));
+    let selection = boundary
+        .progress
+        .find("{\"phase\":\"test-selection\"}")
+        .expect("configured-only dispatch probes full-verifier evidence");
     assert!(!boundary.progress.contains("[change-gate-selection-report]"));
-    assert!(
-        boundary
-            .progress
-            .contains("{\"phase\":\"configured\",\"steps\":1}")
-    );
+    let configured = boundary
+        .progress
+        .find("{\"phase\":\"configured\",\"steps\":1}")
+        .expect("configured battery reaches its trust boundary");
+    assert!(selection < configured, "evidence lookup precedes fallback");
 }
 
 #[test]
@@ -116,7 +119,7 @@ fn source_override_refuses_its_exact_capability_without_creating_trust() {
     ] {
         assert!(detail.contains(evidence), "missing {evidence:?}: {detail}");
     }
-    assert!(!boundary.progress.contains("test-selection"));
+    assert!(boundary.progress.contains("test-selection"));
     assert!(!boundary.progress.contains("[change-gate-selection-report]"));
     assert!(
         boundary

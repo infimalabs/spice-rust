@@ -134,6 +134,83 @@ fn only_unscoped_resolution_source_gate_argv_selects_the_private_exhaustive_leaf
 }
 
 #[test]
+fn full_verifier_proves_only_the_exact_unscoped_source_gate_contract() {
+    let commands = parsed_commands(&[
+        row(
+            "label is not authority",
+            &[
+                "cargo",
+                "run",
+                "--quiet",
+                "--locked",
+                "--package",
+                "spice",
+                "--bin",
+                "spice",
+                "--",
+                "gate",
+                "selection",
+            ],
+            &[],
+        ),
+        row(
+            "different selector",
+            &[
+                "cargo",
+                "run",
+                "--quiet",
+                "--locked",
+                "--package",
+                "spice",
+                "--bin",
+                "spice",
+                "--",
+                "gate",
+                "staging",
+            ],
+            &[],
+        ),
+        row(
+            "scoped source gate",
+            &[
+                "cargo",
+                "run",
+                "--quiet",
+                "--locked",
+                "--package",
+                "spice",
+                "--bin",
+                "spice",
+                "--",
+                "gate",
+                "selection",
+            ],
+            &["spice/**"],
+        ),
+        row("unrelated configured command", &["/bin/true"], &[]),
+    ]);
+
+    assert!(full_verifier_proves(&commands[0]));
+    assert!(!full_verifier_proves(&commands[1]));
+    assert!(!full_verifier_proves(&commands[2]));
+    assert!(!full_verifier_proves(&commands[3]));
+
+    let mut remaining = commands;
+    assert_eq!(omit_full_verifier_proven(&mut remaining), 1);
+    assert_eq!(
+        remaining
+            .iter()
+            .map(PreCommitStep::label)
+            .collect::<Vec<_>>(),
+        [
+            "different selector",
+            "scoped source gate",
+            "unrelated configured command",
+        ],
+    );
+}
+
+#[test]
 fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_environment() {
     let scratch = Scratch::new("ordered-environment");
     let log = scratch.root.join("commands.log");

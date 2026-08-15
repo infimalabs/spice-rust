@@ -64,7 +64,7 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 16] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 18] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
     // control-plane boundary after authored release approval. Each count
@@ -93,6 +93,10 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 16] = [
     ("spice/src/task_git/landing_tests.rs", "clone", 1),
     ("spice/src/task_git/landing_tests.rs", "fetch", 1),
     ("spice/src/task_git/landing_tests.rs", "push", 2),
+    // Allocator-owned merge-resolution fixtures use the same local bare
+    // remote shape and never name a production remote.
+    ("spice/src/task_git/resolution_tests.rs", "clone", 1),
+    ("spice/src/task_git/resolution_tests.rs", "push", 3),
     ("spice/src/task_git/tests.rs", "clone", 1),
     ("spice/src/task_git/tests.rs", "fetch", 1),
     ("spice/src/task_git/tests.rs", "ls-remote", 2),
@@ -157,6 +161,7 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
             ("prepare_claim", Boundary::Claim),
             ("prepare_free", Boundary::ReadOnly),
             ("publish", Boundary::PhaseCompletion),
+            ("publish_claimed", Boundary::PhaseCompletion),
             ("stranded_commits", Boundary::ReadOnly),
         ],
     ),

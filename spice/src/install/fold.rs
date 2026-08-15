@@ -1,4 +1,4 @@
-//! Bounded public projections of private installation authority.
+//! Bounded public folds of private installation authority.
 
 use serde::{Deserialize, Serialize};
 use wire::Digest;

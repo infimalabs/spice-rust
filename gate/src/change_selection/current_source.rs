@@ -68,6 +68,25 @@ pub fn select_current_source_change_gates(
     )
 }
 
+/// Select current-source reach after a complete verifier has independently
+/// proved this exact source and every canonical arm.
+///
+/// The exception is deliberately limited to paths that are already compiled
+/// selector authorities. Unknown classes and sources outside the compiled
+/// workspace continue through the ordinary classifier and still refuse.
+pub fn select_current_source_change_gates_with_full_verifier(
+    source: Digest,
+    changed_sources: &[String],
+) -> Result<ChangeSelectionReport, ChangeSelectionError> {
+    select_with(source, changed_sources, GateId::BATTERY.to_vec(), |path| {
+        if selector_authority(path) {
+            Ok(GateId::BATTERY.to_vec())
+        } else {
+            gates_for_path(path)
+        }
+    })
+}
+
 fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
     if selector_authority(path) {
         return Err(ChangeSelectionError::new(format!(

@@ -131,12 +131,18 @@ fn a_line_separator_in_the_git_common_path_refuses_without_mutation() {
 fn assert_launcher(path: &Path, command: &str) {
     let bytes = fs::read(path).expect("read generated hook");
     let text = std::str::from_utf8(&bytes).expect("hook is UTF-8");
-    assert_eq!(bytes.iter().filter(|byte| **byte == b'\n').count(), 2);
-    assert_eq!(text.lines().count(), 2);
     assert_eq!(text.lines().next(), Some("#!/bin/sh -eu"));
-    assert!(text.lines().nth(1).is_some_and(
+    assert!(text.lines().last().is_some_and(
         |line| line.starts_with("exec '") && line.ends_with(&format!(" gate {command} \"$@\""))
     ));
+    if command == "pre-commit" {
+        assert!(text.contains("unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n"));
+        assert!(text.contains("PATH=${PATH#\"$git_exec_path\":}; export PATH"));
+    } else {
+        assert_eq!(bytes.iter().filter(|byte| **byte == b'\n').count(), 2);
+        assert_eq!(text.lines().count(), 2);
+        assert!(!text.contains("PATH="));
+    }
     assert_eq!(
         fs::metadata(path).unwrap().permissions().mode() & 0o777,
         0o755
@@ -149,7 +155,6 @@ fn assert_launcher(path: &Path, command: &str) {
         "basename",
         "/usr/bin/env",
         "$(",
-        "PATH=",
     ] {
         assert!(
             !text.contains(forbidden),

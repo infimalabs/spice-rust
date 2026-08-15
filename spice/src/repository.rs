@@ -120,6 +120,7 @@ pub struct StatePaths {
     lane_canvas: PathBuf,
     inbox: PathBuf,
     learnings: PathBuf,
+    full_verifier_evidence: PathBuf,
 }
 
 impl StatePaths {
@@ -143,6 +144,7 @@ impl StatePaths {
             local_configuration: runtime.join("config.toml"),
             lane_canvas: runtime.join("canvas-lanes"),
             inbox: worktree_runtime.join("inbox"),
+            full_verifier_evidence: worktree_runtime.join("full-verifier-evidence.json"),
             learnings: runtime.join("learnings"),
             artifact_data,
             runtime,
@@ -161,6 +163,12 @@ impl StatePaths {
     #[must_use]
     pub fn worktree_runtime(&self) -> &Path {
         &self.worktree_runtime
+    }
+
+    /// Worktree-local reusable evidence from the last admitted full verifier.
+    #[must_use]
+    pub fn full_verifier_evidence(&self) -> &Path {
+        &self.full_verifier_evidence
     }
 
     /// Parent of the Rust authority database.
@@ -344,7 +352,7 @@ impl StatePaths {
     }
 
     /// Files whose shape this runtime admits before it does any work.
-    fn admitted_files(&self) -> [&Path; 7] {
+    fn admitted_files(&self) -> [&Path; 8] {
         [
             self.journal(),
             self.folds(),
@@ -353,6 +361,7 @@ impl StatePaths {
             self.resident(),
             self.resident_log(),
             self.canvas(),
+            self.full_verifier_evidence(),
         ]
     }
 
@@ -363,7 +372,7 @@ impl StatePaths {
     /// an operator repairing a bad `config.toml` needs the runtime to reach the
     /// refusal that names it rather than stop at a shape check.
     #[must_use]
-    pub fn owned_files(&self) -> [&Path; 9] {
+    pub fn owned_files(&self) -> [&Path; 10] {
         let [
             journal,
             folds,
@@ -372,6 +381,7 @@ impl StatePaths {
             resident,
             resident_log,
             canvas,
+            full_verifier_evidence,
         ] = self.admitted_files();
         [
             journal,
@@ -381,6 +391,7 @@ impl StatePaths {
             resident,
             resident_log,
             canvas,
+            full_verifier_evidence,
             self.install_record(),
             self.local_configuration(),
         ]

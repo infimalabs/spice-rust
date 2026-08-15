@@ -25,8 +25,8 @@ use wire::{Digest, Domain};
 
 use super::ToolEvidence;
 use super::analyze::{
-    CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, canvas_source_root, make_cache_writable,
-    rust_analysis_workspace, synchronize_source,
+    CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, canvas_output_roots, canvas_source_root,
+    make_cache_writable, rust_analysis_workspace, synchronize_source,
 };
 use crate::VERIFIER_APP_PUBLISH_FLAG;
 use crate::battery::CANONICAL_BATTERY_MANIFEST;
@@ -208,6 +208,7 @@ impl VerifierCompilerContract {
                 gate_id.as_str()
             ));
         }
+        let environment = contract_environment(gate_id, environment, &repository);
         Ok(Self {
             gate_id,
             source,
@@ -428,6 +429,31 @@ impl VerifierCompilerContract {
     }
 }
 
+fn contract_environment(
+    gate_id: GateId,
+    mut environment: Vec<(OsString, OsString)>,
+    repository: &Path,
+) -> Vec<(OsString, OsString)> {
+    if gate_id != GateId::CanvasWebTypecheck {
+        return environment;
+    }
+    let (target, build) = canvas_output_roots(repository);
+    set_environment_value(&mut environment, CARGO_TARGET_DIR, target);
+    set_environment_value(&mut environment, CARGO_BUILD_BUILD_DIR, build);
+    environment.sort();
+    environment
+}
+
+fn set_environment_value(environment: &mut Vec<(OsString, OsString)>, name: &str, value: PathBuf) {
+    match environment
+        .iter_mut()
+        .find(|(candidate, _)| candidate == OsStr::new(name))
+    {
+        Some((_, current)) => *current = value.into_os_string(),
+        None => environment.push((OsString::from(name), value.into_os_string())),
+    }
+}
+
 /// One compiler contract bound to a verified stable mirror of its selection.
 pub struct PreparedVerifierCompiler {
     contract: VerifierCompilerContract,
@@ -435,6 +461,12 @@ pub struct PreparedVerifierCompiler {
 }
 
 impl PreparedVerifierCompiler {
+    /// Gate arm owned by this stable compiler source.
+    #[must_use]
+    pub const fn gate_id(&self) -> GateId {
+        self.contract.gate_id()
+    }
+
     /// Exact stages this prepared arm must complete.
     #[must_use]
     pub fn stages(&self) -> &'static [VerifierCompilerStage] {
@@ -450,31 +482,56 @@ impl PreparedVerifierCompiler {
         self.contract.run(stage)
     }
 
-    /// Complete the arm proof and release its stable source possession.
+    /// Run one exact stage from the held stable source mirror under cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same supervision failures as
+    /// [`VerifierCompilerContract::run_supervised`].
+    pub fn run_supervised(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: CancellationToken,
+    ) -> io::Result<VerifierCompilerRun> {
+        self.contract.run_supervised(stage, cancellation)
+    }
+
+    /// Native compiler output roots which workspace tests may reuse.
+    #[must_use]
+    pub fn reusable_workspace(&self) -> Option<super::RustAnalysisWorkspace> {
+        self.contract.reusable_workspace()
+    }
+
+    /// Complete the arm proof while retaining stable-source possession.
+    ///
+    /// The prepared contract remains locked until it is dropped, allowing the
+    /// full verifier to construct both its battery receipt and terminal durable
+    /// evidence from one unchanged compiler authority.
     ///
     /// # Errors
     ///
     /// Refuses incomplete evidence or a source mirror that cannot be returned
     /// to its writable persistent state.
     pub fn complete(
-        mut self,
+        &self,
         processes: &[VerifierCompilerProcessEvidence],
     ) -> Result<VerifierCompilerEvidence, String> {
-        let evidence = self.contract.complete(processes)?;
-        self.source.release().map_err(|error| {
-            format!(
-                "{} {} could not be released: {error}",
-                self.source.label,
-                self.source.root.display(),
-            )
-        })?;
-        Ok(evidence)
+        self.contract.complete(processes)
+    }
+
+    /// Release the stable source mirror after every proof consumer has finished.
+    ///
+    /// # Errors
+    ///
+    /// Returns a permission error if the persistent mirror cannot be restored
+    /// to its writable idle state.
+    pub fn release(&mut self) -> io::Result<()> {
+        self.source.release()
     }
 }
 
 struct StableCompilerSource {
     root: PathBuf,
-    label: &'static str,
     possession: Option<Possession>,
 }
 
@@ -502,7 +559,6 @@ impl StableCompilerSource {
         synchronize_source(&contract.selection_root, &root)?;
         Ok(Self {
             root,
-            label,
             possession: Some(possession),
         })
     }
@@ -692,7 +748,8 @@ impl VerifierCompilerEvidence {
         tools: &[ToolEvidence],
     ) -> bool {
         let expected = expected_stages(gate_id);
-        let process_environment = compiler_environment(environment, repository);
+        let environment = contract_environment(gate_id, environment.to_vec(), repository);
+        let process_environment = compiler_environment(&environment, repository);
         self.gate_id == gate_id
             && &self.source == source
             && self.manifest == manifest_identity()

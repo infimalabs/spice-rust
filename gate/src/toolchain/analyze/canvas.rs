@@ -165,8 +165,7 @@ impl CanvasOutputs {
         selected: &Path,
         repository: &Path,
     ) -> Result<Self, String> {
-        let cargo_target = repository.join("target/xtask-app");
-        let cargo_build = repository.join("target/xtask-app-build");
+        let (cargo_target, cargo_build) = canvas_output_roots(repository);
         let trunk_dist = workspace.path().join("trunk-dist");
         if let Err(error) = fs::create_dir_all(&cargo_target)
             .and_then(|()| fs::create_dir_all(&cargo_build))
@@ -183,4 +182,11 @@ impl CanvasOutputs {
             trunk_dist,
         })
     }
+}
+
+pub(in crate::toolchain) fn canvas_output_roots(repository: &Path) -> (PathBuf, PathBuf) {
+    (
+        repository.join("target/xtask-app"),
+        repository.join("target/xtask-app-build"),
+    )
 }

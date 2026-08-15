@@ -21,7 +21,9 @@ mod current_source;
 mod policy;
 mod reach;
 
-pub use current_source::select_current_source_change_gates;
+pub use current_source::{
+    select_current_source_change_gates, select_current_source_change_gates_with_full_verifier,
+};
 pub use policy::{ChangeSelectionPolicy, ChangeSelectionPolicyInputs};
 pub use reach::{
     ChangeArmReach, ChangeReachAuthority, ChangeReachEdge, ChangeReachMode, ChangeReachObject,

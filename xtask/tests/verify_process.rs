@@ -386,24 +386,30 @@ fn assert_workspace_test_execution(
             .expect("canonical verifier repository")
             .display()
     );
+    let mut actual = fs::read_to_string(cargo_log)
+        .expect("read verifier Cargo actions")
+        .lines()
+        .filter(|line| *line != "--version")
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut expected = [
+        "build --locked -p spice --bin spice",
+        "clippy --locked --workspace --all-targets -- -D warnings",
+        "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+        "check --locked --workspace --target wasm32-unknown-unknown",
+        app_action.as_str(),
+        "test --locked --workspace --all-targets --no-run",
+        "test --locked --package verify-process-fixture-id --lib",
+        "doc --locked --workspace --lib --bins --no-deps",
+        "test --locked --workspace --doc",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    actual.sort_unstable();
+    expected.sort_unstable();
     assert_eq!(
-        fs::read_to_string(cargo_log)
-            .expect("read verifier Cargo actions")
-            .lines()
-            .filter(|line| *line != "--version")
-            .take(9)
-            .collect::<Vec<_>>(),
-        [
-            "build --locked -p spice --bin spice",
-            "clippy --locked --workspace --all-targets -- -D warnings",
-            "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
-            "check --locked --workspace --target wasm32-unknown-unknown",
-            app_action.as_str(),
-            "test --locked --workspace --all-targets --no-run",
-            "test --locked --package verify-process-fixture-id --lib",
-            "doc --locked --workspace --lib --bins --no-deps",
-            "test --locked --workspace --doc",
-        ]
+        actual, expected,
+        "concurrent compiler and workspace-test setup emitted an unexpected Cargo action set"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(

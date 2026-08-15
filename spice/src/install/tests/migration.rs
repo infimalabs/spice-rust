@@ -143,6 +143,14 @@ fn large_rollback_archive_stays_private_to_bounded_public_replies() {
 
 #[test]
 fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
+    let (fixture, migration, pre_witness_digest, before) = pre_witness_fixture();
+    let (repair, other) = exact_repair_plan(&fixture, &migration, &pre_witness_digest, &before);
+    apply_interrupted_repair(&fixture, &repair);
+    refresh_repaired_appliance(&fixture, &other);
+    reverse_and_assert_version_7(&fixture);
+}
+
+fn pre_witness_fixture() -> (MigrationFixture, InstallPlan, Digest, InstalledState) {
     let fixture = version_7_fixture();
     let migration = preview_migration(&fixture);
     let migrated = apply(
@@ -188,9 +196,18 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
     );
     assert_eq!(installed_state(&fixture.repository, &migration), before);
 
+    (fixture, migration, pre_witness_digest, before)
+}
+
+fn exact_repair_plan(
+    fixture: &MigrationFixture,
+    migration: &InstallPlan,
+    pre_witness_digest: &Digest,
+    before: &InstalledState,
+) -> (InstallPlan, PathBuf) {
     let repair = plan(&fixture.repository, Some(&fixture.binary))
         .expect("derive exact side-effect-free repair plan");
-    assert_ne!(repair.digest().unwrap(), pre_witness_digest);
+    assert_ne!(repair.digest().unwrap(), *pre_witness_digest);
     assert!(repair.canonical_bytes().unwrap().len() < MAX_COMPACT_PLAN_BYTES);
     let rollback = repair
         .rollback_state()
@@ -206,7 +223,7 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
                 retirement.rollback_witness()
             ))
     );
-    assert_eq!(installed_state(&fixture.repository, &migration), before);
+    assert_eq!(installed_state(&fixture.repository, migration), *before);
 
     let other = fixture
         .scratch
@@ -214,8 +231,12 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
     let stale = apply(&fixture.repository, Some(&other), &repair.digest().unwrap())
         .expect_err("a repair digest cannot authorize another build");
     assert!(matches!(stale, InstallError::DigestMismatch { .. }));
-    assert_eq!(installed_state(&fixture.repository, &migration), before);
+    assert_eq!(installed_state(&fixture.repository, migration), *before);
 
+    (repair, other)
+}
+
+fn apply_interrupted_repair(fixture: &MigrationFixture, repair: &InstallPlan) {
     let interrupted = apply_with_interruption(
         &fixture.repository,
         Some(&fixture.binary),
@@ -253,8 +274,10 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
             .status(),
         InstallStatus::Complete
     );
+}
 
-    let refresh = plan(&fixture.repository, Some(&other))
+fn refresh_repaired_appliance(fixture: &MigrationFixture, other: &Path) {
+    let refresh = plan(&fixture.repository, Some(other))
         .expect("derive a normal refresh after the forward repair");
     let rollback = refresh
         .rollback_state()
@@ -271,18 +294,13 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
             })
     );
     assert!(refresh.canonical_bytes().unwrap().len() < MAX_COMPACT_PLAN_BYTES);
-    apply(
-        &fixture.repository,
-        Some(&other),
-        &refresh.digest().unwrap(),
-    )
-    .expect("apply a normal refresh after the forward repair");
+    apply(&fixture.repository, Some(other), &refresh.digest().unwrap())
+        .expect("apply a normal refresh after the forward repair");
     assert!(
-        audit_appliance(&fixture.repository, &other)
+        audit_appliance(&fixture.repository, other)
             .expect("audit refreshed repaired appliance")
             .is_current()
     );
-    reverse_and_assert_version_7(&fixture);
 }
 
 #[derive(Clone, Copy, Debug)]
