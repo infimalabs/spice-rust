@@ -432,6 +432,27 @@ fn current_source_authorities_refuse_and_local_reports_are_canonical() {
 }
 
 #[test]
+fn full_verifier_evidence_admits_only_known_current_source_authorities() {
+    let report = select_current_source_change_gates_with_full_verifier(
+        source(),
+        &strings(&[
+            "gate/src/change_selection.rs",
+            "spice/src/gate_command/pre_commit.rs",
+        ]),
+    )
+    .expect("exact full-verifier evidence reaches compiled selector authorities");
+
+    assert_eq!(report.gate_ids(), GateId::BATTERY);
+    assert_eq!(report.applicable_gate_ids(), GateId::BATTERY);
+    for path in ["assets/opaque.bin", "tools/outside.rs"] {
+        let error =
+            select_current_source_change_gates_with_full_verifier(source(), &strings(&[path]))
+                .expect_err("full-verifier evidence must not classify unknown source");
+        assert!(error.detail().starts_with(&format!("{path:?} ")));
+    }
+}
+
+#[test]
 fn current_source_report_modules_remain_selector_authorities() {
     let error = select_current_source_change_gates(
         source(),

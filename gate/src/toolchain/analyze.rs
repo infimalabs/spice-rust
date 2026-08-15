@@ -47,6 +47,7 @@ mod formatter;
 pub(in crate::toolchain) use build_root::{
     CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, canvas_source_root,
 };
+pub(in crate::toolchain) use canvas::canvas_output_roots;
 pub(super) use canvas::canvas_web_typecheck;
 #[cfg(test)]
 use formatter::differing_files;

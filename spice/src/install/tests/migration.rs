@@ -203,7 +203,6 @@ fn assert_forward_repair_plan(
         "{audit:?}"
     );
     assert_eq!(installed_state(&fixture.repository, migration), *before);
-
     let repair = plan(&fixture.repository, Some(&fixture.binary))
         .expect("derive exact side-effect-free repair plan");
     assert_ne!(repair.digest().unwrap(), *pre_witness_digest);

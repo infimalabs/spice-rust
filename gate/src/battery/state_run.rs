@@ -165,6 +165,15 @@ impl BatteryStateRun {
             .ok_or_else(|| BatteryError::new("battery state run has not bound a selected source"))
     }
 
+    /// Exact durable ledger loaded before run-start normalization.
+    pub(super) fn durable_ledger(&self) -> Result<StateLedger, BatteryError> {
+        self.lock()?
+            .current
+            .as_ref()
+            .map(|current| current.before().clone())
+            .ok_or_else(|| BatteryError::new("battery state transaction is already terminal"))
+    }
+
     /// Finish the complete accumulated proposal, publishing only staged sources.
     ///
     /// Revision-selected proposals are deliberately reconciled to preserve the

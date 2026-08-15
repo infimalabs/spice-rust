@@ -57,6 +57,25 @@ struct BatteryAuthorities {
     tools: Vec<BatteryToolEvidence>,
 }
 
+fn authorities_match_after_state(
+    prior: &super::BatteryContext,
+    current: &super::BatteryContext,
+    durable: &Digest,
+    state: &StateReceipt,
+) -> bool {
+    state.accepted()
+        && state.before() == prior.state()
+        && state.after() == durable
+        && prior.source() == current.source()
+        && prior.actor() == current.actor()
+        && prior.scope() == current.scope()
+        && prior.configuration() == current.configuration()
+        && prior.policy() == current.policy()
+        && prior.bounds() == current.bounds()
+        && prior.latches() == current.latches()
+        && prior.tools() == current.tools()
+}
+
 impl BatteryAuthorities {
     /// Borrow the complete authority set as one validated input contract.
     fn inputs(&self) -> Result<BatteryInputs<'_>, BatteryError> {
@@ -86,6 +105,77 @@ pub struct BatteryCapture<'trace> {
 }
 
 impl BatteryCapture<'_> {
+    /// Re-admit one retained complete receipt against this exact fresh capture.
+    ///
+    /// Receipt decoding proves the retained document is canonical and complete;
+    /// the comparisons here additionally bind it to every authority resolved by
+    /// this capture, including the current baseline document.  This does not
+    /// execute an arm or mutate the shared state transaction.
+    pub fn admit_receipt(&self, document: &[u8]) -> Result<BatteryReceipt, BatteryError> {
+        self.admit_receipt_inner(document, None)
+    }
+
+    /// Re-admit one retained complete receipt after its exact state transition.
+    ///
+    /// The complete verifier reads the ledger before it runs, then publishes
+    /// the accepted ledger after every arm admits. A subsequent capture binds
+    /// the transition's exact `after` identity to the durable ledger it loaded,
+    /// while comparing freshly normalized latch and bound projections to the
+    /// receipt. This permits irrelevant expiry normalization without permitting
+    /// a persisted transition, gate-relevant state, or independent authority to
+    /// drift.
+    pub fn admit_receipt_after_state(
+        &self,
+        document: &[u8],
+        state: &StateReceipt,
+    ) -> Result<BatteryReceipt, BatteryError> {
+        self.admit_receipt_inner(document, Some(state))
+    }
+
+    fn admit_receipt_inner(
+        &self,
+        document: &[u8],
+        state: Option<&StateReceipt>,
+    ) -> Result<BatteryReceipt, BatteryError> {
+        if self.selected.is_some() {
+            return Err(BatteryError::new(
+                "battery receipt admission requires a complete capture",
+            ));
+        }
+        let receipt = BatteryReceipt::verify(document)
+            .map_err(|error| BatteryError::new(format!("battery receipt refused: {error}")))?;
+        if !receipt.run().admits() {
+            return Err(BatteryError::new(
+                "battery receipt does not carry an admitted complete run",
+            ));
+        }
+        let current = self.authorities.inputs()?.snapshot()?;
+        let prior = receipt.run().context();
+        let authorities_match = match state {
+            Some(state) => {
+                let durable = self.state_run.durable_ledger()?.digest();
+                authorities_match_after_state(prior, &current, &durable, state)
+            }
+            None => prior == &current,
+        };
+        if !authorities_match {
+            return Err(BatteryError::new(
+                "battery receipt does not match the current captured authorities",
+            ));
+        }
+        let baseline = self.executor.contract().baseline_digest().ok_or_else(|| {
+            BatteryError::new(format!(
+                "battery receipt requires lower-is-better state at {BASELINE_PATH:?}"
+            ))
+        })?;
+        if receipt.baseline() != &baseline {
+            return Err(BatteryError::new(
+                "battery receipt does not match the current baseline authority",
+            ));
+        }
+        Ok(receipt)
+    }
+
     /// Prove the live selector source still names this capture.
     ///
     /// # Errors
@@ -781,6 +871,26 @@ impl<'trace> BatteryCapture<'trace> {
             .map(|report| BatteryReceipt::mint(report, &baseline))
     }
 
+    /// Bind a completed report from this capture to its selected baseline.
+    ///
+    /// This is the full-verifier seam: compiler evidence is installed and the
+    /// battery executes through its existing path first, then the resulting
+    /// complete report is minted without acquiring a second contract.
+    pub fn mint_receipt(&self, report: BatteryReport) -> Result<BatteryReceipt, BatteryError> {
+        let current = self.authorities.inputs()?.snapshot()?;
+        if report.context() != &current {
+            return Err(BatteryError::new(
+                "battery report does not match the capture minting its receipt",
+            ));
+        }
+        let baseline = self.executor.contract().baseline_digest().ok_or_else(|| {
+            BatteryError::new(format!(
+                "battery receipt requires lower-is-better state at {BASELINE_PATH:?}"
+            ))
+        })?;
+        Ok(BatteryReceipt::mint(report, &baseline))
+    }
+
     /// Identity of the selected bytes this capture owns.
     #[must_use]
     pub const fn source(&self) -> &Digest {
@@ -924,4 +1034,103 @@ fn tool_evidence(contract: &Contract) -> Result<Vec<BatteryToolEvidence>, Batter
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod transition_tests {
+    use serde::Serialize;
+
+    use super::*;
+
+    #[derive(Serialize)]
+    struct StateReceiptFixture<'a> {
+        version: u64,
+        before: &'a Digest,
+        after: &'a Digest,
+        accepted: bool,
+    }
+
+    #[test]
+    fn retained_authorities_cross_only_their_exact_accepted_state_transition() {
+        let before = digest(b"before ledger");
+        let after = digest(b"after ledger");
+        let normalized = digest(b"normalized after ledger");
+        let prior = context(b"source", &before);
+        let current = context(b"source", &normalized);
+
+        assert!(authorities_match_after_state(
+            &prior,
+            &current,
+            &after,
+            &state_receipt(&before, &after, true),
+        ));
+        assert!(!authorities_match_after_state(
+            &prior,
+            &current,
+            &after,
+            &state_receipt(&before, &after, false),
+        ));
+        assert!(!authorities_match_after_state(
+            &prior,
+            &current,
+            &after,
+            &state_receipt(&digest(b"foreign before"), &after, true),
+        ));
+        assert!(!authorities_match_after_state(
+            &prior,
+            &current,
+            &after,
+            &state_receipt(&before, &digest(b"foreign after"), true),
+        ));
+        assert!(!authorities_match_after_state(
+            &prior,
+            &context(b"changed source", &normalized),
+            &after,
+            &state_receipt(&before, &after, true),
+        ));
+        let mut changed_projection =
+            serde_json::to_value(&current).expect("serialize current context fixture");
+        changed_projection["latches"] = serde_json::json!([{
+            "kind": "file-loc",
+            "path": "fixture.rs",
+        }]);
+        let changed_projection = serde_json::from_value(changed_projection)
+            .expect("deserialize changed projection fixture");
+        assert!(!authorities_match_after_state(
+            &prior,
+            &changed_projection,
+            &after,
+            &state_receipt(&before, &after, true),
+        ));
+    }
+
+    fn context(source: &[u8], state: &Digest) -> super::super::BatteryContext {
+        serde_json::from_value(serde_json::json!({
+            "source": digest(source),
+            "actor": { "source": "active-actor", "value": "fixture-actor" },
+            "scope": { "name": "staged-index", "provenance": "fixture index" },
+            "configuration": [],
+            "policy": digest(b"policy"),
+            "state": state,
+            "bounds": [],
+            "latches": [],
+            "tools": [],
+        }))
+        .expect("deserialize context fixture")
+    }
+
+    fn state_receipt(before: &Digest, after: &Digest, accepted: bool) -> StateReceipt {
+        let bytes = wire::encode(&StateReceiptFixture {
+            version: crate::state::STATE_RECEIPT_VERSION,
+            before,
+            after,
+            accepted,
+        })
+        .expect("encode state receipt fixture");
+        StateReceipt::decode(&bytes).expect("decode state receipt fixture")
+    }
+
+    fn digest(bytes: &[u8]) -> Digest {
+        Digest::compute(Domain::GateStateReceipt, bytes)
+    }
 }

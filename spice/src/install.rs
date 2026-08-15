@@ -15,6 +15,7 @@ mod audit;
 mod binding;
 mod error;
 mod files;
+mod fold;
 mod git_hooks;
 mod handle;
 mod hook_activation;
@@ -22,7 +23,6 @@ mod maintenance;
 mod model;
 mod path;
 mod progress;
-mod projection;
 mod record;
 mod rollback;
 mod validation;
@@ -42,9 +42,14 @@ use progress::{
 #[cfg(test)]
 use record::record_path;
 use record::{RefreshRecord, read_record, read_record_for_refresh};
-use rollback::{RollbackArchive, RollbackState};
+use rollback::{RollbackArchive, RollbackState, rollback_image_matches};
 use validation::{asset_contract, fixed_content_differs_from_current_build};
 
+pub use fold::{
+    HookActivationSummary, InstallOperationSummary, InstallPlanSummary, InstallPreview,
+    InstallReceipt, InstallRetirementSummary, InstallStageKind, InstallStatus,
+    RollbackArchiveSummary,
+};
 pub use hook_activation::{
     HookActivationPlan, HookConfigurationMutation, HookConfigurationScope, HookWorktreeObservation,
 };
@@ -53,11 +58,6 @@ pub use maintenance::{
 };
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, RepositoryIdentity};
-pub use projection::{
-    HookActivationSummary, InstallOperationSummary, InstallPlanSummary, InstallPreview,
-    InstallReceipt, InstallRetirementSummary, InstallStageKind, InstallStatus,
-    RollbackArchiveSummary,
-};
 
 const PLAN_VERSION: u16 = 8;
 const RECORD_VERSION: u16 = 8;
@@ -367,14 +367,6 @@ impl InstallPlan {
             }
         }
         Ok(false)
-    }
-}
-
-fn rollback_image_matches(image: Option<&FileImage>, superseded: Option<&GeneratedImage>) -> bool {
-    match (image, superseded) {
-        (None, None) => true,
-        (Some(image), Some(superseded)) => image.validate() && image.generated() == *superseded,
-        _ => false,
     }
 }
 
@@ -859,32 +851,6 @@ fn retirement_drift(retirement: &Retirement, observed: Option<ObservedFile>) -> 
         path: retirement.path.clone(),
         observed: observed.map(|observed| observed.image.digest),
     }
-}
-
-fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
-    validate_relative(&retirement.path)?;
-    validate_relative(&retirement.destination)?;
-    let expected_parent = Path::new(&retirement.parent.ancestor).join(&retirement.parent.missing);
-    if Path::new(&retirement.destination).parent() != Some(expected_parent.as_path())
-        || retirement
-            .previous
-            .as_ref()
-            .is_some_and(|observed| !observed.image.validate())
-        || retirement
-            .observed
-            .as_ref()
-            .is_some_and(|observed| !observed.image.validate())
-        || retirement
-            .superseded
-            .as_ref()
-            .is_some_and(|superseded| !superseded.validate())
-        || (retirement.observed.is_some() && retirement.superseded.is_some())
-    {
-        return Err(InstallError::InvalidRecord(
-            "install retirement carries an invalid path or file image".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

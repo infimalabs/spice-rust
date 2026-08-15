@@ -146,6 +146,157 @@ fn verifier_cargo_budget_binds_once_and_refuses_drift() {
 }
 
 #[test]
+fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs() {
+    let producer = verifier_environment_from([
+        (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
+        (
+            OsString::from(SHELL_LAST_COMMAND),
+            OsString::from("/fixture/producer-xtask"),
+        ),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+    ]);
+    let consumer = verifier_environment_from([
+        (
+            OsString::from(SHELL_LAST_COMMAND),
+            OsString::from("/fixture/consumer-spice"),
+        ),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+        (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
+    ]);
+
+    assert_eq!(producer, consumer);
+    assert_eq!(
+        producer,
+        [
+            (
+                OsString::from("ARBITRARY_BUILD_INPUT"),
+                OsString::from("retained"),
+            ),
+            (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
+        ]
+    );
+
+    let drifted = verifier_environment_from([
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("changed"),
+        ),
+        (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
+    ]);
+    assert_ne!(producer, drifted);
+}
+
+#[test]
+fn cargo_launcher_metadata_normalizes_to_the_installed_compiler_environment() {
+    let producer = verifier_environment_from([
+        (OsString::from("HOME"), OsString::from("/fixture/home")),
+        (
+            OsString::from("CARGO_HOME"),
+            OsString::from("/fixture/home/.cargo"),
+        ),
+        (
+            OsString::from("RUSTUP_HOME"),
+            OsString::from("/fixture/home/.rustup"),
+        ),
+        (OsString::from("CARGO"), OsString::from("/toolchain/cargo")),
+        (
+            OsString::from("CARGO_MANIFEST_DIR"),
+            OsString::from("/fixture/xtask"),
+        ),
+        (OsString::from("CARGO_PKG_NAME"), OsString::from("xtask")),
+        (
+            OsString::from("DYLD_FALLBACK_LIBRARY_PATH"),
+            OsString::from("/fixture/target/debug/deps"),
+        ),
+        (
+            OsString::from("RUSTUP_TOOLCHAIN"),
+            OsString::from("fixture-toolchain"),
+        ),
+        (OsString::from("RUST_RECURSION_COUNT"), OsString::from("1")),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+    ]);
+    let consumer = verifier_environment_from([
+        (OsString::from("HOME"), OsString::from("/fixture/home")),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+    ]);
+
+    assert_eq!(producer, consumer);
+    assert!(producer.contains(&(
+        OsString::from("CARGO_HOME"),
+        OsString::from("/fixture/home/.cargo"),
+    )));
+    assert!(producer.contains(&(
+        OsString::from("RUSTUP_HOME"),
+        OsString::from("/fixture/home/.rustup"),
+    )));
+
+    let custom = verifier_environment_from([
+        (OsString::from("HOME"), OsString::from("/fixture/home")),
+        (
+            OsString::from("CARGO_HOME"),
+            OsString::from("/fixture/custom-cargo"),
+        ),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+    ]);
+    assert_ne!(
+        consumer, custom,
+        "a custom Cargo home remains evidence-bound"
+    );
+}
+
+#[test]
+fn git_commit_metadata_normalizes_to_the_verifier_compiler_environment() {
+    let producer = verifier_environment_from([
+        (OsString::from("HOME"), OsString::from("/fixture/home")),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+    ]);
+    let consumer = verifier_environment_from([
+        (OsString::from("HOME"), OsString::from("/fixture/home")),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+        (
+            OsString::from("GIT_AUTHOR_DATE"),
+            OsString::from("@1786792967 -0500"),
+        ),
+        (
+            OsString::from("GIT_AUTHOR_EMAIL"),
+            OsString::from("gate-report@example.invalid"),
+        ),
+        (
+            OsString::from("GIT_AUTHOR_NAME"),
+            OsString::from("Gate Report Fixture"),
+        ),
+        (OsString::from("GIT_EDITOR"), OsString::from(":")),
+        (
+            OsString::from("GIT_INDEX_FILE"),
+            OsString::from("/fixture/git/index"),
+        ),
+    ]);
+
+    assert_eq!(producer, consumer);
+}
+
+#[test]
 fn verifier_compiler_failure_names_both_bounded_output_streams() {
     let detail = verifier_compiler_failure_detail(
         ::gate::VerifierCompilerStage::NativeClippy,

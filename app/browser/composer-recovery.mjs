@@ -171,25 +171,25 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   await chooseCanvasView(page, "Agents");
   await page.getByRole("tab", { name: /^Compose/ }).first().click();
 
-  const firstInbox = await waitForInbox(fixture, seeded.lane, first);
-  const secondDirective = firstInbox.pending.find((directive) => directive.text.includes(second));
-  assert.ok(secondDirective, "the second same-lane submission drains after the first result");
-  assert.ok(firstInbox.found.text.includes("recovered quote reply"));
+  const secondInbox = await waitForInbox(fixture, seeded.lane, second);
+  const firstDirective = secondInbox.pending.find((directive) => directive.text.includes(first));
+  assert.ok(firstDirective, "the first same-lane submission remains ahead of the second result");
+  assert.ok(firstDirective.text.includes("recovered quote reply"));
   assert.deepEqual(
-    firstInbox.found.attachments.map((attachment) => attachment.name),
+    firstDirective.attachments.map((attachment) => attachment.name),
     ["recovery-before.png"],
     "replay retains the detached image",
   );
-  assert.equal(firstInbox.pending.filter((directive) => directive.text.includes(first)).length, 1);
-  assert.equal(firstInbox.pending.filter((directive) => directive.text.includes(second)).length, 1);
+  assert.equal(secondInbox.pending.filter((directive) => directive.text.includes(first)).length, 1);
+  assert.equal(secondInbox.pending.filter((directive) => directive.text.includes(second)).length, 1);
   await unsafeState(page, false, 0);
   assert.equal(
     await primary.locator(".composer-shard-standing span").first().innerText(),
-    `${firstInbox.pending.length} pending`,
+    `${secondInbox.pending.length} pending`,
     "settled predictions render exactly the backend pending count",
   );
 
-  for (const directive of [firstInbox.found, secondDirective]) {
+  for (const directive of [firstDirective, secondInbox.found]) {
     await reply(fixture, ["steer", "cancel", directive.directive]);
   }
   await activity.filter({ hasText: first }).waitFor({

@@ -27,6 +27,20 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
+const SOURCE_GATE_ARGV: [&str; 11] = [
+    "cargo",
+    "run",
+    "--quiet",
+    "--locked",
+    "--package",
+    "spice",
+    "--bin",
+    "spice",
+    "--",
+    "gate",
+    "selection",
+];
+
 const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -416,8 +430,20 @@ impl Dispatch {
         self.policy.commands.len()
     }
 
+    pub(super) fn omit_full_verifier_proven_configured(&mut self) -> usize {
+        omit_full_verifier_proven(&mut self.policy.commands)
+    }
+
     pub(super) fn source(&self) -> &Digest {
         self.anchor.source()
+    }
+
+    pub(super) fn changes(&self) -> &[String] {
+        self.anchor.changes()
+    }
+
+    pub(super) const fn repository(&self) -> &Repository {
+        &self.repository
     }
 
     pub(super) fn verify(&self) -> Result<(), ConfiguredFailure> {
@@ -521,6 +547,21 @@ impl Dispatch {
         )
         .map(Some)
     }
+}
+
+fn omit_full_verifier_proven(commands: &mut Vec<PreCommitStep>) -> usize {
+    let before = commands.len();
+    commands.retain(|command| !full_verifier_proves(command));
+    before - commands.len()
+}
+
+fn full_verifier_proves(command: &PreCommitStep) -> bool {
+    command.scopes().paths().is_empty()
+        && command
+            .run()
+            .iter()
+            .map(String::as_str)
+            .eq(SOURCE_GATE_ARGV)
 }
 
 pub(super) const fn cleanup_reserve() -> Duration {

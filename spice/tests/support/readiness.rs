@@ -121,7 +121,15 @@ pub(super) fn wait_until_ready(
                 panic!("{what} observer failed: {error}")
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                timeout(what, horizon, changed_signals, ready(), ended(child, what))
+                let state_ready = ready();
+                if state_ready {
+                    return Readiness::Ready;
+                }
+                let child_ended = ended(child, what);
+                if child_ended {
+                    return Readiness::Exited;
+                }
+                timeout(what, horizon, changed_signals, state_ready, child_ended)
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 panic!("{what} completion channel disconnected")

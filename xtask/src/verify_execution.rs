@@ -34,11 +34,11 @@ mod setup;
 /// The current Spice executable is built first and its exact bytes are then
 /// checked against the installed receipt before source verification proceeds.
 /// The compiler-evidence chain is serial and retains its warm build root.
-/// Workspace tests reuse that root only after the Canvas app and resident build
-/// have finished, so a Rust-test branch cannot mask a compiler failure or force
-/// the selected Cargo root to publish tests while another Cargo build stage is
-/// still active. Browser verification then overlaps the Rust-test branch while
-/// performing no Cargo work of its own. Documentation follows the workspace
+/// Workspace-test setup starts after native Clippy produces its reusable root
+/// and overlaps the independent WASM/Canvas compiler tail. Browser and Rust-test
+/// actions remain blocked until both compiler paths have admitted, so neither
+/// can mask a compiler failure. Browser verification then overlaps the Rust-test
+/// branch while performing no Cargo work of its own. Documentation follows the workspace
 /// tests so the reusable native Cargo root is not forced into competing
 /// documentation and test publication work. The evidence-consuming battery
 /// overlaps that documentation tail once browser and workspace tests have
@@ -467,6 +467,9 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
     runner
         .accept_battery_state()
         .map_err(VerifyError::Battery)?;
+    runner
+        .publish_full_verifier_evidence()
+        .map_err(VerifyError::Battery)?;
     Ok(())
 }
 
@@ -526,11 +529,13 @@ fn schedule_graph<R: Runner>(
             );
             if !failure_seen && !cancellation.is_cancelled() {
                 if let Some(rebalanced) =
-                    setups.advance(runner, &nodes, output, budget, cancellation)
+                    setups.advance(scope, runner, &nodes, output, budget, cancellation)
                 {
                     budget = rebalanced;
                 }
                 failure_seen = setups.failed();
+            } else if setups.active() {
+                let _ = setups.advance(scope, runner, &nodes, output, budget, cancellation);
             }
             if !failure_seen && !cancellation.is_cancelled() {
                 start_ready_actions(
@@ -545,11 +550,12 @@ fn schedule_graph<R: Runner>(
                     &mut failure_seen,
                     &mut output_fault,
                     &mut test_phase_started,
+                    setups.workspace_prebuilt(),
                 );
             } else if cancellation.is_cancelled() {
                 failure_seen = true;
             }
-            if running == 0 {
+            if running == 0 && !setups.active() {
                 break;
             }
             if receive_completion(
@@ -620,12 +626,16 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
     failure_seen: &mut bool,
     output_fault: &mut Option<io::Error>,
     test_phase_started: &mut Option<Instant>,
+    test_setup_complete: bool,
 ) {
     for index in ready_nodes(nodes) {
         if *running >= budget.workers {
             break;
         }
         let action = VERIFY_ACTIONS[index];
+        if starts_test_phase_deadline(action) && !test_setup_complete {
+            continue;
+        }
         if let Err(error) = verify_timing::write_start(output, stage(index, action)) {
             output_fault.get_or_insert(error);
             cancellation.cancel();

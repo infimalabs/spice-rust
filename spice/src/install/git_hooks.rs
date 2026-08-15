@@ -22,7 +22,7 @@ impl GitHook {
     }
 }
 
-/// Render one exactly-two-line launcher for the repository's installed Spice.
+/// Render one repository-bound launcher for the installed Spice.
 pub(super) fn launcher(common_git: &Path, hook: GitHook) -> Result<Vec<u8>, InstallError> {
     let installed = common_git.join(BINARY_PATH);
     let spelling = installed
@@ -34,13 +34,33 @@ pub(super) fn launcher(common_git: &Path, hook: GitHook) -> Result<Vec<u8>, Inst
     if spelling.chars().any(is_line_separator) {
         return Err(unrepresentable(&installed, "contains a line separator"));
     }
+    let prelude = match hook {
+        GitHook::PreCommit => PRE_COMMIT_ENVIRONMENT,
+        GitHook::CommitMessage | GitHook::ReferenceTransaction => "",
+    };
     Ok(format!(
-        "#!/bin/sh -eu\nexec {} gate {} \"$@\"\n",
+        "#!/bin/sh -eu\n{prelude}exec {} gate {} \"$@\"\n",
         quote(spelling),
         hook.command(),
     )
     .into_bytes())
 }
+
+const PRE_COMMIT_ENVIRONMENT: &str = concat!(
+    "git_exec_path=${GIT_EXEC_PATH-}\n",
+    "case ${PATH-} in\n",
+    "  \"$git_exec_path\":*) PATH=${PATH#\"$git_exec_path\":}; export PATH ;;\n",
+    "esac\n",
+    "unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n",
+    "case $git_exec_path in\n",
+    "  /Library/Developer/CommandLineTools/*)\n",
+    "    [ \"${CPATH-}\" != /usr/local/include ] || unset CPATH\n",
+    "    [ \"${LIBRARY_PATH-}\" != /usr/local/lib ] || unset LIBRARY_PATH\n",
+    "    case ${SDKROOT-} in /Library/Developer/CommandLineTools/*) unset SDKROOT ;; esac\n",
+    "    case ${MANPATH-} in *Library/Developer/CommandLineTools*) unset MANPATH ;; esac\n",
+    "    ;;\n",
+    "esac\n",
+);
 
 fn quote(spelling: &str) -> String {
     let mut quoted = String::with_capacity(spelling.len() + 2);
@@ -75,20 +95,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn launcher_is_exactly_two_lines_and_quotes_shell_metacharacters() {
+    fn pre_commit_launcher_normalizes_git_and_quotes_shell_metacharacters() {
         let common = Path::new("/tmp/space tab\tquote'$`\\common");
         let bytes = launcher(common, GitHook::PreCommit).expect("special path renders");
         let text = String::from_utf8(bytes).expect("launcher is UTF-8");
 
-        assert_eq!(text.lines().count(), 2);
         assert_eq!(text.lines().next(), Some("#!/bin/sh -eu"));
-        assert_eq!(
-            text.lines().nth(1),
-            Some(concat!(
-                "exec '/tmp/space tab\tquote'\\''$`\\common/",
-                ".spice-install/bin/spice' gate pre-commit \"$@\""
-            ))
-        );
+        assert!(text.contains("unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n"));
+        assert!(text.ends_with(concat!(
+            "exec '/tmp/space tab\tquote'\\''$`\\common/",
+            ".spice-install/bin/spice' gate pre-commit \"$@\"\n"
+        )));
+    }
+
+    #[test]
+    fn non_pre_commit_launchers_remain_exactly_two_lines() {
+        for hook in [GitHook::CommitMessage, GitHook::ReferenceTransaction] {
+            let text = String::from_utf8(launcher(Path::new("/git"), hook).unwrap()).unwrap();
+            assert_eq!(text.lines().count(), 2);
+        }
     }
 
     #[test]

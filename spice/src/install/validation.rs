@@ -158,6 +158,32 @@ fn validate_plan_destinations(
     Ok(())
 }
 
+fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
+    validate_relative(&retirement.path)?;
+    validate_relative(&retirement.destination)?;
+    let expected_parent = Path::new(&retirement.parent.ancestor).join(&retirement.parent.missing);
+    if Path::new(&retirement.destination).parent() != Some(expected_parent.as_path())
+        || retirement
+            .previous
+            .as_ref()
+            .is_some_and(|observed| !observed.image.validate())
+        || retirement
+            .observed
+            .as_ref()
+            .is_some_and(|observed| !observed.image.validate())
+        || retirement
+            .superseded
+            .as_ref()
+            .is_some_and(|superseded| !superseded.validate())
+        || (retirement.observed.is_some() && retirement.superseded.is_some())
+    {
+        return Err(InstallError::InvalidRecord(
+            "install retirement carries an invalid path or file image".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_operation(
     operation: &Operation,
     introduced: &mut BTreeSet<(Location, String)>,

@@ -103,18 +103,20 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
             .expect("canonical verifier repository")
             .display()
     );
-    assert_eq!(
-        chain.get(..5),
-        Some(
-            &[
-                "build --locked -p spice --bin spice",
-                "clippy --locked --workspace --all-targets -- -D warnings",
-                "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
-                "check --locked --workspace --target wasm32-unknown-unknown",
-                app_action.as_str(),
-            ][..]
-        )
-    );
+    for required in [
+        "build --locked -p spice --bin spice",
+        "clippy --locked --workspace --all-targets -- -D warnings",
+        "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+        "check --locked --workspace --target wasm32-unknown-unknown",
+        app_action.as_str(),
+        "test --locked --workspace --all-targets --no-run",
+    ] {
+        assert_eq!(
+            chain.iter().filter(|action| **action == required).count(),
+            1,
+            "required Cargo action was absent or repeated: {required:?} in {chain:?}"
+        );
+    }
     let allowed = [
         "clippy --locked --workspace --all-targets -- -D warnings",
         "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
@@ -130,6 +132,20 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
         "unexpected Cargo action under browser refusal: {cargo_actions:?}",
     );
     assert_bounded_workspace_prefix(&chain);
+    assert!(
+        action_index(
+            &chain,
+            "clippy --locked --workspace --all-targets -- -D warnings"
+        ) < action_index(&chain, "test --locked --workspace --all-targets --no-run"),
+        "workspace-test setup began before native Clippy completed: {chain:?}"
+    );
+}
+
+fn action_index(chain: &[&str], expected: &str) -> usize {
+    chain
+        .iter()
+        .position(|action| *action == expected)
+        .unwrap_or_else(|| panic!("missing Cargo action {expected:?} in {chain:?}"))
 }
 
 fn assert_bounded_workspace_prefix(chain: &[&str]) {

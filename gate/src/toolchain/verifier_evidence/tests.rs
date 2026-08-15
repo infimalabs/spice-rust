@@ -113,6 +113,57 @@ fn exact_complete_evidence_admits_each_compiler_arm() {
 }
 
 #[test]
+fn canvas_contract_uses_the_canonical_isolated_output_pair() {
+    let fixture = contract(GateId::CanvasWebTypecheck);
+    let canvas = VerifierCompilerContract::new(
+        fixture.gate_id,
+        fixture.source,
+        fixture.repository,
+        fixture.selection_root,
+        fixture.tools,
+        vec![
+            (
+                OsString::from(CARGO_TARGET_DIR),
+                OsString::from("/foreign/shared-target"),
+            ),
+            (
+                OsString::from(CARGO_BUILD_BUILD_DIR),
+                OsString::from("/foreign/shared-build"),
+            ),
+        ],
+    )
+    .expect("canvas compiler contract");
+
+    assert_eq!(
+        environment_path(&canvas.environment, CARGO_TARGET_DIR),
+        Some(canvas.repository.join("target/xtask-app"))
+    );
+    assert_eq!(
+        environment_path(&canvas.environment, CARGO_BUILD_BUILD_DIR),
+        Some(canvas.repository.join("target/xtask-app-build"))
+    );
+    let evidence = complete_evidence(&canvas);
+    assert!(admits(&evidence, &canvas));
+    assert!(evidence.admits(
+        canvas.gate_id,
+        &canvas.source,
+        &canvas.repository,
+        &canvas.selection_root,
+        &[
+            (
+                OsString::from(CARGO_TARGET_DIR),
+                OsString::from("/another/ambient-target"),
+            ),
+            (
+                OsString::from(CARGO_BUILD_BUILD_DIR),
+                OsString::from("/another/ambient-build"),
+            ),
+        ],
+        &canvas.tools,
+    ));
+}
+
+#[test]
 fn ordinary_verifier_compilers_own_their_process_group() {
     assert_eq!(crate::measure::bounded_process_group(), ProcessGroup::New);
 }
@@ -301,7 +352,7 @@ fn stable_preparation_mirrors_once_holds_its_lock_and_preserves_fingerprints() {
         .expect("stable compiler contract")
     };
 
-    let prepared = contract().prepare_stable().expect("prepare stable source");
+    let mut prepared = contract().prepare_stable().expect("prepare stable source");
     let cached = canvas_source_root(&repository);
     assert_eq!(prepared.contract.selection_root, cached);
     assert_eq!(
@@ -319,7 +370,7 @@ fn stable_preparation_mirrors_once_holds_its_lock_and_preserves_fingerprints() {
             .is_some_and(|error| error.to_string().contains("in use")),
         "a second preparation acquired the held stable source"
     );
-    drop(prepared);
+    prepared.release().expect("release stable source");
 
     let repeated = contract().prepare_stable().expect("repeat stable source");
     assert_eq!(

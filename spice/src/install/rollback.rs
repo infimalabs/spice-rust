@@ -8,11 +8,22 @@ use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
-use super::{FileImage, InstallError};
+use super::{FileImage, GeneratedImage, InstallError};
 
 const FORMAT_VERSION: u16 = 1;
 const MAGIC: &[u8] = b"spice-install-rollback\0";
 const MAX_UNCOMPRESSED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+pub(super) fn rollback_image_matches(
+    image: Option<&FileImage>,
+    superseded: Option<&GeneratedImage>,
+) -> bool {
+    match (image, superseded) {
+        (None, None) => true,
+        (Some(image), Some(superseded)) => image.validate() && image.generated() == *superseded,
+        _ => false,
+    }
+}
 
 /// A compressed, digest-bound snapshot used only to reverse a version-7
 /// migration. Keeping large executable images out of the JSON object graph

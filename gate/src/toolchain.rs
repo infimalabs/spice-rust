@@ -238,9 +238,9 @@ pub(crate) use acquire::{
 pub use declarations::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use verifier_evidence::{
-    VerifierCompilerContract, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
-    VerifierCompilerRun, VerifierCompilerStage, admit_verifier_compiler_receipt,
-    encode_verifier_compiler_receipt,
+    PreparedVerifierCompiler, VerifierCompilerContract, VerifierCompilerEvidence,
+    VerifierCompilerProcessEvidence, VerifierCompilerRun, VerifierCompilerStage,
+    admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
 };
 
 /// Stable selected-source and Cargo output roots completed by native analysis.

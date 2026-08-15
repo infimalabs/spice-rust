@@ -46,6 +46,7 @@ mod tests {
         calls: Vec<&'static str>,
         scoped_calls: Vec<(ScopedCommand, String)>,
         state_accepts: usize,
+        evidence_publications: usize,
     }
 
     struct FakeRunner {
@@ -67,6 +68,10 @@ mod tests {
 
         fn state_accepts(&self) -> usize {
             self.state().state_accepts
+        }
+
+        fn evidence_publications(&self) -> usize {
+            self.state().evidence_publications
         }
 
         fn set_entry_point(&self, outcome: Result<String, String>) {
@@ -191,6 +196,11 @@ mod tests {
             Ok(())
         }
 
+        fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+            self.state().evidence_publications += 1;
+            Ok(())
+        }
+
         fn landing(&self) -> Result<landing::Report, landing::Error> {
             let mut state = self.state();
             state.calls.push(landing::LABEL);
@@ -234,6 +244,7 @@ mod tests {
 
         assert_exact_calls(&runner, &labels());
         assert_eq!(runner.state_accepts(), 1);
+        assert_eq!(runner.evidence_publications(), 1);
         let output = String::from_utf8(output).expect("labels are UTF-8");
         let report =
             serde_json::to_string(&landing::fixture_report(true)).expect("fixture report encodes");
@@ -296,6 +307,7 @@ mod tests {
             ]
         );
         assert_eq!(runner.state_accepts(), 0);
+        assert_eq!(runner.evidence_publications(), 0);
         let output = String::from_utf8(output).expect("fixture output is UTF-8");
         assert!(output.contains("fixture structural refusal\n"));
         assert!(output.contains(&format!(
@@ -867,6 +879,7 @@ mod tests {
                 calls: Vec::new(),
                 scoped_calls: Vec::new(),
                 state_accepts: 0,
+                evidence_publications: 0,
             }),
         }
     }
