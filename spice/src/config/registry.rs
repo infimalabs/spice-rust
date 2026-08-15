@@ -341,6 +341,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "policy.suppress_install_apply_guidance" {
+        kind: Boolean,
+        builtin: Some(Builtin::Boolean(false)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "policy.pre_commit_builtins" {
         kind: Boolean,
         builtin: Some(Builtin::Boolean(true)),

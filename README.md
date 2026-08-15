@@ -1,5 +1,13 @@
 # Spice
 
+## Source development
+
+Ordinary source-task completion consists of validation, commit, and landing.
+No appliance transition is part of that completion path.
+
+The manual commands below are for the initial authority transition and
+operator-directed recovery, not ordinary source-task completion.
+
 ## Install and start
 
 Spice is this repository's installed appliance. Preview its digest-bound plan,

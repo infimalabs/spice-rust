@@ -66,8 +66,8 @@ stable checkpoint. The four surfaces have distinct jobs:
 | Surface | Run it when | Command and boundary |
 | --- | --- | --- |
 | Targeted staged gate | The index is ready for a commit, or you need exact change-to-check evidence. | `cargo run --quiet --locked --package spice --bin spice -- gate selection`. Known paths select affected Cargo targets and focused canonical policy arms. Selector/toolchain authority, unclassified, and out-of-workspace Rust/manifest paths refuse before execution. It is not completion evidence. |
-| Package validation | Work is moving within one crate and needs broader compile/test feedback than an exact test. Add downstream packages when a public seam changes. | `cargo xtask verify --package PACKAGE`. Runs entry-point audit, package Clippy, all targets, and doctests, while printing every full-only omission. |
-| Full verifier | Immediately before handoff or task completion, after package/seam checks are clean. | `cargo xtask verify`. Runs the unchanged 13-action repository completion graph; no targeted or package result substitutes for it. |
+| Package validation | Work is moving within one crate and needs broader compile/test feedback than an exact test. Add downstream packages when a public seam changes. | `cargo xtask verify --package PACKAGE`. Runs package Clippy, all targets, and doctests, while printing every full-only omission. |
+| Full verifier | Immediately before handoff or task completion, after package/seam checks are clean. | `cargo xtask verify`. Runs the 13-action repository completion graph; no targeted or package result substitutes for it. |
 | Study | You are explicitly investigating suite architecture, mutation reach, or redundant coverage. These can be expensive and are not ordinary edit feedback. | `cargo xtask gate suite-seam`, `cargo xtask gate mutation-coverage`, or `cargo xtask gate test-subsumption`. Keep their exhaustive inventories out of the commit common path. |
 
 Use that boundary in this order:
@@ -85,6 +85,7 @@ Use that boundary in this order:
    refusal.
 5. Immediately before commit or handoff, run `cargo xtask verify`; then confirm
    no owned process remains, inspect the diff, and use the installed hooks.
+   Commit and land the task.
 
 The strict verifier remains 13 actions, a 180-second test-phase cutoff, and a
 300-second hard envelope. It prebuilds workspace tests, then re-observes Cargo

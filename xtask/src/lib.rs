@@ -156,13 +156,14 @@ const FORMAT_LABEL: &str =
 /// `-D warnings` a broken intra-doc link in either file is a hard error, and
 /// under the default target set nothing in this tree ever raised it.
 const DOCUMENTATION_LABEL: &str = "cargo doc --locked --workspace --lib --bins --no-deps";
-/// Receipt-backed proof that the installed appliance is this exact build.
+/// Repository policy for the completion publication boundary.
 ///
-/// The preceding supervised Cargo action builds the current Spice executable.
-/// This audit then verifies every receipt-owned byte and compares the installed
-/// binary digest to that build. None of this work enters the reference-
-/// transaction hook's lock-sensitive path.
-const ENTRY_POINT_LABEL: &str = "installed appliance receipt matches current built Spice";
+/// By default the preceding supervised Cargo action supplies the current Spice
+/// executable to the receipt-backed appliance audit. A source repository whose
+/// outer loop owns `cargo xtask install` may explicitly suppress that audit's
+/// apply guidance; verification then completes silently without reading or
+/// mutating the shared appliance.
+const ENTRY_POINT_LABEL: &str = "repository completion publication boundary";
 /// Real-browser guard for the production Mosaic engine edge.
 ///
 /// BROWSER-1kKSWhZk removed one of the two former surfaces. This mandatory
@@ -612,6 +613,37 @@ fn current_spice_binary() -> Result<PathBuf, String> {
     Ok(directory.join(format!("spice{}", std::env::consts::EXE_SUFFIX)))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn entry_point_with_policy(
+    suppress_install_apply_guidance: bool,
+    audit: impl FnOnce() -> Result<String, String>,
+) -> Result<String, String> {
+    if suppress_install_apply_guidance {
+        Ok(String::new())
+    } else {
+        audit()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn audit_entry_point(repository: &spice::repository::Repository) -> Result<String, String> {
+    let current_binary = current_spice_binary()?;
+    let audit = spice::install::audit_appliance(repository, &current_binary)
+        .map_err(|error| error.to_string())?;
+    if !audit.is_current() {
+        return Err(format!(
+            "installed Spice appliance is {:?}: {}; repair={:?}",
+            audit.state(),
+            audit.detail(),
+            audit.repair(),
+        ));
+    }
+    Ok(format!(
+        "installed Spice appliance is current: {}\n",
+        audit.detail()
+    ))
+}
+
 impl Runner for SystemRunner {
     fn entry_point(&self) -> Result<String, String> {
         #[cfg(target_arch = "wasm32")]
@@ -620,23 +652,14 @@ impl Runner for SystemRunner {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let current_binary = current_spice_binary()?;
             let repository = spice::repository::Repository::discover(Path::new("."))
                 .map_err(|error| error.to_string())?;
-            let audit = spice::install::audit_appliance(&repository, &current_binary)
-                .map_err(|error| error.to_string())?;
-            if !audit.is_current() {
-                return Err(format!(
-                    "installed Spice appliance is {:?}: {}; repair={:?}",
-                    audit.state(),
-                    audit.detail(),
-                    audit.repair(),
-                ));
-            }
-            Ok(format!(
-                "installed Spice appliance is current: {}\n",
-                audit.detail()
-            ))
+            let configuration = spice::config::load_repository(&repository, &[])
+                .map_err(|error| error.diagnostic())?;
+            entry_point_with_policy(
+                spice::config::suppress_install_apply_guidance(configuration.root()),
+                || audit_entry_point(&repository),
+            )
         }
     }
 

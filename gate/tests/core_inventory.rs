@@ -405,7 +405,10 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
-    let expected = [config_path(&["vendor", "codex", "fast_mode"])];
+    let expected = [
+        config_path(&["policy", "suppress_install_apply_guidance"]),
+        config_path(&["vendor", "codex", "fast_mode"]),
+    ];
 
     assert_eq!(evidence.declared(), expected);
     assert_eq!(evidence.observed(), expected);

@@ -59,7 +59,9 @@ fn host_only_metric_debt_helper_carries_its_wasm_boundary() {
         })
         .flat_map(|item| item.items)
         .filter_map(|item| match item {
-            ImplItem::Fn(method) if method.sig.ident == "changed_committed_breach" => Some(method),
+            ImplItem::Fn(method) if method.sig.ident == "changed_committed_ratchet_breach" => {
+                Some(method)
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -67,7 +69,7 @@ fn host_only_metric_debt_helper_carries_its_wasm_boundary() {
     assert_eq!(methods.len(), 1, "the host-only metric helper stays unique");
     assert!(
         methods[0].attrs.iter().any(excludes_wasm),
-        "changed_committed_breach lacks cfg(not(target_arch = \"wasm32\"))"
+        "changed_committed_ratchet_breach lacks cfg(not(target_arch = \"wasm32\"))"
     );
 }
 

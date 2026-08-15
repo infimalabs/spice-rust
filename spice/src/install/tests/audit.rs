@@ -40,6 +40,26 @@ fn missing_stale_foreign_and_current_receipts_are_distinct() {
 }
 
 #[test]
+fn development_guidance_suppression_does_not_weaken_installed_client_audit() {
+    let scratch = Scratch::new("appliance-audit-development-policy");
+    fs::write(
+        scratch.path().join("spice-rust.toml"),
+        "[policy]\nsuppress_install_apply_guidance = true\n",
+    )
+    .expect("the source repository opts out of development guidance");
+    let repository = scratch.repository();
+    let current = scratch.binary(b"current client");
+    let installed = scratch.executable("build/installed-client", b"installed client");
+    install(&repository, &installed);
+
+    let audit = audit_appliance(&repository, &current)
+        .expect("the installed-client audit remains available");
+
+    assert_eq!(audit.state(), ApplianceState::AnotherBuild);
+    assert_eq!(audit.repair(), Some(preview(&current).as_str()));
+}
+
+#[test]
 fn missing_tampered_binary_and_tampered_hook_are_distinct() {
     let binary_scratch = Scratch::new("appliance-audit-binary");
     let binary_repository = binary_scratch.repository();
