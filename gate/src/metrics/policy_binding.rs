@@ -62,13 +62,14 @@ impl ResolvedMetricRule {
         })
     }
 
-    /// Whether an edited value inherited debt above its strict base limit.
+    /// Whether byte-distinct authored content inherited debt above its strict base limit.
+    ///
+    /// `Some` is already the caller's proof that current bytes differ from the
+    /// committed document. Character counts may remain equal across that edit.
     #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
-    pub(crate) fn changed_committed_base_breach(&self, committed: Option<u64>, value: u64) -> bool {
-        committed.is_some_and(|committed| {
-            !self.unlimited && committed > self.base_limit && committed != value
-        })
+    pub(crate) fn changed_committed_base_breach(&self, committed: Option<u64>) -> bool {
+        committed.is_some_and(|committed| !self.unlimited && committed > self.base_limit)
     }
 }
 
@@ -245,17 +246,17 @@ mod tests {
     #[test]
     fn changed_committed_debt_distinguishes_strict_base_from_elastic_ratchet() {
         let bounded = rule(false);
-        assert!(bounded.changed_committed_base_breach(Some(101), 100));
+        assert!(bounded.changed_committed_base_breach(Some(101)));
         assert!(!bounded.changed_committed_ratchet_breach(Some(101), 100));
-        assert!(bounded.changed_committed_base_breach(Some(151), 149));
+        assert!(bounded.changed_committed_base_breach(Some(151)));
         assert!(bounded.changed_committed_ratchet_breach(Some(151), 149));
-        assert!(!bounded.changed_committed_base_breach(Some(100), 99));
+        assert!(!bounded.changed_committed_base_breach(Some(100)));
         assert!(!bounded.changed_committed_ratchet_breach(Some(150), 149));
-        assert!(!bounded.changed_committed_base_breach(None, 100));
+        assert!(!bounded.changed_committed_base_breach(None));
         assert!(!bounded.changed_committed_ratchet_breach(None, 100));
-        assert!(!bounded.changed_committed_base_breach(Some(151), 151));
+        assert!(bounded.changed_committed_base_breach(Some(151)));
         assert!(!bounded.changed_committed_ratchet_breach(Some(151), 151));
-        assert!(!rule(true).changed_committed_base_breach(Some(151), 149));
+        assert!(!rule(true).changed_committed_base_breach(Some(151)));
         assert!(!rule(true).changed_committed_ratchet_breach(Some(151), 149));
     }
 

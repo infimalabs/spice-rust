@@ -509,9 +509,10 @@ fn a_latched_document_is_decided_and_judged_against_its_base_limit() {
 fn an_authored_document_above_its_committed_base_is_held_to_the_true_limit() {
     const PATH: &str = "DOCTRINE.md";
     const BASE: u64 = 10_000;
+    const DEBT: u64 = 12_000;
 
     let repository = contract_repository("core-acquire-repo-docs-committed-debt");
-    repository.write(PATH, &"x".repeat(12_000));
+    repository.write(PATH, &"x".repeat(DEBT as usize));
     git_commit(&repository, "commit document debt inside flex");
 
     let acquire = || {
@@ -548,7 +549,7 @@ fn an_authored_document_above_its_committed_base_is_held_to_the_true_limit() {
         "unchanged committed debt keeps its 1.5x flex"
     );
 
-    repository.write(PATH, &"x".repeat(11_000));
+    repository.write(PATH, &"y".repeat(DEBT as usize));
     git(&repository, &["add", PATH]);
     let changed = acquire();
     let [held] = changed.bounds() else {
@@ -558,13 +559,14 @@ fn an_authored_document_above_its_committed_base_is_held_to_the_true_limit() {
         );
     };
     assert_eq!(held.active_limit(), BASE);
+    assert_eq!(held.measured(), DEBT);
     assert!(held.measured() > BASE && held.measured() < held.elastic_limit());
     assert!(held.over_limit() && !held.elastic_breach());
     assert_eq!(held.latch_transition(), LatchTransition::Held);
     assert_eq!(
         acquired_arm(&evaluate_core(&changed), GateId::RepoDocs).standing(),
         CoreStanding::Failed,
-        "an authored improvement remains actionable until it reaches base"
+        "a same-length authored edit remains actionable until it reaches base"
     );
 
     repository.write(PATH, &"x".repeat(BASE as usize));

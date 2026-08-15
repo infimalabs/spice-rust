@@ -574,7 +574,7 @@ fn repo_docs(
 ///
 /// A latched document is held to its base limit, because a breach already
 /// spent the elastic headroom the ratchet lends. The latch is read from the
-/// ledger this run published as its state authority; a changed committed value
+/// ledger this run published as its state authority; changed committed bytes
 /// already above base infers the same state before a first durable observation
 /// can exist. The arm and the report therefore answer to one debt rule whether
 /// the prior breach is visible in the ledger or in the committed document.
@@ -601,7 +601,7 @@ fn document_measurement(
             "resolve repository-document bound for {path:?}: {error}"
         ))
     })?;
-    let committed_over_base = rule.changed_committed_base_breach(committed, characters);
+    let committed_over_base = rule.changed_committed_base_breach(committed);
     let key = MetricKey::path(path)
         .map_err(|error| CoreInputError::new(format!("repository-document key: {error}")))?;
     let binding = MetricStateBinding::new(
