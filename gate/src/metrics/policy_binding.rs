@@ -61,6 +61,15 @@ impl ResolvedMetricRule {
             !self.unlimited && committed > self.ratchet_limit && committed != value
         })
     }
+
+    /// Whether an edited value inherited debt above its strict base limit.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub(crate) fn changed_committed_base_breach(&self, committed: Option<u64>, value: u64) -> bool {
+        committed.is_some_and(|committed| {
+            !self.unlimited && committed > self.base_limit && committed != value
+        })
+    }
 }
 
 /// Resolved threshold and selection provenance for magic-number scanning.
@@ -234,13 +243,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_changed_committed_debt_beyond_ratchet_is_inherited() {
+    fn changed_committed_debt_distinguishes_strict_base_from_elastic_ratchet() {
         let bounded = rule(false);
-        assert!(bounded.changed_committed_ratchet_breach(Some(151), 149));
-        assert!(!bounded.changed_committed_ratchet_breach(Some(150), 149));
+        assert!(bounded.changed_committed_base_breach(Some(101), 100));
         assert!(!bounded.changed_committed_ratchet_breach(Some(101), 100));
+        assert!(bounded.changed_committed_base_breach(Some(151), 149));
+        assert!(bounded.changed_committed_ratchet_breach(Some(151), 149));
+        assert!(!bounded.changed_committed_base_breach(Some(100), 99));
+        assert!(!bounded.changed_committed_ratchet_breach(Some(150), 149));
+        assert!(!bounded.changed_committed_base_breach(None, 100));
         assert!(!bounded.changed_committed_ratchet_breach(None, 100));
+        assert!(!bounded.changed_committed_base_breach(Some(151), 151));
         assert!(!bounded.changed_committed_ratchet_breach(Some(151), 151));
+        assert!(!rule(true).changed_committed_base_breach(Some(151), 149));
         assert!(!rule(true).changed_committed_ratchet_breach(Some(151), 149));
     }
 

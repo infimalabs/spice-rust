@@ -601,7 +601,7 @@ fn document_measurement(
             "resolve repository-document bound for {path:?}: {error}"
         ))
     })?;
-    let committed_over_ratchet = rule.changed_committed_ratchet_breach(committed, characters);
+    let committed_over_base = rule.changed_committed_base_breach(committed, characters);
     let key = MetricKey::path(path)
         .map_err(|error| CoreInputError::new(format!("repository-document key: {error}")))?;
     let binding = MetricStateBinding::new(
@@ -614,7 +614,7 @@ fn document_measurement(
         rule,
     )
     .map_err(|error| CoreInputError::new(format!("bind repository-document {path:?}: {error}")))?;
-    let latched = latches.contains(binding.entry()) || committed_over_ratchet;
+    let latched = latches.contains(binding.entry()) || committed_over_base;
     let actor_inputs = actor.actor_inputs(path).map_err(|error| {
         CoreInputError::new(format!(
             "actor provenance for repository document {path:?}: {error}"
