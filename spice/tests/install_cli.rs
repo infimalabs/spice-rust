@@ -992,5 +992,7 @@ fn alternate_digest(digest: &str) -> String {
 
 #[path = "install_cli/mutations.rs"]
 mod mutations;
+#[path = "install_cli/races.rs"]
+mod races;
 
 use mutations::{emitted_digest, successful_document};

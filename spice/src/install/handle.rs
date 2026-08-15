@@ -22,7 +22,7 @@ mod support;
 
 #[cfg(debug_assertions)]
 pub(super) use support::configure_mutation_rendezvous;
-use support::temporary_name;
+pub(super) use support::temporary_name;
 
 #[cfg(debug_assertions)]
 static MUTATION_RENDEZVOUS: OnceLock<Option<MutationRendezvous>> = OnceLock::new();

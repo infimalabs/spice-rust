@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use sill::{Availability, LockFile, LockName};
 use spice::config::Root;
-use spice::install::{ApplianceState, InstallStatus};
+use spice::install::{ApplianceState, InstallStatus, InstallTempInspection};
 use spice::repository::{Repository, StatePaths};
 use wire::{DoctorObservation, DoctorSubsystem, DoctorSubsystemDiagnosis, FactKind, ResidencyHead};
 
@@ -300,7 +300,7 @@ fn resident_record(path: &Path, expected: wire::CanonicalUuid) -> DoctorObservat
 }
 
 fn installation(repository: &Repository) -> DoctorObservation {
-    match spice::install::inspect(repository) {
+    let receipt = match spice::install::inspect(repository) {
         Ok(None) => not_applicable("installation receipt is absent"),
         Ok(Some(receipt)) => match receipt.status() {
             InstallStatus::Complete => ready(),
@@ -323,6 +323,58 @@ fn installation(repository: &Repository) -> DoctorObservation {
         Err(error) => repairable_installation(repository).unwrap_or_else(|| {
             unavailable(format!("installation receipt is unavailable: {error}"))
         }),
+    };
+    match spice::install::inspect_temporary_records(repository) {
+        Ok(temporary) => installation_with_temporary_evidence(receipt, &temporary),
+        Err(error) => unavailable(format!(
+            "installation temporary publications are unavailable: {error}; {}",
+            receipt_diagnosis(&receipt),
+        )),
+    }
+}
+
+fn installation_with_temporary_evidence(
+    receipt: DoctorObservation,
+    temporary: &InstallTempInspection,
+) -> DoctorObservation {
+    if temporary.incomplete() || !temporary.unsafe_candidates().is_empty() {
+        return unavailable(format!(
+            "installation temporary publication scan is incomplete or unsafe: examined={} omitted_entries={} omitted_candidates={} candidates={:?}; {}",
+            temporary.examined_entries(),
+            temporary.omitted_entries(),
+            temporary.omitted_candidates(),
+            temporary.unsafe_candidates(),
+            receipt_diagnosis(&receipt),
+        ));
+    }
+    if temporary.reclaimable_count() != 0 {
+        return DoctorObservation::InputRequired {
+            reason: format!(
+                "{} stale install publication file(s) totaling {} bytes are safely reclaimable; run spice install once; {}",
+                temporary.reclaimable_count(),
+                temporary.reclaimable_bytes(),
+                receipt_diagnosis(&receipt),
+            ),
+        };
+    }
+    receipt
+}
+
+fn receipt_diagnosis(observation: &DoctorObservation) -> String {
+    match observation {
+        DoctorObservation::Ready {} => "receipt diagnosis: ready".to_owned(),
+        DoctorObservation::Unavailable { reason } => {
+            format!("receipt diagnosis: unavailable: {reason}")
+        }
+        DoctorObservation::InputRequired { reason } => {
+            format!("receipt diagnosis: input-required: {reason}")
+        }
+        DoctorObservation::NotApplicable { reason } => {
+            format!("receipt diagnosis: not-applicable: {reason}")
+        }
+        DoctorObservation::Unsupported { reason } => {
+            format!("receipt diagnosis: unsupported: {reason}")
+        }
     }
 }
 

@@ -14,6 +14,10 @@ pub(crate) enum Answer {
 
 pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
     #[cfg(debug_assertions)]
+    spice::install::configure_test_maintenance_now(crate::bootstrap_environment(
+        spice::install::TEST_PAUSE_ACTION,
+    ));
+    #[cfg(debug_assertions)]
     spice::install::configure_test_mutation_rendezvous(
         crate::bootstrap_environment(spice::install::TEST_PAUSE_CONTROL),
         crate::bootstrap_environment(spice::install::TEST_PAUSE_ACTION),
@@ -38,6 +42,9 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             return request.fault("install::repository-unresolved", error.to_string());
         }
     };
+    if let Err(error) = spice::install::reclaim_temporary_records(&repository) {
+        return request.install_failure(error);
+    }
 
     match request {
         Request::Plan => {
@@ -95,6 +102,13 @@ impl Request {
         match self {
             Self::Plan => Answer::Plan(Outcome::Fault(fault)),
             Self::Apply(_) | Self::Unapply => Answer::Receipt(Outcome::Fault(fault)),
+        }
+    }
+
+    fn install_failure(self, error: InstallError) -> Answer {
+        match self {
+            Self::Plan => Answer::Plan(failure(error)),
+            Self::Apply(_) | Self::Unapply => Answer::Receipt(failure(error)),
         }
     }
 }
