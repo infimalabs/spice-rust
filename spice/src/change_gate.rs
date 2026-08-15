@@ -597,12 +597,16 @@ fn probe_semantic_evidence(
         }
         crate::gate::SemanticFullVerifierAdmission::Admitted(admitted) => {
             let anchor_context = anchor.context().map_err(ChangeGateError::gate)?;
-            if admitted.source() != anchor.source() || admitted.context() != &anchor_context {
+            let drift = capture_authority_drift(admitted.context(), &anchor_context);
+            if admitted.source() != anchor.source() || !drift.is_empty() {
                 return Err(ChangeGateError::refusal(
                     "change-gate-source-moved",
-                    concat!(
-                        "staged source or captured gate authority changed while comparing ",
-                        "semantic verifier evidence"
+                    format!(
+                        concat!(
+                            "staged source or captured gate authority changed while comparing ",
+                            "semantic verifier evidence: {}"
+                        ),
+                        drift.join(", "),
                     ),
                 ));
             }
@@ -634,6 +638,31 @@ fn probe_semantic_evidence(
             Ok(Some(*admitted))
         }
     }
+}
+
+fn capture_authority_drift(
+    left: &gate::BatteryContext,
+    right: &gate::BatteryContext,
+) -> Vec<&'static str> {
+    // The semantic capture is exhaustive while the anchor is the focused
+    // Staging arm, so their scopes, bounds, and latches are deliberately
+    // different projections. Semantic admission already binds the exhaustive
+    // bound and latch authority per reusable arm; this seam compares only the
+    // capture-wide invariants both projections must share.
+    [
+        (left.source() != right.source(), "source"),
+        (left.actor() != right.actor(), "actor"),
+        (
+            left.configuration() != right.configuration(),
+            "configuration",
+        ),
+        (left.policy() != right.policy(), "policy"),
+        (left.state() != right.state(), "state"),
+        (left.tools() != right.tools(), "tools"),
+    ]
+    .into_iter()
+    .filter_map(|(moved, name)| moved.then_some(name))
+    .collect()
 }
 
 fn select_changes(
