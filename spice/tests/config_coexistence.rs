@@ -112,6 +112,28 @@ fn python_configuration_authors_no_root_its_schema_refuses() {
 }
 
 #[test]
+fn python_configuration_mounts_one_rust_cargo_entrypoint() {
+    let parsed: toml::Table = PYTHON_CONFIGURATION
+        .parse()
+        .expect("Python tracked configuration parses as TOML");
+    let mount = parsed["commands"]["dev.cargo"]
+        .as_array()
+        .expect("dev.cargo mount is argv");
+
+    assert_eq!(mount.len(), 4);
+    assert_eq!(mount[0].as_str(), Some("/bin/bash"));
+    assert_eq!(mount[1].as_str(), Some("-ceu"));
+    assert_eq!(mount[3].as_str(), Some("spice dev cargo"));
+    assert!(
+        mount[2]
+            .as_str()
+            .expect("dev.cargo mount carries one Bash command")
+            .contains("exec \"$rust_spice\" dev cargo \"$@\""),
+        "the Python command surface must enter exactly Rust dev cargo",
+    );
+}
+
+#[test]
 fn a_rust_only_root_is_admitted_without_entering_python_configuration() {
     let candidate = format!("{RUST_CONFIGURATION}\n[gate]\n");
     resolve(Inputs::new(
