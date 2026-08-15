@@ -7,6 +7,7 @@
 //! the whole family — spends four declared measurements to say one thing about
 //! whichever of them is least ready.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::baseline::{BaselineCapture, CommittedTexts, FileShapeAuthorship, selects};
@@ -54,6 +55,7 @@ pub struct MetricSource<'a> {
     baselines: &'a BaselineCapture,
     actor: &'a ActorCapture,
     latches: &'a [LatchEntry],
+    reached: Option<BTreeSet<String>>,
 }
 
 impl<'a> MetricSource<'a> {
@@ -73,6 +75,30 @@ impl<'a> MetricSource<'a> {
         actor: &'a ActorCapture,
         latches: &'a [LatchEntry],
     ) -> Result<Self, MetricAcquisitionError> {
+        Self::capture_inner(tree, contract, baselines, actor, latches, None)
+    }
+
+    /// Capture one selected arm's authored path reach while retaining the
+    /// complete tracked inventory needed for cross-file resolution.
+    pub(crate) fn capture_reached(
+        tree: &'a SelectedTree,
+        contract: &'a Contract,
+        baselines: &'a BaselineCapture,
+        actor: &'a ActorCapture,
+        latches: &'a [LatchEntry],
+        reached: &[String],
+    ) -> Result<Self, MetricAcquisitionError> {
+        Self::capture_inner(tree, contract, baselines, actor, latches, Some(reached))
+    }
+
+    fn capture_inner(
+        tree: &'a SelectedTree,
+        contract: &'a Contract,
+        baselines: &'a BaselineCapture,
+        actor: &'a ActorCapture,
+        latches: &'a [LatchEntry],
+        reached: Option<&[String]>,
+    ) -> Result<Self, MetricAcquisitionError> {
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| MetricAcquisitionError::Source(format!("metric walk: {error}")))?;
         Ok(Self {
@@ -82,6 +108,7 @@ impl<'a> MetricSource<'a> {
             baselines,
             actor,
             latches,
+            reached: reached.map(|paths| paths.iter().cloned().collect()),
         })
     }
 
@@ -108,7 +135,15 @@ impl<'a> MetricSource<'a> {
 
     /// Every regular file a metric may measure, in path order.
     fn measurable(&self) -> Vec<&str> {
-        self.jurisdiction.measurable().map(Entry::path).collect()
+        self.jurisdiction
+            .measurable()
+            .map(Entry::path)
+            .filter(|path| {
+                self.reached
+                    .as_ref()
+                    .is_none_or(|reached| reached.contains(*path))
+            })
+            .collect()
     }
 }
 

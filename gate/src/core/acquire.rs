@@ -17,6 +17,7 @@
 //! mutated or swapped after capture has nothing left to reach: there is no
 //! later state that can cross into a report under the captured digest.
 
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
@@ -184,6 +185,7 @@ pub struct CoreSource<'a> {
     actor: ActorCapture,
     git: GitObservations,
     latches: Vec<LatchEntry>,
+    reached: Option<BTreeSet<String>>,
 }
 
 impl<'a> CoreSource<'a> {
@@ -210,7 +212,7 @@ impl<'a> CoreSource<'a> {
         actor: ActorCapture,
         latches: &[LatchEntry],
     ) -> Result<Self, CoreInputError> {
-        Self::capture_inner(tree, contract, claim, actor, latches, None)
+        Self::capture_inner(tree, contract, claim, actor, latches, None, None)
     }
 
     /// Capture only the live Git observation required by one selected arm.
@@ -221,8 +223,17 @@ impl<'a> CoreSource<'a> {
         actor: ActorCapture,
         latches: &[LatchEntry],
         gate_id: GateId,
+        reached: Option<&[String]>,
     ) -> Result<Self, CoreInputError> {
-        Self::capture_inner(tree, contract, claim, actor, latches, Some(gate_id))
+        Self::capture_inner(
+            tree,
+            contract,
+            claim,
+            actor,
+            latches,
+            Some(gate_id),
+            reached,
+        )
     }
 
     fn capture_inner(
@@ -232,6 +243,7 @@ impl<'a> CoreSource<'a> {
         actor: ActorCapture,
         latches: &[LatchEntry],
         gate_id: Option<GateId>,
+        reached: Option<&[String]>,
     ) -> Result<Self, CoreInputError> {
         // Taken before the walk because it is the only subject here that can
         // still move: the selected tree was sealed at materialization, while
@@ -253,6 +265,7 @@ impl<'a> CoreSource<'a> {
             actor,
             git,
             latches: latches.to_vec(),
+            reached: reached.map(|paths| paths.iter().cloned().collect()),
         })
     }
 
@@ -495,6 +508,13 @@ fn repo_docs(
     let mut measurements = Vec::new();
     for entry in source.jurisdiction.measurable() {
         let path = entry.path();
+        if source
+            .reached
+            .as_ref()
+            .is_some_and(|reached| !reached.contains(path))
+        {
+            continue;
+        }
         let selected = contract
             .rule_policy()
             .selects_repository_document(path)

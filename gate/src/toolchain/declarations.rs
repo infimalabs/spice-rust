@@ -224,7 +224,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
         },
         tools: FORMATTER_TOOLS,
         analysis: &[
-            "rustfmt --edition <workspace edition> --check --files-with-diff <every **/*.rs>",
+            "rustfmt --edition <workspace edition> --check --files-with-diff <authorized **/*.rs>",
         ],
     },
     ToolchainDeclaration {

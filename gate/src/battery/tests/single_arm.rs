@@ -189,6 +189,284 @@ fn selected_production_arms_execute_alone_and_match_their_full_rows() {
     }
 }
 
+#[test]
+fn reached_file_shape_measures_only_the_authored_path_and_binds_its_source() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(repository.join("src/lib.rs"), "unrelated\n".repeat(4_000))
+        .expect("write unrelated committed file-shape breach");
+    fixture_git(&repository, &["add", "src/lib.rs"]);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "unrelated file-shape breach"],
+    );
+    fs::create_dir_all(repository.join("app/src")).expect("reached Rust source directory");
+    let reached = "app/src/reached.rs";
+    fs::write(repository.join(reached), "pub fn reached() {}\n")
+        .expect("write reached Rust source");
+    fixture_git(&repository, &["add", reached]);
+
+    let selection = reached_selection(&repository, reached);
+    let report = reached_report(&repository, &selection, reached, GateId::FileShape);
+    assert!(report.admits(), "{}", report.result().reason());
+    let ArmEvidence::Metrics { report: metrics } = report.result().evidence() else {
+        panic!("reached file-shape arm must retain structural evidence")
+    };
+    assert_eq!(metrics.metrics().len(), 2);
+    assert!(
+        metrics.metrics().iter().all(|metric| {
+            metric.key() == &crate::metrics::MetricKey::path(reached).expect("reached metric key")
+        }),
+        "unexpected reached file-shape metrics: {:?}",
+        metrics.metrics()
+    );
+
+    let direct = crate::ChangeReachObject::Path {
+        path: reached.to_owned(),
+    };
+    let extra = crate::ChangeReachObject::Path {
+        path: "src/lib.rs".to_owned(),
+    };
+    let mut expanded_reach = selection.reach().to_vec();
+    let index = expanded_reach
+        .iter()
+        .position(|reach| reach.gate_id() == GateId::FileShape)
+        .expect("file-shape reach record");
+    expanded_reach[index] = crate::ChangeArmReach::focused(
+        GateId::FileShape,
+        vec![direct.clone(), extra.clone()],
+        vec![
+            crate::ChangeReachEdge::changed(reached, direct.clone()),
+            crate::ChangeReachEdge::dependency(reached, direct, extra),
+        ],
+    );
+    let expanded = selection
+        .clone()
+        .with_reach(expanded_reach)
+        .expect("dependency-expanded reach remains structurally valid");
+    let state_run =
+        crate::BatteryStateRun::capture(&repository).expect("capture expanded reach run");
+    let error = match crate::BatteryCapture::capture_arm_in_state_reached(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting(),
+        reached_rim(&repository, reached),
+        hygiene(),
+        &expanded,
+        GateId::FileShape,
+        state_run,
+    ) {
+        Ok(_) => panic!("path-local reach must not admit dependency-expanded paths"),
+        Err(error) => error,
+    };
+    assert!(
+        error.detail().contains("direct authored path selection"),
+        "{error}"
+    );
+
+    fs::write(
+        repository.join(reached),
+        "pub fn reached_after_selection() {}\n",
+    )
+    .expect("change selected source after reach was authorized");
+    fixture_git(&repository, &["add", reached]);
+    let state_run = crate::BatteryStateRun::capture(&repository).expect("capture stale reach run");
+    let error = match crate::BatteryCapture::capture_arm_in_state_reached(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting(),
+        reached_rim(&repository, reached),
+        hygiene(),
+        &selection,
+        GateId::FileShape,
+        state_run,
+    ) {
+        Ok(_) => panic!("stale reach authority must not capture a different source"),
+        Err(error) => error,
+    };
+    assert!(
+        error.detail().contains("different immutable source"),
+        "{error}"
+    );
+}
+
+#[test]
+fn reached_markdown_parses_only_authored_docs_but_resolves_unmodified_targets() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::create_dir_all(repository.join("docs")).expect("reached documentation directory");
+    let reached = "docs/reached.md";
+    fs::write(
+        repository.join(reached),
+        "# Reached\n\nThe unchanged implementation is [here](../src/lib.rs).\n",
+    )
+    .expect("write reached Markdown source");
+    fixture_git(&repository, &["add", reached]);
+
+    let selection = reached_selection(&repository, reached);
+    let report = reached_report(&repository, &selection, reached, GateId::MarkdownLinks);
+    assert!(
+        report.admits(),
+        "the reached link must resolve through the complete tracked inventory while the unrelated bad-case link stays out of scope: {}",
+        report.result().reason()
+    );
+    let ArmEvidence::Metrics { report: metrics } = report.result().evidence() else {
+        panic!("reached Markdown arm must retain structural evidence")
+    };
+    assert!(!metrics.metrics().is_empty());
+    assert!(
+        metrics.metrics().iter().all(|metric| {
+            matches!(metric.key(), crate::metrics::MetricKey::Arm)
+                || metric.key()
+                    == &crate::metrics::MetricKey::path(reached).expect("reached metric key")
+        }),
+        "unexpected reached Markdown metrics: {:?}",
+        metrics.metrics()
+    );
+}
+
+#[test]
+fn reached_assertion_scan_does_not_report_an_unrelated_committed_test() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    let reached = "app/main.py";
+    fs::write(repository.join(reached), "def entry():\n    return 2\n")
+        .expect("write reached production source");
+    fixture_git(&repository, &["add", reached]);
+
+    let selection = reached_selection(&repository, reached);
+    let report = reached_report(&repository, &selection, reached, GateId::AssertionFreeTests);
+    assert!(
+        report.admits(),
+        "the committed tests/test_main.py assertion is outside authored reach: {}",
+        report.result().reason()
+    );
+    let ArmEvidence::Hygiene { report: hygiene } = report.result().evidence() else {
+        panic!("reached assertion arm must retain hygiene evidence")
+    };
+    assert!(hygiene.findings.is_empty());
+}
+
+#[test]
+fn formatter_evidence_distinguishes_focused_reach_from_exhaustive_capture() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::create_dir_all(repository.join("app/src")).expect("reached Rust source directory");
+    let reached = "app/src/reached.rs";
+    fs::write(repository.join(reached), "pub fn reached() {}\n")
+        .expect("write reached Rust source");
+    fixture_git(&repository, &["add", reached]);
+
+    let selection = reached_selection(&repository, reached);
+    let focused = reached_report(&repository, &selection, reached, GateId::Formatters);
+    let ArmEvidence::Toolchain { report: focused } = focused.result().evidence() else {
+        panic!("reached formatter arm must retain toolchain evidence")
+    };
+    assert_eq!(
+        focused.tree_input,
+        crate::toolchain::TreeInput::SelectedChanges
+    );
+
+    let state_run = crate::BatteryStateRun::capture(&repository).expect("capture exhaustive run");
+    let mut exhaustive = crate::BatteryCapture::capture_arm_in_state(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting(),
+        reached_rim(&repository, reached),
+        hygiene(),
+        GateId::Formatters,
+        state_run,
+    )
+    .expect("capture legacy exhaustive formatter arm");
+    let exhaustive = exhaustive
+        .execute_arm_report(GateId::Formatters)
+        .expect("execute legacy exhaustive formatter arm");
+    let ArmEvidence::Toolchain { report: exhaustive } = exhaustive.result().evidence() else {
+        panic!("exhaustive formatter arm must retain toolchain evidence")
+    };
+    assert_eq!(
+        exhaustive.tree_input,
+        crate::toolchain::TreeInput::CompleteSelectedTree
+    );
+}
+
+#[test]
+fn reached_formatter_deletion_is_inapplicable_before_tool_discovery() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::create_dir_all(repository.join("app/src")).expect("deleted Rust source directory");
+    let reached = "app/src/deleted.rs";
+    fs::write(repository.join(reached), "pub fn deleted() {}\n")
+        .expect("write soon-deleted Rust source");
+    fixture_git(&repository, &["add", reached]);
+    fixture_git(&repository, &["commit", "-q", "-m", "add deleted source"]);
+    fs::remove_file(repository.join(reached)).expect("delete reached Rust source");
+    fixture_git(&repository, &["add", "-u", "--", reached]);
+
+    let selection = reached_selection(&repository, reached);
+    let report = reached_report(&repository, &selection, reached, GateId::Formatters);
+    let ArmEvidence::Toolchain { report } = report.result().evidence() else {
+        panic!("reached formatter arm must retain toolchain evidence")
+    };
+    assert_eq!(report.outcome, crate::toolchain::ArmOutcome::NotApplicable);
+    assert!(report.tools.is_empty());
+    assert_eq!(
+        report.tree_input,
+        crate::toolchain::TreeInput::SelectedChanges
+    );
+}
+
+fn reached_selection(repository: &Path, reached: &str) -> crate::ChangeSelectionReport {
+    let state_run =
+        crate::BatteryStateRun::capture(repository).expect("capture selection state run");
+    let anchor = crate::BatteryCapture::capture_arm_in_state(
+        repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting(),
+        reached_rim(repository, reached),
+        hygiene(),
+        GateId::Staging,
+        state_run,
+    )
+    .expect("capture immutable selection source");
+    crate::select_current_source_change_gates(anchor.source().clone(), &[reached.to_owned()])
+        .expect("select reached current-source arm plan")
+}
+
+fn reached_report(
+    repository: &Path,
+    selection: &crate::ChangeSelectionReport,
+    reached: &str,
+    gate_id: GateId,
+) -> crate::FocusedArmReport {
+    assert!(selection.gate_ids().contains(&gate_id));
+    let state_run = crate::BatteryStateRun::capture(repository).expect("capture reached state run");
+    let mut capture = crate::BatteryCapture::capture_arm_in_state_reached(
+        repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting(),
+        reached_rim(repository, reached),
+        hygiene(),
+        selection,
+        gate_id,
+        state_run,
+    )
+    .expect("capture reached production arm");
+    capture
+        .execute_arm_report(gate_id)
+        .expect("execute reached production arm")
+}
+
+fn reached_rim(repository: &Path, reached: &str) -> crate::RimCapture {
+    crate::RimCapture::new(repository, None, [reached.to_owned()])
+        .expect("fixture repository root is absolute")
+}
+
 fn acting() -> crate::ActorCapture {
     crate::ActorCapture::Acting {
         actor: "battery-actor".to_owned(),

@@ -1,7 +1,7 @@
 //! Compiled analyses for the toolchain arms this build answers itself.
 //!
 //! Most of the eight declared analyses are compiled here: the formatter check
-//! over the complete selected tree, the canvas Wasm check and build, the
+//! over its authorized source inventory, the canvas Wasm check and build, the
 //! workstation-path scanner, the prose scanner, the JavaScript
 //! declaration/reference analysis, and the two environment scanners. Each
 //! reports only what it observed, and [`super::measure_toolchain`] remains the
@@ -150,9 +150,13 @@ impl Analysis {
 /// selected tree contains no subject for that analysis. Returning the absence
 /// here keeps an inapplicable arm independent of workstation tool inventory and
 /// ensures its retained tool evidence is empty.
-pub(super) fn before_tools(declaration: ToolchainDeclaration, root: &Path) -> Option<Analysis> {
+pub(super) fn before_tools(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    formatter_reach: Option<&[String]>,
+) -> Option<Analysis> {
     match declaration.id {
-        GateId::Formatters => match formatter_sources(root) {
+        GateId::Formatters => match formatter::formatter_inputs(root, formatter_reach) {
             Ok(sources) if sources.is_empty() => Some(Analysis::not_applicable(declaration)),
             Ok(_) => None,
             Err(reason) => Some(Analysis::terminal(ArmOutcome::ParseFailure, reason)),

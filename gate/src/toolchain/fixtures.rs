@@ -309,6 +309,12 @@ fn fixture_observation(gate: GateId, outcome: ArmOutcome) -> ArmObservation {
     });
     ArmObservation {
         gate_id: gate,
+        tree_input: TOOLCHAIN_ARMS
+            .iter()
+            .find(|declaration| declaration.id() == gate)
+            .expect("fixture gate has one declaration")
+            .jurisdiction()
+            .input(),
         outcome,
         reason: format!("fixture {} result", gate.as_str()),
         tools,

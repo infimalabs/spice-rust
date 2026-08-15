@@ -116,7 +116,7 @@ fn rust_workspace_applicability_is_settled_before_cargo_discovery() {
     assert!(fixture.root.join("app/src/lib.rs").is_file());
     assert!(!fixture.root.join("Cargo.toml").exists());
     let declaration = declaration(GateId::RustTypecheck).expect("Rust arm is declared");
-    let analysis = before_tools(declaration, &fixture.root)
+    let analysis = before_tools(declaration, &fixture.root, None)
         .expect("a tree without a workspace manifest is inapplicable");
     assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
     assert!(

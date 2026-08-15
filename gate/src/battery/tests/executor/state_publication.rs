@@ -113,6 +113,8 @@ fn rejection_and_stale_publication_leave_prior_state_unchanged() {
 fn focused_acceptance_preserves_unrelated_live_state() {
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);
+    let reached = "app/notes.md";
+    stage_document(&repository, reached, 100);
     let (_, common_git) = crate::tree::git_directories(&repository).expect("fixture Git paths");
     let destination = crate::current_state_path(&common_git);
     let live_paths = crate::tree::tracked_paths(&repository).expect("fixture tracked paths");
@@ -148,12 +150,15 @@ fn focused_acceptance_preserves_unrelated_live_state() {
         .expect("publish unrelated seed");
     let before = fs::read(&destination).expect("seeded state bytes");
 
+    let selection = reached_selection(&repository, reached);
     let focused =
         crate::BatteryStateRun::capture_at(&repository, 20.0).expect("capture focused state run");
-    let report = focused_in_state(
+    let report = focused_reached_in_state(
         &repository,
         "focused-actor",
         focused.clone(),
+        &selection,
+        reached,
         GateId::RepoDocs,
     );
     assert!(report.admits(), "{}", report.result().reason());
@@ -166,6 +171,49 @@ fn focused_acceptance_preserves_unrelated_live_state() {
         before,
         "a focused observation must not interpret an unrelated live latch as absent"
     );
+}
+
+fn reached_selection(repository: &Path, reached: &str) -> crate::ChangeSelectionReport {
+    let state_run =
+        crate::BatteryStateRun::capture(repository).expect("capture selection state run");
+    let anchor = crate::BatteryCapture::capture_arm_in_state(
+        repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting("selection-actor"),
+        crate::RimCapture::new(repository, None, [reached.to_owned()]).expect("selection rim"),
+        crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("fixture hygiene"),
+        GateId::Staging,
+        state_run,
+    )
+    .expect("capture immutable selection source");
+    crate::select_current_source_change_gates(anchor.source().clone(), &[reached.to_owned()])
+        .expect("select reached current-source arm plan")
+}
+
+fn focused_reached_in_state(
+    repository: &Path,
+    actor: &str,
+    state_run: crate::BatteryStateRun,
+    selection: &crate::ChangeSelectionReport,
+    reached: &str,
+    gate_id: GateId,
+) -> crate::FocusedArmReport {
+    let mut capture = crate::BatteryCapture::capture_arm_in_state_reached(
+        repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting(actor),
+        crate::RimCapture::new(repository, None, [reached.to_owned()]).expect("reached rim"),
+        crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("fixture hygiene"),
+        selection,
+        gate_id,
+        state_run,
+    )
+    .expect("capture reached production path");
+    capture
+        .execute_arm_report(gate_id)
+        .expect("execute reached production path")
 }
 
 #[test]

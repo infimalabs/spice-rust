@@ -193,6 +193,7 @@ fn tool_observation(
     });
     ArmObservation {
         gate_id: declaration.id(),
+        tree_input: declaration.jurisdiction().input(),
         outcome,
         reason: format!("fixture {} result", declaration.id()),
         tools,

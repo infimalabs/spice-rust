@@ -459,6 +459,32 @@ impl Jurisdiction {
         self.entries.iter().filter(|entry| entry.measurable())
     }
 
+    /// Retain only named paths and their already-observed parent entries.
+    ///
+    /// This projects an authored reach from the immutable complete walk. It
+    /// never lists a directory again or admits a path the original ignore
+    /// policy refused, while retaining an ignored ancestor as the exact reason
+    /// a reached descendant has no measurable file.
+    pub(crate) fn select_paths(&self, paths: &[String]) -> Self {
+        let entries = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                paths.iter().any(|path| {
+                    path == entry.path()
+                        || path
+                            .strip_prefix(entry.path())
+                            .is_some_and(|suffix| suffix.starts_with('/'))
+                })
+            })
+            .cloned()
+            .collect();
+        Self {
+            root: self.root.clone(),
+            entries,
+        }
+    }
+
     /// The canonical inventory: one line per reached path, reason first.
     ///
     /// The path is last because a path may contain spaces and the reason and

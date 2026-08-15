@@ -122,6 +122,36 @@ pub(crate) fn acquire_hygiene_arm(
     analyze_hygiene_arm(source.jurisdiction(), &configuration, gate_id)
 }
 
+/// Acquire one hygiene arm over only its authored path reach.
+///
+/// The path projection comes from the complete immutable jurisdiction, so it
+/// preserves the original ignore decisions without walking or snapshotting an
+/// unrelated file. Suppressed ancestors are retained only when they explain a
+/// reached descendant.
+pub(crate) fn acquire_hygiene_arm_reached(
+    source: &HygieneSource<'_>,
+    configuration: &HygieneConfiguration,
+    gate_id: GateId,
+    reached: &[String],
+) -> Result<HygieneMeasurement, HygieneAnalysisError> {
+    let jurisdiction = source.jurisdiction.select_paths(reached);
+    let suppressions: Vec<_> = source
+        .suppressed()
+        .iter()
+        .filter(|suppressed| {
+            reached.iter().any(|path| {
+                path == &suppressed.path
+                    || path
+                        .strip_prefix(&suppressed.path)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            })
+        })
+        .cloned()
+        .collect();
+    let configuration = configuration.clone().with_suppressions(suppressions)?;
+    analyze_hygiene_arm(&jurisdiction, &configuration, gate_id)
+}
+
 /// Everything the walk withheld from measurement, paired with the rule that
 /// withheld it.
 ///

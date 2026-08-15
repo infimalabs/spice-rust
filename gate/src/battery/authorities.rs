@@ -273,6 +273,70 @@ impl BatteryCapture<'_> {
             Some(state_run),
         )
     }
+
+    /// Capture one strict selected arm with its validated authored reach in an
+    /// existing state transaction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the reach and shared state accompany six independent capture authorities"
+    )]
+    pub fn capture_arm_in_state_reached(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        selection: &crate::ChangeSelectionReport,
+        gate_id: crate::GateId,
+        state_run: BatteryStateRun,
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner_with_reach(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Strict,
+            Some(gate_id),
+            None,
+            Some(state_run),
+            Some(selection),
+        )
+    }
+
+    /// Capture one generic selected arm with its validated authored reach in
+    /// an existing state transaction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the reach and shared state accompany six independent capture authorities"
+    )]
+    pub fn capture_generic_arm_in_state_reached(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        selection: &crate::ChangeSelectionReport,
+        gate_id: crate::GateId,
+        state_run: BatteryStateRun,
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner_with_reach(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Generic,
+            Some(gate_id),
+            None,
+            Some(state_run),
+            Some(selection),
+        )
+    }
 }
 
 impl<'trace> BatteryCapture<'trace> {
@@ -466,6 +530,29 @@ impl<'trace> BatteryCapture<'trace> {
         trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
         state_run: Option<BatteryStateRun>,
     ) -> Result<Self, BatteryError> {
+        Self::capture_inner_with_reach(
+            repository, selector, claim, actor, rim, hygiene, input_mode, selected, trace,
+            state_run, None,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the execution mode and optional reach accompany six independent capture authorities"
+    )]
+    fn capture_inner_with_reach(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        input_mode: InputMode,
+        selected: Option<crate::GateId>,
+        trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+        state_run: Option<BatteryStateRun>,
+        selection: Option<&crate::ChangeSelectionReport>,
+    ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
         // Read before the capture consumes the observation, and both before the
         // selection is materialized: an authority that cannot be produced is a
@@ -486,6 +573,7 @@ impl<'trace> BatteryCapture<'trace> {
             &state_run,
             input_mode,
             selected,
+            selection,
             trace,
         )?;
         let state = state_run.ledger()?;

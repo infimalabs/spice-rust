@@ -594,6 +594,8 @@ pub struct ArmTiming {
 pub struct ArmObservation {
     /// Stable current gate identity.
     pub gate_id: GateId,
+    /// Candidate-path source actually authorized for this observation.
+    pub tree_input: TreeInput,
     /// Typed operational result.
     pub outcome: ArmOutcome,
     /// Exact human-readable cause; never synthesized from exit status alone.
@@ -650,6 +652,7 @@ impl ArmMeasurement {
             declaration(self.gate_id).ok_or(ToolchainError::ForeignGate(self.gate_id))?;
         let observed = ArmObservation {
             gate_id: self.gate_id,
+            tree_input: self.tree_input,
             outcome: self.outcome,
             reason: self.reason.clone(),
             tools: self.tools.clone(),
@@ -703,6 +706,8 @@ pub enum ToolchainError {
     InvalidFindings { gate: GateId, evidence: String },
     /// Completion code did not match the outcome.
     InvalidExitCode(GateId),
+    /// Candidate-path source was not admitted by the arm declaration.
+    InvalidTreeInput(GateId),
     /// Process timing was absent, unbounded, or belonged to another arm.
     InvalidTiming { gate: GateId, evidence: String },
     /// Tool evidence did not match the declaration or outcome.
@@ -739,6 +744,9 @@ impl fmt::Display for ToolchainError {
                     "{} has an outcome-inconsistent exit code",
                     gate.as_str()
                 )
+            }
+            Self::InvalidTreeInput(gate) => {
+                write!(formatter, "{} has an invalid tree input", gate.as_str())
             }
             Self::InvalidTiming { gate, evidence } => {
                 write!(
@@ -815,6 +823,14 @@ fn measure_arm(
     mut observation: ArmObservation,
 ) -> Result<ArmMeasurement, ToolchainError> {
     let gate = declaration.id;
+    let declared_input = declaration.jurisdiction.input;
+    if observation.tree_input != declared_input
+        && !(gate == GateId::Formatters
+            && observation.tree_input == TreeInput::SelectedChanges
+            && declared_input == TreeInput::CompleteSelectedTree)
+    {
+        return Err(ToolchainError::InvalidTreeInput(gate));
+    }
     if observation.reason.is_empty() || observation.reason.contains(['\n', '\r']) {
         return Err(ToolchainError::InvalidReason(gate));
     }
@@ -844,7 +860,7 @@ fn measure_arm(
         configuration_source: configuration.source.to_owned(),
         configuration_field: configuration.field.to_owned(),
         measurement_engine: declaration.measurement_engine,
-        tree_input: jurisdiction.input,
+        tree_input: observation.tree_input,
         roots: owned(jurisdiction.roots),
         includes: owned(jurisdiction.includes),
         excludes: owned(jurisdiction.excludes),
