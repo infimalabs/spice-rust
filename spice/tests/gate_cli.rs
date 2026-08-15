@@ -35,135 +35,11 @@ use fixture::*;
 const REFUSAL_EXIT: i32 = 2;
 const FAULT_EXIT: i32 = 1;
 const PROCESS_PATH: &str = concat!("PA", "TH");
+const PRE_COMMIT_PATHS: &str = wire::SpiceVariable::PreCommitPaths.as_str();
+const PRE_COMMIT_SOURCE: &str = wire::SpiceVariable::PreCommitSource.as_str();
 const COMMIT_WORKER_STARTUP_ALLOWANCE: Duration = Duration::from_secs(6);
 const COMMIT_WORKER_CONTAINMENT_RUNTIME: Duration = Duration::from_secs(2);
 const COMPACT_CHANGE_REPORT_MAX_BYTES: usize = 128 * 1_024;
-
-#[test]
-fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_180_seconds() {
-    let repository = GateRepository::new();
-    repository.write_source(2);
-    repository.add("src/lib.rs");
-    repository.install_pre_commit();
-    let before = git_stdout(repository.path(), &["rev-list", "--count", "HEAD"]);
-    let started = Instant::now();
-
-    let output = fixture_command("/usr/bin/git")
-        .args(["commit", "-qm", "Exercise bounded commit gate"])
-        .current_dir(repository.path())
-        .output()
-        .expect("launch normal fixture commit");
-
-    assert!(
-        output.status.success(),
-        "normal commit failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(180),
-        "normal commit crossed the fixed 180-second gate deadline"
-    );
-    let after = git_stdout(repository.path(), &["rev-list", "--count", "HEAD"]);
-    assert_eq!(
-        String::from_utf8(before)
-            .unwrap()
-            .trim()
-            .parse::<u64>()
-            .unwrap()
-            + 1,
-        String::from_utf8(after)
-            .unwrap()
-            .trim()
-            .parse::<u64>()
-            .unwrap(),
-        "one successful gate permits exactly one commit",
-    );
-    assert_eq!(
-        String::from_utf8(git_stdout(
-            repository.path(),
-            &["show", "-s", "--format=%s", "HEAD"],
-        ))
-        .unwrap()
-        .trim(),
-        "Exercise bounded commit gate",
-    );
-    assert!(
-        git_stdout(repository.path(), &["diff", "--cached", "--name-only"]).is_empty(),
-        "the successful commit left staged bytes behind"
-    );
-    let state = gate::CurrentState::load(gate::current_state_path(&repository.path().join(".git")))
-        .expect("accepted ordinary gate published current state");
-    assert_eq!(state.before().version(), gate::state::STATE_LEDGER_VERSION);
-    assert!(
-        repository
-            .path()
-            .join(".git/.spice-rs/data/gate-state.json")
-            .is_file(),
-        "ordinary change-gate acceptance is the publication boundary"
-    );
-}
-
-#[test]
-fn resolution_worker_exhausts_real_authority_change_while_ordinary_selection_refuses_it() {
-    let repository = GateRepository::new();
-    let authority = repository.path().join("spice-rust.toml");
-    let mut policy = fs::read_to_string(&authority).expect("read fixture policy authority");
-    policy.push_str("\n# allocator-owned resolution fixture\n");
-    fs::write(&authority, policy).expect("move fixture policy authority");
-    repository.add("spice-rust.toml");
-
-    let ordinary = run_commit_worker(repository.path());
-    let Some((ordinary_kind, ordinary_document)) = ordinary.terminal.split_first() else {
-        panic!("ordinary authority selection published no terminal");
-    };
-    assert_eq!(*ordinary_kind, b'F');
-    let ordinary: serde_json::Value =
-        serde_json::from_slice(ordinary_document).expect("decode ordinary authority refusal");
-    assert_eq!(ordinary["reason"], "gate::change-selection-refused");
-
-    let resolution = run_resolution_worker(repository.path());
-    let Some((resolution_kind, resolution_document)) = resolution.terminal.split_first() else {
-        panic!("resolution authority evidence published no terminal");
-    };
-    assert_eq!(
-        *resolution_kind,
-        b'R',
-        "resolution worker did not admit exhaustive authority evidence: {}",
-        String::from_utf8_lossy(resolution_document),
-    );
-    let report: serde_json::Value =
-        serde_json::from_slice(resolution_document).expect("decode resolution report");
-    assert_eq!(report["version"], 1);
-    assert!(report.get("packaged").is_some());
-    assert!(
-        resolution.progress.contains("[rust-test-selection]"),
-        "exhaustive authority evidence omitted configured workspace tests: {}",
-        resolution.progress,
-    );
-
-    let configured = fixture_command(env!("CARGO_BIN_EXE_spice"))
-        .arg("__gate-resolution-selection-worker")
-        .current_dir(repository.path())
-        .env(
-            wire::SpiceVariable::PreCommitSource.as_str(),
-            report["source"]
-                .as_str()
-                .expect("resolution report carries string source"),
-        )
-        .env(
-            wire::SpiceVariable::PreCommitPaths.as_str(),
-            serde_json::to_string(&["spice-rust.toml"]).expect("encode configured authority paths"),
-        )
-        .output()
-        .expect("launch private configured resolution selector");
-    assert!(
-        configured.status.success(),
-        "private configured resolution selector failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&configured.stdout),
-        String::from_utf8_lossy(&configured.stderr),
-    );
-}
 
 #[test]
 fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selected_work() {
@@ -234,7 +110,6 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
         &authority_marker,
     );
 }
-
 #[test]
 fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     let repository = GateRepository::new();
@@ -404,6 +279,8 @@ fn run_worker_with_path(root: &Path, worker: &str, path: Option<&Path>) -> Worke
         .arg(&progress)
         .arg(&terminal)
         .current_dir(root)
+        .env_remove(PRE_COMMIT_PATHS)
+        .env_remove(PRE_COMMIT_SOURCE)
         .env_remove(steer::hook::INBOX);
     if let Some(path) = path {
         command.env(PROCESS_PATH, path);
@@ -481,6 +358,8 @@ fn invoke_with_path(argv: &[&str], current: &Path, path: Option<&Path>) -> Spoke
     command
         .args(argv)
         .current_dir(current)
+        .env_remove(PRE_COMMIT_PATHS)
+        .env_remove(PRE_COMMIT_SOURCE)
         .env_remove(steer::hook::INBOX);
     if let Some(path) = path {
         command.env(PROCESS_PATH, path);

@@ -185,9 +185,11 @@ pub(super) fn git_output(root: &Path, arguments: &[&str]) -> std::process::Outpu
     output
 }
 
+/// Build an isolated fixture command without inheriting an outer gate selection.
 pub(super) fn fixture_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     command
+        .env_remove("GIT_INDEX_FILE") // env-policy: allow
         .env_remove(wire::SpiceVariable::PreCommitPaths.as_str())
         .env_remove(wire::SpiceVariable::PreCommitSource.as_str());
     command
