@@ -14,6 +14,15 @@
 //! returning tree is the one landing nothing else inspects, which is what this
 //! boundary is for.
 //!
+//! Allocator-owned resolution does not make this boundary redundant. It proves
+//! that the active claimant owns the handoff, seals the merge controls and
+//! resolved index around source evidence, and refuses if either moves. Source
+//! evidence proves that the sealed tree is valid; it cannot prove that every
+//! valid path in that tree was authored for this task. An unrelated baseline
+//! path can be rewritten to other valid content without becoming a conflict or
+//! failing any source gate. Only the first-parent landing diff compared with
+//! non-merge task commits retains that authorship distinction.
+//!
 //! The refusal names every drifted path and classifies it, because the two
 //! classes need opposite recoveries: a path the baseline still holds is put
 //! back by restoring its content, and a path the baseline never had is put back
