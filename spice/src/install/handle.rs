@@ -18,6 +18,12 @@ use std::os::unix::fs::PermissionsExt;
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+mod support;
+
+#[cfg(debug_assertions)]
+pub(super) use support::configure_mutation_rendezvous;
+use support::temporary_name;
+
 #[cfg(debug_assertions)]
 static MUTATION_RENDEZVOUS: OnceLock<Option<MutationRendezvous>> = OnceLock::new();
 
@@ -205,11 +211,40 @@ impl AdmittedPath {
         self.publish_with(image, expected, || mutation_pause("publish", &self.display))
     }
 
+    /// Publish the shared receipt without crossing a stale direction's CAS.
+    pub(super) fn publish_receipt(
+        &self,
+        image: &FileImage,
+        expected: Option<Generation>,
+    ) -> Result<Generation, InstallError> {
+        self.publish_with_stale(
+            image,
+            expected,
+            || mutation_pause("publish", &self.display),
+            InstallError::GenerationChanged,
+        )
+    }
+
     fn publish_with(
         &self,
         image: &FileImage,
         expected: Option<Generation>,
         before_mutation: impl FnOnce() -> Result<(), InstallError>,
+    ) -> Result<Generation, InstallError> {
+        self.publish_with_stale(
+            image,
+            expected,
+            before_mutation,
+            InstallError::ParentChanged,
+        )
+    }
+
+    fn publish_with_stale(
+        &self,
+        image: &FileImage,
+        expected: Option<Generation>,
+        before_mutation: impl FnOnce() -> Result<(), InstallError>,
+        stale: fn(PathBuf) -> InstallError,
     ) -> Result<Generation, InstallError> {
         if !self.ready {
             return Err(InstallError::ParentChanged(self.display.clone()));
@@ -217,7 +252,7 @@ impl AdmittedPath {
         if expected.is_none() && self.preexisting_introduced {
             return Err(InstallError::ParentChanged(self.display.clone()));
         }
-        self.require_generation(expected)?;
+        self.require_generation_as(expected, stale)?;
         #[cfg(unix)]
         {
             let temporary = temporary_name();
@@ -248,8 +283,9 @@ impl AdmittedPath {
                         InstallError::io("inspect admitted staged file", &self.display, source)
                     })?);
                 self.verify_named_parent()?;
-                self.require_generation(expected)?;
+                self.require_generation_as(expected, stale)?;
                 before_mutation()?;
+                self.require_generation_as(expected, stale)?;
                 self.admit_staged_name(&temporary, expected, staged_generation)?;
                 if expected.is_some() {
                     remove_name(self.parent(), &temporary, AtFlags::empty(), &self.display)?;
@@ -423,11 +459,19 @@ impl AdmittedPath {
     }
 
     fn require_generation(&self, expected: Option<Generation>) -> Result<(), InstallError> {
+        self.require_generation_as(expected, InstallError::ParentChanged)
+    }
+
+    fn require_generation_as(
+        &self,
+        expected: Option<Generation>,
+        stale: fn(PathBuf) -> InstallError,
+    ) -> Result<(), InstallError> {
         let observed = self.observe()?.map(|observed| observed.generation);
         if observed == expected {
             Ok(())
         } else {
-            Err(InstallError::ParentChanged(self.display.clone()))
+            Err(stale(self.display.clone()))
         }
     }
 
@@ -948,255 +992,5 @@ fn mutation_pause(_action: &str, _display: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
-#[cfg(debug_assertions)]
-pub(super) fn configure_mutation_rendezvous(
-    control: Option<OsString>,
-    action: Option<OsString>,
-    path: Option<OsString>,
-) {
-    let rendezvous = match (control, action, path) {
-        (Some(control), Some(action), Some(path)) => Some(MutationRendezvous {
-            control: PathBuf::from(control),
-            action,
-            path: PathBuf::from(path),
-        }),
-        _ => None,
-    };
-    MUTATION_RENDEZVOUS
-        .set(rendezvous)
-        .expect("install mutation rendezvous is configured once at startup");
-}
-
-fn temporary_name() -> OsString {
-    OsString::from(format!(
-        ".spice-install-{}-{}.tmp",
-        std::process::id(),
-        TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ))
-}
-
 #[cfg(all(test, unix))]
-mod tests {
-    use std::os::unix::fs::symlink;
-
-    use super::*;
-
-    #[test]
-    fn renamed_parent_at_publication_is_restored_on_refusal() {
-        let root = std::env::temp_dir().join(format!(
-            "spice-admitted-path-{}-{}",
-            std::process::id(),
-            TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed),
-        ));
-        let target = root.join("target");
-        let parked = root.join("parked");
-        let outside = root.join("outside");
-        fs::create_dir_all(&target).unwrap();
-        fs::create_dir(&outside).unwrap();
-        fs::write(target.join("file"), b"before").unwrap();
-        let metadata = fs::metadata(&target).unwrap();
-        let parent = ParentObservation {
-            ancestor: "target".to_owned(),
-            generation: Generation::observe(&metadata),
-            missing: String::new(),
-        };
-        let admitted = AdmittedPath::open(&root, "target/file", &parent, false, 0).unwrap();
-        let expected = admitted.observe().unwrap().unwrap().generation;
-
-        let error = admitted
-            .publish_with(
-                &FileImage::new(0o644, b"after".to_vec()),
-                Some(expected),
-                || {
-                    fs::rename(&target, &parked).unwrap();
-                    symlink(&outside, &target).unwrap();
-                    Ok(())
-                },
-            )
-            .unwrap_err();
-
-        assert!(matches!(error, InstallError::ParentChanged(_)));
-        assert_eq!(fs::read(parked.join("file")).unwrap(), b"before");
-        assert!(fs::read_dir(&outside).unwrap().next().is_none());
-        drop(admitted);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn replaced_destination_at_publication_is_restored_on_refusal() {
-        let root = test_root("publish-replacement");
-        let target = root.join("target");
-        let destination = target.join("file");
-        let parked = target.join("parked");
-        fs::create_dir_all(&target).unwrap();
-        fs::write(&destination, b"before").unwrap();
-        let admitted = admitted_file(&root, &target, "target/file");
-        let expected = admitted.observe().unwrap().unwrap().generation;
-
-        let error = admitted
-            .publish_with(
-                &FileImage::new(0o644, b"after".to_vec()),
-                Some(expected),
-                || {
-                    fs::rename(&destination, &parked).unwrap();
-                    fs::write(&destination, b"racer").unwrap();
-                    Ok(())
-                },
-            )
-            .unwrap_err();
-
-        assert!(matches!(error, InstallError::ParentChanged(_)));
-        assert_eq!(fs::read(&destination).unwrap(), b"racer");
-        assert_eq!(fs::read(&parked).unwrap(), b"before");
-        drop(admitted);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn appeared_destination_at_publication_is_unchanged_on_refusal() {
-        let root = test_root("publish-appearance");
-        let target = root.join("target");
-        let destination = target.join("file");
-        fs::create_dir_all(&target).unwrap();
-        let admitted = admitted_file(&root, &target, "target/file");
-
-        let error = admitted
-            .publish_with(&FileImage::new(0o644, b"after".to_vec()), None, || {
-                fs::write(&destination, b"racer").unwrap();
-                Ok(())
-            })
-            .unwrap_err();
-
-        assert!(matches!(error, InstallError::ParentChanged(_)));
-        assert_eq!(fs::read(&destination).unwrap(), b"racer");
-        drop(admitted);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn replaced_destination_at_removal_is_restored_on_refusal() {
-        let root = test_root("remove-replacement");
-        let target = root.join("target");
-        let destination = target.join("file");
-        let parked = target.join("parked");
-        fs::create_dir_all(&target).unwrap();
-        fs::write(&destination, b"before").unwrap();
-        let admitted = admitted_file(&root, &target, "target/file");
-        let expected = admitted.observe().unwrap().unwrap().generation;
-
-        let error = admitted
-            .remove_with(expected, || {
-                fs::rename(&destination, &parked).unwrap();
-                fs::write(&destination, b"racer").unwrap();
-                Ok(())
-            })
-            .unwrap_err();
-
-        assert!(matches!(error, InstallError::ParentChanged(_)));
-        assert_eq!(fs::read(&destination).unwrap(), b"racer");
-        assert_eq!(fs::read(&parked).unwrap(), b"before");
-        drop(admitted);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn replaced_new_directory_is_refused_by_descriptor_identity() {
-        let root = test_root("create-replacement");
-        fs::create_dir_all(&root).unwrap();
-        let parent = unix_fs::open(
-            &root,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map(File::from)
-        .unwrap();
-        let name = OsString::from("created");
-        let created = root.join(&name);
-        let parked = root.join("parked");
-
-        let error = create_directory(&parent, &name, &created, || {
-            fs::rename(&created, &parked).unwrap();
-            fs::create_dir(&created).unwrap();
-            fs::write(created.join("racer"), b"outside").unwrap();
-            Ok(())
-        })
-        .unwrap_err();
-
-        assert!(matches!(error, InstallError::ParentChanged(_)));
-        assert!(parked.is_dir());
-        assert_eq!(fs::read(created.join("racer")).unwrap(), b"outside");
-        drop(parent);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn planned_missing_directory_that_appears_before_open_is_refused() {
-        let root = test_root("missing-appearance");
-        fs::create_dir_all(&root).unwrap();
-        let parent = ParentObservation {
-            ancestor: String::new(),
-            generation: Generation::observe(&fs::metadata(&root).unwrap()),
-            missing: "created/nested".to_owned(),
-        };
-        let created = root.join("created");
-        fs::create_dir(&created).unwrap();
-        fs::write(created.join("racer"), b"outside").unwrap();
-
-        let admitted = AdmittedPath::open(&root, "created/nested/file", &parent, true, 2).unwrap();
-        let error = admitted
-            .publish(&FileImage::new(0o644, b"after".to_vec()), None)
-            .unwrap_err();
-
-        assert!(matches!(error, InstallError::ParentChanged(_)));
-        assert_eq!(fs::read(created.join("racer")).unwrap(), b"outside");
-        assert!(!created.join("nested").exists());
-        drop(admitted);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn replaced_introduced_directory_at_cleanup_is_restored_on_refusal() {
-        let root = test_root("cleanup-replacement");
-        fs::create_dir_all(&root).unwrap();
-        let parent = ParentObservation {
-            ancestor: String::new(),
-            generation: Generation::observe(&fs::metadata(&root).unwrap()),
-            missing: "created".to_owned(),
-        };
-        let created = root.join("created");
-        let parked = root.join("parked");
-        let admitted = AdmittedPath::open(&root, "created/file", &parent, true, 1).unwrap();
-
-        let error = admitted
-            .cleanup_directory_with(0, &created, || {
-                fs::rename(&created, &parked).unwrap();
-                fs::create_dir(&created).unwrap();
-                fs::write(created.join("racer"), b"outside").unwrap();
-                Ok(())
-            })
-            .unwrap_err();
-
-        assert!(matches!(error, InstallError::ParentChanged(_)));
-        assert!(fs::read_dir(&parked).unwrap().next().is_none());
-        assert_eq!(fs::read(created.join("racer")).unwrap(), b"outside");
-        drop(admitted);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    fn admitted_file(root: &Path, target: &Path, destination: &str) -> AdmittedPath {
-        let parent = ParentObservation {
-            ancestor: "target".to_owned(),
-            generation: Generation::observe(&fs::metadata(target).unwrap()),
-            missing: String::new(),
-        };
-        AdmittedPath::open(root, destination, &parent, false, 0).unwrap()
-    }
-
-    fn test_root(case: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "spice-admitted-path-{case}-{}-{}",
-            std::process::id(),
-            TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed),
-        ))
-    }
-}
+mod tests;
