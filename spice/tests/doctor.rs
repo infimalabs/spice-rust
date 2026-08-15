@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -779,6 +781,38 @@ fn doctor_exposes_no_fix_or_aggregate_execution_path() {
     let stderr = String::from_utf8(spoken.err).expect("Clap speaks UTF-8");
     assert!(stderr.contains("unexpected argument '--fix'"));
     assert!(!stderr.contains(PlaceholderReason::NotLanded.as_str()));
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_reports_unsafe_install_publications_without_changing_them() {
+    let repository = Scratch::repository("unsafe-install-publication");
+    repository.tracked("");
+    let temporary = repository
+        .path()
+        .join(".git/.spice-rs/.spice-install-1-0.tmp");
+    fs::write(&temporary, b"unsafe candidate bytes").expect("write unsafe install publication");
+    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o644))
+        .expect("set unsafe install publication mode");
+    let before = directory_state(repository.path());
+
+    let text = invoke(repository.path(), &["doctor"], OsStr::new(""), &[]);
+    let json = invoke(
+        repository.path(),
+        &["--json", "doctor"],
+        OsStr::new(""),
+        &[],
+    );
+    let report = same_report(&text, &json);
+    let DoctorObservation::Unavailable { reason } =
+        &subsystem(&report, DoctorSubsystem::Installation).observation
+    else {
+        panic!("unsafe install publication must be unavailable");
+    };
+    assert!(reason.contains("installation temporary publication scan"));
+    assert!(reason.contains(".spice-install-1-0.tmp"));
+    assert!(reason.contains("receipt diagnosis: not-applicable: installation receipt is absent"));
+    assert_eq!(directory_state(repository.path()), before);
 }
 
 #[derive(Debug, Eq, PartialEq)]
