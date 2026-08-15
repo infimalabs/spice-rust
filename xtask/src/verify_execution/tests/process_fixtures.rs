@@ -196,6 +196,39 @@ struct FailureRunner {
 }
 
 #[cfg(unix)]
+struct DetachedShardRunner {
+    root_pid_file: PathBuf,
+    detached_identity_file: PathBuf,
+    test_executable: PathBuf,
+}
+
+#[cfg(unix)]
+impl DetachedShardRunner {
+    fn new() -> Self {
+        Self {
+            root_pid_file: fixture_pid_file("detached-shard-root"),
+            detached_identity_file: fixture_pid_file("detached-shard-child"),
+            test_executable: std::env::current_exe().expect("fixture test executable resolves"),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for DetachedShardRunner {
+    fn drop(&mut self) {
+        if let Some(group) = read_first_pid_if_present(&self.detached_identity_file)
+            && process_exists(group)
+        {
+            let _ = Command::new("/bin/kill")
+                .args(["-KILL", &format!("-{group}")])
+                .output();
+        }
+        let _ = fs::remove_file(&self.root_pid_file);
+        let _ = fs::remove_file(&self.detached_identity_file);
+    }
+}
+
+#[cfg(unix)]
 impl FailureRunner {
     fn new() -> Self {
         Self {
@@ -248,12 +281,98 @@ impl Runner for FailureRunner {
 }
 
 #[cfg(unix)]
+impl Runner for DetachedShardRunner {
+    fn entry_point(&self) -> Result<String, String> {
+        Ok(String::new())
+    }
+
+    fn format(&self, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
+        Ok(timed_command(true))
+    }
+
+    fn run(&self, _: Step, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
+        Ok(timed_command(true))
+    }
+
+    fn run_scoped(
+        &self,
+        _: ScopedCommand,
+        _: &str,
+        _: &CancellationToken,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        unreachable!("scoped route is not under test")
+    }
+
+    fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
+        wait_for_path(&self.detached_identity_file);
+        Ok(BrowserRun {
+            process: timed_command(true),
+            completed: false,
+        })
+    }
+
+    fn workspace_tests(
+        &self,
+        cancellation: &CancellationToken,
+        jobs: usize,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        run_process(
+            WORKSPACE_TEST_LABEL,
+            "/bin/sh",
+            [
+                "-c",
+                concat!(
+                    "printf '%s\\n' \"$$\" > \"$ROOT_PID_FILE\"; ",
+                    "\"$TEST_EXECUTABLE\" --ignored --exact ",
+                    "\"$DETACHED_WORKSPACE_SHARD_TEST\" --nocapture --test-threads=1 ",
+                    "</dev/null >/dev/null 2>&1 & wait",
+                ),
+            ],
+            cancellation,
+            jobs,
+            &[
+                ("ROOT_PID_FILE", self.root_pid_file.as_os_str()),
+                (
+                    "DETACHED_IDENTITY_FILE",
+                    self.detached_identity_file.as_os_str(),
+                ),
+                ("TEST_EXECUTABLE", self.test_executable.as_os_str()),
+                (
+                    "DETACHED_WORKSPACE_SHARD_TEST",
+                    std::ffi::OsStr::new(DETACHED_WORKSPACE_SHARD_TEST),
+                ),
+            ],
+        )
+    }
+
+    fn battery(&self, _: &CancellationToken) -> Result<BatteryRun, RunError> {
+        panic!("battery crossed the primary failure")
+    }
+
+    fn landing(&self) -> Result<landing::Report, landing::Error> {
+        panic!("landing crossed the primary failure")
+    }
+}
+
+#[cfg(unix)]
 fn fixture_pid_file(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "spice-verify-{label}-{}-{}",
         std::process::id(),
         NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
     ))
+}
+
+#[cfg(unix)]
+fn read_first_pid_if_present(path: &std::path::Path) -> Option<u32> {
+    fs::read_to_string(path)
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 #[cfg(unix)]

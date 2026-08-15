@@ -21,12 +21,14 @@ mod tests {
         write_deferred_supervisor_output,
     };
     use crate::verify_timing::Disposition;
-    use crate::{ScopedCommand, Step, landing};
+    use crate::{ScopedCommand, Step, WORKSPACE_TEST_LABEL, landing};
 
     const FIXTURE_CPU_COUNT: usize = 16;
     const BENCHMARK_CPU_ITERATIONS: u64 = 10_000_000;
     const NON_COOPERATIVE_CHILD_TEST: &str =
         "verify_execution::tests::non_cooperative_in_process_verifier_fixture";
+    const DETACHED_WORKSPACE_SHARD_TEST: &str =
+        "verify_execution::tests::detached_workspace_shard_fixture";
     const SUPERVISOR_PID_MARKER: &str = "verifier-supervisor-fixture pid=";
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -743,6 +745,33 @@ mod tests {
         drop(signal_guard);
     }
 
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "launched exactly by the detached workspace-shard cancellation test"]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the isolated fixture reads its one injected identity path at the process rim"
+    )]
+    fn detached_workspace_shard_fixture() {
+        // SAFETY: this single-threaded fixture process exists only to prove that
+        // a workspace-test descendant can leave its action's process group.
+        let session = unsafe { libc::setsid() };
+        assert_ne!(session, -1, "fixture creates a new session");
+        let pid = std::process::id();
+        // SAFETY: these queries read the calling fixture's process identities.
+        let group = unsafe { libc::getpgrp() };
+        // SAFETY: a zero PID asks for the calling fixture's session.
+        let observed_session = unsafe { libc::getsid(0) };
+        let identity_path = std::env::var_os("DETACHED_IDENTITY_FILE")
+            .map(PathBuf::from)
+            .expect("fixture identity path is present");
+        fs::write(identity_path, format!("{pid} {group} {observed_session}\n"))
+            .expect("fixture identity publishes");
+        loop {
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+
     #[test]
     fn deterministic_terminals_survive_out_of_order_completion() {
         let runner = TimedRunner::benchmark();
@@ -843,6 +872,42 @@ mod tests {
         assert!(output.contains("disposition=cancelled"));
         assert!(output.contains("primary_ordinal=8 interrupted=false"));
         fs::remove_file(&fixture.pid_file).expect("remove failure fixture pid file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verifier_cancellation_reaps_a_detached_workspace_shard_session() {
+        let fixture = DetachedShardRunner::new();
+        let mut output = Vec::new();
+        let error = verify_with_control(
+            &fixture,
+            &mut output,
+            Budget::fixture(3, 1, 0),
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect_err("browser refusal cancels its detached workspace shard sibling");
+        assert!(matches!(error, VerifyError::BrowserIncomplete));
+
+        let root = read_pids(&fixture.root_pid_file);
+        let detached = read_pids(&fixture.detached_identity_file);
+        assert_eq!(root.len(), 1, "fixture publishes one action root PID");
+        assert_eq!(detached.len(), 3, "fixture publishes PID, PGID, and SID");
+        assert_ne!(root[0], detached[0], "detached shard is a descendant");
+        assert_eq!(detached[0], detached[1], "detached shard leads its group");
+        assert_eq!(detached[0], detached[2], "detached shard leads its session");
+        assert_processes_gone(&fixture.root_pid_file, "cancelled workspace action root");
+        assert_processes_gone(
+            &fixture.detached_identity_file,
+            "cancelled detached workspace shard",
+        );
+
+        let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+        assert!(output.contains("disposition=cancelled"), "{output}");
+        assert!(
+            output.contains("primary_ordinal=8 interrupted=false cleanup_faults=0"),
+            "{output}"
+        );
     }
 
     #[test]
