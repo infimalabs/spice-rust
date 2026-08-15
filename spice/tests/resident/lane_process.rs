@@ -90,6 +90,7 @@ pub(super) fn configure_successor_worktree(fixture: &Fixture) -> PathBuf {
     )
     .expect("successor Git pointer");
     fs::write(git.join("commondir"), "../..\n").expect("successor common pointer");
+    copy_cargo_fixture(fixture, &successor);
     fs::copy(
         fixture.root.join("spice-rust.toml"),
         successor.join("spice-rust.toml"),

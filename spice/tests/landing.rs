@@ -58,6 +58,8 @@ const CASES: &[Case] = &[
     case("doctor", &["doctor"]),
     case("version", &["version"]),
     case("install", &["install"]),
+    case("dev cargo", &["dev", "cargo", "--", "--version"]),
+    case("dev cargo-store", &["dev", "cargo-store"]),
     case("lock", &["lock"]),
     case(
         "lock run",
@@ -443,6 +445,7 @@ fn invoke(root: &Path, case: &Case, json: bool) -> Output {
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
         .env("CODEX_HOME", root.join("absent-codex-home"))
         .env("CLAUDE_CONFIG_DIR", root.join("absent-claude-home"))
+        .env(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE, root)
         .output()
         .unwrap_or_else(|error| panic!("{} process did not launch: {error}", case.path))
 }

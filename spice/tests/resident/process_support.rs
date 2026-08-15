@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+
 pub(super) fn unique_fixture_root(family: &str, name: &str) -> PathBuf {
     loop {
         let root = std::env::temp_dir().join(format!(
@@ -21,6 +24,7 @@ pub(super) struct Fixture {
     pub(super) root: PathBuf,
     pub(super) runtime: PathBuf,
     pub(super) cleanup: PathBuf,
+    pub(super) cargo_home: PathBuf,
 }
 
 impl Fixture {
@@ -30,10 +34,12 @@ impl Fixture {
         fs::create_dir(root.join(".git")).expect("fixture git directory");
         let fixture = Self {
             cleanup: root.clone(),
+            cargo_home: root.join("fixture-cargo-home"),
             root,
             runtime,
         };
         fixture.install_app();
+        fixture.install_cargo();
         fixture
     }
 
@@ -50,14 +56,42 @@ impl Fixture {
         let fixture = Self {
             root,
             runtime: common.join(".spice-rs"),
+            cargo_home: cleanup.join("fixture-cargo-home"),
             cleanup,
         };
         fixture.install_app();
+        fixture.install_cargo();
         fixture
     }
 
     pub(super) fn install_app(&self) {
         seed_fixture_app(&self.root);
+    }
+
+    fn install_cargo(&self) {
+        fs::create_dir(&self.cargo_home).expect("fixture bootstrap Cargo home");
+        fs::write(
+            self.root.join("Cargo.toml"),
+            "[package]\nname = \"resident-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("fixture Cargo manifest");
+        fs::write(
+            self.root.join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"resident-fixture\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("fixture Cargo lockfile");
+        let exclude = if self.root.join(".git").is_dir() {
+            self.root.join(".git/info/exclude")
+        } else {
+            self.runtime
+                .parent()
+                .expect("linked runtime has a common directory")
+                .join("info/exclude")
+        };
+        fs::create_dir_all(exclude.parent().expect("fixture exclude parent"))
+            .expect("fixture Git info directory");
+        fs::write(&exclude, "/Cargo.toml\n/Cargo.lock\n/fixture-cargo-home/\n")
+            .expect("fixture Cargo exclusions");
     }
     pub(super) fn journal(&self) -> PathBuf {
         self.runtime.join("data/spicejournal.sqlite3")
@@ -77,9 +111,40 @@ impl Fixture {
     }
 }
 
+pub(super) fn copy_cargo_fixture(fixture: &Fixture, worktree: &Path) {
+    fs::copy(fixture.root.join("Cargo.toml"), worktree.join("Cargo.toml"))
+        .expect("derived worktree Cargo manifest");
+    fs::copy(fixture.root.join("Cargo.lock"), worktree.join("Cargo.lock"))
+        .expect("derived worktree Cargo lockfile");
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
+        make_fixture_writable(&self.cleanup);
         fs::remove_dir_all(&self.cleanup).expect("fixture cleanup");
+    }
+}
+
+fn make_fixture_writable(path: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if metadata.file_type().is_symlink() {
+        return;
+    }
+    if metadata.is_dir() {
+        #[cfg(unix)]
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .expect("fixture directory becomes writable");
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                make_fixture_writable(&entry.path());
+            }
+        }
+    } else {
+        #[cfg(unix)]
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .expect("fixture file becomes writable");
     }
 }
 
@@ -125,6 +190,17 @@ pub(super) struct RunningResident {
     pub(super) child: Option<Child>,
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the resident process fixture captures its native binary-rim PATH"
+)]
+pub(super) fn fixture_native_cargo() -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").expect("test PATH exists"))
+        .map(|directory| directory.join("cargo"))
+        .find(|candidate| candidate.is_file())
+        .expect("test PATH contains native Cargo")
+}
+
 impl RunningResident {
     pub(super) fn spawn(fixture: &Fixture) -> Self {
         Self::spawn_with(fixture, Path::new(env!("CARGO_BIN_EXE_spice")))
@@ -162,6 +238,14 @@ impl RunningResident {
                 &listen.port().to_string(),
             ])
             .current_dir(&fixture.root)
+            .env(
+                spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
+                &fixture.cargo_home,
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+                fixture_native_cargo(),
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let child = command
@@ -184,6 +268,14 @@ impl RunningResident {
                 token,
             ])
             .current_dir(&fixture.root)
+            .env(
+                spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
+                &fixture.cargo_home,
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+                fixture_native_cargo(),
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -210,6 +302,14 @@ impl RunningResident {
         if let Some(path) = path {
             command.env("PATH", path);
         }
+        command.env(
+            spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
+            &fixture.cargo_home,
+        );
+        command.env(
+            spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+            fixture_native_cargo(),
+        );
         let child = command
             .current_dir(&fixture.root)
             .stdout(Stdio::piped())

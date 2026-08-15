@@ -50,6 +50,9 @@ pub enum SpiceVariable {
     /// Pin document sealed into the native proof runner as it is built.
     #[serde(rename = "SPICE_NATIVE_PINS")] // env-policy: allow
     NativePins,
+    /// Original Cargo home used to seed the immutable source store.
+    #[serde(rename = "SPICE_RS_BOOTSTRAP_CARGO_HOME")] // env-policy: allow
+    BootstrapCargoHome,
     /// Installed Rust shell-hook directory.
     #[serde(rename = "SPICE_RS_HOOKS")] // env-policy: allow
     Hooks,
@@ -59,6 +62,9 @@ pub enum SpiceVariable {
     /// Rust lane bound to an intercepted shell.
     #[serde(rename = "SPICE_RS_LANE")] // env-policy: allow
     Lane,
+    /// Native Cargo executable resolved before the private home is installed.
+    #[serde(rename = "SPICE_RS_NATIVE_CARGO")] // env-policy: allow
+    NativeCargo,
     /// User shell restored behind the Rust structural command wrapper.
     #[serde(rename = "SPICE_RS_NATIVE_SHELL")] // env-policy: allow
     NativeShell,
@@ -89,9 +95,11 @@ impl SpiceVariable {
         Self::MutationAttempt,
         Self::MutationSeed,
         Self::NativePins,
+        Self::BootstrapCargoHome,
         Self::Hooks,
         Self::Inbox,
         Self::Lane,
+        Self::NativeCargo,
         Self::NativeShell,
         Self::PreCommitPaths,
         Self::PreCommitSource,
@@ -105,6 +113,7 @@ impl SpiceVariable {
             Self::CodexThread => "CODEX_THREAD_ID",          // env-policy: allow
             Self::AgentVendor => "SPICE_AGENT_VENDOR",       // env-policy: allow
             Self::AppSourceIdentity => "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
+            Self::BootstrapCargoHome => "SPICE_RS_BOOTSTRAP_CARGO_HOME", // env-policy: allow
             Self::Hooks => "SPICE_RS_HOOKS",                 // env-policy: allow
             Self::HygieneAcquireRepository => {
                 "SPICE_HYGIENE_ACQUIRE_REPOSITORY" // env-policy: allow
@@ -129,6 +138,7 @@ impl SpiceVariable {
             Self::MutationAttempt => "SPICE_MUTATION_ATTEMPT", // env-policy: allow
             Self::MutationSeed => "SPICE_MUTATION_SEED", // env-policy: allow
             Self::NativePins => "SPICE_NATIVE_PINS", // env-policy: allow
+            Self::NativeCargo => "SPICE_RS_NATIVE_CARGO", // env-policy: allow
             Self::NativeShell => "SPICE_RS_NATIVE_SHELL", // env-policy: allow
             Self::PreCommitPaths => "SPICE_RS_PRE_COMMIT_PATHS", // env-policy: allow
             Self::PreCommitSource => "SPICE_RS_PRE_COMMIT_SOURCE", // env-policy: allow
@@ -238,6 +248,8 @@ impl DoctorToolRequirement {
 pub enum DoctorToolSource {
     /// The caller supplies the executable after the command delimiter.
     CommandOperand,
+    /// The native bootstrap environment supplies the executable before isolation.
+    BootstrapEnvironment,
     /// The compiled current Gate policy contract supplies the executable.
     GatePolicyContract,
     /// The compiled current Gate mutation profile supplies the executable.
@@ -260,6 +272,7 @@ impl DoctorToolSource {
     /// The complete closed vocabulary.
     pub const ALL: &[Self] = &[
         Self::CommandOperand,
+        Self::BootstrapEnvironment,
         Self::GatePolicyContract,
         Self::GateMutationContract,
         Self::ReferenceTransactionContract,

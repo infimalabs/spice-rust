@@ -38,6 +38,12 @@ must not be copied into process arguments, environment, discovery, or logs.
   top-level shell command through the installed `spice run` boundary; invoking
   that implementation seam yourself is unnecessary and would add a second
   wrapper hop.
+- A resident lane already carries its private admitted `CARGO_HOME`. Whenever a
+  command can create or refresh `Cargo.lock`, or otherwise needs dependencies
+  outside that admitted generation, run it as `spice dev cargo --
+  <cargo-arguments>` so Spice prepares the exact new immutable source generation
+  before invoking native Cargo. Do not point `CARGO_HOME` at a shared mutable
+  Cargo cache to work around a stale generation.
 - Handle every pending steering key promptly, then retire it with
   `spice ack <key>`. Use `spice ack <key> --decline` only for a reasoned refusal.
 - Keep durable work in the task workflow. Use the landed leaves such as

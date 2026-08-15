@@ -17,6 +17,7 @@ pub(super) fn configure(fixture: &Fixture) -> Rig {
     )
     .expect("Codex Git pointer");
     fs::write(codex_git.join("commondir"), "../..\n").expect("Codex common pointer");
+    copy_cargo_fixture(fixture, &codex_worktree);
 
     let captures = fixture.cleanup.join("launch-captures");
     fs::create_dir_all(&captures).expect("capture directory");
@@ -279,6 +280,7 @@ pub(super) fn assert_launches_with_executable(
         );
         assert_eq!(capture.cwd, row.worktree);
         assert_environment(
+            fixture,
             &capture.environment,
             *dialect,
             *lane,
@@ -398,12 +400,8 @@ fn nul_fields(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the integration fixture observes the same five ambient names at the resident \
-              binary rim"
-)]
 fn assert_environment(
+    fixture: &Fixture,
     captured: &BTreeMap<String, String>,
     dialect: Dialect,
     lane: wire::CanonicalUuid,
@@ -411,6 +409,13 @@ fn assert_environment(
     executable: &Path,
     expected_path: Option<&Path>,
 ) {
+    let observed = normalized_environment(captured);
+    let expected =
+        expected_environment(fixture, dialect, lane, worktree, executable, expected_path);
+    assert_eq!(observed, expected, "ambient child environment leaked");
+}
+
+fn normalized_environment(captured: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     let mut observed = captured.clone();
     for shell_owned in ["PWD", "SHLVL", "_"] {
         observed.remove(shell_owned);
@@ -419,27 +424,47 @@ fn assert_environment(
         let count = count
             .parse::<usize>()
             .expect("Git command-scope entry count is numeric");
-        let system = observed
-            .remove("GIT_CONFIG_SYSTEM")
-            .expect("Git shadow names its system config");
-        assert!(
-            system.ends_with("/spice-rs-agent.gitconfig"),
-            "unexpected Git shadow path: {system}"
-        );
-        for index in 0..count {
-            let key = observed
-                .remove(&format!("GIT_CONFIG_KEY_{index}"))
-                .expect("Git command-scope key exists");
-            let value = observed
-                .remove(&format!("GIT_CONFIG_VALUE_{index}"))
-                .expect("Git command-scope value exists");
-            assert!(key.starts_with("branch."));
-            assert!(key.ends_with(".merge") || key.ends_with(".remote"));
-            assert!(!value.is_empty());
-        }
+        remove_git_shadow(&mut observed, count);
     } else {
         assert!(!observed.contains_key("GIT_CONFIG_SYSTEM"));
     }
+    observed
+}
+
+fn remove_git_shadow(observed: &mut BTreeMap<String, String>, count: usize) {
+    let system = observed
+        .remove("GIT_CONFIG_SYSTEM")
+        .expect("Git shadow names its system config");
+    assert!(
+        system.ends_with("/spice-rs-agent.gitconfig"),
+        "unexpected Git shadow path: {system}"
+    );
+    for index in 0..count {
+        let key = observed
+            .remove(&format!("GIT_CONFIG_KEY_{index}"))
+            .expect("Git command-scope key exists");
+        let value = observed
+            .remove(&format!("GIT_CONFIG_VALUE_{index}"))
+            .expect("Git command-scope value exists");
+        assert!(key.starts_with("branch."));
+        assert!(key.ends_with(".merge") || key.ends_with(".remote"));
+        assert!(!value.is_empty());
+    }
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the integration fixture observes the same five ambient names at the resident \
+              binary rim"
+)]
+fn expected_environment(
+    fixture: &Fixture,
+    dialect: Dialect,
+    lane: wire::CanonicalUuid,
+    worktree: &str,
+    executable: &Path,
+    expected_path: Option<&Path>,
+) -> BTreeMap<String, String> {
     let native_shell = std::env::var("SHELL").expect("supervised test has a native shell");
     let mut expected = ["HOME", "TMPDIR", "USER"]
         .into_iter()
@@ -473,6 +498,45 @@ fn assert_environment(
             .display()
             .to_string(),
     );
+    let cargo_host =
+        spice::cargo_isolation::Host::new(fixture.cargo_home.clone(), fixture_native_cargo())
+            .expect("fixture Cargo host admits");
+    let cargo_home = spice::cargo_isolation::prepare_lane(&repository, lane, &cargo_host)
+        .expect("fixture lane Cargo home prepares");
+    expected.insert(
+        spice::cargo_isolation::CARGO_HOME_VARIABLE.to_owned(),
+        cargo_home.home().display().to_string(),
+    );
+    expected.insert(
+        spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE.to_owned(),
+        cargo_host.bootstrap_home().display().to_string(),
+    );
+    expected.insert(
+        spice::cargo_isolation::NATIVE_CARGO_VARIABLE.to_owned(),
+        cargo_host.cargo().display().to_string(),
+    );
+    expected.insert(
+        "PATH".to_owned(),
+        expected_search_path(executable, expected_path),
+    );
+    expected.insert(
+        spice::agent_launch::SPICE_RS_LANE.to_owned(),
+        lane.to_string(),
+    );
+    if dialect == Dialect::Claude {
+        expected.insert(
+            spice::agent_launch::CLAUDE_AUTO_COMPACT_WINDOW.to_owned(),
+            COMPACT_WINDOW.to_owned(),
+        );
+    }
+    expected
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the integration fixture observes the caller's PATH at the resident binary rim"
+)]
+fn expected_search_path(executable: &Path, expected_path: Option<&Path>) -> String {
     let mut search = vec![
         executable
             .parent()
@@ -486,24 +550,10 @@ fn assert_environment(
     {
         search.extend(std::env::split_paths(&path));
     }
-    expected.insert(
-        "PATH".to_owned(),
-        std::env::join_paths(search)
-            .expect("fixture launch PATH joins")
-            .into_string()
-            .expect("fixture launch PATH is UTF-8"),
-    );
-    expected.insert(
-        spice::agent_launch::SPICE_RS_LANE.to_owned(),
-        lane.to_string(),
-    );
-    if dialect == Dialect::Claude {
-        expected.insert(
-            spice::agent_launch::CLAUDE_AUTO_COMPACT_WINDOW.to_owned(),
-            COMPACT_WINDOW.to_owned(),
-        );
-    }
-    assert_eq!(observed, expected, "ambient child environment leaked");
+    std::env::join_paths(search)
+        .expect("fixture launch PATH joins")
+        .into_string()
+        .expect("fixture launch PATH is UTF-8")
 }
 
 fn expected_argv(

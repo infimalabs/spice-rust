@@ -208,6 +208,7 @@ fn install_predecessor_worktree(fixture: &Fixture) -> PathBuf {
             "HEAD",
         ],
     );
+    copy_cargo_fixture(fixture, &worktree);
     worktree
 }
 
@@ -477,6 +478,7 @@ fn prepare_coexistence_repository(fixture: &Fixture, rig: &Rig) {
             "HEAD",
         ],
     );
+    copy_cargo_fixture(fixture, &rig.codex_worktree);
 }
 
 fn install_coexisting_appliance(fixture: &Fixture) -> (PathBuf, String, String) {

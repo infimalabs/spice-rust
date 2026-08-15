@@ -187,6 +187,10 @@ fn launch_environment(
     lane: CanonicalUuid,
 ) -> CommandResult<Environment> {
     let inbox = paths.inbox_for_repository(repository)?;
+    let cargo_host = crate::cargo_command::host()
+        .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
+    let cargo_home = spice::cargo_isolation::prepare_lane(repository, lane, &cargo_host)
+        .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
     let native_shell = crate::bootstrap_environment("SHELL").ok_or_else(|| {
         store_fault(
             "lane::native-shell-unavailable",
@@ -198,6 +202,18 @@ fn launch_environment(
         .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
         .collect::<Vec<(OsString, OsString)>>();
     values.extend([
+        (
+            OsString::from(spice::cargo_isolation::CARGO_HOME_VARIABLE),
+            cargo_home.home().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE),
+            cargo_host.bootstrap_home().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::NATIVE_CARGO_VARIABLE),
+            cargo_host.cargo().as_os_str().to_owned(),
+        ),
         (
             OsString::from("SHELL"),
             spice::install::installed_shell(repository).into_os_string(),
