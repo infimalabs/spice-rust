@@ -1,21 +1,23 @@
 #![cfg(unix)]
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, mpsc};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use spice::install::{Asset, InstallPreview, InstallReceipt, InstallStatus};
+use spice::install::{
+    Asset, InstallPlanSummary, InstallPreview, InstallReceipt, InstallStatus, Location,
+};
 use spice::repository::Repository;
-use wire::{DoctorObservation, DoctorReport, DoctorSubsystem, Outcome, Refusal};
+use wire::{Outcome, Refusal};
 
 /// How long a paused install is given to reach its mutation rendezvous.
 ///
@@ -27,10 +29,6 @@ const RENDEZVOUS: Duration = Duration::from_secs(120);
 static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const MAX_PUBLIC_INSTALL_REPLY: usize = 64 * 1024;
 const MIN_PRIVATE_INSTALL_RECORD: usize = 1024 * 1024;
-
-mod install_cli {
-    mod races;
-}
 
 struct Fixture {
     root: PathBuf,
@@ -102,29 +100,12 @@ impl Fixture {
         }
     }
 
-    fn invoke_at(&self, arguments: &[&str], unix_seconds: u64) -> Spoken {
-        let output = self
-            .command(arguments)
-            .env(
-                spice::install::TEST_PAUSE_ACTION,
-                format!("maintenance-now:{unix_seconds}"),
-            )
-            .output()
-            .expect("spice install launches with test maintenance time");
-        Spoken {
-            code: output.status.code(),
-            out: output.stdout,
-            err: output.stderr,
-        }
-    }
-
     fn command(&self, arguments: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
         command
             .args(arguments)
             .current_dir(&self.root)
             .env(spice::install::TEST_EXECUTABLE, &self.executable)
-            .env_remove(spice::install::TEST_PAUSE_ACTION)
             .env_remove(steer::hook::INBOX);
         command
     }
@@ -225,22 +206,6 @@ impl Fixture {
         self.root.join(".git/.spice-rs/install.json")
     }
 
-    fn record_temps(&self) -> Vec<PathBuf> {
-        let mut paths = fs::read_dir(self.root.join(".git/.spice-rs"))
-            .expect("read runtime directory")
-            .map(|entry| entry.expect("read runtime entry").path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| {
-                        name.starts_with(".spice-install-") && name.ends_with(".tmp")
-                    })
-            })
-            .collect::<Vec<_>>();
-        paths.sort();
-        paths
-    }
-
     fn assert_small_owned_executable(&self) {
         assert!(self.executable.starts_with(&self.root));
         assert!(
@@ -250,6 +215,13 @@ impl Fixture {
                 < 1024,
             "process fixture source must not copy the debug Spice binary",
         );
+    }
+
+    fn rewrite_executable(&self, bytes: &[u8]) {
+        fs::write(&self.executable, bytes).expect("rewrite fixture install executable");
+        fs::set_permissions(&self.executable, fs::Permissions::from_mode(0o755))
+            .expect("restore fixture executable mode");
+        self.assert_small_owned_executable();
     }
 }
 
@@ -309,7 +281,12 @@ struct Paused {
 
 impl Paused {
     fn wait_until_ready(&mut self, expected_action: &str) {
-        let listener = self.ready.take().expect("readiness listener is present");
+        let listener = self
+            .ready
+            .as_ref()
+            .expect("readiness listener is present")
+            .try_clone()
+            .expect("clone readiness listener");
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             let result = listener.accept().and_then(|(mut stream, _)| {
@@ -339,13 +316,20 @@ impl Paused {
         }
     }
 
-    fn resume(self) -> Spoken {
+    fn release(&mut self) {
         let port = self
             .release_port
+            .take()
             .expect("withheld install rendezvous publishes a release port");
+        fs::write(self.control.join("release").join("continue"), b"continue")
+            .expect("land install release for later matching mutations");
         TcpStream::connect((Ipv4Addr::LOCALHOST, port))
             .and_then(|mut stream| stream.write_all(b"continue"))
             .expect("release install mutation rendezvous");
+    }
+
+    fn resume(mut self) -> Spoken {
+        self.release();
         self.collect()
     }
 
@@ -356,24 +340,6 @@ impl Paused {
     /// own -- which is the horizon bounding its wait.
     fn abandon(self) -> Spoken {
         self.collect()
-    }
-
-    fn kill(mut self) -> (u32, Spoken) {
-        let mut child = self.child.take().expect("paused child is present");
-        let pid = child.id();
-        child.kill().expect("kill paused installer");
-        let output = child
-            .wait_with_output()
-            .expect("collect killed install process");
-        fs::remove_dir_all(&self.control).expect("remove install race rendezvous");
-        (
-            pid,
-            Spoken {
-                code: output.status.code(),
-                out: output.stdout,
-                err: output.stderr,
-            },
-        )
     }
 
     fn collect(mut self) -> Spoken {
@@ -392,45 +358,78 @@ impl Paused {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct FileSnapshot {
-    bytes: Vec<u8>,
-    device: u64,
-    inode: u64,
-    mode: u32,
-    links: u64,
-    modified: (i64, i64),
-    changed: (i64, i64),
-}
-
-fn file_snapshot(path: &Path) -> FileSnapshot {
-    let metadata = fs::metadata(path).expect("inspect temporary record");
-    FileSnapshot {
-        bytes: fs::read(path).expect("read fixture temporary record"),
-        device: metadata.dev(),
-        inode: metadata.ino(),
-        mode: metadata.mode(),
-        links: metadata.nlink(),
-        modified: (metadata.mtime(), metadata.mtime_nsec()),
-        changed: (metadata.ctime(), metadata.ctime_nsec()),
+impl Drop for Paused {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if self.control.exists() {
+            let _ = fs::remove_dir_all(&self.control);
+        }
     }
 }
 
-fn installation_observation(spoken: &Spoken) -> DoctorObservation {
-    assert_eq!(spoken.code, Some(0));
-    assert!(spoken.err.is_empty());
-    let outcome: Outcome<DoctorReport<spice::config::Root>> =
-        wire::decode(&spoken.out).expect("Doctor JSON decodes");
-    let Outcome::Reply(reply) = outcome else {
-        panic!("Doctor inspection must reply: {outcome:?}");
-    };
-    reply
-        .body
-        .subsystems
-        .into_iter()
-        .find(|diagnosis| diagnosis.subsystem == DoctorSubsystem::Installation)
-        .expect("Doctor reports installation")
-        .observation
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FileSnapshot {
+    bytes: Vec<u8>,
+    mode: u32,
+    device: u64,
+    inode: u64,
+}
+
+impl FileSnapshot {
+    fn capture(path: &std::path::Path) -> Option<Self> {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+            Err(error) => panic!("inspect {}: {error}", path.display()),
+        };
+        assert!(metadata.is_file(), "{} is not a file", path.display());
+        Some(Self {
+            bytes: fs::read(path).unwrap_or_else(|error| {
+                panic!("read {}: {error}", path.display());
+            }),
+            mode: metadata.permissions().mode() & 0o777,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InstallSnapshot {
+    record: Option<FileSnapshot>,
+    targets: Vec<(String, Option<FileSnapshot>)>,
+    git_config: FileSnapshot,
+}
+
+impl InstallSnapshot {
+    fn capture(fixture: &Fixture, plan: &InstallPlanSummary) -> Self {
+        let repository = Repository::discover(&fixture.root).expect("discover snapshot repository");
+        let mut targets = plan
+            .operations()
+            .iter()
+            .map(|operation| {
+                let root = match operation.location() {
+                    Location::Worktree => repository.worktree_root(),
+                    Location::CommonGit => repository.common_dir(),
+                };
+                let path = root.join(operation.path());
+                (operation.path().to_owned(), FileSnapshot::capture(&path))
+            })
+            .collect::<Vec<_>>();
+        targets.extend(plan.retirements().iter().map(|retirement| {
+            let path = repository.common_dir().join(retirement.path());
+            (retirement.path().to_owned(), FileSnapshot::capture(&path))
+        }));
+        Self {
+            record: FileSnapshot::capture(&fixture.record()),
+            targets,
+            git_config: FileSnapshot::capture(&fixture.root.join(".git/config"))
+                .expect("fixture Git configuration exists"),
+        }
+    }
 }
 
 #[test]
@@ -782,9 +781,60 @@ fn retired_state_refusal_names_ownership_recovery_and_changes_nothing() {
     fixture.assert_state_unchanged();
 }
 
-fn successful_document(spoken: Spoken) -> Value {
-    spoken.assert_success();
-    serde_json::from_slice(&spoken.out).expect("successful output is JSON")
+#[test]
+fn preview_apply_and_unapply_overlap_with_small_fixture_owned_sources() {
+    let preview_fixture = Fixture::new("overlap-preview");
+    preview_fixture.assert_small_owned_executable();
+    let apply_fixture = Fixture::new("overlap-apply");
+    apply_fixture.assert_small_owned_executable();
+    let apply_plan: InstallPreview = reply_body(apply_fixture.invoke(&["--json", "install"]));
+    let unapply_fixture = Fixture::new("overlap-unapply");
+    unapply_fixture.assert_small_owned_executable();
+    let unapply_plan: InstallPreview = reply_body(unapply_fixture.invoke(&["--json", "install"]));
+    let _: InstallReceipt = reply_body(unapply_fixture.invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", unapply_plan.digest()),
+    ]));
+
+    let overlap = Arc::new(Barrier::new(3));
+
+    let preview_overlap = Arc::clone(&overlap);
+    let preview = thread::spawn(move || {
+        preview_overlap.wait();
+        let _: InstallPreview = reply_body(preview_fixture.invoke(&["--json", "install"]));
+    });
+
+    let apply_overlap = Arc::clone(&overlap);
+    let apply = thread::spawn(move || {
+        apply_overlap.wait();
+        let receipt: InstallReceipt = reply_body(apply_fixture.invoke(&[
+            "--json",
+            "install",
+            &format!("--apply={}", apply_plan.digest()),
+        ]));
+        assert_eq!(receipt.status(), InstallStatus::Complete);
+        assert_eq!(
+            fs::read(apply_fixture.installed_binary())
+                .expect("read overlapped installed executable"),
+            fs::read(&apply_fixture.executable).expect("read overlapped fixture executable"),
+        );
+    });
+
+    let unapply_overlap = Arc::clone(&overlap);
+    let unapply = thread::spawn(move || {
+        unapply_overlap.wait();
+        let receipt: InstallReceipt =
+            reply_body(unapply_fixture.invoke(&["--json", "install", "--unapply"]));
+        assert_eq!(receipt.status(), InstallStatus::Uninstalled);
+        assert!(!unapply_fixture.installed_binary().exists());
+    });
+
+    for process in [preview, apply, unapply] {
+        process
+            .join()
+            .expect("overlapped install fixture completes");
+    }
 }
 
 struct LargeMigration {
@@ -915,12 +965,6 @@ fn assert_no_private_install_key(value: &Value) {
     }
 }
 
-fn emitted_digest(document: &Value) -> &str {
-    document["digest"]
-        .as_str()
-        .expect("install preview emits a digest token")
-}
-
 fn reply_body<T: DeserializeOwned + std::fmt::Debug>(spoken: Spoken) -> T {
     spoken.assert_success();
     let outcome: Outcome<T> = wire::decode(&spoken.out).expect("JSON outcome decodes");
@@ -945,3 +989,10 @@ fn alternate_digest(digest: &str) -> String {
     *last = if *last == b'0' { b'1' } else { b'0' };
     String::from_utf8(moved).expect("digest is ASCII")
 }
+
+#[path = "install_cli/mutations.rs"]
+mod mutations;
+#[path = "install_cli/races.rs"]
+mod races;
+
+use mutations::{emitted_digest, successful_document};

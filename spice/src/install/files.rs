@@ -166,7 +166,7 @@ pub(super) fn publish_bound(
     expected: Option<Generation>,
 ) -> Result<Generation, InstallError> {
     let path = AdmittedPath::open(root, destination, parent, true, introduced)?;
-    path.publish(image, expected)
+    path.publish_receipt(image, expected)
 }
 
 pub(super) fn observe(path: &Path) -> Result<Option<ObservedFile>, InstallError> {

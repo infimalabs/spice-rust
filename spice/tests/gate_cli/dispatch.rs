@@ -11,11 +11,9 @@ fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_1
     let before = git_stdout(repository.path(), &["rev-list", "--count", "HEAD"]);
     let started = Instant::now();
 
-    let output = Command::new("/usr/bin/git")
+    let output = fixture_command("/usr/bin/git")
         .args(["commit", "-qm", "Exercise bounded commit gate"])
         .current_dir(repository.path())
-        .env_remove(PRE_COMMIT_PATHS)
-        .env_remove(PRE_COMMIT_SOURCE)
         .output()
         .expect("launch normal fixture commit");
 
@@ -107,7 +105,7 @@ fn resolution_worker_exhausts_real_authority_change_while_ordinary_selection_ref
         resolution.progress,
     );
 
-    let configured = Command::new(env!("CARGO_BIN_EXE_spice"))
+    let configured = fixture_command(env!("CARGO_BIN_EXE_spice"))
         .arg("__gate-resolution-selection-worker")
         .current_dir(repository.path())
         .env(
@@ -288,7 +286,7 @@ fn explicitly_trusted_source_override_runs_one_public_spice_leaf_through_the_hoo
     let path = std::env::join_paths([programs, PathBuf::from("/usr/bin"), PathBuf::from("/bin")])
         .expect("compose source-gate executable path");
 
-    let output = Command::new("/usr/bin/git")
+    let output = fixture_command("/usr/bin/git")
         .args(["commit", "-qm", "Exercise the trusted source gate"])
         .current_dir(repository.path())
         .env("PATH", path)
@@ -331,7 +329,7 @@ fn recursion_marker_refuses_public_and_hidden_dispatcher_entrypoints() {
     let scratch = Scratch::new("dispatcher-recursion");
     let source = wire::Digest::compute(wire::Domain::GateTree, b"recursive fixture");
     let variable = wire::SpiceVariable::PreCommitSource.as_str();
-    let public = Command::new(env!("CARGO_BIN_EXE_spice"))
+    let public = fixture_command(env!("CARGO_BIN_EXE_spice"))
         .args(["gate", "pre-commit"])
         .current_dir(scratch.path())
         .env(variable, source.to_string())
@@ -346,7 +344,7 @@ fn recursion_marker_refuses_public_and_hidden_dispatcher_entrypoints() {
     let terminal = scratch.path().join("terminal.bin");
     fs::write(&progress, []).expect("create recursion progress file");
     fs::write(&terminal, []).expect("create recursion terminal file");
-    let hidden = Command::new(env!("CARGO_BIN_EXE_spice"))
+    let hidden = fixture_command(env!("CARGO_BIN_EXE_spice"))
         .arg("__gate-pre-commit-worker")
         .arg(&progress)
         .arg(&terminal)

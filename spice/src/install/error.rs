@@ -23,6 +23,7 @@ pub enum InstallError {
     PathShape(PathBuf),
     PathOutsideRoot(PathBuf),
     ParentChanged(PathBuf),
+    GenerationChanged(PathBuf),
     BinaryNotRegular(PathBuf),
     BinaryEmpty(PathBuf),
     HookPathUnrepresentable {
@@ -91,6 +92,7 @@ impl fmt::Display for InstallError {
             | Self::PathShape(_)
             | Self::PathOutsideRoot(_)
             | Self::ParentChanged(_)
+            | Self::GenerationChanged(_)
             | Self::BinaryNotRegular(_)
             | Self::BinaryEmpty(_)
             | Self::HookPathUnrepresentable { .. } => fmt_input_error(self, formatter),
@@ -140,6 +142,11 @@ fn fmt_input_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> 
         InstallError::ParentChanged(path) => write!(
             formatter,
             "install destination parent generation changed after planning: {}",
+            path.display()
+        ),
+        InstallError::GenerationChanged(path) => write!(
+            formatter,
+            "install receipt generation changed before publication: {}",
             path.display()
         ),
         InstallError::BinaryNotRegular(path) => {
