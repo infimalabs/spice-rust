@@ -5,7 +5,7 @@ use wire::{Digest, Domain};
 
 use crate::repository::Repository;
 
-use super::{Generation, InstallError, InstallPlan};
+use super::{Generation, InstallError};
 
 /// One Spice-owned asset in canonical installation order.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -326,79 +326,5 @@ impl Operation {
 
     pub(super) fn destination(&self, repository: &Repository) -> PathBuf {
         self.location.root(repository).join(&self.destination)
-    }
-}
-
-/// One side-effect-free install preview and the exact identity admitted by apply.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct InstallPreview {
-    pub(super) digest: Digest,
-    pub(super) plan: InstallPlan,
-}
-
-impl InstallPreview {
-    /// Bind a canonical plan to its dedicated-domain identity.
-    pub fn from_plan(plan: InstallPlan) -> Result<Self, InstallError> {
-        let digest = plan.digest()?;
-        Ok(Self { digest, plan })
-    }
-
-    /// Exact canonical plan identity accepted by `install --apply`.
-    #[must_use]
-    pub const fn digest(&self) -> &Digest {
-        &self.digest
-    }
-
-    /// Side-effect-free canonical installation plan.
-    #[must_use]
-    pub const fn plan(&self) -> &InstallPlan {
-        &self.plan
-    }
-}
-
-/// Durable progress state for apply and reversal.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum InstallStatus {
-    Applying,
-    Complete,
-    Unapplying,
-    Uninstalled,
-}
-
-/// Current strict installation receipt.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct InstallReceipt {
-    pub(super) plan: InstallPlan,
-    pub(super) digest: Digest,
-    pub(super) status: InstallStatus,
-    pub(super) completed: usize,
-}
-
-impl InstallReceipt {
-    /// Exact plan retained for reversal and repeat application.
-    #[must_use]
-    pub const fn plan(&self) -> &InstallPlan {
-        &self.plan
-    }
-
-    /// Plan identity admitted by apply.
-    #[must_use]
-    pub const fn digest(&self) -> &Digest {
-        &self.digest
-    }
-
-    /// Durable progress state.
-    #[must_use]
-    pub const fn status(&self) -> InstallStatus {
-        self.status
-    }
-
-    /// Operations durably acknowledged in the current direction.
-    #[must_use]
-    pub const fn completed(&self) -> usize {
-        self.completed
     }
 }

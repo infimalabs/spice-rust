@@ -166,13 +166,13 @@ fn apply_is_idempotent_and_unapply_is_exact() {
     let planned = plan(&repository, Some(&binary)).expect("plan install");
     let digest = planned.digest().unwrap();
     let first = apply(&repository, Some(&binary), &digest).expect("apply exact plan");
-    let installed_images = images(&repository, first.plan());
+    let installed_images = images(&repository, &planned);
     let repeated = apply(&repository, Some(&binary), &digest).expect("repeat exact apply");
 
     assert_eq!(first.status(), InstallStatus::Complete);
     assert_eq!(first.completed(), planned.operation_count());
     assert_eq!(first, repeated);
-    assert_eq!(installed_images, images(&repository, repeated.plan()));
+    assert_eq!(installed_images, images(&repository, &planned));
     assert_eq!(
         fs::read_to_string(repository.common_dir().join(GIT_PRE_COMMIT_PATH)).unwrap(),
         String::from_utf8(

@@ -14,6 +14,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use spice::install::{Asset, InstallPreview, InstallReceipt, InstallStatus};
+use spice::repository::Repository;
 use wire::{Outcome, Refusal};
 
 /// How long a paused install is given to reach its mutation rendezvous.
@@ -24,6 +25,8 @@ use wire::{Outcome, Refusal};
 const RENDEZVOUS: Duration = Duration::from_secs(120);
 
 static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const MAX_PUBLIC_INSTALL_REPLY: usize = 64 * 1024;
+const MIN_PRIVATE_INSTALL_RECORD: usize = 1024 * 1024;
 
 struct Fixture {
     root: PathBuf,
@@ -353,7 +356,6 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(text, preview);
     assert_eq!(text_digest, json_digest);
     assert_eq!(preview.digest().as_str(), text_digest);
-    assert_eq!(preview.digest(), &preview.plan().digest().unwrap());
     let operation_count = preview.plan().operation_count();
     assert_eq!(operation_count, 10);
     assert!(!fixture.installed_binary().exists());
@@ -401,6 +403,76 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     );
     assert!(fixture.record().is_file());
     fixture.assert_state_unchanged();
+}
+
+#[test]
+fn large_migration_payload_never_crosses_the_cli_reply_boundary() {
+    let migration = LargeMigration::new("bounded-migration");
+    let fixture = &migration.fixture;
+    let text_preview = fixture.invoke(&["install"]);
+    let json_preview = fixture.invoke(&["--json", "install"]);
+    let text_preview_body: InstallPreview = bounded_install_reply(&text_preview, false);
+    let json_preview_body: InstallPreview = bounded_install_reply(&json_preview, true);
+    assert_eq!(text_preview_body, json_preview_body);
+    let archive = text_preview_body
+        .plan()
+        .rollback_archive()
+        .expect("migration preview reports rollback metadata");
+    assert!(archive.uncompressed_bytes() > MIN_PRIVATE_INSTALL_RECORD as u64);
+    let digest = text_preview_body.digest().clone();
+
+    let text_apply = fixture.invoke(&["install", &format!("--apply={digest}")]);
+    let text_applied: InstallReceipt = bounded_install_reply(&text_apply, false);
+    assert_eq!(text_applied.status(), InstallStatus::Complete);
+    assert_eq!(text_applied.plan(), text_preview_body.plan());
+    let json_apply = fixture.invoke(&["--json", "install", &format!("--apply={digest}")]);
+    let json_applied: InstallReceipt = bounded_install_reply(&json_apply, true);
+    assert_eq!(json_applied, text_applied);
+
+    let private_record = fs::read(fixture.record()).expect("read private migration receipt");
+    assert!(private_record.len() > MIN_PRIVATE_INSTALL_RECORD);
+    let private_document: Value =
+        serde_json::from_slice(&private_record).expect("private migration receipt is JSON");
+    let payload = private_document["plan"]["rollback_archive"]["payload"]
+        .as_str()
+        .expect("private migration receipt retains rollback payload");
+    assert!(payload.len() > MIN_PRIVATE_INSTALL_RECORD);
+    let sentinel = &payload[payload.len() / 2..payload.len() / 2 + 64];
+
+    let text_unapply = fixture.invoke(&["install", "--unapply"]);
+    let text_removed: InstallReceipt = bounded_install_reply(&text_unapply, false);
+    assert_eq!(text_removed.status(), InstallStatus::Uninstalled);
+    migration.assert_restored();
+
+    let repeated_preview = fixture.invoke(&["--json", "install"]);
+    let repeated_preview_body: InstallPreview = bounded_install_reply(&repeated_preview, true);
+    assert_eq!(repeated_preview_body, json_preview_body);
+    let repeated_apply = fixture.invoke(&["--json", "install", &format!("--apply={digest}")]);
+    let repeated_applied: InstallReceipt = bounded_install_reply(&repeated_apply, true);
+    assert_eq!(repeated_applied, json_applied);
+    let json_unapply = fixture.invoke(&["--json", "install", "--unapply"]);
+    let json_removed: InstallReceipt = bounded_install_reply(&json_unapply, true);
+    assert_eq!(json_removed, text_removed);
+    migration.assert_restored();
+
+    for spoken in [
+        &text_preview,
+        &json_preview,
+        &text_apply,
+        &json_apply,
+        &text_unapply,
+        &repeated_preview,
+        &repeated_apply,
+        &json_unapply,
+    ] {
+        assert!(
+            !spoken
+                .out
+                .windows(sentinel.len())
+                .any(|window| window == sentinel.as_bytes()),
+            "public install reply exposed rollback payload bytes",
+        );
+    }
 }
 
 #[test]
@@ -452,7 +524,7 @@ fn installed_hook_activation_uses_no_cargo_or_xtask_and_reverses_git_config() {
         preview
             .plan()
             .hook_activation()
-            .map(spice::install::HookActivationPlan::hooks_path),
+            .map(|activation| activation.hooks_path()),
     );
     assert!(!invoked.exists());
 
@@ -1045,6 +1117,134 @@ fn unapply_record_parent_replacement_at_publication_preserves_both_trees() {
 fn successful_document(spoken: Spoken) -> Value {
     spoken.assert_success();
     serde_json::from_slice(&spoken.out).expect("successful output is JSON")
+}
+
+struct LargeMigration {
+    fixture: Fixture,
+    prior_record: Vec<u8>,
+    legacy_xtask: PathBuf,
+    legacy_guard: PathBuf,
+    xtask_bytes: Vec<u8>,
+    guard_bytes: Vec<u8>,
+}
+
+impl LargeMigration {
+    fn new(label: &str) -> Self {
+        let fixture = Fixture::new(label);
+        let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+        let _: InstallReceipt = reply_body(fixture.invoke(&[
+            "--json",
+            "install",
+            &format!("--apply={}", preview.digest()),
+        ]));
+        let repository = Repository::discover(&fixture.root).expect("discover migration fixture");
+        spice::install::publish_test_version_7_receipt(&repository)
+            .expect("publish version-7 process fixture receipt");
+        let prior_record = fs::read(fixture.record()).expect("read version-7 process receipt");
+        let legacy_xtask = fixture.root.join(".git/.spice-install/bin/xtask");
+        let legacy_guard = fixture.root.join(".git/.spice-install/bin/xtask.guard");
+        let xtask_bytes = deterministic_large_bytes(2 * MIN_PRIVATE_INSTALL_RECORD);
+        let guard_bytes = b"large-migration-guard\n".to_vec();
+        fs::write(&legacy_xtask, &xtask_bytes).expect("write large legacy xtask");
+        fs::set_permissions(&legacy_xtask, fs::Permissions::from_mode(0o755))
+            .expect("set large legacy xtask mode");
+        fs::write(&legacy_guard, &guard_bytes).expect("write legacy guard");
+        fs::set_permissions(&legacy_guard, fs::Permissions::from_mode(0o644))
+            .expect("set legacy guard mode");
+        Self {
+            fixture,
+            prior_record,
+            legacy_xtask,
+            legacy_guard,
+            xtask_bytes,
+            guard_bytes,
+        }
+    }
+
+    fn assert_restored(&self) {
+        assert_eq!(
+            fs::read(self.fixture.record()).expect("read restored version-7 receipt"),
+            self.prior_record,
+        );
+        assert_eq!(
+            fs::read(&self.legacy_xtask).expect("read restored legacy xtask"),
+            self.xtask_bytes,
+        );
+        assert_eq!(
+            fs::metadata(&self.legacy_xtask)
+                .expect("inspect restored legacy xtask")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755,
+        );
+        assert_eq!(
+            fs::read(&self.legacy_guard).expect("read restored legacy guard"),
+            self.guard_bytes,
+        );
+        assert_eq!(
+            fs::metadata(&self.legacy_guard)
+                .expect("inspect restored legacy guard")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644,
+        );
+    }
+}
+
+fn deterministic_large_bytes(length: usize) -> Vec<u8> {
+    let mut state = 0xd1b5_4a32_d192_ed03_u64;
+    (0..length)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect()
+}
+
+fn bounded_install_reply<T: DeserializeOwned + std::fmt::Debug>(spoken: &Spoken, json: bool) -> T {
+    spoken.assert_success();
+    assert!(
+        spoken.out.len() <= MAX_PUBLIC_INSTALL_REPLY,
+        "public install reply grew to {} bytes",
+        spoken.out.len(),
+    );
+    let document: Value =
+        serde_json::from_slice(&spoken.out).expect("public install reply is JSON");
+    assert_no_private_install_key(&document);
+    if json {
+        let outcome: Outcome<T> = wire::decode(&spoken.out).expect("JSON install reply decodes");
+        let Outcome::Reply(reply) = outcome else {
+            panic!("install must reply: {outcome:?}");
+        };
+        assert_eq!(reply.position, wire::ReplyPosition::Direct {});
+        reply.body
+    } else {
+        wire::decode(&spoken.out).expect("text install body decodes")
+    }
+}
+
+fn assert_no_private_install_key(value: &Value) {
+    match value {
+        Value::Object(fields) => {
+            for (name, value) in fields {
+                assert!(
+                    !matches!(name.as_str(), "payload" | "bytes" | "repository"),
+                    "public install reply exposed private field {name:?}",
+                );
+                assert_no_private_install_key(value);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                assert_no_private_install_key(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn emitted_digest(document: &Value) -> &str {
