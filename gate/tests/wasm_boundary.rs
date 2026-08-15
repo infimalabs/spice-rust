@@ -7,6 +7,10 @@ use std::path::Path;
 use syn::{ImplItem, Item, Meta, UseTree};
 
 const HOST_IMPORTS: [&str; 3] = ["CommittedTexts", "scan_jurisdiction", "tracked_paths"];
+const HOST_METRIC_DEBT_HELPERS: [&str; 2] = [
+    "changed_committed_base_breach",
+    "changed_committed_ratchet_breach",
+];
 
 #[test]
 fn verdict_host_imports_carry_their_items_wasm_boundary() {
@@ -50,6 +54,10 @@ fn host_only_metric_debt_helper_carries_its_wasm_boundary() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/metrics/policy_binding.rs");
     let source = fs::read_to_string(&path).expect("read metric policy binding source");
     let file = syn::parse_file(&source).expect("parse metric policy binding source");
+    let expected = HOST_METRIC_DEBT_HELPERS
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
     let methods = file
         .items
         .into_iter()
@@ -59,18 +67,28 @@ fn host_only_metric_debt_helper_carries_its_wasm_boundary() {
         })
         .flat_map(|item| item.items)
         .filter_map(|item| match item {
-            ImplItem::Fn(method) if method.sig.ident == "changed_committed_ratchet_breach" => {
+            ImplItem::Fn(method) if expected.contains(method.sig.ident.to_string().as_str()) => {
                 Some(method)
             }
             _ => None,
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(methods.len(), 1, "the host-only metric helper stays unique");
-    assert!(
-        methods[0].attrs.iter().any(excludes_wasm),
-        "changed_committed_ratchet_breach lacks cfg(not(target_arch = \"wasm32\"))"
+    assert_eq!(
+        methods
+            .iter()
+            .map(|method| method.sig.ident.to_string())
+            .collect::<BTreeSet<_>>(),
+        expected,
+        "every host-only metric debt helper stays unique"
     );
+    for method in methods {
+        assert!(
+            method.attrs.iter().any(excludes_wasm),
+            "{} lacks cfg(not(target_arch = \"wasm32\"))",
+            method.sig.ident,
+        );
+    }
 }
 
 fn imported_names(tree: &UseTree, names: &mut BTreeSet<String>) {

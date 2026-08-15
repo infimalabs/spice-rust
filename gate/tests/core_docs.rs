@@ -504,9 +504,9 @@ fn a_latched_document_is_decided_and_judged_against_its_base_limit() {
     repository.remove();
 }
 
-/// Editing committed document debt inside the ratchet retains flex.
+/// Editing inherited document debt spends flex until the document heals.
 #[test]
-fn an_authored_document_inside_its_ratchet_keeps_headroom() {
+fn an_authored_document_above_its_committed_base_is_held_to_the_true_limit() {
     const PATH: &str = "DOCTRINE.md";
     const BASE: u64 = 10_000;
 
@@ -551,20 +551,20 @@ fn an_authored_document_inside_its_ratchet_keeps_headroom() {
     repository.write(PATH, &"x".repeat(11_000));
     git(&repository, &["add", PATH]);
     let changed = acquire();
-    let [elastic] = changed.bounds() else {
+    let [held] = changed.bounds() else {
         panic!(
             "one changed document must decide one bound: {:?}",
             changed.bounds()
         );
     };
-    assert_eq!(elastic.active_limit(), 14_850);
-    assert!(elastic.measured() > BASE && elastic.measured() < elastic.elastic_limit());
-    assert!(!elastic.over_limit() && !elastic.elastic_breach());
-    assert_eq!(elastic.latch_transition(), LatchTransition::Clear);
+    assert_eq!(held.active_limit(), BASE);
+    assert!(held.measured() > BASE && held.measured() < held.elastic_limit());
+    assert!(held.over_limit() && !held.elastic_breach());
+    assert_eq!(held.latch_transition(), LatchTransition::Held);
     assert_eq!(
         acquired_arm(&evaluate_core(&changed), GateId::RepoDocs).standing(),
-        CoreStanding::Passed,
-        "authored document debt inside the configured ratchet retains flex"
+        CoreStanding::Failed,
+        "an authored improvement remains actionable until it reaches base"
     );
 
     repository.write(PATH, &"x".repeat(BASE as usize));
@@ -576,9 +576,9 @@ fn an_authored_document_inside_its_ratchet_keeps_headroom() {
             healed.bounds()
         );
     };
-    assert_eq!(decision.active_limit(), 14_850);
+    assert_eq!(decision.active_limit(), BASE);
     assert!(!decision.over_limit() && !decision.over_base());
-    assert_eq!(decision.latch_transition(), LatchTransition::Clear);
+    assert_eq!(decision.latch_transition(), LatchTransition::Healed);
     assert_eq!(
         acquired_arm(&evaluate_core(&healed), GateId::RepoDocs).standing(),
         CoreStanding::Passed
