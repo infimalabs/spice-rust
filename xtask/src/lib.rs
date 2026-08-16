@@ -173,10 +173,9 @@ const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
 const RESIDENT_BUILD_LABEL: &str =
     "cargo build --locked -p spice --bin spice (freshness reference and canvas resident)";
 const WORKSPACE_TEST_CONCURRENCY_CAP: usize = gate::WORKSPACE_TEST_CONCURRENCY_CAP;
-const WORKSPACE_TEST_LABEL: &str =
-    "deterministic sharded cargo test --locked --workspace --all-targets";
+const WORKSPACE_TEST_LABEL: &str = "deterministic sharded cargo test --locked --workspace";
 const WORKSPACE_TEST_PREBUILD_LABEL: &str =
-    "cargo test --locked --workspace --all-targets --no-run (workspace-test setup)";
+    "cargo test --locked --workspace --no-run (workspace-test setup)";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {

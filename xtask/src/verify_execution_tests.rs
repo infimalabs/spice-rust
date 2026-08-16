@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn peer_cargo_pressure_collapses_outer_and_workspace_worker_budgets() {
+    fn peer_cargo_pressure_preserves_three_workspace_workers_when_capacity_exists() {
         let no_pressure = Budget::from_observation(FIXTURE_CPU_COUNT, Some(0));
         let one_peer = Budget::from_observation(FIXTURE_CPU_COUNT, Some(1));
         let two_peers = Budget::from_observation(FIXTURE_CPU_COUNT, Some(2));
@@ -326,13 +326,13 @@ mod tests {
         assert_eq!(unknown.workers, 1);
         assert_eq!(unknown.cargo_jobs, 1);
         assert_eq!(no_pressure.workspace_workers, 4);
-        assert_eq!(one_peer.workspace_workers, 2);
-        assert_eq!(two_peers.workspace_workers, 1);
+        assert_eq!(one_peer.workspace_workers, 3);
+        assert_eq!(two_peers.workspace_workers, 3);
         assert_eq!(pressure.workspace_workers, 1);
         assert_eq!(one_peer_twelve_cpus.cargo_jobs, 4);
-        assert_eq!(one_peer_twelve_cpus.workspace_workers, 2);
+        assert_eq!(one_peer_twelve_cpus.workspace_workers, 3);
         assert_eq!(three_peers.cargo_jobs, 3);
-        assert_eq!(three_peers.workspace_workers, 1);
+        assert_eq!(three_peers.workspace_workers, 3);
         assert_eq!(two_cpus.workspace_workers, 1);
         assert_eq!(one_free_cpu.workspace_workers, 1);
         assert_eq!(saturated_cpu.workspace_workers, 1);
@@ -342,10 +342,12 @@ mod tests {
     }
 
     #[test]
-    fn cargo_probe_excludes_the_current_cargo_ancestor() {
+    fn cargo_probe_excludes_the_current_cargo_ancestor_and_owned_descendants() {
         let listing = concat!(
             "10 1 cargo\n",
             "20 10 xtask\n",
+            "21 20 cargo\n",
+            "22 21 cargo\n",
             "30 1 /toolchains/bin/cargo\n",
             "31 30 rustc\n",
         );
@@ -415,7 +417,7 @@ mod tests {
         assert_line_order(
             &output,
             "stage=start ordinal=6/13",
-            "stage=setup identity=\"cargo test --locked --workspace --all-targets --no-run (workspace-test setup)\"",
+            "stage=setup identity=\"cargo test --locked --workspace --no-run (workspace-test setup)\"",
         );
         let setup_terminal = "stage=setup-terminal";
         assert_line_order(&output, setup_terminal, "stage=start ordinal=8/13");
@@ -428,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn transient_peer_pressure_is_rebalanced_after_workspace_test_setup() {
+    fn transient_peer_pressure_rebalances_without_moving_compiler_job_authority() {
         let runner = TimedRunner::uniform(Duration::from_millis(2))
             .with_prebuild_delay(Duration::from_millis(2));
         let mut output = Vec::new();
@@ -448,10 +450,10 @@ mod tests {
 
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains(
-            "scheduler workers=1 cargo_jobs=3 active_peer_cargo_jobs=3 workspace_workers=1"
+            "scheduler workers=1 cargo_jobs=3 active_peer_cargo_jobs=3 workspace_workers=3"
         ));
         assert!(output.contains(concat!(
-            "scheduler-rebalanced trigger=workspace-test-setup workers=3 cargo_jobs=4 ",
+            "scheduler-rebalanced trigger=workspace-test-setup workers=3 cargo_jobs=3 ",
             "active_peer_cargo_jobs=0 workspace_workers=4"
         )));
         assert_line_order(
@@ -469,7 +471,40 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_post_setup_pressure_uses_the_single_worker_degraded_mode() {
+    fn pressured_rebalance_overlaps_the_two_long_test_phase_branches() {
+        let mut delays = VERIFY_ACTIONS
+            .iter()
+            .map(|action| (action.label(), Duration::from_millis(2)))
+            .collect::<BTreeMap<_, _>>();
+        delays.insert(VERIFY_ACTIONS[7].label(), Duration::from_millis(80));
+        delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(80));
+        let runner = TimedRunner::new(delays, 0).with_prebuild_delay(Duration::from_millis(2));
+        let mut output = Vec::new();
+        let initial = Budget::from_observation(12, Some(0));
+        let pressured = Budget::from_observation(12, Some(2));
+
+        verify_with_deadline_and_rebalance(
+            &runner,
+            &mut output,
+            initial,
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_millis(120),
+            |_| pressured,
+        )
+        .expect("the two long test-phase branches overlap under measurable pressure");
+
+        let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+        assert!(output.contains(concat!(
+            "scheduler-rebalanced trigger=workspace-test-setup workers=2 cargo_jobs=4 ",
+            "active_peer_cargo_jobs=2 workspace_workers=3"
+        )));
+        assert!(runner.peak.load(Ordering::Acquire) >= 2);
+        assert_exactly_once(&runner.calls());
+    }
+
+    #[test]
+    fn unreadable_post_setup_pressure_preserves_bound_compiler_job_authority() {
         let runner = TimedRunner::uniform(Duration::from_millis(2))
             .with_prebuild_delay(Duration::from_millis(2));
         let mut output = Vec::new();
@@ -489,7 +524,7 @@ mod tests {
 
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains(concat!(
-            "scheduler-rebalanced trigger=workspace-test-setup workers=1 cargo_jobs=1 ",
+            "scheduler-rebalanced trigger=workspace-test-setup workers=1 cargo_jobs=4 ",
             "active_peer_cargo_jobs=unknown workspace_workers=1"
         )));
         assert_eq!(runner.peak.load(Ordering::Acquire), 1);
