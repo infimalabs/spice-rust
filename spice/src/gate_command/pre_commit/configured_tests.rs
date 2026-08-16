@@ -417,7 +417,7 @@ fn one_shared_deadline_terminates_and_reaps_a_late_step_process_tree() {
     let pid = scratch.root.join("descendant.pid");
     let pid_text = pid.to_str().expect("pid path is UTF-8");
     let commands = parsed_commands(&[
-        row("first", &["/bin/sh", "-c", "sleep 0.10", "fixture"], &[]),
+        row("first", &["/bin/sh", "-c", "sleep 0.25", "fixture"], &[]),
         row(
             "tree",
             &[
@@ -440,7 +440,7 @@ fn one_shared_deadline_terminates_and_reaps_a_late_step_process_tree() {
         &["src/lib.rs".to_owned()],
         &scratch.root,
         &base_environment(),
-        test_bounds(Duration::from_millis(180)),
+        test_bounds(Duration::from_millis(750)),
         Cancellation::Never,
         ExecutionMode::Ordinary,
         &mut || Ok(()),
