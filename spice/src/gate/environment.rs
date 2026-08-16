@@ -6,6 +6,7 @@ use std::path::Path;
 
 pub(super) const SHELL_LAST_COMMAND: &str = "_";
 const SHELL_OLD_DIRECTORY: &str = "OLDPWD";
+const SHELL_LEVEL: &str = "SHLVL";
 const HOME: &str = "HOME";
 const CARGO_HOME: &str = "CARGO_HOME";
 const RUSTUP_HOME: &str = "RUSTUP_HOME";
@@ -35,6 +36,7 @@ fn retained(name: &OsStr) -> bool {
     let name = name.as_encoded_bytes();
     name != SHELL_LAST_COMMAND.as_bytes()
         && name != SHELL_OLD_DIRECTORY.as_bytes()
+        && name != SHELL_LEVEL.as_bytes()
         && name != b"CARGO"
         && name != b"CARGO_MANIFEST_DIR"
         && name != b"CARGO_MANIFEST_PATH"

@@ -153,6 +153,7 @@ fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from(SHELL_LAST_COMMAND),
             OsString::from("/fixture/producer-xtask"),
         ),
+        (OsString::from("SHLVL"), OsString::from("1")),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
             OsString::from("retained"),
@@ -163,6 +164,7 @@ fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from(SHELL_LAST_COMMAND),
             OsString::from("/fixture/consumer-spice"),
         ),
+        (OsString::from("SHLVL"), OsString::from("2")),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
             OsString::from("retained"),
