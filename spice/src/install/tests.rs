@@ -619,6 +619,13 @@ fn reversing_a_refresh_restores_the_tree_the_first_install_found() {
 }
 
 #[test]
+fn checkout_skill_source_matches_the_embedded_install_asset() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("agent/SKILL.md");
+
+    assert_eq!(fs::read_to_string(source).unwrap(), SKILL);
+}
+
+#[test]
 fn generated_guidance_and_install_errors_name_spice() {
     for command in [
         "`spice agent activation`",
