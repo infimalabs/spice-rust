@@ -1,4 +1,6 @@
-fn execute_action<R: Runner>(
+use super::*;
+
+pub(super) fn execute_action<R: Runner>(
     runner: &R,
     action: Action,
     cancellation: &CancellationToken,
@@ -36,13 +38,13 @@ fn execute_action<R: Runner>(
         Action::Browser => execute_browser(runner.browser(cancellation, budget.cargo_jobs)),
         Action::WorkspaceTests => execute_process(
             runner.workspace_tests(cancellation, budget.cargo_jobs, budget.workspace_workers),
-            super::WORKSPACE_TEST_LABEL,
+            crate::WORKSPACE_TEST_LABEL,
             |source| VerifyError::Launch {
-                label: super::WORKSPACE_TEST_LABEL,
+                label: crate::WORKSPACE_TEST_LABEL,
                 source,
             },
             |code| VerifyError::Exit {
-                label: super::WORKSPACE_TEST_LABEL,
+                label: crate::WORKSPACE_TEST_LABEL,
                 code,
             },
         ),
@@ -71,7 +73,7 @@ fn execute_action<R: Runner>(
     }
 }
 
-fn execute_process(
+pub(super) fn execute_process(
     run: Result<CommandRun, RunError>,
     label: &str,
     launch_error: impl FnOnce(io::Error) -> VerifyError,
@@ -111,7 +113,7 @@ fn execute_process(
     }
 }
 
-fn panic_detail(payload: Box<dyn std::any::Any + Send>) -> String {
+pub(super) fn panic_detail(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(detail) = payload.downcast_ref::<&str>() {
         (*detail).to_owned()
     } else if let Some(detail) = payload.downcast_ref::<String>() {
@@ -183,7 +185,10 @@ fn execute_browser(run: Result<BrowserRun, RunError>) -> ActionCompletion {
     }
 }
 
-fn execute_battery(run: Result<BatteryRun, RunError>, label: &'static str) -> ActionCompletion {
+pub(super) fn execute_battery(
+    run: Result<BatteryRun, RunError>,
+    label: &'static str,
+) -> ActionCompletion {
     match run {
         Err(RunError::Launch(source)) => failure(
             VerifyError::Battery(source.to_string()),
@@ -218,7 +223,7 @@ fn execute_battery(run: Result<BatteryRun, RunError>, label: &'static str) -> Ac
     }
 }
 
-fn success(output: Vec<u8>, disposition: Disposition) -> ActionCompletion {
+pub(super) fn success(output: Vec<u8>, disposition: Disposition) -> ActionCompletion {
     ActionCompletion {
         elapsed: Duration::ZERO,
         output,
@@ -227,7 +232,7 @@ fn success(output: Vec<u8>, disposition: Disposition) -> ActionCompletion {
     }
 }
 
-fn failure(error: VerifyError, disposition: Disposition) -> ActionCompletion {
+pub(super) fn failure(error: VerifyError, disposition: Disposition) -> ActionCompletion {
     failure_with_bytes(error, disposition, Vec::new())
 }
 
@@ -259,7 +264,7 @@ fn process_bytes(output: &ProcessOutput) -> Vec<u8> {
     bytes
 }
 
-fn write_failure_summary(
+pub(super) fn write_failure_summary(
     output: &mut impl Write,
     primary: &str,
     cleanup: &[(usize, VerifyError)],

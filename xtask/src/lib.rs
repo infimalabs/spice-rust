@@ -1051,4 +1051,4 @@ pub fn verify_package(package: &str, output: &mut impl Write) -> Result<(), Veri
 }
 
 #[cfg(test)]
-include!("lib_tests.rs");
+mod tests;

@@ -27,7 +27,21 @@ use super::{
     VERIFY_ACTIONS, VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, valid_package_name,
 };
 
+mod action;
+mod process;
 mod setup;
+
+use action::{
+    execute_action, execute_battery, execute_process, failure, panic_detail, write_failure_summary,
+};
+pub(super) use process::run_process;
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) use process::run_process_at;
+use process::{
+    SignalGuard, StreamingRunError, active_peer_cargo_jobs, run_bounded_process_streaming,
+};
+#[cfg(test)]
+use {action::success, process::count_peer_cargo};
 
 /// The explicit full-verifier dependency graph, indexed by report ordinal.
 ///
@@ -884,8 +898,6 @@ fn stage(index: usize, action: Action) -> Stage<'static> {
     }
 }
 
-include!("verify_execution/action.rs");
-
 pub(super) fn verify_package_system(
     package: &str,
     output: &mut impl Write,
@@ -995,7 +1007,5 @@ fn write_scope_inventory(package: &str, output: &mut impl Write) -> Result<(), V
         .map_err(VerifyError::Output)
 }
 
-include!("verify_execution/process.rs");
-
 #[cfg(test)]
-include!("verify_execution_tests.rs");
+mod tests;

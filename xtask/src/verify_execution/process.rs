@@ -1,7 +1,9 @@
+use super::*;
+
 #[cfg(unix)]
 mod descendants;
 
-pub(super) fn run_process<I, S, P>(
+pub(crate) fn run_process<I, S, P>(
     label: &str,
     program: P,
     arguments: I,
@@ -26,7 +28,7 @@ where
     )
 }
 
-pub(super) fn run_process_at<I, S, P>(
+pub(crate) fn run_process_at<I, S, P>(
     label: &str,
     program: P,
     arguments: I,
@@ -150,7 +152,7 @@ fn wait_after_stop_request(
 }
 
 #[derive(Debug)]
-enum StreamingRunError {
+pub(super) enum StreamingRunError {
     Process(RunError),
     Output(io::Error),
 }
@@ -175,7 +177,7 @@ impl RecordObserver for LiveProgressObserver {
     clippy::too_many_arguments,
     reason = "the streaming process boundary retains the ordinary rim plus its explicit sink"
 )]
-fn run_bounded_process_streaming<I, S, P>(
+pub(super) fn run_bounded_process_streaming<I, S, P>(
     label: &str,
     program: P,
     arguments: I,
@@ -402,7 +404,7 @@ fn captured(
     Ok(output.bytes().to_vec())
 }
 
-fn active_peer_cargo_jobs() -> io::Result<usize> {
+pub(super) fn active_peer_cargo_jobs() -> io::Result<usize> {
     let output = Command::new("ps")
         .args(["-Ao", "pid=,ppid=,comm="])
         .output()?;
@@ -416,7 +418,7 @@ fn active_peer_cargo_jobs() -> io::Result<usize> {
     Ok(count_peer_cargo(&listing, std::process::id()))
 }
 
-fn count_peer_cargo(listing: &str, current: u32) -> usize {
+pub(super) fn count_peer_cargo(listing: &str, current: u32) -> usize {
     let processes = listing
         .lines()
         .filter_map(|line| {
@@ -468,14 +470,14 @@ fn descends_from(process: u32, ancestor: u32, parents: &BTreeMap<u32, u32>) -> b
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-struct SignalGuard {
+pub(super) struct SignalGuard {
     handle: signal_hook::iterator::Handle,
     join: Option<thread::JoinHandle<()>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl SignalGuard {
-    fn install(
+    pub(super) fn install(
         cancellation: CancellationToken,
         interrupted: Arc<AtomicBool>,
     ) -> Result<Self, VerifyError> {
@@ -511,11 +513,11 @@ impl Drop for SignalGuard {
 }
 
 #[cfg(target_arch = "wasm32")]
-struct SignalGuard;
+pub(super) struct SignalGuard;
 
 #[cfg(target_arch = "wasm32")]
 impl SignalGuard {
-    fn install(
+    pub(super) fn install(
         _cancellation: CancellationToken,
         _interrupted: Arc<AtomicBool>,
     ) -> Result<Self, VerifyError> {
