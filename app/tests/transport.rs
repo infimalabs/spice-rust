@@ -52,6 +52,30 @@ fn accepted(session: &Session, epoch: &str) -> Admitted<Accepted> {
         .expect("the fixture acceptance is admitted")
 }
 
+#[test]
+fn an_accepted_frame_cannot_echo_the_session_capability() {
+    let bytes = format!(
+        concat!(
+            r#"{{ "wire": 1, "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2", "#,
+            r#""epoch": "{EPOCH}", "capability": "{CAPABILITY}" }}"#,
+        ),
+        EPOCH = EPOCH,
+        CAPABILITY = CAPABILITY,
+    );
+
+    let fault = session()
+        .admit_accepted(bytes.as_bytes())
+        .expect_err("the resident return frame cannot echo a live credential");
+
+    assert_eq!(fault.class, FaultClass::Protocol);
+    assert_eq!(fault.reason, "frame::undecodable");
+    assert!(
+        !fault.detail.contains(CAPABILITY),
+        "the decoder diagnostic echoed the credential: {}",
+        fault.detail
+    );
+}
+
 fn browser_state<T>() -> BrowserState<T> {
     BrowserState::new(&accepted(&session(), EPOCH))
 }
