@@ -125,7 +125,7 @@ fn resolution_worker_exhausts_real_authority_change_while_ordinary_selection_ref
     );
     let report: serde_json::Value =
         serde_json::from_slice(resolution_document).expect("decode resolution report");
-    assert_eq!(report["version"], 1);
+    assert_eq!(report["version"], 2);
     assert!(report.get("packaged").is_some());
     assert!(
         resolution.progress.contains("[rust-test-selection]"),

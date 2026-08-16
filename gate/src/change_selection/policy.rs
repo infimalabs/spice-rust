@@ -255,6 +255,10 @@ impl ChangeSelectionPolicy {
         contains_exact(&self.policy_authorities, path)
     }
 
+    pub(super) fn selection_authority(&self, path: &str) -> bool {
+        self.policy_authority(path) || repository_selection_authority(path)
+    }
+
     fn generated(&self, path: &str) -> bool {
         matches_any(&self.generated_paths, path)
     }

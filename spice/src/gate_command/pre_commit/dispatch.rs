@@ -11,25 +11,51 @@ pub(super) fn dispatch_resolution(
     let source = dispatch.source().clone();
     let packaged = if dispatch.builtins_enabled() {
         write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
-        let report = spice::change_gate::run_exhaustive(progress).map_err(change_gate_failure)?;
-        if report.source() != &source {
-            return Err(WorkerFailure {
-                reason: "gate::resolution-staged-source-moved".to_owned(),
-                detail: format!(
-                    "dispatcher source {source} differs from exhaustive source {}",
-                    report.source(),
-                ),
-                fault: false,
-            });
+        let packaged = match spice::change_gate::run_resolution(progress) {
+            Ok(report) => {
+                if report.selection().source() != &source {
+                    return Err(WorkerFailure {
+                        reason: "gate::resolution-staged-source-moved".to_owned(),
+                        detail: format!(
+                            "dispatcher source {source} differs from selected resolution source {}",
+                            report.selection().source(),
+                        ),
+                        fault: false,
+                    });
+                }
+                ResolutionPackagedReport::selected(&report)
+            }
+            Err(error) if error.reason() == "gate::change-selection-refused" => {
+                writeln!(
+                    progress,
+                    "[change-gate-resolution] disposition=fresh-exhaustive detail={:?}",
+                    error.detail(),
+                )
+                .map_err(worker_io_failure)?;
+                progress.flush().map_err(worker_io_failure)?;
+                let report = spice::change_gate::run_exhaustive(progress)
+                    .map_err(change_gate_failure)?;
+                if report.source() != &source {
+                    return Err(WorkerFailure {
+                        reason: "gate::resolution-staged-source-moved".to_owned(),
+                        detail: format!(
+                            "dispatcher source {source} differs from exhaustive resolution source {}",
+                            report.source(),
+                        ),
+                        fault: false,
+                    });
+                }
+                ResolutionPackagedReport::exhaustive(&report)
+            }
+            Err(error) => return Err(change_gate_failure(error)),
         }
+        .map_err(|detail| WorkerFailure {
+            reason: "gate::resolution-report-invalid".to_owned(),
+            detail,
+            fault: true,
+        })?;
         dispatch = dispatch.rebind(&source).map_err(configured_failure)?;
-        Some(
-            ResolutionPackagedReport::new(&report).map_err(|detail| WorkerFailure {
-                reason: "gate::resolution-report-invalid".to_owned(),
-                detail,
-                fault: true,
-            })?,
-        )
+        Some(packaged)
     } else {
         None
     };
