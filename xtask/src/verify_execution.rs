@@ -84,12 +84,13 @@ const MAX_CONCURRENT_ACTIONS: usize = 3;
 ///
 /// Standalone workspace verification may use the whole coordinator cap. With no
 /// peer Cargo process, the full verifier may use that same cap so all deterministic
-/// shards can finish inside the fixed test-phase window. One peer caps the branch
-/// at two lanes; two or more peers collapse it to one so the verifier does not
-/// become a cross-lane contention source while Canvas is also live.
-const ONE_PEER_FULL_VERIFIER_WORKSPACE_LANES: usize = 2;
+/// shards can finish inside the fixed test-phase window. Peer pressure caps the
+/// branch at three lanes: two lanes cannot execute the measured workspace portfolio
+/// inside that window, while the CPU and Cargo-job budgets still bound aggregate
+/// pressure on smaller or saturated machines.
+const PRESSURED_FULL_VERIFIER_WORKSPACE_LANES: usize = 3;
 const _: () =
-    assert!(ONE_PEER_FULL_VERIFIER_WORKSPACE_LANES <= super::WORKSPACE_TEST_CONCURRENCY_CAP);
+    assert!(PRESSURED_FULL_VERIFIER_WORKSPACE_LANES <= super::WORKSPACE_TEST_CONCURRENCY_CAP);
 /// Stop launching and cancel owned process groups after 180 seconds of actual
 /// test-phase runtime. Compiler setup can be cold once; it is still serialized
 /// for low contention, but it does not consume the test runtime budget.
@@ -200,6 +201,21 @@ impl Budget {
         }
     }
 
+    /// Rebalance outer and workspace parallelism without changing the Cargo
+    /// job cap already bound into compiler evidence by the native stage.
+    ///
+    /// Once setup has completed, the two longest ready branches are the Cargo
+    /// workspace coordinator and the Cargo-free browser suite. When the fresh
+    /// observation still grants multiple workspace lanes, retain two outer
+    /// workers so those branches cannot consume the fixed test window serially.
+    fn after_workspace_prebuild(self, mut observed: Self) -> Self {
+        observed.cargo_jobs = self.cargo_jobs;
+        if observed.workspace_workers > 1 {
+            observed.workers = observed.workers.max(2);
+        }
+        observed
+    }
+
     #[cfg(test)]
     fn fixture(workers: usize, cargo_jobs: usize, active_cargo_jobs: usize) -> Self {
         Self {
@@ -216,8 +232,7 @@ impl Budget {
 fn workspace_lane_cap(active_cargo_jobs: usize) -> usize {
     match active_cargo_jobs {
         0 => super::WORKSPACE_TEST_CONCURRENCY_CAP,
-        1 => ONE_PEER_FULL_VERIFIER_WORKSPACE_LANES,
-        _ => 1,
+        _ => PRESSURED_FULL_VERIFIER_WORKSPACE_LANES,
     }
 }
 
@@ -436,7 +451,9 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
         prebuild_failure,
         output_fault,
         deadline_exceeded,
-    } = schedule_graph(runner, output, budget, &cancellation, runtime, rebalance);
+    } = schedule_graph(runner, output, budget, &cancellation, runtime, |initial| {
+        initial.after_workspace_prebuild(rebalance(initial))
+    });
     if let Some(error) = output_fault {
         return Err(VerifyError::Output(error));
     }

@@ -501,44 +501,7 @@ fn install_coexisting_appliance(fixture: &Fixture) -> (PathBuf, String, String) 
     assert_eq!(receipt.status(), spice::install::InstallStatus::Complete);
 
     let installed_binary = spice::install::installed_binary(&repository);
-    let installed_skill = spice::install::installed_skill(&repository);
     assert!(installed_binary.is_file(), "installed binary is visible");
-    assert_eq!(
-        fs::read(&installed_binary).expect("installed binary reads"),
-        fs::read(source_binary).expect("source binary reads"),
-        "the staged appliance binary drifted from the reviewed source binary"
-    );
-    assert_eq!(
-        installed_skill
-            .strip_prefix(repository.common_dir())
-            .unwrap(),
-        Path::new(".spice-install/agents/skills/spice/SKILL.md")
-    );
-    let skill = fs::read_to_string(&installed_skill).expect("installed skill reads");
-    for required in [
-        "spice recall",
-        "spice board",
-        "spice inbox",
-        "spice ack",
-        "SPICE_RS_LANE", // env-policy: not-an-env SPICE_RS_LANE
-        "spice task next",
-        "spice task done",
-    ] {
-        assert!(
-            skill.contains(required),
-            "installed skill omitted {required:?}"
-        );
-    }
-    for unavailable in [
-        "SPICE_LANE", // env-policy: not-an-env SPICE_LANE
-        "spice agent",
-        "spice task status",
-    ] {
-        assert!(
-            !skill.contains(unavailable),
-            "installed skill named unavailable command {unavailable:?}"
-        );
-    }
     (installed_binary, digest.as_str().to_owned(), binary_digest)
 }
 

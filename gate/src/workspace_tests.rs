@@ -55,10 +55,6 @@ pub fn cargo_workspace_tests_applicable(
 /// Targets are source-weight balanced across the minimum shard count so one
 /// cluster of larger integration targets cannot pin the coordinator tail.
 const TARGETS_PER_SHARD: usize = 8;
-/// The full verifier's prebuilt branch pays no compiler cost per shard, so use
-/// finer work units there to keep one long integration-target cluster from
-/// pinning a worker while the fixed four-lane test-phase budget expires.
-const FULL_VERIFIER_TARGETS_PER_SHARD: usize = 4;
 /// Below three targets, observed Cargo startup and publication time outweighs
 /// target cardinality, so these tail batches retain stable metadata order.
 const CARGO_STARTUP_DOMINATED_TARGET_LIMIT: usize = 2;
@@ -303,11 +299,7 @@ fn run_at_with_prebuild(
     if prebuild && policy.shared_outputs {
         prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)?;
     }
-    let targets_per_shard = if prebuild {
-        TARGETS_PER_SHARD
-    } else {
-        FULL_VERIFIER_TARGETS_PER_SHARD
-    };
+    let targets_per_shard = TARGETS_PER_SHARD;
     let shards = partition_with_target_limit(&inventory, targets_per_shard);
     validate_partition_with_target_limit(&inventory, &shards, targets_per_shard)?;
     let policy = policy.for_shards(shards.len());
@@ -362,19 +354,13 @@ fn prebuild_all_tests(
     cargo: &OsStr,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
-    let command = "cargo test --locked --workspace --all-targets --no-run";
+    let command = "cargo test --locked --workspace --no-run";
     writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
     output.flush().map_err(output_error)?;
     let started = Instant::now();
     let spec = process_spec(
         cargo,
-        [
-            "test",
-            "--locked",
-            "--workspace",
-            "--all-targets",
-            "--no-run",
-        ],
+        ["test", "--locked", "--workspace", "--no-run"],
         root,
         environment.clone(),
         SHARD_DEADLINE,

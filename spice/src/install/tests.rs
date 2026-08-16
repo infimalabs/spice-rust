@@ -620,12 +620,18 @@ fn reversing_a_refresh_restores_the_tree_the_first_install_found() {
 
 #[test]
 fn generated_guidance_and_install_errors_name_spice() {
-    assert_eq!(
-        SKILL
-            .matches("--git-common-dir)/.spice-install/bin/spice up")
-            .count(),
-        1
-    );
+    for command in [
+        "`spice agent activation`",
+        "`spice session briefing`",
+        "`spice task status`",
+    ] {
+        assert!(
+            SKILL.contains(command),
+            "missing bootstrap command {command}"
+        );
+    }
+    assert!(SKILL.contains("## Operator Decision Boundary"));
+    assert!(SKILL.contains("`spice config trust grant` / `revoke` plan"));
     assert!(!SKILL.contains("spice-rust"));
     assert!(!SKILL.contains("Rust"));
 
