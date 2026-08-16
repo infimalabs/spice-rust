@@ -721,10 +721,12 @@ impl StateReceipt {
         self.accepted
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) const fn authority_ledger(&self) -> &StateLedger {
         &self.authority_ledger
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) const fn published_ledger(&self) -> &StateLedger {
         &self.published_ledger
     }
