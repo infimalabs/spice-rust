@@ -7,11 +7,13 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use gate::{GateId, Selector, VerifierCompilerEvidence, VerifierCompilerProcessEvidence};
+use gate::{
+    BatteryReceipt, GateId, Selector, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
+};
 use spice::gate::{
-    FullVerifierEvidence, SemanticFullVerifierAdmission, admit_full_verifier_evidence,
-    admit_merge_parent_full_verifier_evidence, admit_semantic_full_verifier_evidence,
-    prepare_strict,
+    FullVerifierEvidence, PreparedBattery, SemanticFullVerifierAdmission,
+    admit_full_verifier_evidence, admit_merge_parent_full_verifier_evidence,
+    admit_semantic_full_verifier_evidence, prepare_strict,
 };
 use spice::repository::Repository;
 
@@ -103,6 +105,39 @@ fn concurrent_linked_worktree_state_receipts_compose_and_remain_source_bound() {
 #[ignore = "subprocess fixture with isolated cwd and compiler environment"]
 fn concurrent_state_receipt_fixture_process() {
     let left = env::current_dir().expect("fixture current directory");
+    let right = configure_concurrent_state_fixture(&left);
+    let (left_repository, left_prepared, left_compiler, left_battery) =
+        capture_concurrent_verifier(&left);
+    let (right_repository, right_prepared, right_compiler, right_battery) =
+        capture_concurrent_verifier(&right);
+    assert_ne!(left_prepared.source(), right_prepared.source());
+
+    let left_evidence = publish_concurrent_verifier(
+        &left,
+        &left_repository,
+        &left_prepared,
+        &left_compiler,
+        &left_battery,
+    );
+    publish_concurrent_verifier(
+        &right,
+        &right_repository,
+        &right_prepared,
+        &right_compiler,
+        &right_battery,
+    );
+    assert_composed_claims(&right);
+    assert_retained_evidence_is_source_bound(
+        &left,
+        &right,
+        &left_repository,
+        &right_repository,
+        &left_evidence,
+    );
+    env::set_current_dir(&left).expect("return to fixture root for cleanup");
+}
+
+fn configure_concurrent_state_fixture(left: &Path) -> PathBuf {
     let policy_path = left.join("spice-rust.toml");
     let policy = fs::read_to_string(&policy_path).expect("read fixture policy");
     fs::write(
@@ -115,12 +150,12 @@ fn concurrent_state_receipt_fixture_process() {
     .expect("select two independently bounded documents");
     fs::write(left.join("LEFT.md"), "left baseline\n").expect("write left baseline");
     fs::write(left.join("RIGHT.md"), "right baseline\n").expect("write right baseline");
-    git(&left, &["add", "spice-rust.toml", "LEFT.md", "RIGHT.md"]);
-    git(&left, &["commit", "-qm", "concurrent state baseline"]);
+    git(left, &["add", "spice-rust.toml", "LEFT.md", "RIGHT.md"]);
+    git(left, &["commit", "-qm", "concurrent state baseline"]);
 
-    let right = fixture_peer(&left, "concurrent-right");
+    let right = fixture_peer(left, "concurrent-right");
     git(
-        &left,
+        left,
         &[
             "worktree",
             "add",
@@ -132,61 +167,49 @@ fn concurrent_state_receipt_fixture_process() {
         ],
     );
     fs::write(left.join("LEFT.md"), "l".repeat(11_000)).expect("grow left document over base");
-    git(&left, &["add", "LEFT.md"]);
+    git(left, &["add", "LEFT.md"]);
     fs::write(right.join("RIGHT.md"), "r".repeat(11_000)).expect("grow right document over base");
     git(&right, &["add", "RIGHT.md"]);
+    right
+}
 
-    env::set_current_dir(&left).expect("enter left worktree");
-    let left_repository = Repository::discover(&left).expect("discover left repository");
-    let mut left_prepared = prepare_strict(Selector::staged()).expect("prepare left source");
-    let left_source = left_prepared.source().clone();
-    let left_compiler = compiler_evidence(&mut left_prepared);
-    let left_battery = left_prepared
-        .execute_prepared_compiler_receipt(&left_compiler, 1)
-        .expect("execute left battery");
-    assert!(left_battery.run().admits());
+fn capture_concurrent_verifier(
+    worktree: &Path,
+) -> (
+    Repository,
+    PreparedBattery<'static>,
+    Vec<VerifierCompilerEvidence>,
+    BatteryReceipt,
+) {
+    env::set_current_dir(worktree).expect("enter concurrent worktree");
+    let repository = Repository::discover(worktree).expect("discover concurrent repository");
+    let mut prepared = prepare_strict(Selector::staged()).expect("prepare concurrent source");
+    let compiler = compiler_evidence(&mut prepared);
+    let battery = prepared
+        .execute_prepared_compiler_receipt(&compiler, 1)
+        .expect("execute concurrent battery");
+    assert!(battery.run().admits());
+    (repository, prepared, compiler, battery)
+}
 
-    env::set_current_dir(&right).expect("enter right worktree");
-    let right_repository = Repository::discover(&right).expect("discover right repository");
-    let mut right_prepared = prepare_strict(Selector::staged()).expect("prepare right source");
-    let right_source = right_prepared.source().clone();
-    let right_compiler = compiler_evidence(&mut right_prepared);
-    let right_battery = right_prepared
-        .execute_prepared_compiler_receipt(&right_compiler, 1)
-        .expect("execute right battery");
-    assert!(right_battery.run().admits());
-    assert_ne!(
-        left_source, right_source,
-        "the fixture requires distinct staged digests"
-    );
+fn publish_concurrent_verifier(
+    worktree: &Path,
+    repository: &Repository,
+    prepared: &PreparedBattery<'_>,
+    compiler: &[VerifierCompilerEvidence],
+    battery: &BatteryReceipt,
+) -> FullVerifierEvidence {
+    env::set_current_dir(worktree).expect("enter publishing worktree");
+    let evidence = FullVerifierEvidence::mint(repository, 1, battery, compiler, prepared)
+        .expect("publish captured state transaction");
+    evidence
+        .publish(repository)
+        .expect("publish verifier evidence");
+    evidence
+}
 
-    env::set_current_dir(&left).expect("return to left worktree");
-    let left_evidence = FullVerifierEvidence::mint(
-        &left_repository,
-        1,
-        &left_battery,
-        &left_compiler,
-        &left_prepared,
-    )
-    .expect("publish the first captured state transaction");
-    left_evidence
-        .publish(&left_repository)
-        .expect("publish left evidence");
-
-    env::set_current_dir(&right).expect("return to right worktree");
-    let right_evidence = FullVerifierEvidence::mint(
-        &right_repository,
-        1,
-        &right_battery,
-        &right_compiler,
-        &right_prepared,
-    )
-    .expect("compose the second captured state transaction");
-    right_evidence
-        .publish(&right_repository)
-        .expect("publish right evidence");
-
-    let common_git = PathBuf::from(git_output(&right, &["rev-parse", "--git-common-dir"]));
+fn assert_composed_claims(right: &Path) {
+    let common_git = PathBuf::from(git_output(right, &["rev-parse", "--git-common-dir"]));
     let common_git = if common_git.is_absolute() {
         common_git
     } else {
@@ -204,30 +227,37 @@ fn concurrent_state_receipt_fixture_process() {
             .collect::<Vec<_>>(),
         ["LEFT.md", "RIGHT.md"],
     );
+}
 
-    env::set_current_dir(&left).expect("admit retained left evidence");
+fn assert_retained_evidence_is_source_bound(
+    left: &Path,
+    right: &Path,
+    left_repository: &Repository,
+    right_repository: &Repository,
+    left_evidence: &FullVerifierEvidence,
+) {
+    env::set_current_dir(left).expect("admit retained left evidence");
     assert!(
-        admit_full_verifier_evidence(&left_repository, Selector::staged())
+        admit_full_verifier_evidence(left_repository, Selector::staged())
             .expect("admit left evidence after right publication")
             .is_some(),
     );
-    env::set_current_dir(&right).expect("admit retained right evidence");
+    env::set_current_dir(right).expect("admit retained right evidence");
     assert!(
-        admit_full_verifier_evidence(&right_repository, Selector::staged())
+        admit_full_verifier_evidence(right_repository, Selector::staged())
             .expect("admit right evidence after composition")
             .is_some(),
     );
 
     left_evidence
-        .publish(&right_repository)
+        .publish(right_repository)
         .expect("copy foreign-source evidence into right worktree");
     assert!(
-        admit_full_verifier_evidence(&right_repository, Selector::staged())
+        admit_full_verifier_evidence(right_repository, Selector::staged())
             .expect("probe foreign-source evidence")
             .is_none(),
         "state composition must not weaken exact staged-source admission",
     );
-    env::set_current_dir(&left).expect("return to fixture root for cleanup");
 }
 
 #[test]
