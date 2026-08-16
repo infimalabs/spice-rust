@@ -233,9 +233,7 @@ impl BatteryStateRun {
             .finish()
             .map_err(|error| BatteryError::new(format!("cannot finish battery state: {error}")))?;
         if publishes_state {
-            pending.accept().map_err(|error| {
-                BatteryError::new(format!("cannot publish battery state: {error}"))
-            })
+            pending.accept().map_err(BatteryError::state_publication)
         } else {
             Ok(pending.reject())
         }

@@ -27,6 +27,12 @@ use test_execution::{TestExecution, run_resolution_tests, run_selected_tests};
 /// Current combined ordinary-change-gate report schema.
 pub const CHANGE_GATE_REPORT_VERSION: u64 = 4;
 
+/// One initial compare-and-swap plus bounded fresh-authority retries. The
+/// enclosing pre-commit supervisor remains the wall-clock authority; this cap
+/// prevents a continuously moving ledger from creating an unbounded inner
+/// retry loop.
+const STATE_PUBLICATION_ATTEMPTS: usize = 4;
+
 /// Policy evidence shaped to the selector's exact authority scope.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "coverage")]
@@ -559,15 +565,64 @@ fn run_with_selection(
         ));
     }
 
-    let report = ChangeGateReport::new(selection, tests, policy)?;
-    if report.admits() {
-        anchor
-            .accept_state(StateRunScope::Partial)
-            .map_err(ChangeGateError::gate)?;
-    } else {
-        anchor.reject_state().map_err(ChangeGateError::gate)?;
+    let policy = settle_partial_state(
+        &mut anchor,
+        &selection,
+        &source,
+        surface,
+        policy,
+        &mut shared_progress,
+    )?;
+    ChangeGateReport::new(selection, tests, policy)
+}
+
+fn settle_partial_state<W: Write + Send + ?Sized>(
+    anchor: &mut crate::gate::PreparedArm<'static>,
+    selection: &ChangeSelectionReport,
+    source: &wire::Digest,
+    surface: SelectionSurface,
+    mut policy: ChangePolicyReport,
+    progress: &mut SharedProgress<'_, W>,
+) -> Result<ChangePolicyReport, ChangeGateError> {
+    for attempt in 1..=STATE_PUBLICATION_ATTEMPTS {
+        if !policy.admits() {
+            anchor.reject_state().map_err(ChangeGateError::gate)?;
+            return Ok(policy);
+        }
+        match anchor.accept_state(StateRunScope::Partial) {
+            Ok(()) => return Ok(policy),
+            Err(error)
+                if error.is_stale_state_publication() && attempt < STATE_PUBLICATION_ATTEMPTS =>
+            {
+                writeln!(
+                    progress,
+                    "[change-gate-state] disposition=stale-retry publication_attempt={attempt}",
+                )
+                .map_err(|error| {
+                    ChangeGateError::environment("change-gate-progress-unavailable", error)
+                })?;
+                progress.flush().map_err(|error| {
+                    ChangeGateError::environment("change-gate-progress-unavailable", error)
+                })?;
+
+                let mut retry = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
+                let (retry_selection, _) = select_changes(&retry, surface)?;
+                if &retry_selection != selection || retry.source() != source {
+                    return Err(ChangeGateError::refusal(
+                        "change-gate-source-moved",
+                        "staged source or selected policy changed while retrying state publication",
+                    ));
+                }
+                let results =
+                    run_focused_policy(&mut retry, selection, source, surface, None, progress)?;
+                policy = ChangePolicyReport::focused_summaries(source, results);
+                policy.validate(selection.gate_ids(), source)?;
+                *anchor = retry;
+            }
+            Err(error) => return Err(ChangeGateError::gate(error)),
+        }
     }
-    Ok(report)
+    unreachable!("the fixed state publication attempt loop always returns")
 }
 
 fn probe_semantic_evidence(

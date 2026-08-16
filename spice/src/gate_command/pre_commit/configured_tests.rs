@@ -423,7 +423,10 @@ fn one_shared_deadline_terminates_and_reaps_a_late_step_process_tree() {
             &[
                 "/bin/sh",
                 "-c",
-                "sleep 30 & child=$!; printf '%s\\n' \"$child\" > \"$1\"; wait",
+                concat!(
+                    "sleep 30 & child=$!; ",
+                    "printf '%s\\n' \"$child\" > \"$1.tmp\"; mv \"$1.tmp\" \"$1\"; wait"
+                ),
                 "fixture",
                 pid_text,
             ],
@@ -473,7 +476,10 @@ fn cancellation_terminates_and_reaps_the_configured_process_tree() {
         &[
             "/bin/sh",
             "-c",
-            "sleep 30 & child=$!; printf '%s\\n' \"$child\" > \"$1\"; wait",
+            concat!(
+                "sleep 30 & child=$!; ",
+                "printf '%s\\n' \"$child\" > \"$1.tmp\"; mv \"$1.tmp\" \"$1\"; wait"
+            ),
             "fixture",
             pid_text,
         ],

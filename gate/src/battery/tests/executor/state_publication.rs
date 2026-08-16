@@ -103,6 +103,7 @@ fn rejection_and_stale_publication_leave_prior_state_unchanged() {
         .accept(crate::StateRunScope::Partial)
         .expect_err("stale production publication must refuse");
     assert!(error.detail().contains("stale"), "{error}");
+    assert!(error.is_stale_state_publication());
     assert_eq!(
         fs::read(&destination).expect("state after stale refusal"),
         accepted_bytes
