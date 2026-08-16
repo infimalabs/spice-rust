@@ -60,19 +60,91 @@ struct BatteryAuthorities {
 fn authorities_match_after_state(
     prior: &super::BatteryContext,
     current: &super::BatteryContext,
-    durable: &Digest,
+    current_state: &StateLedger,
     state: &StateReceipt,
-) -> bool {
-    state.accepted()
-        && state.after() == durable
-        && prior.source() == current.source()
-        && prior.actor() == current.actor()
-        && prior.scope() == current.scope()
-        && prior.configuration() == current.configuration()
-        && prior.policy() == current.policy()
-        && prior.bounds() == current.bounds()
-        && prior.latches() == current.latches()
-        && prior.tools() == current.tools()
+) -> Result<(), String> {
+    if !state.accepted() {
+        return Err("state transition was not accepted".to_owned());
+    }
+    if prior.state() != state.authority() {
+        return Err("state receipt names a different judged authority".to_owned());
+    }
+    if prior.source() != current.source() {
+        return Err("source authority changed".to_owned());
+    }
+    if prior.actor() != current.actor() {
+        return Err("actor authority changed".to_owned());
+    }
+    if prior.scope() != current.scope() {
+        return Err("scope authority changed".to_owned());
+    }
+    if prior.configuration() != current.configuration() {
+        return Err("configuration authority changed".to_owned());
+    }
+    if prior.policy() != current.policy() {
+        return Err("policy authority changed".to_owned());
+    }
+    if prior.bounds() != current.bounds() {
+        return Err("bound authority changed".to_owned());
+    }
+    if prior.tools() != current.tools() {
+        return Err("tool authority changed".to_owned());
+    }
+
+    let authority_latches = state
+        .authority_ledger()
+        .latches()
+        .iter()
+        .map(super::LatchEvidence::from)
+        .collect::<Vec<_>>();
+    if prior.latches() != authority_latches {
+        return Err("state receipt latch authority disagrees with its battery".to_owned());
+    }
+    let latch_paths = prior
+        .bounds()
+        .iter()
+        .map(|bound| bound.actor_inputs().candidate_path())
+        .chain(prior.latches().iter().map(super::LatchEvidence::path))
+        .collect::<std::collections::BTreeSet<_>>();
+    for path in latch_paths {
+        let expected_latches = state
+            .published_ledger()
+            .latches()
+            .iter()
+            .filter(|entry| entry.key().repo_path() == path)
+            .collect::<Vec<_>>();
+        let actual_latches = current_state
+            .latches()
+            .iter()
+            .filter(|entry| entry.key().repo_path() == path)
+            .collect::<Vec<_>>();
+        if expected_latches != actual_latches {
+            return Err(format!("latch authority changed at path {path:?}"));
+        }
+    }
+    let claim_paths = prior
+        .bounds()
+        .iter()
+        .filter(|bound| bound.over_base())
+        .map(|bound| bound.actor_inputs().candidate_path())
+        .collect::<std::collections::BTreeSet<_>>();
+    for path in claim_paths {
+        let expected_claims = state
+            .published_ledger()
+            .claims()
+            .iter()
+            .filter(|claim| claim.path() == path)
+            .collect::<Vec<_>>();
+        let actual_claims = current_state
+            .claims()
+            .iter()
+            .filter(|claim| claim.path() == path)
+            .collect::<Vec<_>>();
+        if expected_claims != actual_claims {
+            return Err(format!("actor/claim authority changed at path {path:?}"));
+        }
+    }
+    Ok(())
 }
 
 impl BatteryAuthorities {
@@ -226,8 +298,15 @@ impl BatteryCapture<'_> {
         let prior = receipt.run().context();
         let authorities_match = match state {
             Some(state) => {
-                let durable = self.state_run.durable_ledger()?.digest();
-                authorities_match_after_state(prior, &current, &durable, state)
+                let current_state = self.state_run.ledger()?;
+                authorities_match_after_state(prior, &current, &current_state, state).map_err(
+                    |conflict| {
+                        BatteryError::new(format!(
+                            "battery receipt state composition conflict: {conflict}"
+                        ))
+                    },
+                )?;
+                true
             }
             None => prior == &current,
         };
@@ -1125,57 +1204,179 @@ mod transition_tests {
     struct StateReceiptFixture<'a> {
         version: u64,
         before: &'a Digest,
+        authority: Digest,
         after: &'a Digest,
         accepted: bool,
+        authority_ledger: &'a StateLedger,
+        published_ledger: &'a StateLedger,
+    }
+
+    struct TransitionFixture {
+        durable_before: Digest,
+        authority: StateLedger,
+        published: StateLedger,
+        prior: super::super::BatteryContext,
+        current: super::super::BatteryContext,
+    }
+
+    impl TransitionFixture {
+        fn new() -> Self {
+            let authority = ledger([]);
+            let published = ledger([]);
+            Self {
+                durable_before: digest(b"durable before ledger"),
+                prior: context(b"source", &authority.digest()),
+                current: context(b"source", &published.digest()),
+                authority,
+                published,
+            }
+        }
+
+        fn receipt(&self, accepted: bool) -> StateReceipt {
+            state_receipt(
+                &self.durable_before,
+                &self.authority,
+                &self.published,
+                accepted,
+            )
+        }
     }
 
     #[test]
     fn retained_authorities_cross_only_their_exact_accepted_state_transition() {
-        let durable_before = digest(b"durable before ledger");
-        let judged = digest(b"run-start normalized ledger");
-        let after = digest(b"after ledger");
-        let normalized = digest(b"normalized after ledger");
-        let prior = context(b"source", &judged);
-        let current = context(b"source", &normalized);
+        let fixture = TransitionFixture::new();
+        assert_exact_transition_authorities(&fixture);
+        assert_non_state_conflicts(&fixture);
+        assert_composed_state_conflicts(&fixture);
+    }
 
-        assert!(authorities_match_after_state(
-            &prior,
-            &current,
-            &after,
-            &state_receipt(&durable_before, &after, true),
-        ));
-        assert!(!authorities_match_after_state(
-            &prior,
-            &current,
-            &after,
-            &state_receipt(&durable_before, &after, false),
-        ));
-        assert!(!authorities_match_after_state(
-            &prior,
-            &current,
-            &after,
-            &state_receipt(&durable_before, &digest(b"foreign after"), true),
-        ));
-        assert!(!authorities_match_after_state(
-            &prior,
-            &context(b"changed source", &normalized),
-            &after,
-            &state_receipt(&durable_before, &after, true),
-        ));
+    fn assert_exact_transition_authorities(fixture: &TransitionFixture) {
+        assert!(
+            authorities_match_after_state(
+                &fixture.prior,
+                &fixture.current,
+                &fixture.published,
+                &fixture.receipt(true),
+            )
+            .is_ok()
+        );
+        assert!(
+            authorities_match_after_state(
+                &fixture.prior,
+                &fixture.current,
+                &fixture.published,
+                &fixture.receipt(false),
+            )
+            .is_err()
+        );
+        assert!(
+            authorities_match_after_state(
+                &fixture.prior,
+                &context(b"changed source", &fixture.published.digest()),
+                &fixture.published,
+                &fixture.receipt(true),
+            )
+            .unwrap_err()
+            .contains("source authority")
+        );
+    }
+
+    fn assert_non_state_conflicts(fixture: &TransitionFixture) {
         let mut changed_projection =
-            serde_json::to_value(&current).expect("serialize current context fixture");
-        changed_projection["latches"] = serde_json::json!([{
-            "kind": "file-loc",
-            "path": "fixture.rs",
-        }]);
+            serde_json::to_value(&fixture.current).expect("serialize current context fixture");
+        changed_projection["policy"] = serde_json::json!(digest(b"changed policy"));
         let changed_projection = serde_json::from_value(changed_projection)
             .expect("deserialize changed projection fixture");
-        assert!(!authorities_match_after_state(
-            &prior,
-            &changed_projection,
-            &after,
-            &state_receipt(&durable_before, &after, true),
-        ));
+        assert!(
+            authorities_match_after_state(
+                &fixture.prior,
+                &changed_projection,
+                &fixture.published,
+                &fixture.receipt(true),
+            )
+            .unwrap_err()
+            .contains("policy authority")
+        );
+        for (field, value, diagnostic) in [
+            (
+                "actor",
+                serde_json::json!({"source": "active-actor", "value": "other-actor"}),
+                "actor authority changed",
+            ),
+            (
+                "bounds",
+                serde_json::json!([bound("fixture.rs")]),
+                "bound authority changed",
+            ),
+            (
+                "tools",
+                serde_json::json!([{
+                    "state": "identified",
+                    "name": "fixture-tool",
+                    "program": "fixture-tool",
+                    "version": "2",
+                    "executable_digest": digest(b"changed tool"),
+                }]),
+                "tool authority changed",
+            ),
+        ] {
+            let mut changed =
+                serde_json::to_value(&fixture.current).expect("serialize exact authority context");
+            changed[field] = value;
+            let changed = serde_json::from_value(changed).expect("deserialize changed authority");
+            assert_eq!(
+                authorities_match_after_state(
+                    &fixture.prior,
+                    &changed,
+                    &fixture.published,
+                    &fixture.receipt(true),
+                )
+                .expect_err("overlapping authority must refuse"),
+                diagnostic,
+            );
+        }
+    }
+
+    fn assert_composed_state_conflicts(fixture: &TransitionFixture) {
+        let unrelated = ledger([("unrelated.rs", "peer")]);
+        assert!(
+            authorities_match_after_state(
+                &fixture.prior,
+                &context(b"source", &unrelated.digest()),
+                &unrelated,
+                &fixture.receipt(true),
+            )
+            .is_ok()
+        );
+        let mut bounded_prior =
+            serde_json::to_value(context(b"source", &fixture.authority.digest()))
+                .expect("prior context");
+        bounded_prior["bounds"] = serde_json::json!([bound("fixture.rs")]);
+        let bounded_prior: super::super::BatteryContext =
+            serde_json::from_value(bounded_prior).expect("bounded prior context");
+        let bounded_current = bounded_prior.clone();
+        let latched = ledger_with_latch("fixture.rs");
+        assert_eq!(
+            authorities_match_after_state(
+                &bounded_prior,
+                &bounded_current,
+                &latched,
+                &fixture.receipt(true),
+            )
+            .expect_err("overlapping latch must refuse"),
+            "latch authority changed at path \"fixture.rs\"",
+        );
+        let claimed = ledger([("fixture.rs", "peer")]);
+        assert_eq!(
+            authorities_match_after_state(
+                &bounded_prior,
+                &bounded_current,
+                &claimed,
+                &fixture.receipt(true),
+            )
+            .expect_err("overlapping actor claim must refuse"),
+            "actor/claim authority changed at path \"fixture.rs\"",
+        );
     }
 
     fn context(source: &[u8], state: &Digest) -> super::super::BatteryContext {
@@ -1193,15 +1394,68 @@ mod transition_tests {
         .expect("deserialize context fixture")
     }
 
-    fn state_receipt(before: &Digest, after: &Digest, accepted: bool) -> StateReceipt {
+    fn state_receipt(
+        before: &Digest,
+        authority: &StateLedger,
+        published: &StateLedger,
+        accepted: bool,
+    ) -> StateReceipt {
+        let after = published.digest();
         let bytes = wire::encode(&StateReceiptFixture {
             version: crate::state::STATE_RECEIPT_VERSION,
             before,
-            after,
+            authority: authority.digest(),
+            after: &after,
             accepted,
+            authority_ledger: authority,
+            published_ledger: published,
         })
         .expect("encode state receipt fixture");
         StateReceipt::decode(&bytes).expect("decode state receipt fixture")
+    }
+
+    fn ledger<const N: usize>(claims: [(&str, &str); N]) -> StateLedger {
+        serde_json::from_value(serde_json::json!({
+            "version": crate::state::STATE_LEDGER_VERSION,
+            "latches": [],
+            "claims": claims.into_iter().enumerate().map(|(index, (path, actor))| {
+                serde_json::json!({
+                    "path": path,
+                    "actor": actor,
+                    "created_at": index as f64,
+                    "expires_at": 10_000.0,
+                })
+            }).collect::<Vec<_>>(),
+        }))
+        .expect("deserialize canonical state ledger fixture")
+    }
+
+    fn ledger_with_latch(path: &str) -> StateLedger {
+        serde_json::from_value(serde_json::json!({
+            "version": crate::state::STATE_LEDGER_VERSION,
+            "latches": [{"kind": "file_loc", "key": {"path": path}}],
+            "claims": [],
+        }))
+        .expect("deserialize latched state ledger fixture")
+    }
+
+    fn bound(path: &str) -> serde_json::Value {
+        serde_json::json!({
+            "rule": "fixture",
+            "metric": "file-loc",
+            "measured": 11,
+            "base_limit": 10,
+            "configured_elastic_limit": 15,
+            "variation_percent": 0,
+            "elastic_limit": 15,
+            "active_limit": 15,
+            "unlimited": false,
+            "over_limit": false,
+            "over_base": true,
+            "elastic_breach": false,
+            "latch_transition": "clear",
+            "actor_inputs": {"candidate_path": path},
+        })
     }
 
     fn digest(bytes: &[u8]) -> Digest {

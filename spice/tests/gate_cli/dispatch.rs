@@ -360,7 +360,7 @@ fn explicitly_trusted_source_override_runs_one_public_spice_leaf_through_the_hoo
     clippy::disallowed_methods,
     reason = "the configured process-boundary fixture must preserve the invoking test PATH"
 )]
-fn configured_source_gate_retries_a_concurrent_state_writer_under_continuous_peer_cargo() {
+fn configured_source_gate_composes_a_concurrent_state_writer_under_continuous_peer_cargo() {
     let repository = configured_source_gate_repository();
     let first = run_commit_worker(repository.path());
     let failure = terminal_failure(&first);
@@ -375,7 +375,7 @@ fn configured_source_gate_retries_a_concurrent_state_writer_under_continuous_pee
         .expect("trust refusal digest is canonical");
     grant_fixture_trust(&repository, digest);
 
-    let scratch = Scratch::new("configured-state-retry");
+    let scratch = Scratch::new("configured-state-composition");
     let marker = scratch.path().join("selected-tests.log");
     repository.write_selected_test_with_state_writer(&marker);
     repository.add("src/lib.rs");
@@ -414,7 +414,7 @@ fn configured_source_gate_retries_a_concurrent_state_writer_under_continuous_pee
     let started = Instant::now();
 
     let output = fixture_command("/usr/bin/git")
-        .args(["commit", "-qm", "Retry concurrent gate-state publication"])
+        .args(["commit", "-qm", "Compose concurrent gate-state publication"])
         .current_dir(repository.path())
         .env("PATH", path)
         .env_remove(PRE_COMMIT_PATHS)
@@ -439,7 +439,7 @@ fn configured_source_gate_retries_a_concurrent_state_writer_under_continuous_pee
     assert_eq!(
         fs::read_to_string(marker).expect("read selected-test executions"),
         "canonical selected target executed\n",
-        "stale state publication reran an already-complete selected test",
+        "conflict-aware state publication reran an already-complete selected test",
     );
 }
 
