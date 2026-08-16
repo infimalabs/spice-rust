@@ -241,6 +241,25 @@ impl VerifierCompilerContract {
         )
     }
 
+    /// Source-independent compiler authority portable between linked worktrees.
+    ///
+    /// This projection is deliberately separate from [`Self::semantic_authority`].
+    /// Ordinary retained evidence remains bound to one exact worktree. A merge
+    /// coordinator may compare this narrower identity only after independently
+    /// admitted parent bundles prove their complete compiler executions inside
+    /// one repository authority.
+    #[must_use]
+    pub fn merge_semantic_authority(&self, repository: &Digest) -> Digest {
+        compiler_merge_semantic_authority(
+            self.gate_id,
+            &self.manifest,
+            &self.repository,
+            repository,
+            &self.tools,
+            &self.environment,
+        )
+    }
+
     /// Selected source and Cargo output roots this native Rust compiler contract
     /// has populated and later workspace tests may reuse serially.
     #[must_use]
@@ -820,6 +839,19 @@ impl VerifierCompilerEvidence {
         )
     }
 
+    /// Compiler authority portable between linked worktrees in one repository.
+    #[must_use]
+    pub fn merge_semantic_authority(&self, repository: &Digest) -> Digest {
+        compiler_merge_semantic_authority(
+            self.gate_id,
+            &self.manifest,
+            &self.repository,
+            repository,
+            &self.tools,
+            &self.environment,
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn corrupt_source_for_test(&mut self) {
         self.source = Digest::compute(Domain::GateTree, b"stale verifier source fixture");
@@ -894,6 +926,130 @@ pub(super) fn compiler_semantic_authority(
         frame(&mut bytes, arguments.as_str().as_bytes());
     }
     Digest::compute(Domain::GateReceipt, &bytes)
+}
+
+fn compiler_merge_semantic_authority(
+    gate_id: GateId,
+    manifest: &Digest,
+    worktree: &Path,
+    repository: &Digest,
+    tools: &[ToolEvidence],
+    environment: &[(OsString, OsString)],
+) -> Digest {
+    let environment = contract_environment(gate_id, environment.to_vec(), worktree);
+    let mut bytes = Vec::new();
+    frame(
+        &mut bytes,
+        b"gate/verifier-compiler-merge-semantic-authority/v1",
+    );
+    frame(&mut bytes, gate_id.as_str().as_bytes());
+    frame(&mut bytes, manifest.as_str().as_bytes());
+    frame(&mut bytes, repository.as_str().as_bytes());
+    let mut tool_bytes = Vec::new();
+    for tool in tools {
+        portable_tool_identity(&mut tool_bytes, tool, worktree);
+    }
+    let tools = Digest::compute(Domain::GateReceipt, &tool_bytes);
+    frame(&mut bytes, tools.as_str().as_bytes());
+    let mut environment_bytes = Vec::new();
+    for (name, value) in environment
+        .iter()
+        .filter(|(name, _)| portable_environment_name(name))
+    {
+        frame(&mut environment_bytes, name.as_bytes());
+        frame(
+            &mut environment_bytes,
+            portable_path(value.as_os_str(), worktree).as_bytes(),
+        );
+    }
+    let environment = Digest::compute(Domain::GateReceipt, &environment_bytes);
+    frame(&mut bytes, environment.as_str().as_bytes());
+    for stage in expected_stages(gate_id) {
+        frame(&mut bytes, stage.tag().as_bytes());
+        let mut target_bytes = Vec::new();
+        for target in stage.targets() {
+            frame(&mut target_bytes, target.as_bytes());
+        }
+        let targets = Digest::compute(Domain::GateReceipt, &target_bytes);
+        frame(&mut bytes, targets.as_str().as_bytes());
+        let mut argument_bytes = Vec::new();
+        for argument in stage_arguments(*stage, worktree) {
+            frame(
+                &mut argument_bytes,
+                portable_path(argument.as_os_str(), worktree).as_bytes(),
+            );
+        }
+        let arguments = Digest::compute(Domain::GateReceipt, &argument_bytes);
+        frame(&mut bytes, arguments.as_str().as_bytes());
+    }
+    Digest::compute(Domain::GateReceipt, &bytes)
+}
+
+fn portable_tool_identity(into: &mut Vec<u8>, tool: &ToolEvidence, worktree: &Path) {
+    match tool {
+        ToolEvidence::Missing {
+            name,
+            requested_program,
+        } => {
+            frame(into, b"missing");
+            frame(into, name.as_bytes());
+            frame(into, requested_program.as_bytes());
+        }
+        ToolEvidence::Unprobed {
+            name,
+            requested_program,
+            resolved_program,
+            failure,
+        } => {
+            frame(into, b"unprobed");
+            frame(into, name.as_bytes());
+            frame(into, requested_program.as_bytes());
+            frame(
+                into,
+                portable_path(OsStr::new(resolved_program), worktree).as_bytes(),
+            );
+            frame(
+                into,
+                &wire::encode(failure).expect("probe failure is encodable"),
+            );
+        }
+        ToolEvidence::Identified {
+            name,
+            requested_program,
+            resolved_program,
+            version,
+            digest,
+        } => {
+            frame(into, b"identified");
+            frame(into, name.as_bytes());
+            frame(into, requested_program.as_bytes());
+            frame(
+                into,
+                portable_path(OsStr::new(resolved_program), worktree).as_bytes(),
+            );
+            frame(into, version.as_bytes());
+            frame(into, digest.as_bytes());
+        }
+    }
+}
+
+fn portable_environment_name(name: &OsStr) -> bool {
+    !matches!(
+        name.as_bytes(),
+        b"CARGO_BUILD_JOBS"
+            | b"CARGO_HOME"
+            | b"CLAUDE_CODE_SESSION_ID" // env-policy: allow
+            | b"CODEX_THREAD_ID" // env-policy: allow
+            | b"SPICE_AGENT_VENDOR" // env-policy: allow
+    )
+}
+
+fn portable_path(value: &OsStr, worktree: &Path) -> OsString {
+    let path = Path::new(value);
+    let Ok(relative) = path.strip_prefix(worktree) else {
+        return value.to_owned();
+    };
+    Path::new("$SPICE_WORKTREE").join(relative).into_os_string()
 }
 
 fn expected_stages(gate_id: GateId) -> &'static [VerifierCompilerStage] {

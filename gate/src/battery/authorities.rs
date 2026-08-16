@@ -147,6 +147,28 @@ impl BatteryCapture<'_> {
         &self,
         document: &[u8],
     ) -> Result<BatteryReceipt, BatteryError> {
+        self.admit_receipt_for_semantic_comparison_inner(document, true)
+    }
+
+    /// Re-admit one complete parent receipt for merge-only semantic comparison.
+    ///
+    /// The parent was verified as a staged index while its later comparison is
+    /// captured as a revision. Their scope spellings therefore differ even
+    /// when they name the same complete tree. All other source-independent
+    /// authorities and the selected baseline remain exact; callers still owe
+    /// per-arm source, state, tool, and compiler comparisons.
+    pub fn admit_receipt_for_merge_parent_comparison(
+        &self,
+        document: &[u8],
+    ) -> Result<BatteryReceipt, BatteryError> {
+        self.admit_receipt_for_semantic_comparison_inner(document, false)
+    }
+
+    fn admit_receipt_for_semantic_comparison_inner(
+        &self,
+        document: &[u8],
+        compare_scope: bool,
+    ) -> Result<BatteryReceipt, BatteryError> {
         if self.selected.is_some() {
             return Err(BatteryError::new(
                 "semantic battery receipt admission requires a complete capture",
@@ -162,7 +184,7 @@ impl BatteryCapture<'_> {
         let current = self.authorities.inputs()?.snapshot()?;
         let prior = receipt.run().context();
         if prior.actor() != current.actor()
-            || prior.scope() != current.scope()
+            || (compare_scope && prior.scope() != current.scope())
             || prior.configuration() != current.configuration()
             || prior.policy() != current.policy()
         {

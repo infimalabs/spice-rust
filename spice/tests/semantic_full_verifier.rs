@@ -10,7 +10,8 @@ use std::process::Command;
 use gate::{GateId, Selector, VerifierCompilerEvidence, VerifierCompilerProcessEvidence};
 use spice::gate::{
     FullVerifierEvidence, SemanticFullVerifierAdmission, admit_full_verifier_evidence,
-    admit_semantic_full_verifier_evidence, prepare_strict,
+    admit_merge_parent_full_verifier_evidence, admit_semantic_full_verifier_evidence,
+    prepare_strict,
 };
 use spice::repository::Repository;
 
@@ -29,6 +30,8 @@ fn full_verifier_semantic_reuse_crosses_the_complete_evidence_lifecycle() {
         ])
         .current_dir(&fixture.repository)
         .env("PATH", fixture.search_path())
+        .env_remove("SPICE_RS_BOOTSTRAP_CARGO_HOME") // env-policy: allow
+        .env_remove("SPICE_RS_NATIVE_CARGO") // env-policy: allow
         .output()
         .expect("launch isolated semantic lifecycle fixture");
 
@@ -38,6 +41,258 @@ fn full_verifier_semantic_reuse_crosses_the_complete_evidence_lifecycle() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+}
+
+#[test]
+fn admitted_parent_archives_compose_one_normal_two_parent_commit() {
+    let fixture = Fixture::new();
+    fixture.write_repository();
+    fixture.write_tools();
+
+    let output = Command::new(env::current_exe().expect("resolve integration-test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "merge_parent_fixture_process",
+            "--nocapture",
+        ])
+        .current_dir(&fixture.repository)
+        .env("PATH", fixture.search_path())
+        .env_remove("SPICE_RS_BOOTSTRAP_CARGO_HOME") // env-policy: allow
+        .env_remove("SPICE_RS_NATIVE_CARGO") // env-policy: allow
+        .output()
+        .expect("launch isolated merge-parent fixture");
+
+    assert!(
+        output.status.success(),
+        "merge-parent fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+#[ignore = "subprocess fixture with isolated cwd and compiler environment"]
+fn merge_parent_fixture_process() {
+    let root = env::current_dir().expect("fixture current directory");
+    make_static_compiler_baseline(&root);
+    let base = create_admitted_left_parent(&root);
+    let right_head = create_admitted_right_parent(&root, &base);
+    let repository = open_parent_merge(&root, &right_head);
+
+    assert_initial_merge_parent_reuse(&repository);
+    assert_malformed_merge_receipt_fails_closed(&repository);
+    assert_resolution_input_invalidates_compilers(&root, &repository);
+    assert_protected_resolution_executes_fresh(&root, &repository);
+    assert_selected_resolution_reuses_and_commits(&root);
+}
+
+fn make_static_compiler_baseline(root: &Path) {
+    let manifest =
+        fs::read_to_string(root.join("app/Cargo.toml")).expect("read merge fixture manifest");
+    fs::write(
+        root.join("app/Cargo.toml"),
+        manifest.replace("build = \"build.rs\"\n", ""),
+    )
+    .expect("remove dynamic compiler boundary");
+    git(root, &["rm", "-q", "app/build.rs", "app/schema.json"]);
+    git(root, &["add", "app/Cargo.toml"]);
+    git(root, &["commit", "-qm", "static compiler baseline"]);
+}
+
+fn create_admitted_left_parent(root: &Path) -> String {
+    git(root, &["checkout", "-qb", "left"]);
+    fs::write(
+        root.join("AGENTS.md"),
+        "# Fixture\n\nLeft parent documentation.\n",
+    )
+    .expect("write left parent source");
+    git(root, &["add", "AGENTS.md"]);
+    let left_repository = Repository::discover(root).expect("discover left repository");
+    publish_producer_evidence(&left_repository);
+    git(root, &["commit", "-qm", "left parent"]);
+    git_output(root, &["rev-parse", "HEAD~1"])
+}
+
+fn create_admitted_right_parent(root: &Path, base: &str) -> String {
+    let right = fixture_peer(root, "right");
+    git(
+        root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "right",
+            right.to_str().expect("right worktree path is text"),
+            base,
+        ],
+    );
+    env::set_current_dir(&right).expect("enter right worktree");
+    let browser = right.join("app/browser/lifecycle.mjs");
+    let source = fs::read_to_string(&browser).expect("read right browser source");
+    fs::write(&browser, format!("// right parent\n{source}")).expect("write right parent source");
+    git(&right, &["add", "app/browser/lifecycle.mjs"]);
+    let right_repository = Repository::discover(&right).expect("discover right repository");
+    publish_producer_evidence(&right_repository);
+    git(&right, &["commit", "-qm", "right parent"]);
+    let right_head = git_output(&right, &["rev-parse", "HEAD"]);
+    env::set_current_dir(root).expect("return to left worktree");
+    right_head
+}
+
+fn open_parent_merge(root: &Path, right_head: &str) -> Repository {
+    git(root, &["merge", "--no-ff", "--no-commit", right_head]);
+    let repository = Repository::discover(root).expect("rediscover merge repository");
+    assert!(repository.git_dir().join("MERGE_HEAD").is_file());
+    repository
+}
+
+fn assert_initial_merge_parent_reuse(repository: &Repository) {
+    assert!(
+        admit_full_verifier_evidence(repository, Selector::staged())
+            .expect("probe ordinary exact merge evidence")
+            .is_none(),
+        "a merged source must not become exact evidence through parent composition",
+    );
+
+    let admitted = admitted_merge(repository);
+    assert!(admitted.reusable_gate_ids().contains(&GateId::RepoDocs));
+    assert!(
+        admitted
+            .reusable_gate_ids()
+            .contains(&GateId::CanvasWebTypecheck),
+        "reusable={:?} invalidated={:?} diagnostics={:?}",
+        admitted.reusable_gate_ids(),
+        admitted.invalidated_gate_ids(),
+        admitted.diagnostics(),
+    );
+    assert!(
+        admitted
+            .reusable_gate_ids()
+            .contains(&GateId::RustTypecheck),
+    );
+}
+
+fn assert_malformed_merge_receipt_fails_closed(repository: &Repository) {
+    let archive = fs::read_dir(
+        repository
+            .admit_state()
+            .expect("admit merge fixture state")
+            .full_verifier_evidence_archive(),
+    )
+    .expect("read merge parent archive")
+    .next()
+    .expect("one parent archive")
+    .expect("read parent archive entry")
+    .path();
+    let original = fs::read(&archive).expect("read archived parent bundle");
+    let marker = b"\"compiler\":\"{";
+    let offset = original
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .expect("locate merge compiler receipt")
+        + marker.len()
+        - 1;
+    let mut malformed = original.clone();
+    malformed[offset] = b'x';
+    fs::write(&archive, malformed).expect("malform merge compiler receipt");
+    assert!(matches!(
+        admit_merge_parent_full_verifier_evidence(repository)
+            .expect("probe malformed merge compiler receipt"),
+        SemanticFullVerifierAdmission::Unavailable { .. },
+    ));
+    fs::write(&archive, original).expect("restore merge compiler receipt");
+}
+
+fn assert_resolution_input_invalidates_compilers(root: &Path, repository: &Repository) {
+    fs::write(
+        root.join("app/src/lib.rs"),
+        "pub fn app_fixture() {}\npub fn resolution_only() {}\n",
+    )
+    .expect("write resolution-only compiler input");
+    git(root, &["add", "app/src/lib.rs"]);
+    let resolved = admitted_merge(repository);
+    assert!(
+        resolved
+            .invalidated_gate_ids()
+            .contains(&GateId::RustTypecheck),
+    );
+    assert!(
+        resolved
+            .invalidated_gate_ids()
+            .contains(&GateId::CanvasWebTypecheck),
+    );
+    git(root, &["checkout", "HEAD", "--", "app/src/lib.rs"]);
+}
+
+fn assert_protected_resolution_executes_fresh(root: &Path, repository: &Repository) {
+    let policy =
+        fs::read_to_string(root.join("spice-rust.toml")).expect("read protected policy source");
+    fs::write(
+        root.join("spice-rust.toml"),
+        policy.replace(
+            "generated_paths = []",
+            "generated_paths = [\"generated/**\"]",
+        ),
+    )
+    .expect("write protected resolution source");
+    git(root, &["add", "spice-rust.toml"]);
+    match admit_merge_parent_full_verifier_evidence(repository)
+        .expect("probe protected resolution authority")
+    {
+        SemanticFullVerifierAdmission::Admitted(admitted) => {
+            assert!(admitted.reusable_gate_ids().is_empty());
+            assert_eq!(admitted.invalidated_gate_ids(), GateId::BATTERY);
+        }
+        SemanticFullVerifierAdmission::Unavailable { .. } => {}
+    }
+    let mut protected_progress = Vec::new();
+    let protected = spice::change_gate::run_resolution(&mut protected_progress)
+        .expect("run protected merge resolution gate");
+    assert!(protected.admits());
+    assert_eq!(
+        protected.selection().gate_ids(),
+        protected.selection().applicable_gate_ids(),
+    );
+    let protected_progress =
+        String::from_utf8(protected_progress).expect("protected progress is UTF-8");
+    assert!(protected_progress.contains("disposition=admitted"));
+    assert!(!protected_progress.contains("disposition=reused"));
+    assert!(!protected_progress.contains("disposition=fresh-exhaustive"));
+    git(root, &["checkout", "HEAD", "--", "spice-rust.toml"]);
+}
+
+fn assert_selected_resolution_reuses_and_commits(root: &Path) {
+    let mut progress = Vec::new();
+    let report = spice::change_gate::run_resolution(&mut progress)
+        .expect("run selected merge resolution gate");
+    assert!(report.admits(), "selected merge resolution must admit");
+    let progress = String::from_utf8(progress).expect("merge progress is UTF-8");
+    assert!(
+        progress.contains("gate=javascript-unused disposition=reused"),
+        "right-parent selected evidence was not reused:\n{progress}",
+    );
+
+    git(root, &["commit", "-qm", "normal admitted merge"]);
+    assert_eq!(
+        git_output(root, &["rev-list", "--parents", "-n", "1", "HEAD"])
+            .split_whitespace()
+            .count(),
+        3,
+        "the admitted resolution must become one normal two-parent commit",
+    );
+}
+
+fn admitted_merge(repository: &Repository) -> Box<spice::gate::AdmittedSemanticVerifierEvidence> {
+    match admit_merge_parent_full_verifier_evidence(repository)
+        .expect("compare both admitted merge parents")
+    {
+        SemanticFullVerifierAdmission::Admitted(admitted) => admitted,
+        SemanticFullVerifierAdmission::Unavailable { detail } => {
+            panic!("merge parents did not compose: {detail}")
+        }
+    }
 }
 
 #[test]
@@ -159,11 +414,16 @@ fn publish_producer_evidence(repository: &Repository) -> FullVerifierEvidence {
     evidence
         .publish(repository)
         .expect("publish producer evidence");
+    let exact = admit_full_verifier_evidence(repository, Selector::staged())
+        .expect("read exact producer evidence");
+    let semantic = admit_semantic_full_verifier_evidence(repository, Selector::staged())
+        .expect("diagnose exact producer evidence");
     assert!(
-        admit_full_verifier_evidence(repository, Selector::staged())
-            .expect("read exact producer evidence")
-            .is_some(),
-        "the complete bundle must re-admit against its exact source",
+        exact.is_some(),
+        "the complete bundle must re-admit against its exact source: {}",
+        semantic
+            .unavailable_detail()
+            .unwrap_or("semantic evidence admitted"),
     );
     evidence
 }
@@ -468,4 +728,21 @@ fn git(root: &Path, arguments: &[&str]) {
         "git {arguments:?} failed: {}",
         String::from_utf8_lossy(&output.stderr),
     );
+}
+
+fn git_output(root: &Path, arguments: &[&str]) -> String {
+    let output = Command::new("/usr/bin/git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .expect("fixture Git launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    String::from_utf8(output.stdout)
+        .expect("fixture Git output is UTF-8")
+        .trim()
+        .to_owned()
 }

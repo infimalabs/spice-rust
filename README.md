@@ -92,6 +92,14 @@ failure or interruption cancels and reaps siblings before returning. See
 [gate/THROUGHPUT_AUDIT.md](gate/THROUGHPUT_AUDIT.md) for execution and measured
 fleet details.
 
+An admitted verifier bundle remains exact to its producing worktree and is also
+archived by selected-source identity in repository-common state. Only an open
+two-parent resolution compares both parent archives: matching per-arm source,
+tool, compiler, policy, and state authorities are reused, while resolution-only
+or protected-authority changes execute their selected checks normally. Ordinary
+single-parent commits never consult this archive and retain exact-source
+admission.
+
 The native `commit-msg` hook enforces message hygiene and exact v1
 `Spice-Origin` grammar. The `reference-transaction` hook refuses a
 current-branch update that would abandon commits already merged upstream.

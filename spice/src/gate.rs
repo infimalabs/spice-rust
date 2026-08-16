@@ -38,7 +38,9 @@ mod full_verifier_evidence;
 
 use environment::verifier_environment;
 #[cfg(test)]
-use environment::{SHELL_LAST_COMMAND, verifier_environment_from};
+use environment::{
+    SHELL_LAST_COMMAND, verifier_environment_from, verifier_environment_from_with_cargo_home,
+};
 
 pub use finding_source::{
     GateFindingAnchor, capture_gate_finding_anchor, require_gate_finding_source_forward,
@@ -47,7 +49,7 @@ pub use finding_source::{
 pub use full_verifier_evidence::{
     AdmittedFullVerifierEvidence, AdmittedSemanticVerifierEvidence, FullVerifierEvidence,
     SemanticFullVerifierAdmission, admit_full_verifier_evidence,
-    admit_semantic_full_verifier_evidence,
+    admit_merge_parent_full_verifier_evidence, admit_semantic_full_verifier_evidence,
 };
 
 /// One staged battery capture retained across the full verifier's actions.
@@ -155,6 +157,10 @@ impl PreparedArm<'_> {
 }
 
 impl PreparedBattery<'_> {
+    fn bind_exact_evidence_environment(&mut self, verifier_environment: Vec<(OsString, OsString)>) {
+        self.verifier_environment = verifier_environment;
+    }
+
     /// Identity of the immutable selected source retained by this preparation.
     #[must_use]
     pub const fn source(&self) -> &Digest {
@@ -203,6 +209,23 @@ impl PreparedBattery<'_> {
                 self.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
             {
                 authorities.push((gate_id, contract.semantic_authority()));
+            }
+        }
+        Ok(authorities)
+    }
+
+    /// Compiler authorities portable between linked worktrees for one merge.
+    pub fn merge_semantic_compiler_authorities(
+        &mut self,
+        cargo_jobs: usize,
+        repository: &Digest,
+    ) -> Result<Vec<(GateId, Digest)>, RunError> {
+        let mut authorities = Vec::new();
+        for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
+            if let Some(contract) =
+                self.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
+            {
+                authorities.push((gate_id, contract.merge_semantic_authority(repository)));
             }
         }
         Ok(authorities)
@@ -386,6 +409,16 @@ impl PreparedBattery<'_> {
     ) -> Result<BatteryReceipt, RunError> {
         self.capture
             .admit_receipt_for_semantic_comparison(receipt)
+            .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
+    }
+
+    /// Re-admit a staged parent receipt against a fresh revision capture.
+    pub fn admit_battery_receipt_for_merge_parent_comparison(
+        &self,
+        receipt: &[u8],
+    ) -> Result<BatteryReceipt, RunError> {
+        self.capture
+            .admit_receipt_for_merge_parent_comparison(receipt)
             .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
     }
 

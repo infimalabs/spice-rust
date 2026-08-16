@@ -409,6 +409,17 @@ pub fn run_current_source(
     run_with_selection(progress, SelectionSurface::CurrentSource)
 }
 
+/// Run the packaged selector with independently admitted merge-parent credit.
+///
+/// Only an open two-parent Git merge can reach the parent archive. Missing or
+/// mismatched evidence simply leaves the selected arm executable, preserving
+/// the ordinary fail-closed path for every conflict-resolution change.
+pub fn run_resolution(
+    progress: &mut (impl Write + Send),
+) -> Result<ChangeGateReport, ChangeGateError> {
+    run_with_selection(progress, SelectionSurface::Resolution)
+}
+
 /// Run every packaged policy arm and every conservatively reached test target.
 ///
 /// This is deliberately not an ordinary selector. Its sole caller is the
@@ -483,12 +494,15 @@ pub fn run_exhaustive(
 enum SelectionSurface {
     Packaged,
     CurrentSource,
+    Resolution,
 }
 
 impl SelectionSurface {
     fn prepare_anchor(self) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
         match self {
-            Self::Packaged => crate::gate::prepare_arm(Selector::staged(), GateId::Staging),
+            Self::Packaged | Self::Resolution => {
+                crate::gate::prepare_arm(Selector::staged(), GateId::Staging)
+            }
             Self::CurrentSource => {
                 crate::gate::prepare_arm_strict(Selector::staged(), GateId::Staging)
             }
@@ -502,7 +516,7 @@ impl SelectionSurface {
         state_run: ::gate::BatteryStateRun,
     ) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
         match self {
-            Self::Packaged => crate::gate::prepare_arm_in_state_reached(
+            Self::Packaged | Self::Resolution => crate::gate::prepare_arm_in_state_reached(
                 Selector::staged(),
                 selection,
                 gate_id,
@@ -523,13 +537,29 @@ fn run_with_selection(
     surface: SelectionSurface,
 ) -> Result<ChangeGateReport, ChangeGateError> {
     let mut anchor = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
-    let (selection, test_execution) = select_changes(&anchor, surface)?;
+    let resolution_repository = if matches!(surface, SelectionSurface::Resolution) {
+        Some(Repository::discover(Path::new(".")).map_err(|error| {
+            ChangeGateError::environment("change-gate-repository-unresolved", error)
+        })?)
+    } else {
+        None
+    };
+    let mut semantic = match &resolution_repository {
+        Some(repository) => probe_semantic_evidence(repository, &anchor, surface, progress)?,
+        None => None,
+    };
+    let (selection, test_execution) = select_changes(&anchor, surface, semantic.is_some())?;
     publish_selection(progress, &selection)?;
 
-    let repository = Repository::discover(Path::new(".")).map_err(|error| {
-        ChangeGateError::environment("change-gate-repository-unresolved", error)
-    })?;
-    let semantic = probe_semantic_evidence(&repository, &anchor, surface, progress)?;
+    let repository = match resolution_repository {
+        Some(repository) => repository,
+        None => Repository::discover(Path::new(".")).map_err(|error| {
+            ChangeGateError::environment("change-gate-repository-unresolved", error)
+        })?,
+    };
+    if !matches!(surface, SelectionSurface::Resolution) {
+        semantic = probe_semantic_evidence(&repository, &anchor, surface, progress)?;
+    }
     let execution = ChangeGateExecution {
         selected_root: anchor.root().to_path_buf(),
         writable_root: repository.worktree_root().to_path_buf(),
@@ -570,6 +600,7 @@ fn run_with_selection(
         &selection,
         &source,
         surface,
+        semantic.is_some(),
         policy,
         &mut shared_progress,
     )?;
@@ -581,6 +612,7 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     surface: SelectionSurface,
+    parent_evidence: bool,
     mut policy: ChangePolicyReport,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<ChangePolicyReport, ChangeGateError> {
@@ -606,7 +638,7 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
                 })?;
 
                 let mut retry = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
-                let (retry_selection, _) = select_changes(&retry, surface)?;
+                let (retry_selection, _) = select_changes(&retry, surface, parent_evidence)?;
                 if &retry_selection != selection || retry.source() != source {
                     return Err(ChangeGateError::refusal(
                         "change-gate-source-moved",
@@ -634,9 +666,17 @@ fn probe_semantic_evidence(
     if matches!(surface, SelectionSurface::Packaged) {
         return Ok(None);
     }
-    match crate::gate::admit_semantic_full_verifier_evidence(repository, Selector::staged())
-        .map_err(ChangeGateError::gate)?
-    {
+    let admission = match surface {
+        SelectionSurface::Resolution => {
+            crate::gate::admit_merge_parent_full_verifier_evidence(repository)
+        }
+        SelectionSurface::CurrentSource => {
+            crate::gate::admit_semantic_full_verifier_evidence(repository, Selector::staged())
+        }
+        SelectionSurface::Packaged => unreachable!("packaged evidence returned above"),
+    }
+    .map_err(ChangeGateError::gate)?;
+    match admission {
         crate::gate::SemanticFullVerifierAdmission::Unavailable { detail } => {
             writeln!(
                 progress,
@@ -723,18 +763,25 @@ fn capture_authority_drift(
 fn select_changes(
     anchor: &crate::gate::PreparedArm<'_>,
     surface: SelectionSurface,
+    parent_evidence: bool,
 ) -> Result<(ChangeSelectionReport, TestExecution), ChangeGateError> {
     let (selection, test_execution) = match surface {
-        SelectionSurface::Packaged => {
+        SelectionSurface::Packaged | SelectionSurface::Resolution => {
             let policy = packaged_policy(anchor.root(), anchor.paths())?;
-            (
+            let selection = if parent_evidence {
+                gate::select_change_gates_with_parent_evidence(
+                    anchor.source().clone(),
+                    anchor.changes(),
+                    &policy.selection,
+                )
+            } else {
                 gate::select_change_gates(
                     anchor.source().clone(),
                     anchor.changes(),
                     &policy.selection,
-                ),
-                TestExecution::Packaged(policy.test_engines),
-            )
+                )
+            };
+            (selection, TestExecution::Packaged(policy.test_engines))
         }
         SelectionSurface::CurrentSource => (
             gate::select_current_source_change_gates(anchor.source().clone(), anchor.changes()),

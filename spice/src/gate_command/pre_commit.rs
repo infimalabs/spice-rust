@@ -92,7 +92,7 @@ impl WorkerPhase {
 }
 
 const PRE_COMMIT_REPORT_VERSION: u64 = 2;
-const RESOLUTION_REPORT_VERSION: u64 = 1;
+const RESOLUTION_REPORT_VERSION: u64 = 2;
 
 /// One complete packaged-plus-configured pre-commit battery result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -222,15 +222,21 @@ impl FullVerifierReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ResolutionPackagedReport {
-    policy: Vec<u8>,
-    tests: Vec<u8>,
+#[serde(deny_unknown_fields, rename_all = "kebab-case", tag = "coverage")]
+enum ResolutionPackagedReport {
+    Selected { report: Vec<u8> },
+    Exhaustive { policy: Vec<u8>, tests: Vec<u8> },
 }
 
 impl ResolutionPackagedReport {
-    fn new(report: &spice::change_gate::ExhaustiveChangeGateReport) -> Result<Self, String> {
-        Ok(Self {
+    fn selected(report: &spice::change_gate::ChangeGateReport) -> Result<Self, String> {
+        Ok(Self::Selected {
+            report: report.encode().map_err(|error| error.to_string())?,
+        })
+    }
+
+    fn exhaustive(report: &spice::change_gate::ExhaustiveChangeGateReport) -> Result<Self, String> {
+        Ok(Self::Exhaustive {
             policy: report
                 .policy()
                 .encode()
@@ -240,21 +246,44 @@ impl ResolutionPackagedReport {
     }
 
     fn validate(&self, source: &Digest) -> Result<bool, String> {
-        let policy =
-            gate::BatteryReport::decode(&self.policy).map_err(|error| error.to_string())?;
-        let tests =
-            gate::TestSelectionReport::decode(&self.tests).map_err(|error| error.to_string())?;
-        if policy.context().source() != source || tests.source() != source {
-            return Err("resolution packaged evidence names a different staged source".to_owned());
+        match self {
+            Self::Selected { report } => {
+                let report = spice::change_gate::ChangeGateReport::decode(report)
+                    .map_err(|error| error.to_string())?;
+                if report.selection().source() != source || report.tests().source() != source {
+                    return Err(
+                        "resolution packaged evidence names a different staged source".to_owned(),
+                    );
+                }
+                Ok(report.admits())
+            }
+            Self::Exhaustive { policy, tests } => {
+                let policy =
+                    gate::BatteryReport::decode(policy).map_err(|error| error.to_string())?;
+                let tests =
+                    gate::TestSelectionReport::decode(tests).map_err(|error| error.to_string())?;
+                if policy.context().source() != source || tests.source() != source {
+                    return Err(
+                        "resolution packaged evidence names a different staged source".to_owned(),
+                    );
+                }
+                Ok(policy.admits() && tests.admits())
+            }
         }
-        Ok(policy.admits() && tests.admits())
     }
 
     fn refusal_evidence(&self) -> String {
-        gate::BatteryReport::decode(&self.policy).map_or_else(
-            |error| format!("invalid exhaustive policy evidence: {error}"),
-            |report| report.refusal_fold().to_string(),
-        )
+        match self {
+            Self::Selected { report } => spice::change_gate::ChangeGateReport::decode(report)
+                .map_or_else(
+                    |error| format!("invalid selected resolution evidence: {error}"),
+                    |report| report.refusal_fold(),
+                ),
+            Self::Exhaustive { policy, .. } => gate::BatteryReport::decode(policy).map_or_else(
+                |error| format!("invalid exhaustive policy evidence: {error}"),
+                |report| report.refusal_fold().to_string(),
+            ),
+        }
     }
 }
 
@@ -598,7 +627,20 @@ fn resolution_selection_worker() -> Outcome<()> {
         env::remove_var(configured::PATHS_VARIABLE);
     }
     let mut progress = Vec::new();
-    match spice::change_gate::run_exhaustive(&mut progress) {
+    let result = match spice::change_gate::run_resolution(&mut progress) {
+        Ok(report) => Ok(ResolutionSelectionEvidence::Selected(report)),
+        Err(error) if error.reason() == "gate::change-selection-refused" => {
+            let _ = writeln!(
+                progress,
+                "[change-gate-resolution] disposition=fresh-exhaustive detail={:?}",
+                error.detail(),
+            );
+            spice::change_gate::run_exhaustive(&mut progress)
+                .map(ResolutionSelectionEvidence::Exhaustive)
+        }
+        Err(error) => Err(error),
+    };
+    match result {
         Ok(report)
             if report.source().to_string() == expected_source
                 && report.tests().changed_sources() == expected_paths
@@ -641,6 +683,41 @@ fn resolution_selection_worker() -> Outcome<()> {
             error.detail(),
             "repair the exhaustive source finding, then retry task completion",
         )),
+    }
+}
+
+enum ResolutionSelectionEvidence {
+    Selected(spice::change_gate::ChangeGateReport),
+    Exhaustive(spice::change_gate::ExhaustiveChangeGateReport),
+}
+
+impl ResolutionSelectionEvidence {
+    fn source(&self) -> &Digest {
+        match self {
+            Self::Selected(report) => report.selection().source(),
+            Self::Exhaustive(report) => report.source(),
+        }
+    }
+
+    fn tests(&self) -> &gate::TestSelectionReport {
+        match self {
+            Self::Selected(report) => report.tests(),
+            Self::Exhaustive(report) => report.tests(),
+        }
+    }
+
+    fn admits(&self) -> bool {
+        match self {
+            Self::Selected(report) => report.admits(),
+            Self::Exhaustive(report) => report.admits(),
+        }
+    }
+
+    fn refusal_fold(&self) -> String {
+        match self {
+            Self::Selected(report) => report.refusal_fold(),
+            Self::Exhaustive(report) => report.refusal_fold(),
+        }
     }
 }
 
