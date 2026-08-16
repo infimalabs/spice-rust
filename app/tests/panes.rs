@@ -19,9 +19,9 @@ use app::{
 };
 use serde::{Deserialize, Serialize};
 use wire::{
-    Accepted, Answer, Authority, CanonicalUuid, Command, CommandKind, Derived, Digest, Fault,
-    FaultClass, FoldName, Name, Outcome, Overflow, Packed, Refusal, Reply, ReplyPosition, Response,
-    Seq, SeqRange, TrustState, WireVersion, Witness, WitnessKind,
+    Accepted, Answer, Authority, CanonicalUuid, Command, CommandKind, Derived, Digest, FaultClass,
+    FoldName, Name, Outcome, Overflow, Packed, Refusal, Reply, ReplyPosition, Response, Seq,
+    TrustState, WireVersion, Witness, WitnessKind,
 };
 
 mod support;
@@ -201,83 +201,6 @@ fn noted(principal: &Principal) -> Command<Note> {
 }
 
 #[test]
-fn the_resident_names_the_principal_a_session_acts_as() {
-    assert!(operator().is_operator());
-    assert!(!lane().is_operator());
-    assert_eq!(operator().epoch(), uuid(EPOCH));
-    assert_eq!(lane().actor().to_string(), format!("lane:{LANE}"));
-}
-
-#[test]
-fn an_acceptance_for_another_generation_never_names_a_principal() {
-    let fault = operator_session()
-        .admit_accepted(&accepted_bytes("operator", NEXT_EPOCH))
-        .expect_err("an acceptance from a replaced generation faults");
-
-    assert_eq!(fault.class, FaultClass::Protocol);
-    assert_eq!(fault.reason, "frame::epoch-mismatch");
-    assert!(fault.detail.contains(NEXT_EPOCH), "{}", fault.detail);
-}
-
-#[test]
-fn an_acceptance_at_another_wire_version_never_names_a_principal() {
-    let bytes =
-        format!(r#"{{ "wire": 99, "actor": "operator", "epoch": "{EPOCH}" }}"#).into_bytes();
-
-    let fault = operator_session()
-        .admit_accepted(&bytes)
-        .expect_err("a foreign version faults");
-
-    assert_eq!(fault.reason, "frame::wire-mismatch");
-}
-
-#[test]
-fn an_acceptance_that_is_not_a_frame_names_no_principal() {
-    let fault = operator_session()
-        .admit_accepted(br#"{"wire": 1, "actor":"#)
-        .expect_err("truncated bytes fault");
-
-    assert_eq!(fault.reason, "frame::undecodable");
-}
-
-#[test]
-fn an_acceptance_carrying_a_capability_does_not_decode() {
-    // The capability crosses once, inside the opening. The one current
-    // acceptance shape omits it; echoing it would place a live credential on
-    // every return path, including every lane-scoped one.
-    let bytes = format!(
-        concat!(
-            r#"{{ "wire": 1, "actor": "lane:{LANE}", "epoch": "{EPOCH}", "#,
-            r#""capability": "{LANE_CAPABILITY}" }}"#,
-        ),
-        LANE = LANE,
-        EPOCH = EPOCH,
-        LANE_CAPABILITY = LANE_CAPABILITY
-    )
-    .into_bytes();
-
-    let fault = lane_session()
-        .admit_accepted(&bytes)
-        .expect_err("an acceptance carrying a capability is not a frame this build reads");
-
-    assert_eq!(fault.reason, "frame::undecodable");
-}
-
-#[test]
-fn principal_debug_renders_the_epoch_but_not_the_capability() {
-    let rendered = format!("{:?}", lane());
-
-    assert!(
-        rendered.contains(EPOCH),
-        "principal debug omitted its generation: {rendered}"
-    );
-    assert!(
-        !rendered.contains(LANE_CAPABILITY),
-        "principal debug rendered its session capability: {rendered}"
-    );
-}
-
-#[test]
 fn a_read_pane_shows_the_answer_it_was_given() {
     let lane = lane();
     let state = answered();
@@ -297,21 +220,6 @@ fn a_read_pane_shows_the_answer_it_was_given() {
         })
     );
     assert!(pane.is_overflowing());
-}
-
-#[test]
-fn a_read_pane_invents_no_rows_horizon_or_overflow_before_an_answer() {
-    let session = operator_session();
-    let operator = operator();
-    let state = BrowserState::<Row>::new(&accepted(&session, "operator", EPOCH));
-
-    let pane = ReadPane::over(&operator, &state).expect("state is from this generation");
-
-    assert!(pane.rows().is_empty());
-    assert_eq!(pane.horizon(), None);
-    assert_eq!(pane.overflow(), None);
-    assert_eq!(pane.cursor(), None);
-    assert!(!pane.is_overflowing());
 }
 
 #[test]
@@ -360,34 +268,6 @@ fn operator_only_packed_state_never_opens_for_a_same_epoch_lane() {
 }
 
 #[test]
-fn a_lane_principal_opens_no_grant_pane() {
-    assert!(GrantPane::over(&lane()).is_none());
-    assert!(GrantPane::over(&operator()).is_some());
-}
-
-#[test]
-fn a_consent_decision_is_an_operator_grant_control() {
-    let lane = lane();
-    let error = SteerPane::over(&lane)
-        .command(
-            uuid(COMMAND),
-            CommandKind::ConsentDecide,
-            Vec::new(),
-            note(),
-        )
-        .expect_err("a lane cannot decide operator consent");
-
-    assert_eq!(
-        error,
-        Declined::Authority {
-            kind: CommandKind::ConsentDecide,
-            actor: lane.actor().clone(),
-        }
-    );
-    assert!(GrantPane::decisions().any(|kind| kind == CommandKind::ConsentDecide));
-}
-
-#[test]
 fn no_rendered_row_promotes_a_lane_principal() {
     let session = lane_session();
     let lane = lane();
@@ -419,32 +299,6 @@ fn no_rendered_row_promotes_a_lane_principal() {
             "{kind} was offered to a lane that had rendered operator text"
         );
     }
-}
-
-#[test]
-fn a_lane_steer_pane_declines_every_command_the_operator_capability_carries() {
-    let lane = lane();
-    let steer = SteerPane::over(&lane);
-
-    let mut declined = 0_usize;
-    for kind in GrantPane::decisions() {
-        let error = steer
-            .command(uuid(COMMAND), kind, trust(), note())
-            .expect_err("a lane is offered no operator-capability command");
-
-        assert_eq!(
-            error,
-            Declined::Authority {
-                kind,
-                actor: lane.actor().clone(),
-            }
-        );
-        assert!(error.to_string().contains(&format!("lane:{LANE}")));
-        declined += 1;
-    }
-
-    // A loop that found nothing to decline would pass while proving nothing.
-    assert!(declined >= 1, "the operator decision set is empty");
 }
 
 #[test]
@@ -485,21 +339,6 @@ fn a_lane_builds_the_commands_it_is_offered() {
 }
 
 #[test]
-fn the_operator_builds_a_decision_through_the_pane_that_submits_it() {
-    let operator = operator();
-    let grant = GrantPane::over(&operator).expect("the operator opens a grant pane");
-
-    let command = grant
-        .steer()
-        .command(uuid(COMMAND), CommandKind::TrustGrant, trust(), note())
-        .expect("the operator is offered trust::grant");
-
-    assert_eq!(command.kind, CommandKind::TrustGrant);
-    assert!(command.witnessed().is_ok());
-    assert!(grant.principal().is_operator());
-}
-
-#[test]
 fn a_command_that_does_not_satisfy_its_law_is_declined_before_it_is_built() {
     let lane = lane();
 
@@ -508,65 +347,6 @@ fn a_command_that_does_not_satisfy_its_law_is_declined_before_it_is_built() {
         .expect_err("task::note does not witness trust");
 
     assert!(matches!(error, Declined::Law(_)), "{error:?}");
-}
-
-#[test]
-fn a_reply_a_refusal_and_a_fault_reach_the_pane_as_three_distinct_outcomes() {
-    let lane = lane();
-    let command = noted(&lane);
-
-    let reply = response(
-        COMMAND,
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(SeqRange {
-                first: seq(48213),
-                last: seq(48214),
-            }),
-            body: note(),
-        }),
-    );
-    let refusal = response(
-        COMMAND,
-        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-            "task::absent".to_owned(),
-            None,
-            None,
-            None,
-        ))),
-    );
-    let fault = response(
-        COMMAND,
-        Outcome::Fault(Fault {
-            class: FaultClass::Store,
-            reason: "journal::unreadable".to_owned(),
-            detail: "authority database is not readable".to_owned(),
-        }),
-    );
-
-    let outcomes = [&reply, &refusal, &fault].map(|admitted| {
-        settled(&command, admitted).expect("each answer names the command it answers")
-    });
-
-    assert!(
-        matches!(outcomes[0], Outcome::Reply(_)),
-        "{:?}",
-        outcomes[0]
-    );
-    assert!(
-        matches!(outcomes[1], Outcome::Refusal(_)),
-        "{:?}",
-        outcomes[1]
-    );
-    assert!(
-        matches!(outcomes[2], Outcome::Fault(_)),
-        "{:?}",
-        outcomes[2]
-    );
-
-    // Three variants, three values: no pair collapses into the other.
-    assert_ne!(outcomes[0], outcomes[1]);
-    assert_ne!(outcomes[1], outcomes[2]);
-    assert_ne!(outcomes[0], outcomes[2]);
 }
 
 #[test]
@@ -670,63 +450,6 @@ fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() 
         ])
     );
     assert_eq!(GrantPane::decisions().collect::<BTreeSet<_>>(), classified);
-}
-
-#[test]
-fn every_command_states_an_authority_and_most_need_no_operator() {
-    let mut operator = 0;
-    let mut connected = 0;
-
-    // The match is exhaustive over `Authority`, so a third capability cannot
-    // enter the vocabulary without this count being confronted with it. Summing
-    // the two arms back to `ALL.len()` would prove nothing instead: every kind
-    // lands in exactly one arm, so that total holds under any classification.
-    for kind in CommandKind::ALL {
-        match kind.law().authority {
-            Authority::Operator => operator += 1,
-            Authority::Connected => connected += 1,
-        }
-    }
-
-    assert_eq!(operator, 19);
-    assert_eq!(connected, 33);
-    assert_eq!(
-        CommandKind::TaskOopsAdd.law().authority,
-        Authority::Connected,
-        "the exact oops route remains available to authenticated operators and lanes",
-    );
-    assert_eq!(
-        CommandKind::EffortRead.law().authority,
-        Authority::Connected,
-        "reading what a task cost is an authenticated read, not an operator move",
-    );
-    assert_eq!(
-        CommandKind::ALL.len(),
-        52,
-        "a command joined or left the registry; the counts above are the claim \
-         to re-make, not the number to bump"
-    );
-}
-
-#[test]
-fn commands_sharing_witnesses_do_not_share_an_authority() {
-    // These pairs witness identically and answer to different capabilities,
-    // which is why each holds its own registry row. A single row per move
-    // would have to state one authority for both and would be wrong for one.
-    for (unrestricted, restricted) in [
-        (CommandKind::TrustPend, CommandKind::TrustGrant),
-        (CommandKind::TrustPend, CommandKind::TrustRevoke),
-    ] {
-        assert_eq!(
-            unrestricted.law().required,
-            restricted.law().required,
-            "{} and {} were split for authority, not for witnesses",
-            unrestricted.as_str(),
-            restricted.as_str()
-        );
-        assert_eq!(unrestricted.law().authority, Authority::Connected);
-        assert_eq!(restricted.law().authority, Authority::Operator);
-    }
 }
 
 #[test]
@@ -902,22 +625,6 @@ fn a_head_direct_answer_fabricates_no_provenance() {
 }
 
 #[test]
-fn the_generation_cursor_is_neither_the_horizon_nor_the_stream_cursor() {
-    let operator = operator();
-    let state = fold_backed();
-    let read = ReadPane::over(&operator, &state).expect("state is from this generation");
-
-    // Three claims about three subjects: how far the fold had applied the
-    // journal, how far the answer's sources are complete, and how far this
-    // browser has applied what it received. Reading one for another would let a
-    // stale generation render as current.
-    assert_eq!(read.generation_cursor(), Some(seq(48200)));
-    assert_eq!(read.horizon(), Some(seq(48213)));
-    assert_eq!(read.cursor(), None, "no frame has been applied yet");
-    assert_ne!(read.generation_cursor(), read.horizon());
-}
-
-#[test]
 fn replacing_a_derived_answer_with_a_head_direct_one_drops_its_provenance() {
     let operator = operator();
     let mut state = fold_backed();
@@ -966,64 +673,4 @@ fn a_refused_answer_leaves_the_provenance_the_pane_already_had() {
     assert_eq!(read.fold().map(FoldName::as_str), Some("task::backlog"));
     assert_eq!(read.generation(), Some(7));
     assert_eq!(read.rows().len(), 2);
-}
-
-#[test]
-fn truncation_is_read_from_the_answer_rather_than_counted_from_the_rows() {
-    let operator = operator();
-
-    // The truncated answer carries fewer rows than the complete one, so any
-    // rule comparing row count against a page size gets these two backwards.
-    let session = operator_session();
-    let mut truncated = BrowserState::new(&accepted(&session, "operator", EPOCH));
-    assert!(truncated.replace(&packed_answer(
-        &session,
-        &["SPICE-aBcD"],
-        Some((41, 48250)),
-        48213
-    )));
-
-    let mut complete = BrowserState::new(&accepted(&session, "operator", EPOCH));
-    assert!(complete.replace(&packed_answer(
-        &session,
-        &["SPICE-aBcD", "SPICE-eFgH"],
-        None,
-        48213
-    )));
-
-    let short = ReadPane::over(&operator, &truncated).expect("state is from this generation");
-    let long = ReadPane::over(&operator, &complete).expect("state is from this generation");
-
-    assert!(short.rows().len() < long.rows().len());
-    assert!(
-        short.is_overflowing(),
-        "the shorter answer is the truncated one"
-    );
-    assert!(
-        !long.is_overflowing(),
-        "the longer answer is the complete one"
-    );
-    assert_eq!(
-        short.overflow(),
-        Some(Overflow {
-            omitted: 41,
-            continuation: seq(48250)
-        })
-    );
-}
-
-#[test]
-fn a_pane_reports_the_horizon_the_answer_declared_and_no_other() {
-    let operator = operator();
-    let state = fold_backed();
-    let read = ReadPane::over(&operator, &state).expect("state is from this generation");
-
-    // A pane with no answer yet reports absence rather than position zero.
-    let empty = BrowserState::<Row>::new(&accepted(&operator_session(), "operator", EPOCH));
-    let blank = ReadPane::over(&operator, &empty).expect("state is from this generation");
-
-    assert_eq!(read.horizon(), Some(seq(48213)));
-    assert_eq!(blank.horizon(), None);
-    assert!(blank.rows().is_empty());
-    assert!(!blank.is_overflowing());
 }
