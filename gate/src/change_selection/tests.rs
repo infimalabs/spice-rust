@@ -259,6 +259,36 @@ fn policy_and_unknown_changes_refuse_without_manufacturing_applicable_execution(
 }
 
 #[test]
+fn admitted_parent_authority_selects_complete_exhaustive_reach_only_for_known_authorities() {
+    let tracked = strings(&["notes/readme.md", "spice-rust.toml"]);
+    let suffixes = strings(&[".md"]);
+    let policy = policy(&tracked, true, Some(&suffixes), &[], &[], &[]);
+    let report =
+        select_change_gates_with_parent_evidence(source(), &strings(&["spice-rust.toml"]), &policy)
+            .expect("admitted parent expands one known selection authority");
+
+    assert_eq!(report.gate_ids(), report.applicable_gate_ids());
+    assert!(report.reach().iter().all(|reach| {
+        matches!(
+            reach.mode(),
+            ChangeReachMode::Exhaustive {
+                authority: ChangeReachAuthority::SelectionPolicy,
+                ..
+            }
+        ) && reach.objects() == [ChangeReachObject::Repository]
+    }));
+    assert!(
+        select_change_gates_with_parent_evidence(
+            source(),
+            &strings(&["assets/opaque.bin"]),
+            &policy,
+        )
+        .is_err(),
+        "parent evidence must not classify an unknown path",
+    );
+}
+
+#[test]
 fn generic_selection_has_no_spice_frontend_or_workspace_topology() {
     let tracked = strings(&[
         "Cargo.toml",

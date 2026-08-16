@@ -60,6 +60,9 @@
 //!   because their parents are below the common exclusive `.spice-rs` root.
 //!   `artifacts/tasks/<INCEPTION-STAMP>/` uses the board's sole task identity;
 //!   the rendered handle never becomes a second filesystem authority.
+//! * **Full-verifier parent evidence** is archived by selected-source digest in
+//!   the common runtime. Its latest exact admission remains worktree-local;
+//!   only an open two-parent merge may compare the common parent records.
 //! * **Installed hooks, skills, and binaries** stay in the already-disjoint
 //!   `.spice-install` appliance. The install receipt remains runtime state at
 //!   the [`StatePaths::install_record`] path below `.spice-rs`.
@@ -121,6 +124,7 @@ pub struct StatePaths {
     inbox: PathBuf,
     learnings: PathBuf,
     full_verifier_evidence: PathBuf,
+    full_verifier_evidence_archive: PathBuf,
 }
 
 impl StatePaths {
@@ -145,6 +149,7 @@ impl StatePaths {
             lane_canvas: runtime.join("canvas-lanes"),
             inbox: worktree_runtime.join("inbox"),
             full_verifier_evidence: worktree_runtime.join("full-verifier-evidence.json"),
+            full_verifier_evidence_archive: runtime.join("full-verifier-evidence"),
             learnings: runtime.join("learnings"),
             artifact_data,
             runtime,
@@ -169,6 +174,12 @@ impl StatePaths {
     #[must_use]
     pub fn full_verifier_evidence(&self) -> &Path {
         &self.full_verifier_evidence
+    }
+
+    /// Repository-common exact bundles indexed by their admitted source.
+    #[must_use]
+    pub fn full_verifier_evidence_archive(&self) -> &Path {
+        &self.full_verifier_evidence_archive
     }
 
     /// Parent of the Rust authority database.
@@ -310,6 +321,7 @@ impl StatePaths {
             self.tape(),
             &self.artifact_data,
             self.artifacts(),
+            self.full_verifier_evidence_archive(),
         ];
         for path in [self.worktree_runtime(), self.inbox()] {
             if !paths.contains(&path) {

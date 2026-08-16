@@ -158,6 +158,7 @@ fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from(SHELL_LAST_COMMAND),
             OsString::from("/fixture/producer-xtask"),
         ),
+        (OsString::from("SHLVL"), OsString::from("1")),
         (
             shell_hook_name("REPO_ROOT"),
             OsString::from("/fixture/repository"),
@@ -176,6 +177,7 @@ fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from(SHELL_LAST_COMMAND),
             OsString::from("/fixture/consumer-spice"),
         ),
+        (OsString::from("SHLVL"), OsString::from("2")),
         (
             shell_hook_name("WRAPPERS"),
             OsString::from("consumer wrapper functions"),
@@ -274,6 +276,49 @@ fn cargo_launcher_metadata_normalizes_to_the_installed_compiler_environment() {
         consumer, custom,
         "a custom Cargo home remains evidence-bound"
     );
+}
+
+#[test]
+fn isolated_exact_evidence_rebinds_the_lane_to_the_manual_cargo_home() {
+    let bootstrap = crate::cargo_isolation::BOOTSTRAP_HOME_VARIABLE;
+    let native = crate::cargo_isolation::NATIVE_CARGO_VARIABLE;
+    let producer = verifier_environment_from([
+        (OsString::from("HOME"), OsString::from("/fixture/home")),
+        (
+            OsString::from("CARGO_HOME"),
+            OsString::from("/fixture/manual-cargo"),
+        ),
+        (
+            OsString::from(bootstrap),
+            OsString::from("/fixture/native-cargo"),
+        ),
+        (OsString::from(native), OsString::from("/fixture/bin/cargo")),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+    ]);
+    let consumer = verifier_environment_from_with_cargo_home(
+        [
+            (OsString::from("HOME"), OsString::from("/fixture/home")),
+            (
+                OsString::from("CARGO_HOME"),
+                OsString::from("/fixture/lane-cargo"),
+            ),
+            (
+                OsString::from(bootstrap),
+                OsString::from("/fixture/native-cargo"),
+            ),
+            (OsString::from(native), OsString::from("/fixture/bin/cargo")),
+            (
+                OsString::from("ARBITRARY_BUILD_INPUT"),
+                OsString::from("retained"),
+            ),
+        ],
+        Path::new("/fixture/manual-cargo"),
+    );
+
+    assert_eq!(producer, consumer);
 }
 
 #[test]

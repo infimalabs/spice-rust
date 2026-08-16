@@ -277,6 +277,68 @@ pub fn select_change_gates(
     })
 }
 
+/// Select packaged reach after both full-verifier merge parents were admitted.
+///
+/// Known authority paths may select every applicable arm only on this explicit
+/// merge surface. Their reach is repository-exhaustive: a reused arm consumes
+/// its matching parent receipt, while any invalidated arm executes its complete
+/// invariant rather than a path-focused approximation. Unknown paths and
+/// sources outside compiled repository structure continue to refuse.
+pub fn select_change_gates_with_parent_evidence(
+    source: Digest,
+    changed_sources: &[String],
+    policy: &ChangeSelectionPolicy,
+) -> Result<ChangeSelectionReport, ChangeSelectionError> {
+    let applicable = policy.applicable_gates(changed_sources);
+    let mut report = select_with(source, changed_sources, applicable.clone(), |path| {
+        if policy.selection_authority(path) {
+            Ok(applicable.clone())
+        } else {
+            policy.gates_for_path(path)
+        }
+    })?;
+    let authority_paths = report
+        .changed_sources()
+        .iter()
+        .filter(|path| policy.selection_authority(path))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if authority_paths.is_empty() {
+        return Ok(report);
+    }
+    let reach = report
+        .reach()
+        .iter()
+        .map(|current| {
+            let gate_id = current.gate_id();
+            let mut provenance = Vec::new();
+            if ALWAYS.contains(&gate_id) {
+                provenance.push(ChangeReachEdge::always(ChangeReachObject::Repository));
+            }
+            provenance.extend(
+                report
+                    .edges()
+                    .iter()
+                    .filter(|edge| edge.gate_id() == gate_id)
+                    .map(|edge| {
+                        ChangeReachEdge::changed(edge.source(), ChangeReachObject::Repository)
+                    }),
+            );
+            provenance.sort();
+            provenance.dedup();
+            ChangeArmReach::exhaustive(
+                gate_id,
+                ChangeReachAuthority::SelectionPolicy,
+                "an admitted merge parent owns changed selection authority",
+                vec![ChangeReachObject::Repository],
+                provenance,
+            )
+        })
+        .collect();
+    report = report.with_reach(reach)?;
+    Ok(report)
+}
+
 fn select_with(
     source: Digest,
     changed_sources: &[String],

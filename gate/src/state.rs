@@ -24,7 +24,7 @@ use wire::{Digest, Domain};
 /// Current ledger schema.
 pub const STATE_LEDGER_VERSION: u64 = 1;
 /// Current immutable state-transition receipt schema.
-pub const STATE_RECEIPT_VERSION: u64 = 1;
+pub const STATE_RECEIPT_VERSION: u64 = 2;
 /// Lifetime of one peer flex claim.
 pub const PEER_CLAIM_TTL_SECONDS: u64 = 6 * 60 * 60;
 

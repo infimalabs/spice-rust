@@ -769,6 +769,65 @@ fn semantic_compiler_authority_crosses_source_commits_but_not_contract_or_worktr
 }
 
 #[test]
+fn merge_compiler_authority_crosses_only_materialization_and_session_scratch() {
+    let repository = Digest::compute(Domain::GateReceipt, b"shared repository fixture");
+    for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
+        let mut first = contract(gate_id);
+        first.environment.extend([
+            (
+                OsString::from("PWD"),
+                first.repository.as_os_str().to_owned(),
+            ),
+            (
+                OsString::from("CODEX_THREAD_ID"), // env-policy: allow
+                OsString::from("producer-session"),
+            ),
+            (OsString::from("CARGO_BUILD_JOBS"), OsString::from("8")),
+            (
+                OsString::from("CARGO_HOME"),
+                OsString::from("/cargo-homes/first-worktree"),
+            ),
+        ]);
+        first.environment.sort();
+        let mut linked = first.clone();
+        linked.repository = PathBuf::from("/linked/repository");
+        linked.environment = linked
+            .environment
+            .into_iter()
+            .map(|(name, value)| match name.to_str() {
+                Some("PWD") => (name, linked.repository.as_os_str().to_owned()),
+                Some("CODEX_THREAD_ID") => (name, OsString::from("consumer-session")), // env-policy: allow
+                Some("CARGO_BUILD_JOBS") => (name, OsString::from("3")),
+                Some("CARGO_HOME") => (name, OsString::from("/cargo-homes/linked-worktree")),
+                _ => (name, value),
+            })
+            .collect();
+        assert_ne!(first.semantic_authority(), linked.semantic_authority());
+        assert_eq!(
+            first.merge_semantic_authority(&repository),
+            linked.merge_semantic_authority(&repository),
+        );
+
+        linked.environment.push((
+            OsString::from("RUSTFLAGS"),
+            OsString::from("--cfg=merge_contract_drift"),
+        ));
+        linked.environment.sort();
+        assert_ne!(
+            first.merge_semantic_authority(&repository),
+            linked.merge_semantic_authority(&repository),
+        );
+        assert_ne!(
+            first.merge_semantic_authority(&repository),
+            first.merge_semantic_authority(&Digest::compute(
+                Domain::GateReceipt,
+                b"foreign repository fixture",
+            )),
+        );
+    }
+}
+
+#[test]
 fn missing_partial_duplicate_and_stale_receipts_fail_closed() {
     let producers = [
         contract(GateId::RustTypecheck),

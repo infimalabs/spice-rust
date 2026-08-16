@@ -1,15 +1,19 @@
-//! Atomic, worktree-local evidence published by the complete verifier.
+//! Atomic worktree-latest and repository-common parent evidence from the verifier.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write as _};
+use std::path::Path;
 
 use ::gate::{
-    BatteryReceipt, GateSemanticClosure, Selector, StateReceipt, VerifierCompilerEvidence,
+    BatteryContext, BatteryReceipt, GateId, GateSemanticClosure, Selector, StateReceipt,
+    VerifierCompilerEvidence,
 };
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
-use super::{PreparedBattery, RunError, prepare_strict};
+use super::{PreparedBattery, RunError, prepare, prepare_strict};
+use crate::gate::environment::exact_evidence_environment;
 use crate::repository::Repository;
 
 mod semantic;
@@ -17,14 +21,30 @@ mod semantic;
 pub use semantic::{AdmittedSemanticVerifierEvidence, SemanticFullVerifierAdmission};
 
 const FULL_VERIFIER_EVIDENCE_VERSION: u64 = 3;
+const MERGE_PARENT_EVIDENCE_VERSION: u64 = 1;
 const STATE_PUBLICATION_ATTEMPTS: usize = 4;
 const AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/compiler-evidence/v1";
+const MERGE_AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/merge-compiler-evidence/v1";
 const PREPARED_AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/prepared-compiler-evidence/v1";
 
 /// Canonical evidence retained only after the complete verifier admits.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FullVerifierEvidence {
+    version: u64,
+    cargo_jobs: usize,
+    battery: String,
+    compiler: String,
+    state: String,
+    semantic: String,
+    #[serde(skip)]
+    merge_parent: Option<MergeParentEvidence>,
+}
+
+/// Repository-portable parent proof published beside the exact worktree bundle.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MergeParentEvidence {
     version: u64,
     cargo_jobs: usize,
     battery: String,
@@ -63,7 +83,10 @@ impl FullVerifierEvidence {
             prepared.changes(),
             prepared.generated_paths(),
         )?;
-        let semantic = semantic::SemanticEvidence::mint(repository, closure, battery, compiler)?;
+        let semantic =
+            semantic::SemanticEvidence::mint(repository, closure.clone(), battery, compiler)?;
+        let merge_semantic =
+            semantic::MergeSemanticEvidence::mint(repository, closure, battery, compiler)?;
         let state = accept_state_with_retry(prepared, battery)?;
         let semantic = String::from_utf8(
             semantic
@@ -71,17 +94,31 @@ impl FullVerifierEvidence {
                 .map_err(|error| format!("encode semantic evidence: {error}"))?,
         )
         .map_err(|error| format!("semantic evidence is not UTF-8: {error}"))?;
+        let merge_semantic = String::from_utf8(
+            merge_semantic
+                .encode()
+                .map_err(|error| format!("encode merge semantic evidence: {error}"))?,
+        )
+        .map_err(|error| format!("merge semantic evidence is not UTF-8: {error}"))?;
         let battery = String::from_utf8(
             battery
                 .encode()
                 .map_err(|error| format!("encode battery receipt: {error}"))?,
         )
         .map_err(|error| format!("battery receipt is not UTF-8: {error}"))?;
-        let compiler = String::from_utf8(
+        let exact_compiler =
             ::gate::encode_verifier_compiler_receipt(compiler, &compiler_authority(repository))
-                .map_err(|error| format!("encode compiler receipt: {error}"))?,
+                .map_err(|error| format!("encode compiler receipt: {error}"))?;
+        let merge_compiler = String::from_utf8(
+            ::gate::encode_verifier_compiler_receipt(
+                compiler,
+                &merge_compiler_authority(repository),
+            )
+            .map_err(|error| format!("encode merge compiler receipt: {error}"))?,
         )
-        .map_err(|error| format!("compiler receipt is not UTF-8: {error}"))?;
+        .map_err(|error| format!("merge compiler receipt is not UTF-8: {error}"))?;
+        let compiler = String::from_utf8(exact_compiler)
+            .map_err(|error| format!("compiler receipt is not UTF-8: {error}"))?;
         if !state.accepted() {
             return Err("full-verifier evidence requires an accepted state transition".to_owned());
         }
@@ -91,13 +128,24 @@ impl FullVerifierEvidence {
                 .map_err(|error| format!("encode state receipt: {error}"))?,
         )
         .map_err(|error| format!("state receipt is not UTF-8: {error}"))?;
+        let cargo_jobs = cargo_jobs.max(1);
+        let merge_parent = MergeParentEvidence {
+            version: MERGE_PARENT_EVIDENCE_VERSION,
+            cargo_jobs,
+            battery: battery.clone(),
+            compiler: merge_compiler,
+            state: state.clone(),
+            semantic: merge_semantic,
+        };
+        merge_parent.validate_shape()?;
         let evidence = Self {
             version: FULL_VERIFIER_EVIDENCE_VERSION,
-            cargo_jobs: cargo_jobs.max(1),
+            cargo_jobs,
             battery,
             compiler,
             state,
             semantic,
+            merge_parent: Some(merge_parent),
         };
         evidence.validate_shape()?;
         Ok(evidence)
@@ -139,27 +187,84 @@ impl FullVerifierEvidence {
         Ok(())
     }
 
-    /// Atomically replace the evidence for this worktree.
+    /// Atomically replace this worktree's evidence and retain its parent archive.
     pub fn publish(&self, repository: &Repository) -> Result<(), String> {
         let paths = repository
             .admit_state()
             .map_err(|error| format!("admit full-verifier state: {error}"))?;
-        fs::create_dir_all(paths.worktree_runtime()).map_err(|error| {
-            format!(
-                "create full-verifier state directory {}: {error}",
-                paths.worktree_runtime().display(),
-            )
-        })?;
+        for directory in [
+            paths.worktree_runtime(),
+            paths.full_verifier_evidence_archive(),
+        ] {
+            fs::create_dir_all(directory).map_err(|error| {
+                format!(
+                    "create full-verifier state directory {}: {error}",
+                    directory.display(),
+                )
+            })?;
+        }
         let paths = repository
             .admit_state()
             .map_err(|error| format!("re-admit full-verifier state: {error}"))?;
-        let bytes = self
+        let merge_parent = self
+            .merge_parent
+            .as_ref()
+            .ok_or_else(|| "full-verifier publication lacks merge-parent evidence".to_owned())?;
+        let semantic = semantic::MergeSemanticEvidence::decode(merge_parent.semantic.as_bytes())?;
+        let archive = paths
+            .full_verifier_evidence_archive()
+            .join(format!("{}.json", semantic.source()));
+        let archive_bytes = merge_parent
+            .encode()
+            .map_err(|error| format!("encode merge-parent evidence: {error}"))?;
+        let exact_bytes = self
             .encode()
             .map_err(|error| format!("encode full-verifier evidence: {error}"))?;
+        atomic::Destination::new(&archive)
+            .map_err(|error| format!("resolve full-verifier archive destination: {error}"))?
+            .publish(|staged| staged.write_all(&archive_bytes))
+            .map_err(|error| format!("publish full-verifier archive: {error}"))?;
         atomic::Destination::new(paths.full_verifier_evidence())
             .map_err(|error| format!("resolve full-verifier destination: {error}"))?
-            .publish(|staged| staged.write_all(&bytes))
+            .publish(|staged| staged.write_all(&exact_bytes))
             .map_err(|error| format!("publish full-verifier evidence: {error}"))
+    }
+}
+
+impl MergeParentEvidence {
+    fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
+        wire::encode(self)
+    }
+
+    fn decode(document: &[u8]) -> Result<Self, String> {
+        let evidence: Self = wire::decode(document)
+            .map_err(|error| format!("decode merge-parent evidence: {error}"))?;
+        evidence.validate_shape()?;
+        let canonical = evidence
+            .encode()
+            .map_err(|error| format!("encode merge-parent evidence: {error}"))?;
+        if canonical != document {
+            return Err("merge-parent evidence is not canonical".to_owned());
+        }
+        Ok(evidence)
+    }
+
+    fn validate_shape(&self) -> Result<(), String> {
+        if self.version != MERGE_PARENT_EVIDENCE_VERSION {
+            return Err(format!(
+                "unsupported merge-parent evidence version {}; expected {MERGE_PARENT_EVIDENCE_VERSION}",
+                self.version,
+            ));
+        }
+        if self.cargo_jobs == 0
+            || self.battery.is_empty()
+            || self.compiler.is_empty()
+            || self.state.is_empty()
+            || self.semantic.is_empty()
+        {
+            return Err("merge-parent evidence is partial".to_owned());
+        }
+        Ok(())
     }
 }
 
@@ -259,9 +364,13 @@ pub fn admit_full_verifier_evidence(
     let Ok(semantic) = semantic::SemanticEvidence::decode(evidence.semantic.as_bytes()) else {
         return Ok(None);
     };
+    let Ok(verifier_environment) = exact_evidence_environment(repository) else {
+        return Ok(None);
+    };
     let Ok(mut prepared) = prepare_strict(selector) else {
         return Ok(None);
     };
+    prepared.bind_exact_evidence_environment(verifier_environment);
     let Ok(current_closure) = GateSemanticClosure::capture(
         prepared.source().clone(),
         prepared.root(),
@@ -351,9 +460,185 @@ pub fn admit_semantic_full_verifier_evidence(
     }
 }
 
+/// Compose two independently admitted parent bundles for one open Git merge.
+///
+/// This is a separate admission surface from ordinary semantic reuse. Both
+/// parent revisions are freshly captured, each archived bundle must be exact
+/// for its parent, and only arms whose closure and portable authority match the
+/// staged merge candidate are returned. Absence or drift is a cache miss, so
+/// the caller executes the selected invariant normally.
+pub fn admit_merge_parent_full_verifier_evidence(
+    repository: &Repository,
+) -> Result<SemanticFullVerifierAdmission, RunError> {
+    let parents = match merge_parent_revisions(repository)? {
+        MergeParentRevisions::Available(parents) => parents,
+        MergeParentRevisions::Unavailable(detail) => {
+            return Ok(SemanticFullVerifierAdmission::Unavailable { detail });
+        }
+    };
+    let paths = repository
+        .admit_state()
+        .map_err(|error| RunError::fault("gate::full-verifier-state-unavailable", error))?;
+    let current = match prepare_merge_candidate(repository) {
+        Ok(current) => current,
+        Err(detail) => {
+            return Ok(SemanticFullVerifierAdmission::Unavailable { detail });
+        }
+    };
+    let mut admitted = Vec::with_capacity(parents.len());
+    for parent in parents {
+        match admit_archived_merge_parent(
+            repository,
+            paths.full_verifier_evidence_archive(),
+            &parent,
+            &current,
+        )? {
+            ArchivedMergeParent::Admitted(parent) => admitted.push(*parent),
+            ArchivedMergeParent::Unavailable(detail) => {
+                return Ok(SemanticFullVerifierAdmission::Unavailable { detail });
+            }
+        }
+    }
+    match AdmittedSemanticVerifierEvidence::compose_merge(admitted) {
+        Ok(evidence) => Ok(SemanticFullVerifierAdmission::Admitted(Box::new(evidence))),
+        Err(detail) => Ok(SemanticFullVerifierAdmission::Unavailable { detail }),
+    }
+}
+
+enum MergeParentRevisions {
+    Available([String; 2]),
+    Unavailable(String),
+}
+
+fn merge_parent_revisions(repository: &Repository) -> Result<MergeParentRevisions, RunError> {
+    let merge_head = match fs::read_to_string(repository.git_dir().join("MERGE_HEAD")) {
+        Ok(head) => head,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(MergeParentRevisions::Unavailable(
+                "no two-parent Git merge is open".to_owned(),
+            ));
+        }
+        Err(error) => return Err(RunError::fault("gate::merge-parent-unavailable", error)),
+    };
+    let merge_heads = merge_head.lines().collect::<Vec<_>>();
+    let canonical = merge_heads.len() == 1
+        && matches!(merge_heads[0].len(), 40 | 64)
+        && merge_heads[0]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
+    if !canonical {
+        return Ok(MergeParentRevisions::Unavailable(
+            "MERGE_HEAD does not name exactly one canonical parent".to_owned(),
+        ));
+    }
+    Ok(MergeParentRevisions::Available([
+        "HEAD".to_owned(),
+        merge_heads[0].to_owned(),
+    ]))
+}
+
+struct MergeCandidateEvidence {
+    compiler: BTreeMap<GateId, Digest>,
+    context: BatteryContext,
+    closure: GateSemanticClosure,
+}
+
+fn prepare_merge_candidate(repository: &Repository) -> Result<MergeCandidateEvidence, String> {
+    let mut prepared = prepare(Selector::staged()).map_err(|error| error.to_string())?;
+    let repository_authority = semantic::repository_authority(repository);
+    let compiler = prepared
+        .merge_semantic_compiler_authorities(1, &repository_authority)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .collect();
+    let context = prepared.context().map_err(|error| error.to_string())?;
+    let closure = GateSemanticClosure::capture(
+        prepared.source().clone(),
+        prepared.root(),
+        prepared.paths(),
+        prepared.changes(),
+        prepared.generated_paths(),
+    )?;
+    Ok(MergeCandidateEvidence {
+        compiler,
+        context,
+        closure,
+    })
+}
+
+enum ArchivedMergeParent {
+    Admitted(Box<AdmittedSemanticVerifierEvidence>),
+    Unavailable(String),
+}
+
+fn admit_archived_merge_parent(
+    repository: &Repository,
+    archive_root: &Path,
+    parent: &str,
+    current: &MergeCandidateEvidence,
+) -> Result<ArchivedMergeParent, RunError> {
+    let mut prepared = match prepare(Selector::revision(parent.to_owned())) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return Ok(ArchivedMergeParent::Unavailable(format!(
+                "capture merge parent {parent}: {error}"
+            )));
+        }
+    };
+    let archive = archive_root.join(format!("{}.json", prepared.source()));
+    let document = match fs::read(&archive) {
+        Ok(document) => document,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(ArchivedMergeParent::Unavailable(format!(
+                "merge parent {parent} has no archived full-verifier evidence"
+            )));
+        }
+        Err(error) => {
+            return Err(RunError::fault(
+                "gate::full-verifier-evidence-unavailable",
+                format!("{}: {error}", archive.display()),
+            ));
+        }
+    };
+    let unavailable = |detail| Ok(ArchivedMergeParent::Unavailable(detail));
+    let evidence = match MergeParentEvidence::decode(&document) {
+        Ok(evidence) => evidence,
+        Err(detail) => return unavailable(detail),
+    };
+    let semantic = match semantic::MergeSemanticEvidence::decode(evidence.semantic.as_bytes()) {
+        Ok(semantic) => semantic,
+        Err(detail) => return unavailable(detail),
+    };
+    if semantic.source() != prepared.source() {
+        return unavailable(format!(
+            "merge parent {parent} archive names another source"
+        ));
+    }
+    match semantic.admit_merge_parent(
+        repository,
+        &mut prepared,
+        &current.closure,
+        &current.context,
+        &current.compiler,
+        evidence.cargo_jobs,
+        evidence.battery.as_bytes(),
+        evidence.compiler.as_bytes(),
+        evidence.state.as_bytes(),
+        Digest::compute(Domain::GateReceipt, &document),
+    ) {
+        Ok(parent) => Ok(ArchivedMergeParent::Admitted(Box::new(parent))),
+        Err(detail) => unavailable(detail),
+    }
+}
+
 fn compiler_authority(repository: &Repository) -> Vec<u8> {
     let path = repository.git_dir().as_os_str().as_encoded_bytes();
     framed_authority(AUTHORITY_PREFIX, path)
+}
+
+fn merge_compiler_authority(repository: &Repository) -> Vec<u8> {
+    let path = repository.common_dir().as_os_str().as_encoded_bytes();
+    framed_authority(MERGE_AUTHORITY_PREFIX, path)
 }
 
 pub(super) fn prepared_compiler_authority(source: &Digest) -> Vec<u8> {
@@ -389,8 +674,13 @@ mod tests {
             compiler: "compiler".to_owned(),
             state: "state".to_owned(),
             semantic: "semantic".to_owned(),
+            merge_parent: None,
         };
         let canonical = complete.encode().expect("encode complete fixture");
+        let canonical_text = String::from_utf8(canonical.clone()).expect("canonical UTF-8");
+        assert!(canonical_text.contains("\"version\":3"));
+        assert!(!canonical_text.contains("merge_parent"));
+        assert!(!canonical_text.contains("merge_compiler"));
         assert_eq!(
             FullVerifierEvidence::decode(&canonical).expect("decode canonical fixture"),
             complete,
@@ -427,6 +717,58 @@ mod tests {
         ] {
             let bytes = partial.encode().expect("encode invalid fixture");
             assert!(FullVerifierEvidence::decode(&bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn merge_parent_bundle_has_one_distinct_canonical_contract() {
+        let complete = MergeParentEvidence {
+            version: MERGE_PARENT_EVIDENCE_VERSION,
+            cargo_jobs: 3,
+            battery: "battery".to_owned(),
+            compiler: "compiler".to_owned(),
+            state: "state".to_owned(),
+            semantic: "semantic".to_owned(),
+        };
+        let canonical = complete.encode().expect("encode merge-parent fixture");
+        assert_eq!(
+            MergeParentEvidence::decode(&canonical).expect("decode merge-parent fixture"),
+            complete,
+        );
+
+        let mut noncanonical = canonical;
+        noncanonical.push(b'\n');
+        assert!(MergeParentEvidence::decode(&noncanonical).is_err());
+        for partial in [
+            MergeParentEvidence {
+                compiler: String::new(),
+                ..complete.clone()
+            },
+            MergeParentEvidence {
+                battery: String::new(),
+                ..complete.clone()
+            },
+            MergeParentEvidence {
+                state: String::new(),
+                ..complete.clone()
+            },
+            MergeParentEvidence {
+                semantic: String::new(),
+                ..complete.clone()
+            },
+            MergeParentEvidence {
+                cargo_jobs: 0,
+                ..complete.clone()
+            },
+            MergeParentEvidence {
+                version: MERGE_PARENT_EVIDENCE_VERSION + 1,
+                ..complete
+            },
+        ] {
+            let bytes = partial
+                .encode()
+                .expect("encode invalid merge-parent fixture");
+            assert!(MergeParentEvidence::decode(&bytes).is_err());
         }
     }
 

@@ -43,6 +43,10 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
     assert_eq!(state.tape(), common.join(".spice-rs/tape"));
     assert_eq!(state.inbox(), common.join(".spice-rs/inbox"));
     assert_eq!(
+        state.full_verifier_evidence_archive(),
+        common.join(".spice-rs/full-verifier-evidence"),
+    );
+    assert_eq!(
         proof::Layout::new(
             repository.worktree_root(),
             state.proof(),
@@ -104,6 +108,12 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
         fs::canonicalize(&git)
             .expect("canonical Rust inbox parent")
             .join(".spice-rs/inbox")
+    );
+    assert_eq!(
+        state.full_verifier_evidence_archive(),
+        fs::canonicalize(&common)
+            .expect("canonical evidence archive parent")
+            .join(".spice-rs/full-verifier-evidence"),
     );
     assert_eq!(
         proof::Layout::new(

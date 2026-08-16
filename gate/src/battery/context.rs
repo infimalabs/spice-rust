@@ -454,6 +454,12 @@ impl BoundEvidence {
         self.active_limit
     }
 
+    /// Whether the measured value consumed peer-claim authority.
+    #[must_use]
+    pub const fn over_base(&self) -> bool {
+        self.over_base
+    }
+
     /// Resulting sticky-state transition.
     #[must_use]
     pub fn latch_transition(&self) -> &str {

@@ -5,8 +5,11 @@ use super::*;
 pub(super) struct RawStateReceipt {
     pub(super) version: u64,
     pub(super) before: Digest,
+    pub(super) authority: Digest,
     pub(super) after: Digest,
     pub(super) accepted: bool,
+    pub(super) authority_ledger: StateLedger,
+    pub(super) published_ledger: StateLedger,
 }
 
 #[derive(Deserialize)]
@@ -30,6 +33,7 @@ pub enum StateErrorKind {
     UnsupportedVersion,
     Malformed,
     Collision,
+    Conflict,
     Stale,
     NonCanonical,
     MissingActor,
@@ -45,6 +49,7 @@ impl fmt::Display for StateErrorKind {
             Self::UnsupportedVersion => "unsupported-version",
             Self::Malformed => "malformed",
             Self::Collision => "collision",
+            Self::Conflict => "conflict",
             Self::Stale => "stale",
             Self::NonCanonical => "non-canonical",
             Self::MissingActor => "missing-actor",
@@ -181,42 +186,6 @@ pub(super) fn decode_current(path: &Path, bytes: &[u8]) -> Result<StateLedger, S
     Ok(ledger)
 }
 
-pub(super) fn verify_destination_unchanged(
-    path: &Path,
-    before: &StateLedger,
-    initially_absent: bool,
-) -> Result<(), StateError> {
-    let observed = read_optional(path, CURRENT_STATE_RELEASE)?;
-    match (initially_absent, observed) {
-        (true, None) => Ok(()),
-        (true, Some(_)) => Err(StateError::current(
-            StateErrorKind::Stale,
-            path,
-            "current state appeared after this run started from an absent ledger",
-            "reload current state and replay the run against its accepted ledger",
-        )),
-        (false, None) => Err(StateError::current(
-            StateErrorKind::Stale,
-            path,
-            "current state disappeared after this run loaded it",
-            "restore or reload current state before retrying the run",
-        )),
-        (false, Some(bytes)) => {
-            let observed = decode_current(path, &bytes)?;
-            if observed.digest() == before.digest() {
-                Ok(())
-            } else {
-                Err(StateError::current(
-                    StateErrorKind::Stale,
-                    path,
-                    "current state changed after this run loaded it",
-                    "reload current state and replay the run against its accepted ledger",
-                ))
-            }
-        }
-    }
-}
-
 pub(super) fn read_optional(path: &Path, release: &str) -> Result<Option<Vec<u8>>, StateError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -251,7 +220,20 @@ pub(super) fn read_optional(path: &Path, release: &str) -> Result<Option<Vec<u8>
     })
 }
 
-fn validate_ledger(ledger: &StateLedger, path: &Path, release: &str) -> Result<(), StateError> {
+pub(super) fn validate_ledger(
+    ledger: &StateLedger,
+    path: &Path,
+    release: &str,
+) -> Result<(), StateError> {
+    if ledger.version != STATE_LEDGER_VERSION {
+        return Err(StateError::new(
+            StateErrorKind::UnsupportedVersion,
+            path,
+            release,
+            format!("unsupported current ledger version {}", ledger.version),
+            "use a build that admits this ledger version; do not rewrite it",
+        ));
+    }
     for entry in &ledger.latches {
         if !entry.kind.admits(&entry.key) {
             return Err(StateError::new(

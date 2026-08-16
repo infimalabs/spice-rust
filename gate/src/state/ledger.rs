@@ -210,6 +210,31 @@ pub struct StateLedger {
     pub(super) claims: Vec<PeerClaim>,
 }
 
+impl<'de> Deserialize<'de> for StateLedger {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawLedger {
+            version: u64,
+            latches: Vec<LatchEntry>,
+            claims: Vec<PeerClaim>,
+        }
+
+        let raw = RawLedger::deserialize(deserializer)?;
+        let ledger = Self {
+            version: raw.version,
+            latches: raw.latches,
+            claims: raw.claims,
+        };
+        validate_ledger(&ledger, Path::new("<state-ledger>"), CURRENT_STATE_RELEASE)
+            .map_err(serde::de::Error::custom)?;
+        Ok(ledger)
+    }
+}
+
 impl StateLedger {
     /// Current schema number.
     #[must_use]

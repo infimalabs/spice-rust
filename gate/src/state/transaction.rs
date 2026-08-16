@@ -5,6 +5,7 @@ struct RunContext {
     now: f64,
     live_paths: BTreeSet<String>,
     reconciled: bool,
+    authority: StateLedger,
 }
 
 /// One loaded current ledger with an in-memory run in progress.
@@ -148,6 +149,7 @@ impl CurrentState {
             now,
             live_paths: live,
             reconciled: false,
+            authority: self.working.clone(),
         });
         Ok(())
     }
@@ -394,6 +396,10 @@ impl CurrentState {
             before: self.before,
             after: self.working,
             initially_absent: self.initially_absent,
+            authority: self
+                .run
+                .expect("a finished transaction retains its run authority")
+                .authority,
         })
     }
 }
@@ -454,6 +460,7 @@ pub struct PendingState {
     before: StateLedger,
     after: StateLedger,
     initially_absent: bool,
+    authority: StateLedger,
 }
 
 impl PendingState {
@@ -472,26 +479,16 @@ impl PendingState {
     /// Reject the run without touching the destination.
     #[must_use]
     pub fn reject(self) -> StateReceipt {
-        StateReceipt::new(&self.before, &self.after, false)
+        StateReceipt::new(&self.before, &self.authority, &self.after, false)
     }
 
     /// Atomically publish the after-ledger at the sole accepted-run boundary.
+    /// A concurrent ledger is composed under the same lock only when its
+    /// latch and claim keys are disjoint from this proposal.
     ///
     /// The first accepted run always writes its current ledger, even when
     /// reconciliation did not otherwise move it.
     pub fn accept(self) -> Result<StateReceipt, StateError> {
-        let changed = self.initially_absent || self.before != self.after;
-        let bytes = changed
-            .then(|| self.after.encode())
-            .transpose()
-            .map_err(|error| {
-                StateError::current(
-                    StateErrorKind::Encode,
-                    &self.destination,
-                    format!("could not encode current state: {error}"),
-                    "report the schema defect; do not replace the prior ledger",
-                )
-            })?;
         let parent = self.destination.parent().ok_or_else(|| {
             StateError::current(
                 StateErrorKind::Persist,
@@ -519,7 +516,41 @@ impl PendingState {
                 "repair the Git-common state directory and retry the accepted run",
             )
         })?;
-        verify_destination_unchanged(&self.destination, &self.before, self.initially_absent)?;
+        let observed = read_optional(&self.destination, CURRENT_STATE_RELEASE)?
+            .map(|bytes| decode_current(&self.destination, &bytes))
+            .transpose()?;
+        let (published, changed) = match observed {
+            None if self.initially_absent => (self.after.clone(), true),
+            None => {
+                return Err(StateError::current(
+                    StateErrorKind::Stale,
+                    &self.destination,
+                    "current state disappeared after this run loaded it",
+                    "restore or reload current state before retrying the run",
+                ));
+            }
+            Some(current) if current.digest() == self.before.digest() => {
+                let changed = current != self.after;
+                (self.after.clone(), changed)
+            }
+            Some(current) => {
+                let composed =
+                    compose_disjoint(&self.destination, &self.before, &self.after, &current)?;
+                let changed = current != composed;
+                (composed, changed)
+            }
+        };
+        let bytes = changed
+            .then(|| published.encode())
+            .transpose()
+            .map_err(|error| {
+                StateError::current(
+                    StateErrorKind::Encode,
+                    &self.destination,
+                    format!("could not encode current state: {error}"),
+                    "report the schema defect; do not replace the prior ledger",
+                )
+            })?;
         if let Some(bytes) = bytes {
             atomic::Destination::new(&self.destination)
                 .map_err(|error| {
@@ -540,26 +571,123 @@ impl PendingState {
                     )
                 })?;
         }
-        Ok(StateReceipt::new(&self.before, &self.after, true))
+        Ok(StateReceipt::new(
+            &self.before,
+            &self.authority,
+            &published,
+            true,
+        ))
     }
 }
 
+fn compose_disjoint(
+    destination: &Path,
+    before: &StateLedger,
+    proposed: &StateLedger,
+    current: &StateLedger,
+) -> Result<StateLedger, StateError> {
+    let proposed_latches = changed_latches(before, proposed);
+    let concurrent_latches = changed_latches(before, current);
+    if let Some(entry) = proposed_latches.intersection(&concurrent_latches).next() {
+        return Err(StateError::current(
+            StateErrorKind::Conflict,
+            destination,
+            format!("concurrent gate-state conflict kind=latch key={entry:?}"),
+            "recapture and rerun against the accepted latch authority",
+        ));
+    }
+
+    let proposed_claims = changed_claim_paths(before, proposed);
+    let concurrent_claims = changed_claim_paths(before, current);
+    if let Some(path) = proposed_claims.intersection(&concurrent_claims).next() {
+        return Err(StateError::current(
+            StateErrorKind::Conflict,
+            destination,
+            format!("concurrent gate-state conflict kind=claim path={path:?}"),
+            "recapture and rerun against the accepted actor/claim authority",
+        ));
+    }
+
+    let mut composed = current.clone();
+    let proposed_latch_set = proposed.latches.iter().cloned().collect::<BTreeSet<_>>();
+    let mut composed_latches = composed.latches.iter().cloned().collect::<BTreeSet<_>>();
+    for entry in proposed_latches {
+        if proposed_latch_set.contains(&entry) {
+            composed_latches.insert(entry);
+        } else {
+            composed_latches.remove(&entry);
+        }
+    }
+    composed.latches = composed_latches.into_iter().collect();
+
+    for path in proposed_claims {
+        composed.claims.retain(|claim| claim.path != path);
+        composed.claims.extend(
+            proposed
+                .claims
+                .iter()
+                .filter(|claim| claim.path == path)
+                .cloned(),
+        );
+    }
+    sort_claims(&mut composed.claims);
+    Ok(composed)
+}
+
+fn changed_latches(left: &StateLedger, right: &StateLedger) -> BTreeSet<LatchEntry> {
+    let left = left.latches.iter().cloned().collect::<BTreeSet<_>>();
+    let right = right.latches.iter().cloned().collect::<BTreeSet<_>>();
+    left.symmetric_difference(&right).cloned().collect()
+}
+
+fn changed_claim_paths(left: &StateLedger, right: &StateLedger) -> BTreeSet<String> {
+    let mut paths = left
+        .claims
+        .iter()
+        .chain(&right.claims)
+        .map(|claim| claim.path.clone())
+        .collect::<BTreeSet<_>>();
+    paths.retain(|path| {
+        left.claims
+            .iter()
+            .filter(|claim| claim.path == *path)
+            .collect::<Vec<_>>()
+            != right
+                .claims
+                .iter()
+                .filter(|claim| claim.path == *path)
+                .collect::<Vec<_>>()
+    });
+    paths
+}
+
 /// Immutable evidence for one proposed ledger transition.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StateReceipt {
     version: u64,
     before: Digest,
+    authority: Digest,
     after: Digest,
     accepted: bool,
+    authority_ledger: StateLedger,
+    published_ledger: StateLedger,
 }
 
 impl StateReceipt {
-    fn new(before: &StateLedger, after: &StateLedger, accepted: bool) -> Self {
+    fn new(
+        before: &StateLedger,
+        authority: &StateLedger,
+        published: &StateLedger,
+        accepted: bool,
+    ) -> Self {
         Self {
             version: STATE_RECEIPT_VERSION,
             before: before.digest(),
-            after: after.digest(),
+            authority: authority.digest(),
+            after: published.digest(),
             accepted,
+            authority_ledger: authority.clone(),
+            published_ledger: published.clone(),
         }
     }
 
@@ -575,7 +703,13 @@ impl StateReceipt {
         &self.before
     }
 
-    /// Exact proposed ledger identity after the run.
+    /// Exact normalized ledger every arm judged before execution.
+    #[must_use]
+    pub const fn authority(&self) -> &Digest {
+        &self.authority
+    }
+
+    /// Exact ledger identity published by the accepted run.
     #[must_use]
     pub const fn after(&self) -> &Digest {
         &self.after
@@ -585,6 +719,16 @@ impl StateReceipt {
     #[must_use]
     pub const fn accepted(&self) -> bool {
         self.accepted
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) const fn authority_ledger(&self) -> &StateLedger {
+        &self.authority_ledger
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) const fn published_ledger(&self) -> &StateLedger {
+        &self.published_ledger
     }
 
     /// Canonical immutable receipt bytes.
@@ -622,9 +766,24 @@ impl StateReceipt {
         let receipt = Self {
             version: raw.version,
             before: raw.before,
+            authority: raw.authority,
             after: raw.after,
             accepted: raw.accepted,
+            authority_ledger: raw.authority_ledger,
+            published_ledger: raw.published_ledger,
         };
+        validate_ledger(&receipt.authority_ledger, source, CURRENT_STATE_RELEASE)?;
+        validate_ledger(&receipt.published_ledger, source, CURRENT_STATE_RELEASE)?;
+        if receipt.authority_ledger.digest() != receipt.authority
+            || receipt.published_ledger.digest() != receipt.after
+        {
+            return Err(StateError::current(
+                StateErrorKind::Malformed,
+                source,
+                "state receipt ledger bodies do not match their declared identities",
+                "retain the original bytes and regenerate the receipt from one accepted transition",
+            ));
+        }
         let canonical = receipt.encode().map_err(|error| {
             StateError::current(
                 StateErrorKind::Encode,
