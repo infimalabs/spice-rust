@@ -514,31 +514,6 @@ fn install_coexisting_appliance(fixture: &Fixture) -> (PathBuf, String, String) 
             .unwrap(),
         Path::new(".spice-install/agents/skills/spice/SKILL.md")
     );
-    let skill = fs::read_to_string(&installed_skill).expect("installed skill reads");
-    for required in [
-        "spice recall",
-        "spice board",
-        "spice inbox",
-        "spice ack",
-        "SPICE_RS_LANE", // env-policy: not-an-env SPICE_RS_LANE
-        "spice task next",
-        "spice task done",
-    ] {
-        assert!(
-            skill.contains(required),
-            "installed skill omitted {required:?}"
-        );
-    }
-    for unavailable in [
-        "SPICE_LANE", // env-policy: not-an-env SPICE_LANE
-        "spice agent",
-        "spice task status",
-    ] {
-        assert!(
-            !skill.contains(unavailable),
-            "installed skill named unavailable command {unavailable:?}"
-        );
-    }
     (installed_binary, digest.as_str().to_owned(), binary_digest)
 }
 

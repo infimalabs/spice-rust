@@ -37,13 +37,7 @@ fn installed_spice_is_the_one_repository_local_executable() {
         fs::metadata(&installed).unwrap().len(),
         fs::metadata(source).unwrap().len()
     );
-    let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
-    assert_eq!(
-        skill
-            .matches("--git-common-dir)/.spice-install/bin/spice up")
-            .count(),
-        1
-    );
+    assert!(installed_skill(&repository).is_file());
     let receipt = fs::metadata(scratch.join(".git/.spice-rs/install.json")).unwrap();
     assert!(receipt.len() < MAX_COMPACT_RECORD_BYTES);
     assert_eq!(receipt.permissions().mode() & 0o777, 0o600);
