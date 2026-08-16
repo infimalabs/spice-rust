@@ -60,6 +60,21 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn publish_detached_fixture_identity(identity_path: &std::path::Path, identity: &str) {
+        let destination = atomic::Destination::new(identity_path)
+            .expect("resolve detached fixture identity destination");
+        let mut staged = destination
+            .stage()
+            .expect("stage detached fixture identity");
+        staged
+            .write_all(identity.as_bytes())
+            .expect("write detached fixture identity");
+        staged
+            .commit()
+            .expect("publish detached fixture identity atomically");
+    }
+
     struct TimedRunner {
         delays: BTreeMap<&'static str, Duration>,
         prebuild_delay: Duration,
@@ -795,8 +810,10 @@ mod tests {
         let group = unsafe { libc::getpgrp() };
         // SAFETY: a zero PID asks for the calling fixture's session.
         let observed_session = unsafe { libc::getsid(0) };
-        fs::write(identity_path, format!("{pid} {group} {observed_session}\n"))
-            .expect("fixture identity publishes");
+        publish_detached_fixture_identity(
+            &identity_path,
+            &format!("{pid} {group} {observed_session}\n"),
+        );
         thread::sleep(life.saturating_sub(started.elapsed()));
     }
 

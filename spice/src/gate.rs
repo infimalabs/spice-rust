@@ -143,7 +143,7 @@ impl PreparedArm<'_> {
         self.capture
             .accept_state(scope)
             .map(|_| ())
-            .map_err(|error| RunError::refusal("gate::state-publication-refused", error))
+            .map_err(RunError::state_publication)
     }
 
     /// Discard all focused observations after the enclosing run rejects.
@@ -365,7 +365,7 @@ impl PreparedBattery<'_> {
     pub fn accept_state(&self) -> Result<::gate::StateReceipt, RunError> {
         self.capture
             .accept_state(StateRunScope::Exhaustive)
-            .map_err(|error| RunError::refusal("gate::state-publication-refused", error))
+            .map_err(RunError::state_publication)
     }
 
     /// Re-admit a complete battery receipt across its exact accepted state transition.
@@ -966,6 +966,7 @@ pub struct RunError {
     reason: &'static str,
     detail: String,
     fault: bool,
+    stale_state_publication: bool,
 }
 
 impl RunError {
@@ -974,6 +975,7 @@ impl RunError {
             reason,
             detail: detail.to_string(),
             fault: false,
+            stale_state_publication: false,
         }
     }
 
@@ -982,6 +984,16 @@ impl RunError {
             reason,
             detail: detail.to_string(),
             fault: true,
+            stale_state_publication: false,
+        }
+    }
+
+    fn state_publication(error: ::gate::BatteryError) -> Self {
+        Self {
+            reason: "gate::state-publication-refused",
+            detail: error.to_string(),
+            fault: false,
+            stale_state_publication: error.is_stale_state_publication(),
         }
     }
 
@@ -1001,6 +1013,12 @@ impl RunError {
     #[must_use]
     pub const fn is_fault(&self) -> bool {
         self.fault
+    }
+
+    /// Whether an accepted run lost only the durable state compare-and-swap.
+    #[must_use]
+    pub const fn is_stale_state_publication(&self) -> bool {
+        self.stale_state_publication
     }
 }
 

@@ -2,7 +2,8 @@ use super::{Acquisition, LockFile, LockName};
 use std::fs;
 use std::path::PathBuf;
 use std::process;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn possession_is_exclusive_and_release_is_automatic() {
@@ -43,11 +44,24 @@ fn explicit_child_inheritance_retains_possession_until_the_child_exits() {
 
     child.kill().expect("stop inheriting child");
     child.wait().expect("reap inheriting child");
-    assert_eq!(
-        lock.availability().expect("probe released possession"),
-        super::Availability::Available,
-    );
+    wait_available(&lock);
     fs::remove_file(path).expect("remove test lock file");
+}
+
+#[cfg(unix)]
+fn wait_available(lock: &LockFile) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match lock.availability().expect("probe released possession") {
+            super::Availability::Available => return,
+            super::Availability::Held if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            super::Availability::Held => {
+                panic!("inherited possession remained held after the child exited");
+            }
+        }
+    }
 }
 
 #[test]
