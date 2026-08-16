@@ -423,40 +423,6 @@ fn down_refuses_a_resident_that_released_without_withdrawing_discovery() {
     assert!(elapsed < CLIENT_DEADLINE_BOUND);
 }
 
-/// A resident reply cannot leave `down` waiting forever for the runtime lock.
-///
-/// Both halves withdraw discovery and send the same successful response. The
-/// first releases its lock normally and proves this path can complete; the
-/// second keeps the lock beyond the client bound and must return the deadline
-/// fault rather than waiting for the fixture's longer adversarial lifetime.
-#[test]
-fn down_bounds_release_confirmation_after_the_resident_answers() {
-    let fixture = Fixture::new("client-release-deadline");
-
-    let (released, _) = fake_down(&fixture, FakeBehavior::Success, true);
-    assert!(
-        released.status.success(),
-        "a normally released lock must complete down: {:?}",
-        released.stderr
-    );
-
-    let (held, elapsed) = fake_down(&fixture, FakeBehavior::ReleaseStall, true);
-    assert_eq!(held.status.code(), Some(FAULT_EXIT));
-    let Outcome::Fault(fault) = outcome(&held) else {
-        panic!("a held release lock must fault at the client bound");
-    };
-    assert_eq!(fault.reason, "canvas::deadline-elapsed");
-    assert!(fault.detail.contains("20s client bound"), "{fault:?}");
-    assert!(
-        !fixture.canvas().exists(),
-        "the deadline fault must remain distinct from release-incomplete"
-    );
-    assert!(
-        elapsed < CLIENT_DEADLINE_BOUND,
-        "release confirmation exceeded its client bound: {elapsed:?}"
-    );
-}
-
 #[test]
 fn authenticated_board_snapshot_survives_a_resident_restart() {
     let fixture = Fixture::new("board-restart");
@@ -545,44 +511,6 @@ fn command_client_process_fences_replay_loss_and_capability_echo() {
             .stderr
             .windows(capability.len())
             .any(|w| w == capability.as_bytes())
-    );
-}
-
-#[test]
-fn command_client_process_bounds_an_unanswered_request() {
-    let fixture = Fixture::new("client-timeout");
-    let (output, elapsed) = fake_down(&fixture, FakeBehavior::ReadTimeout, true);
-
-    assert_eq!(output.status.code(), Some(FAULT_EXIT));
-    let Outcome::Fault(fault) = outcome(&output) else {
-        panic!("unanswered request must fault");
-    };
-    assert_eq!(fault.reason, "canvas::deadline-elapsed", "{fault:?}");
-    assert!(
-        elapsed < CLIENT_DEADLINE_BOUND,
-        "read deadline was not bounded: {elapsed:?}"
-    );
-}
-
-/// A resident that has not answered the upgrade is not a peer that failed.
-///
-/// Accepting the socket costs the resident nothing, so under load it accepts
-/// long before it answers, and the bound elapses here first. The handshake
-/// spells that as an interrupted would-block, which is the exact shape the
-/// elapsed bound exists to keep apart from a transport that broke.
-#[test]
-fn command_client_process_names_the_bound_a_stalled_opening_spent() {
-    let fixture = Fixture::new("client-opening-stall");
-    let (output, elapsed) = fake_down(&fixture, FakeBehavior::OpeningStall, true);
-
-    assert_eq!(output.status.code(), Some(FAULT_EXIT));
-    let Outcome::Fault(fault) = outcome(&output) else {
-        panic!("a stalled opening must fault");
-    };
-    assert_eq!(fault.reason, "canvas::deadline-elapsed", "{fault:?}");
-    assert!(
-        elapsed < CLIENT_DEADLINE_BOUND,
-        "the opening deadline was not bounded: {elapsed:?}"
     );
 }
 

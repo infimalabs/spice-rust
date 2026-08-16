@@ -2,6 +2,34 @@
 
 use super::*;
 
+struct PeerCargo(Vec<std::process::Child>);
+
+impl PeerCargo {
+    fn start(program: &Path, count: usize) -> Self {
+        let children = (0..count)
+            .map(|_| {
+                fixture_command(program)
+                    .arg("__peer-load")
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .expect("launch continuous peer Cargo fixture")
+            })
+            .collect();
+        Self(children)
+    }
+}
+
+impl Drop for PeerCargo {
+    fn drop(&mut self) {
+        for child in &mut self.0 {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 #[test]
 fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_180_seconds() {
     let repository = GateRepository::new();
@@ -328,42 +356,90 @@ fn explicitly_trusted_source_override_runs_one_public_spice_leaf_through_the_hoo
 }
 
 #[test]
-fn trusted_configured_redispatch_still_refuses_as_pre_commit_recursion() {
-    let repository = configured_redispatch_repository();
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the configured process-boundary fixture must preserve the invoking test PATH"
+)]
+fn configured_source_gate_retries_a_concurrent_state_writer_under_continuous_peer_cargo() {
+    let repository = configured_source_gate_repository();
     let first = run_commit_worker(repository.path());
     let failure = terminal_failure(&first);
-    let digest = failure["detail"]
+    let detail = failure["detail"]
         .as_str()
-        .and_then(|detail| detail.split_once("digest="))
+        .expect("trust refusal carries the exact digest");
+    let digest = detail
+        .split_once("digest=")
         .and_then(|(_, remainder)| remainder.split_whitespace().next())
-        .expect("trust refusal names the configured redispatch digest")
+        .expect("trust refusal names digest")
         .parse::<Digest>()
-        .expect("configured redispatch digest is canonical");
+        .expect("trust refusal digest is canonical");
     grant_fixture_trust(&repository, digest);
 
-    let boundary = run_commit_worker(repository.path());
-    let Some((kind, document)) = boundary.terminal.split_first() else {
-        panic!("configured redispatch published no terminal: {boundary:?}");
-    };
-    assert_eq!(
-        *kind, b'R',
-        "configured redispatch lost its report: {boundary:?}"
+    let scratch = Scratch::new("configured-state-retry");
+    let marker = scratch.path().join("selected-tests.log");
+    repository.write_selected_test_with_state_writer(&marker);
+    repository.add("src/lib.rs");
+    repository.install_pre_commit();
+
+    let real_cargo =
+        std::env::split_paths(&std::env::var_os("PATH").expect("test process carries PATH"))
+            .map(|directory| directory.join("cargo"))
+            .find(|candidate| candidate.is_file())
+            .expect("locate real Cargo on PATH");
+    assert!(!real_cargo.to_string_lossy().contains('\''));
+    let programs = scratch.path().join("programs");
+    fs::create_dir(&programs).expect("create configured source-gate program directory");
+    let cargo = programs.join("cargo");
+    executable(
+        &cargo,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"${{1-}}\" = \"__peer-load\" ]; then read _; exit 0; fi\n",
+                "if [ \"$*\" = \"run --quiet --locked --package spice --bin spice -- gate selection\" ]; then\n",
+                "  exec '{}' gate selection\n",
+                "fi\n",
+                "exec '{}' \"$@\"\n",
+            ),
+            env!("CARGO_BIN_EXE_spice"),
+            real_cargo.display(),
+        ),
     );
-    let report: serde_json::Value =
-        serde_json::from_slice(document).expect("decode configured redispatch report");
-    let findings = report["configured"]["steps"][0]["findings"]
-        .as_array()
-        .expect("configured redispatch step carries findings");
-    assert_eq!(findings.len(), 1, "unexpected redispatch report: {report}");
-    assert_eq!(findings[0]["kind"], "exit");
-    let detail = findings[0]["detail"]
-        .as_str()
-        .expect("configured redispatch exit carries captured evidence");
-    assert!(detail.contains("code=Some(2)"), "{detail}");
-    assert!(detail.contains("gate::pre-commit-recursion"), "{detail}");
+    let mut path_entries = vec![programs];
+    path_entries.extend(std::env::split_paths(
+        &std::env::var_os("PATH").expect("test process carries PATH"),
+    ));
+    let path = std::env::join_paths(path_entries).expect("compose configured source-gate path");
+    let peers = PeerCargo::start(&cargo, 2);
+    let started = Instant::now();
+
+    let output = fixture_command("/usr/bin/git")
+        .args(["commit", "-qm", "Retry concurrent gate-state publication"])
+        .current_dir(repository.path())
+        .env("PATH", path)
+        .env_remove(PRE_COMMIT_PATHS)
+        .env_remove(PRE_COMMIT_SOURCE)
+        .output()
+        .expect("commit through configured source gate");
+
     assert!(
-        !detail.contains("gate::pre-commit-dispatch-active"),
-        "the recursion marker must refuse before dispatch-lock contention: {detail}"
+        output.status.success(),
+        "configured source gate failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(180),
+        "configured source gate crossed its parent deadline",
+    );
+    assert!(
+        peers.0.iter().all(|peer| process_exists(peer.id())),
+        "peer Cargo fixtures did not remain live through pre-commit completion",
+    );
+    assert_eq!(
+        fs::read_to_string(marker).expect("read selected-test executions"),
+        "canonical selected target executed\n",
+        "stale state publication reran an already-complete selected test",
     );
 }
 
@@ -433,33 +509,6 @@ fn dispatch_repository(builtins: Option<bool>) -> GateRepository {
     repository
 }
 
-fn configured_redispatch_repository() -> GateRepository {
-    let repository = GateRepository::new();
-    let policy = repository.path().join("spice-rust.toml");
-    let text = fs::read_to_string(&policy).expect("read redispatch fixture policy");
-    let executable =
-        serde_json::to_string(env!("CARGO_BIN_EXE_spice")).expect("encode fixture executable");
-    let insertion = format!(
-        concat!(
-            "[policy]\n",
-            "pre_commit_builtins = false\n",
-            "pre_commit = [{{ label = \"recursive fixture\", ",
-            "run = [{executable}, \"gate\", \"pre-commit\"] }}]\n",
-        ),
-        executable = executable,
-    );
-    fs::write(&policy, text.replacen("[policy]\n", &insertion, 1))
-        .expect("write configured redispatch policy");
-    repository.add("spice-rust.toml");
-    git(
-        repository.path(),
-        &["commit", "-qm", "Configure recursive fixture"],
-    );
-    repository.write_source(2);
-    repository.add("src/lib.rs");
-    repository
-}
-
 fn source_override_repository() -> GateRepository {
     let repository = GateRepository::new();
     fs::write(
@@ -471,6 +520,27 @@ fn source_override_repository() -> GateRepository {
     git(
         repository.path(),
         &["commit", "-qm", "Adopt the source-repository gate"],
+    );
+    repository.write_source(2);
+    repository.add("src/lib.rs");
+    repository
+}
+
+fn configured_source_gate_repository() -> GateRepository {
+    let repository = GateRepository::new();
+    let policy = repository.path().join("spice-rust.toml");
+    let text = fs::read_to_string(&policy).expect("read fixture policy");
+    let configured = concat!(
+        "[policy]\n",
+        "pre_commit_builtins = false\n",
+        "pre_commit = [{ label = \"Spice source gate\", run = [\"cargo\", \"run\", \"--quiet\", \"--locked\", \"--package\", \"spice\", \"--bin\", \"spice\", \"--\", \"gate\", \"selection\"] }]\n",
+    );
+    fs::write(&policy, text.replacen("[policy]\n", configured, 1))
+        .expect("write configured source-gate policy");
+    repository.add("spice-rust.toml");
+    git(
+        repository.path(),
+        &["commit", "-qm", "Configure source gate"],
     );
     repository.write_source(2);
     repository.add("src/lib.rs");

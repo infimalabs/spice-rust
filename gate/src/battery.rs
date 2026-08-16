@@ -76,6 +76,7 @@ fn inline_evidence(value: &str) -> String {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatteryError {
     detail: String,
+    stale_state_publication: bool,
 }
 
 impl BatteryError {
@@ -83,6 +84,15 @@ impl BatteryError {
     pub fn new(detail: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
+            stale_state_publication: false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn state_publication(error: crate::StateError) -> Self {
+        Self {
+            stale_state_publication: error.kind() == crate::StateErrorKind::Stale,
+            detail: format!("cannot publish battery state: {error}"),
         }
     }
 
@@ -90,6 +100,12 @@ impl BatteryError {
     #[must_use]
     pub fn detail(&self) -> &str {
         &self.detail
+    }
+
+    /// Whether an accepted run lost only the durable state compare-and-swap.
+    #[must_use]
+    pub const fn is_stale_state_publication(&self) -> bool {
+        self.stale_state_publication
     }
 }
 

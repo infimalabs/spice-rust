@@ -566,8 +566,9 @@ pub(super) fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha
             workflow_witness(&alpha_before),
             deferral_witness(&alpha_before),
         ],
-        &TaskRef {
+        &TaskWake {
             task: alpha.clone(),
+            into: None,
         },
     );
     assert!(matches!(
@@ -585,8 +586,9 @@ pub(super) fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha
             workflow_witness(at(&deferred, alpha)),
             deferral_witness(at(&deferred, alpha)),
         ],
-        &TaskRef {
+        &TaskWake {
             task: alpha.clone(),
+            into: None,
         },
     ));
 }

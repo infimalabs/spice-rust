@@ -21,14 +21,59 @@ mod tests {
         write_deferred_supervisor_output,
     };
     use crate::verify_timing::Disposition;
-    use crate::{ScopedCommand, Step, landing};
+    use crate::{ScopedCommand, Step, WORKSPACE_TEST_LABEL, landing};
 
     const FIXTURE_CPU_COUNT: usize = 16;
     const BENCHMARK_CPU_ITERATIONS: u64 = 10_000_000;
     const NON_COOPERATIVE_CHILD_TEST: &str =
         "verify_execution::tests::non_cooperative_in_process_verifier_fixture";
+    const DETACHED_WORKSPACE_SHARD_TEST: &str =
+        "verify_execution::tests::detached_workspace_shard_fixture";
+    const DETACHED_FIXTURE_LIFE_EXTENSION: &str = "life-ms";
+    const DETACHED_FIXTURE_DEFAULT_LIFE: Duration = Duration::from_secs(600);
     const SUPERVISOR_PID_MARKER: &str = "verifier-supervisor-fixture pid=";
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    fn detached_fixture_life(value: Option<&str>) -> Duration {
+        let Some(value) = value else {
+            return DETACHED_FIXTURE_DEFAULT_LIFE;
+        };
+        let milliseconds = value
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|milliseconds| *milliseconds > 0)
+            .unwrap_or_else(|| {
+                panic!("detached fixture life must be a positive integer number of milliseconds")
+            });
+        Duration::from_millis(milliseconds)
+    }
+
+    fn read_detached_fixture_life(identity_path: &std::path::Path) -> Duration {
+        let path = identity_path.with_extension(DETACHED_FIXTURE_LIFE_EXTENSION);
+        match fs::read_to_string(&path) {
+            Ok(value) => detached_fixture_life(Some(&value)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                detached_fixture_life(None)
+            }
+            Err(error) => panic!("detached fixture life {path:?} cannot be read: {error}"),
+        }
+    }
+
+    #[cfg(unix)]
+    fn publish_detached_fixture_identity(identity_path: &std::path::Path, identity: &str) {
+        let destination = atomic::Destination::new(identity_path)
+            .expect("resolve detached fixture identity destination");
+        let mut staged = destination
+            .stage()
+            .expect("stage detached fixture identity");
+        staged
+            .write_all(identity.as_bytes())
+            .expect("write detached fixture identity");
+        staged
+            .commit()
+            .expect("publish detached fixture identity atomically");
+    }
 
     struct TimedRunner {
         delays: BTreeMap<&'static str, Duration>,
@@ -625,8 +670,10 @@ mod tests {
 
     #[test]
     fn overlapped_prebuild_reserves_test_and_terminal_work_inside_the_outer_envelope() {
-        const TEST_RUNTIME: Duration = Duration::from_millis(540);
-        const OUTER_RUNTIME: Duration = Duration::from_millis(888);
+        const PROPORTIONAL_TEST_RUNTIME: Duration = Duration::from_millis(540);
+        const PROPORTIONAL_OUTER_RUNTIME: Duration = Duration::from_millis(888);
+        const PREBUILD_DELAY: Duration = Duration::from_millis(160);
+        const CANVAS_READY_DELAY: Duration = Duration::from_millis(40);
         let mut delays = VERIFY_ACTIONS
             .iter()
             .map(|action| (action.label(), Duration::from_millis(15)))
@@ -641,41 +688,70 @@ mod tests {
             delays.insert(action.label(), Duration::from_millis(15));
         }
         delays.insert(landing::LABEL, Duration::from_millis(15));
+        let through_native_clippy = VERIFY_ACTIONS[..=3]
+            .iter()
+            .map(|action| delays[action.label()])
+            .sum::<Duration>();
+        let through_wasm_check = through_native_clippy
+            + VERIFY_ACTIONS[4..=5]
+                .iter()
+                .map(|action| delays[action.label()])
+                .sum::<Duration>();
+        let prebuild_complete = through_native_clippy + PREBUILD_DELAY;
+        let canvas_ready = through_wasm_check + CANVAS_READY_DELAY;
+        let workspace_start = prebuild_complete.max(canvas_ready);
+        let canvas_complete = through_wasm_check + delays[VERIFY_ACTIONS[6].label()];
+        let workspace_complete = workspace_start + delays[VERIFY_ACTIONS[8].label()];
+        let browser_complete = canvas_complete + delays[BROWSER_LABEL];
+        let test_phase_start = workspace_start.min(canvas_complete);
+        let test_branches_complete = workspace_complete.max(browser_complete);
+        let documentation_complete = workspace_complete
+            + delays[VERIFY_ACTIONS[9].label()]
+            + delays[VERIFY_ACTIONS[10].label()];
+        let battery_complete = test_branches_complete + delays[VERIFY_ACTIONS[11].label()];
+        let terminal_complete =
+            documentation_complete.max(battery_complete) + delays[landing::LABEL];
+        let old_workspace_complete = canvas_complete + delays[VERIFY_ACTIONS[8].label()];
+        let old_test_branches_complete = old_workspace_complete.max(browser_complete);
+        let old_documentation_complete = old_workspace_complete
+            + delays[VERIFY_ACTIONS[9].label()]
+            + delays[VERIFY_ACTIONS[10].label()];
+        let old_battery_complete = old_test_branches_complete + delays[VERIFY_ACTIONS[11].label()];
+        let old_terminal_complete =
+            old_documentation_complete.max(old_battery_complete) + delays[landing::LABEL];
+
+        assert_eq!(workspace_start, Duration::from_millis(340));
+        assert_eq!(canvas_complete, Duration::from_millis(520));
+        assert!(workspace_start < canvas_complete);
+        assert!(
+            test_branches_complete - test_phase_start < PROPORTIONAL_TEST_RUNTIME,
+            "both test branches must fit inside the proportional test-phase budget"
+        );
+        assert_eq!(terminal_complete, Duration::from_millis(805));
+        assert!(
+            terminal_complete < PROPORTIONAL_OUTER_RUNTIME,
+            "the overlapped terminal tail must fit inside its supervisor analogue"
+        );
+        assert_eq!(old_terminal_complete, Duration::from_millis(985));
+        assert!(
+            old_terminal_complete >= PROPORTIONAL_OUTER_RUNTIME,
+            "the old Canvas-complete barrier must fail the same supervisor analogue"
+        );
+
         let runner = TimedRunner::new(delays, 0)
-            .with_prebuild_delay(Duration::from_millis(160))
-            .with_canvas_ready_delay(Duration::from_millis(40));
+            .with_prebuild_delay(PREBUILD_DELAY)
+            .with_canvas_ready_delay(CANVAS_READY_DELAY);
         let mut output = Vec::new();
-        let started = Instant::now();
-        let cancellation = CancellationToken::new();
-        let controller_token = cancellation.clone();
-        let completed = Arc::new(AtomicBool::new(false));
-        let controller_completed = Arc::clone(&completed);
-        let controller = thread::spawn(move || {
-            while started.elapsed() < OUTER_RUNTIME && !controller_completed.load(Ordering::Acquire)
-            {
-                thread::sleep(Duration::from_millis(1));
-            }
-            if !controller_completed.load(Ordering::Acquire) {
-                controller_token.cancel();
-            }
-        });
 
         let result = verify_with_deadline(
             &runner,
             &mut output,
             Budget::fixture(3, 1, 0),
-            cancellation,
+            CancellationToken::new(),
             Arc::new(AtomicBool::new(false)),
-            TEST_RUNTIME,
+            Duration::from_secs(5),
         );
-        completed.store(true, Ordering::Release);
-        controller.join().expect("outer-envelope controller joins");
         result.expect("overlapped setup leaves test and terminal work inside the outer envelope");
-
-        assert!(
-            started.elapsed() < OUTER_RUNTIME,
-            "the compressed terminal tail must remain inside its supervisor analogue"
-        );
         let calls = runner.calls();
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert_line_order(
@@ -969,6 +1045,87 @@ mod tests {
         drop(signal_guard);
     }
 
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "launched exactly by the detached workspace-shard cancellation test"]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the isolated fixture reads its one injected identity path at the process rim"
+    )]
+    fn detached_workspace_shard_fixture() {
+        let started = Instant::now();
+        let identity_path = std::env::var_os("DETACHED_IDENTITY_FILE")
+            .map(PathBuf::from)
+            .expect("fixture identity path is present");
+        let life = read_detached_fixture_life(&identity_path);
+        // SAFETY: this single-threaded fixture process exists only to prove that
+        // a workspace-test descendant can leave its action's process group.
+        let session = unsafe { libc::setsid() };
+        assert_ne!(session, -1, "fixture creates a new session");
+        let pid = std::process::id();
+        // SAFETY: these queries read the calling fixture's process identities.
+        let group = unsafe { libc::getpgrp() };
+        // SAFETY: a zero PID asks for the calling fixture's session.
+        let observed_session = unsafe { libc::getsid(0) };
+        publish_detached_fixture_identity(
+            &identity_path,
+            &format!("{pid} {group} {observed_session}\n"),
+        );
+        thread::sleep(life.saturating_sub(started.elapsed()));
+    }
+
+    #[test]
+    fn detached_fixture_life_has_one_default_and_accepts_milliseconds() {
+        assert_eq!(detached_fixture_life(None), DETACHED_FIXTURE_DEFAULT_LIFE);
+        assert_eq!(detached_fixture_life(Some("25")), Duration::from_millis(25));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "detached fixture life must be a positive integer number of milliseconds"
+    )]
+    fn detached_fixture_life_rejects_a_malformed_injection() {
+        let _ = detached_fixture_life(Some("soon"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detached_workspace_fixture_self_terminates_after_its_parent_exits() {
+        let identity_file = fixture_pid_file("detached-self-deadline");
+        let life_file = identity_file.with_extension(DETACHED_FIXTURE_LIFE_EXTENSION);
+        fs::write(&life_file, "250\n").expect("write injected fixture life");
+        let executable = std::env::current_exe().expect("resolve fixture test executable");
+        let parent = Command::new("/bin/sh")
+            .args([
+                "-c",
+                concat!(
+                    "\"$TEST_EXECUTABLE\" --ignored --exact ",
+                    "\"$DETACHED_WORKSPACE_SHARD_TEST\" --nocapture --test-threads=1 ",
+                    "</dev/null >/dev/null 2>&1 &"
+                ),
+            ])
+            .env("TEST_EXECUTABLE", executable)
+            .env(
+                "DETACHED_WORKSPACE_SHARD_TEST",
+                DETACHED_WORKSPACE_SHARD_TEST,
+            )
+            .env("DETACHED_IDENTITY_FILE", &identity_file)
+            .status()
+            .expect("launch detached fixture through its short-lived parent");
+        assert!(parent.success(), "short-lived fixture parent exits cleanly");
+
+        wait_for_path(&identity_file);
+        let identity = read_pids(&identity_file);
+        assert_eq!(identity.len(), 3, "fixture publishes PID, PGID, and SID");
+        assert_process_stops_within(
+            identity[0],
+            "self-deadlined detached workspace fixture",
+            Duration::from_secs(2),
+        );
+        fs::remove_file(identity_file).expect("remove self-deadline fixture identity");
+        fs::remove_file(life_file).expect("remove injected fixture life");
+    }
+
     #[test]
     fn deterministic_terminals_survive_out_of_order_completion() {
         let runner = TimedRunner::benchmark();
@@ -1069,6 +1226,42 @@ mod tests {
         assert!(output.contains("disposition=cancelled"));
         assert!(output.contains("primary_ordinal=8 interrupted=false"));
         fs::remove_file(&fixture.pid_file).expect("remove failure fixture pid file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verifier_cancellation_reaps_a_detached_workspace_shard_session() {
+        let fixture = DetachedShardRunner::new();
+        let mut output = Vec::new();
+        let error = verify_with_control(
+            &fixture,
+            &mut output,
+            Budget::fixture(3, 1, 0),
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect_err("browser refusal cancels its detached workspace shard sibling");
+        assert!(matches!(error, VerifyError::BrowserIncomplete));
+
+        let root = read_pids(&fixture.root_pid_file);
+        let detached = read_pids(&fixture.detached_identity_file);
+        assert_eq!(root.len(), 1, "fixture publishes one action root PID");
+        assert_eq!(detached.len(), 3, "fixture publishes PID, PGID, and SID");
+        assert_ne!(root[0], detached[0], "detached shard is a descendant");
+        assert_eq!(detached[0], detached[1], "detached shard leads its group");
+        assert_eq!(detached[0], detached[2], "detached shard leads its session");
+        assert_processes_gone(&fixture.root_pid_file, "cancelled workspace action root");
+        assert_processes_gone(
+            &fixture.detached_identity_file,
+            "cancelled detached workspace shard",
+        );
+
+        let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+        assert!(output.contains("disposition=cancelled"), "{output}");
+        assert!(
+            output.contains("primary_ordinal=8 interrupted=false cleanup_faults=0"),
+            "{output}"
+        );
     }
 
     #[test]

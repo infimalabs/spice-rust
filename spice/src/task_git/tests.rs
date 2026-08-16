@@ -96,31 +96,7 @@ fn metadata() -> Metadata<'static> {
 }
 
 #[test]
-fn publication_builds_baseline_first_merge_and_pushes_it() {
-    let fixture = Fixture::new("publish");
-    let agent = fixture.agent_commit("agent.txt", "agent\n");
-    let upstream = fixture.peer_commit("peer.txt", "peer\n");
-
-    let result = publish(&fixture.repository(), metadata()).expect("publish task work");
-
-    assert_eq!(result.head, agent);
-    assert_eq!(result.upstream_head.as_deref(), Some(upstream.as_str()));
-    assert_eq!(
-        parents(&fixture.agent, &result.integrated),
-        vec![upstream, agent]
-    );
-    assert_eq!(
-        stdout(&fixture.agent, &["ls-remote", "origin", "refs/heads/main"])
-            .split_whitespace()
-            .next(),
-        Some(result.integrated.as_str())
-    );
-    assert_eq!(stdout(&fixture.agent, &["status", "--porcelain"]), "");
-    assert_eq!(stdout(&fixture.agent, &["show", "HEAD:peer.txt"]), "peer");
-}
-
-#[test]
-fn retry_after_published_merge_recovers_original_lane_head() {
+fn publication_builds_baseline_first_merge_and_retry_reuses_it() {
     let fixture = Fixture::new("published-retry");
     let agent = fixture.agent_commit("agent.txt", "agent\n");
     let upstream = fixture.peer_commit("peer.txt", "peer\n");
@@ -129,12 +105,26 @@ fn retry_after_published_merge_recovers_original_lane_head() {
     let retried =
         publish(&fixture.repository(), metadata()).expect("retry published task transition");
 
+    assert_eq!(first.head, agent);
+    assert_eq!(first.upstream_head.as_deref(), Some(upstream.as_str()));
     assert_eq!(retried.head, agent);
+    assert_eq!(
+        retried.upstream_head.as_deref(),
+        Some(first.integrated.as_str())
+    );
     assert_eq!(retried.integrated, first.integrated);
     assert_eq!(
         parents(&fixture.agent, &retried.integrated),
         vec![upstream, agent],
     );
+    assert_eq!(
+        stdout(&fixture.agent, &["ls-remote", "origin", "refs/heads/main"])
+            .split_whitespace()
+            .next(),
+        Some(retried.integrated.as_str())
+    );
+    assert_eq!(stdout(&fixture.agent, &["status", "--porcelain"]), "");
+    assert_eq!(stdout(&fixture.agent, &["show", "HEAD:peer.txt"]), "peer");
 }
 
 #[test]

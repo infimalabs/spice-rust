@@ -5,6 +5,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 
 use super::*;
 
@@ -145,6 +146,53 @@ impl GateRepository {
             ),
         )
         .expect("write staged source with selected-target marker");
+    }
+
+    pub(super) fn write_selected_test_with_state_writer(&self, marker: &Path) {
+        let marker = format!("{:?}", marker.to_string_lossy());
+        let state = format!(
+            "{:?}",
+            self.path()
+                .join(".git/.spice-rs/data/gate-state.json")
+                .to_string_lossy(),
+        );
+        fs::write(
+            self.path().join("src/lib.rs"),
+            format!(
+                concat!(
+                    "pub fn fixture() {{}}\n\n",
+                    "#[test]\n",
+                    "fn canonical_selected_target() {{\n",
+                    "    use std::io::Write as _;\n",
+                    "    let mut marker = std::fs::OpenOptions::new()\n",
+                    "        .create(true)\n",
+                    "        .append(true)\n",
+                    "        .open({marker})\n",
+                    "        .expect(\"open selected-target execution marker\");\n",
+                    "    writeln!(marker, \"canonical selected target executed\")\n",
+                    "        .expect(\"append selected-target execution marker\");\n",
+                    "    let state = std::path::Path::new({state});\n",
+                    "    std::fs::create_dir_all(state.parent().expect(\"gate-state parent\"))\n",
+                    "        .expect(\"create concurrent gate-state parent\");\n",
+                    "    std::fs::write(state, b\"{{\\\"version\\\":1,\\\"latches\\\":[],\\\"claims\\\":[]}}\")\n",
+                    "        .expect(\"publish concurrent canonical gate state\");\n",
+                    "}}\n",
+                ),
+                marker = marker,
+                state = state,
+            ),
+        )
+        .expect("write staged source with selected-target state writer");
+        let output = Command::new("rustfmt")
+            .args(["--edition", "2024"])
+            .arg(self.path().join("src/lib.rs"))
+            .output()
+            .expect("launch rustfmt for concurrent state-writer fixture");
+        assert!(
+            output.status.success(),
+            "format concurrent state-writer fixture: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
     }
 
     pub(super) fn write_camp_lines(&self, length: usize) {

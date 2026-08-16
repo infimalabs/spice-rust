@@ -1183,6 +1183,10 @@ mod closing_boundary;
 mod hidden;
 use hidden::*;
 
+// Parked `.oops` rows have one deliberate exit: exact capture may hold one
+// for triage, and atomic wake promotion moves it into public work.
+mod oops_promotion;
+
 // Statement correction and its refusals are one bounded scenario seam, so
 // this file stays inside the structural review bound as it grows.
 mod edit;

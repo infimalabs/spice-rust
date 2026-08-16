@@ -167,4 +167,6 @@ fn quoted(value: &str) -> String {
 
 mod render;
 pub use render::*;
+#[cfg(test)]
+mod fixture_repository;
 mod fixtures;

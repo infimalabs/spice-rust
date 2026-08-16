@@ -99,7 +99,8 @@ fn deadline_terminates_the_worker_group_and_names_its_last_phase() {
     let pid = files.root.join("descendant.pid");
     let script = concat!(
         "printf '%s\\n' '{\"phase\":\"family\",\"family\":\"toolchain\"}' >> \"$1\"; ",
-        "sleep 30 & child=$!; printf '%s\\n' \"$child\" > \"$2\"; wait"
+        "sleep 30 & child=$!; printf '%s\\n' \"$child\" > \"$2.tmp\"; ",
+        "mv \"$2.tmp\" \"$2\"; wait"
     );
     let bounds = ProcessBounds {
         runtime: Duration::from_millis(100),

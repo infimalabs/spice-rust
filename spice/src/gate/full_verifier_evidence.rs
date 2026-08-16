@@ -17,6 +17,7 @@ mod semantic;
 pub use semantic::{AdmittedSemanticVerifierEvidence, SemanticFullVerifierAdmission};
 
 const FULL_VERIFIER_EVIDENCE_VERSION: u64 = 3;
+const STATE_PUBLICATION_ATTEMPTS: usize = 4;
 const AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/compiler-evidence/v1";
 const PREPARED_AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/prepared-compiler-evidence/v1";
 
@@ -63,6 +64,7 @@ impl FullVerifierEvidence {
             prepared.generated_paths(),
         )?;
         let semantic = semantic::SemanticEvidence::mint(repository, closure, battery, compiler)?;
+        let state = accept_state_with_retry(prepared, battery)?;
         let semantic = String::from_utf8(
             semantic
                 .encode()
@@ -80,9 +82,6 @@ impl FullVerifierEvidence {
                 .map_err(|error| format!("encode compiler receipt: {error}"))?,
         )
         .map_err(|error| format!("compiler receipt is not UTF-8: {error}"))?;
-        let state = prepared
-            .accept_state()
-            .map_err(|error| format!("accept full-verifier battery state: {error}"))?;
         if !state.accepted() {
             return Err("full-verifier evidence requires an accepted state transition".to_owned());
         }
@@ -162,6 +161,47 @@ impl FullVerifierEvidence {
             .publish(|staged| staged.write_all(&bytes))
             .map_err(|error| format!("publish full-verifier evidence: {error}"))
     }
+}
+
+fn accept_state_with_retry(
+    prepared: &PreparedBattery<'_>,
+    battery: &BatteryReceipt,
+) -> Result<StateReceipt, String> {
+    let receipt = battery
+        .encode()
+        .map_err(|error| format!("encode battery receipt for state retry: {error}"))?;
+    for attempt in 1..=STATE_PUBLICATION_ATTEMPTS {
+        let result = if attempt == 1 {
+            prepared.accept_state()
+        } else {
+            let retry = prepare_strict(Selector::staged())
+                .map_err(|error| format!("recapture full-verifier battery state: {error}"))?;
+            if retry.source() != prepared.source() {
+                return Err(
+                    "staged source moved while retrying full-verifier state publication".to_owned(),
+                );
+            }
+            let admitted = retry
+                .admit_battery_receipt(&receipt)
+                .map_err(|error| format!("re-admit full-verifier battery state: {error}"))?;
+            if &admitted != battery {
+                return Err(
+                    "battery receipt changed while retrying full-verifier state publication"
+                        .to_owned(),
+                );
+            }
+            retry.accept_state()
+        };
+        match result {
+            Ok(state) => return Ok(state),
+            Err(error)
+                if error.is_stale_state_publication() && attempt < STATE_PUBLICATION_ATTEMPTS => {}
+            Err(error) => {
+                return Err(format!("accept full-verifier battery state: {error}"));
+            }
+        }
+    }
+    unreachable!("the fixed state publication attempt loop always returns")
 }
 
 /// A retained bundle independently matched to a fresh strict capture.

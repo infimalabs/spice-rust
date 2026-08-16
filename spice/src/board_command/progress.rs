@@ -257,6 +257,16 @@ pub(super) fn task_done(
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
+    if is_oops(entry) {
+        return refusal(
+            "task::promotion-required",
+            Some(oops_state(entry)),
+            &format!(
+                "promote with spice task wake {} --into PUBLIC_PROJECT, add required public dependencies, then complete it",
+                entry.handle(),
+            ),
+        );
+    }
     let (at, lane, transition) = match done_transition(&snapshot, entry, command) {
         Ok(value) => value,
         Err(outcome) => return outcome,

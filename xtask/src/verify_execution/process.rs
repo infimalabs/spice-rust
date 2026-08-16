@@ -1,3 +1,6 @@
+#[cfg(unix)]
+mod descendants;
+
 pub(super) fn run_process<I, S, P>(
     label: &str,
     program: P,
@@ -78,11 +81,72 @@ where
         overrides,
         bounds,
     )?;
-    let outcome = sill::spawn(spec)
-        .map_err(RunError::Launch)?
-        .wait()
-        .map_err(|error| RunError::Cleanup(error.to_string()))?;
+    let running = sill::spawn(spec).map_err(RunError::Launch)?;
+    let outcome = wait_bounded(running, cancellation, bounds)?;
     command_run_from_outcome(label, &outcome)
+}
+
+fn wait_bounded(
+    mut running: sill::Running,
+    cancellation: &CancellationToken,
+    bounds: ProcessBounds,
+) -> Result<sill::WaitOutcome, RunError> {
+    loop {
+        if cancellation.is_cancelled() || running.runtime_remaining().is_zero() {
+            return wait_after_stop_request(running, bounds);
+        }
+        let interval = SCHEDULER_POLL.min(running.runtime_remaining());
+        match running
+            .wait_for(interval)
+            .map_err(|error| RunError::Cleanup(error.to_string()))?
+        {
+            WaitStep::Exited(outcome) => return Ok(outcome),
+            WaitStep::Running(next) => running = *next,
+        }
+    }
+}
+
+fn wait_after_stop_request(
+    running: sill::Running,
+    bounds: ProcessBounds,
+) -> Result<sill::WaitOutcome, RunError> {
+    #[cfg(not(unix))]
+    let _ = bounds;
+    #[cfg(unix)]
+    let mut faults = Vec::new();
+    #[cfg(unix)]
+    let descendants = match descendants::DescendantGroups::discover(running.id()) {
+        Ok(descendants) => {
+            if let Err(error) = descendants.terminate() {
+                faults.push(format!(
+                    "discoverable descendant termination failed: {error}"
+                ));
+            }
+            Some(descendants)
+        }
+        Err(error) => {
+            faults.push(format!("descendant discovery failed: {error}"));
+            None
+        }
+    };
+
+    let outcome = running.wait();
+
+    #[cfg(unix)]
+    if let Some(descendants) = descendants
+        && let Err(error) = descendants.reap(bounds.grace, bounds.reap)
+    {
+        faults.push(format!("descendant reap failed: {error}"));
+    }
+    #[cfg(unix)]
+    if !faults.is_empty() {
+        if let Err(error) = outcome {
+            faults.push(format!("action process-group reap failed: {error}"));
+        }
+        return Err(RunError::Cleanup(faults.join("; ")));
+    }
+
+    outcome.map_err(|error| RunError::Cleanup(error.to_string()))
 }
 
 #[derive(Debug)]
@@ -159,14 +223,11 @@ where
         if let Err(error) = drain_live_progress(&received, output) {
             cancellation.cancel();
             drop(received);
-            let _cleanup = running.wait();
+            let _cleanup = wait_after_stop_request(running, bounds);
             return Err(StreamingRunError::Output(error));
         }
         if cancellation.is_cancelled() || running.runtime_remaining().is_zero() {
-            break running
-                .wait()
-                .map_err(|error| RunError::Cleanup(error.to_string()))
-                .map_err(StreamingRunError::Process)?;
+            break wait_after_stop_request(running, bounds).map_err(StreamingRunError::Process)?;
         }
         let observation = FULL_VERIFIER_LIVE_POLL.min(running.runtime_remaining());
         match running

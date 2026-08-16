@@ -214,10 +214,24 @@ pub struct TaskDefer {
     pub wait: Instant,
 }
 
+/// Wake ordinary deferred work, or promote one parked `.oops` row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWake {
+    /// Task being woken or promoted.
+    pub task: TaskHandle,
+    /// Public project receiving a parked `.oops` row.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub into: Option<String>,
+}
+
 /// Name one task and nothing else.
 ///
-/// Waking a task, and every claim move that only identifies its subject,
-/// share this shape.
+/// Claim moves that only identify their subject share this shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRef {
