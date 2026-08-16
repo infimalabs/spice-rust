@@ -109,7 +109,7 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
         "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
         "check --locked --workspace --target wasm32-unknown-unknown",
         app_action.as_str(),
-        "test --locked --workspace --all-targets --no-run",
+        "test --locked --workspace --no-run",
     ] {
         assert_eq!(
             chain.iter().filter(|action| **action == required).count(),
@@ -124,7 +124,7 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
         app_action.as_str(),
         "build --locked -p spice --bin spice",
         "metadata --locked --format-version 1 --no-deps",
-        "test --locked --workspace --all-targets --no-run",
+        "test --locked --workspace --no-run",
         "test --locked --package verify-process-fixture-id --lib",
     ];
     assert!(
@@ -136,7 +136,7 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
         action_index(
             &chain,
             "clippy --locked --workspace --all-targets -- -D warnings"
-        ) < action_index(&chain, "test --locked --workspace --all-targets --no-run"),
+        ) < action_index(&chain, "test --locked --workspace --no-run"),
         "workspace-test setup began before native Clippy completed: {chain:?}"
     );
 }

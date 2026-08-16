@@ -16,8 +16,7 @@ use gate::{BatteryArmResult, BatteryReport, FocusedArmReport, GateId};
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const FORMAT_ACTION: &str =
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
-const WORKSPACE_TEST_ACTION: &str =
-    "deterministic sharded cargo test --locked --workspace --all-targets";
+const WORKSPACE_TEST_ACTION: &str = "deterministic sharded cargo test --locked --workspace";
 const STREAMING_FIXTURE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[path = "verify_process/browser_refusal.rs"]
@@ -398,7 +397,7 @@ fn assert_workspace_test_execution(
         "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
         "check --locked --workspace --target wasm32-unknown-unknown",
         app_action.as_str(),
-        "test --locked --workspace --all-targets --no-run",
+        "test --locked --workspace --no-run",
         "test --locked --package verify-process-fixture-id --lib",
         "doc --locked --workspace --lib --bins --no-deps",
         "test --locked --workspace --doc",

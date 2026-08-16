@@ -115,7 +115,7 @@ fn assert_wasm_refusal(cargo_log: &Path, output: &std::process::Output) {
             *action == "--version"
                 || *action == "build --locked -p spice --bin spice"
                 || *action == "metadata --locked --format-version 1 --no-deps"
-                || *action == "test --locked --workspace --all-targets --no-run"
+                || *action == "test --locked --workspace --no-run"
                 || action.starts_with("clippy ")
         }),
         "unexpected Cargo action while the battery ran concurrently: {actions:?}",
