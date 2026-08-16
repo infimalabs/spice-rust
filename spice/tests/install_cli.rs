@@ -333,15 +333,6 @@ impl Paused {
         self.collect()
     }
 
-    /// Collect a paused install that is never released.
-    ///
-    /// The only difference from `resume` is the release that does not happen,
-    /// so what is collected here is whatever ending the install reaches on its
-    /// own -- which is the horizon bounding its wait.
-    fn abandon(self) -> Spoken {
-        self.collect()
-    }
-
     fn collect(mut self) -> Spoken {
         let output = self
             .child

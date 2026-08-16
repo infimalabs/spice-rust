@@ -1,6 +1,15 @@
 //! Bounded shard coordinator for workspace Rust test execution.
 
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const TEMP_ROOT_ATTEMPTS: usize = 100;
+const TEMP_ENVIRONMENT: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
+/// Each Cargo shard starts test binaries that would otherwise each claim every
+/// host CPU. Retain modest intra-binary overlap while bounding the multiplier
+/// across the admitted process lanes.
+const MAX_TEST_HARNESS_THREADS_PER_SHARD: usize = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RunPolicy {
@@ -16,16 +25,32 @@ pub(super) struct RunPolicy {
 
 impl RunPolicy {
     pub(super) fn production(concurrency: usize) -> Result<Self, WorkspaceTestError> {
-        if !(1..=WORKSPACE_TEST_CONCURRENCY_CAP).contains(&concurrency) {
+        Self::production_with_cap(concurrency, WORKSPACE_TEST_CONCURRENCY_CAP, false)
+    }
+
+    pub(super) fn production_shared(concurrency: usize) -> Result<Self, WorkspaceTestError> {
+        Self::production_with_cap(
+            concurrency,
+            crate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP,
+            true,
+        )
+    }
+
+    fn production_with_cap(
+        concurrency: usize,
+        cap: usize,
+        shared_outputs: bool,
+    ) -> Result<Self, WorkspaceTestError> {
+        if !(1..=cap).contains(&concurrency) {
             return Err(WorkspaceTestError::new(format!(
                 "workspace test concurrency must be between 1 and {}, \
                  got {concurrency}",
-                WORKSPACE_TEST_CONCURRENCY_CAP,
+                cap,
             )));
         }
         Ok(Self {
             concurrency,
-            shared_outputs: false,
+            shared_outputs,
             shard_deadline: SHARD_DEADLINE,
             coordinator_deadline: COORDINATOR_DEADLINE,
             progress_interval: PROGRESS_INTERVAL,
@@ -37,11 +62,6 @@ impl RunPolicy {
 
     pub(super) fn for_shards(mut self, shards: usize) -> Self {
         self.concurrency = self.concurrency.min(if shards == 0 { 1 } else { shards });
-        self
-    }
-
-    pub(super) const fn with_shared_outputs(mut self) -> Self {
-        self.shared_outputs = true;
         self
     }
 }
@@ -461,8 +481,10 @@ fn run_shard(
     } else {
         isolate_shard_outputs(environment, output_lane)
     };
-    let spec = environment.and_then(|environment| {
-        shard_spec(
+    let outcome = (|| {
+        let temporary = ShardTemporaryRoot::create()?;
+        let environment = environment?.with_temporary_root(temporary.path())?;
+        let spec = shard_spec(
             &cargo,
             &shard,
             &root,
@@ -470,9 +492,7 @@ fn run_shard(
             cancellation,
             policy,
             &owner,
-        )
-    });
-    let outcome = spec.and_then(|spec| {
+        )?;
         let observation = Observation::new(
             OutputStream::Stdout,
             RECORD_FRAME_LIMIT,
@@ -485,7 +505,7 @@ fn run_shard(
         running
             .wait()
             .map_err(|error| WorkspaceTestError::new(format!("shard wait failed: {error}")))
-    });
+    })();
     shard_result(
         index,
         shard,
@@ -494,6 +514,77 @@ fn run_shard(
         observer.last(),
         outcome,
     )
+}
+
+trait PrivateTemporaryEnvironment {
+    fn with_temporary_root(self, root: &Path) -> Result<Self, WorkspaceTestError>
+    where
+        Self: Sized;
+}
+
+impl PrivateTemporaryEnvironment for Environment {
+    fn with_temporary_root(self, root: &Path) -> Result<Self, WorkspaceTestError> {
+        let mut entries = self
+            .entries()
+            .iter()
+            .cloned()
+            .collect::<BTreeMap<OsString, OsString>>();
+        for variable in TEMP_ENVIRONMENT {
+            entries.insert(OsString::from(variable), root.as_os_str().to_owned());
+        }
+        Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
+    }
+}
+
+struct ShardTemporaryRoot(PathBuf);
+
+impl ShardTemporaryRoot {
+    fn create() -> Result<Self, WorkspaceTestError> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        for _ in 0..TEMP_ROOT_ATTEMPTS {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| WorkspaceTestError::new(error.to_string()))?
+                .as_nanos();
+            let path = shard_temporary_parent().join(format!(
+                "swt-{stamp:x}-{:x}",
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(WorkspaceTestError::new(format!(
+                        "workspace test temporary root could not be created: {error}"
+                    )));
+                }
+            }
+        }
+        Err(WorkspaceTestError::new(format!(
+            "no exclusive workspace test temporary root was available in {TEMP_ROOT_ATTEMPTS} attempts"
+        )))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+fn shard_temporary_parent() -> PathBuf {
+    #[cfg(unix)]
+    {
+        PathBuf::from("/tmp")
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir()
+    }
+}
+
+impl Drop for ShardTemporaryRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 /// Give one concurrent worker lane sole ownership of every Cargo output publication.
@@ -566,6 +657,12 @@ fn shard_spec(
     for target in &shard.targets {
         arguments.extend(target_arguments(target)?);
     }
+    if policy.shared_outputs {
+        arguments.extend([
+            OsString::from("--"),
+            OsString::from(format!("--test-threads={}", shard_test_threads(shard))),
+        ]);
+    }
     let mut spec = process_spec(
         cargo,
         arguments,
@@ -579,6 +676,16 @@ fn shard_spec(
         .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
     spec.grace = policy.grace;
     Ok(spec)
+}
+
+pub(super) fn shard_test_threads(shard: &PackageInventory) -> usize {
+    if shard.name == "sill" {
+        return 1;
+    }
+    thread::available_parallelism()
+        .map(std::num::NonZero::get)
+        .unwrap_or(1)
+        .clamp(1, MAX_TEST_HARNESS_THREADS_PER_SHARD)
 }
 
 pub(super) fn target_arguments(

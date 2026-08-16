@@ -46,7 +46,7 @@ pub fn run(
     let workspace = workspace_tests::run_at(
         prepared.root(),
         environment,
-        crate::WORKSPACE_TEST_CONCURRENCY_CAP,
+        gate::WORKSPACE_TEST_CONCURRENCY_CAP,
         progress,
     )
     .map_err(TestEvidenceRunError::new)?;

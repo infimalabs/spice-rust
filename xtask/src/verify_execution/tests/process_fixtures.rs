@@ -20,6 +20,15 @@ impl Runner for WorkerPanicRunner {
             panic!("a successor crossed a panicked prerequisite")
         }
     }
+    fn run_with_readiness(
+        &self,
+        _: Step,
+        _: &CancellationToken,
+        _: usize,
+        _: ActionReadiness,
+    ) -> Result<CommandRun, RunError> {
+        panic!("a readiness action crossed a panicked prerequisite")
+    }
     fn run_scoped(
         &self,
         _: ScopedCommand,
@@ -32,11 +41,35 @@ impl Runner for WorkerPanicRunner {
     fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
         panic!("browser crossed a panicked prerequisite")
     }
+    fn workspace_test_prebuild(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        panic!("workspace prebuild crossed a panicked prerequisite")
+    }
+    fn workspace_tests(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        panic!("workspace tests crossed a panicked prerequisite")
+    }
+    fn structural_preflight(&self, _: &CancellationToken) -> Result<BatteryRun, RunError> {
+        panic!("structural preflight crossed a panicked prerequisite")
+    }
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
         while !cancellation.is_cancelled() {
             thread::yield_now();
         }
         Ok(BatteryRun::Cancelled)
+    }
+    fn accept_battery_state(&self) -> Result<(), String> {
+        panic!("state acceptance crossed a panicked prerequisite")
+    }
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+        panic!("evidence publication crossed a panicked prerequisite")
     }
     fn landing(&self) -> Result<landing::Report, landing::Error> {
         panic!("landing crossed a panicked prerequisite")
@@ -52,6 +85,16 @@ impl Runner for CleanupFaultRunner {
     }
     fn run(&self, _: Step, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
         Ok(timed_command(true))
+    }
+    fn run_with_readiness(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        jobs: usize,
+        readiness: ActionReadiness,
+    ) -> Result<CommandRun, RunError> {
+        readiness();
+        self.run(step, cancellation, jobs)
     }
     fn run_scoped(
         &self,
@@ -71,6 +114,13 @@ impl Runner for CleanupFaultRunner {
             completed: false,
         })
     }
+    fn workspace_test_prebuild(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        Ok(timed_command(true))
+    }
     fn workspace_tests(
         &self,
         cancellation: &CancellationToken,
@@ -83,8 +133,24 @@ impl Runner for CleanupFaultRunner {
         }
         Err(RunError::Cleanup("fixture sibling reap fault".to_owned()))
     }
+    fn structural_preflight(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<BatteryRun, RunError> {
+        Ok(if cancellation.is_cancelled() {
+            BatteryRun::Cancelled
+        } else {
+            BatteryRun::Admitted(Vec::new())
+        })
+    }
     fn battery(&self, _: &CancellationToken) -> Result<BatteryRun, RunError> {
         panic!("battery crossed a failed prerequisite")
+    }
+    fn accept_battery_state(&self) -> Result<(), String> {
+        panic!("state acceptance crossed a failed prerequisite")
+    }
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+        panic!("evidence publication crossed a failed prerequisite")
     }
     fn landing(&self) -> Result<landing::Report, landing::Error> {
         panic!("landing crossed a failed prerequisite")
@@ -124,6 +190,15 @@ impl Runner for InterruptRunner {
             panic!("a successor crossed interruption")
         }
     }
+    fn run_with_readiness(
+        &self,
+        _: Step,
+        _: &CancellationToken,
+        _: usize,
+        _: ActionReadiness,
+    ) -> Result<CommandRun, RunError> {
+        panic!("a readiness action crossed interruption")
+    }
     fn run_scoped(
         &self,
         _: ScopedCommand,
@@ -136,11 +211,35 @@ impl Runner for InterruptRunner {
     fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
         panic!("browser crossed interruption")
     }
+    fn workspace_test_prebuild(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        panic!("workspace prebuild crossed interruption")
+    }
+    fn workspace_tests(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        panic!("workspace tests crossed interruption")
+    }
+    fn structural_preflight(&self, _: &CancellationToken) -> Result<BatteryRun, RunError> {
+        panic!("structural preflight crossed interruption")
+    }
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
         while !cancellation.is_cancelled() {
             thread::sleep(Duration::from_millis(1));
         }
         Ok(BatteryRun::Cancelled)
+    }
+    fn accept_battery_state(&self) -> Result<(), String> {
+        panic!("state acceptance crossed interruption")
+    }
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+        panic!("evidence publication crossed interruption")
     }
     fn landing(&self) -> Result<landing::Report, landing::Error> {
         panic!("landing crossed interruption")
@@ -172,6 +271,15 @@ impl Runner for ScopedInterruptRunner {
     fn run(&self, _: Step, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
         unreachable!("full route is not under test")
     }
+    fn run_with_readiness(
+        &self,
+        _: Step,
+        _: &CancellationToken,
+        _: usize,
+        _: ActionReadiness,
+    ) -> Result<CommandRun, RunError> {
+        unreachable!("full route is not under test")
+    }
     fn run_scoped(
         &self,
         _: ScopedCommand,
@@ -184,7 +292,31 @@ impl Runner for ScopedInterruptRunner {
     fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
         unreachable!("full route is not under test")
     }
+    fn workspace_test_prebuild(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        unreachable!("full route is not under test")
+    }
+    fn workspace_tests(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        unreachable!("full route is not under test")
+    }
+    fn structural_preflight(&self, _: &CancellationToken) -> Result<BatteryRun, RunError> {
+        unreachable!("full route is not under test")
+    }
     fn battery(&self, _: &CancellationToken) -> Result<BatteryRun, RunError> {
+        unreachable!("full route is not under test")
+    }
+    fn accept_battery_state(&self) -> Result<(), String> {
+        unreachable!("full route is not under test")
+    }
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
         unreachable!("full route is not under test")
     }
     fn landing(&self) -> Result<landing::Report, landing::Error> {
@@ -250,6 +382,16 @@ impl Runner for FailureRunner {
     fn run(&self, _: Step, _: &CancellationToken, _: usize) -> Result<CommandRun, RunError> {
         Ok(timed_command(true))
     }
+    fn run_with_readiness(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        jobs: usize,
+        readiness: ActionReadiness,
+    ) -> Result<CommandRun, RunError> {
+        readiness();
+        self.run(step, cancellation, jobs)
+    }
     fn run_scoped(
         &self,
         _: ScopedCommand,
@@ -266,6 +408,13 @@ impl Runner for FailureRunner {
             completed: false,
         })
     }
+    fn workspace_test_prebuild(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        Ok(timed_command(true))
+    }
     fn workspace_tests(
         &self,
         cancellation: &CancellationToken,
@@ -274,8 +423,24 @@ impl Runner for FailureRunner {
     ) -> Result<CommandRun, RunError> {
         supervised_sleep(&self.pid_file, cancellation, jobs)
     }
+    fn structural_preflight(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<BatteryRun, RunError> {
+        Ok(if cancellation.is_cancelled() {
+            BatteryRun::Cancelled
+        } else {
+            BatteryRun::Admitted(Vec::new())
+        })
+    }
     fn battery(&self, _: &CancellationToken) -> Result<BatteryRun, RunError> {
         panic!("battery crossed the primary failure")
+    }
+    fn accept_battery_state(&self) -> Result<(), String> {
+        panic!("state acceptance crossed the primary failure")
+    }
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+        panic!("evidence publication crossed the primary failure")
     }
     fn landing(&self) -> Result<landing::Report, landing::Error> {
         panic!("landing crossed the primary failure")
@@ -296,6 +461,17 @@ impl Runner for DetachedShardRunner {
         Ok(timed_command(true))
     }
 
+    fn run_with_readiness(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        jobs: usize,
+        readiness: ActionReadiness,
+    ) -> Result<CommandRun, RunError> {
+        readiness();
+        self.run(step, cancellation, jobs)
+    }
+
     fn run_scoped(
         &self,
         _: ScopedCommand,
@@ -312,6 +488,14 @@ impl Runner for DetachedShardRunner {
             process: timed_command(true),
             completed: false,
         })
+    }
+
+    fn workspace_test_prebuild(
+        &self,
+        _: &CancellationToken,
+        _: usize,
+    ) -> Result<CommandRun, RunError> {
+        Ok(timed_command(true))
     }
 
     fn workspace_tests(
@@ -349,8 +533,27 @@ impl Runner for DetachedShardRunner {
         )
     }
 
+    fn structural_preflight(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<BatteryRun, RunError> {
+        Ok(if cancellation.is_cancelled() {
+            BatteryRun::Cancelled
+        } else {
+            BatteryRun::Admitted(Vec::new())
+        })
+    }
+
     fn battery(&self, _: &CancellationToken) -> Result<BatteryRun, RunError> {
         panic!("battery crossed the primary failure")
+    }
+
+    fn accept_battery_state(&self) -> Result<(), String> {
+        panic!("state acceptance crossed the primary failure")
+    }
+
+    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+        panic!("evidence publication crossed the primary failure")
     }
 
     fn landing(&self) -> Result<landing::Report, landing::Error> {

@@ -36,7 +36,10 @@ const LANE_DEADLINE_BOUND: Duration = Duration::from_secs(20);
 /// The wait itself is event-driven; this covers the full vendor, capture,
 /// decode, and persistence pipeline rather than resident discovery.
 const LANE_EFFECT_HORIZON: Duration = Duration::from_secs(45);
-const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(25);
+/// Keep a fake peer alive beyond the process-level guard so scheduler delay
+/// cannot turn the client's elapsed bound into a peer-close transport fault.
+/// Every normal path still stops the peer immediately through its shared flag.
+const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(60);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 

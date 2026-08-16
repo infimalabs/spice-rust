@@ -490,6 +490,7 @@ fn semantic_lifecycle_fixture_process() {
     let root = env::current_dir().expect("fixture current directory");
     let repository = Repository::discover(&root).expect("discover fixture repository");
     let evidence = publish_producer_evidence(&repository);
+    assert_pre_commit_reuses_complete_evidence(&root);
 
     reject_cross_worktree_reuse(&root, &evidence);
     reject_compiler_contract_drift(&repository);
@@ -569,6 +570,43 @@ fn semantic_lifecycle_fixture_process() {
             .count(),
         1,
         "Canvas current-source build must execute exactly once:\n{trunk}",
+    );
+}
+
+fn assert_pre_commit_reuses_complete_evidence(root: &Path) {
+    let progress = fixture_peer(root, "pre-commit-progress.jsonl");
+    let terminal = fixture_peer(root, "pre-commit-terminal.bin");
+    fs::write(&progress, "").expect("create pre-commit progress fixture");
+    fs::write(&terminal, "").expect("create pre-commit terminal fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args([
+            "__gate-pre-commit-worker",
+            progress.to_str().expect("progress path is text"),
+            terminal.to_str().expect("terminal path is text"),
+        ])
+        .current_dir(root)
+        .output()
+        .expect("launch exact pre-commit worker");
+    assert!(
+        output.status.success(),
+        "pre-commit worker failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let terminal = fs::read(&terminal).expect("read pre-commit terminal fixture");
+    let Some((kind, document)) = terminal.split_first() else {
+        panic!("pre-commit worker published no terminal");
+    };
+    assert_eq!(*kind, b'R', "pre-commit worker refused complete evidence");
+    let report: serde_json::Value =
+        serde_json::from_slice(document).expect("decode pre-commit report");
+    assert!(
+        report["full_verifier"].is_object(),
+        "pre-commit worker fell through instead of reusing complete evidence: {report}",
+    );
+    assert!(
+        report.get("packaged").is_none(),
+        "complete evidence must replace packaged execution: {report}",
     );
 }
 

@@ -442,10 +442,6 @@ impl Dispatch {
         self.anchor.changes()
     }
 
-    pub(super) const fn repository(&self) -> &Repository {
-        &self.repository
-    }
-
     pub(super) fn verify(&self) -> Result<(), ConfiguredFailure> {
         self.anchor.verify_source().map_err(|error| {
             ConfiguredFailure::refusal(

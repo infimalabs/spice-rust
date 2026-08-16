@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::*;
 use crate::verify_execution::{verify_package_with, verify_with};
@@ -9,7 +10,6 @@ enum Outcome {
     Exit(i32),
     Launch,
 }
-
 /// The report a source-development entry point produces, so the order test
 /// can pin the policy action without reaching a real repository.
 const ENTRY_POINT_FIXTURE: &str = "fixture automatic publisher owns installation\n";
@@ -137,6 +137,17 @@ impl Runner for FakeRunner {
         )
     }
 
+    fn run_with_readiness(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        readiness: ActionReadiness,
+    ) -> Result<CommandRun, RunError> {
+        readiness();
+        self.run(step, cancellation, cargo_jobs)
+    }
+
     fn run_scoped(
         &self,
         step: ScopedCommand,
@@ -165,6 +176,30 @@ impl Runner for FakeRunner {
             .take()
             .expect("fixture has one browser outcome")
             .map_err(RunError::Launch)
+    }
+
+    fn workspace_test_prebuild(
+        &self,
+        _cancellation: &CancellationToken,
+        _cargo_jobs: usize,
+    ) -> Result<CommandRun, RunError> {
+        Ok(CommandRun::Exited(ProcessOutput::status_only(Status {
+            success: true,
+            code: Some(0),
+        })))
+    }
+
+    fn workspace_tests(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        workspace_workers: usize,
+    ) -> Result<CommandRun, RunError> {
+        self.run(
+            Step::cargo(WORKSPACE_TEST_LABEL, &[]),
+            cancellation,
+            cargo_jobs.min(workspace_workers),
+        )
     }
 
     fn structural_preflight(
@@ -208,6 +243,24 @@ impl Runner for FakeRunner {
             .take()
             .expect("fixture has one landing outcome")
     }
+}
+
+#[test]
+fn production_readiness_refuses_an_ordinary_command_without_forging_the_event() {
+    let runner = SystemRunner::standalone();
+    let observed = Arc::new(AtomicBool::new(false));
+    let callback_observed = Arc::clone(&observed);
+    let error = runner
+        .run_with_readiness(
+            Step::cargo("fixture ordinary command", &[]),
+            &CancellationToken::new(),
+            1,
+            Arc::new(move || callback_observed.store(true, Ordering::Release)),
+        )
+        .expect_err("ordinary commands have no compiler-readiness authority");
+
+    assert!(matches!(error, RunError::Launch(_)));
+    assert!(!observed.load(Ordering::Acquire));
 }
 
 fn fake_command(

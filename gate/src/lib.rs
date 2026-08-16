@@ -46,6 +46,14 @@ mod workspace_tests;
 
 /// Hard ceiling on canonical workspace-test shard workers.
 pub const WORKSPACE_TEST_CONCURRENCY_CAP: usize = 4;
+/// Higher shard ceiling reserved for a completed shared-output prebuild.
+///
+/// Six lanes parallelize already-built test processes without admitting six
+/// cold Rust compilers or consuming the outer scheduler slot deliberately kept
+/// free of Cargo work during compiler setup. The workspace-test coordinator
+/// accepts this ceiling only when its private shared-output authority is
+/// present.
+pub const PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP: usize = 6;
 
 pub use battery::{
     ActorEvidence, ArmDisposition, ArmEvidence, ArmExecution, ArmFamily,
@@ -177,6 +185,9 @@ pub use test_evidence::{
 /// Private `cargo xtask app` argument used by the native full verifier to
 /// publish a selected-source app build into its live worktree.
 pub const VERIFIER_APP_PUBLISH_FLAG: &str = "--spice-verifier-publish-root";
+/// Complete stdout record emitted after Trunk's Cargo process succeeds but
+/// before selected-source validation and atomic app publication finish.
+pub const VERIFIER_APP_COMPILER_READY_RECORD: &str = "[app] compiler-ready";
 #[cfg(not(target_arch = "wasm32"))]
 pub use structural::{
     StructuralCapture, StructuralMatch, StructuralPattern, StructuralScanError, scan_structural,
