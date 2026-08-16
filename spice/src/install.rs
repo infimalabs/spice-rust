@@ -92,7 +92,7 @@ const BINARY_PATH: &str = ".spice-install/bin/spice";
 const RETIRED_XTASK_PATH: &str = ".spice-install/bin/xtask";
 const RETIRED_XTASK_GUARD_PATH: &str = ".spice-install/bin/xtask.guard";
 
-const SKILL: &str = include_str!("install/skill.md");
+const SKILL: &str = include_str!("../agent/SKILL.md");
 
 #[cfg(debug_assertions)]
 #[doc(hidden)]
