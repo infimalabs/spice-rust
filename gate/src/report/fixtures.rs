@@ -3,18 +3,16 @@ use super::*;
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
     use serde_json::json;
     use wire::{Digest, Domain, Outcome, Reply, ReplyPosition};
 
     use super::*;
     use crate::Contract;
+    use crate::report::fixture_repository::ReportFixture;
 
     #[test]
     fn one_current_run_constructs_one_coherent_gate_report_and_direct_body() {
+        ReportFixture::assert_parent_environment_isolated();
         let report = fixture_gate_report();
 
         assert_eq!(report.version(), GATE_REPORT_VERSION);
@@ -792,7 +790,10 @@ mod tests {
     /// fixture move the jurisdiction between the two integrity observations and
     /// prevents the serializer assertion from running at all.
     fn fixture_gate_report() -> GateReport {
-        let fixture = ReportFixture::new();
+        fixture_gate_report_from(ReportFixture::new())
+    }
+
+    fn fixture_gate_report_from(fixture: ReportFixture) -> GateReport {
         let contract = Contract::load(&fixture.root).expect("load fixture contract");
         let report = contract
             .adjudicate(&fixture.root)
@@ -804,58 +805,6 @@ mod tests {
             refusal_detail(&fixture.root, &contract, &report)
         );
         report
-    }
-
-    struct ReportFixture {
-        root: PathBuf,
-    }
-
-    impl ReportFixture {
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "spice-gate-report-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir_all(root.join("src")).expect("create report fixture tree");
-            fs::write(
-                root.join("spice-rust.toml"),
-                format!("{}[gate.walk]\nskip = []\n", crate::NARROWEST_FILE_CLASSES),
-            )
-            .expect("write report fixture policy");
-            fs::write(
-                root.join("baseline.toml"),
-                concat!(
-                    "version = 1\n\n",
-                    "[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
-                ),
-            )
-            .expect("write report fixture baseline");
-            fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n")
-                .expect("write report fixture source");
-            for arguments in [
-                ["init", "-q", "-b", "main"].as_slice(),
-                ["config", "user.name", "Gate Report Fixture"].as_slice(),
-                ["config", "user.email", "gate-report@example.invalid"].as_slice(),
-                ["add", "--all"].as_slice(),
-                ["commit", "-q", "-m", "report fixture"].as_slice(),
-            ] {
-                let status = Command::new("/usr/bin/git")
-                    .args(arguments)
-                    .current_dir(&root)
-                    .status()
-                    .expect("run report fixture Git");
-                assert!(status.success(), "git {arguments:?} creates report fixture");
-            }
-            Self { root }
-        }
-    }
-
-    impl Drop for ReportFixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("remove report fixture tree");
-        }
     }
 
     fn sample_kill_report() -> KillReport {
