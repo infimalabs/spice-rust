@@ -1,8 +1,10 @@
-struct CleanupFaultRunner {
-    sibling_started: AtomicBool,
+use super::*;
+
+pub(super) struct CleanupFaultRunner {
+    pub(super) sibling_started: AtomicBool,
 }
 
-struct WorkerPanicRunner;
+pub(super) struct WorkerPanicRunner;
 
 impl Runner for WorkerPanicRunner {
     fn entry_point(&self) -> Result<String, String> {
@@ -156,13 +158,13 @@ impl Runner for CleanupFaultRunner {
 }
 
 #[cfg(unix)]
-struct InterruptRunner {
-    pid_file: PathBuf,
+pub(super) struct InterruptRunner {
+    pub(super) pid_file: PathBuf,
 }
 
 #[cfg(unix)]
 impl InterruptRunner {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             pid_file: fixture_pid_file("cancel"),
         }
@@ -245,13 +247,13 @@ impl Runner for InterruptRunner {
 }
 
 #[cfg(unix)]
-struct ScopedInterruptRunner {
-    pid_file: PathBuf,
+pub(super) struct ScopedInterruptRunner {
+    pub(super) pid_file: PathBuf,
 }
 
 #[cfg(unix)]
 impl ScopedInterruptRunner {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             pid_file: fixture_pid_file("scoped-cancel"),
         }
@@ -323,20 +325,20 @@ impl Runner for ScopedInterruptRunner {
 }
 
 #[cfg(unix)]
-struct FailureRunner {
-    pid_file: PathBuf,
+pub(super) struct FailureRunner {
+    pub(super) pid_file: PathBuf,
 }
 
 #[cfg(unix)]
-struct DetachedShardRunner {
-    root_pid_file: PathBuf,
-    detached_identity_file: PathBuf,
+pub(super) struct DetachedShardRunner {
+    pub(super) root_pid_file: PathBuf,
+    pub(super) detached_identity_file: PathBuf,
     test_executable: PathBuf,
 }
 
 #[cfg(unix)]
 impl DetachedShardRunner {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             root_pid_file: fixture_pid_file("detached-shard-root"),
             detached_identity_file: fixture_pid_file("detached-shard-child"),
@@ -362,7 +364,7 @@ impl Drop for DetachedShardRunner {
 
 #[cfg(unix)]
 impl FailureRunner {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             pid_file: fixture_pid_file("failure"),
         }
@@ -560,7 +562,7 @@ impl Runner for DetachedShardRunner {
 }
 
 #[cfg(unix)]
-fn fixture_pid_file(label: &str) -> PathBuf {
+pub(super) fn fixture_pid_file(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "spice-verify-{label}-{}-{}",
         std::process::id(),
@@ -598,7 +600,7 @@ fn supervised_sleep(
 }
 
 #[cfg(unix)]
-fn wait_for_path(path: &std::path::Path) {
+pub(super) fn wait_for_path(path: &std::path::Path) {
     let started = Instant::now();
     while !path.is_file() {
         assert!(
@@ -610,7 +612,7 @@ fn wait_for_path(path: &std::path::Path) {
 }
 
 #[cfg(unix)]
-fn read_pids(path: &std::path::Path) -> Vec<u32> {
+pub(super) fn read_pids(path: &std::path::Path) -> Vec<u32> {
     fs::read_to_string(path)
         .expect("read verifier fixture pids")
         .split_whitespace()
@@ -619,7 +621,7 @@ fn read_pids(path: &std::path::Path) -> Vec<u32> {
 }
 
 #[cfg(unix)]
-fn assert_processes_gone(path: &std::path::Path, label: &str) {
+pub(super) fn assert_processes_gone(path: &std::path::Path, label: &str) {
     let pids = read_pids(path);
     let started = Instant::now();
     loop {
@@ -640,7 +642,7 @@ fn assert_processes_gone(path: &std::path::Path, label: &str) {
 }
 
 #[cfg(unix)]
-fn assert_process_stops_within(pid: u32, label: &str, deadline: Duration) {
+pub(super) fn assert_process_stops_within(pid: u32, label: &str, deadline: Duration) {
     let started = Instant::now();
     while process_is_running(pid) {
         assert!(
@@ -652,7 +654,7 @@ fn assert_process_stops_within(pid: u32, label: &str, deadline: Duration) {
 }
 
 #[cfg(unix)]
-fn process_exists(pid: u32) -> bool {
+pub(super) fn process_exists(pid: u32) -> bool {
     Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "pid="])
         .output()

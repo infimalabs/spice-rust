@@ -28,7 +28,21 @@ use super::{
     valid_package_name,
 };
 
+mod action;
+mod process;
 mod setup;
+
+use action::{
+    execute_action, execute_battery, execute_process, failure, panic_detail, write_failure_summary,
+};
+pub(super) use process::run_process;
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) use process::run_process_at;
+use process::{
+    SignalGuard, StreamingRunError, active_peer_cargo_jobs, run_bounded_process_streaming,
+};
+#[cfg(test)]
+use {action::success, process::count_peer_cargo};
 
 /// The explicit full-verifier dependency graph, indexed by report ordinal.
 ///
@@ -201,6 +215,17 @@ impl Budget {
             workspace_workers,
             active_cargo_jobs: Some(active),
         }
+    }
+
+    /// Once setup has completed, the two longest ready branches are the Cargo
+    /// workspace coordinator and the Cargo-free browser suite. When the fresh
+    /// observation still grants multiple workspace lanes, retain two outer
+    /// workers so those branches cannot consume the fixed test window serially.
+    fn after_workspace_prebuild(mut self) -> Self {
+        if self.workspace_workers > 1 {
+            self.workers = self.workers.max(2);
+        }
+        self
     }
 
     #[cfg(test)]
@@ -442,7 +467,9 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
         prebuild_failure,
         output_fault,
         deadline_exceeded,
-    } = schedule_graph(runner, output, budget, &cancellation, runtime, rebalance);
+    } = schedule_graph(runner, output, budget, &cancellation, runtime, |initial| {
+        rebalance(initial).after_workspace_prebuild()
+    });
     if let Some(error) = output_fault {
         return Err(VerifyError::Output(error));
     }
@@ -959,8 +986,6 @@ fn stage(index: usize, action: Action) -> Stage<'static> {
     }
 }
 
-include!("verify_execution/action.rs");
-
 pub(super) fn verify_package_system(
     package: &str,
     output: &mut impl Write,
@@ -1070,7 +1095,5 @@ fn write_scope_inventory(package: &str, output: &mut impl Write) -> Result<(), V
         .map_err(VerifyError::Output)
 }
 
-include!("verify_execution/process.rs");
-
 #[cfg(test)]
-include!("verify_execution_tests.rs");
+mod tests;

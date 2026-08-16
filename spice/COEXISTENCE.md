@@ -130,8 +130,8 @@ attachment localized the investigation; the causal trace came from code and the
 concurrent reproduction:
 
 1. Python's console entry at `spice-z/spice/cli/entry.py#def main` and Rust's
-   installed skill at `spice/src/install/skill.md#spice recall` both answer to
-   the shell word `spice`.
+   installed skill at `spice/agent/SKILL.md#spice agent activation` both
+   answer to the shell word `spice`.
 2. Rust already embedded its exact executable in hook and MCP launch arguments,
    but the resident passed ambient `PATH` to the occupant. If Python's executable
    appeared first, prose-driven Rust skill commands reached Python.

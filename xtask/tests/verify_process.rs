@@ -16,8 +16,7 @@ use gate::{BatteryArmResult, BatteryReport, FocusedArmReport, GateId};
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const FORMAT_ACTION: &str =
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
-const WORKSPACE_TEST_ACTION: &str =
-    "deterministic sharded cargo test --locked --workspace --all-targets";
+const WORKSPACE_TEST_ACTION: &str = "deterministic sharded cargo test --locked --workspace";
 const STREAMING_FIXTURE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[path = "verify_process/browser_refusal.rs"]
