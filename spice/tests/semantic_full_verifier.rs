@@ -72,6 +72,165 @@ fn admitted_parent_archives_compose_one_normal_two_parent_commit() {
 }
 
 #[test]
+fn concurrent_linked_worktree_state_receipts_compose_and_remain_source_bound() {
+    let fixture = Fixture::new();
+    fixture.write_repository();
+    fixture.write_tools();
+
+    let output = Command::new(env::current_exe().expect("resolve integration-test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "concurrent_state_receipt_fixture_process",
+            "--nocapture",
+        ])
+        .current_dir(&fixture.repository)
+        .env("PATH", fixture.search_path())
+        .env_remove("SPICE_RS_BOOTSTRAP_CARGO_HOME") // env-policy: allow
+        .env_remove("SPICE_RS_NATIVE_CARGO") // env-policy: allow
+        .output()
+        .expect("launch isolated concurrent-state fixture");
+
+    assert!(
+        output.status.success(),
+        "concurrent-state fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+#[ignore = "subprocess fixture with isolated cwd and compiler environment"]
+fn concurrent_state_receipt_fixture_process() {
+    let left = env::current_dir().expect("fixture current directory");
+    let policy_path = left.join("spice-rust.toml");
+    let policy = fs::read_to_string(&policy_path).expect("read fixture policy");
+    fs::write(
+        &policy_path,
+        policy.replace(
+            "docs = [\"AGENTS.md\"]",
+            "docs = [\"LEFT.md\", \"RIGHT.md\"]",
+        ),
+    )
+    .expect("select two independently bounded documents");
+    fs::write(left.join("LEFT.md"), "left baseline\n").expect("write left baseline");
+    fs::write(left.join("RIGHT.md"), "right baseline\n").expect("write right baseline");
+    git(&left, &["add", "spice-rust.toml", "LEFT.md", "RIGHT.md"]);
+    git(&left, &["commit", "-qm", "concurrent state baseline"]);
+
+    let right = fixture_peer(&left, "concurrent-right");
+    git(
+        &left,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "concurrent-right",
+            right.to_str().expect("right worktree path is text"),
+            "HEAD",
+        ],
+    );
+    fs::write(left.join("LEFT.md"), "l".repeat(11_000)).expect("grow left document over base");
+    git(&left, &["add", "LEFT.md"]);
+    fs::write(right.join("RIGHT.md"), "r".repeat(11_000)).expect("grow right document over base");
+    git(&right, &["add", "RIGHT.md"]);
+
+    env::set_current_dir(&left).expect("enter left worktree");
+    let left_repository = Repository::discover(&left).expect("discover left repository");
+    let mut left_prepared = prepare_strict(Selector::staged()).expect("prepare left source");
+    let left_source = left_prepared.source().clone();
+    let left_compiler = compiler_evidence(&mut left_prepared);
+    let left_battery = left_prepared
+        .execute_prepared_compiler_receipt(&left_compiler, 1)
+        .expect("execute left battery");
+    assert!(left_battery.run().admits());
+
+    env::set_current_dir(&right).expect("enter right worktree");
+    let right_repository = Repository::discover(&right).expect("discover right repository");
+    let mut right_prepared = prepare_strict(Selector::staged()).expect("prepare right source");
+    let right_source = right_prepared.source().clone();
+    let right_compiler = compiler_evidence(&mut right_prepared);
+    let right_battery = right_prepared
+        .execute_prepared_compiler_receipt(&right_compiler, 1)
+        .expect("execute right battery");
+    assert!(right_battery.run().admits());
+    assert_ne!(
+        left_source, right_source,
+        "the fixture requires distinct staged digests"
+    );
+
+    env::set_current_dir(&left).expect("return to left worktree");
+    let left_evidence = FullVerifierEvidence::mint(
+        &left_repository,
+        1,
+        &left_battery,
+        &left_compiler,
+        &left_prepared,
+    )
+    .expect("publish the first captured state transaction");
+    left_evidence
+        .publish(&left_repository)
+        .expect("publish left evidence");
+
+    env::set_current_dir(&right).expect("return to right worktree");
+    let right_evidence = FullVerifierEvidence::mint(
+        &right_repository,
+        1,
+        &right_battery,
+        &right_compiler,
+        &right_prepared,
+    )
+    .expect("compose the second captured state transaction");
+    right_evidence
+        .publish(&right_repository)
+        .expect("publish right evidence");
+
+    let common_git = PathBuf::from(git_output(&right, &["rev-parse", "--git-common-dir"]));
+    let common_git = if common_git.is_absolute() {
+        common_git
+    } else {
+        right.join(common_git)
+    };
+    let state = gate::CurrentState::load(gate::current_state_path(&common_git))
+        .expect("load composed ledger")
+        .before()
+        .clone();
+    assert_eq!(
+        state
+            .claims()
+            .iter()
+            .map(gate::PeerClaim::path)
+            .collect::<Vec<_>>(),
+        ["LEFT.md", "RIGHT.md"],
+    );
+
+    env::set_current_dir(&left).expect("admit retained left evidence");
+    assert!(
+        admit_full_verifier_evidence(&left_repository, Selector::staged())
+            .expect("admit left evidence after right publication")
+            .is_some(),
+    );
+    env::set_current_dir(&right).expect("admit retained right evidence");
+    assert!(
+        admit_full_verifier_evidence(&right_repository, Selector::staged())
+            .expect("admit right evidence after composition")
+            .is_some(),
+    );
+
+    left_evidence
+        .publish(&right_repository)
+        .expect("copy foreign-source evidence into right worktree");
+    assert!(
+        admit_full_verifier_evidence(&right_repository, Selector::staged())
+            .expect("probe foreign-source evidence")
+            .is_none(),
+        "state composition must not weaken exact staged-source admission",
+    );
+    env::set_current_dir(&left).expect("return to fixture root for cleanup");
+}
+
+#[test]
 #[ignore = "subprocess fixture with isolated cwd and compiler environment"]
 fn merge_parent_fixture_process() {
     let root = env::current_dir().expect("fixture current directory");

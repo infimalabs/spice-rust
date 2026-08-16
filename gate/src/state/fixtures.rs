@@ -355,7 +355,7 @@ fn rename_pruning_latching_healing_and_acceptance_are_one_transaction() {
 }
 
 #[test]
-fn stale_linked_worktree_update_refuses_instead_of_losing_a_claim() {
+fn overlapping_linked_worktree_claims_refuse_with_the_exact_conflict() {
     let fixture = StateFixture::new();
     let mut first = CurrentState::load(&fixture.current).expect("first load");
     let mut second = CurrentState::load(&fixture.current).expect("second load");
@@ -392,10 +392,120 @@ fn stale_linked_worktree_update_refuses_instead_of_losing_a_claim() {
         .expect("finish stale second")
         .accept()
         .expect_err("stale initial transaction must refuse");
-    assert_eq!(error.kind(), StateErrorKind::Stale);
+    assert_eq!(error.kind(), StateErrorKind::Conflict);
+    assert!(
+        error
+            .to_string()
+            .contains("concurrent gate-state conflict kind=claim path=\"src/live.rs\""),
+        "{error}"
+    );
     let current = CurrentState::load(&fixture.current).expect("current state");
     assert_eq!(current.before().claims().len(), 1);
     assert_eq!(current.before().claims()[0].actor(), "actor-a");
+}
+
+#[test]
+fn disjoint_linked_worktree_latches_and_claims_compose_without_lost_updates() {
+    let fixture = StateFixture::new();
+    let mut first = CurrentState::load(&fixture.current).expect("first load");
+    let mut second = CurrentState::load(&fixture.current).expect("second load");
+    for state in [&mut first, &mut second] {
+        state
+            .begin_run(
+                &RenameMap::default(),
+                ["src/first.rs", "src/second.rs"],
+                100.0,
+            )
+            .expect("begin concurrent run");
+    }
+    first
+        .reconcile_partial([observation(
+            LatchKind::FileLoc,
+            StateKey::path("src/first.rs").expect("first path key"),
+            16,
+            "actor-a",
+        )])
+        .expect("first latch proposal");
+    second
+        .reconcile_partial([observation(
+            LatchKind::FileBytes,
+            StateKey::path("src/second.rs").expect("second path key"),
+            16,
+            "actor-b",
+        )])
+        .expect("second latch proposal");
+    first
+        .claim(
+            ["src/first.rs"],
+            &ActorInputs::new("src/first.rs")
+                .expect("first actor inputs")
+                .with_active_actor("actor-a"),
+        )
+        .expect("first claim");
+    second
+        .claim(
+            ["src/second.rs"],
+            &ActorInputs::new("src/second.rs")
+                .expect("second actor inputs")
+                .with_active_actor("actor-b"),
+        )
+        .expect("second claim");
+
+    let first_receipt = first
+        .finish()
+        .expect("finish first")
+        .accept()
+        .expect("accept first");
+    let second_receipt = second
+        .finish()
+        .expect("finish second")
+        .accept()
+        .expect("compose second");
+    let current = CurrentState::load(&fixture.current)
+        .expect("load composed state")
+        .before()
+        .clone();
+    assert_eq!(current.latches().len(), 2);
+    assert_eq!(current.claims().len(), 2);
+    assert_ne!(first_receipt.after(), second_receipt.after());
+    assert_eq!(second_receipt.after(), &current.digest());
+}
+
+#[test]
+fn overlapping_linked_worktree_latches_refuse_with_the_exact_key() {
+    let fixture = StateFixture::new();
+    let mut first = CurrentState::load(&fixture.current).expect("first load");
+    let mut second = CurrentState::load(&fixture.current).expect("second load");
+    for state in [&mut first, &mut second] {
+        state
+            .begin_run(&RenameMap::default(), ["src/shared.rs"], 100.0)
+            .expect("begin concurrent run");
+        state
+            .reconcile_partial([observation(
+                LatchKind::FileLoc,
+                StateKey::path("src/shared.rs").expect("shared path key"),
+                16,
+                "actor-a",
+            )])
+            .expect("shared latch proposal");
+    }
+    first
+        .finish()
+        .expect("finish first")
+        .accept()
+        .expect("accept first");
+    let error = second
+        .finish()
+        .expect("finish second")
+        .accept()
+        .expect_err("overlapping latch must conflict even when both propose the same value");
+    assert_eq!(error.kind(), StateErrorKind::Conflict);
+    assert!(
+        error.to_string().contains(
+            "concurrent gate-state conflict kind=latch key=LatchEntry { kind: FileLoc, key: Path(PathKey { path: \"src/shared.rs\" }) }"
+        ),
+        "{error}"
+    );
 }
 
 #[test]

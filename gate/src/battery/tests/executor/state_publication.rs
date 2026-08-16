@@ -68,7 +68,7 @@ fn latches_hold_heal_and_redirect_a_peer_only_after_acceptance() {
 }
 
 #[test]
-fn rejection_and_stale_publication_leave_prior_state_unchanged() {
+fn rejection_and_empty_concurrent_publication_leave_prior_state_unchanged() {
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);
     let (_, common_git) = crate::tree::git_directories(&repository).expect("fixture Git paths");
@@ -99,11 +99,10 @@ fn rejection_and_stale_publication_leave_prior_state_unchanged() {
         .accept(crate::StateRunScope::Partial)
         .expect("first publication wins");
     let accepted_bytes = fs::read(&destination).expect("accepted current state bytes");
-    let error = second
+    let composed = second
         .accept(crate::StateRunScope::Partial)
-        .expect_err("stale production publication must refuse");
-    assert!(error.detail().contains("stale"), "{error}");
-    assert!(error.is_stale_state_publication());
+        .expect("an empty concurrent proposal composes with the appeared ledger");
+    assert!(composed.accepted());
     assert_eq!(
         fs::read(&destination).expect("state after stale refusal"),
         accepted_bytes
