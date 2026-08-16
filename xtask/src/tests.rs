@@ -259,7 +259,13 @@ fn production_readiness_refuses_an_ordinary_command_without_forging_the_event() 
         )
         .expect_err("ordinary commands have no compiler-readiness authority");
 
-    assert!(matches!(error, RunError::Launch(_)));
+    match error {
+        RunError::Launch(error) => assert_eq!(
+            error.to_string(),
+            "compiler readiness is unavailable for fixture ordinary command"
+        ),
+        RunError::Cleanup(detail) => panic!("ordinary readiness returned cleanup: {detail}"),
+    }
     assert!(!observed.load(Ordering::Acquire));
 }
 

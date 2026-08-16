@@ -22,7 +22,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
-use sill::{Argv, Completion, Environment, spawn};
+use sill::{Argv, Completion, spawn};
 use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
@@ -249,21 +249,8 @@ impl<'a> CoreSource<'a> {
         // still move: the selected tree was sealed at materialization, while
         // the repository stays live and writable underneath the run.
         let git = gate_id.map_or_else(
-            || {
-                GitObservations::capture(
-                    tree.repository(),
-                    tree.captured_index(),
-                    contract.bounds(),
-                )
-            },
-            |gate_id| {
-                GitObservations::capture_arm(
-                    tree.repository(),
-                    tree.captured_index(),
-                    contract.bounds(),
-                    gate_id,
-                )
-            },
+            || GitObservations::capture(tree.repository(), contract.bounds()),
+            |gate_id| GitObservations::capture_arm(tree.repository(), contract.bounds(), gate_id),
         );
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| CoreInputError::new(format!("core source jurisdiction: {error}")))?;
@@ -352,23 +339,18 @@ struct GitObservations {
 }
 
 impl GitObservations {
-    fn capture(repository: &Path, captured_index: Option<&Path>, bounds: &Bounds) -> Self {
+    fn capture(repository: &Path, bounds: &Bounds) -> Self {
         Self {
-            merge_integrity: Some(merge_integrity(repository, captured_index, bounds)),
+            merge_integrity: Some(merge_integrity(repository, bounds)),
             staging: Some(staging(repository, bounds)),
             clean_merge_tree: clean_merge_tree(repository, bounds),
         }
     }
 
-    fn capture_arm(
-        repository: &Path,
-        captured_index: Option<&Path>,
-        bounds: &Bounds,
-        gate_id: GateId,
-    ) -> Self {
+    fn capture_arm(repository: &Path, bounds: &Bounds, gate_id: GateId) -> Self {
         Self {
             merge_integrity: (gate_id == GateId::MergeIntegrity)
-                .then(|| merge_integrity(repository, captured_index, bounds)),
+                .then(|| merge_integrity(repository, bounds)),
             staging: (gate_id == GateId::Staging).then(|| staging(repository, bounds)),
             clean_merge_tree: (gate_id == GateId::FileShape)
                 .then(|| clean_merge_tree(repository, bounds))
@@ -670,11 +652,7 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
     }
 }
 
-fn merge_integrity(
-    repository: &Path,
-    captured_index: Option<&Path>,
-    bounds: &Bounds,
-) -> CoreObservation {
+fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
     let merge_head = match git(
         repository,
         bounds,
@@ -690,8 +668,7 @@ fn merge_integrity(
         ));
     }
 
-    let staged_tree = match git_tree_with_index(repository, captured_index, bounds, &["write-tree"])
-    {
+    let staged_tree = match git_tree(repository, bounds, &["write-tree"]) {
         Ok(tree) => tree,
         Err(refusal) => return refusal.into_observation(),
     };
@@ -814,32 +791,7 @@ fn parse_merge_tree(output: &str) -> Result<(String, Vec<String>), GitRefusal> {
 }
 
 fn git_tree(repository: &Path, bounds: &Bounds, arguments: &[&str]) -> Result<String, GitRefusal> {
-    git_tree_with_environment(repository, bounds, arguments, Environment::empty())
-}
-
-fn git_tree_with_index(
-    repository: &Path,
-    captured_index: Option<&Path>,
-    bounds: &Bounds,
-    arguments: &[&str],
-) -> Result<String, GitRefusal> {
-    let environment = captured_index.map_or_else(
-        || Ok(Environment::empty()),
-        |index| {
-            Environment::new([("GIT_INDEX_FILE", index.as_os_str())])
-                .map_err(|error| GitRefusal::Unmeasured(format!("Git index environment: {error}")))
-        },
-    )?;
-    git_tree_with_environment(repository, bounds, arguments, environment)
-}
-
-fn git_tree_with_environment(
-    repository: &Path,
-    bounds: &Bounds,
-    arguments: &[&str],
-    environment: Environment,
-) -> Result<String, GitRefusal> {
-    let (_, output) = git_with_environment(repository, bounds, arguments, &[0], environment)?;
+    let (_, output) = git(repository, bounds, arguments, &[0])?;
     let tree = output.trim().to_owned();
     validate_git_tree(&tree).map_err(|error| {
         GitRefusal::Unmeasured(format!(
@@ -905,27 +857,9 @@ fn git(
     arguments: &[&str],
     accepted: &[i32],
 ) -> Result<(i32, String), GitRefusal> {
-    git_with_environment(
-        repository,
-        bounds,
-        arguments,
-        accepted,
-        Environment::empty(),
-    )
-}
-
-fn git_with_environment(
-    repository: &Path,
-    bounds: &Bounds,
-    arguments: &[&str],
-    accepted: &[i32],
-    environment: Environment,
-) -> Result<(i32, String), GitRefusal> {
     let argv = Argv::new(GIT, arguments.iter().map(OsStr::new))
         .map_err(|error| GitRefusal::Unmeasured(format!("git argument vector: {error}")))?;
-    let mut spec = bounds.spec(argv, repository);
-    spec.environment = environment;
-    let outcome = spawn(spec)
+    let outcome = spawn(bounds.spec(argv, repository))
         .map_err(|error| GitRefusal::Unavailable(format!("git did not start: {error}")))?
         .wait()
         .map_err(|error| GitRefusal::Unmeasured(format!("git was not reaped: {error}")))?;

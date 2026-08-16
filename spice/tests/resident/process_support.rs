@@ -456,12 +456,17 @@ pub(super) enum FakeBehavior {
     /// makes it the fixture for a resident that answered and then failed to
     /// withdraw.
     RetainedDiscovery,
+    /// Answer and withdraw discovery, but keep the runtime lock past the
+    /// client's release-confirmation bound.
+    ReleaseStall,
     Replay,
     EchoCapability,
     ResidentLoss,
+    ReadTimeout,
     TotalDeadlineDrip,
     ControlFrames,
     WriteTimeout,
+    OpeningStall,
 }
 
 /// Hold the runtime lock the way the resident being faked would.
@@ -549,6 +554,12 @@ pub(super) fn run_fake_resident(
         run_deadline_drip(listener, &discovery, &canvas, stop);
         return;
     }
+    if matches!(behavior, FakeBehavior::OpeningStall) {
+        let (stream, _) = listener.accept().expect("fake resident accepts");
+        hold_adversarial_peer(&stop);
+        drop(stream);
+        return;
+    }
     let mut socket = accept_fake(listener);
     assert_fake_hello(&mut socket, &discovery);
     if matches!(behavior, FakeBehavior::EchoCapability) {
@@ -571,6 +582,10 @@ pub(super) fn run_fake_resident(
         return;
     }
     let command = read_fake_dark_command(&mut socket, discovery.epoch);
+    if matches!(behavior, FakeBehavior::ReadTimeout) {
+        hold_adversarial_peer(&stop);
+        return;
+    }
     if matches!(behavior, FakeBehavior::ControlFrames) {
         send_control_frames(&mut socket, &stop);
         return;
@@ -579,10 +594,13 @@ pub(super) fn run_fake_resident(
         saturate_control_writes(&mut socket, &stop);
         return;
     }
-    if matches!(behavior, FakeBehavior::Success) {
+    if matches!(behavior, FakeBehavior::Success | FakeBehavior::ReleaseStall) {
         fs::remove_file(canvas).expect("fake resident withdraws discovery");
     }
     send_dark_response(&mut socket, &discovery, &command, behavior);
+    if matches!(behavior, FakeBehavior::ReleaseStall) {
+        hold_adversarial_peer(&stop);
+    }
 }
 
 pub(super) struct DripStream {

@@ -133,6 +133,8 @@ fn run_benchmark_route(runner: &TimedRunner, mode: BenchmarkMode) {
                     action,
                     &cancellation,
                     Budget::fixture(3, 2, 0),
+                    // The serial control deliberately withholds readiness so it
+                    // continues to measure the retired all-compiler barrier.
                     None,
                 )
                 .result

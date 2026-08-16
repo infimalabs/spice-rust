@@ -100,7 +100,7 @@ impl IndexSeal {
         &self,
         repo: &gix::Repository,
         workspace: &Path,
-    ) -> Result<(gix::index::File, PathBuf), TreeError> {
+    ) -> Result<gix::index::File, TreeError> {
         self.snapshot.open(repo, workspace)
     }
 
@@ -181,7 +181,7 @@ impl IndexSnapshot {
         &self,
         repo: &gix::Repository,
         workspace: &Path,
-    ) -> Result<(gix::index::File, PathBuf), TreeError> {
+    ) -> Result<gix::index::File, TreeError> {
         let source = workspace.join("index-source");
         create_private_workspace(&source).map_err(|error| {
             TreeError::io("creating a captured index directory", &source, error)
@@ -202,7 +202,7 @@ impl IndexSnapshot {
             write_private_source(&source, &source.join(name), &file.bytes)?;
         }
         let captured_index = source.join("index");
-        let index = gix::index::File::at(
+        gix::index::File::at(
             &captured_index,
             repo.object_hash(),
             false,
@@ -211,8 +211,7 @@ impl IndexSnapshot {
         .map_err(|error| TreeError::IndexUnreadable {
             path: original_index,
             evidence: error.to_string(),
-        })?;
-        Ok((index, captured_index))
+        })
     }
 }
 

@@ -90,7 +90,7 @@ impl Selector {
         let repo = open_repository(repository)?;
         let mut build = BuildRoot::create()?;
 
-        let (items, source, renames, publishes_state, captured_index) = match self {
+        let (items, source, renames, publishes_state) = match self {
             Self::Staged => {
                 let before = IndexSeal::capture(&repo)?;
                 let head = head_seal(&repo)?;
@@ -99,17 +99,11 @@ impl Selector {
                     .as_ref()
                     .map(|seal| seal.resolve(&repo, "HEAD", &build.workspace))
                     .transpose()?;
-                let (index, captured_index) = before.open(&repo, &build.workspace)?;
+                let index = before.open(&repo, &build.workspace)?;
                 let items = index_items(&index)?;
                 materialize_items(&repo, &build.root, &items)?;
                 let renames = staged_renames(&repo, head_commit, &index)?;
-                (
-                    items,
-                    SelectionSeal::Index { before, head },
-                    renames,
-                    true,
-                    Some(captured_index),
-                )
+                (items, SelectionSeal::Index { before, head }, renames, true)
             }
             Self::Revision(revision) => {
                 let before = RevisionSeal::capture(&repo, revision)?;
@@ -125,7 +119,6 @@ impl Selector {
                     },
                     RenameMap::default(),
                     false,
-                    None,
                 )
             }
         };
@@ -139,7 +132,6 @@ impl Selector {
             items.into_iter().map(|item| item.path).collect(),
             renames,
             publishes_state,
-            captured_index,
         ))
     }
 }
@@ -158,7 +150,6 @@ pub struct SelectedTree {
     paths: Vec<String>,
     renames: RenameMap,
     publishes_state: bool,
-    captured_index: Option<PathBuf>,
     possession: Option<Possession>,
 }
 
@@ -179,17 +170,6 @@ impl SelectedTree {
     #[must_use]
     pub fn repository(&self) -> &Path {
         &self.repository
-    }
-
-    /// Private captured index backing a staged selection.
-    ///
-    /// Git commands that derive a tree from the index must use this copy. Git
-    /// may refresh cache extensions even for a byte-equivalent `write-tree`,
-    /// and directing that refresh at the live index would invalidate the
-    /// selection's own generation seal.
-    #[must_use]
-    pub(crate) fn captured_index(&self) -> Option<&Path> {
-        self.captured_index.as_deref()
     }
 
     /// Prove that the live Git source has not moved since materialization.
@@ -268,7 +248,7 @@ pub(crate) fn tracked_paths(repository: &Path) -> Result<Vec<String>, TreeError>
     let repo = open_repository(repository)?;
     let seal = IndexSeal::capture(&repo)?;
     let build = BuildRoot::create()?;
-    let (index, _) = seal.open(&repo, &build.workspace)?;
+    let index = seal.open(&repo, &build.workspace)?;
     let items = index_items(&index)?;
     seal.verify(&repo)?;
     Ok(items.into_iter().map(|item| item.path).collect())

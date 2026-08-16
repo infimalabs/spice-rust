@@ -131,13 +131,6 @@ fn verify_authority(
     race: wire::Disposition,
     expected: &[ExpectedRecognition],
 ) {
-    let source = tape::Tape::open_existing(fixture.tape(lane))
-        .expect("lane tape opens")
-        .source_id()
-        .expect("lane tape source reads")
-        .as_str()
-        .parse()
-        .expect("tape source is canonical");
     let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
     journal.verify().expect("steering authority verifies");
     let snapshot = journal.fact_snapshot().expect("steering facts read");
@@ -186,7 +179,6 @@ fn verify_authority(
     }
     assert_eq!(observed.len(), expected.len());
     for expected in expected {
-        assert_eq!(expected.locus.source, Some(source));
         assert!(observed.iter().any(|observed| {
             observed.directive == expected.directive
                 && observed.key == expected.key
@@ -333,6 +325,46 @@ fn resend_before_the_first_horizon_redelivers_one_unchanged_stable_directive() {
     assert_eq!(canceled.directive, sent.directive);
     assert_eq!(canceled.key, sent.key);
     assert_eq!(canceled.disposition, wire::Disposition::Canceled);
+    stop(&fixture, resident);
+}
+
+#[test]
+fn transcript_ack_persists_the_tape_generation_source() {
+    let (fixture, resident, lanes) = setup();
+    let lane = lanes.target.to_string();
+    let sent = text_directive(&invoke(
+        &fixture,
+        &["steer", &lane, "persist the transcript source"],
+        false,
+    ));
+    let expected = record_reply(
+        &fixture,
+        lanes.target,
+        &format!("ACK {}: source captured", sent.key),
+        &sent.key,
+    );
+    let acknowledged = text_directive(&invoke_as_lane(&fixture, &lane, &["ack", &sent.key], false));
+    assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
+
+    let facts = journal::Journal::open(fixture.journal())
+        .expect("steering journal opens")
+        .fact_snapshot()
+        .expect("steering facts read");
+    let observed = facts
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<wire::body::SteerAcked>())
+        .find(|body| body.directive == sent.directive)
+        .expect("acknowledgment fact is durable");
+    assert_eq!(observed.locus, expected);
+    let source = tape::Tape::open_existing(fixture.tape(lanes.target))
+        .expect("lane tape opens")
+        .source_id()
+        .expect("lane tape source reads")
+        .as_str()
+        .parse()
+        .expect("tape source is canonical");
+    assert_eq!(observed.locus.source, Some(source));
     stop(&fixture, resident);
 }
 

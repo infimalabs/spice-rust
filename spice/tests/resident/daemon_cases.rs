@@ -341,3 +341,33 @@ fn failed_daemon_start_reaps_its_unique_process_group_and_releases_runtime_state
     drop(possession);
     launcher.disarm();
 }
+
+#[cfg(unix)]
+#[test]
+fn daemon_readiness_timeout_kills_and_reaps_its_exact_process_group() {
+    let fixture = Fixture::new("daemon-readiness-timeout");
+    let (_pointer, _current) = block_app_pointer(&fixture);
+
+    let mut launcher = LauncherGuard::spawn(&fixture, &["up", "--port", "0"]);
+    let launcher_pid = launcher.pid();
+    let process = DetachedProcess::wait_for_holder(&fixture);
+    launcher.observe(process);
+    process.assert_running_in_unique_group();
+
+    let launched = launcher.wait();
+
+    assert_eq!(launched.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&launched) else {
+        panic!("readiness timeout must return one typed fault")
+    };
+    assert_eq!(fault.reason, "resident::daemon-readiness-elapsed");
+    assert_pid_gone(launcher_pid, "readiness timeout");
+    process.assert_gone("readiness timeout");
+    assert!(
+        !fixture.canvas().exists(),
+        "timed-out start never published discovery"
+    );
+    let possession = hold(&fixture.resident(), "post-timeout-audit\n");
+    drop(possession);
+    launcher.disarm();
+}

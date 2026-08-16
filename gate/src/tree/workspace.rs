@@ -87,7 +87,6 @@ impl BuildRoot {
         paths: Vec<String>,
         renames: RenameMap,
         publishes_state: bool,
-        captured_index: Option<PathBuf>,
     ) -> SelectedTree {
         SelectedTree {
             workspace: self.workspace.clone(),
@@ -97,7 +96,6 @@ impl BuildRoot {
             paths,
             renames,
             publishes_state,
-            captured_index,
             possession: self.possession.take(),
         }
     }

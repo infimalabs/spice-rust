@@ -756,6 +756,10 @@ fn overlapped_prebuild_reserves_test_and_terminal_work_inside_the_outer_envelope
     assert_eq!(canvas_complete, Duration::from_millis(520));
     assert!(workspace_start < canvas_complete);
     assert!(
+        workspace_complete < old_workspace_complete,
+        "readiness overlap must shorten the native branch relative to the retired Canvas barrier"
+    );
+    assert!(
         test_branches_complete - test_phase_start < PROPORTIONAL_TEST_RUNTIME,
         "both test branches must fit inside the proportional test-phase budget"
     );

@@ -1,13 +1,21 @@
 #![cfg(unix)]
 
+use std::collections::BTreeMap;
+use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use gate::{
     BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryReceipt, BatteryReport, BatteryState, CampReport,
     CampStanding, CoverageCompleteness, TestSelectionReport,
+};
+use sill::{
+    Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction, Spec,
+    StdinPolicy, StreamPolicy, WaitPolicy,
 };
 use spice::change_gate::ChangeGateReport;
 use spice::placeholder::PlaceholderReason;
@@ -29,6 +37,8 @@ const FAULT_EXIT: i32 = 1;
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const PRE_COMMIT_PATHS: &str = wire::SpiceVariable::PreCommitPaths.as_str();
 const PRE_COMMIT_SOURCE: &str = wire::SpiceVariable::PreCommitSource.as_str();
+const COMMIT_WORKER_STARTUP_ALLOWANCE: Duration = Duration::from_secs(6);
+const COMMIT_WORKER_CONTAINMENT_RUNTIME: Duration = Duration::from_secs(2);
 const COMPACT_CHANGE_REPORT_MAX_BYTES: usize = 128 * 1_024;
 
 #[test]
@@ -100,6 +110,139 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
         &authority_marker,
     );
 }
+#[test]
+fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
+    let repository = GateRepository::new();
+    repository.write_source(2);
+    repository.add("src/lib.rs");
+    let scratch = Scratch::new("deadline-process-tree");
+    let programs = scratch.path().join("programs");
+    fs::create_dir(&programs).expect("create deadline program directory");
+    let tool_pid = scratch.path().join("tool.pid");
+    executable(
+        &programs.join("cargo"),
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$*\" = \"--version\" ]; then\n",
+            "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
+            "  exit 0\n",
+            "fi\n",
+            "case \"$1\" in\n",
+            "  metadata)\n",
+            "    root=$(/bin/pwd -P)\n",
+            "    printf '%s\\n' ",
+            "'{\"packages\":[{\"id\":\"gate-fixture-id\",\"name\":\"gate-fixture\",",
+            "\"manifest_path\":\"'\"$root\"'/Cargo.toml\",\"dependencies\":[],",
+            "\"targets\":[{\"name\":\"gate_fixture\",\"kind\":[\"lib\"],",
+            "\"test\":true,\"src_path\":\"'\"$root\"'/src/lib.rs\"}]}],",
+            "\"workspace_members\":[\"gate-fixture-id\"]}'\n",
+            "    exit 0\n",
+            "    ;;\n",
+            "  test) exit 0 ;;\n",
+            "  fmt) exit 0 ;;\n",
+            "  check) printf '%s\\n' 'unexpected stale cargo check arm' >&2; exit 97 ;;\n",
+            "  *) exit 0 ;;\n",
+            "esac\n",
+        ),
+    );
+    executable(
+        &programs.join("rustfmt"),
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)'\n",
+                "  exit 0\n",
+                "fi\n",
+                "/bin/sleep 30 & child=$!\n",
+                "printf '%s\\n' \"$child\" > '{}'\n",
+                "wait\n",
+            ),
+            tool_pid.display(),
+        ),
+    );
+    let progress = scratch.path().join("progress.jsonl");
+    let terminal = scratch.path().join("terminal.bin");
+    fs::write(&progress, []).expect("create deadline progress file");
+    fs::write(&terminal, []).expect("create deadline terminal file");
+    let spec = deadline_worker_spec(repository.path(), &programs, &progress, &terminal);
+
+    let waited = sill::spawn(spec)
+        .expect("launch hidden commit worker")
+        .wait()
+        .expect("terminate and reap hidden commit worker group");
+
+    assert!(matches!(waited.completion(), Completion::TimedOut(_)));
+    let pid = fs::read_to_string(&tool_pid)
+        .expect("the active gate tool published its descendant")
+        .trim()
+        .parse::<u32>()
+        .expect("gate-tool descendant pid is numeric");
+    for _ in 0..100 {
+        if !process_exists(pid) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !process_exists(pid),
+        "commit worker deadline leaked gate-tool descendant {pid}"
+    );
+    let progress = fs::read_to_string(progress).expect("read worker phase evidence");
+    assert!(
+        progress.contains("[change-gate-policy] gate=formatters"),
+        "deadline phase evidence omitted the active selected formatter arm: {progress}"
+    );
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the process-boundary fixture must preserve the invoking test environment"
+)]
+fn deadline_worker_spec(root: &Path, programs: &Path, progress: &Path, terminal: &Path) -> Spec {
+    let mut environment = env::vars_os().collect::<BTreeMap<_, _>>();
+    for variable in [
+        wire::SpiceVariable::PreCommitPaths,
+        wire::SpiceVariable::PreCommitSource,
+    ] {
+        environment.remove(OsStr::new(variable.as_str()));
+    }
+    environment.insert(
+        OsString::from(PROCESS_PATH),
+        programs.as_os_str().to_owned(),
+    );
+    let capture = StreamPolicy::Capture { limit: 1024 * 1024 };
+    Spec {
+        argv: Argv::new(
+            env!("CARGO_BIN_EXE_spice"),
+            [
+                OsString::from("__gate-pre-commit-worker"),
+                progress.as_os_str().to_owned(),
+                terminal.as_os_str().to_owned(),
+            ],
+        )
+        .expect("declare hidden commit worker"),
+        cwd: root.to_path_buf(),
+        environment: Environment::new(environment).expect("capture deadline environment"),
+        group: ProcessGroup::New,
+        deadlines: Deadlines::new(
+            COMMIT_WORKER_STARTUP_ALLOWANCE + COMMIT_WORKER_CONTAINMENT_RUNTIME,
+            Duration::from_millis(200),
+            Duration::from_millis(200),
+        )
+        .expect("declare scaled deadline"),
+        wait: WaitPolicy::new(
+            "commit worker process-tree fixture",
+            Cancellation::Never,
+            sill::RestartDisposition::Never,
+        )
+        .expect("declare worker wait"),
+        output: Output::new(StdinPolicy::Null, capture, capture),
+        redaction: Redaction::All,
+        grace: Duration::from_millis(200),
+    }
+}
+
 struct Spoken {
     code: Option<i32>,
     out: Vec<u8>,

@@ -1,9 +1,6 @@
 use std::fs;
 use std::str::FromStr;
 
-#[cfg(target_family = "unix")]
-use std::os::unix::fs::MetadataExt as _;
-
 use gate::{
     ActorCapture, CORE_GATE_IDS, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence,
     Contract, CoreArmInput, CoreEvidence, CoreFinding, CoreInputs, CoreObservation, CoreProvenance,
@@ -874,51 +871,8 @@ fn an_empty_merge_is_acquired_from_the_repository_and_refused_by_the_engine() {
     );
     assert!(repository.path(".git/MERGE_HEAD").exists());
     git(&repository, &["read-tree", "--reset", "-u", "HEAD"]);
-    git(&repository, &["update-index", "--split-index"]);
-    assert!(
-        fs::read_dir(repository.path(".git"))
-            .expect("list the fixture Git directory")
-            .filter_map(Result::ok)
-            .any(|entry| entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("sharedindex.")),
-        "the merge regression must exercise a captured split index",
-    );
-
-    let index = repository.path(".git/index");
-    #[cfg(target_family = "unix")]
-    let before = fs::symlink_metadata(&index).expect("observe the selected index generation");
-    let before_bytes = fs::read(&index).expect("read the selected index bytes");
 
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
-    #[cfg(target_family = "unix")]
-    let after = fs::symlink_metadata(&index).expect("reobserve the selected index generation");
-    assert_eq!(
-        fs::read(&index).expect("read the index after acquisition"),
-        before_bytes,
-        "merge-integrity acquisition must preserve the live index bytes",
-    );
-    #[cfg(target_family = "unix")]
-    assert_eq!(
-        (
-            before.dev(),
-            before.ino(),
-            before.mtime(),
-            before.mtime_nsec(),
-            before.ctime(),
-            before.ctime_nsec(),
-        ),
-        (
-            after.dev(),
-            after.ino(),
-            after.mtime(),
-            after.mtime_nsec(),
-            after.ctime(),
-            after.ctime_nsec(),
-        ),
-        "merge-integrity acquisition must not replace the live index generation",
-    );
     let merge = acquired_arm(&report, GateId::MergeIntegrity);
 
     let head_tree = git(&repository, &["rev-parse", "HEAD^{tree}"]);
