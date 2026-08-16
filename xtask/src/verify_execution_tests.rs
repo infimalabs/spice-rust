@@ -1,5 +1,5 @@
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::hint::black_box;
     use std::io::Write as _;
@@ -11,8 +11,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget, CancellationToken,
-        CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_HARD_RUNTIME,
+        ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget,
+        CancellationToken, CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_HARD_RUNTIME,
         FULL_VERIFIER_PROCESS_BOUNDS, FULL_VERIFIER_TEST_RUNTIME, PREREQUISITES, ProcessBounds,
         ProcessOutput, RunError, Runner, SignalGuard, Status, StreamingRunError, VERIFY_ACTIONS,
         VerifyError, count_peer_cargo, is_live_progress_record, ready_nodes,
@@ -33,7 +33,11 @@ mod tests {
     struct TimedRunner {
         delays: BTreeMap<&'static str, Duration>,
         prebuild_delay: Duration,
+        canvas_ready_delay: Duration,
         calls: Mutex<Vec<&'static str>>,
+        cargo_jobs: Mutex<Vec<(&'static str, usize)>>,
+        timeline: Mutex<Vec<(&'static str, bool)>>,
+        failures: BTreeSet<&'static str>,
         active: AtomicUsize,
         peak: AtomicUsize,
         cpu_iterations: u64,
@@ -90,7 +94,11 @@ mod tests {
             Self {
                 delays,
                 prebuild_delay: Duration::ZERO,
+                canvas_ready_delay: Duration::ZERO,
                 calls: Mutex::new(Vec::new()),
+                cargo_jobs: Mutex::new(Vec::new()),
+                timeline: Mutex::new(Vec::new()),
+                failures: BTreeSet::new(),
                 active: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
                 cpu_iterations,
@@ -102,8 +110,31 @@ mod tests {
             self
         }
 
+        fn with_canvas_ready_delay(mut self, delay: Duration) -> Self {
+            self.canvas_ready_delay = delay;
+            self
+        }
+
+        fn with_failures<const N: usize>(mut self, failures: [&'static str; N]) -> Self {
+            self.failures.extend(failures);
+            self
+        }
+
         fn perform(&self, label: &'static str, cancellation: Option<&CancellationToken>) -> bool {
+            self.perform_with_readiness(label, cancellation, None)
+        }
+
+        fn perform_with_readiness(
+            &self,
+            label: &'static str,
+            cancellation: Option<&CancellationToken>,
+            readiness: Option<ActionReadiness>,
+        ) -> bool {
             self.calls.lock().expect("timed calls lock").push(label);
+            self.timeline
+                .lock()
+                .expect("timed timeline lock")
+                .push((label, false));
             let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
             self.peak.fetch_max(active, Ordering::AcqRel);
             let delay = self
@@ -116,13 +147,63 @@ mod tests {
                 value = value.rotate_left(7).wrapping_add(index ^ 0x9e37_79b9);
             }
             black_box(value);
-            thread::sleep(delay);
+            match readiness {
+                Some(readiness) => {
+                    let before_ready = self.canvas_ready_delay.min(delay);
+                    thread::sleep(before_ready);
+                    readiness();
+                    thread::sleep(delay.saturating_sub(before_ready));
+                }
+                None => thread::sleep(delay),
+            }
             self.active.fetch_sub(1, Ordering::AcqRel);
+            self.timeline
+                .lock()
+                .expect("timed timeline lock")
+                .push((label, true));
             !cancellation.is_some_and(CancellationToken::is_cancelled)
         }
 
         fn calls(&self) -> Vec<&'static str> {
             self.calls.lock().expect("timed calls lock").clone()
+        }
+
+        fn timeline(&self) -> Vec<(&'static str, bool)> {
+            self.timeline.lock().expect("timed timeline lock").clone()
+        }
+
+        fn jobs_for(&self, label: &'static str) -> Vec<usize> {
+            self.cargo_jobs
+                .lock()
+                .expect("timed Cargo jobs lock")
+                .iter()
+                .filter_map(|(candidate, jobs)| (*candidate == label).then_some(*jobs))
+                .collect()
+        }
+
+        fn command(&self, label: &'static str, cancellation: &CancellationToken) -> CommandRun {
+            if !self.perform(label, Some(cancellation)) {
+                return timed_command(false);
+            }
+            CommandRun::Exited(ProcessOutput::status_only(Status {
+                success: !self.failures.contains(label),
+                code: Some(i32::from(self.failures.contains(label))),
+            }))
+        }
+
+        fn command_with_readiness(
+            &self,
+            label: &'static str,
+            cancellation: &CancellationToken,
+            readiness: ActionReadiness,
+        ) -> CommandRun {
+            if !self.perform_with_readiness(label, Some(cancellation), Some(readiness)) {
+                return timed_command(false);
+            }
+            CommandRun::Exited(ProcessOutput::status_only(Status {
+                success: !self.failures.contains(label),
+                code: Some(i32::from(self.failures.contains(label))),
+            }))
         }
     }
 
@@ -137,18 +218,34 @@ mod tests {
             cancellation: &CancellationToken,
             _cargo_jobs: usize,
         ) -> Result<CommandRun, RunError> {
-            Ok(timed_command(
-                self.perform(FORMAT_LABEL, Some(cancellation)),
-            ))
+            Ok(self.command(FORMAT_LABEL, cancellation))
         }
 
         fn run(
             &self,
             step: Step,
             cancellation: &CancellationToken,
-            _cargo_jobs: usize,
+            cargo_jobs: usize,
         ) -> Result<CommandRun, RunError> {
-            Ok(timed_command(self.perform(step.label, Some(cancellation))))
+            self.cargo_jobs
+                .lock()
+                .expect("timed Cargo jobs lock")
+                .push((step.label, cargo_jobs));
+            Ok(self.command(step.label, cancellation))
+        }
+
+        fn run_with_readiness(
+            &self,
+            step: Step,
+            cancellation: &CancellationToken,
+            cargo_jobs: usize,
+            readiness: ActionReadiness,
+        ) -> Result<CommandRun, RunError> {
+            self.cargo_jobs
+                .lock()
+                .expect("timed Cargo jobs lock")
+                .push((step.label, cargo_jobs));
+            Ok(self.command_with_readiness(step.label, cancellation, readiness))
         }
 
         fn run_scoped(
@@ -169,7 +266,7 @@ mod tests {
             _cargo_jobs: usize,
         ) -> Result<BrowserRun, RunError> {
             Ok(BrowserRun {
-                process: timed_command(self.perform(BROWSER_LABEL, Some(cancellation))),
+                process: self.command(BROWSER_LABEL, cancellation),
                 completed: true,
             })
         }
@@ -183,12 +280,44 @@ mod tests {
             Ok(timed_command(!cancellation.is_cancelled()))
         }
 
+        fn workspace_tests(
+            &self,
+            cancellation: &CancellationToken,
+            cargo_jobs: usize,
+            workspace_workers: usize,
+        ) -> Result<CommandRun, RunError> {
+            self.run(
+                Step::cargo(crate::WORKSPACE_TEST_LABEL, &[]),
+                cancellation,
+                cargo_jobs.min(workspace_workers),
+            )
+        }
+
+        fn structural_preflight(
+            &self,
+            cancellation: &CancellationToken,
+        ) -> Result<BatteryRun, RunError> {
+            Ok(if cancellation.is_cancelled() {
+                BatteryRun::Cancelled
+            } else {
+                BatteryRun::Admitted(Vec::new())
+            })
+        }
+
         fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
             if self.perform(BATTERY_LABEL, Some(cancellation)) {
                 Ok(BatteryRun::Admitted(br#"{"admitted":true}"#.to_vec()))
             } else {
                 Ok(BatteryRun::Cancelled)
             }
+        }
+
+        fn accept_battery_state(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+            Ok(())
         }
 
         fn landing(&self) -> Result<landing::Report, landing::Error> {
@@ -241,7 +370,7 @@ mod tests {
         nodes[4] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [5]);
         nodes[5] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
-        assert_eq!(ready_nodes(&nodes), [6]);
+        assert_eq!(ready_nodes(&nodes), [6, 8]);
         nodes[6] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(
             ready_nodes(&nodes),
@@ -261,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn peer_cargo_pressure_collapses_outer_and_workspace_worker_budgets() {
+    fn peer_cargo_pressure_continuously_scales_outer_and_workspace_worker_budgets() {
         let no_pressure = Budget::from_observation(FIXTURE_CPU_COUNT, Some(0));
         let one_peer = Budget::from_observation(FIXTURE_CPU_COUNT, Some(1));
         let two_peers = Budget::from_observation(FIXTURE_CPU_COUNT, Some(2));
@@ -280,27 +409,35 @@ mod tests {
         assert_eq!(saturated_cpu.workers, 1);
         assert_eq!(unknown.workers, 1);
         assert_eq!(unknown.cargo_jobs, 1);
-        assert_eq!(no_pressure.workspace_workers, 4);
-        assert_eq!(one_peer.workspace_workers, 2);
-        assert_eq!(two_peers.workspace_workers, 1);
+        assert_eq!(no_pressure.cargo_jobs, 8);
+        assert_eq!(no_pressure.workspace_workers, 6);
+        assert_eq!(one_peer.workspace_workers, 5);
+        assert_eq!(two_peers.workspace_workers, 5);
         assert_eq!(pressure.workspace_workers, 1);
         assert_eq!(one_peer_twelve_cpus.cargo_jobs, 4);
-        assert_eq!(one_peer_twelve_cpus.workspace_workers, 2);
+        assert_eq!(one_peer_twelve_cpus.workspace_workers, 4);
         assert_eq!(three_peers.cargo_jobs, 3);
-        assert_eq!(three_peers.workspace_workers, 1);
+        assert_eq!(three_peers.workspace_workers, 3);
         assert_eq!(two_cpus.workspace_workers, 1);
         assert_eq!(one_free_cpu.workspace_workers, 1);
         assert_eq!(saturated_cpu.workspace_workers, 1);
         assert_eq!(unknown.workspace_workers, 1);
-        assert!(no_pressure.cargo_jobs <= FIXTURE_CPU_COUNT / no_pressure.workers);
+        assert_eq!(
+            no_pressure.cargo_jobs * super::MAX_CONCURRENT_CARGO_ACTIONS,
+            FIXTURE_CPU_COUNT
+        );
         assert_eq!(pressure.cargo_jobs, 1);
     }
 
     #[test]
-    fn cargo_probe_excludes_the_current_cargo_ancestor() {
+    fn cargo_probe_excludes_current_ancestors_and_owned_descendants() {
         let listing = concat!(
             "10 1 cargo\n",
             "20 10 xtask\n",
+            "21 20 cargo\n",
+            "22 21 rustc\n",
+            "23 20 sh\n",
+            "24 23 /toolchains/bin/cargo\n",
             "30 1 /toolchains/bin/cargo\n",
             "31 30 rustc\n",
         );
@@ -364,13 +501,13 @@ mod tests {
 
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains(
-            "scheduler workers=3 cargo_jobs=5 active_peer_cargo_jobs=0 workspace_workers=4"
+            "scheduler workers=3 cargo_jobs=8 active_peer_cargo_jobs=0 workspace_workers=6"
         ));
         assert!(output.contains("deadline_scope=test-phase deadline_ms=1800"));
         assert_line_order(
             &output,
-            "stage=start ordinal=6/13",
-            "stage=setup identity=\"cargo test --locked --workspace --all-targets --no-run (workspace-test setup)\"",
+            "stage=setup identity=\"native test and Canvas launcher prebuild (workspace-test setup)\"",
+            "stage=start ordinal=5/13",
         );
         let setup_terminal = "stage=setup-terminal";
         assert_line_order(&output, setup_terminal, "stage=start ordinal=8/13");
@@ -403,12 +540,13 @@ mod tests {
 
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains(
-            "scheduler workers=1 cargo_jobs=3 active_peer_cargo_jobs=3 workspace_workers=1"
+            "scheduler workers=1 cargo_jobs=3 active_peer_cargo_jobs=3 workspace_workers=3"
         ));
         assert!(output.contains(concat!(
-            "scheduler-rebalanced trigger=workspace-test-setup workers=3 cargo_jobs=4 ",
-            "active_peer_cargo_jobs=0 workspace_workers=4"
+            "scheduler-rebalanced trigger=workspace-test-setup workers=3 cargo_jobs=6 ",
+            "active_peer_cargo_jobs=0 workspace_workers=6"
         )));
+        assert!(output.contains("workspace_workers=6 compiler_cargo_jobs=3"));
         assert_line_order(
             &output,
             "stage=setup-terminal",
@@ -420,6 +558,14 @@ mod tests {
             "stage=start ordinal=8/13",
         );
         assert!(runner.peak.load(Ordering::Acquire) >= 2);
+        for action in [VERIFY_ACTIONS[3], VERIFY_ACTIONS[5], VERIFY_ACTIONS[6]] {
+            assert_eq!(
+                runner.jobs_for(action.label()),
+                [initial.cargo_jobs],
+                "compiler evidence must retain its captured Cargo job authority"
+            );
+        }
+        assert_eq!(runner.jobs_for(VERIFY_ACTIONS[8].label()), [6]);
         assert_exactly_once(&runner.calls());
     }
 
@@ -478,44 +624,124 @@ mod tests {
     }
 
     #[test]
-    fn completed_test_branches_release_the_terminal_tail_to_the_supervisor_envelope() {
+    fn overlapped_prebuild_reserves_test_and_terminal_work_inside_the_outer_envelope() {
+        const TEST_RUNTIME: Duration = Duration::from_millis(540);
+        const OUTER_RUNTIME: Duration = Duration::from_millis(888);
         let mut delays = VERIFY_ACTIONS
             .iter()
-            .map(|action| (action.label(), Duration::from_millis(2)))
+            .map(|action| (action.label(), Duration::from_millis(15)))
             .collect::<BTreeMap<_, _>>();
-        delays.insert(BROWSER_LABEL, Duration::from_millis(80));
-        delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(120));
-        delays.insert(VERIFY_ACTIONS[9].label(), Duration::from_millis(50));
-        delays.insert(VERIFY_ACTIONS[10].label(), Duration::from_millis(50));
-        delays.insert(BATTERY_LABEL, Duration::from_millis(50));
-        let runner = TimedRunner::new(delays, 0).with_prebuild_delay(Duration::from_millis(2));
+        for action in &VERIFY_ACTIONS[4..=5] {
+            delays.insert(action.label(), Duration::from_millis(120));
+        }
+        delays.insert(VERIFY_ACTIONS[6].label(), Duration::from_millis(220));
+        delays.insert(BROWSER_LABEL, Duration::from_millis(240));
+        delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(420));
+        for action in &VERIFY_ACTIONS[9..=11] {
+            delays.insert(action.label(), Duration::from_millis(15));
+        }
+        delays.insert(landing::LABEL, Duration::from_millis(15));
+        let runner = TimedRunner::new(delays, 0)
+            .with_prebuild_delay(Duration::from_millis(160))
+            .with_canvas_ready_delay(Duration::from_millis(40));
         let mut output = Vec::new();
         let started = Instant::now();
+        let cancellation = CancellationToken::new();
+        let controller_token = cancellation.clone();
+        let completed = Arc::new(AtomicBool::new(false));
+        let controller_completed = Arc::clone(&completed);
+        let controller = thread::spawn(move || {
+            while started.elapsed() < OUTER_RUNTIME && !controller_completed.load(Ordering::Acquire)
+            {
+                thread::sleep(Duration::from_millis(1));
+            }
+            if !controller_completed.load(Ordering::Acquire) {
+                controller_token.cancel();
+            }
+        });
 
-        verify_with_deadline(
+        let result = verify_with_deadline(
             &runner,
             &mut output,
             Budget::fixture(3, 1, 0),
-            CancellationToken::new(),
+            cancellation,
             Arc::new(AtomicBool::new(false)),
-            Duration::from_millis(180),
-        )
-        .expect("completed test branches leave their bounded terminal tail runnable");
+            TEST_RUNTIME,
+        );
+        completed.store(true, Ordering::Release);
+        controller.join().expect("outer-envelope controller joins");
+        result.expect("overlapped setup leaves test and terminal work inside the outer envelope");
 
         assert!(
-            started.elapsed() < Duration::from_millis(500),
+            started.elapsed() < OUTER_RUNTIME,
             "the compressed terminal tail must remain inside its supervisor analogue"
         );
         let calls = runner.calls();
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert_line_order(
             &output,
-            "stage=start ordinal=9/13",
-            "stage=start ordinal=8/13",
+            "stage=setup identity=\"native test and Canvas launcher prebuild (workspace-test setup)\"",
+            "stage=start ordinal=5/13",
         );
         assert_terminal_exit_zero(&output, 9, VERIFY_ACTIONS[8].label());
         assert_terminal_success(&output, 13, VERIFY_ACTIONS[12].label());
         assert_exactly_once(&calls);
+        let timeline = runner.timeline();
+        let workspace_start = timeline
+            .iter()
+            .position(|event| *event == (VERIFY_ACTIONS[8].label(), false))
+            .expect("workspace tests started");
+        let final_canvas_compiler_end = timeline
+            .iter()
+            .position(|event| *event == (VERIFY_ACTIONS[6].label(), true))
+            .expect("final Canvas compiler completed");
+        assert!(
+            workspace_start < final_canvas_compiler_end,
+            "the prebuilt native root must overlap the final Canvas tail: {timeline:?}"
+        );
+    }
+
+    #[test]
+    fn early_workspace_failure_cannot_mask_a_later_canvas_compiler_failure() {
+        let mut delays = VERIFY_ACTIONS
+            .iter()
+            .map(|action| (action.label(), Duration::from_millis(2)))
+            .collect::<BTreeMap<_, _>>();
+        for action in &VERIFY_ACTIONS[4..=6] {
+            delays.insert(action.label(), Duration::from_millis(30));
+        }
+        delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(5));
+        let runner = TimedRunner::new(delays, 0)
+            .with_prebuild_delay(Duration::from_millis(1))
+            .with_failures([VERIFY_ACTIONS[8].label(), VERIFY_ACTIONS[6].label()]);
+        let mut output = Vec::new();
+
+        let error = verify_with_deadline(
+            &runner,
+            &mut output,
+            Budget::fixture(3, 1, 0),
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_secs(1),
+        )
+        .expect_err("the Canvas compiler failure refuses verification");
+
+        assert!(matches!(
+            error,
+            VerifyError::Exit {
+                label,
+                code: Some(1),
+            } if label == VERIFY_ACTIONS[6].label()
+        ));
+        let calls = runner.calls();
+        assert!(calls.contains(&VERIFY_ACTIONS[8].label()));
+        assert!(calls.contains(&VERIFY_ACTIONS[6].label()));
+        assert!(!calls.contains(&BROWSER_LABEL));
+        assert!(
+            String::from_utf8(output)
+                .expect("scheduler output is UTF-8")
+                .contains("primary_ordinal=7 interrupted=false")
+        );
     }
 
     #[test]

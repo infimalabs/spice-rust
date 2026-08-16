@@ -27,8 +27,33 @@ fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
         let error = RunPolicy::production(concurrency)
             .expect_err("out-of-contract scheduler grant refuses")
             .to_string();
-        assert!(error.contains("must be between 1 and 4"), "{error}");
+        assert!(
+            error.contains(&format!(
+                "must be between 1 and {WORKSPACE_TEST_CONCURRENCY_CAP}"
+            )),
+            "{error}"
+        );
     }
+}
+
+#[test]
+fn shared_prebuild_policy_alone_admits_the_higher_process_lane_cap() {
+    for concurrency in 1..=crate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP {
+        let policy = RunPolicy::production_shared(concurrency)
+            .expect("every shared-prebuild scheduler grant admits");
+        assert_eq!(policy.concurrency, concurrency);
+        assert!(policy.shared_outputs);
+    }
+    let error = RunPolicy::production_shared(crate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP + 1)
+        .expect_err("an oversized shared-prebuild scheduler grant refuses")
+        .to_string();
+    assert!(
+        error.contains(&format!(
+            "must be between 1 and {}",
+            crate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP
+        )),
+        "{error}"
+    );
 }
 
 #[test]
@@ -69,6 +94,47 @@ fn selected_test_environment_cannot_inherit_the_parent_git_repository() {
 }
 
 #[test]
+fn workspace_test_children_drop_only_the_configured_dispatch_recursion_marker() {
+    let environment = without_pre_commit_dispatch(
+        Environment::new([
+            (
+                OsString::from(PRE_COMMIT_SOURCE),
+                OsString::from("configured-source"),
+            ),
+            (OsString::from("PATH"), OsString::from("/fixture/bin")),
+            (
+                OsString::from(CARGO_TARGET_DIR),
+                OsString::from("/fixture/target"),
+            ),
+            (
+                OsString::from("SPICE_RS_PRE_COMMIT_PATHS"), // env-policy: allow
+                OsString::from("[\"spice/tests/gate_cli.rs\"]"),
+            ),
+        ])
+        .expect("configured workspace-test environment admits"),
+    )
+    .expect("workspace-test child environment admits");
+
+    assert!(
+        environment_value(&environment, PRE_COMMIT_SOURCE).is_none(),
+        "selected Cargo children cannot inherit the configured-command recursion marker"
+    );
+    assert_eq!(
+        environment_value(&environment, "PATH"),
+        Some(&OsString::from("/fixture/bin")),
+    );
+    assert_eq!(
+        environment_value(&environment, CARGO_TARGET_DIR),
+        Some(&OsString::from("/fixture/target")),
+    );
+    assert_eq!(
+        environment_value(&environment, "SPICE_RS_PRE_COMMIT_PATHS"), // env-policy: allow
+        Some(&OsString::from("[\"spice/tests/gate_cli.rs\"]")),
+        "the staged-source binding remains available to selected execution"
+    );
+}
+
+#[test]
 fn selected_tree_execution_rewrites_external_cargo_outputs_to_writable_root() {
     let inventory = Inventory {
         target_directory: PathBuf::from("/selected/target"),
@@ -101,7 +167,7 @@ fn selected_tree_execution_rewrites_external_cargo_outputs_to_writable_root() {
 fn reusable_workspace_execution_preserves_prepared_cargo_outputs() {
     let inventory = Inventory {
         target_directory: PathBuf::from("/worktree/target"),
-        build_directory: PathBuf::from("/worktree/target/spice-gate-native-build"),
+        build_directory: PathBuf::from("/worktree/target/spice-gate-native-stable-build-v1"),
         packages: vec![quick_package()],
     };
     let environment = inventory
@@ -121,7 +187,9 @@ fn reusable_workspace_execution_preserves_prepared_cargo_outputs() {
     );
     assert_eq!(
         environment_value(&environment, CARGO_BUILD_BUILD_DIR),
-        Some(&OsString::from("/worktree/target/spice-gate-native-build")),
+        Some(&OsString::from(
+            "/worktree/target/spice-gate-native-stable-build-v1"
+        )),
         "reusable test execution keeps the analysis build root"
     );
 }

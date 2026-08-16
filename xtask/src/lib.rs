@@ -3,8 +3,9 @@
 use std::io::{self, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use sill::CancellationToken;
 
@@ -73,7 +74,7 @@ const VERIFY_ACTIONS: [Action; 13] = [
     Action::EntryPoint,
     Action::Format,
     Action::Command(Step::cargo(
-        "cargo clippy --locked --workspace --all-targets -- -D warnings",
+        NATIVE_CLIPPY_LABEL,
         &[
             "clippy",
             "--locked",
@@ -99,7 +100,7 @@ const VERIFY_ACTIONS: [Action; 13] = [
         ],
     )),
     Action::Command(Step::cargo(
-        "cargo check --locked --workspace --target wasm32-unknown-unknown",
+        CANVAS_CHECK_LABEL,
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
     )),
     Action::Command(Step::cargo(CANVAS_APP_LABEL, &["xtask", "app"])),
@@ -170,13 +171,16 @@ const ENTRY_POINT_LABEL: &str = "repository completion publication boundary";
 /// action protects the remaining `composer -> mosaic_plane -> mosaic` path.
 const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
 const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
+const CANVAS_CHECK_LABEL: &str = "cargo check --locked --workspace --target wasm32-unknown-unknown";
+const NATIVE_CLIPPY_LABEL: &str = "cargo clippy --locked --workspace --all-targets -- -D warnings";
 const RESIDENT_BUILD_LABEL: &str =
     "cargo build --locked -p spice --bin spice (freshness reference and canvas resident)";
-const WORKSPACE_TEST_CONCURRENCY_CAP: usize = gate::WORKSPACE_TEST_CONCURRENCY_CAP;
+const FULL_VERIFIER_WORKSPACE_TEST_CONCURRENCY_CAP: usize =
+    gate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP;
 const WORKSPACE_TEST_LABEL: &str =
     "deterministic sharded cargo test --locked --workspace --all-targets";
 const WORKSPACE_TEST_PREBUILD_LABEL: &str =
-    "cargo test --locked --workspace --all-targets --no-run (workspace-test setup)";
+    "native test and Canvas launcher prebuild (workspace-test setup)";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {
@@ -187,6 +191,13 @@ struct Step {
 impl Step {
     const fn cargo(label: &'static str, arguments: &'static [&'static str]) -> Self {
         Self { label, arguments }
+    }
+
+    fn uses_verifier_compiler_contract(self) -> bool {
+        matches!(
+            self.label,
+            NATIVE_CLIPPY_LABEL | CANVAS_CHECK_LABEL | CANVAS_APP_LABEL
+        )
     }
 }
 
@@ -311,6 +322,8 @@ enum RunError {
     Cleanup(String),
 }
 
+type ActionReadiness = Arc<dyn Fn() + Send + Sync>;
+
 trait Runner: Sync {
     fn entry_point(&self) -> Result<String, String>;
     fn format(
@@ -323,6 +336,13 @@ trait Runner: Sync {
         step: Step,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
+    ) -> Result<CommandRun, RunError>;
+    fn run_with_readiness(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        readiness: ActionReadiness,
     ) -> Result<CommandRun, RunError>;
     fn run_scoped(
         &self,
@@ -338,47 +358,22 @@ trait Runner: Sync {
     ) -> Result<BrowserRun, RunError>;
     fn workspace_test_prebuild(
         &self,
-        _cancellation: &CancellationToken,
-        _cargo_jobs: usize,
-    ) -> Result<CommandRun, RunError> {
-        Ok(CommandRun::Exited(ProcessOutput {
-            status: Status {
-                success: true,
-                code: Some(0),
-            },
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }))
-    }
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+    ) -> Result<CommandRun, RunError>;
     fn workspace_tests(
         &self,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
         workspace_workers: usize,
-    ) -> Result<CommandRun, RunError> {
-        self.run(
-            Step::cargo(WORKSPACE_TEST_LABEL, &[]),
-            cancellation,
-            cargo_jobs.min(workspace_workers),
-        )
-    }
+    ) -> Result<CommandRun, RunError>;
     fn structural_preflight(
         &self,
         cancellation: &CancellationToken,
-    ) -> Result<BatteryRun, RunError> {
-        Ok(if cancellation.is_cancelled() {
-            BatteryRun::Cancelled
-        } else {
-            BatteryRun::Admitted(Vec::new())
-        })
-    }
+    ) -> Result<BatteryRun, RunError>;
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError>;
-    fn accept_battery_state(&self) -> Result<(), String> {
-        Ok(())
-    }
-    fn publish_full_verifier_evidence(&self) -> Result<(), String> {
-        Ok(())
-    }
+    fn accept_battery_state(&self) -> Result<(), String>;
+    fn publish_full_verifier_evidence(&self) -> Result<(), String>;
     fn landing(&self) -> Result<landing::Report, landing::Error>;
 }
 
@@ -482,12 +477,8 @@ impl SystemRunner {
 
     fn compiler_stage(step: Step) -> Option<gate::VerifierCompilerStage> {
         match step.label {
-            "cargo clippy --locked --workspace --all-targets -- -D warnings" => {
-                Some(gate::VerifierCompilerStage::NativeClippy)
-            }
-            "cargo check --locked --workspace --target wasm32-unknown-unknown" => {
-                Some(gate::VerifierCompilerStage::CanvasCheck)
-            }
+            NATIVE_CLIPPY_LABEL => Some(gate::VerifierCompilerStage::NativeClippy),
+            CANVAS_CHECK_LABEL => Some(gate::VerifierCompilerStage::CanvasCheck),
             CANVAS_APP_LABEL => Some(gate::VerifierCompilerStage::CanvasApp),
             _ => None,
         }
@@ -534,7 +525,7 @@ impl SystemRunner {
             .compiler_contracts
             .iter()
             .find(|contract| contract.gate_id() == gate_id)
-            .cloned()
+            .map(Arc::clone)
             .ok_or_else(|| {
                 RunError::Cleanup(format!("missing {} compiler contract", gate_id.as_str()))
             })
@@ -545,11 +536,16 @@ impl SystemRunner {
         stage: gate::VerifierCompilerStage,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
+        readiness: Option<ActionReadiness>,
     ) -> Result<CommandRun, RunError> {
         let contract = self.compiler_contract(stage, cargo_jobs)?;
-        let run = contract
-            .run_supervised(stage, cancellation.clone())
-            .map_err(RunError::Launch)?;
+        let run = match readiness {
+            Some(readiness) => {
+                contract.run_supervised_with_readiness(stage, cancellation.clone(), readiness)
+            }
+            None => contract.run_supervised(stage, cancellation.clone()),
+        }
+        .map_err(RunError::Launch)?;
         let cancelled = run.cancelled();
         let timed_out = run.timed_out();
         let reusable_workspace = (stage == gate::VerifierCompilerStage::NativeClippy
@@ -719,7 +715,7 @@ impl Runner for SystemRunner {
     ) -> Result<CommandRun, RunError> {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(stage) = Self::compiler_stage(step) {
-            return self.run_compiler_stage(stage, cancellation, cargo_jobs);
+            return self.run_compiler_stage(stage, cancellation, cargo_jobs, None);
         }
         verify_execution::run_process(
             step.label,
@@ -729,6 +725,32 @@ impl Runner for SystemRunner {
             cargo_jobs,
             &[],
         )
+    }
+
+    fn run_with_readiness(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        readiness: ActionReadiness,
+    ) -> Result<CommandRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let stage = Self::compiler_stage(step).ok_or_else(|| {
+                RunError::Launch(io::Error::other(format!(
+                    "compiler readiness is unavailable for {}",
+                    step.label
+                )))
+            })?;
+            self.run_compiler_stage(stage, cancellation, cargo_jobs, Some(readiness))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (step, cancellation, cargo_jobs, readiness);
+            Err(RunError::Launch(io::Error::other(
+                "compiler readiness is unavailable on wasm32",
+            )))
+        }
     }
 
     fn run_scoped(
@@ -766,7 +788,8 @@ impl Runner for SystemRunner {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let executable = std::env::current_exe().map_err(RunError::Launch)?;
-            if let Some(workspace) = self.state()?.native_workspace.clone() {
+            let workspace = { self.state()?.native_workspace.clone() };
+            if let Some(workspace) = workspace {
                 let workspace_cargo_jobs = cargo_jobs.min(workspace_workers);
                 return verify_execution::run_process_at(
                     WORKSPACE_TEST_LABEL,
@@ -806,7 +829,8 @@ impl Runner for SystemRunner {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let executable = std::env::current_exe().map_err(RunError::Launch)?;
-            if let Some(workspace) = self.state()?.native_workspace.clone() {
+            let workspace = { self.state()?.native_workspace.clone() };
+            if let Some(workspace) = workspace {
                 return verify_execution::run_process_at(
                     WORKSPACE_TEST_PREBUILD_LABEL,
                     executable,
@@ -887,7 +911,7 @@ impl Runner for SystemRunner {
             let evidence = match state
                 .compiler_contracts
                 .iter()
-                .map(|contract| contract.complete(&state.compiler_processes))
+                .map(|contract| contract.complete_retained(&state.compiler_processes))
                 .collect::<Result<Vec<_>, _>>()
             {
                 Ok(evidence) => evidence,

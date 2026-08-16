@@ -38,6 +38,10 @@ fn install_wasm_programs(fixture: &Fixture) -> WasmPrograms {
                 "  printf '%s\\n' '{metadata}'\n",
                 "  exit 0\n",
                 "fi\n",
+                "if [ \"$*\" = \"test --locked --workspace --all-targets --no-run\" ]; then\n",
+                "  sleep 30\n",
+                "  exit 0\n",
+                "fi\n",
                 "if [ \"$*\" = \"clippy --locked -p app --target ",
                 "wasm32-unknown-unknown -- -D warnings\" ]; then\n",
                 "  {path_name}=${{{path_name}#*:}}\n",
@@ -47,8 +51,8 @@ fn install_wasm_programs(fixture: &Fixture) -> WasmPrograms {
                 "exit 0\n",
             ),
             cargo_log = cargo_log.display(),
-            metadata = wasm_fixture_metadata(),
             path_name = PROCESS_PATH,
+            metadata = wasm_fixture_metadata(),
         ),
     );
     let launcher = programs.join("verify");
@@ -116,6 +120,7 @@ fn assert_wasm_refusal(cargo_log: &Path, output: &std::process::Output) {
                 || *action == "build --locked -p spice --bin spice"
                 || *action == "metadata --locked --format-version 1 --no-deps"
                 || *action == "test --locked --workspace --all-targets --no-run"
+                || *action == "build --locked -p xtask --bin xtask"
                 || action.starts_with("clippy ")
         }),
         "unexpected Cargo action while the battery ran concurrently: {actions:?}",

@@ -9,6 +9,7 @@ const SHELL_OLD_DIRECTORY: &str = "OLDPWD";
 const HOME: &str = "HOME";
 const CARGO_HOME: &str = "CARGO_HOME";
 const RUSTUP_HOME: &str = "RUSTUP_HOME";
+pub(super) const SHELL_HOOK_PREFIX: &[u8] = b"SPICE_SHELL_HOOK_"; // env-policy: allow
 
 #[expect(
     clippy::disallowed_methods,
@@ -35,6 +36,7 @@ fn retained(name: &OsStr) -> bool {
     let name = name.as_encoded_bytes();
     name != SHELL_LAST_COMMAND.as_bytes()
         && name != SHELL_OLD_DIRECTORY.as_bytes()
+        && !name.starts_with(SHELL_HOOK_PREFIX)
         && name != b"CARGO"
         && name != b"CARGO_MANIFEST_DIR"
         && name != b"CARGO_MANIFEST_PATH"
@@ -49,8 +51,11 @@ fn retained(name: &OsStr) -> bool {
         && name != b"GIT_COMMITTER_DATE"
         && name != b"GIT_COMMITTER_EMAIL"
         && name != b"GIT_COMMITTER_NAME"
+        && name != b"GIT_DIR"
         && name != b"GIT_EDITOR"
+        && name != b"GIT_EXEC_PATH"
         && name != b"GIT_INDEX_FILE"
+        && name != b"GIT_PREFIX"
 }
 
 fn bind_implicit_home(environment: &mut Vec<(OsString, OsString)>, name: &str, suffix: &str) {

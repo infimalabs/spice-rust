@@ -328,6 +328,46 @@ fn explicitly_trusted_source_override_runs_one_public_spice_leaf_through_the_hoo
 }
 
 #[test]
+fn trusted_configured_redispatch_still_refuses_as_pre_commit_recursion() {
+    let repository = configured_redispatch_repository();
+    let first = run_commit_worker(repository.path());
+    let failure = terminal_failure(&first);
+    let digest = failure["detail"]
+        .as_str()
+        .and_then(|detail| detail.split_once("digest="))
+        .and_then(|(_, remainder)| remainder.split_whitespace().next())
+        .expect("trust refusal names the configured redispatch digest")
+        .parse::<Digest>()
+        .expect("configured redispatch digest is canonical");
+    grant_fixture_trust(&repository, digest);
+
+    let boundary = run_commit_worker(repository.path());
+    let Some((kind, document)) = boundary.terminal.split_first() else {
+        panic!("configured redispatch published no terminal: {boundary:?}");
+    };
+    assert_eq!(
+        *kind, b'R',
+        "configured redispatch lost its report: {boundary:?}"
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(document).expect("decode configured redispatch report");
+    let findings = report["configured"]["steps"][0]["findings"]
+        .as_array()
+        .expect("configured redispatch step carries findings");
+    assert_eq!(findings.len(), 1, "unexpected redispatch report: {report}");
+    assert_eq!(findings[0]["kind"], "exit");
+    let detail = findings[0]["detail"]
+        .as_str()
+        .expect("configured redispatch exit carries captured evidence");
+    assert!(detail.contains("code=Some(2)"), "{detail}");
+    assert!(detail.contains("gate::pre-commit-recursion"), "{detail}");
+    assert!(
+        !detail.contains("gate::pre-commit-dispatch-active"),
+        "the recursion marker must refuse before dispatch-lock contention: {detail}"
+    );
+}
+
+#[test]
 fn recursion_marker_refuses_public_and_hidden_dispatcher_entrypoints() {
     let scratch = Scratch::new("dispatcher-recursion");
     let source = wire::Digest::compute(wire::Domain::GateTree, b"recursive fixture");
@@ -387,6 +427,33 @@ fn dispatch_repository(builtins: Option<bool>) -> GateRepository {
     git(
         repository.path(),
         &["commit", "-qm", "Configure fixture pre-commit"],
+    );
+    repository.write_source(2);
+    repository.add("src/lib.rs");
+    repository
+}
+
+fn configured_redispatch_repository() -> GateRepository {
+    let repository = GateRepository::new();
+    let policy = repository.path().join("spice-rust.toml");
+    let text = fs::read_to_string(&policy).expect("read redispatch fixture policy");
+    let executable =
+        serde_json::to_string(env!("CARGO_BIN_EXE_spice")).expect("encode fixture executable");
+    let insertion = format!(
+        concat!(
+            "[policy]\n",
+            "pre_commit_builtins = false\n",
+            "pre_commit = [{{ label = \"recursive fixture\", ",
+            "run = [{executable}, \"gate\", \"pre-commit\"] }}]\n",
+        ),
+        executable = executable,
+    );
+    fs::write(&policy, text.replacen("[policy]\n", &insertion, 1))
+        .expect("write configured redispatch policy");
+    repository.add("spice-rust.toml");
+    git(
+        repository.path(),
+        &["commit", "-qm", "Configure recursive fixture"],
     );
     repository.write_source(2);
     repository.add("src/lib.rs");

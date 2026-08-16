@@ -147,11 +147,24 @@ fn verifier_cargo_budget_binds_once_and_refuses_drift() {
 
 #[test]
 fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs() {
+    let shell_hook_name = |suffix: &str| {
+        let mut name = String::from_utf8_lossy(SHELL_HOOK_PREFIX).into_owned();
+        name.push_str(suffix);
+        OsString::from(name)
+    };
     let producer = verifier_environment_from([
         (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
         (
             OsString::from(SHELL_LAST_COMMAND),
             OsString::from("/fixture/producer-xtask"),
+        ),
+        (
+            shell_hook_name("REPO_ROOT"),
+            OsString::from("/fixture/repository"),
+        ),
+        (
+            shell_hook_name("WRAPPERS"),
+            OsString::from("producer wrapper functions"),
         ),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
@@ -162,6 +175,10 @@ fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
         (
             OsString::from(SHELL_LAST_COMMAND),
             OsString::from("/fixture/consumer-spice"),
+        ),
+        (
+            shell_hook_name("WRAPPERS"),
+            OsString::from("consumer wrapper functions"),
         ),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
@@ -286,11 +303,17 @@ fn git_commit_metadata_normalizes_to_the_verifier_compiler_environment() {
             OsString::from("GIT_AUTHOR_NAME"),
             OsString::from("Gate Report Fixture"),
         ),
+        (OsString::from("GIT_DIR"), OsString::from(".git")),
         (OsString::from("GIT_EDITOR"), OsString::from(":")),
+        (
+            OsString::from("GIT_EXEC_PATH"),
+            OsString::from("/fixture/git/libexec"),
+        ),
         (
             OsString::from("GIT_INDEX_FILE"),
             OsString::from("/fixture/git/index"),
         ),
+        (OsString::from("GIT_PREFIX"), OsString::new()),
     ]);
 
     assert_eq!(producer, consumer);

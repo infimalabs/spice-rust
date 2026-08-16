@@ -171,7 +171,7 @@ struct RustWorkspace {
 const RUST_SOURCE_DIRECTORY: &str = "gate-native-source";
 const RUST_SOURCE_LABEL: &str = "rust analysis source cache";
 const RUST_SOURCE_LOCK: &str = "rust-analysis-source-cache";
-const RUST_BUILD_DIRECTORY: &str = "spice-gate-native-build";
+pub(in crate::toolchain) const RUST_BUILD_DIRECTORY: &str = "spice-gate-native-stable-build-v1";
 
 impl RustWorkspace {
     fn create(selected: &Path, repository: &Path) -> Result<Self, String> {

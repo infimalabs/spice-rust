@@ -60,7 +60,9 @@ mod rust;
 
 pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
-pub(in crate::toolchain) use rust::{make_cache_writable, synchronize_source};
+pub(in crate::toolchain) use rust::{
+    RUST_BUILD_DIRECTORY, make_cache_writable, synchronize_source,
+};
 pub(super) use rust::{rust_analysis_workspace, rust_typecheck};
 
 /// What one compiled analysis observed about one arm.

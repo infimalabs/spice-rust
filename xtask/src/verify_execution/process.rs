@@ -383,11 +383,27 @@ fn count_peer_cargo(listing: &str, current: u32) -> usize {
         .iter()
         .filter(|(pid, _, command)| {
             !ancestors.contains(pid)
+                && !descends_from(*pid, current, &parents)
                 && PathBuf::from(command)
                     .file_name()
                     .is_some_and(|name| name == OsStr::new("cargo"))
         })
         .count()
+}
+
+fn descends_from(pid: u32, ancestor: u32, parents: &BTreeMap<u32, u32>) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut cursor = pid;
+    while let Some(parent) = parents.get(&cursor).copied() {
+        if parent == ancestor {
+            return true;
+        }
+        if parent == 0 || !seen.insert(parent) {
+            break;
+        }
+        cursor = parent;
+    }
+    false
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -38,7 +38,7 @@ mod full_verifier_evidence;
 
 use environment::verifier_environment;
 #[cfg(test)]
-use environment::{SHELL_LAST_COMMAND, verifier_environment_from};
+use environment::{SHELL_HOOK_PREFIX, SHELL_LAST_COMMAND, verifier_environment_from};
 
 pub use finding_source::{
     GateFindingAnchor, capture_gate_finding_anchor, require_gate_finding_source_forward,

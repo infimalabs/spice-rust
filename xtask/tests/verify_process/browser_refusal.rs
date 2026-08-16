@@ -48,6 +48,9 @@ fn install_browser_refusal_programs(fixture: &Fixture) -> BrowserRefusalPrograms
                 "if [ \"$1\" = metadata ]; then\n",
                 "  printf '%s\\n' '{}'\n",
                 "fi\n",
+                "if [ \"$1\" = xtask ] && [ \"$2\" = app ]; then\n",
+                "  printf '[app] compiler-ready\\n'\n",
+                "fi\n",
                 "exit 0\n",
             ),
             cargo_log.display(),
@@ -103,20 +106,23 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
             .expect("canonical verifier repository")
             .display()
     );
-    for required in [
-        "build --locked -p spice --bin spice",
-        "clippy --locked --workspace --all-targets -- -D warnings",
-        "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
-        "check --locked --workspace --target wasm32-unknown-unknown",
-        app_action.as_str(),
-        "test --locked --workspace --all-targets --no-run",
-    ] {
-        assert_eq!(
-            chain.iter().filter(|action| **action == required).count(),
-            1,
-            "required Cargo action was absent or repeated: {required:?} in {chain:?}"
-        );
-    }
+    assert_ordered_actions(
+        &chain,
+        &[
+            "build --locked -p spice --bin spice",
+            "clippy --locked --workspace --all-targets -- -D warnings",
+            "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+            "check --locked --workspace --target wasm32-unknown-unknown",
+            app_action.as_str(),
+        ],
+    );
+    assert_ordered_actions(
+        &chain,
+        &[
+            "clippy --locked --workspace --all-targets -- -D warnings",
+            "test --locked --workspace --all-targets --no-run",
+        ],
+    );
     let allowed = [
         "clippy --locked --workspace --all-targets -- -D warnings",
         "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
@@ -125,7 +131,10 @@ fn assert_browser_refusal_cargo_trace(fixture: &Fixture, cargo_log: &Path) {
         "build --locked -p spice --bin spice",
         "metadata --locked --format-version 1 --no-deps",
         "test --locked --workspace --all-targets --no-run",
-        "test --locked --package verify-process-fixture-id --lib",
+        "build --locked -p xtask --bin xtask",
+        "test --locked --package verify-process-fixture-id --lib -- --test-threads=3",
+        "doc --locked --workspace --lib --bins --no-deps",
+        "test --locked --workspace --doc",
     ];
     assert!(
         chain.iter().all(|action| allowed.contains(action)),
@@ -146,6 +155,21 @@ fn action_index(chain: &[&str], expected: &str) -> usize {
         .iter()
         .position(|action| *action == expected)
         .unwrap_or_else(|| panic!("missing Cargo action {expected:?} in {chain:?}"))
+}
+
+fn assert_ordered_actions(chain: &[&str], expected: &[&str]) {
+    let mut previous = None;
+    for action in expected {
+        let index = chain
+            .iter()
+            .position(|candidate| candidate == action)
+            .unwrap_or_else(|| panic!("missing Cargo action {action:?}: {chain:?}"));
+        assert!(
+            previous.is_none_or(|previous| previous < index),
+            "Cargo actions are out of order: expected={expected:?} actual={chain:?}"
+        );
+        previous = Some(index);
+    }
 }
 
 fn assert_bounded_workspace_prefix(chain: &[&str]) {

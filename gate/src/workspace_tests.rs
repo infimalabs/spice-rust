@@ -30,7 +30,7 @@ use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
 };
 #[cfg(test)]
-use coordinator::{LastTest, isolate_shard_outputs, target_arguments};
+use coordinator::{LastTest, isolate_shard_outputs, shard_test_threads, target_arguments};
 use selection::{exhaustive_selection_report, package_inventory, selection_report};
 
 /// Whether the compiled Cargo workspace engine applies to this selected tree.
@@ -57,8 +57,8 @@ pub fn cargo_workspace_tests_applicable(
 const TARGETS_PER_SHARD: usize = 8;
 /// The full verifier's prebuilt branch pays no compiler cost per shard, so use
 /// finer work units there to keep one long integration-target cluster from
-/// pinning a worker while the fixed four-lane test-phase budget expires.
-const FULL_VERIFIER_TARGETS_PER_SHARD: usize = 4;
+/// pinning a worker while the bounded test-phase worker budget expires.
+const FULL_VERIFIER_TARGETS_PER_SHARD: usize = 1;
 /// Below three targets, observed Cargo startup and publication time outweighs
 /// target cardinality, so these tail batches retain stable metadata order.
 const CARGO_STARTUP_DOMINATED_TARGET_LIMIT: usize = 2;
@@ -77,6 +77,7 @@ const RECORD_FRAME_LIMIT: usize = 256 * 1024;
 const RECORD_QUEUE_CAPACITY: usize = 4_096;
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
+const PRE_COMMIT_SOURCE: &str = wire::SpiceVariable::PreCommitSource.as_str();
 const TEST_WRITABLE_ROOT: &str = "SPICE_WORKSPACE_TEST_WRITABLE_ROOT"; // env-policy: allow
 const SHARED_OUTPUTS_ENV: &str = "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS"; // env-policy: allow
 const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
@@ -244,11 +245,15 @@ pub fn run_at(
     run_at_with_prebuild(root, environment, concurrency, output, true)
 }
 
-/// Prebuild every canonical workspace test target into one shared Cargo build cache.
+/// Prebuild every canonical workspace test target and the normal `xtask`
+/// launcher into one shared Cargo build cache.
 ///
-/// The full verifier calls this setup boundary after its serial compiler chain and
-/// before starting the bounded test-phase clock. [`run_prebuilt_shared_at`] then
-/// reuses that completed build cache without repeating setup inside that clock.
+/// The full verifier calls this setup boundary after native compiler admission
+/// and before starting the bounded test-phase clock. [`run_prebuilt_shared_at`]
+/// then reuses that completed native build cache after wasm analysis and the
+/// Canvas compiler-ready boundary, without repeating setup inside the test
+/// clock. The launcher build keeps `cargo xtask app` from recompiling its native
+/// entry point before it can start Trunk.
 ///
 /// # Errors
 ///
@@ -265,7 +270,8 @@ pub fn prebuild_shared_at(
             "shared workspace-test prebuild requires shared Cargo output authority",
         ));
     }
-    prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)
+    prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)?;
+    prebuild_canvas_launcher(root, &environment, OsStr::new("cargo"), output)
 }
 
 /// Run every canonical workspace test target from a completed shared-output prebuild.
@@ -328,6 +334,7 @@ fn prepare_execution(
     environment: Environment,
     concurrency: usize,
 ) -> Result<(Inventory, Environment, RunPolicy), WorkspaceTestError> {
+    let environment = without_pre_commit_dispatch(environment)?;
     let (environment, policy) = policy_from_environment(environment, concurrency)?;
     let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
     let environment = inventory.execution_environment(environment, root, root, true)?;
@@ -347,7 +354,7 @@ fn policy_from_environment(
         .remove(OsStr::new(SHARED_OUTPUTS_ENV))
         .is_some_and(|value| value == OsStr::new("1"));
     let policy = if shared_outputs {
-        RunPolicy::production(concurrency)?.with_shared_outputs()
+        RunPolicy::production_shared(concurrency)?
     } else {
         RunPolicy::production(concurrency)?
     };
@@ -362,12 +369,12 @@ fn prebuild_all_tests(
     cargo: &OsStr,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
-    let command = "cargo test --locked --workspace --all-targets --no-run";
-    writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
-    output.flush().map_err(output_error)?;
-    let started = Instant::now();
-    let spec = process_spec(
+    run_prebuild_command(
+        root,
+        environment,
         cargo,
+        output,
+        "cargo test --locked --workspace --all-targets --no-run",
         [
             "test",
             "--locked",
@@ -375,11 +382,47 @@ fn prebuild_all_tests(
             "--all-targets",
             "--no-run",
         ],
+        "workspace-test prebuild",
+    )
+}
+
+fn prebuild_canvas_launcher(
+    root: &Path,
+    environment: &Environment,
+    cargo: &OsStr,
+    output: &mut impl Write,
+) -> Result<(), WorkspaceTestError> {
+    run_prebuild_command(
+        root,
+        environment,
+        cargo,
+        output,
+        "cargo build --locked -p xtask --bin xtask",
+        ["build", "--locked", "-p", "xtask", "--bin", "xtask"],
+        "Canvas launcher prebuild",
+    )
+}
+
+fn run_prebuild_command<const N: usize>(
+    root: &Path,
+    environment: &Environment,
+    cargo: &OsStr,
+    output: &mut impl Write,
+    command: &str,
+    arguments: [&str; N],
+    owner: &str,
+) -> Result<(), WorkspaceTestError> {
+    writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    let started = Instant::now();
+    let spec = process_spec(
+        cargo,
+        arguments,
         root,
         environment.clone(),
         SHARD_DEADLINE,
         Cancellation::Never,
-        "workspace-test prebuild",
+        owner,
     )?;
     let outcome = sill::spawn(spec)
         .map_err(|error| WorkspaceTestError::new(format!("prebuild launch failed: {error}")))?
@@ -413,7 +456,7 @@ fn prebuild_all_tests(
     match outcome.completion() {
         Completion::Exited(status) if status.success() && !capture_failed => Ok(()),
         completion => Err(WorkspaceTestError::new(format!(
-            "workspace test prebuild ended as {}: stdout-tail={:?}; stderr-tail={:?}",
+            "{owner} ended as {}: stdout-tail={:?}; stderr-tail={:?}",
             completion_name(completion),
             captured_excerpt(outcome.stdout()),
             captured_excerpt(outcome.stderr()),
@@ -497,6 +540,7 @@ fn run_selected_at_mode(
     let root = roots
         .reusable
         .map_or(roots.selected, crate::RustAnalysisWorkspace::source);
+    let environment = without_pre_commit_dispatch(environment)?;
     let environment = without_parent_repository(environment)?;
     let environment = match roots.reusable {
         Some(workspace) => reuse_environment(environment, workspace)?,
@@ -572,6 +616,18 @@ fn without_parent_repository(environment: Environment) -> Result<Environment, Wo
     for variable in GIT_LOCAL_ENVIRONMENT {
         entries.remove(OsStr::new(variable));
     }
+    Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
+}
+
+fn without_pre_commit_dispatch(
+    environment: Environment,
+) -> Result<Environment, WorkspaceTestError> {
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    entries.remove(OsStr::new(PRE_COMMIT_SOURCE));
     Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
@@ -833,20 +889,31 @@ fn partition_with_target_limit(
         .flat_map(|package| partition_package(package, targets_per_shard))
         .collect::<Vec<_>>();
     shards.sort_by(|left, right| {
-        let left_startup_dominated = left.targets.len() <= CARGO_STARTUP_DOMINATED_TARGET_LIMIT;
-        let right_startup_dominated = right.targets.len() <= CARGO_STARTUP_DOMINATED_TARGET_LIMIT;
+        let left_startup_dominated =
+            targets_per_shard != 1 && left.targets.len() <= CARGO_STARTUP_DOMINATED_TARGET_LIMIT;
+        let right_startup_dominated =
+            targets_per_shard != 1 && right.targets.len() <= CARGO_STARTUP_DOMINATED_TARGET_LIMIT;
         let left_package_targets = package_target_counts[&left.id];
         let right_package_targets = package_target_counts[&right.id];
+        let left_source_bytes = left
+            .targets
+            .iter()
+            .map(|target| target.source_bytes)
+            .sum::<u64>();
+        let right_source_bytes = right
+            .targets
+            .iter()
+            .map(|target| target.source_bytes)
+            .sum::<u64>();
         left_startup_dominated
             .cmp(&right_startup_dominated)
             .then_with(|| {
                 if left_startup_dominated {
                     Ordering::Equal
                 } else {
-                    right
-                        .targets
-                        .len()
-                        .cmp(&left.targets.len())
+                    right_source_bytes
+                        .cmp(&left_source_bytes)
+                        .then_with(|| right.targets.len().cmp(&left.targets.len()))
                         .then_with(|| right_package_targets.cmp(&left_package_targets))
                 }
             })

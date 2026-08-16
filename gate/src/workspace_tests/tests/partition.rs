@@ -100,7 +100,7 @@ fn full_verifier_partition_uses_finer_exact_work_units() {
             name: format!("target-{index:02}"),
             source: PathBuf::from(format!("/workspace/tests/target-{index:02}.rs")),
             declared_path_sources: Vec::new(),
-            source_bytes: 1,
+            source_bytes: u64::try_from(index + 1).expect("fixture weight fits"),
         })
         .collect();
 
@@ -108,12 +108,20 @@ fn full_verifier_partition_uses_finer_exact_work_units() {
     let full_verifier = partition_with_target_limit(&inventory, FULL_VERIFIER_TARGETS_PER_SHARD);
 
     assert_eq!(ordinary.len(), 3);
-    assert_eq!(full_verifier.len(), 4);
+    assert_eq!(
+        full_verifier.len(),
+        inventory
+            .packages
+            .iter()
+            .map(|package| package.targets.len())
+            .sum::<usize>(),
+    );
     assert!(
         full_verifier
             .iter()
             .all(|shard| shard.targets.len() <= FULL_VERIFIER_TARGETS_PER_SHARD)
     );
+    assert_eq!(full_verifier[0].targets[0].name, "target-08");
     validate_partition_with_target_limit(
         &inventory,
         &full_verifier,

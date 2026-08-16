@@ -60,9 +60,23 @@ pub(super) fn dispatch_resolution(
 
 pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, WorkerFailure> {
     write_phase(progress, &WorkerPhase::Policy).map_err(worker_io_failure)?;
+    let initial = configured::Dispatch::capture().map_err(configured_failure)?;
+    let expected_source = initial.source().clone();
+    drop(initial);
+    write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
+    let admitted = full_verifier_evidence()?;
     let dispatch = configured::Dispatch::capture().map_err(configured_failure)?;
     let source = dispatch.source().clone();
-    let (packaged, full_verifier, dispatch) = packaged(progress, dispatch, &source)?;
+    if source != expected_source {
+        return Err(WorkerFailure {
+            reason: "gate::pre-commit-staged-source-moved".to_owned(),
+            detail: format!(
+                "initial dispatcher source {expected_source} differs from rebound source {source}",
+            ),
+            fault: false,
+        });
+    }
+    let (packaged, full_verifier, dispatch) = packaged(progress, dispatch, &source, admitted)?;
 
     let configured = if dispatch.has_configured() {
         write_phase(
@@ -99,15 +113,8 @@ fn packaged(
     progress: &mut File,
     mut dispatch: configured::Dispatch,
     source: &Digest,
+    admitted: Option<spice::gate::AdmittedFullVerifierEvidence>,
 ) -> Result<Builtins, WorkerFailure> {
-    write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
-    let admitted =
-        spice::gate::admit_full_verifier_evidence(dispatch.repository(), gate::Selector::staged())
-            .map_err(|error| WorkerFailure {
-                reason: error.reason().to_owned(),
-                detail: error.detail().to_owned(),
-                fault: error.is_fault(),
-            })?;
     if let Some(admitted) = admitted {
         if admitted.source() != source {
             return Err(WorkerFailure {
@@ -154,4 +161,25 @@ fn packaged(
     }
     dispatch = dispatch.rebind(source).map_err(configured_failure)?;
     Ok((Some(report), None, dispatch))
+}
+
+fn full_verifier_evidence()
+-> Result<Option<spice::gate::AdmittedFullVerifierEvidence>, WorkerFailure> {
+    let current = env::current_dir().map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-working-directory-unavailable".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    let repository = Repository::discover(&current).map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-repository-unresolved".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    spice::gate::admit_full_verifier_evidence(&repository, gate::Selector::staged()).map_err(
+        |error| WorkerFailure {
+            reason: error.reason().to_owned(),
+            detail: error.detail().to_owned(),
+            fault: error.is_fault(),
+        },
+    )
 }
