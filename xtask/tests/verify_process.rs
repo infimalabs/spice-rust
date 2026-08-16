@@ -365,6 +365,9 @@ fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path, _repository: &
                 "  exit 0\n",
                 "fi\n",
                 "printf '%s\\n' \"$*\" >> '{}'\n",
+                "if [ \"$1\" = xtask ] && [ \"$2\" = app ]; then\n",
+                "  printf '[app] compiler-ready\\n'\n",
+                "fi\n",
                 "exit 0\n",
             ),
             metadata,
@@ -385,30 +388,54 @@ fn assert_workspace_test_execution(
             .expect("canonical verifier repository")
             .display()
     );
-    let mut actual = fs::read_to_string(cargo_log)
-        .expect("read verifier Cargo actions")
+    let cargo_actions = fs::read_to_string(cargo_log).expect("read verifier Cargo actions");
+    let actions = cargo_actions
         .lines()
         .filter(|line| *line != "--version")
-        .map(str::to_owned)
         .collect::<Vec<_>>();
-    let mut expected = [
+    let expected = [
         "build --locked -p spice --bin spice",
         "clippy --locked --workspace --all-targets -- -D warnings",
         "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
         "check --locked --workspace --target wasm32-unknown-unknown",
         app_action.as_str(),
-        "test --locked --workspace --no-run",
-        "test --locked --package verify-process-fixture-id --lib",
+        "test --locked --workspace --all-targets --no-run",
+        "build --locked -p xtask --bin xtask",
+        "test --locked --package verify-process-fixture-id --lib -- --test-threads=3",
         "doc --locked --workspace --lib --bins --no-deps",
         "test --locked --workspace --doc",
-    ]
-    .map(str::to_owned)
-    .to_vec();
-    actual.sort_unstable();
-    expected.sort_unstable();
-    assert_eq!(
-        actual, expected,
-        "concurrent compiler and workspace-test setup emitted an unexpected Cargo action set"
+    ];
+    assert_eq!(actions.len(), expected.len(), "{cargo_actions}");
+    for expected_action in expected {
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| **action == expected_action)
+                .count(),
+            1,
+            "missing or repeated Cargo action {expected_action:?}: {actions:?}"
+        );
+    }
+    assert_ordered_cargo_actions(
+        &actions,
+        &[
+            "build --locked -p spice --bin spice",
+            "clippy --locked --workspace --all-targets -- -D warnings",
+            "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+            "check --locked --workspace --target wasm32-unknown-unknown",
+            app_action.as_str(),
+        ],
+    );
+    assert_ordered_cargo_actions(
+        &actions,
+        &[
+            "clippy --locked --workspace --all-targets -- -D warnings",
+            "test --locked --workspace --all-targets --no-run",
+            "build --locked -p xtask --bin xtask",
+            "test --locked --package verify-process-fixture-id --lib -- --test-threads=3",
+            "doc --locked --workspace --lib --bins --no-deps",
+            "test --locked --workspace --doc",
+        ],
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -424,6 +451,21 @@ fn assert_workspace_test_execution(
         "workspace shard coordinator did not complete: {}",
         streams(output)
     );
+}
+
+fn assert_ordered_cargo_actions(actions: &[&str], expected: &[&str]) {
+    let mut previous = None;
+    for action in expected {
+        let index = actions
+            .iter()
+            .position(|candidate| candidate == action)
+            .unwrap_or_else(|| panic!("missing Cargo action {action:?}: {actions:?}"));
+        assert!(
+            previous.is_none_or(|previous| previous < index),
+            "Cargo actions are out of order: expected={expected:?} actual={actions:?}"
+        );
+        previous = Some(index);
+    }
 }
 
 fn run_selected_gate(

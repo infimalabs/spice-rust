@@ -128,9 +128,17 @@ fn run_benchmark_route(runner: &TimedRunner, mode: BenchmarkMode) {
         BenchmarkMode::Serial => {
             let cancellation = CancellationToken::new();
             for action in VERIFY_ACTIONS {
-                execute_action(runner, action, &cancellation, Budget::fixture(3, 2, 0))
-                    .result
-                    .expect("serial fixture action succeeds");
+                execute_action(
+                    runner,
+                    action,
+                    &cancellation,
+                    Budget::fixture(3, 2, 0),
+                    // The serial control deliberately withholds readiness so it
+                    // continues to measure the retired all-compiler barrier.
+                    None,
+                )
+                .result
+                .expect("serial fixture action succeeds");
             }
         }
         BenchmarkMode::Concurrent => verify_with_control(

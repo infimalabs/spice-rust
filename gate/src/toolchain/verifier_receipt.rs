@@ -9,7 +9,8 @@ use wire::{Digest, Domain};
 
 use super::{
     VerifierCompilerContract, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
-    VerifierCompilerStage, compiler_environment, expected_stages, frame, stage_arguments,
+    VerifierCompilerStage, compiler_authority_environment, compiler_environment, expected_stages,
+    frame, stage_arguments,
 };
 use crate::manifest::GateId;
 use crate::toolchain::ToolEvidence;
@@ -386,7 +387,7 @@ fn tools_identity(tools: &[ToolEvidence]) -> Digest {
 
 fn environment_identity(environment: &[(OsString, OsString)]) -> Digest {
     let mut bytes = Vec::new();
-    for (name, value) in environment {
+    for (name, value) in compiler_authority_environment(environment) {
         frame(&mut bytes, name.as_bytes());
         frame(&mut bytes, value.as_bytes());
     }

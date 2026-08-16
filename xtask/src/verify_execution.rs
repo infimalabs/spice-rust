@@ -22,9 +22,10 @@ use sill::{
 use super::ENTRY_POINT_LABEL;
 use super::verify_timing::{self, Conclusion, Disposition, Stage};
 use super::{
-    Action, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, CommandRun, FORMAT_LABEL,
-    ProcessOutput, RunError, Runner, SCOPED_COMMANDS, STRUCTURAL_PREFLIGHT_LABEL, Status,
-    VERIFY_ACTIONS, VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, valid_package_name,
+    Action, ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun,
+    CANVAS_APP_LABEL, CommandRun, FORMAT_LABEL, ProcessOutput, RunError, Runner, SCOPED_COMMANDS,
+    STRUCTURAL_PREFLIGHT_LABEL, Status, VERIFY_ACTIONS, VerifyError, WORKSPACE_TEST_PREBUILD_LABEL,
+    valid_package_name,
 };
 
 mod action;
@@ -48,18 +49,24 @@ use {action::success, process::count_peer_cargo};
 /// The current Spice executable is built first and its exact bytes are then
 /// checked against the installed receipt before source verification proceeds.
 /// The compiler-evidence chain is serial and retains its warm build root.
-/// Workspace-test setup starts after native Clippy produces its reusable root
-/// and overlaps the independent WASM/Canvas compiler tail. Browser and Rust-test
-/// actions remain blocked until both compiler paths have admitted, so neither
-/// can mask a compiler failure. Browser verification then overlaps the Rust-test
-/// branch while performing no Cargo work of its own. Documentation follows the workspace
-/// tests so the reusable native Cargo root is not forced into competing
-/// documentation and test publication work. The evidence-consuming battery
-/// overlaps that documentation tail once browser and workspace tests have
-/// completed; contract landing remains the barrier over every action. After
-/// formatting admits, the scheduler synchronously projects the capture-time
-/// file-shape and complexity evidence before it can launch the compiler chain;
-/// this setup gate is not a second report action or a second source capture.
+/// Workspace-test prebuild reuses the native root as soon as native Clippy has
+/// published it, overlapping the disjoint Canvas compiler root while retaining
+/// the same aggregate worker and Cargo-job caps. After wasm analysis releases
+/// its CPU-heavy slot, the final Canvas app build keeps sole Cargo-home access.
+/// Its observed post-compiler record releases the native test branch from the
+/// completed prebuild while selected-source validation and atomic publication
+/// are still in progress. A native failure is held at the branch boundary until
+/// that compiler chain terminates, so it
+/// cannot mask compiler evidence. Browser verification starts only after Canvas
+/// and overlaps the Rust-test branch while performing no Cargo work of its own.
+/// Documentation follows the workspace tests so the reusable native Cargo root
+/// is not forced into competing documentation and test publication work. The
+/// evidence-consuming battery overlaps that documentation tail once browser and
+/// workspace tests have completed; contract landing remains the barrier over
+/// every action.
+/// After formatting admits, the scheduler synchronously projects the capture-
+/// time file-shape and complexity evidence before it can launch the compiler
+/// chain; this setup gate is not a second report action or source capture.
 const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[],
     &[0],
@@ -69,7 +76,7 @@ const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[4],
     &[5],
     &[6],
-    &[6],
+    &[5],
     &[8],
     &[9],
     &[0, 3, 5, 6, 7, 8],
@@ -78,19 +85,20 @@ const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
 
 /// Three is the fleet-safe ceiling for independently ready outer actions.
 const MAX_CONCURRENT_ACTIONS: usize = 3;
-/// The full verifier prebuilds test binaries once in the native compiler output
-/// root before parallel shard execution, so every coordinator lane can reuse the
-/// same selected-root build cache while retaining its own final-publication path.
+/// Only workspace-test prebuild and one member of the serial Canvas compiler
+/// chain can perform Cargo work concurrently. The third outer worker is
+/// reserved for non-Cargo work, so charging every worker a Cargo share leaves
+/// CPU capacity idle throughout the cold compiler path.
+const MAX_CONCURRENT_CARGO_ACTIONS: usize = 2;
+/// The full verifier prebuilds test binaries and the normal Canvas launcher once
+/// in the native compiler output root before parallel shard execution, so every
+/// coordinator lane can reuse the same selected-root build cache while retaining
+/// its own final-publication path.
 ///
-/// Standalone workspace verification may use the whole coordinator cap. With no
-/// peer Cargo process, the full verifier may use that same cap so all deterministic
-/// shards can finish inside the fixed test-phase window. Peer pressure caps the
-/// branch at three lanes: two lanes cannot execute the measured workspace portfolio
-/// inside that window, while the CPU and Cargo-job budgets still bound aggregate
-/// pressure on smaller or saturated machines.
-const PRESSURED_FULL_VERIFIER_WORKSPACE_LANES: usize = 3;
-const _: () =
-    assert!(PRESSURED_FULL_VERIFIER_WORKSPACE_LANES <= super::WORKSPACE_TEST_CONCURRENCY_CAP);
+/// Standalone workspace verification may use the whole coordinator cap. The
+/// full verifier derives its actual lane count continuously from observed CPUs,
+/// live Cargo groups, concurrent outer actions, and each action's Cargo job
+/// share. Its completed shared prebuild then caps that measured answer at six.
 /// Stop launching and cancel owned process groups after 180 seconds of actual
 /// test-phase runtime. Compiler setup can be cold once; it is still serialized
 /// for low contention, but it does not consume the test runtime budget.
@@ -160,6 +168,7 @@ const _: () =
 struct Budget {
     workers: usize,
     cargo_jobs: usize,
+    compiler_cargo_jobs: usize,
     workspace_workers: usize,
     active_cargo_jobs: Option<usize>,
 }
@@ -176,6 +185,7 @@ impl Budget {
             return Self {
                 workers: 1,
                 cargo_jobs: 1,
+                compiler_cargo_jobs: 1,
                 workspace_workers: 1,
                 active_cargo_jobs: None,
             };
@@ -184,36 +194,38 @@ impl Budget {
             MAX_CONCURRENT_ACTIONS.saturating_sub(active.min(MAX_CONCURRENT_ACTIONS - 1));
         let cpu_slots = cpus.saturating_sub(active).max(1);
         let workers = fleet_slots.min(cpu_slots);
-        let participants = active + workers;
+        let cargo_workers = workers.min(MAX_CONCURRENT_CARGO_ACTIONS);
+        let participants = active + cargo_workers;
         let cargo_jobs = (cpus / participants.max(1)).max(1);
-        let sibling_reserve = cargo_jobs.saturating_mul(workers.saturating_sub(1));
-        let workspace_job_cap = cargo_jobs.max(1);
+        // Workspace tests start only after the Canvas process has emitted its
+        // post-compiler readiness record. No sibling compiler remains to claim
+        // the Cargo-worker reserve at that boundary. Convert the outer slot
+        // deliberately reserved for non-Cargo work into one additional lane of
+        // already-built test processes; live peer pressure still removes that
+        // slot through `workers` before this phase-specific budget is derived.
+        let non_cargo_workers = workers.saturating_sub(cargo_workers);
+        let workspace_job_cap = cargo_jobs.saturating_add(non_cargo_workers).max(1);
         let workspace_workers = cpu_slots
-            .saturating_sub(sibling_reserve)
             .min(workspace_job_cap)
-            .min(workspace_lane_cap(active))
-            .clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP);
+            .clamp(1, super::FULL_VERIFIER_WORKSPACE_TEST_CONCURRENCY_CAP);
         Self {
             workers,
             cargo_jobs,
+            compiler_cargo_jobs: cargo_jobs,
             workspace_workers,
             active_cargo_jobs: Some(active),
         }
     }
 
-    /// Rebalance outer and workspace parallelism without changing the Cargo
-    /// job cap already bound into compiler evidence by the native stage.
-    ///
     /// Once setup has completed, the two longest ready branches are the Cargo
     /// workspace coordinator and the Cargo-free browser suite. When the fresh
     /// observation still grants multiple workspace lanes, retain two outer
     /// workers so those branches cannot consume the fixed test window serially.
-    fn after_workspace_prebuild(self, mut observed: Self) -> Self {
-        observed.cargo_jobs = self.cargo_jobs;
-        if observed.workspace_workers > 1 {
-            observed.workers = observed.workers.max(2);
+    fn after_workspace_prebuild(mut self) -> Self {
+        if self.workspace_workers > 1 {
+            self.workers = self.workers.max(2);
         }
-        observed
+        self
     }
 
     #[cfg(test)]
@@ -221,18 +233,16 @@ impl Budget {
         Self {
             workers,
             cargo_jobs,
+            compiler_cargo_jobs: cargo_jobs,
             workspace_workers: cargo_jobs
-                .min(workspace_lane_cap(active_cargo_jobs))
-                .clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP),
+                .clamp(1, super::FULL_VERIFIER_WORKSPACE_TEST_CONCURRENCY_CAP),
             active_cargo_jobs: Some(active_cargo_jobs),
         }
     }
-}
 
-fn workspace_lane_cap(active_cargo_jobs: usize) -> usize {
-    match active_cargo_jobs {
-        0 => super::WORKSPACE_TEST_CONCURRENCY_CAP,
-        _ => PRESSURED_FULL_VERIFIER_WORKSPACE_LANES,
+    fn with_rebalanced_capacity(self, mut observed: Self) -> Self {
+        observed.compiler_cargo_jobs = self.compiler_cargo_jobs;
+        observed
     }
 }
 
@@ -252,9 +262,15 @@ struct ActionCompletion {
     result: Result<(), VerifyError>,
 }
 
-struct WorkerCompletion {
-    index: usize,
-    completion: ActionCompletion,
+enum WorkerCompletion {
+    Action {
+        index: usize,
+        completion: ActionCompletion,
+    },
+    CanvasReady {
+        index: usize,
+    },
+    WorkspacePrebuild(ActionCompletion),
 }
 
 struct GraphRun {
@@ -452,7 +468,7 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
         output_fault,
         deadline_exceeded,
     } = schedule_graph(runner, output, budget, &cancellation, runtime, |initial| {
-        initial.after_workspace_prebuild(rebalance(initial))
+        rebalance(initial).after_workspace_prebuild()
     });
     if let Some(error) = output_fault {
         return Err(VerifyError::Output(error));
@@ -546,6 +562,7 @@ fn schedule_graph<R: Runner>(
     let mut output_fault = None;
     let mut deadline_exceeded = false;
     let mut test_phase_started = None;
+    let mut canvas_app_ready = false;
     let mut setups = setup::SetupRun::new(rebalance);
 
     thread::scope(|scope| {
@@ -559,14 +576,26 @@ fn schedule_graph<R: Runner>(
                 cancellation,
             );
             if !failure_seen && !cancellation.is_cancelled() {
-                if let Some(rebalanced) =
-                    setups.advance(scope, runner, &nodes, output, budget, cancellation)
-                {
+                if let Some(rebalanced) = setups.advance(
+                    scope,
+                    runner,
+                    &nodes,
+                    output,
+                    budget,
+                    cancellation,
+                    &sender,
+                    &mut running,
+                ) {
                     budget = rebalanced;
                 }
                 failure_seen = setups.failed();
-            } else if setups.active() {
-                let _ = setups.advance(scope, runner, &nodes, output, budget, cancellation);
+            }
+            if !failure_seen
+                && !cancellation.is_cancelled()
+                && deferred_workspace_failure_ready(&nodes)
+            {
+                failure_seen = true;
+                cancellation.cancel();
             }
             if !failure_seen && !cancellation.is_cancelled() {
                 start_ready_actions(
@@ -581,20 +610,27 @@ fn schedule_graph<R: Runner>(
                     &mut failure_seen,
                     &mut output_fault,
                     &mut test_phase_started,
-                    setups.workspace_prebuilt(),
+                    setups.test_branches_ready(),
+                    canvas_app_ready,
                 );
             } else if cancellation.is_cancelled() {
                 failure_seen = true;
             }
-            if running == 0 && !setups.active() {
+            if running == 0 {
                 break;
             }
+            let completion_state = CompletionState {
+                nodes: &mut nodes,
+                running: &mut running,
+                failure_seen: &mut failure_seen,
+                canvas_app_ready: &mut canvas_app_ready,
+            };
             if receive_completion(
                 &receiver,
-                &mut nodes,
-                &mut running,
-                &mut failure_seen,
                 cancellation,
+                &mut setups,
+                output,
+                completion_state,
             ) {
                 break;
             }
@@ -657,14 +693,18 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
     failure_seen: &mut bool,
     output_fault: &mut Option<io::Error>,
     test_phase_started: &mut Option<Instant>,
-    test_setup_complete: bool,
+    test_branches_ready: bool,
+    canvas_app_ready: bool,
 ) {
     for index in ready_nodes(nodes) {
         if *running >= budget.workers {
             break;
         }
         let action = VERIFY_ACTIONS[index];
-        if starts_test_phase_deadline(action) && !test_setup_complete {
+        if starts_test_phase_deadline(action) && !test_branches_ready {
+            continue;
+        }
+        if matches!(action, Action::WorkspaceTests) && !canvas_app_ready {
             continue;
         }
         if let Err(error) = verify_timing::write_start(output, stage(index, action)) {
@@ -733,8 +773,18 @@ fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
         .name(format!("verification-action-{}", index + 1))
         .spawn_scoped(scope, move || {
             let started = Instant::now();
+            let readiness = matches!(
+                action,
+                Action::Command(step) if step.label == CANVAS_APP_LABEL
+            )
+            .then(|| {
+                let sender = sender.clone();
+                Arc::new(move || {
+                    let _ = sender.send(WorkerCompletion::CanvasReady { index });
+                }) as ActionReadiness
+            });
             let mut completion = panic::catch_unwind(AssertUnwindSafe(|| {
-                execute_action(runner, action, &cancellation, budget)
+                execute_action(runner, action, &cancellation, budget, readiness)
             }))
             .unwrap_or_else(|payload| {
                 failure(
@@ -746,38 +796,76 @@ fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
                 )
             });
             completion.elapsed = started.elapsed();
-            let _ = sender.send(WorkerCompletion { index, completion });
+            let _ = sender.send(WorkerCompletion::Action { index, completion });
         })
         .map(|_| ())
 }
 
-fn receive_completion(
+struct CompletionState<'a> {
+    nodes: &'a mut [NodeState],
+    running: &'a mut usize,
+    failure_seen: &'a mut bool,
+    canvas_app_ready: &'a mut bool,
+}
+
+fn receive_completion<Rebalance>(
     receiver: &mpsc::Receiver<WorkerCompletion>,
-    nodes: &mut [NodeState],
-    running: &mut usize,
-    failure_seen: &mut bool,
     cancellation: &CancellationToken,
+    setups: &mut setup::SetupRun<Rebalance>,
+    output: &mut impl Write,
+    state: CompletionState<'_>,
 ) -> bool {
     match receiver.recv_timeout(SCHEDULER_POLL) {
-        Ok(worker) => {
-            *running -= 1;
-            if !matches!(
-                worker.completion.result,
+        Ok(WorkerCompletion::Action { index, completion }) => {
+            *state.running -= 1;
+            let substantive = !matches!(
+                completion.result,
                 Ok(()) | Err(VerifyError::Cancelled { .. })
-            ) {
-                *failure_seen = true;
+            );
+            let defer_until_compilers_finish = index == 8 && !compiler_chain_complete(state.nodes);
+            if substantive && !defer_until_compilers_finish {
+                *state.failure_seen = true;
                 cancellation.cancel();
             }
-            nodes[worker.index] = NodeState::Complete(worker.completion);
+            state.nodes[index] = NodeState::Complete(completion);
+            false
+        }
+        Ok(WorkerCompletion::WorkspacePrebuild(completion)) => {
+            *state.running -= 1;
+            setups.complete_workspace_prebuild(completion, output, cancellation);
+            *state.failure_seen = setups.failed();
+            false
+        }
+        Ok(WorkerCompletion::CanvasReady { index }) => {
+            debug_assert_eq!(index, 6);
+            *state.canvas_app_ready = true;
             false
         }
         Err(mpsc::RecvTimeoutError::Timeout) => false,
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            *failure_seen = true;
+            *state.failure_seen = true;
             cancellation.cancel();
             true
         }
     }
+}
+
+fn compiler_chain_complete(nodes: &[NodeState]) -> bool {
+    matches!(
+        nodes.get(6),
+        Some(NodeState::Complete(ActionCompletion { result: Ok(()), .. }))
+    )
+}
+
+fn deferred_workspace_failure_ready(nodes: &[NodeState]) -> bool {
+    compiler_chain_complete(nodes)
+        && matches!(
+            nodes.get(8),
+            Some(NodeState::Complete(ActionCompletion {
+                result: Err(error),
+                ..
+            })) if !matches!(error, VerifyError::Cancelled { .. })
+        )
 }
 
 fn write_due_progress(

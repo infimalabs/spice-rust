@@ -354,7 +354,12 @@ fn stable_preparation_mirrors_once_holds_its_lock_and_preserves_fingerprints() {
 
     let mut prepared = contract().prepare_stable().expect("prepare stable source");
     let cached = canvas_source_root(&repository);
-    assert_eq!(prepared.contract.selection_root, cached);
+    assert_eq!(prepared.contract.selection_root, selection);
+    assert_eq!(prepared.contract.execution_root, cached);
+    let evidence = prepared
+        .complete_retained(&complete_processes(&prepared.contract))
+        .expect("complete prepared evidence");
+    assert!(admits(&evidence, &contract()));
     assert_eq!(
         fs::read(cached.join("src/lib.rs")).expect("read mirrored body"),
         b"pub fn answer() -> u8 { 42 }\n"
@@ -597,6 +602,88 @@ fn canonical_receipt_crosses_capture_roots_without_leaking_environment_values() 
 }
 
 #[test]
+fn canonical_receipt_crosses_private_cargo_materializations() {
+    let mut producers = [
+        contract(GateId::RustTypecheck),
+        contract(GateId::CanvasWebTypecheck),
+    ];
+    for producer in &mut producers {
+        producer.environment.push((
+            OsString::from(CARGO_HOME),
+            OsString::from("/producer/admitted-cargo-home"),
+        ));
+        producer.environment.extend([
+            (
+                OsString::from(PATH),
+                OsString::from("/producer/admitted-cargo-home/bin:/tool/bin"),
+            ),
+            (
+                OsString::from(SPICE_RS_BOOTSTRAP_CARGO_HOME),
+                OsString::from("/bootstrap/cargo-home"),
+            ),
+            (
+                OsString::from(SPICE_RS_NATIVE_CARGO),
+                OsString::from("/bootstrap/cargo-home/bin/cargo"),
+            ),
+        ]);
+        if producer.gate_id == GateId::RustTypecheck {
+            producer.environment.extend([
+                (
+                    OsString::from(CARGO_TARGET_DIR),
+                    OsString::from("/producer/artifact-cache"),
+                ),
+                (
+                    OsString::from(CARGO_BUILD_BUILD_DIR),
+                    OsString::from("/producer/build-script-cache"),
+                ),
+            ]);
+        }
+        producer.environment.sort();
+    }
+    let evidence = producers.iter().map(complete_evidence).collect::<Vec<_>>();
+    let receipt = encode_verifier_compiler_receipt(&evidence, AUTHORITY)
+        .expect("encode private Cargo-home receipt");
+
+    let consumers = producers
+        .iter()
+        .cloned()
+        .map(|mut consumer| {
+            let names: &[&str] = if consumer.gate_id == GateId::RustTypecheck {
+                &[CARGO_HOME, CARGO_TARGET_DIR, CARGO_BUILD_BUILD_DIR]
+            } else {
+                &[CARGO_HOME]
+            };
+            for name in names {
+                let (_, value) = consumer
+                    .environment
+                    .iter_mut()
+                    .find(|(candidate, _)| candidate == name)
+                    .expect("fixture Cargo materialization path");
+                *value = OsString::from(format!("/consumer/{name}"));
+            }
+            consumer.environment.retain(|(name, _)| {
+                name != SPICE_RS_BOOTSTRAP_CARGO_HOME && name != SPICE_RS_NATIVE_CARGO
+            });
+            let (_, path) = consumer
+                .environment
+                .iter_mut()
+                .find(|(name, _)| name == PATH)
+                .expect("fixture search path");
+            *path = OsString::from("/tool/bin");
+            consumer
+        })
+        .collect::<Vec<_>>();
+    let admitted = admit_verifier_compiler_receipt(&receipt, &consumers, AUTHORITY)
+        .expect("receipt authority ignores private Cargo materialization paths");
+    assert!(
+        admitted
+            .iter()
+            .zip(&consumers)
+            .all(|(candidate, consumer)| admits(candidate, consumer))
+    );
+}
+
+#[test]
 fn semantic_compiler_authority_crosses_source_commits_but_not_contract_or_worktree_drift() {
     let producers = [
         contract(GateId::RustTypecheck),
@@ -648,6 +735,18 @@ fn semantic_compiler_authority_crosses_source_commits_but_not_contract_or_worktr
         assert_ne!(
             producer.semantic_authority(),
             different_environment.semantic_authority(),
+        );
+
+        let mut different_cargo_home = producer.clone();
+        different_cargo_home.environment.push((
+            OsString::from(CARGO_HOME),
+            OsString::from("/another/private-cargo-home"),
+        ));
+        different_cargo_home.environment.sort();
+        assert_eq!(
+            producer.semantic_authority(),
+            different_cargo_home.semantic_authority(),
+            "private Cargo cache materialization is not compiler authority",
         );
     }
 
@@ -892,6 +991,7 @@ fn a_failed_process_returns_no_reusable_token() {
         .expect("gate crate has a workspace parent")
         .to_path_buf();
     contract.selection_root = contract.repository.clone();
+    contract.execution_root = contract.repository.clone();
     contract.tools = vec![tool("cargo", "/usr/bin/false")];
 
     let run = contract
@@ -900,6 +1000,67 @@ fn a_failed_process_returns_no_reusable_token() {
 
     assert!(!run.success());
     assert!(run.into_evidence().is_none());
+}
+
+#[test]
+fn canvas_readiness_requires_and_observes_the_post_compiler_record() {
+    let root = crate::toolchain::exclusive_scratch_root("gate-verifier-canvas-readiness");
+    let repository = root.join("repository");
+    let selection = root.join("selection");
+    fs::create_dir(&repository).expect("fixture repository");
+    fs::create_dir(&selection).expect("fixture selected root");
+
+    for (name, record, expected) in [
+        (
+            "ready-cargo",
+            format!("{}\n", crate::VERIFIER_APP_COMPILER_READY_RECORD),
+            Ok(()),
+        ),
+        ("silent-cargo", String::new(), Err("omitted")),
+    ] {
+        let cargo = root.join(name);
+        fs::write(&cargo, format!("#!/bin/sh\nprintf '%s' '{record}'\n"))
+            .expect("write readiness fixture Cargo executable");
+        fs::set_permissions(
+            &cargo,
+            fs::metadata("/usr/bin/true")
+                .expect("read fixture executable permissions")
+                .permissions(),
+        )
+        .expect("make readiness fixture executable");
+        let contract = VerifierCompilerContract::new(
+            GateId::CanvasWebTypecheck,
+            source(name.as_bytes()),
+            repository.clone(),
+            selection.clone(),
+            vec![tool("cargo", cargo.to_str().expect("UTF-8 fixture path"))],
+            Vec::new(),
+        )
+        .expect("readiness compiler contract");
+        let observed = Arc::new(AtomicBool::new(false));
+        let callback_observed = Arc::clone(&observed);
+        let run = contract.run_supervised_with_readiness(
+            VerifierCompilerStage::CanvasApp,
+            CancellationToken::new(),
+            Arc::new(move || callback_observed.store(true, Ordering::Release)),
+        );
+
+        match expected {
+            Ok(()) => {
+                assert!(run.expect("ready compiler runs").success());
+                assert!(observed.load(Ordering::Acquire));
+            }
+            Err(fragment) => {
+                let error = match run {
+                    Err(error) => error,
+                    Ok(_) => panic!("silent successful compiler is refused"),
+                };
+                assert!(error.to_string().contains(fragment));
+                assert!(!observed.load(Ordering::Acquire));
+            }
+        }
+    }
+    fs::remove_dir_all(root).expect("remove readiness fixture");
 }
 
 #[test]

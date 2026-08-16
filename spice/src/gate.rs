@@ -39,7 +39,8 @@ mod full_verifier_evidence;
 use environment::verifier_environment;
 #[cfg(test)]
 use environment::{
-    SHELL_LAST_COMMAND, verifier_environment_from, verifier_environment_from_with_cargo_home,
+    SHELL_HOOK_PREFIX, SHELL_LAST_COMMAND, verifier_environment_from,
+    verifier_environment_from_with_cargo_home,
 };
 
 pub use finding_source::{

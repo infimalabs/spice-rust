@@ -9,24 +9,28 @@
 //! and a complete arm token can only be assembled from the exact successful
 //! stages that arm requires.
 
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sill::{
-    Acquisition, Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
-    Possession, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+    Acquisition, Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment,
+    Observation, ObserveError, ObservedRecord, Output, OutputStream, Possession, RecordObserver,
+    Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
 use wire::{Digest, Domain};
 
 use super::ToolEvidence;
 use super::analyze::{
-    CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, canvas_output_roots, canvas_source_root,
-    make_cache_writable, rust_analysis_workspace, synchronize_source,
+    CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, RUST_BUILD_DIRECTORY, canvas_output_roots,
+    canvas_source_root, make_cache_writable, rust_analysis_workspace, synchronize_source,
 };
 use crate::VERIFIER_APP_PUBLISH_FLAG;
 use crate::battery::CANONICAL_BATTERY_MANIFEST;
@@ -45,12 +49,17 @@ use receipt::VerifierCompilerReceiptSet;
 
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
-const RUST_BUILD_DIRECTORY: &str = "spice-gate-native-build";
+const CARGO_HOME: &str = "CARGO_HOME";
+const PATH: &str = "PATH";
+const SPICE_RS_BOOTSTRAP_CARGO_HOME: &str = "SPICE_RS_BOOTSTRAP_CARGO_HOME"; // env-policy: allow
+const SPICE_RS_NATIVE_CARGO: &str = "SPICE_RS_NATIVE_CARGO"; // env-policy: allow
 const PROCESS_RUNTIME: Duration = Duration::from_secs(30 * 60);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(30);
 const REAP_DEADLINE: Duration = Duration::from_secs(10);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 const OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
+const READY_FRAME_LIMIT: usize = 8 * 1024;
+const READY_QUEUE_CAPACITY: usize = 16;
 
 const NATIVE_CLIPPY_ARGUMENTS: &[&str] = &[
     "clippy",
@@ -192,6 +201,7 @@ pub struct VerifierCompilerContract {
     manifest: Digest,
     repository: PathBuf,
     selection_root: PathBuf,
+    execution_root: PathBuf,
     tools: Vec<ToolEvidence>,
     environment: Vec<(OsString, OsString)>,
 }
@@ -217,6 +227,7 @@ impl VerifierCompilerContract {
             source,
             manifest: manifest_identity(),
             repository,
+            execution_root: selection_root.clone(),
             selection_root,
             tools,
             environment,
@@ -271,7 +282,7 @@ impl VerifierCompilerContract {
             let build = environment_path(&environment, CARGO_BUILD_BUILD_DIR)
                 .unwrap_or_else(|| target.join(RUST_BUILD_DIRECTORY));
             super::RustAnalysisWorkspace {
-                source: self.selection_root.clone(),
+                source: self.execution_root.clone(),
                 cargo_target: target,
                 cargo_build: build,
             }
@@ -299,7 +310,7 @@ impl VerifierCompilerContract {
     pub fn prepare_stable(self) -> io::Result<PreparedVerifierCompiler> {
         let source = StableCompilerSource::capture(&self)?;
         let mut contract = self;
-        contract.selection_root = source.root().to_path_buf();
+        contract.execution_root = source.root().to_path_buf();
         Ok(PreparedVerifierCompiler { contract, source })
     }
 
@@ -315,7 +326,7 @@ impl VerifierCompilerContract {
     /// Returns an unsupported stage, invalid supervision policy, launch, wait,
     /// drain, or capture failure.
     pub fn run(&self, stage: VerifierCompilerStage) -> io::Result<VerifierCompilerRun> {
-        self.run_with_cancellation(stage, Cancellation::Never)
+        self.run_with_cancellation(stage, Cancellation::Never, None)
     }
 
     /// Run one compiler stage under an externally cancellable process group.
@@ -329,13 +340,36 @@ impl VerifierCompilerContract {
         stage: VerifierCompilerStage,
         cancellation: CancellationToken,
     ) -> io::Result<VerifierCompilerRun> {
-        self.run_with_cancellation(stage, Cancellation::Token(cancellation))
+        self.run_with_cancellation(stage, Cancellation::Token(cancellation), None)
+    }
+
+    /// Run the Canvas app stage and report the exact point where nested Cargo
+    /// compilation has succeeded but publication work is still in progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns the ordinary supervised-process failures, rejects any other
+    /// stage, and rejects a successful app process that omits the readiness
+    /// record.
+    pub fn run_supervised_with_readiness(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: CancellationToken,
+        ready: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<VerifierCompilerRun> {
+        if stage != VerifierCompilerStage::CanvasApp {
+            return Err(io::Error::other(
+                "compiler readiness is defined only for the Canvas app stage",
+            ));
+        }
+        self.run_with_cancellation(stage, Cancellation::Token(cancellation), Some(ready))
     }
 
     fn run_with_cancellation(
         &self,
         stage: VerifierCompilerStage,
         cancellation: Cancellation,
+        readiness: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> io::Result<VerifierCompilerRun> {
         if stage.gate_id() != self.gate_id {
             return Err(io::Error::other(format!(
@@ -353,51 +387,19 @@ impl VerifierCompilerContract {
         let arguments = stage_arguments(stage, &self.repository);
         let environment = compiler_environment(&self.environment, &self.repository);
         let started = Instant::now();
-        let process_environment =
-            Environment::new(environment.clone()).map_err(io::Error::other)?;
-        let deadlines = Deadlines::new(PROCESS_RUNTIME, OUTPUT_DRAIN, REAP_DEADLINE)
-            .map_err(io::Error::other)?;
-        let wait = WaitPolicy::new(
-            format!("verifier compiler stage {}", stage.tag()),
-            cancellation,
-            RestartDisposition::Never,
-        )
-        .map_err(io::Error::other)?;
-        let spec = Spec {
-            argv: Argv::new(program, arguments.iter().cloned()).map_err(io::Error::other)?,
-            cwd: self.selection_root.clone(),
-            environment: process_environment,
-            group: crate::measure::bounded_process_group(),
-            deadlines,
-            wait,
-            output: Output::new(
-                StdinPolicy::Null,
-                StreamPolicy::Capture {
-                    limit: OUTPUT_LIMIT,
-                },
-                StreamPolicy::Capture {
-                    limit: OUTPUT_LIMIT,
-                },
-            ),
-            redaction: Redaction::None,
-            grace: TERMINATION_GRACE,
-        };
-        let outcome = sill::spawn(spec)
-            .map_err(io::Error::other)?
-            .wait()
-            .map_err(io::Error::other)?;
-        if !outcome.outputs_drained() {
-            return Err(io::Error::other(format!(
-                "{} compiler output did not drain before cleanup",
-                stage.tag()
-            )));
-        }
+        let spec = self.compiler_spec(stage, cancellation, program, &arguments, &environment)?;
+        let (outcome, readiness) = wait_for_compiler(spec, stage, readiness)?;
         let stdout = complete_output(stage, "stdout", outcome.stdout())?;
         let stderr = complete_output(stage, "stderr", outcome.stderr())?;
         let status = outcome.completion().status();
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let success = status.success();
         let code = status.code();
+        if success && readiness.is_some_and(|observer| !observer.observed()) {
+            return Err(io::Error::other(
+                "successful Canvas app compiler omitted its readiness record",
+            ));
+        }
         let completion = match outcome.completion() {
             Completion::Exited(_) => VerifierCompilerCompletion::Exited,
             Completion::Cancelled(_) => VerifierCompilerCompletion::Cancelled,
@@ -420,6 +422,44 @@ impl VerifierCompilerContract {
             stdout,
             stderr,
             completion,
+        })
+    }
+
+    fn compiler_spec(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: Cancellation,
+        program: &OsStr,
+        arguments: &[OsString],
+        environment: &[(OsString, OsString)],
+    ) -> io::Result<Spec> {
+        let environment = Environment::new(environment.to_vec()).map_err(io::Error::other)?;
+        let deadlines = Deadlines::new(PROCESS_RUNTIME, OUTPUT_DRAIN, REAP_DEADLINE)
+            .map_err(io::Error::other)?;
+        let wait = WaitPolicy::new(
+            format!("verifier compiler stage {}", stage.tag()),
+            cancellation,
+            RestartDisposition::Never,
+        )
+        .map_err(io::Error::other)?;
+        Ok(Spec {
+            argv: Argv::new(program, arguments.iter().cloned()).map_err(io::Error::other)?,
+            cwd: self.execution_root.clone(),
+            environment,
+            group: crate::measure::bounded_process_group(),
+            deadlines,
+            wait,
+            output: Output::new(
+                StdinPolicy::Null,
+                StreamPolicy::Capture {
+                    limit: OUTPUT_LIMIT,
+                },
+                StreamPolicy::Capture {
+                    limit: OUTPUT_LIMIT,
+                },
+            ),
+            redaction: Redaction::None,
+            grace: TERMINATION_GRACE,
         })
     }
 
@@ -488,6 +528,76 @@ fn set_environment_value(environment: &mut Vec<(OsString, OsString)>, name: &str
     }
 }
 
+fn wait_for_compiler(
+    spec: Spec,
+    stage: VerifierCompilerStage,
+    readiness: Option<Arc<dyn Fn() + Send + Sync>>,
+) -> io::Result<(WaitOutcome, Option<Arc<CompilerReadinessObserver>>)> {
+    let readiness = readiness.map(CompilerReadinessObserver::new).map(Arc::new);
+    let outcome = match &readiness {
+        Some(observer) => {
+            let observation = Observation::new(
+                OutputStream::Stdout,
+                READY_FRAME_LIMIT,
+                READY_QUEUE_CAPACITY,
+                Arc::clone(observer) as Arc<dyn RecordObserver>,
+            )
+            .map_err(io::Error::other)?;
+            sill::spawn_observed(spec, observation)
+                .map_err(io::Error::other)?
+                .wait()
+                .map_err(io::Error::other)?
+        }
+        None => sill::spawn(spec)
+            .map_err(io::Error::other)?
+            .wait()
+            .map_err(io::Error::other)?,
+    };
+    if let Some(failure) = outcome.observation_failure() {
+        return Err(io::Error::other(format!(
+            "{} compiler readiness observation failed: {failure}",
+            stage.tag()
+        )));
+    }
+    if !outcome.outputs_drained() {
+        return Err(io::Error::other(format!(
+            "{} compiler output did not drain before cleanup",
+            stage.tag()
+        )));
+    }
+    Ok((outcome, readiness))
+}
+
+struct CompilerReadinessObserver {
+    ready: Arc<dyn Fn() + Send + Sync>,
+    observed: AtomicBool,
+}
+
+impl CompilerReadinessObserver {
+    fn new(ready: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self {
+            ready,
+            observed: AtomicBool::new(false),
+        }
+    }
+
+    fn observed(&self) -> bool {
+        self.observed.load(Ordering::Acquire)
+    }
+}
+
+impl RecordObserver for CompilerReadinessObserver {
+    fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
+        if record.bytes().strip_suffix(b"\n")
+            == Some(crate::VERIFIER_APP_COMPILER_READY_RECORD.as_bytes())
+            && !self.observed.swap(true, Ordering::AcqRel)
+        {
+            (self.ready)();
+        }
+        Ok(())
+    }
+}
+
 /// One compiler contract bound to a verified stable mirror of its selection.
 pub struct PreparedVerifierCompiler {
     contract: VerifierCompilerContract,
@@ -536,11 +646,39 @@ impl PreparedVerifierCompiler {
         self.contract.reusable_workspace()
     }
 
-    /// Complete the arm proof while retaining stable-source possession.
+    /// Run the prepared Canvas app stage and report its compiler-ready boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as
+    /// [`VerifierCompilerContract::run_supervised_with_readiness`].
+    pub fn run_supervised_with_readiness(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: CancellationToken,
+        ready: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<VerifierCompilerRun> {
+        self.contract
+            .run_supervised_with_readiness(stage, cancellation, ready)
+    }
+
+    /// Assemble reusable evidence while retaining the stable source possession.
     ///
     /// The prepared contract remains locked until it is dropped, allowing the
     /// full verifier to construct both its battery receipt and terminal durable
     /// evidence from one unchanged compiler authority.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the same incomplete or foreign evidence as [`Self::complete`].
+    pub fn complete_retained(
+        &self,
+        processes: &[VerifierCompilerProcessEvidence],
+    ) -> Result<VerifierCompilerEvidence, String> {
+        self.contract.complete(processes)
+    }
+
+    /// Complete the arm proof while retaining stable-source possession.
     ///
     /// # Errors
     ///
@@ -904,7 +1042,7 @@ pub(super) fn compiler_semantic_authority(
     let tools = Digest::compute(Domain::GateReceipt, &tool_bytes);
     frame(&mut bytes, tools.as_str().as_bytes());
     let mut environment_bytes = Vec::new();
-    for (name, value) in &environment {
+    for (name, value) in compiler_authority_environment(&environment) {
         frame(&mut environment_bytes, name.as_bytes());
         frame(&mut environment_bytes, value.as_bytes());
     }
@@ -926,6 +1064,65 @@ pub(super) fn compiler_semantic_authority(
         frame(&mut bytes, arguments.as_str().as_bytes());
     }
     Digest::compute(Domain::GateReceipt, &bytes)
+}
+
+/// Environment entries that affect compiler semantics across launcher rims.
+///
+/// `CARGO_HOME`, `CARGO_TARGET_DIR`, and `CARGO_BUILD_BUILD_DIR` select the
+/// admitted dependency, artifact, and build-script cache locations used to run
+/// Cargo. `spice dev cargo` also publishes two provenance variables and puts
+/// the private Cargo home's empty `bin` directory at the front of `PATH`. The
+/// full verifier must retain all of that for process execution, but a normal
+/// installed hook reconstructs the same source/tool contract outside that
+/// launcher and cannot reproduce its private materialization paths.
+///
+/// The resolved and digested compiler tools remain authoritative, as does the
+/// rest of `PATH`; only an injection proven by the launcher's bootstrap marker
+/// is removed. Source, lockfile, arguments, job limits, and every other
+/// retained compiler variable remain bound to the receipt.
+pub(super) fn compiler_authority_environment(
+    environment: &[(OsString, OsString)],
+) -> Vec<(OsString, OsString)> {
+    let injected_bin = injected_cargo_bin(environment);
+    environment
+        .iter()
+        .filter(|(name, _)| {
+            ![
+                OsStr::new(CARGO_HOME),
+                OsStr::new(CARGO_TARGET_DIR),
+                OsStr::new(CARGO_BUILD_BUILD_DIR),
+                OsStr::new(SPICE_RS_BOOTSTRAP_CARGO_HOME),
+                OsStr::new(SPICE_RS_NATIVE_CARGO),
+            ]
+            .contains(&name.as_os_str())
+        })
+        .map(|(name, value)| {
+            let value = if name == OsStr::new(PATH) {
+                canonical_path(value, injected_bin.as_deref())
+            } else {
+                value.clone()
+            };
+            (name.clone(), value)
+        })
+        .collect()
+}
+
+fn injected_cargo_bin(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
+    let bootstrap = environment
+        .iter()
+        .find(|(name, _)| name == OsStr::new(SPICE_RS_BOOTSTRAP_CARGO_HOME))?;
+    let cargo_home = environment
+        .iter()
+        .find(|(name, _)| name == OsStr::new(CARGO_HOME))?;
+    (cargo_home.1 != bootstrap.1).then(|| Path::new(&cargo_home.1).join("bin"))
+}
+
+fn canonical_path(value: &OsStr, injected_bin: Option<&Path>) -> OsString {
+    let Some(injected_bin) = injected_bin else {
+        return value.to_owned();
+    };
+    env::join_paths(env::split_paths(value).filter(|entry| entry != injected_bin))
+        .unwrap_or_else(|_| value.to_owned())
 }
 
 fn compiler_merge_semantic_authority(

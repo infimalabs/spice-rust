@@ -5,6 +5,7 @@ pub(super) fn execute_action<R: Runner>(
     action: Action,
     cancellation: &CancellationToken,
     budget: Budget,
+    readiness: Option<ActionReadiness>,
 ) -> ActionCompletion {
     match action {
         Action::EntryPoint => match runner.entry_point() {
@@ -24,7 +25,15 @@ pub(super) fn execute_action<R: Runner>(
             },
         ),
         Action::Command(step) => execute_process(
-            runner.run(step, cancellation, budget.cargo_jobs),
+            match readiness {
+                Some(readiness) => runner.run_with_readiness(
+                    step,
+                    cancellation,
+                    command_cargo_jobs(step, budget),
+                    readiness,
+                ),
+                None => runner.run(step, cancellation, command_cargo_jobs(step, budget)),
+            },
             step.label,
             |source| VerifyError::Launch {
                 label: step.label,
@@ -70,6 +79,14 @@ pub(super) fn execute_action<R: Runner>(
                 }
             }
         },
+    }
+}
+
+fn command_cargo_jobs(step: crate::Step, budget: Budget) -> usize {
+    if step.uses_verifier_compiler_contract() {
+        budget.compiler_cargo_jobs
+    } else {
+        budget.cargo_jobs
     }
 }
 

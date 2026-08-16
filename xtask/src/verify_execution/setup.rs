@@ -1,6 +1,7 @@
-//! Synchronous setup gates interleaved with the verifier action graph.
+//! Setup gates interleaved with the verifier action graph.
 
 use std::io::{self, Write};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
@@ -8,16 +9,16 @@ use std::time::Instant;
 use sill::CancellationToken;
 
 use super::{
-    ActionCompletion, Budget, NodeState, Runner, STRUCTURAL_PREFLIGHT_LABEL, VerifyError,
-    WORKSPACE_TEST_PREBUILD_LABEL, execute_battery, execute_process,
+    ActionCompletion, Budget, Disposition, NodeState, Runner, STRUCTURAL_PREFLIGHT_LABEL,
+    VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, WorkerCompletion, execute_battery, execute_process,
+    failure, panic_detail,
 };
 
 pub(super) struct SetupRun<Rebalance> {
     structural_completed: bool,
     structural_failure: Option<VerifyError>,
-    workspace_prebuilt: bool,
     workspace_prebuild_started: bool,
-    workspace_prebuild_receiver: Option<mpsc::Receiver<ActionCompletion>>,
+    workspace_prebuilt: bool,
     prebuild_failure: Option<VerifyError>,
     output_fault: Option<io::Error>,
     rebalance: Option<Rebalance>,
@@ -28,9 +29,8 @@ impl<Rebalance> SetupRun<Rebalance> {
         Self {
             structural_completed: false,
             structural_failure: None,
-            workspace_prebuilt: false,
             workspace_prebuild_started: false,
-            workspace_prebuild_receiver: None,
+            workspace_prebuilt: false,
             prebuild_failure: None,
             output_fault: None,
             rebalance: Some(rebalance),
@@ -43,14 +43,9 @@ impl<Rebalance> SetupRun<Rebalance> {
             || self.output_fault.is_some()
     }
 
-    pub(super) const fn workspace_prebuilt(&self) -> bool {
+    pub(super) const fn test_branches_ready(&self) -> bool {
         self.workspace_prebuilt
     }
-
-    pub(super) const fn active(&self) -> bool {
-        self.workspace_prebuild_receiver.is_some()
-    }
-
     pub(super) fn into_failures(
         self,
     ) -> (Option<VerifyError>, Option<VerifyError>, Option<io::Error>) {
@@ -74,14 +69,30 @@ impl<Rebalance> SetupRun<Rebalance> {
             VerifyError::Output(error) => {
                 self.output_fault.get_or_insert(error);
             }
+            VerifyError::Cancelled { .. } => {}
             error if structural => self.structural_failure = Some(error),
             error => self.prebuild_failure = Some(error),
         }
         cancellation.cancel();
     }
+
+    pub(super) fn complete_workspace_prebuild(
+        &mut self,
+        completion: ActionCompletion,
+        output: &mut impl Write,
+        cancellation: &CancellationToken,
+    ) {
+        self.workspace_prebuilt = completion.result.is_ok();
+        let rendered = render_workspace_test_prebuild(completion, output);
+        self.record(rendered, false, cancellation);
+    }
 }
 
 impl<Rebalance: FnOnce(Budget) -> Budget> SetupRun<Rebalance> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "setup scheduling exposes the same bounded worker state as action scheduling"
+    )]
     pub(super) fn advance<'scope, 'env: 'scope, R: Runner + 'env>(
         &mut self,
         scope: &'scope thread::Scope<'scope, 'env>,
@@ -90,6 +101,8 @@ impl<Rebalance: FnOnce(Budget) -> Budget> SetupRun<Rebalance> {
         output: &mut impl Write,
         budget: Budget,
         cancellation: &CancellationToken,
+        sender: &mpsc::Sender<WorkerCompletion>,
+        running: &mut usize,
     ) -> Option<Budget> {
         if !self.structural_completed && structural_preflight_ready(nodes) {
             let completion = execute_structural_preflight(runner, cancellation);
@@ -97,84 +110,43 @@ impl<Rebalance: FnOnce(Budget) -> Budget> SetupRun<Rebalance> {
             let rendered = render_structural_preflight(completion, output);
             self.record(rendered, true, cancellation);
         }
-        if !self.failed()
-            && !cancellation.is_cancelled()
-            && !self.workspace_prebuild_started
-            && workspace_test_prebuild_ready(nodes)
-        {
-            self.start_workspace_test_prebuild(scope, runner, cancellation, budget);
+        if self.failed() {
+            return None;
         }
-        let completion = self.poll_workspace_test_prebuild(cancellation)?;
-        self.workspace_prebuilt = completion.result.is_ok();
-        let rendered = render_workspace_test_prebuild(completion, output);
-        self.record(rendered, false, cancellation);
-        if self.failed() || !self.workspace_prebuilt {
+        if !self.workspace_prebuild_started
+            && workspace_test_prebuild_ready(nodes)
+            && *running < budget.workers
+        {
+            if let Err(error) =
+                start_workspace_test_prebuild(scope, runner, output, cancellation, budget, sender)
+            {
+                self.prebuild_failure = Some(VerifyError::Launch {
+                    label: WORKSPACE_TEST_PREBUILD_LABEL,
+                    source: error,
+                });
+                cancellation.cancel();
+                return None;
+            }
+            self.workspace_prebuild_started = true;
+            *running += 1;
+        }
+        if !self.workspace_prebuilt
+            || !workspace_test_launch_slot_ready(nodes)
+            || self.rebalance.is_none()
+        {
             return None;
         }
         let rebalance = self
             .rebalance
             .take()
             .expect("workspace-test setup rebalances exactly once");
-        let budget = rebalance(budget);
+        let budget = budget.with_rebalanced_capacity(rebalance(budget));
         if let Err(error) = write_rebalanced_budget(output, budget) {
             self.output_fault = Some(error);
             cancellation.cancel();
             None
         } else {
             Some(budget)
-        }
-    }
-
-    fn start_workspace_test_prebuild<'scope, 'env: 'scope, R: Runner + 'env>(
-        &mut self,
-        scope: &'scope thread::Scope<'scope, 'env>,
-        runner: &'scope R,
-        cancellation: &CancellationToken,
-        budget: Budget,
-    ) {
-        let (sender, receiver) = mpsc::channel();
-        let worker_cancellation = cancellation.clone();
-        self.workspace_prebuild_started = true;
-        match thread::Builder::new()
-            .name("verification-workspace-test-prebuild".to_owned())
-            .spawn_scoped(scope, move || {
-                let completion =
-                    execute_workspace_test_prebuild(runner, &worker_cancellation, budget);
-                let _ = sender.send(completion);
-            }) {
-            Ok(_) => self.workspace_prebuild_receiver = Some(receiver),
-            Err(source) => {
-                self.prebuild_failure = Some(VerifyError::Launch {
-                    label: WORKSPACE_TEST_PREBUILD_LABEL,
-                    source,
-                });
-                cancellation.cancel();
-            }
-        }
-    }
-
-    fn poll_workspace_test_prebuild(
-        &mut self,
-        cancellation: &CancellationToken,
-    ) -> Option<ActionCompletion> {
-        let result = self.workspace_prebuild_receiver.as_ref()?.try_recv();
-        match result {
-            Ok(completion) => {
-                self.workspace_prebuild_receiver = None;
-                Some(completion)
-            }
-            Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.workspace_prebuild_receiver = None;
-                self.prebuild_failure = Some(VerifyError::Launch {
-                    label: WORKSPACE_TEST_PREBUILD_LABEL,
-                    source: io::Error::other(
-                        "workspace-test prebuild worker disconnected before reporting",
-                    ),
-                });
-                cancellation.cancel();
-                None
-            }
         }
     }
 }
@@ -229,9 +201,13 @@ fn write_rebalanced_budget(output: &mut impl Write, budget: Budget) -> io::Resul
         output,
         concat!(
             "[verify] scheduler-rebalanced trigger=workspace-test-setup workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={}"
+            "active_peer_cargo_jobs={} workspace_workers={} compiler_cargo_jobs={}"
         ),
-        budget.workers, budget.cargo_jobs, active, budget.workspace_workers,
+        budget.workers,
+        budget.cargo_jobs,
+        active,
+        budget.workspace_workers,
+        budget.compiler_cargo_jobs,
     )?;
     output.flush()
 }
@@ -240,7 +216,52 @@ fn workspace_test_prebuild_ready(nodes: &[NodeState]) -> bool {
     matches!(
         nodes.get(3),
         Some(NodeState::Complete(ActionCompletion { result: Ok(()), .. }))
+    ) && matches!(nodes.get(7), Some(NodeState::Pending))
+        && matches!(nodes.get(8), Some(NodeState::Pending))
+}
+
+fn workspace_test_launch_slot_ready(nodes: &[NodeState]) -> bool {
+    matches!(
+        nodes.get(5),
+        Some(NodeState::Complete(ActionCompletion { result: Ok(()), .. }))
     )
+}
+
+fn start_workspace_test_prebuild<'scope, 'env: 'scope, R: Runner + 'env>(
+    scope: &'scope thread::Scope<'scope, 'env>,
+    runner: &'scope R,
+    output: &mut impl Write,
+    cancellation: &CancellationToken,
+    budget: Budget,
+    sender: &mpsc::Sender<WorkerCompletion>,
+) -> io::Result<()> {
+    writeln!(
+        output,
+        "[verify] stage=setup identity={WORKSPACE_TEST_PREBUILD_LABEL:?}"
+    )?;
+    output.flush()?;
+    let sender = sender.clone();
+    let cancellation = cancellation.clone();
+    thread::Builder::new()
+        .name("verification-workspace-test-prebuild".to_owned())
+        .spawn_scoped(scope, move || {
+            let started = Instant::now();
+            let mut completion = panic::catch_unwind(AssertUnwindSafe(|| {
+                execute_workspace_test_prebuild(runner, &cancellation, budget)
+            }))
+            .unwrap_or_else(|payload| {
+                failure(
+                    VerifyError::WorkerPanic {
+                        label: WORKSPACE_TEST_PREBUILD_LABEL,
+                        detail: panic_detail(payload),
+                    },
+                    Disposition::Panic,
+                )
+            });
+            completion.elapsed = started.elapsed();
+            let _ = sender.send(WorkerCompletion::WorkspacePrebuild(completion));
+        })
+        .map(|_| ())
 }
 
 fn execute_workspace_test_prebuild<R: Runner>(
@@ -269,11 +290,6 @@ fn render_workspace_test_prebuild(
     completion: ActionCompletion,
     output: &mut impl Write,
 ) -> Result<(), VerifyError> {
-    writeln!(
-        output,
-        "[verify] stage=setup identity={WORKSPACE_TEST_PREBUILD_LABEL:?}"
-    )
-    .map_err(VerifyError::Output)?;
     output
         .write_all(&completion.output)
         .map_err(VerifyError::Output)?;
