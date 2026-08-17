@@ -34,6 +34,7 @@ const CONFIGURED_BOUNDARY_TEST: &str = concat!(
     "}\n",
 );
 
+mod cross_package_ownership;
 mod environment;
 mod metadata;
 mod partition;
