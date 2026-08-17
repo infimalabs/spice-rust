@@ -673,6 +673,21 @@ fn every_registered_leaf_renders_its_exact_usage() {
 }
 
 #[test]
+fn root_version_flags_render_one_compile_time_identity() {
+    let expected = format!("spice {}\n", env!("CARGO_PKG_VERSION"));
+    for flag in ["-V", "--version"] {
+        let error = command()
+            .try_get_matches_from(["spice", flag])
+            .expect_err("a version flag terminates parsing with its display");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(error.to_string(), expected);
+    }
+
+    let help = command().render_help().to_string();
+    assert!(help.contains("-V, --version"), "{help}");
+}
+
+#[test]
 fn reference_transaction_contract_names_early_conditional_git() {
     let contract = contract_at(CONTRACTS, &["gate", "reference-transaction"])
         .expect("reference-transaction has one registered contract");

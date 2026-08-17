@@ -166,6 +166,7 @@ fn main() {
             }
             Err(error) => deliver_mount_refusal(error, bootstrap_form),
         },
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayVersion => error.exit(),
         Err(_) => {
             let mounts = mounted_registry(
                 bootstrap_form,
