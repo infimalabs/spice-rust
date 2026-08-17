@@ -34,6 +34,10 @@ struct SemanticArmReceipt {
 }
 
 impl SemanticEvidence {
+    pub(super) const fn source(&self) -> &Digest {
+        self.closure.source()
+    }
+
     pub(super) fn mint(
         repository: &Repository,
         closure: GateSemanticClosure,

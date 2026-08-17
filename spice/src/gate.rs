@@ -36,6 +36,7 @@ mod environment;
 mod finding_source;
 mod full_verifier_evidence;
 
+pub use environment::git_local_environment;
 use environment::verifier_environment;
 #[cfg(test)]
 use environment::{
@@ -49,8 +50,10 @@ pub use finding_source::{
 };
 pub use full_verifier_evidence::{
     AdmittedFullVerifierEvidence, AdmittedSemanticVerifierEvidence, FullVerifierEvidence,
+    FullVerifierEvidenceAdmission, FullVerifierEvidenceMiss, FullVerifierEvidenceStage,
     SemanticFullVerifierAdmission, admit_full_verifier_evidence,
     admit_merge_parent_full_verifier_evidence, admit_semantic_full_verifier_evidence,
+    inspect_full_verifier_evidence,
 };
 
 /// One staged battery capture retained across the full verifier's actions.

@@ -127,29 +127,97 @@ pub(crate) fn resolution_evidence(repository: &Repository) -> Outcome<()> {
 /// This leaf is the policy-free destination for source-development delegates:
 /// Cargo may build this product command, but no xtask command or hook owns a
 /// second selection implementation.
-pub(crate) fn selection() -> Outcome<spice::change_gate::ChangeGateReport> {
+#[derive(serde::Serialize)]
+#[serde(rename_all = "kebab-case", tag = "evidence")]
+pub(crate) enum CurrentSourceSelectionReport {
+    FullVerifier {
+        source: Digest,
+        bundle: Digest,
+        battery: Digest,
+        selection: gate::ChangeSelectionReport,
+    },
+    Focused {
+        report: spice::change_gate::ChangeGateReport,
+    },
+}
+
+pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
     let mut progress = Vec::new();
+    let repository = match Repository::discover(Path::new(".")) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "gate::selection-repository-unresolved".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    let miss = match spice::gate::inspect_full_verifier_evidence(&repository, Selector::staged()) {
+        Ok(spice::gate::FullVerifierEvidenceAdmission::Admitted(admitted)) => {
+            let selection = match gate::select_current_source_change_gates_with_full_verifier(
+                admitted.source().clone(),
+                admitted.changes(),
+            ) {
+                Ok(selection) => selection,
+                Err(error) => {
+                    return Outcome::Refusal(Refusal::evidence(
+                        "gate::change-selection-refused",
+                        error.to_string(),
+                        "repair the named selection input, then rerun the source gate",
+                    ));
+                }
+            };
+            return direct(CurrentSourceSelectionReport::FullVerifier {
+                source: admitted.source().clone(),
+                bundle: admitted.digest().clone(),
+                battery: admitted.battery().digest(),
+                selection,
+            });
+        }
+        Ok(spice::gate::FullVerifierEvidenceAdmission::Unavailable(miss)) => miss,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: error.reason().to_owned(),
+                detail: error.detail().to_owned(),
+            });
+        }
+    };
     match spice::change_gate::run_current_source(&mut progress) {
-        Ok(report) if report.admits() => direct(report),
+        Ok(report) if report.admits() => direct(CurrentSourceSelectionReport::Focused { report }),
         Ok(report) => {
             progress.extend_from_slice(report.refusal_fold().as_bytes());
             Outcome::Refusal(Refusal::evidence(
                 "gate::selection-regressed",
-                String::from_utf8_lossy(&progress).into_owned(),
+                selection_detail_with_miss(&progress, "selected gate regressed", &miss),
                 "repair the selected change before committing it",
             ))
         }
         Err(error) if error.is_fault() => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: error.reason().to_owned(),
-            detail: selection_detail(&progress, error.detail()),
+            detail: selection_detail_with_miss(&progress, error.detail(), &miss),
         }),
         Err(error) => Outcome::Refusal(Refusal::evidence(
             error.reason(),
-            selection_detail(&progress, error.detail()),
+            selection_detail_with_miss(&progress, error.detail(), &miss),
             "repair the named selection input, then rerun the source gate",
         )),
     }
+}
+
+fn selection_detail_with_miss(
+    progress: &[u8],
+    detail: &str,
+    miss: &spice::gate::FullVerifierEvidenceMiss,
+) -> String {
+    let detail = selection_detail(progress, detail);
+    format!(
+        "full-verifier admission missed at stage={}: {}; {detail}",
+        miss.stage().as_str(),
+        miss.detail(),
+    )
 }
 
 fn selection_detail(progress: &[u8], detail: &str) -> String {

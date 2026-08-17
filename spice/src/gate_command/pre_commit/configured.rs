@@ -41,24 +41,6 @@ const SOURCE_GATE_ARGV: [&str; 11] = [
     "selection",
 ];
 
-const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_CONFIG",
-    "GIT_CONFIG_PARAMETERS",
-    "GIT_CONFIG_COUNT",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_IMPLICIT_WORK_TREE",
-    "GIT_GRAFT_FILE",
-    "GIT_INDEX_FILE",
-    "GIT_NO_REPLACE_OBJECTS",
-    "GIT_REPLACE_REF_BASE",
-    "GIT_PREFIX",
-    "GIT_SHALLOW_FILE",
-    "GIT_COMMON_DIR",
-];
-
 /// One ordered configured-command result bound to an immutable staged source.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -732,7 +714,7 @@ fn command_environment(
 ) -> Result<Environment, ConfiguredFailure> {
     let mut entries = base
         .iter()
-        .filter(|(name, _)| !git_local_environment(name))
+        .filter(|(name, _)| !spice::gate::git_local_environment(name))
         .cloned()
         .collect::<BTreeMap<_, _>>();
     entries.remove(OsStr::new(PATHS_VARIABLE));
@@ -745,15 +727,6 @@ fn command_environment(
     Environment::new(entries).map_err(|error| {
         ConfiguredFailure::fault("gate::pre-commit-environment-invalid", error.to_string())
     })
-}
-
-fn git_local_environment(name: &OsStr) -> bool {
-    GIT_LOCAL_ENVIRONMENT
-        .iter()
-        .any(|candidate| name == OsStr::new(candidate))
-        || name.to_str().is_some_and(|name| {
-            name.starts_with("GIT_CONFIG_KEY_") || name.starts_with("GIT_CONFIG_VALUE_")
-        })
 }
 
 fn classify_wait(waited: &WaitOutcome) -> Vec<StepFinding> {

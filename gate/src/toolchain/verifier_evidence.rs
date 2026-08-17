@@ -52,6 +52,7 @@ const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
 const CARGO_HOME: &str = "CARGO_HOME";
 const PATH: &str = "PATH";
 const SPICE_RS_BOOTSTRAP_CARGO_HOME: &str = "SPICE_RS_BOOTSTRAP_CARGO_HOME"; // env-policy: allow
+#[cfg(test)]
 const SPICE_RS_NATIVE_CARGO: &str = "SPICE_RS_NATIVE_CARGO"; // env-policy: allow
 const PROCESS_RUNTIME: Duration = Duration::from_secs(30 * 60);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(30);
@@ -1078,24 +1079,17 @@ pub(super) fn compiler_semantic_authority(
 ///
 /// The resolved and digested compiler tools remain authoritative, as does the
 /// rest of `PATH`; only an injection proven by the launcher's bootstrap marker
-/// is removed. Source, lockfile, arguments, job limits, and every other
-/// retained compiler variable remain bound to the receipt.
+/// is removed. Source, lockfile, arguments, and every unclassified compiler
+/// variable remain bound to the receipt. Scheduler capacity, launcher plan
+/// identity, installed-appliance generation, and equivalent terminal/session
+/// context are operational and therefore excluded from reusable authority.
 pub(super) fn compiler_authority_environment(
     environment: &[(OsString, OsString)],
 ) -> Vec<(OsString, OsString)> {
     let injected_bin = injected_cargo_bin(environment);
     environment
         .iter()
-        .filter(|(name, _)| {
-            ![
-                OsStr::new(CARGO_HOME),
-                OsStr::new(CARGO_TARGET_DIR),
-                OsStr::new(CARGO_BUILD_BUILD_DIR),
-                OsStr::new(SPICE_RS_BOOTSTRAP_CARGO_HOME),
-                OsStr::new(SPICE_RS_NATIVE_CARGO),
-            ]
-            .contains(&name.as_os_str())
-        })
+        .filter(|(name, _)| compiler_environment_authority(name).is_semantic())
         .map(|(name, value)| {
             let value = if name == OsStr::new(PATH) {
                 canonical_path(value, injected_bin.as_deref())
@@ -1105,6 +1099,99 @@ pub(super) fn compiler_authority_environment(
             (name.clone(), value)
         })
         .collect()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompilerEnvironmentAuthority {
+    Semantic,
+    Operational,
+}
+
+impl CompilerEnvironmentAuthority {
+    const fn is_semantic(self) -> bool {
+        matches!(self, Self::Semantic)
+    }
+}
+
+/// Classify every captured variable before it can enter reusable compiler authority.
+///
+/// Unknown names remain semantic because build scripts may consume arbitrary
+/// environment inputs. The operational set is deliberately explicit: cache
+/// materializations, scheduler capacity, launcher provenance, agent/session
+/// identity, terminal presentation, and caller scratch cannot change the
+/// compiler contract. The full environment is still passed to the original
+/// compiler process; this classification only determines receipt reuse.
+fn compiler_environment_authority(name: &OsStr) -> CompilerEnvironmentAuthority {
+    let name = name.as_bytes();
+    let operational = name.starts_with(b"CODEX_")
+        || name.starts_with(b"ITERM_")
+        || name.starts_with(b"LC_TERMINAL")
+        || name.starts_with(concat!("SPICE", "_SHELL_HOOK_").as_bytes()) // env-policy: not-an-env SPICE_SHELL_HOOK_
+        || name.starts_with(b"TERM")
+        || name.starts_with(b"XPC_")
+        || name.starts_with(b"ZSH_")
+        || name.starts_with(b"__CF")
+        || matches!(
+            name,
+            b"AIEOF"
+                | b"AIGEN"
+                | b"AILVL"
+                | b"AIMOD"
+                | b"AISID"
+                | b"AITAG"
+                | b"AITID"
+                | b"AITOP"
+                | b"AIWTF"
+                | b"BROWSER_USE_AVAILABLE_BACKENDS"
+                | b"CARGO_BUILD_BUILD_DIR"
+                | b"CARGO_BUILD_JOBS"
+                | b"CARGO_HOME"
+                | b"CARGO_TARGET_DIR"
+                | b"CLAUDE_CODE_SESSION_ID" // env-policy: allow
+                | b"COLORFGBG"
+                | b"COLORTERM"
+                | b"COMMAND_MODE"
+                | b"DEVEL"
+                | b"EDITOR"
+                | b"ELLIPSIS"
+                | b"ELLIPSIS_DEBUG"
+                | b"ELLIPSIS_PATH"
+                | b"GH_PAGER"
+                | b"GIT_PAGER"
+                | b"HISTFILE"
+                | b"NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S"
+                | b"NODE_REPL_TRUSTED_CODE_PATHS"
+                | b"NO_COLOR"
+                | b"OSLogRateLimit"
+                | b"PAGER"
+                | b"PROMPT_DIRTRIM"
+                | b"PWD"
+                | b"RTK_DB_PATH"
+                | b"SHELL"
+                | b"SPICE_AGENT_VENDOR" // env-policy: allow
+                | b"SPICE_COMMAND_PLAN_EXECUTION_DIGEST" // env-policy: allow
+                | b"SPICE_MOUNTED_COMMAND" // env-policy: allow
+                | b"SPICE_RS_BOOTSTRAP_CARGO_HOME" // env-policy: allow
+                | b"SPICE_RS_HOOKS" // env-policy: allow
+                | b"SPICE_RS_INBOX" // env-policy: allow
+                | b"SPICE_RS_LANE" // env-policy: allow
+                | b"SPICE_RS_NATIVE_CARGO" // env-policy: allow
+                | b"SPICE_RS_NATIVE_SHELL" // env-policy: allow
+                | b"SPICE_RS_PRE_COMMIT_PATHS" // env-policy: allow
+                | b"SPICE_RS_PRE_COMMIT_SOURCE" // env-policy: allow
+                | b"SPICE_RUNTIME_PYTHON" // env-policy: allow
+                | b"SPICE_VISIBLE_PROG" // env-policy: allow
+                | b"SSH_AUTH_SOCK"
+                | b"TASKRC"
+                | b"TMPDIR"
+                | b"VIRTUAL_ENV_DISABLE_PROMPT"
+                | b"_ELLIPSIS"
+        );
+    if operational {
+        CompilerEnvironmentAuthority::Operational
+    } else {
+        CompilerEnvironmentAuthority::Semantic
+    }
 }
 
 fn injected_cargo_bin(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
@@ -1149,10 +1236,7 @@ fn compiler_merge_semantic_authority(
     let tools = Digest::compute(Domain::GateReceipt, &tool_bytes);
     frame(&mut bytes, tools.as_str().as_bytes());
     let mut environment_bytes = Vec::new();
-    for (name, value) in environment
-        .iter()
-        .filter(|(name, _)| portable_environment_name(name))
-    {
+    for (name, value) in compiler_authority_environment(&environment) {
         frame(&mut environment_bytes, name.as_bytes());
         frame(
             &mut environment_bytes,
@@ -1228,17 +1312,6 @@ fn portable_tool_identity(into: &mut Vec<u8>, tool: &ToolEvidence, worktree: &Pa
             frame(into, digest.as_bytes());
         }
     }
-}
-
-fn portable_environment_name(name: &OsStr) -> bool {
-    !matches!(
-        name.as_bytes(),
-        b"CARGO_BUILD_JOBS"
-            | b"CARGO_HOME"
-            | b"CLAUDE_CODE_SESSION_ID" // env-policy: allow
-            | b"CODEX_THREAD_ID" // env-policy: allow
-            | b"SPICE_AGENT_VENDOR" // env-policy: allow
-    )
 }
 
 fn portable_path(value: &OsStr, worktree: &Path) -> OsString {

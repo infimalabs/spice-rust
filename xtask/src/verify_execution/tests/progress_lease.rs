@@ -46,7 +46,7 @@ fn fixture_progress_bounds(
 }
 
 #[test]
-fn outer_supervisor_has_a_tight_progress_lease_inside_one_absolute_ceiling() {
+fn outer_supervisor_has_a_tight_progress_lease_inside_one_absolute_limit() {
     let bounds = FULL_VERIFIER_PROCESS_BOUNDS;
     let absolute = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
     assert_eq!(absolute, FULL_VERIFIER_ABSOLUTE_RUNTIME);
@@ -147,7 +147,7 @@ fn active_progress_renews_the_inactivity_lease_past_its_original_deadline() {
 
 #[cfg(unix)]
 #[test]
-fn trickle_progress_cannot_renew_past_the_absolute_process_tree_ceiling() {
+fn trickle_progress_cannot_renew_past_the_absolute_process_tree_limit() {
     let bounds = fixture_progress_bounds(Duration::from_millis(80), Duration::from_millis(260));
     let executable = std::env::current_exe().expect("resolve the xtask unit-test process");
     let count = OsString::from("100");
@@ -172,11 +172,11 @@ fn trickle_progress_cannot_renew_past_the_absolute_process_tree_ceiling() {
     let elapsed = started.elapsed();
     assert!(
         matches!(run, CommandRun::TimedOut(_)),
-        "trickle progress crossed the absolute ceiling: {run:?}"
+        "trickle progress crossed the absolute limit: {run:?}"
     );
     assert!(
         elapsed >= Duration::from_millis(200) && elapsed < Duration::from_secs(1),
-        "absolute ceiling was not the bounded terminal: {elapsed:?}"
+        "absolute limit was not the bounded terminal: {elapsed:?}"
     );
     assert!(
         String::from_utf8(live)

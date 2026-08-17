@@ -316,11 +316,27 @@ fn assert_selection_refusal(boundary: &WorkerBoundary, detail: &str, test_marker
         failure["reason"], "gate::change-selection-refused",
         "worker surfaced the wrong refusal: {failure}",
     );
-    assert_eq!(failure["detail"], detail);
+    let actual = failure["detail"]
+        .as_str()
+        .expect("selection refusal detail is text");
+    assert!(
+        actual.starts_with(
+            "full-verifier admission missed at stage=document: \
+             no full-verifier evidence is published for this worktree; "
+        ),
+        "worker collapsed the exact evidence-admission miss: {actual}",
+    );
+    assert!(
+        actual.ends_with(detail),
+        "worker replaced the selection cause: {actual}",
+    );
     assert_eq!(failure["fault"], false);
     assert!(!test_marker.exists(), "refused selection executed a test");
     assert!(
-        !boundary.progress.contains("[change-gate-policy]")
+        boundary
+            .progress
+            .contains("[change-gate-full-verifier] disposition=miss stage=document")
+            && !boundary.progress.contains("[change-gate-policy]")
             && !boundary.progress.contains("[rust-test"),
         "refused selection started policy or workspace tests: {}",
         boundary.progress,

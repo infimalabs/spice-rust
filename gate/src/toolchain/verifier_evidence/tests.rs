@@ -684,6 +684,76 @@ fn canonical_receipt_crosses_private_cargo_materializations() {
 }
 
 #[test]
+fn canonical_receipt_crosses_only_classified_operational_context() {
+    let mut producer = contract(GateId::RustTypecheck);
+    producer.environment.extend([
+        (OsString::from("CARGO_BUILD_JOBS"), OsString::from("8")),
+        (
+            OsString::from("SPICE_COMMAND_PLAN_EXECUTION_DIGEST"), // env-policy: allow
+            OsString::from("producer-plan"),
+        ),
+        (
+            OsString::from("SPICE_MOUNTED_COMMAND"), // env-policy: allow
+            OsString::from("1"),
+        ),
+        (
+            OsString::from("SPICE_RUNTIME_PYTHON"), // env-policy: allow
+            OsString::from("/producer/python"),
+        ),
+        (
+            OsString::from("SPICE_VISIBLE_PROG"), // env-policy: allow
+            OsString::from("producer-spice"),
+        ),
+        (
+            OsString::from("CODEX_THREAD_ID"), // env-policy: allow
+            OsString::from("producer-session"),
+        ),
+        (
+            OsString::from("CLAUDE_CODE_SESSION_ID"), // env-policy: allow
+            OsString::from("producer-session"),
+        ),
+        (OsString::from("PWD"), OsString::from("/producer/shell")),
+        (OsString::from("TERM_PROGRAM"), OsString::from("producer")),
+        (OsString::from("TMPDIR"), OsString::from("/producer/tmp")),
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("semantic"),
+        ),
+        (
+            OsString::from("SPICE_APP_SOURCE_IDENTITY"), // env-policy: allow
+            OsString::from("semantic-source"),
+        ),
+    ]);
+    producer.environment.sort();
+    let evidence = complete_evidence(&producer);
+    let receipt = encode_verifier_compiler_receipt(&[evidence], AUTHORITY)
+        .expect("encode operational-context receipt");
+
+    let mut consumer = producer.clone();
+    consumer.environment.retain(|(name, _)| {
+        compiler_environment_authority(name) == CompilerEnvironmentAuthority::Semantic
+    });
+    admit_verifier_compiler_receipt(&receipt, &[consumer.clone()], AUTHORITY)
+        .expect("operational launcher and caller context cannot invalidate compiler proof");
+
+    let (_, arbitrary) = consumer
+        .environment
+        .iter_mut()
+        .find(|(name, _)| name == "ARBITRARY_BUILD_INPUT")
+        .expect("semantic arbitrary input remains captured");
+    *arbitrary = OsString::from("drifted");
+    assert!(
+        admit_verifier_compiler_receipt(&receipt, &[consumer], AUTHORITY).is_err(),
+        "unknown build inputs remain semantic by default",
+    );
+    assert_eq!(
+        compiler_environment_authority(OsStr::new("SPICE_APP_SOURCE_IDENTITY")), // env-policy: allow
+        CompilerEnvironmentAuthority::Semantic,
+        "the app's compile-time source identity must not be generalized as launcher scratch",
+    );
+}
+
+#[test]
 fn semantic_compiler_authority_crosses_source_commits_but_not_contract_or_worktree_drift() {
     let producers = [
         contract(GateId::RustTypecheck),

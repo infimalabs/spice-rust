@@ -314,6 +314,7 @@ pub struct AdmittedFullVerifierEvidence {
     source: Digest,
     evidence: Digest,
     battery: BatteryReceipt,
+    changes: Vec<String>,
 }
 
 impl AdmittedFullVerifierEvidence {
@@ -334,6 +335,95 @@ impl AdmittedFullVerifierEvidence {
     pub const fn battery(&self) -> &BatteryReceipt {
         &self.battery
     }
+
+    /// Exact changed paths from the strict capture which admitted this bundle.
+    #[must_use]
+    pub fn changes(&self) -> &[String] {
+        &self.changes
+    }
+}
+
+/// Exact stage at which reusable full-verifier evidence became unavailable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FullVerifierEvidenceStage {
+    Document,
+    Bundle,
+    SemanticDocument,
+    Environment,
+    Capture,
+    Source,
+    Closure,
+    State,
+    Battery,
+    Compiler,
+    Semantic,
+}
+
+impl FullVerifierEvidenceStage {
+    /// Stable diagnostic name used by hook progress and refusals.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Bundle => "bundle",
+            Self::SemanticDocument => "semantic-document",
+            Self::Environment => "environment",
+            Self::Capture => "capture",
+            Self::Source => "source",
+            Self::Closure => "closure",
+            Self::State => "state",
+            Self::Battery => "battery",
+            Self::Compiler => "compiler",
+            Self::Semantic => "semantic",
+        }
+    }
+}
+
+/// One cache miss with its first failed exact-admission stage preserved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FullVerifierEvidenceMiss {
+    stage: FullVerifierEvidenceStage,
+    detail: String,
+}
+
+impl FullVerifierEvidenceMiss {
+    /// Construct a diagnostic miss for a caller-owned admission boundary.
+    #[must_use]
+    pub fn new(stage: FullVerifierEvidenceStage, detail: impl ToString) -> Self {
+        Self {
+            stage,
+            detail: detail.to_string(),
+        }
+    }
+
+    /// First exact-admission stage which did not match.
+    #[must_use]
+    pub const fn stage(&self) -> FullVerifierEvidenceStage {
+        self.stage
+    }
+
+    /// Bounded causal detail from that stage.
+    #[must_use]
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+/// Exact reusable evidence or a typed, first-cause cache miss.
+pub enum FullVerifierEvidenceAdmission {
+    Admitted(Box<AdmittedFullVerifierEvidence>),
+    Unavailable(FullVerifierEvidenceMiss),
+}
+
+impl FullVerifierEvidenceAdmission {
+    /// Consume an admitted bundle while discarding a diagnostic miss.
+    #[must_use]
+    pub fn into_admitted(self) -> Option<AdmittedFullVerifierEvidence> {
+        match self {
+            Self::Admitted(evidence) => Some(*evidence),
+            Self::Unavailable(_) => None,
+        }
+    }
 }
 
 /// Consume the worktree-local bundle only when every current authority agrees.
@@ -345,12 +435,26 @@ pub fn admit_full_verifier_evidence(
     repository: &Repository,
     selector: Selector,
 ) -> Result<Option<AdmittedFullVerifierEvidence>, RunError> {
+    inspect_full_verifier_evidence(repository, selector)
+        .map(FullVerifierEvidenceAdmission::into_admitted)
+}
+
+/// Re-admit exact evidence while preserving the first causal cache-miss stage.
+pub fn inspect_full_verifier_evidence(
+    repository: &Repository,
+    selector: Selector,
+) -> Result<FullVerifierEvidenceAdmission, RunError> {
     let paths = repository
         .admit_state()
         .map_err(|error| RunError::fault("gate::full-verifier-state-unavailable", error))?;
     let document = match fs::read(paths.full_verifier_evidence()) {
         Ok(document) => document,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return unavailable(
+                FullVerifierEvidenceStage::Document,
+                "no full-verifier evidence is published for this worktree",
+            );
+        }
         Err(error) => {
             return Err(RunError::fault(
                 "gate::full-verifier-evidence-unavailable",
@@ -358,54 +462,83 @@ pub fn admit_full_verifier_evidence(
             ));
         }
     };
-    let Ok(evidence) = FullVerifierEvidence::decode(&document) else {
-        return Ok(None);
+    let evidence = match FullVerifierEvidence::decode(&document) {
+        Ok(evidence) => evidence,
+        Err(detail) => return unavailable(FullVerifierEvidenceStage::Bundle, detail),
     };
-    let Ok(semantic) = semantic::SemanticEvidence::decode(evidence.semantic.as_bytes()) else {
-        return Ok(None);
+    let semantic = match semantic::SemanticEvidence::decode(evidence.semantic.as_bytes()) {
+        Ok(semantic) => semantic,
+        Err(detail) => {
+            return unavailable(FullVerifierEvidenceStage::SemanticDocument, detail);
+        }
     };
-    let Ok(verifier_environment) = exact_evidence_environment(repository) else {
-        return Ok(None);
+    let verifier_environment = match exact_evidence_environment(repository) {
+        Ok(environment) => environment,
+        Err(error) => return unavailable(FullVerifierEvidenceStage::Environment, error),
     };
-    let Ok(mut prepared) = prepare_strict(selector) else {
-        return Ok(None);
+    let mut prepared = match prepare_strict(selector) {
+        Ok(prepared) => prepared,
+        Err(error) => return unavailable(FullVerifierEvidenceStage::Capture, error),
     };
     prepared.bind_exact_evidence_environment(verifier_environment);
-    let Ok(current_closure) = GateSemanticClosure::capture(
+    if semantic.source() != prepared.source() {
+        return unavailable(
+            FullVerifierEvidenceStage::Source,
+            format!(
+                "retained source {} does not match current source {}",
+                semantic.source(),
+                prepared.source(),
+            ),
+        );
+    }
+    let current_closure = match GateSemanticClosure::capture(
         prepared.source().clone(),
         prepared.root(),
         prepared.paths(),
         prepared.changes(),
         prepared.generated_paths(),
-    ) else {
-        return Ok(None);
+    ) {
+        Ok(closure) => closure,
+        Err(detail) => return unavailable(FullVerifierEvidenceStage::Closure, detail),
     };
-    let Ok(state) = StateReceipt::decode(evidence.state.as_bytes()) else {
-        return Ok(None);
+    let state = match StateReceipt::decode(evidence.state.as_bytes()) {
+        Ok(state) => state,
+        Err(detail) => return unavailable(FullVerifierEvidenceStage::State, detail),
     };
-    let Ok(battery) =
-        prepared.admit_battery_receipt_after_state(evidence.battery.as_bytes(), &state)
-    else {
-        return Ok(None);
-    };
-    let Ok(compiler) = prepared.admit_verifier_compiler_receipt(
+    let battery =
+        match prepared.admit_battery_receipt_after_state(evidence.battery.as_bytes(), &state) {
+            Ok(battery) => battery,
+            Err(error) => return unavailable(FullVerifierEvidenceStage::Battery, error),
+        };
+    let compiler = match prepared.admit_verifier_compiler_receipt(
         evidence.compiler.as_bytes(),
         evidence.cargo_jobs,
         &compiler_authority(repository),
-    ) else {
-        return Ok(None);
+    ) {
+        Ok(compiler) => compiler,
+        Err(error) => return unavailable(FullVerifierEvidenceStage::Compiler, error),
     };
-    if semantic
-        .validate_exact(repository, &battery, &compiler, &current_closure)
-        .is_err()
+    if let Err(detail) = semantic.validate_exact(repository, &battery, &compiler, &current_closure)
     {
-        return Ok(None);
+        return unavailable(FullVerifierEvidenceStage::Semantic, detail);
     }
-    Ok(Some(AdmittedFullVerifierEvidence {
-        source: battery.tree().clone(),
-        evidence: Digest::compute(Domain::GateReceipt, &document),
-        battery,
-    }))
+    Ok(FullVerifierEvidenceAdmission::Admitted(Box::new(
+        AdmittedFullVerifierEvidence {
+            source: battery.tree().clone(),
+            evidence: Digest::compute(Domain::GateReceipt, &document),
+            battery,
+            changes: prepared.changes().to_vec(),
+        },
+    )))
+}
+
+fn unavailable(
+    stage: FullVerifierEvidenceStage,
+    detail: impl ToString,
+) -> Result<FullVerifierEvidenceAdmission, RunError> {
+    Ok(FullVerifierEvidenceAdmission::Unavailable(
+        FullVerifierEvidenceMiss::new(stage, detail),
+    ))
 }
 
 /// Re-admit individual green arms when their semantic input closures are unchanged.
