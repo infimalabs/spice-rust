@@ -2,10 +2,11 @@ use std::ffi::OsString;
 
 use super::*;
 use crate::verify_execution::{
-    FULL_VERIFIER_ABSOLUTE_RUNTIME, FULL_VERIFIER_PROCESS_BOUNDS, FULL_VERIFIER_PROGRESS_BOUNDS,
-    FULL_VERIFIER_PROGRESS_INACTIVITY, ProcessBounds, ProgressLeaseBounds, ProgressSource,
-    SignalGuard, StreamingRunError, is_lease_renewal_record, is_live_progress_record,
-    run_bounded_process_streaming, run_process_with_progress, write_deferred_supervisor_output,
+    FULL_VERIFIER_ABSOLUTE_RUNTIME, FULL_VERIFIER_LABEL, FULL_VERIFIER_PROCESS_BOUNDS,
+    FULL_VERIFIER_PROGRESS_BOUNDS, FULL_VERIFIER_PROGRESS_INACTIVITY, ProcessBounds,
+    ProgressLeaseBounds, ProgressSource, SignalGuard, StreamingRunError, is_lease_renewal_record,
+    is_live_progress_record, render_supervised_verifier, run_bounded_process_streaming,
+    run_process_with_progress, write_deferred_supervisor_output,
 };
 
 const NON_COOPERATIVE_CHILD_TEST: &str =
@@ -94,12 +95,15 @@ fn outer_supervisor_has_a_tight_progress_lease_inside_one_absolute_limit() {
     let bounds = FULL_VERIFIER_PROCESS_BOUNDS;
     let absolute = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
     assert_eq!(absolute, FULL_VERIFIER_ABSOLUTE_RUNTIME);
-    assert_eq!(bounds.runtime, Duration::from_secs(15 * 60 - 3));
+    assert_eq!(absolute, Duration::from_secs(10 * 60));
+    assert_eq!(bounds.runtime, Duration::from_secs(10 * 60 - 3));
+    assert!(FULL_VERIFIER_LABEL.contains("ten-minute absolute ceiling"));
     assert_eq!(
         FULL_VERIFIER_PROGRESS_BOUNDS.inactivity,
         FULL_VERIFIER_PROGRESS_INACTIVITY
     );
     assert_eq!(FULL_VERIFIER_PROGRESS_INACTIVITY, Duration::from_secs(90));
+    assert_eq!(FULL_VERIFIER_TEST_RUNTIME, Duration::from_secs(3 * 60));
     assert!(FULL_VERIFIER_PROGRESS_INACTIVITY < FULL_VERIFIER_TEST_RUNTIME);
     assert_eq!(
         bounds.output_limit,
@@ -109,6 +113,33 @@ fn outer_supervisor_has_a_tight_progress_lease_inside_one_absolute_limit() {
     assert!(
         bounds.runtime > FULL_VERIFIER_TEST_RUNTIME,
         "the hard supervisor must outlive the child-owned deadline"
+    );
+}
+
+#[test]
+fn outer_timeout_names_the_absolute_bound_and_preserves_primary_child_evidence() {
+    let mut output = Vec::new();
+    let error = render_supervised_verifier(
+        Ok(CommandRun::TimedOut(ProcessOutput {
+            status: Status {
+                success: false,
+                code: None,
+            },
+            stdout: b"primary_ordinal=8 interrupted=false cleanup_faults=0\n".to_vec(),
+            stderr: b"terminated at the absolute process-tree deadline\n".to_vec(),
+        })),
+        &mut output,
+        false,
+    )
+    .expect_err("an outer absolute timeout refuses verification");
+
+    assert!(matches!(
+        error,
+        VerifyError::TimedOut { ref label } if label == FULL_VERIFIER_LABEL
+    ));
+    assert_eq!(
+        output,
+        b"primary_ordinal=8 interrupted=false cleanup_faults=0\n"
     );
 }
 

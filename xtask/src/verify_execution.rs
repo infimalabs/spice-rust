@@ -111,11 +111,11 @@ const FULL_VERIFIER_PROGRESS_INACTIVITY: Duration = Duration::from_secs(90);
 /// Progress may renew the inactivity lease, but it can never carry the complete
 /// process tree beyond this wall-time ceiling. Cleanup consumes the final three
 /// seconds of the ceiling below.
-const FULL_VERIFIER_ABSOLUTE_RUNTIME: Duration = Duration::from_secs(15 * 60);
-const FULL_VERIFIER_PROCESS_RUNTIME: Duration = Duration::from_secs(15 * 60 - 3);
+const FULL_VERIFIER_ABSOLUTE_RUNTIME: Duration = Duration::from_secs(10 * 60);
+const FULL_VERIFIER_PROCESS_RUNTIME: Duration = Duration::from_secs(10 * 60 - 3);
 const FULL_VERIFIER_LABEL: &str = concat!(
     "full verifier progress lease (three-minute test-phase cutoff; ",
-    "fifteen-minute absolute ceiling)"
+    "ten-minute absolute ceiling)"
 );
 const FULL_VERIFIER_CHILD_COMMAND: &str = "__verify-system";
 /// Hard-supervisor cleanup is a last resort after the child-owned soft deadline.

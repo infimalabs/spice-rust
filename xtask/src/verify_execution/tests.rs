@@ -781,6 +781,7 @@ fn compressed_full_verifier_enforces_its_declared_bounds() {
         "deadline_scope=test-phase deadline_ms={}",
         test_runtime.as_millis()
     )));
+    assert!(output.contains("supervisor_absolute_ms=600000"));
 
     let mut crossing_delays = VERIFY_ACTIONS
         .iter()
