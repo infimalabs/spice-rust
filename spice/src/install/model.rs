@@ -97,6 +97,34 @@ impl ObservedFile {
     }
 }
 
+/// Native and content identity of one observed install receipt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ReceiptGeneration {
+    generation: Generation,
+    image: GeneratedImage,
+}
+
+impl ReceiptGeneration {
+    pub(super) fn observed(observed: &ObservedFile) -> Self {
+        Self::published(observed.generation, &observed.image)
+    }
+
+    pub(super) fn published(generation: Generation, image: &FileImage) -> Self {
+        Self {
+            generation,
+            image: image.generated(),
+        }
+    }
+
+    pub(super) const fn native(&self) -> Generation {
+        self.generation
+    }
+
+    pub(super) fn matches(&self, observed: &ObservedFile) -> bool {
+        self.generation == observed.generation && self.image == observed.generated()
+    }
+}
+
 pub(super) fn images_match(
     observed: Option<&ObservedFile>,
     expected: Option<&ObservedFile>,

@@ -90,9 +90,9 @@ pub(super) fn apply_with_interruption(
 fn apply_activation(
     repository: &Repository,
     record: &mut InstallRecord,
-    mut record_generation: Option<Generation>,
+    mut record_generation: Option<ReceiptGeneration>,
     interrupt_after_write: Option<usize>,
-) -> Result<Option<Generation>, InstallError> {
+) -> Result<Option<ReceiptGeneration>, InstallError> {
     let activation_step = record.plan.operations.len() + record.plan.retirements.len();
     if record.plan.hook_activation.is_some() && record.completed == activation_step {
         let index = record.completed;
@@ -114,7 +114,7 @@ fn prepare_apply(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
-) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
+) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
     match read_record_for_refresh(repository)? {
         Some(loaded) => prepare_loaded(repository, spice_binary, expected, loaded),
         None => {
@@ -130,7 +130,7 @@ fn prepare_loaded(
     spice_binary: Option<&Path>,
     expected: &Digest,
     refresh: RefreshRecord,
-) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
+) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
     let repairable = matches!(refresh, RefreshRecord::Repairable { .. });
     let loaded = refresh.into_loaded();
     let LoadedRecord {
@@ -160,9 +160,9 @@ fn prepare_reinstall(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
-    generation: Generation,
+    generation: ReceiptGeneration,
     record: InstallRecord,
-) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
+) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
     verify_progress(repository, &record)?;
     let plan = build_plan(repository, spice_binary)?;
     admit_digest(&plan, expected)?;
@@ -173,10 +173,10 @@ fn prepare_refresh(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
-    generation: Generation,
+    generation: ReceiptGeneration,
     prior_receipt: Option<FileImage>,
     record: InstallRecord,
-) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
+) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
     // One record swap derives a complete current plan before any destination
     // changes. Binary-only drift is the sole reconciled input; fixed assets
     // remain receipt-strict.
@@ -205,9 +205,9 @@ fn prepare_resume(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
-    generation: Generation,
+    generation: ReceiptGeneration,
     record: InstallRecord,
-) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
+) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
     verify_binary_context(&record.plan, spice_binary)?;
     if &record.plan_digest != expected {
         return Err(InstallError::DigestMismatch {
@@ -243,8 +243,8 @@ fn apply_operation(
     record: &mut InstallRecord,
     generated: &FileImage,
     index: usize,
-    record_generation: Generation,
-) -> Result<Generation, InstallError> {
+    record_generation: ReceiptGeneration,
+) -> Result<ReceiptGeneration, InstallError> {
     let operation = &record.plan.operations[index];
     let (current, parent) = observe_bound(
         operation.location.root(repository),
@@ -323,7 +323,7 @@ pub(super) fn unapply_with_interruption(
         if let Some(generation) = reverse_activation(
             repository,
             &mut record,
-            record_generation,
+            record_generation.clone(),
             interrupt_after_write,
         )? {
             record_generation = generation;
@@ -333,7 +333,7 @@ pub(super) fn unapply_with_interruption(
             repository,
             &mut record,
             rollback.as_ref(),
-            record_generation,
+            record_generation.clone(),
             interrupt_after_write,
         )? {
             record_generation = generation;
@@ -368,9 +368,9 @@ fn reverse_retirement(
     repository: &Repository,
     record: &mut InstallRecord,
     rollback: Option<&RollbackState>,
-    mut record_generation: Generation,
+    mut record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
-) -> Result<Option<Generation>, InstallError> {
+) -> Result<Option<ReceiptGeneration>, InstallError> {
     let activation_offset = usize::from(record.plan.hook_activation.is_some());
     let completed = record.completed.saturating_sub(activation_offset);
     if completed >= record.plan.retirements.len() {
@@ -407,9 +407,9 @@ fn reverse_retirement(
 fn reverse_activation(
     repository: &Repository,
     record: &mut InstallRecord,
-    mut record_generation: Generation,
+    mut record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
-) -> Result<Option<Generation>, InstallError> {
+) -> Result<Option<ReceiptGeneration>, InstallError> {
     let Some(activation) = record
         .plan
         .hook_activation
@@ -433,9 +433,9 @@ fn reverse_file_operation(
     repository: &Repository,
     record: &mut InstallRecord,
     rollback: Option<&RollbackState>,
-    mut record_generation: Generation,
+    mut record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
-) -> Result<Generation, InstallError> {
+) -> Result<ReceiptGeneration, InstallError> {
     let non_file_offset =
         usize::from(record.plan.hook_activation.is_some()) + record.plan.retirements.len();
     let file_completed = record.completed - non_file_offset;

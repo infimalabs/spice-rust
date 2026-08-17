@@ -95,6 +95,35 @@ fn appeared_destination_at_publication_is_unchanged_on_refusal() {
 }
 
 #[test]
+fn receipt_publication_rejects_reused_native_generation_with_different_content() {
+    let root = test_root("receipt-generation-aba");
+    let target = root.join("target");
+    let destination = target.join("file");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(&destination, b"winner receipt").unwrap();
+    let admitted = admitted_file(&root, &target, "target/file");
+    let winner = admitted.observe().unwrap().unwrap();
+    let stale = ReceiptGeneration::published(
+        winner.generation,
+        &FileImage::new(0o644, b"stale receipt".to_vec()),
+    );
+
+    assert_eq!(stale.native(), winner.generation);
+    assert!(!stale.matches(&winner));
+    let error = admitted
+        .publish_receipt(
+            &FileImage::new(0o644, b"loser receipt".to_vec()),
+            Some(stale),
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, InstallError::GenerationChanged(_)));
+    assert_eq!(fs::read(&destination).unwrap(), b"winner receipt");
+    drop(admitted);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn replaced_destination_at_removal_is_restored_on_refusal() {
     let root = test_root("remove-replacement");
     let target = root.join("target");

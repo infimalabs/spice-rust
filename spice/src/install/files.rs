@@ -7,7 +7,7 @@ use crate::repository::Repository;
 use super::handle::AdmittedPath;
 use super::{
     Asset, FileImage, Generation, InstallError, ObservedFile, Operation, ParentObservation,
-    Retirement, fixed_asset_bytes, read_binary,
+    ReceiptGeneration, Retirement, fixed_asset_bytes, read_binary,
 };
 
 pub(super) fn retire_path(
@@ -163,8 +163,8 @@ pub(super) fn publish_bound(
     parent: &ParentObservation,
     introduced: usize,
     image: &FileImage,
-    expected: Option<Generation>,
-) -> Result<Generation, InstallError> {
+    expected: Option<ReceiptGeneration>,
+) -> Result<ReceiptGeneration, InstallError> {
     let path = AdmittedPath::open(root, destination, parent, true, introduced)?;
     path.publish_receipt(image, expected)
 }

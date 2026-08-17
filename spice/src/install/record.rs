@@ -11,7 +11,7 @@ use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
     InstallStatus, LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
-    Repository, RepositoryIdentity,
+    ReceiptGeneration, Repository, RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,7 +36,7 @@ pub(super) struct InstallRecord {
 
 pub(super) struct LoadedRecord {
     pub(super) record: InstallRecord,
-    pub(super) generation: Generation,
+    pub(super) generation: ReceiptGeneration,
     pub(super) image: Option<FileImage>,
 }
 
@@ -406,7 +406,7 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
     let Some(observed) = observed else {
         return Ok(None);
     };
-    let generation = observed.generation;
+    let generation = ReceiptGeneration::observed(&observed);
     let image = observed.image;
     let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
     if let Some((_, owner)) = LEGACY_RECORD_VERSIONS
@@ -499,7 +499,7 @@ pub(super) fn rebase_rollback_record(
 pub(super) fn write_initial_record(
     repository: &Repository,
     record: &InstallRecord,
-) -> Result<Generation, InstallError> {
+) -> Result<ReceiptGeneration, InstallError> {
     record.validate_for_write(repository)?;
     let (observed, _) = observe_bound(
         repository.common_dir(),
@@ -515,8 +515,8 @@ pub(super) fn write_initial_record(
 pub(super) fn write_record(
     repository: &Repository,
     record: &InstallRecord,
-    expected: Generation,
-) -> Result<Generation, InstallError> {
+    expected: ReceiptGeneration,
+) -> Result<ReceiptGeneration, InstallError> {
     record.validate_for_write(repository)?;
     write_record_bytes(repository, record, Some(expected))
 }
@@ -524,8 +524,8 @@ pub(super) fn write_record(
 fn write_record_bytes(
     repository: &Repository,
     record: &InstallRecord,
-    expected: Option<Generation>,
-) -> Result<Generation, InstallError> {
+    expected: Option<ReceiptGeneration>,
+) -> Result<ReceiptGeneration, InstallError> {
     let bytes = wire::encode(record).map_err(InstallError::Encode)?;
     publish_bound(
         repository.common_dir(),

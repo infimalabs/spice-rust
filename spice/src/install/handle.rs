@@ -7,7 +7,10 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::path::validate_relative;
-use super::{DIRECTORY_MODE, FileImage, Generation, InstallError, ObservedFile, ParentObservation};
+use super::{
+    DIRECTORY_MODE, FileImage, Generation, InstallError, ObservedFile, ParentObservation,
+    ReceiptGeneration,
+};
 
 #[cfg(all(unix, any(target_vendor = "apple", target_os = "linux")))]
 use rustix::fs::RenameFlags;
@@ -215,14 +218,16 @@ impl AdmittedPath {
     pub(super) fn publish_receipt(
         &self,
         image: &FileImage,
-        expected: Option<Generation>,
-    ) -> Result<Generation, InstallError> {
-        self.publish_with_stale(
+        expected: Option<ReceiptGeneration>,
+    ) -> Result<ReceiptGeneration, InstallError> {
+        let expected_native = expected.as_ref().map(ReceiptGeneration::native);
+        let generation = self.publish_checked(
             image,
-            expected,
+            expected_native,
             || mutation_pause("publish", &self.display),
-            InstallError::GenerationChanged,
-        )
+            || self.require_receipt_generation(expected.as_ref()),
+        )?;
+        Ok(ReceiptGeneration::published(generation, image))
     }
 
     fn publish_with(
@@ -231,20 +236,17 @@ impl AdmittedPath {
         expected: Option<Generation>,
         before_mutation: impl FnOnce() -> Result<(), InstallError>,
     ) -> Result<Generation, InstallError> {
-        self.publish_with_stale(
-            image,
-            expected,
-            before_mutation,
-            InstallError::ParentChanged,
-        )
+        self.publish_checked(image, expected, before_mutation, || {
+            self.require_generation(expected)
+        })
     }
 
-    fn publish_with_stale(
+    fn publish_checked(
         &self,
         image: &FileImage,
         expected: Option<Generation>,
         before_mutation: impl FnOnce() -> Result<(), InstallError>,
-        stale: fn(PathBuf) -> InstallError,
+        require_expected: impl Fn() -> Result<(), InstallError>,
     ) -> Result<Generation, InstallError> {
         if !self.ready {
             return Err(InstallError::ParentChanged(self.display.clone()));
@@ -252,7 +254,7 @@ impl AdmittedPath {
         if expected.is_none() && self.preexisting_introduced {
             return Err(InstallError::ParentChanged(self.display.clone()));
         }
-        self.require_generation_as(expected, stale)?;
+        require_expected()?;
         #[cfg(unix)]
         {
             let temporary = temporary_name();
@@ -283,9 +285,9 @@ impl AdmittedPath {
                         InstallError::io("inspect admitted staged file", &self.display, source)
                     })?);
                 self.verify_named_parent()?;
-                self.require_generation_as(expected, stale)?;
+                require_expected()?;
                 before_mutation()?;
-                self.require_generation_as(expected, stale)?;
+                require_expected()?;
                 self.admit_staged_name(&temporary, expected, staged_generation)?;
                 if expected.is_some() {
                     remove_name(self.parent(), &temporary, AtFlags::empty(), &self.display)?;
@@ -459,19 +461,28 @@ impl AdmittedPath {
     }
 
     fn require_generation(&self, expected: Option<Generation>) -> Result<(), InstallError> {
-        self.require_generation_as(expected, InstallError::ParentChanged)
-    }
-
-    fn require_generation_as(
-        &self,
-        expected: Option<Generation>,
-        stale: fn(PathBuf) -> InstallError,
-    ) -> Result<(), InstallError> {
         let observed = self.observe()?.map(|observed| observed.generation);
         if observed == expected {
             Ok(())
         } else {
-            Err(stale(self.display.clone()))
+            Err(InstallError::ParentChanged(self.display.clone()))
+        }
+    }
+
+    fn require_receipt_generation(
+        &self,
+        expected: Option<&ReceiptGeneration>,
+    ) -> Result<(), InstallError> {
+        let observed = self.observe()?;
+        let matches = match (observed.as_ref(), expected) {
+            (None, None) => true,
+            (Some(observed), Some(expected)) => expected.matches(observed),
+            _ => false,
+        };
+        if matches {
+            Ok(())
+        } else {
+            Err(InstallError::GenerationChanged(self.display.clone()))
         }
     }
 
