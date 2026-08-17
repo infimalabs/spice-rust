@@ -36,6 +36,7 @@ const CONFIGURED_BOUNDARY_TEST: &str = concat!(
 
 mod environment;
 mod partition;
+mod reach_escalation;
 mod selection;
 
 #[test]

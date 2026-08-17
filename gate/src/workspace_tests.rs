@@ -31,7 +31,11 @@ use coordinator::{
 };
 #[cfg(test)]
 use coordinator::{LastTest, isolate_shard_outputs, shard_test_threads, target_arguments};
-use selection::{exhaustive_selection_report, package_inventory, selection_report};
+use selection::{
+    CargoReachEscalation, exhaustive_selection_report, package_inventory, selection_plan,
+};
+#[cfg(test)]
+use selection::{CargoReachEscalationReason, selection_report};
 
 /// Whether the compiled Cargo workspace engine applies to this selected tree.
 ///
@@ -663,11 +667,15 @@ fn run_selected_at_mode(
         None => environment,
     };
     let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
-    let report = if exhaustive {
-        exhaustive_selection_report(&inventory, source, changed_sources)?
+    let (report, escalations) = if exhaustive {
+        (
+            exhaustive_selection_report(&inventory, source, changed_sources)?,
+            Vec::new(),
+        )
     } else {
-        selection_report(&inventory, root, source, changed_sources)?
+        selection_plan(&inventory, root, source, changed_sources)?.into_parts()
     };
+    write_reach_escalations(output, &escalations)?;
     for edge in report.edges() {
         writeln!(
             output,
@@ -701,6 +709,33 @@ fn run_selected_at_mode(
     )
     .run()?;
     Ok(report)
+}
+
+fn write_reach_escalations(
+    output: &mut impl Write,
+    escalations: &[CargoReachEscalation],
+) -> Result<(), WorkspaceTestError> {
+    for escalation in escalations {
+        match escalation.reason().package() {
+            Some(package) => writeln!(
+                output,
+                "[rust-test-reach-escalation] source={:?} reason={} package={package:?}",
+                escalation.source(),
+                escalation.reason().kind(),
+            ),
+            None => writeln!(
+                output,
+                "[rust-test-reach-escalation] source={:?} reason={}",
+                escalation.source(),
+                escalation.reason().kind(),
+            ),
+        }
+        .map_err(output_error)?;
+    }
+    if !escalations.is_empty() {
+        output.flush().map_err(output_error)?;
+    }
+    Ok(())
 }
 
 fn reuse_environment(
