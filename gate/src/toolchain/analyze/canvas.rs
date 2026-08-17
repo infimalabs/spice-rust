@@ -21,11 +21,20 @@ pub(in crate::toolchain) fn canvas_web_typecheck(
     declaration: ToolchainDeclaration,
     root: &Path,
     repository: &Path,
+    changes: &[String],
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
 ) -> Analysis {
     let removal = Cell::new(None);
-    let analysis = canvas_analysis(declaration, root, repository, bounds, programs, &removal);
+    let analysis = canvas_analysis(
+        declaration,
+        root,
+        repository,
+        changes,
+        bounds,
+        programs,
+        &removal,
+    );
     match removal.take() {
         Some(report) => Analysis::terminal(ArmOutcome::ParseFailure, report),
         None => analysis,
@@ -36,6 +45,7 @@ fn canvas_analysis(
     declaration: ToolchainDeclaration,
     root: &Path,
     repository: &Path,
+    changes: &[String],
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
     removal: &Cell<Option<String>>,
@@ -49,17 +59,36 @@ fn canvas_analysis(
             format!("{} declares no {CARGO} program", declaration.id.as_str()),
         );
     };
-    let Some(trunk) = programs.get(TRUNK) else {
-        return Analysis::terminal(
-            ArmOutcome::ToolUnavailable,
-            format!("{} declares no {TRUNK} program", declaration.id.as_str()),
-        );
-    };
     // The mirror must outlive both compiler invocations; only the generated
     // trunk distribution belongs to the transient per-run workspace below.
     let source = match CanvasSource::create(root, repository, removal) {
         Ok(source) => source,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    let metadata_environment = match tool_environment("canvas reach", &[*cargo]) {
+        Ok(environment) => environment,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+
+    let source = source.path();
+    let app = source.join("app");
+    if !frontend_change_reaches_canvas(changes) {
+        match crate::workspace_tests::workspace_package_reach_at(
+            source,
+            changes,
+            &metadata_environment,
+            std::ffi::OsStr::new(cargo),
+        ) {
+            Ok(reach) if reach.reaches_root(&app) => {}
+            Ok(_) => return Analysis::not_applicable(declaration),
+            Err(error) => return Analysis::terminal(ArmOutcome::ParseFailure, error.to_string()),
+        }
+    }
+    let Some(trunk) = programs.get(TRUNK) else {
+        return Analysis::terminal(
+            ArmOutcome::ToolUnavailable,
+            format!("{} declares no {TRUNK} program", declaration.id.as_str()),
+        );
     };
     let workspace = match CanvasWorkspace::create(root, removal) {
         Ok(workspace) => workspace,
@@ -73,9 +102,6 @@ fn canvas_analysis(
         Ok(environment) => environment,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-
-    let source = source.path();
-    let app = source.join("app");
     let invocations = [
         CompileInvocation {
             name: "cargo wasm32 check",
@@ -109,6 +135,14 @@ fn canvas_analysis(
             declaration.id.as_str()
         ),
     )
+}
+
+fn frontend_change_reaches_canvas(changes: &[String]) -> bool {
+    changes.iter().any(|path| {
+        path.starts_with("app/")
+            || path.starts_with("canvas/")
+            || matches!(path.as_str(), "package.json" | "package-lock.json")
+    })
 }
 
 fn canvas_environment(

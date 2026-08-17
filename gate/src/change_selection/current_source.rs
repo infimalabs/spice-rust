@@ -7,8 +7,10 @@ use super::{ChangeSelectionError, ChangeSelectionReport, select_with};
 use crate::GateId;
 use wire::Digest;
 
-const RUST: [GateId; 5] = [
+const RUST: [GateId; 7] = [
     GateId::Formatters,
+    GateId::RustTypecheck,
+    GateId::CanvasWebTypecheck,
     GateId::EnvPolicy,
     GateId::Complexity,
     GateId::MagicNumbers,
@@ -241,10 +243,12 @@ fn known_workspace_package_root(root: &str) -> bool {
 pub(crate) fn selector_authority(path: &str) -> bool {
     matches!(
         path,
-        ".cargo/config.toml"
+        ".cargo/config"
+            | ".cargo/config.toml"
             | ".githooks/pre-commit"
             | "spice-rust.toml"
             | "baseline.toml"
+            | "rust-toolchain"
             | "rust-toolchain.toml"
             | "Cargo.lock"
             | "Cargo.toml"

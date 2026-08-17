@@ -204,7 +204,11 @@ impl ChangeSelectionPolicy {
         match extension.as_str() {
             "rs" => {
                 if self.rust_workspace() {
-                    gates.extend([GateId::Formatters, GateId::RustTypecheck]);
+                    gates.extend([
+                        GateId::Formatters,
+                        GateId::RustTypecheck,
+                        GateId::CanvasWebTypecheck,
+                    ]);
                 }
                 gates.insert(GateId::MarkdownLinks);
                 gates.extend([GateId::EnvPolicy, GateId::EnvNameLedger]);
@@ -248,13 +252,21 @@ impl ChangeSelectionPolicy {
                 gates.extend([GateId::EnvPolicy, GateId::EnvNameLedger]);
             }
             "toml" if cargo_manifest(path) && self.rust_workspace() => {
-                gates.extend([GateId::Formatters, GateId::RustTypecheck]);
+                gates.extend([
+                    GateId::Formatters,
+                    GateId::RustTypecheck,
+                    GateId::CanvasWebTypecheck,
+                ]);
             }
             "toml" if path == "rust-toolchain.toml" && self.rust_workspace() => {
-                gates.extend([GateId::Formatters, GateId::RustTypecheck]);
+                gates.extend([
+                    GateId::Formatters,
+                    GateId::RustTypecheck,
+                    GateId::CanvasWebTypecheck,
+                ]);
             }
             "lock" if path == "Cargo.lock" && self.rust_workspace() => {
-                gates.insert(GateId::RustTypecheck);
+                gates.extend([GateId::RustTypecheck, GateId::CanvasWebTypecheck]);
             }
             _ => {}
         }
@@ -360,10 +372,12 @@ fn compiled_package_root(path: &str) -> Option<&str> {
 fn repository_selection_authority(path: &str) -> bool {
     matches!(
         path,
-        ".cargo/config.toml"
+        ".cargo/config"
+            | ".cargo/config.toml"
             | ".githooks/pre-commit"
             | "Cargo.lock"
             | "Cargo.toml"
+            | "rust-toolchain"
             | "rust-toolchain.toml"
     )
 }

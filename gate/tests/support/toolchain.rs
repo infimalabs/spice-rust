@@ -325,6 +325,7 @@ pub(crate) fn environment_repository(label: &str) -> Tree {
         "Cargo.toml",
         "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     );
+    repository.write("src/lib.rs", "pub fn fixture() {}\n");
     let marker = PACKAGED_ENV_PROFILE.allow_marker;
     let waived = format!("home = os.getenv(\"{WAIVED_NAME}\")  # {marker}");
     repository.write(
@@ -430,6 +431,22 @@ pub(crate) fn refusing_stub_directory(label: &str) -> Tree {
 /// Exact-version stubs whose cargo analysis refuses before trunk can run.
 pub(crate) fn canvas_nonzero_directory(label: &str) -> Tree {
     let stubs = Tree::new(label);
+    let metadata = serde_json::json!({
+        "packages": [{
+            "id": "fixture-id",
+            "name": "fixture",
+            "manifest_path": "$PWD/Cargo.toml",
+            "targets": [{
+                "name": "fixture",
+                "kind": ["bin"],
+                "src_path": "$PWD/src/main.rs",
+                "test": true,
+            }],
+        }],
+        "workspace_members": ["fixture-id"],
+    })
+    .to_string()
+    .replace('"', "\\\"");
     let mut declared = BTreeMap::new();
     for declaration in TOOLCHAIN_ARMS {
         for requirement in declaration.tools() {
@@ -448,10 +465,12 @@ pub(crate) fn canvas_nonzero_directory(label: &str) -> Tree {
                     "#!/bin/sh\n",
                     "if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{version}'; exit 0; fi\n",
                     "if [ \"$1\" = \"fmt\" ]; then exit 0; fi\n",
+                    "if [ \"$1\" = \"metadata\" ]; then printf '%s\\n' \"{metadata}\"; exit 0; fi\n",
                     "if [ \"$1\" = \"check\" ]; then printf 'opaque refusal\\n' >&2; exit 17; fi\n",
                     "exit 91\n",
                 ),
                 version = version,
+                metadata = metadata,
             ),
             "trunk" => {
                 let marker = stubs.path("trunk-analysis-ran");

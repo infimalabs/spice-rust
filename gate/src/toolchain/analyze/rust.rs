@@ -6,6 +6,7 @@
 //! `target` pair it owns; those are the whole of this file.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -25,15 +26,7 @@ use crate::toolchain::{
 };
 use sill::{Acquisition, Environment, Possession, WaitPolicy};
 
-/// The native analysis, kept in its declaration order.
-///
-/// `--all-targets` is the whole point of the arm rather than a thoroughness
-/// flourish: a plain `cargo check` builds no test target, and test bodies are
-/// exactly where a rename's stale references survive a clean textual merge.
-pub(super) const CARGO_CHECK_ARGUMENTS: &[&str] =
-    &["check", "--locked", "--workspace", "--all-targets"];
-
-/// Compile the selected workspace natively, including every test target.
+/// Compile the selected workspace natively, including every reached target.
 ///
 /// The canvas arm beside this one already compiles Rust, but only for
 /// `wasm32-unknown-unknown` and only the default targets, so nothing in the
@@ -46,12 +39,14 @@ pub(in crate::toolchain) fn rust_typecheck(
     declaration: ToolchainDeclaration,
     root: &Path,
     repository: &Path,
+    changes: &[String],
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
 ) -> Analysis {
     rust_typecheck_with_workspace(
         declaration,
         root,
+        changes,
         bounds,
         programs,
         || RustWorkspace::create(root, repository),
@@ -62,6 +57,7 @@ pub(in crate::toolchain) fn rust_typecheck(
 fn rust_typecheck_with_workspace(
     declaration: ToolchainDeclaration,
     root: &Path,
+    changes: &[String],
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
     create_workspace: impl FnOnce() -> Result<RustWorkspace, String>,
@@ -83,37 +79,65 @@ fn rust_typecheck_with_workspace(
     let analysis = match rust_environment(cargo, &workspace) {
         Err(reason) => Analysis::terminal(ArmOutcome::ParseFailure, reason),
         Ok(environment) => {
-            let invocation = CompileInvocation {
-                name: "cargo native check",
-                program: cargo,
-                arguments: CARGO_CHECK_ARGUMENTS,
-                cwd: &workspace.source,
-            };
-            let result = run_compile_analysis_with_wait(
-                declaration.id,
+            let reach = crate::workspace_tests::workspace_package_reach_at(
                 &workspace.source,
-                invocation,
-                bounds,
+                changes,
                 &environment,
-                |code, message| FindingDetail::RustTypeOutput { code, message },
-                wait,
+                OsStr::new(cargo),
             );
-            match result {
-                Err(failure) => {
-                    let (analysis, elapsed) = failure.into_parts();
-                    match elapsed {
-                        Some(elapsed) => analysis.timed(timing(elapsed, bounds)),
-                        None => analysis,
+            match reach.map(|reach| reach.cargo_check_arguments()) {
+                Ok(invocations) if !invocations.is_empty() => {
+                    let mut elapsed = Duration::ZERO;
+                    let mut observed = false;
+                    let mut refusal = None;
+                    for owned in invocations {
+                        let arguments = owned.iter().map(String::as_str).collect::<Vec<_>>();
+                        let invocation = CompileInvocation {
+                            name: "cargo native check",
+                            program: cargo,
+                            arguments: &arguments,
+                            cwd: &workspace.source,
+                        };
+                        match run_compile_analysis_with_wait(
+                            declaration.id,
+                            &workspace.source,
+                            invocation,
+                            bounds,
+                            &environment,
+                            |code, message| FindingDetail::RustTypeOutput { code, message },
+                            wait.clone(),
+                        ) {
+                            Ok(duration) => {
+                                observed = true;
+                                elapsed = elapsed.saturating_add(duration);
+                            }
+                            Err(failure) => {
+                                let (analysis, duration) = failure.into_parts();
+                                observed |= duration.is_some();
+                                elapsed = duration
+                                    .map_or(elapsed, |duration| elapsed.saturating_add(duration));
+                                refusal = Some(analysis);
+                                break;
+                            }
+                        }
+                    }
+                    let analysis = refusal.unwrap_or_else(|| {
+                        Analysis::terminal(
+                            ArmOutcome::Passed,
+                            format!(
+                                "{} completed its declared native analysis",
+                                declaration.id.as_str()
+                            ),
+                        )
+                    });
+                    if observed {
+                        analysis.timed(timing(elapsed, bounds))
+                    } else {
+                        analysis
                     }
                 }
-                Ok(elapsed) => Analysis::terminal(
-                    ArmOutcome::Passed,
-                    format!(
-                        "{} completed its declared native analysis",
-                        declaration.id.as_str()
-                    ),
-                )
-                .timed(timing(elapsed, bounds)),
+                Ok(_) => Analysis::not_applicable(declaration),
+                Err(error) => Analysis::terminal(ArmOutcome::ParseFailure, error.to_string()),
             }
         }
     };
@@ -671,6 +695,39 @@ mod tests {
             fs::write(self.root.join("src/lib.rs"), contents).expect("write fixture source");
         }
 
+        fn add_reach_packages(&self) {
+            for (package, dependencies) in [
+                ("consumer", "[dependencies]\nplanted = { path = \"..\" }\n"),
+                ("unrelated", ""),
+            ] {
+                let root = self.root.join(package);
+                fs::create_dir_all(root.join("src")).expect("create reach package source");
+                fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n")
+                    .expect("write reach package source");
+                let manifest = format!(
+                    "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{dependencies}"
+                );
+                fs::write(root.join("Cargo.toml"), manifest).expect("write reach package manifest");
+            }
+            let manifest = FIXTURE_MANIFEST.replace(
+                "[workspace]",
+                "[workspace]\nmembers = [\"consumer\", \"unrelated\"]",
+            );
+            fs::write(self.root.join("Cargo.toml"), manifest)
+                .expect("write reach workspace manifest");
+            fs::write(
+                self.root.join("Cargo.lock"),
+                concat!(
+                    "version = 4\n\n",
+                    "[[package]]\nname = \"consumer\"\nversion = \"0.0.0\"\n",
+                    "dependencies = [\"planted\"]\n\n",
+                    "[[package]]\nname = \"planted\"\nversion = \"0.0.0\"\n\n",
+                    "[[package]]\nname = \"unrelated\"\nversion = \"0.0.0\"\n",
+                ),
+            )
+            .expect("write reach workspace lock");
+        }
+
         /// Analyze the fixture with the compiler that built these tests.
         ///
         /// `CARGO` names the exact binary Cargo invoked this build with, which
@@ -684,10 +741,21 @@ mod tests {
         }
 
         fn analyze_with(&self, cargo: &str, bounds: &Bounds, wait: Option<WaitPolicy>) -> Analysis {
+            self.analyze_changes_with(&["src/lib.rs".to_owned()], cargo, bounds, wait)
+        }
+
+        fn analyze_changes_with(
+            &self,
+            changes: &[String],
+            cargo: &str,
+            bounds: &Bounds,
+            wait: Option<WaitPolicy>,
+        ) -> Analysis {
             let programs = BTreeMap::from([(CARGO, cargo)]);
             rust_typecheck_with_workspace(
                 declaration(GateId::RustTypecheck).expect("native arm is declared"),
                 &self.root,
+                changes,
                 bounds,
                 &programs,
                 || {
@@ -703,10 +771,56 @@ mod tests {
 
         fn sleeping_cargo(&self, label: &str) -> PathBuf {
             let path = self.root.join(label);
-            fs::write(&path, "#!/bin/sh\n/bin/sleep 5\n").expect("write sleeping Cargo");
+            let cargo = env!("CARGO");
+            assert!(
+                !cargo.contains('\''),
+                "fixture Cargo path must be shell-safe"
+            );
+            fs::write(
+                &path,
+                format!(
+                    concat!(
+                        "#!/bin/sh\n",
+                        "if [ \"$1\" = metadata ]; then\n",
+                        "  exec '{cargo}' \"$@\"\n",
+                        "fi\n",
+                        "/bin/sleep 5\n",
+                    ),
+                    cargo = cargo,
+                ),
+            )
+            .expect("write sleeping Cargo");
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
                 .expect("make sleeping Cargo executable");
             path
+        }
+
+        fn logging_cargo(&self) -> (PathBuf, PathBuf) {
+            let path = self.root.join("logging-cargo");
+            let log = self.base.join("cargo-arguments.log");
+            let cargo = env!("CARGO");
+            assert!(
+                !cargo.contains('\'') && !log.to_string_lossy().contains('\''),
+                "fixture paths must be shell-safe"
+            );
+            fs::write(
+                &path,
+                format!(
+                    concat!(
+                        "#!/bin/sh\n",
+                        "if [ \"$1\" = metadata ]; then\n",
+                        "  exec '{cargo}' \"$@\"\n",
+                        "fi\n",
+                        "printf '%s\\n' \"$*\" > '{log}'\n",
+                    ),
+                    cargo = cargo,
+                    log = log.display(),
+                ),
+            )
+            .expect("write logging Cargo");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .expect("make logging Cargo executable");
+            (path, log)
         }
     }
 
@@ -764,10 +878,14 @@ mod tests {
             .analysis;
 
         assert_eq!(
-            [format!("{CARGO} {}", CARGO_CHECK_ARGUMENTS.join(" "))],
+            [format!(
+                "{CARGO} check --locked --package <each reached package> <--all-targets or exact reached target flags>"
+            )],
             declared
         );
     }
+
+    mod reach_tests;
 
     /// The arm refuses a planted body reference, then passes once it is gone.
     ///

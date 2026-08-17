@@ -340,17 +340,18 @@ fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path, _repository: &
         "packages": [{
             "id": "verify-process-fixture-id",
             "name": "verify-process-fixture",
-            "manifest_path": "Cargo.toml",
+            "manifest_path": "$PWD/Cargo.toml",
             "targets": [{
                 "name": "verify_process_fixture",
                 "kind": ["lib"],
-                "src_path": "src/lib.rs",
+                "src_path": "$PWD/src/lib.rs",
                 "test": true,
             }],
         }],
         "workspace_members": ["verify-process-fixture-id"],
     })
-    .to_string();
+    .to_string()
+    .replace('"', "\\\"");
     executable(
         &programs.join("cargo"),
         &format!(
@@ -361,7 +362,7 @@ fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path, _repository: &
                 "  exit 0\n",
                 "fi\n",
                 "if [ \"$1\" = metadata ]; then\n",
-                "  printf '%s\\n' '{}'\n",
+                "  printf '%s\\n' \"{}\"\n",
                 "  exit 0\n",
                 "fi\n",
                 "printf '%s\\n' \"$*\" >> '{}'\n",
@@ -582,26 +583,20 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
         "<!doctype html><title>fixture</title>\n",
     )
     .expect("write fixture app entry point");
-    git(&fixture.repository, &["add", "."]);
+    fs::write(
+        fixture.repository.join("src/lib.rs"),
+        "pub fn fixture() { assert_eq!(2 + 2, 4); }\n",
+    )
+    .expect("write fixture Rust source");
+    git(
+        &fixture.repository,
+        &["add", "app/index.html", "src/lib.rs"],
+    );
 
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create standalone compiler programs");
     let cargo_log = fixture.root.join("standalone-cargo-actions");
-    executable(
-        &programs.join("cargo"),
-        &format!(
-            concat!(
-                "#!/bin/sh\n",
-                "if [ \"$*\" = \"--version\" ]; then\n",
-                "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
-                "  exit 0\n",
-                "fi\n",
-                "printf '%s\\n' \"$*\" >> '{}'\n",
-                "exit 0\n",
-            ),
-            cargo_log.display()
-        ),
-    );
+    install_cargo_with_metadata(&programs, &cargo_log, &fixture.repository);
     let trunk_log = fixture.root.join("standalone-trunk-actions");
     executable(
         &programs.join("trunk"),
@@ -631,9 +626,9 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
 
     let cargo = fs::read_to_string(&cargo_log).expect("read standalone Cargo trace");
     assert!(
-        cargo
-            .lines()
-            .any(|line| line == "check --locked --workspace --all-targets"),
+        cargo.lines().any(|line| {
+            line == "check --locked --all-targets --package verify-process-fixture"
+        }),
         "native standalone analysis did not run: {cargo}"
     );
     assert!(

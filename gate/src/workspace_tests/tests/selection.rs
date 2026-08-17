@@ -85,6 +85,7 @@ fn staged_path_module_selects_only_its_declaring_integration_target() {
                 id: "fixture-id".to_owned(),
                 name: "fixture".to_owned(),
                 manifest_path: root.join("fixture/Cargo.toml"),
+                dependencies: Vec::new(),
                 features: BTreeMap::new(),
                 targets: vec![
                     MetadataTarget {
@@ -181,6 +182,193 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
             .iter()
             .all(|edge| edge.source() == "fixture-a/src/behavior.rs")
     );
+}
+
+#[test]
+fn staged_library_source_selects_transitive_reverse_workspace_dependents() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[1]
+        .dependencies
+        .push(PathBuf::from("/workspace/fixture-a"));
+    inventory.packages.push(PackageInventory {
+        id: "fixture-c-id".to_owned(),
+        name: "fixture-c".to_owned(),
+        root: PathBuf::from("/workspace/fixture-c"),
+        dependencies: vec![PathBuf::from("/workspace/fixture-b")],
+        declared_targets: vec![TargetIdentity {
+            package: "fixture-c-id".to_owned(),
+            kind: "test".to_owned(),
+            name: "behavior".to_owned(),
+            source: PathBuf::from("/workspace/fixture-c/tests/behavior.rs"),
+            declared_path_sources: Vec::new(),
+            source_bytes: 1,
+        }],
+        targets: vec![TargetIdentity {
+            package: "fixture-c-id".to_owned(),
+            kind: "test".to_owned(),
+            name: "behavior".to_owned(),
+            source: PathBuf::from("/workspace/fixture-c/tests/behavior.rs"),
+            declared_path_sources: Vec::new(),
+            source_bytes: 1,
+        }],
+    });
+
+    let report = selection_report(
+        &inventory,
+        Path::new("/workspace"),
+        wire::Digest::compute(wire::Domain::GateTree, b"reverse dependency reach"),
+        &["fixture-a/src/behavior.rs".to_owned()],
+    )
+    .expect("library reach expands through transitive reverse dependencies");
+
+    assert_eq!(
+        report.tests(),
+        [
+            "fixture-a::lib:fixture-a",
+            "fixture-b::bin:fixture-b",
+            "fixture-c::test:behavior",
+        ]
+    );
+    assert_eq!(report.edges().len(), 3);
+    assert!(
+        report
+            .edges()
+            .iter()
+            .all(|edge| edge.source() == "fixture-a/src/behavior.rs")
+    );
+}
+
+#[test]
+fn non_test_declared_target_still_owns_native_check_reach() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[0].targets.clear();
+
+    let reached = crate::workspace_tests::selection::cargo_check_selections(
+        &inventory,
+        Path::new("/workspace"),
+        &["fixture-a/src/behavior.rs".to_owned()],
+    )
+    .expect("declared target check reach resolves");
+
+    assert_eq!(
+        reached
+            .iter()
+            .map(|check| check.name.as_str())
+            .collect::<Vec<_>>(),
+        ["fixture-a"],
+        "a declared target remains an exact check owner even when Cargo disables its test harness"
+    );
+}
+
+#[test]
+fn non_test_binary_target_escalates_test_reach_instead_of_dropping_the_source() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[1].targets.clear();
+
+    let plan = selection_plan(
+        &inventory,
+        Path::new("/workspace"),
+        wire::Digest::compute(wire::Domain::GateTree, b"non-test binary reach"),
+        &["fixture-b/src/main.rs".to_owned()],
+    )
+    .expect("a source without a test-enabled owner escalates test reach");
+
+    assert_eq!(plan.escalations().len(), 1);
+    assert_eq!(plan.escalations()[0].source(), "fixture-b/src/main.rs");
+    assert_eq!(
+        plan.escalations()[0].reason(),
+        &CargoReachEscalationReason::UnreachedInPackage {
+            package: "fixture-b".to_owned(),
+        }
+    );
+    assert_eq!(
+        plan.report().tests(),
+        ["fixture-a::lib:fixture-a"],
+        "exhaustive fallback retains every available workspace test target"
+    );
+}
+
+#[test]
+fn custom_build_target_reaches_workspace_dependents() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[0].declared_targets.push(TargetIdentity {
+        package: "fixture-a-id".to_owned(),
+        kind: "custom-build".to_owned(),
+        name: "build-script-build".to_owned(),
+        source: PathBuf::from("/workspace/fixture-a/tools/generate.rs"),
+        declared_path_sources: Vec::new(),
+        source_bytes: 1,
+    });
+    inventory.packages[1]
+        .dependencies
+        .push(PathBuf::from("/workspace/fixture-a"));
+
+    let reached = crate::workspace_tests::selection::cargo_check_selections(
+        &inventory,
+        Path::new("/workspace"),
+        &["fixture-a/tools/generate.rs".to_owned()],
+    )
+    .expect("custom build check reach resolves");
+
+    assert_eq!(
+        reached
+            .iter()
+            .map(|check| check.name.as_str())
+            .collect::<Vec<_>>(),
+        ["fixture-a", "fixture-b"]
+    );
+
+    let report = selection_report(
+        &inventory,
+        Path::new("/workspace"),
+        wire::Digest::compute(wire::Domain::GateTree, b"custom build reach"),
+        &["fixture-a/tools/generate.rs".to_owned()],
+    )
+    .expect("custom build test reach uses its reverse dependency closure");
+    assert_eq!(
+        report.tests(),
+        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+    );
+}
+
+#[test]
+fn metadata_inventory_refuses_an_unowned_local_dependency_path() {
+    let root = fixture_root("workspace-unowned-local-dependency");
+    fs::create_dir_all(root.join("member/src")).expect("dependency fixture source root creates");
+    fs::write(
+        root.join("member/Cargo.toml"),
+        "[package]\nname = \"member\"\nversion = \"0.0.0\"\n",
+    )
+    .expect("dependency fixture manifest writes");
+    fs::write(root.join("member/src/lib.rs"), "pub fn member() {}\n")
+        .expect("dependency fixture source writes");
+    let root = fs::canonicalize(root).expect("dependency fixture root canonicalizes");
+    let missing = root.join("missing-member");
+
+    let error = inventory_from_metadata(
+        Metadata {
+            workspace_members: vec!["member-id".to_owned()],
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+            packages: vec![MetadataPackage {
+                id: "member-id".to_owned(),
+                name: "member".to_owned(),
+                manifest_path: root.join("member/Cargo.toml"),
+                dependencies: vec![MetadataDependency {
+                    path: Some(missing.clone()),
+                }],
+                features: BTreeMap::new(),
+                targets: vec![target(&root.join("member"), "member", &["lib"], true)],
+            }],
+        },
+        &root,
+    )
+    .expect_err("an in-workspace path dependency without a workspace package must refuse")
+    .to_string();
+
+    assert!(error.contains("unowned local path"), "{error}");
+    assert!(error.contains(&missing.display().to_string()), "{error}");
+    fs::remove_dir_all(root).expect("dependency fixture removes");
 }
 
 #[test]

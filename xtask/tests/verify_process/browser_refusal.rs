@@ -46,7 +46,7 @@ fn install_browser_refusal_programs(fixture: &Fixture) -> BrowserRefusalPrograms
                 "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
                 "fi\n",
                 "if [ \"$1\" = metadata ]; then\n",
-                "  printf '%s\\n' '{}'\n",
+                "  printf '%s\\n' \"{}\"\n",
                 "fi\n",
                 "if [ \"$1\" = xtask ] && [ \"$2\" = app ]; then\n",
                 "  printf '[app] compiler-ready\\n'\n",
@@ -54,7 +54,7 @@ fn install_browser_refusal_programs(fixture: &Fixture) -> BrowserRefusalPrograms
                 "exit 0\n",
             ),
             cargo_log.display(),
-            browser_refusal_metadata(),
+            browser_refusal_metadata().replace('"', "\\\""),
         ),
     );
     executable(
@@ -79,11 +79,11 @@ fn browser_refusal_metadata() -> String {
         "packages": [{
             "id": "verify-process-fixture-id",
             "name": "verify-process-fixture",
-            "manifest_path": "Cargo.toml",
+            "manifest_path": "$PWD/Cargo.toml",
             "targets": [{
                 "name": "verify_process_fixture",
                 "kind": ["lib"],
-                "src_path": "src/lib.rs",
+                "src_path": "$PWD/src/lib.rs",
                 "test": true,
             }],
         }],
