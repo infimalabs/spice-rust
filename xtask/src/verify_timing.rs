@@ -205,6 +205,31 @@ pub(super) fn write_progress(
     output.flush()
 }
 
+/// Report a bounded-cadence child-output cursor which has advanced since the
+/// previous report. Unlike the elapsed-only diagnostic above, this record may
+/// renew the outer verifier's inactivity lease.
+pub(super) fn write_advancement(
+    output: &mut impl Write,
+    stage: Stage<'_>,
+    elapsed: Duration,
+    cursor: u64,
+) -> io::Result<()> {
+    writeln!(
+        output,
+        concat!(
+            "[verify] stage=advance ordinal={}/{} elapsed_ms={} cursor={} ",
+            "family={} identity={:?}"
+        ),
+        stage.ordinal,
+        stage.total,
+        elapsed.as_millis(),
+        cursor,
+        stage.family,
+        stage.identity,
+    )?;
+    output.flush()
+}
+
 pub(super) fn write_terminal(
     output: &mut impl Write,
     stage: Stage<'_>,

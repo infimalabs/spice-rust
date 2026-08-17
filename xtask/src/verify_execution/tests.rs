@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use super::{
     ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget,
     CancellationToken, CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_TEST_RUNTIME,
-    PREREQUISITES, ProcessOutput, RunError, Runner, Status, VERIFY_ACTIONS, VerifyError,
-    count_peer_cargo, ready_nodes, run_process, success, verify_package_with_control,
+    PREREQUISITES, PROGRESS_INTERVAL, ProcessOutput, RunError, Runner, Status, VERIFY_ACTIONS,
+    VerifyError, count_peer_cargo, ready_nodes, run_process, success, verify_package_with_control,
     verify_with_control, verify_with_deadline, verify_with_deadline_and_rebalance,
 };
 use crate::verify_timing::Disposition;
@@ -557,6 +557,7 @@ fn transient_peer_pressure_is_rebalanced_after_workspace_test_setup() {
         CancellationToken::new(),
         Arc::new(AtomicBool::new(false)),
         Duration::from_secs(1),
+        PROGRESS_INTERVAL,
         |_| recovered,
     )
     .expect("the post-setup observation restores capacity after transient peers exit");
@@ -614,6 +615,7 @@ fn pressured_rebalance_overlaps_the_two_long_test_phase_branches() {
         CancellationToken::new(),
         Arc::new(AtomicBool::new(false)),
         Duration::from_millis(120),
+        PROGRESS_INTERVAL,
         |_| pressured,
     )
     .expect("the two long test-phase branches overlap under measurable pressure");
@@ -642,6 +644,7 @@ fn unreadable_post_setup_pressure_uses_the_single_worker_degraded_mode() {
         CancellationToken::new(),
         Arc::new(AtomicBool::new(false)),
         Duration::from_secs(1),
+        PROGRESS_INTERVAL,
         |_| degraded,
     )
     .expect("the fail-closed post-setup budget still completes every action");

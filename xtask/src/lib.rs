@@ -323,6 +323,7 @@ enum RunError {
 }
 
 type ActionReadiness = Arc<dyn Fn() + Send + Sync>;
+type ActionProgress = Arc<dyn Fn() + Send + Sync>;
 
 trait Runner: Sync {
     fn entry_point(&self) -> Result<String, String>;
@@ -331,12 +332,31 @@ trait Runner: Sync {
         cancellation: &CancellationToken,
         cargo_jobs: usize,
     ) -> Result<CommandRun, RunError>;
+    fn format_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        let _ = progress;
+        self.format(cancellation, cargo_jobs)
+    }
     fn run(
         &self,
         step: Step,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
     ) -> Result<CommandRun, RunError>;
+    fn run_with_progress(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        let _ = progress;
+        self.run(step, cancellation, cargo_jobs)
+    }
     fn run_with_readiness(
         &self,
         step: Step,
@@ -344,6 +364,17 @@ trait Runner: Sync {
         cargo_jobs: usize,
         readiness: ActionReadiness,
     ) -> Result<CommandRun, RunError>;
+    fn run_with_readiness_and_progress(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        readiness: ActionReadiness,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        let _ = progress;
+        self.run_with_readiness(step, cancellation, cargo_jobs, readiness)
+    }
     fn run_scoped(
         &self,
         step: ScopedCommand,
@@ -356,17 +387,45 @@ trait Runner: Sync {
         cancellation: &CancellationToken,
         cargo_jobs: usize,
     ) -> Result<BrowserRun, RunError>;
+    fn browser_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        progress: ActionProgress,
+    ) -> Result<BrowserRun, RunError> {
+        let _ = progress;
+        self.browser(cancellation, cargo_jobs)
+    }
     fn workspace_test_prebuild(
         &self,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
     ) -> Result<CommandRun, RunError>;
+    fn workspace_test_prebuild_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        let _ = progress;
+        self.workspace_test_prebuild(cancellation, cargo_jobs)
+    }
     fn workspace_tests(
         &self,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
         workspace_workers: usize,
     ) -> Result<CommandRun, RunError>;
+    fn workspace_tests_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        workspace_workers: usize,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        let _ = progress;
+        self.workspace_tests(cancellation, cargo_jobs, workspace_workers)
+    }
     fn structural_preflight(
         &self,
         cancellation: &CancellationToken,
@@ -537,13 +596,24 @@ impl SystemRunner {
         cancellation: &CancellationToken,
         cargo_jobs: usize,
         readiness: Option<ActionReadiness>,
+        progress: Option<ActionProgress>,
     ) -> Result<CommandRun, RunError> {
         let contract = self.compiler_contract(stage, cargo_jobs)?;
-        let run = match readiness {
-            Some(readiness) => {
+        let run = match (readiness, progress) {
+            (Some(readiness), Some(progress)) => contract
+                .run_supervised_with_readiness_and_progress(
+                    stage,
+                    cancellation.clone(),
+                    readiness,
+                    progress,
+                ),
+            (Some(readiness), None) => {
                 contract.run_supervised_with_readiness(stage, cancellation.clone(), readiness)
             }
-            None => contract.run_supervised(stage, cancellation.clone()),
+            (None, Some(progress)) => {
+                contract.run_supervised_with_progress(stage, cancellation.clone(), progress)
+            }
+            (None, None) => contract.run_supervised(stage, cancellation.clone()),
         }
         .map_err(RunError::Launch)?;
         let cancelled = run.cancelled();
@@ -574,6 +644,50 @@ impl SystemRunner {
         } else {
             CommandRun::Exited(output)
         })
+    }
+
+    fn run_workspace_process(
+        &self,
+        label: &'static str,
+        arguments: impl IntoIterator<Item = String>,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        progress: Option<ActionProgress>,
+        progress_source: verify_execution::ProgressSource,
+    ) -> Result<CommandRun, RunError> {
+        let executable = std::env::current_exe().map_err(RunError::Launch)?;
+        let workspace = { self.state()?.native_workspace.clone() };
+        let workspace = workspace.ok_or_else(|| {
+            RunError::Cleanup(format!(
+                "full verifier {label} has no reusable native compiler workspace"
+            ))
+        })?;
+        let overrides = [
+            ("CARGO_TARGET_DIR", workspace.cargo_target().as_os_str()),
+            ("CARGO_BUILD_BUILD_DIR", workspace.cargo_build().as_os_str()),
+        ];
+        match progress {
+            Some(progress) => verify_execution::run_process_at_with_progress(
+                label,
+                executable,
+                arguments,
+                workspace.source(),
+                cancellation,
+                cargo_jobs,
+                &overrides,
+                progress_source,
+                progress,
+            ),
+            None => verify_execution::run_process_at(
+                label,
+                executable,
+                arguments,
+                workspace.source(),
+                cancellation,
+                cargo_jobs,
+                &overrides,
+            ),
+        }
     }
 }
 
@@ -715,7 +829,7 @@ impl Runner for SystemRunner {
     ) -> Result<CommandRun, RunError> {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(stage) = Self::compiler_stage(step) {
-            return self.run_compiler_stage(stage, cancellation, cargo_jobs, None);
+            return self.run_compiler_stage(stage, cancellation, cargo_jobs, None, None);
         }
         verify_execution::run_process(
             step.label,
@@ -724,6 +838,29 @@ impl Runner for SystemRunner {
             cancellation,
             cargo_jobs,
             &[],
+        )
+    }
+
+    fn run_with_progress(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(stage) = Self::compiler_stage(step) {
+            return self.run_compiler_stage(stage, cancellation, cargo_jobs, None, Some(progress));
+        }
+        verify_execution::run_process_with_progress(
+            step.label,
+            "cargo",
+            step.arguments,
+            cancellation,
+            cargo_jobs,
+            &[],
+            verify_execution::ProgressSource::CargoStderr,
+            progress,
         )
     }
 
@@ -742,11 +879,44 @@ impl Runner for SystemRunner {
                     step.label
                 )))
             })?;
-            self.run_compiler_stage(stage, cancellation, cargo_jobs, Some(readiness))
+            self.run_compiler_stage(stage, cancellation, cargo_jobs, Some(readiness), None)
         }
         #[cfg(target_arch = "wasm32")]
         {
             let _ = (step, cancellation, cargo_jobs, readiness);
+            Err(RunError::Launch(io::Error::other(
+                "compiler readiness is unavailable on wasm32",
+            )))
+        }
+    }
+
+    fn run_with_readiness_and_progress(
+        &self,
+        step: Step,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        readiness: ActionReadiness,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let stage = Self::compiler_stage(step).ok_or_else(|| {
+                RunError::Launch(io::Error::other(format!(
+                    "compiler readiness is unavailable for {}",
+                    step.label
+                )))
+            })?;
+            self.run_compiler_stage(
+                stage,
+                cancellation,
+                cargo_jobs,
+                Some(readiness),
+                Some(progress),
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (step, cancellation, cargo_jobs, readiness, progress);
             Err(RunError::Launch(io::Error::other(
                 "compiler readiness is unavailable on wasm32",
             )))
@@ -779,6 +949,15 @@ impl Runner for SystemRunner {
         verify_browser::run(cancellation, cargo_jobs)
     }
 
+    fn browser_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        progress: ActionProgress,
+    ) -> Result<BrowserRun, RunError> {
+        verify_browser::run_with_progress(cancellation, cargo_jobs, progress)
+    }
+
     fn workspace_tests(
         &self,
         cancellation: &CancellationToken,
@@ -787,34 +966,51 @@ impl Runner for SystemRunner {
     ) -> Result<CommandRun, RunError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let executable = std::env::current_exe().map_err(RunError::Launch)?;
-            let workspace = { self.state()?.native_workspace.clone() };
-            if let Some(workspace) = workspace {
-                let workspace_cargo_jobs = cargo_jobs.min(workspace_workers);
-                return verify_execution::run_process_at(
-                    WORKSPACE_TEST_LABEL,
-                    executable,
-                    [
-                        "__workspace-tests-prebuilt-shared".to_owned(),
-                        workspace_workers.to_string(),
-                    ],
-                    workspace.source(),
-                    cancellation,
-                    workspace_cargo_jobs,
-                    &[
-                        ("CARGO_TARGET_DIR", workspace.cargo_target().as_os_str()),
-                        ("CARGO_BUILD_BUILD_DIR", workspace.cargo_build().as_os_str()),
-                    ],
-                );
-            }
-            let _ = (executable, cancellation, cargo_jobs, workspace_workers);
-            Err(RunError::Cleanup(
-                "full verifier workspace tests have no reusable native compiler workspace".into(),
-            ))
+            self.run_workspace_process(
+                WORKSPACE_TEST_LABEL,
+                [
+                    "__workspace-tests-prebuilt-shared".to_owned(),
+                    workspace_workers.to_string(),
+                ],
+                cancellation,
+                cargo_jobs.min(workspace_workers),
+                None,
+                verify_execution::ProgressSource::WorkspaceStdout,
+            )
         }
         #[cfg(target_arch = "wasm32")]
         {
             let _ = (cancellation, cargo_jobs, workspace_workers);
+            Err(RunError::Launch(io::Error::other(
+                "workspace tests are unavailable on wasm32",
+            )))
+        }
+    }
+
+    fn workspace_tests_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        workspace_workers: usize,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.run_workspace_process(
+                WORKSPACE_TEST_LABEL,
+                [
+                    "__workspace-tests-prebuilt-shared".to_owned(),
+                    workspace_workers.to_string(),
+                ],
+                cancellation,
+                cargo_jobs.min(workspace_workers),
+                Some(progress),
+                verify_execution::ProgressSource::WorkspaceStdout,
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (cancellation, cargo_jobs, workspace_workers, progress);
             Err(RunError::Launch(io::Error::other(
                 "workspace tests are unavailable on wasm32",
             )))
@@ -828,31 +1024,44 @@ impl Runner for SystemRunner {
     ) -> Result<CommandRun, RunError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let executable = std::env::current_exe().map_err(RunError::Launch)?;
-            let workspace = { self.state()?.native_workspace.clone() };
-            if let Some(workspace) = workspace {
-                return verify_execution::run_process_at(
-                    WORKSPACE_TEST_PREBUILD_LABEL,
-                    executable,
-                    ["__workspace-tests-prebuild-shared"],
-                    workspace.source(),
-                    cancellation,
-                    cargo_jobs,
-                    &[
-                        ("CARGO_TARGET_DIR", workspace.cargo_target().as_os_str()),
-                        ("CARGO_BUILD_BUILD_DIR", workspace.cargo_build().as_os_str()),
-                    ],
-                );
-            }
-            let _ = (executable, cancellation, cargo_jobs);
-            Err(RunError::Cleanup(
-                "full verifier workspace-test prebuild has no reusable native compiler workspace"
-                    .into(),
-            ))
+            self.run_workspace_process(
+                WORKSPACE_TEST_PREBUILD_LABEL,
+                ["__workspace-tests-prebuild-shared".to_owned()],
+                cancellation,
+                cargo_jobs,
+                None,
+                verify_execution::ProgressSource::CargoStderr,
+            )
         }
         #[cfg(target_arch = "wasm32")]
         {
             let _ = (cancellation, cargo_jobs);
+            Err(RunError::Launch(io::Error::other(
+                "workspace-test prebuild is unavailable on wasm32",
+            )))
+        }
+    }
+
+    fn workspace_test_prebuild_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.run_workspace_process(
+                WORKSPACE_TEST_PREBUILD_LABEL,
+                ["__workspace-tests-prebuild-shared".to_owned()],
+                cancellation,
+                cargo_jobs,
+                Some(progress),
+                verify_execution::ProgressSource::CargoStderr,
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (cancellation, cargo_jobs, progress);
             Err(RunError::Launch(io::Error::other(
                 "workspace-test prebuild is unavailable on wasm32",
             )))

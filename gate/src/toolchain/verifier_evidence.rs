@@ -16,14 +16,12 @@ use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sill::{
-    Acquisition, Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment,
-    Observation, ObserveError, ObservedRecord, Output, OutputStream, Possession, RecordObserver,
-    Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
+    Acquisition, Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
+    Possession, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 use wire::{Digest, Domain};
 
@@ -36,8 +34,11 @@ use crate::VERIFIER_APP_PUBLISH_FLAG;
 use crate::battery::CANONICAL_BATTERY_MANIFEST;
 use crate::manifest::GateId;
 
+mod compiler_observation;
 #[path = "verifier_receipt.rs"]
 mod receipt;
+
+use compiler_observation::wait_for_compiler;
 
 pub use receipt::{
     admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
@@ -327,7 +328,7 @@ impl VerifierCompilerContract {
     /// Returns an unsupported stage, invalid supervision policy, launch, wait,
     /// drain, or capture failure.
     pub fn run(&self, stage: VerifierCompilerStage) -> io::Result<VerifierCompilerRun> {
-        self.run_with_cancellation(stage, Cancellation::Never, None)
+        self.run_with_cancellation(stage, Cancellation::Never, None, None)
     }
 
     /// Run one compiler stage under an externally cancellable process group.
@@ -341,7 +342,28 @@ impl VerifierCompilerContract {
         stage: VerifierCompilerStage,
         cancellation: CancellationToken,
     ) -> io::Result<VerifierCompilerRun> {
-        self.run_with_cancellation(stage, Cancellation::Token(cancellation), None)
+        self.run_with_cancellation(stage, Cancellation::Token(cancellation), None, None)
+    }
+
+    /// Run one compiler stage under cancellation while reporting each framed
+    /// compiler-output advancement to the owning verifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns the ordinary supervised compiler failures plus observation
+    /// setup, delivery, and drain failures.
+    pub fn run_supervised_with_progress(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: CancellationToken,
+        progress: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<VerifierCompilerRun> {
+        self.run_with_cancellation(
+            stage,
+            Cancellation::Token(cancellation),
+            None,
+            Some(progress),
+        )
     }
 
     /// Run the Canvas app stage and report the exact point where nested Cargo
@@ -363,7 +385,34 @@ impl VerifierCompilerContract {
                 "compiler readiness is defined only for the Canvas app stage",
             ));
         }
-        self.run_with_cancellation(stage, Cancellation::Token(cancellation), Some(ready))
+        self.run_with_cancellation(stage, Cancellation::Token(cancellation), Some(ready), None)
+    }
+
+    /// Run the Canvas app stage with both its readiness boundary and framed
+    /// stdout advancement reported to the owning verifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::run_supervised_with_readiness`]
+    /// plus observation delivery failures.
+    pub fn run_supervised_with_readiness_and_progress(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: CancellationToken,
+        ready: Arc<dyn Fn() + Send + Sync>,
+        progress: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<VerifierCompilerRun> {
+        if stage != VerifierCompilerStage::CanvasApp {
+            return Err(io::Error::other(
+                "compiler readiness is defined only for the Canvas app stage",
+            ));
+        }
+        self.run_with_cancellation(
+            stage,
+            Cancellation::Token(cancellation),
+            Some(ready),
+            Some(progress),
+        )
     }
 
     fn run_with_cancellation(
@@ -371,6 +420,7 @@ impl VerifierCompilerContract {
         stage: VerifierCompilerStage,
         cancellation: Cancellation,
         readiness: Option<Arc<dyn Fn() + Send + Sync>>,
+        progress: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> io::Result<VerifierCompilerRun> {
         if stage.gate_id() != self.gate_id {
             return Err(io::Error::other(format!(
@@ -389,14 +439,14 @@ impl VerifierCompilerContract {
         let environment = compiler_environment(&self.environment, &self.repository);
         let started = Instant::now();
         let spec = self.compiler_spec(stage, cancellation, program, &arguments, &environment)?;
-        let (outcome, readiness) = wait_for_compiler(spec, stage, readiness)?;
+        let (outcome, readiness) = wait_for_compiler(spec, stage, readiness, progress)?;
         let stdout = complete_output(stage, "stdout", outcome.stdout())?;
         let stderr = complete_output(stage, "stderr", outcome.stderr())?;
         let status = outcome.completion().status();
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let success = status.success();
         let code = status.code();
-        if success && readiness.is_some_and(|observer| !observer.observed()) {
+        if success && readiness == Some(false) {
             return Err(io::Error::other(
                 "successful Canvas app compiler omitted its readiness record",
             ));
@@ -529,76 +579,6 @@ fn set_environment_value(environment: &mut Vec<(OsString, OsString)>, name: &str
     }
 }
 
-fn wait_for_compiler(
-    spec: Spec,
-    stage: VerifierCompilerStage,
-    readiness: Option<Arc<dyn Fn() + Send + Sync>>,
-) -> io::Result<(WaitOutcome, Option<Arc<CompilerReadinessObserver>>)> {
-    let readiness = readiness.map(CompilerReadinessObserver::new).map(Arc::new);
-    let outcome = match &readiness {
-        Some(observer) => {
-            let observation = Observation::new(
-                OutputStream::Stdout,
-                READY_FRAME_LIMIT,
-                READY_QUEUE_CAPACITY,
-                Arc::clone(observer) as Arc<dyn RecordObserver>,
-            )
-            .map_err(io::Error::other)?;
-            sill::spawn_observed(spec, observation)
-                .map_err(io::Error::other)?
-                .wait()
-                .map_err(io::Error::other)?
-        }
-        None => sill::spawn(spec)
-            .map_err(io::Error::other)?
-            .wait()
-            .map_err(io::Error::other)?,
-    };
-    if let Some(failure) = outcome.observation_failure() {
-        return Err(io::Error::other(format!(
-            "{} compiler readiness observation failed: {failure}",
-            stage.tag()
-        )));
-    }
-    if !outcome.outputs_drained() {
-        return Err(io::Error::other(format!(
-            "{} compiler output did not drain before cleanup",
-            stage.tag()
-        )));
-    }
-    Ok((outcome, readiness))
-}
-
-struct CompilerReadinessObserver {
-    ready: Arc<dyn Fn() + Send + Sync>,
-    observed: AtomicBool,
-}
-
-impl CompilerReadinessObserver {
-    fn new(ready: Arc<dyn Fn() + Send + Sync>) -> Self {
-        Self {
-            ready,
-            observed: AtomicBool::new(false),
-        }
-    }
-
-    fn observed(&self) -> bool {
-        self.observed.load(Ordering::Acquire)
-    }
-}
-
-impl RecordObserver for CompilerReadinessObserver {
-    fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
-        if record.bytes().strip_suffix(b"\n")
-            == Some(crate::VERIFIER_APP_COMPILER_READY_RECORD.as_bytes())
-            && !self.observed.swap(true, Ordering::AcqRel)
-        {
-            (self.ready)();
-        }
-        Ok(())
-    }
-}
-
 /// One compiler contract bound to a verified stable mirror of its selection.
 pub struct PreparedVerifierCompiler {
     contract: VerifierCompilerContract,
@@ -641,6 +621,22 @@ impl PreparedVerifierCompiler {
         self.contract.run_supervised(stage, cancellation)
     }
 
+    /// Run the prepared stage while reporting framed compiler output.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as
+    /// [`VerifierCompilerContract::run_supervised_with_progress`].
+    pub fn run_supervised_with_progress(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: CancellationToken,
+        progress: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<VerifierCompilerRun> {
+        self.contract
+            .run_supervised_with_progress(stage, cancellation, progress)
+    }
+
     /// Native compiler output roots which workspace tests may reuse.
     #[must_use]
     pub fn reusable_workspace(&self) -> Option<super::RustAnalysisWorkspace> {
@@ -661,6 +657,28 @@ impl PreparedVerifierCompiler {
     ) -> io::Result<VerifierCompilerRun> {
         self.contract
             .run_supervised_with_readiness(stage, cancellation, ready)
+    }
+
+    /// Run the prepared Canvas app stage while reporting readiness and framed
+    /// compiler output through one stdout observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as
+    /// [`VerifierCompilerContract::run_supervised_with_readiness_and_progress`].
+    pub fn run_supervised_with_readiness_and_progress(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: CancellationToken,
+        ready: Arc<dyn Fn() + Send + Sync>,
+        progress: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<VerifierCompilerRun> {
+        self.contract.run_supervised_with_readiness_and_progress(
+            stage,
+            cancellation,
+            ready,
+            progress,
+        )
     }
 
     /// Assemble reusable evidence while retaining the stable source possession.

@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::*;
 use sill::ProcessGroup;
@@ -1109,16 +1110,20 @@ fn canvas_readiness_requires_and_observes_the_post_compiler_record() {
         .expect("readiness compiler contract");
         let observed = Arc::new(AtomicBool::new(false));
         let callback_observed = Arc::clone(&observed);
-        let run = contract.run_supervised_with_readiness(
+        let progressed = Arc::new(AtomicBool::new(false));
+        let callback_progressed = Arc::clone(&progressed);
+        let run = contract.run_supervised_with_readiness_and_progress(
             VerifierCompilerStage::CanvasApp,
             CancellationToken::new(),
             Arc::new(move || callback_observed.store(true, Ordering::Release)),
+            Arc::new(move || callback_progressed.store(true, Ordering::Release)),
         );
 
         match expected {
             Ok(()) => {
                 assert!(run.expect("ready compiler runs").success());
                 assert!(observed.load(Ordering::Acquire));
+                assert!(progressed.load(Ordering::Acquire));
             }
             Err(fragment) => {
                 let error = match run {
@@ -1127,6 +1132,7 @@ fn canvas_readiness_requires_and_observes_the_post_compiler_record() {
                 };
                 assert!(error.to_string().contains(fragment));
                 assert!(!observed.load(Ordering::Acquire));
+                assert!(!progressed.load(Ordering::Acquire));
             }
         }
     }
@@ -1163,14 +1169,21 @@ fn failed_process_feedback_is_captured_completely_without_minting_evidence() {
     )
     .expect("captured output contract");
 
+    let progressed = Arc::new(AtomicBool::new(false));
+    let callback_progressed = Arc::clone(&progressed);
     let run = contract
-        .run(VerifierCompilerStage::NativeClippy)
+        .run_supervised_with_progress(
+            VerifierCompilerStage::NativeClippy,
+            CancellationToken::new(),
+            Arc::new(move || callback_progressed.store(true, Ordering::Release)),
+        )
         .expect("fixture Cargo launches");
 
     assert!(!run.success());
     assert_eq!(run.code(), Some(23));
     assert_eq!(run.stdout(), b"bounded stdout\n");
     assert_eq!(run.stderr(), b"bounded stderr\n");
+    assert!(progressed.load(Ordering::Acquire));
     assert!(!run.cancelled());
     assert!(!run.timed_out());
     assert!(run.into_evidence().is_none());
