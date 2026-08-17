@@ -211,6 +211,11 @@ fn mixed_language_worker_executes_exactly_its_published_components() {
 
 fn commit_mixed_language_fixture(repository: &GateRepository) {
     let root = repository.path();
+    let policy_path = root.join("spice-rust.toml");
+    let policy = fs::read_to_string(&policy_path)
+        .expect("read mixed reach policy")
+        .replace("[policy]\n", "[policy]\npackage_roots = [\"src/pkg\"]\n");
+    fs::write(policy_path, policy).expect("configure explicit Python package directory");
     for directory in ["web", "csharp", "src/pkg", "tests", "other", "docs"] {
         fs::create_dir_all(root.join(directory)).expect("create mixed reach fixture directory");
     }
