@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use gate::{
     BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryReceipt, BatteryReport, BatteryState, CampReport,
-    CampStanding, CoverageCompleteness, TestSelectionReport,
+    CampStanding, ChangeReachAuthority, ChangeReachMode, ChangeReachObject, ChangeSelectionReport,
+    CoverageCompleteness, GateId, TestSelectionReport,
 };
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction, Spec,
@@ -72,6 +73,7 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
     assert_eq!(report.edges()[0].source(), "src/lib.rs");
     assert_eq!(report.edges()[0].test(), "gate-fixture::lib:gate_fixture");
     assert_eq!(report.coverage(), &CoverageCompleteness::Complete);
+    assert_execution_matches_reach(&known.progress);
 
     let refused_marker_scratch = Scratch::new("refused-selected-test-marker");
     let refused_marker = refused_marker_scratch.path().join("executed");
@@ -110,6 +112,278 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
         &authority_marker,
     );
 }
+
+#[test]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the configured process-boundary fixture must preserve the invoking test PATH"
+)]
+fn mixed_language_worker_executes_exactly_its_published_components() {
+    let repository = GateRepository::new();
+    let root = repository.path();
+    commit_mixed_language_fixture(&repository);
+    stage_mixed_language_changes(&repository);
+
+    let scratch = Scratch::new("mixed-language-reach");
+    let programs = scratch.path().join("programs");
+    fs::create_dir(&programs).expect("create mixed reach program directory");
+    let pyright_log = scratch.path().join("pyright.log");
+    executable(
+        &programs.join("pyright"),
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$*\" = \"--version\" ]; then printf '%s\\n' 'pyright 1.1.411'; exit 0; fi\n",
+                "printf '%s\\n' \"$*\" >> '{}'\n",
+                "printf '%s\\n' '{{\"generalDiagnostics\":[],\"summary\":{{\"errorCount\":0}}}}'\n",
+            ),
+            pyright_log.display(),
+        ),
+    );
+    let mut path_entries = vec![programs];
+    path_entries.extend(std::env::split_paths(
+        &std::env::var_os(PROCESS_PATH).expect("test process carries PATH"),
+    ));
+    let path = std::env::join_paths(path_entries).expect("compose mixed reach PATH");
+
+    let boundary = run_commit_worker_with_path(root, Some(Path::new(&path)));
+
+    assert_eq!(
+        boundary.terminal.first(),
+        Some(&b'R'),
+        "mixed fixture refused before complete execution: {}",
+        String::from_utf8_lossy(&boundary.terminal)
+    );
+    assert_execution_matches_reach(&boundary.progress);
+    let selection = change_selection_report(&boundary.progress);
+    assert_eq!(
+        reached_paths(&selection, GateId::JavascriptUnused),
+        ["web/dep.js", "web/entry.js"],
+    );
+    assert_eq!(
+        reached_paths(&selection, GateId::CsharpUnusedCandidates),
+        ["csharp/Child.cs", "csharp/Widget.cs"],
+    );
+    assert_eq!(
+        reached_paths(&selection, GateId::PythonTypecheck),
+        [
+            "src/pkg/__init__.py",
+            "src/pkg/a.py",
+            "src/pkg/b.py",
+            "tests/test_pkg.py",
+        ],
+    );
+    assert_eq!(
+        reached_paths(&selection, GateId::MarkdownLinks),
+        ["docs/changed.md", "src/lib.rs"],
+    );
+    let pyright = fs::read_to_string(pyright_log).expect("read Pyright execution log");
+    assert_eq!(
+        pyright.lines().count(),
+        1,
+        "Pyright must execute once: {pyright}"
+    );
+    for reached in [
+        "src/pkg/__init__.py",
+        "src/pkg/a.py",
+        "src/pkg/b.py",
+        "tests/test_pkg.py",
+    ] {
+        assert!(
+            pyright.contains(reached),
+            "Pyright omitted {reached}: {pyright}"
+        );
+    }
+    assert!(!pyright.contains("other/unused.py"), "{pyright}");
+    let terminal = String::from_utf8_lossy(&boundary.terminal);
+    for unrelated in [
+        "other/isolated.js",
+        "other/Other.cs",
+        "other/unused.py",
+        "docs/unrelated.md",
+    ] {
+        assert!(
+            !terminal.contains(unrelated),
+            "unrelated finding escaped focused execution: {unrelated}"
+        );
+    }
+}
+
+fn commit_mixed_language_fixture(repository: &GateRepository) {
+    let root = repository.path();
+    for directory in ["web", "csharp", "src/pkg", "tests", "other", "docs"] {
+        fs::create_dir_all(root.join(directory)).expect("create mixed reach fixture directory");
+    }
+    fs::write(
+        root.join("package.json"),
+        "{\"name\":\"mixed-reach-fixture\"}\n",
+    )
+    .expect("write JavaScript package authority");
+    fs::write(root.join("web/dep.js"), "export const used = 1;\n")
+        .expect("write JavaScript dependency");
+    fs::write(
+        root.join("web/entry.js"),
+        "import { used } from './dep.js';\nconsole.log(used);\n",
+    )
+    .expect("write JavaScript dependent");
+    fs::write(root.join("other/isolated.js"), "const unrelatedDebt = 1;\n")
+        .expect("write unrelated JavaScript debt");
+    fs::write(
+        root.join("csharp/Widget.cs"),
+        "namespace Product.Core;\nclass Widget { }\n",
+    )
+    .expect("write C# dependency");
+    fs::write(
+        root.join("csharp/Child.cs"),
+        "using Product.Core;\nclass Child : Widget { }\n",
+    )
+    .expect("write C# dependent");
+    fs::write(
+        root.join("other/Other.cs"),
+        "namespace Other;\nclass OtherType { private int unrelatedDebt; }\n",
+    )
+    .expect("write unrelated C# debt");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = 'mixed-reach'\n",
+    )
+    .expect("write Python project authority");
+    fs::write(root.join("src/pkg/__init__.py"), "\n").expect("write Python package");
+    fs::write(root.join("src/pkg/b.py"), "# dependency generation 1\n")
+        .expect("write Python dependency");
+    fs::write(root.join("src/pkg/a.py"), "from pkg import b\n").expect("write Python dependent");
+    fs::write(root.join("tests/test_pkg.py"), "from pkg import a\n")
+        .expect("write Python test dependent");
+    fs::write(
+        root.join("other/unused.py"),
+        "def unrelated_debt():\n    pass\n",
+    )
+    .expect("write unrelated Python debt");
+    fs::write(root.join("docs/changed.md"), "# Mixed reach\n")
+        .expect("write changed Markdown source");
+    fs::write(root.join("docs/unrelated.md"), "[broken](missing.md)\n")
+        .expect("write unrelated Markdown debt");
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "mixed reach fixture"]);
+}
+
+fn stage_mixed_language_changes(repository: &GateRepository) {
+    let root = repository.path();
+    fs::write(root.join("web/dep.js"), "export const used = 2;\n")
+        .expect("change JavaScript dependency");
+    fs::write(
+        root.join("csharp/Widget.cs"),
+        "namespace Product.Core;\nclass Widget { } // generation 2\n",
+    )
+    .expect("change C# dependency");
+    fs::write(root.join("src/pkg/b.py"), "# dependency generation 2\n")
+        .expect("change Python dependency");
+    fs::write(root.join("docs/changed.md"), "# Mixed reach generation 2\n")
+        .expect("change Markdown source");
+    repository.write_source(2);
+    for path in [
+        "web/dep.js",
+        "csharp/Widget.cs",
+        "src/pkg/b.py",
+        "docs/changed.md",
+        "src/lib.rs",
+    ] {
+        repository.add(path);
+    }
+}
+
+#[test]
+fn rename_and_delete_worker_binds_both_sides_without_scanning_unrelated_debt() {
+    let repository = GateRepository::new();
+    let root = repository.path();
+    fs::create_dir(root.join("docs")).expect("create rename fixture directory");
+    fs::write(root.join("docs/old.md"), "# Renamed document\n").expect("write rename source");
+    fs::write(root.join("docs/deleted.md"), "# Deleted document\n").expect("write deletion source");
+    fs::write(root.join("docs/unrelated.md"), "[broken](missing.md)\n")
+        .expect("write unrelated Markdown debt");
+    git(root, &["add", "docs"]);
+    git(root, &["commit", "-qm", "rename fixture"]);
+    git(root, &["mv", "docs/old.md", "docs/new.md"]);
+    git(root, &["rm", "-q", "docs/deleted.md"]);
+
+    let boundary = run_commit_worker(root);
+
+    assert_eq!(
+        boundary.terminal.first(),
+        Some(&b'R'),
+        "rename/delete fixture refused: {}",
+        String::from_utf8_lossy(&boundary.terminal)
+    );
+    assert_execution_matches_reach(&boundary.progress);
+    let selection = change_selection_report(&boundary.progress);
+    assert_eq!(
+        selection.changed_sources(),
+        ["docs/deleted.md", "docs/new.md", "docs/old.md"]
+    );
+    for gate_id in [GateId::Taste, GateId::MarkdownLinks] {
+        assert_eq!(
+            reached_paths(&selection, gate_id),
+            ["docs/deleted.md", "docs/new.md", "docs/old.md"],
+            "{gate_id} lost one rename/delete side"
+        );
+    }
+    assert!(
+        !String::from_utf8_lossy(&boundary.terminal).contains("docs/unrelated.md"),
+        "unrelated Markdown debt escaped focused execution"
+    );
+}
+
+#[test]
+fn dynamic_javascript_worker_publishes_and_executes_explicit_exhaustive_reach() {
+    let repository = GateRepository::new();
+    let root = repository.path();
+    fs::create_dir_all(root.join("web")).expect("create dynamic JavaScript directory");
+    fs::create_dir_all(root.join("other")).expect("create exhaustive peer directory");
+    fs::write(
+        root.join("package.json"),
+        "{\"name\":\"dynamic-reach-fixture\"}\n",
+    )
+    .expect("write dynamic package authority");
+    fs::write(root.join("web/changed.js"), "console.log('initial');\n")
+        .expect("write initial JavaScript source");
+    fs::write(root.join("web/dependency.js"), "export const VALUE = 1;\n")
+        .expect("write dynamic dependency");
+    fs::write(
+        root.join("other/peer.js"),
+        "export function exhaustivePeer() {}\n",
+    )
+    .expect("write exhaustive peer debt");
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "dynamic reach fixture"]);
+    fs::write(
+        root.join("web/changed.js"),
+        "const target = './dependency.js';\nimport(target);\n",
+    )
+    .expect("write dynamic JavaScript change");
+    repository.add("web/changed.js");
+
+    let boundary = run_commit_worker(root);
+
+    assert_execution_matches_reach(&boundary.progress);
+    let selection = change_selection_report(&boundary.progress);
+    let reach = selection
+        .reach_for(GateId::JavascriptUnused)
+        .expect("JavaScript arm retains exhaustive reach");
+    assert!(matches!(
+        reach.mode(),
+        ChangeReachMode::Exhaustive {
+            authority: ChangeReachAuthority::LanguageGraph,
+            reason,
+        } if reason.contains("dynamic or unsupported specifier")
+    ));
+    assert_eq!(reach.objects(), [ChangeReachObject::Repository]);
+    let terminal = String::from_utf8_lossy(&boundary.terminal);
+    assert!(
+        terminal.contains("javascript-unused found 2 findings across 3 selected paths"),
+        "explicit exhaustive execution omitted its three-file, two-finding inventory: {terminal}"
+    );
+}
+
 #[test]
 fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     let repository = GateRepository::new();
@@ -337,6 +611,7 @@ fn assert_selection_refusal(boundary: &WorkerBoundary, detail: &str, test_marker
             .progress
             .contains("[change-gate-full-verifier] disposition=miss stage=document")
             && !boundary.progress.contains("[change-gate-policy]")
+            && !boundary.progress.contains("[change-gate-execution]")
             && !boundary.progress.contains("[rust-test"),
         "refused selection started policy or workspace tests: {}",
         boundary.progress,
@@ -355,6 +630,70 @@ fn selection_report(progress: &str) -> TestSelectionReport {
         "worker must publish exactly one selection report: {progress}"
     );
     TestSelectionReport::decode(encoded[0].as_bytes()).expect("decode worker selection report")
+}
+
+fn assert_execution_matches_reach(progress: &str) {
+    const EXECUTION_PREFIX: &str = "[change-gate-execution] gate=";
+    let report = change_selection_report(progress);
+    let expected = report
+        .reach()
+        .iter()
+        .map(|reach| {
+            (
+                reach.gate_id().as_str().to_owned(),
+                reach.objects().to_vec(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut executed = BTreeMap::new();
+    for line in progress
+        .lines()
+        .filter_map(|line| line.strip_prefix(EXECUTION_PREFIX))
+    {
+        let (gate, objects) = line
+            .split_once(" objects=")
+            .expect("execution scope separates gate and objects");
+        let objects = serde_json::from_str::<Vec<ChangeReachObject>>(objects)
+            .expect("execution scope carries typed objects");
+        assert!(
+            executed.insert(gate.to_owned(), objects).is_none(),
+            "gate executed more than once: {gate}: {progress}"
+        );
+    }
+    assert_eq!(
+        executed, expected,
+        "executed scope diverged from reach plan: {progress}"
+    );
+}
+
+fn change_selection_report(progress: &str) -> ChangeSelectionReport {
+    const PREFIX: &str = "[change-gate-selection-report] ";
+    let reports = progress
+        .lines()
+        .filter_map(|line| line.strip_prefix(PREFIX))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reports.len(),
+        1,
+        "worker must publish exactly one change reach report: {progress}"
+    );
+    ChangeSelectionReport::decode(reports[0].as_bytes()).expect("decode worker change reach report")
+}
+
+fn reached_paths(report: &ChangeSelectionReport, gate_id: GateId) -> Vec<&str> {
+    report
+        .reach_for(gate_id)
+        .expect("selected arm retains reach")
+        .objects()
+        .iter()
+        .filter_map(|object| match object {
+            ChangeReachObject::Path { path } => Some(path.as_str()),
+            ChangeReachObject::Repository
+            | ChangeReachObject::Package { .. }
+            | ChangeReachObject::Target { .. }
+            | ChangeReachObject::Check { .. } => None,
+        })
+        .collect()
 }
 
 fn packaged_change_report(document: &[u8]) -> ChangeGateReport {

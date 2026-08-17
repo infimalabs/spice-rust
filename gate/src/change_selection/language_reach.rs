@@ -72,6 +72,11 @@ pub fn compile_language_reach(
             .map(|edge| edge.source().to_owned())
             .collect::<Vec<_>>();
         let expanded = match gate_id {
+            GateId::RepoShape => exhaustive(
+                gate_id,
+                &sources,
+                "repository shape compares complete configured package and test root topology",
+            ),
             GateId::EnvNameLedger => exhaustive(
                 gate_id,
                 &sources,
@@ -1241,6 +1246,18 @@ mod tests {
             ));
             assert_eq!(reach.objects(), [ChangeReachObject::Repository]);
         }
+        let repository_shape = expanded
+            .reach_for(GateId::RepoShape)
+            .expect("repository shape remains selected");
+        assert!(matches!(
+            repository_shape.mode(),
+            ChangeReachMode::Exhaustive {
+                authority: ChangeReachAuthority::LanguageGraph,
+                reason,
+            } if reason
+                == "repository shape compares complete configured package and test root topology"
+        ));
+        assert_eq!(repository_shape.objects(), [ChangeReachObject::Repository]);
     }
 
     #[test]

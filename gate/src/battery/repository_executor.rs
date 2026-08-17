@@ -121,6 +121,7 @@ pub struct RepositoryExecutor<'trace> {
     verifier_evidence_required: bool,
     selected: Option<GateId>,
     reached_paths: Option<Vec<String>>,
+    execution_objects: Option<Vec<ChangeReachObject>>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 }
 
@@ -175,6 +176,8 @@ impl<'trace> RepositoryExecutor<'trace> {
         let rim = reached_paths
             .as_ref()
             .map_or(rim.clone(), |paths| rim.clone().with_changes(paths.clone()));
+        let execution_objects =
+            bound_execution_objects(selected, selection, reached_paths.as_deref(), rim.changes())?;
         let tree = selector.materialize(&repository).map_err(|error| {
             BatteryError::new(format!("cannot capture battery source: {error}"))
         })?;
@@ -253,6 +256,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             verifier_evidence_required: false,
             selected,
             reached_paths,
+            execution_objects,
             trace,
         })
     }
@@ -273,6 +277,11 @@ impl<'trace> RepositoryExecutor<'trace> {
     #[must_use]
     pub(super) fn changes(&self) -> &[String] {
         self.rim.changes()
+    }
+
+    /// Objects the validated ordinary reach plan actually bound to this capture.
+    pub(super) fn execution_objects(&self) -> Option<&[ChangeReachObject]> {
+        self.execution_objects.as_deref()
     }
 
     /// Prove the live selector source still names this retained tree.
@@ -782,7 +791,7 @@ fn record_capture_analyses(
     }
 }
 
-const PATH_LOCAL_ARMS: [GateId; 18] = [
+const PATH_LOCAL_ARMS: [GateId; 20] = [
     GateId::RepoDocs,
     GateId::Formatters,
     GateId::LocalPaths,
@@ -793,6 +802,8 @@ const PATH_LOCAL_ARMS: [GateId; 18] = [
     GateId::MagicNumbers,
     GateId::MarkdownLinks,
     GateId::AssertionFreeTests,
+    GateId::RustTypecheck,
+    GateId::CanvasWebTypecheck,
     GateId::JavascriptUnused,
     GateId::CsharpUnusedCandidates,
     GateId::PythonTypecheck,
@@ -813,6 +824,56 @@ const DEPENDENCY_PATH_ARMS: [GateId; 8] = [
     GateId::PythonUnused,
     GateId::PrivateInternals,
 ];
+
+fn bound_execution_objects(
+    selected: Option<GateId>,
+    selection: Option<&ChangeSelectionReport>,
+    reached_paths: Option<&[String]>,
+    rim_changes: &[String],
+) -> Result<Option<Vec<ChangeReachObject>>, BatteryError> {
+    let Some(selection) = selection else {
+        return Ok(None);
+    };
+    let Some(gate_id) = selected else {
+        return Err(BatteryError::new(
+            "object reach cannot be supplied to a complete battery capture",
+        ));
+    };
+    let reach = selection.reach_for(gate_id).ok_or_else(|| {
+        BatteryError::new(format!(
+            "selected arm {gate_id} has no validated object reach authority"
+        ))
+    })?;
+    let mut objects = match reach.mode() {
+        ChangeReachMode::Exhaustive { .. } => vec![ChangeReachObject::Repository],
+        ChangeReachMode::Focused => reached_paths.map_or_else(
+            || {
+                if reach.objects() == [ChangeReachObject::Repository] {
+                    vec![ChangeReachObject::Repository]
+                } else {
+                    rim_changes
+                        .iter()
+                        .map(|path| ChangeReachObject::Path { path: path.clone() })
+                        .collect()
+                }
+            },
+            |paths| {
+                paths
+                    .iter()
+                    .map(|path| ChangeReachObject::Path { path: path.clone() })
+                    .collect()
+            },
+        ),
+    };
+    objects.sort();
+    objects.dedup();
+    if objects != reach.objects() {
+        return Err(BatteryError::new(format!(
+            "focused execution scope for {gate_id} does not equal its validated reach plan"
+        )));
+    }
+    Ok(Some(objects))
+}
 
 fn path_local_reach(
     selected: Option<GateId>,

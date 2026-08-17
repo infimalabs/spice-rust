@@ -97,6 +97,12 @@ impl PreparedArm<'_> {
         self.capture.changes()
     }
 
+    /// Objects the validated ordinary reach plan bound to this recapture.
+    #[must_use]
+    pub fn execution_objects(&self) -> Option<&[::gate::ChangeReachObject]> {
+        self.capture.execution_objects()
+    }
+
     /// Every regular path retained by the immutable selected tree.
     #[must_use]
     pub fn paths(&self) -> &[String] {

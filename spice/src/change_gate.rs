@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 
 use gate::{
-    ArmDisposition, ArmFamily, BatteryArmResult, BatteryManifest, BatteryState,
+    ArmDisposition, ArmFamily, BatteryArmResult, BatteryManifest, BatteryState, ChangeReachObject,
     ChangeSelectionReport, GateId, Selector, StateRunScope, TestSelectionReport,
 };
 use serde::{Deserialize, Serialize};
@@ -993,12 +993,28 @@ fn run_focused_policy(
             ChangeGateError::environment("change-gate-progress-unavailable", error)
         })?;
         let report = if gate_id == GateId::Staging {
+            publish_execution_scope(
+                progress,
+                gate_id,
+                reach.objects(),
+                &[ChangeReachObject::Repository],
+            )?;
             anchor.execute().map_err(ChangeGateError::gate)?
         } else {
-            surface
+            let mut prepared = surface
                 .prepare_arm_in_state(selection, gate_id, state_run.clone())
-                .and_then(|mut prepared| prepared.execute())
-                .map_err(ChangeGateError::gate)?
+                .map_err(ChangeGateError::gate)?;
+            let execution_objects = prepared.execution_objects().ok_or_else(|| {
+                ChangeGateError::protocol(
+                    "change-gate-reach-unbound",
+                    format!(
+                        "focused arm {} retained no execution object inventory",
+                        gate_id.as_str()
+                    ),
+                )
+            })?;
+            publish_execution_scope(progress, gate_id, reach.objects(), execution_objects)?;
+            prepared.execute().map_err(ChangeGateError::gate)?
         };
         if report.context().source() != source {
             return Err(ChangeGateError::refusal(
@@ -1018,6 +1034,34 @@ fn run_focused_policy(
         ));
     }
     Ok(policy)
+}
+
+fn publish_execution_scope(
+    progress: &mut impl Write,
+    gate_id: GateId,
+    planned: &[ChangeReachObject],
+    executed: &[ChangeReachObject],
+) -> Result<(), ChangeGateError> {
+    if executed != planned {
+        return Err(ChangeGateError::protocol(
+            "change-gate-reach-mismatch",
+            format!(
+                "focused arm {} bound an execution inventory different from its reach plan",
+                gate_id.as_str()
+            ),
+        ));
+    }
+    let objects = serde_json::to_string(executed)
+        .map_err(|error| ChangeGateError::protocol("change-gate-reach-unencodable", error))?;
+    writeln!(
+        progress,
+        "[change-gate-execution] gate={} objects={objects}",
+        gate_id.as_str(),
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    progress
+        .flush()
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
