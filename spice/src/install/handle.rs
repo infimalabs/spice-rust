@@ -151,37 +151,7 @@ impl AdmittedPath {
         self.verify_named_parent()?;
         #[cfg(unix)]
         {
-            let descriptor = match unix_fs::openat(
-                self.parent(),
-                &self.file_name,
-                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-                Mode::empty(),
-            ) {
-                Ok(descriptor) => descriptor,
-                Err(rustix::io::Errno::NOENT) => return Ok(None),
-                Err(source) => {
-                    return Err(InstallError::io(
-                        "open admitted install file",
-                        &self.display,
-                        source.into(),
-                    ));
-                }
-            };
-            let mut file = File::from(descriptor);
-            let metadata = file.metadata().map_err(|source| {
-                InstallError::io("inspect admitted install file", &self.display, source)
-            })?;
-            if !metadata.is_file() {
-                return Err(InstallError::PathShape(self.display.clone()));
-            }
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes).map_err(|source| {
-                InstallError::io("read admitted install file", &self.display, source)
-            })?;
-            Ok(Some(ObservedFile {
-                image: FileImage::new(metadata.permissions().mode() & 0o777, bytes),
-                generation: Generation::observe(&metadata),
-            }))
+            self.observe_named(&self.file_name)
         }
         #[cfg(not(unix))]
         unreachable!("construction refuses non-Unix filesystems")
@@ -220,12 +190,30 @@ impl AdmittedPath {
         image: &FileImage,
         expected: Option<ReceiptGeneration>,
     ) -> Result<ReceiptGeneration, InstallError> {
+        self.publish_receipt_with(image, expected, || Ok(()))
+    }
+
+    fn publish_receipt_with(
+        &self,
+        image: &FileImage,
+        expected: Option<ReceiptGeneration>,
+        before_admission: impl FnOnce() -> Result<(), InstallError>,
+    ) -> Result<ReceiptGeneration, InstallError> {
         let expected_native = expected.as_ref().map(ReceiptGeneration::native);
         let generation = self.publish_checked(
             image,
             expected_native,
             || mutation_pause("publish", &self.display),
             || self.require_receipt_generation(expected.as_ref()),
+            before_admission,
+            |name| {
+                self.require_named_receipt_generation(
+                    name,
+                    expected
+                        .as_ref()
+                        .expect("an exchanged receipt has an expected generation"),
+                )
+            },
         )?;
         Ok(ReceiptGeneration::published(generation, image))
     }
@@ -236,9 +224,19 @@ impl AdmittedPath {
         expected: Option<Generation>,
         before_mutation: impl FnOnce() -> Result<(), InstallError>,
     ) -> Result<Generation, InstallError> {
-        self.publish_checked(image, expected, before_mutation, || {
-            self.require_generation(expected)
-        })
+        self.publish_checked(
+            image,
+            expected,
+            before_mutation,
+            || self.require_generation(expected),
+            || Ok(()),
+            |name| {
+                self.require_named_generation(
+                    name,
+                    expected.expect("an exchanged file has an expected generation"),
+                )
+            },
+        )
     }
 
     fn publish_checked(
@@ -247,6 +245,8 @@ impl AdmittedPath {
         expected: Option<Generation>,
         before_mutation: impl FnOnce() -> Result<(), InstallError>,
         require_expected: impl Fn() -> Result<(), InstallError>,
+        before_admission: impl FnOnce() -> Result<(), InstallError>,
+        require_displaced: impl FnOnce(&OsString) -> Result<(), InstallError>,
     ) -> Result<Generation, InstallError> {
         if !self.ready {
             return Err(InstallError::ParentChanged(self.display.clone()));
@@ -288,7 +288,8 @@ impl AdmittedPath {
                 require_expected()?;
                 before_mutation()?;
                 require_expected()?;
-                self.admit_staged_name(&temporary, expected, staged_generation)?;
+                before_admission()?;
+                self.admit_staged_name(&temporary, expected, staged_generation, require_displaced)?;
                 if expected.is_some() {
                     remove_name(self.parent(), &temporary, AtFlags::empty(), &self.display)?;
                 }
@@ -325,9 +326,10 @@ impl AdmittedPath {
         temporary: &OsString,
         expected: Option<Generation>,
         staged_generation: Generation,
+        require_displaced: impl FnOnce(&OsString) -> Result<(), InstallError>,
     ) -> Result<(), InstallError> {
         match expected {
-            Some(expected) => changed_on_name_race(
+            Some(_) => changed_on_name_race(
                 exchange(
                     self.parent(),
                     temporary,
@@ -340,7 +342,7 @@ impl AdmittedPath {
             .and_then(|()| {
                 let admitted = self.verify_named_parent().and_then(|()| {
                     self.require_named_generation(&self.file_name, staged_generation)?;
-                    self.require_named_generation(temporary, expected)
+                    require_displaced(temporary)
                 });
                 if let Err(error) = admitted {
                     exchange(
@@ -487,6 +489,23 @@ impl AdmittedPath {
     }
 
     #[cfg(unix)]
+    fn require_named_receipt_generation(
+        &self,
+        name: &OsString,
+        expected: &ReceiptGeneration,
+    ) -> Result<(), InstallError> {
+        let observed = self.observe_named(name)?;
+        if observed
+            .as_ref()
+            .is_some_and(|observed| expected.matches(observed))
+        {
+            Ok(())
+        } else {
+            Err(InstallError::GenerationChanged(self.display.clone()))
+        }
+    }
+
+    #[cfg(unix)]
     fn require_named_generation(
         &self,
         name: &OsString,
@@ -498,6 +517,41 @@ impl AdmittedPath {
         } else {
             Err(InstallError::ParentChanged(self.display.clone()))
         }
+    }
+
+    #[cfg(unix)]
+    fn observe_named(&self, name: &OsString) -> Result<Option<ObservedFile>, InstallError> {
+        let descriptor = match unix_fs::openat(
+            self.parent(),
+            name,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
+            Err(source) => {
+                return Err(InstallError::io(
+                    "open admitted install file",
+                    &self.display,
+                    source.into(),
+                ));
+            }
+        };
+        let mut file = File::from(descriptor);
+        let metadata = file.metadata().map_err(|source| {
+            InstallError::io("inspect admitted install file", &self.display, source)
+        })?;
+        if !metadata.is_file() {
+            return Err(InstallError::PathShape(self.display.clone()));
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|source| {
+            InstallError::io("read admitted install file", &self.display, source)
+        })?;
+        Ok(Some(ObservedFile {
+            image: FileImage::new(metadata.permissions().mode() & 0o777, bytes),
+            generation: Generation::observe(&metadata),
+        }))
     }
 
     #[cfg(unix)]
