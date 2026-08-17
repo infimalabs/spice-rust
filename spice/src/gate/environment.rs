@@ -17,6 +17,24 @@ const CARGO_HOME: &str = "CARGO_HOME";
 const RUSTUP_HOME: &str = "RUSTUP_HOME";
 pub(super) const SHELL_HOOK_PREFIX: &[u8] = b"SPICE_SHELL_HOOK_"; // env-policy: allow
 
+const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
 #[expect(
     clippy::disallowed_methods,
     reason = "the canonical gate command rim owns full-verifier environment acquisition"
@@ -74,30 +92,43 @@ pub(super) fn verifier_environment_from(
 }
 
 fn retained(name: &OsStr) -> bool {
-    let name = name.as_encoded_bytes();
-    name != SHELL_LAST_COMMAND.as_bytes()
-        && name != SHELL_OLD_DIRECTORY.as_bytes()
-        && !name.starts_with(SHELL_HOOK_PREFIX)
-        && name != SHELL_LEVEL.as_bytes()
-        && name != b"CARGO"
-        && name != b"CARGO_MANIFEST_DIR"
-        && name != b"CARGO_MANIFEST_PATH"
-        && !name.starts_with(b"CARGO_PKG_")
-        && name != b"DYLD_FALLBACK_LIBRARY_PATH"
-        && name != b"RUSTUP_TOOLCHAIN"
-        && name != b"RUSTUP_TOOLCHAIN_SOURCE"
-        && name != b"RUST_RECURSION_COUNT"
-        && name != b"GIT_AUTHOR_DATE"
-        && name != b"GIT_AUTHOR_EMAIL"
-        && name != b"GIT_AUTHOR_NAME"
-        && name != b"GIT_COMMITTER_DATE"
-        && name != b"GIT_COMMITTER_EMAIL"
-        && name != b"GIT_COMMITTER_NAME"
-        && name != b"GIT_DIR"
-        && name != b"GIT_EDITOR"
-        && name != b"GIT_EXEC_PATH"
-        && name != b"GIT_INDEX_FILE"
-        && name != b"GIT_PREFIX"
+    let bytes = name.as_encoded_bytes();
+    bytes != SHELL_LAST_COMMAND.as_bytes()
+        && bytes != SHELL_OLD_DIRECTORY.as_bytes()
+        && !bytes.starts_with(SHELL_HOOK_PREFIX)
+        && bytes != SHELL_LEVEL.as_bytes()
+        && bytes != b"CARGO"
+        && bytes != b"CARGO_MANIFEST_DIR"
+        && bytes != b"CARGO_MANIFEST_PATH"
+        && !bytes.starts_with(b"CARGO_PKG_")
+        && bytes != b"DYLD_FALLBACK_LIBRARY_PATH"
+        && bytes != b"RUSTUP_TOOLCHAIN"
+        && bytes != b"RUSTUP_TOOLCHAIN_SOURCE"
+        && bytes != b"RUST_RECURSION_COUNT"
+        && bytes != b"GIT_AUTHOR_DATE"
+        && bytes != b"GIT_AUTHOR_EMAIL"
+        && bytes != b"GIT_AUTHOR_NAME"
+        && bytes != b"GIT_COMMITTER_DATE"
+        && bytes != b"GIT_COMMITTER_EMAIL"
+        && bytes != b"GIT_COMMITTER_NAME"
+        && bytes != b"GIT_EDITOR"
+        && bytes != b"GIT_EXEC_PATH"
+        && !git_local_environment(name)
+}
+
+/// Whether Git declares an environment entry local to one repository command.
+///
+/// The installed pre-commit rim removes this authority before configured child
+/// execution. Compiler evidence uses the same classifier so a receipt minted
+/// outside that rim remains reusable without allowing Git's transient index,
+/// object, or command-line configuration to become an implicit build input.
+pub fn git_local_environment(name: &OsStr) -> bool {
+    GIT_LOCAL_ENVIRONMENT
+        .iter()
+        .any(|candidate| name == OsStr::new(candidate))
+        || name.to_str().is_some_and(|name| {
+            name.starts_with("GIT_CONFIG_KEY_") || name.starts_with("GIT_CONFIG_VALUE_")
+        })
 }
 
 fn has_isolation_markers(environment: &[(OsString, OsString)]) -> bool {

@@ -358,6 +358,15 @@ fn git_commit_metadata_normalizes_to_the_verifier_compiler_environment() {
             OsString::from("GIT_INDEX_FILE"),
             OsString::from("/fixture/git/index"),
         ),
+        (OsString::from("GIT_CONFIG_COUNT"), OsString::from("1")),
+        (
+            OsString::from("GIT_CONFIG_KEY_0"),
+            OsString::from("core.hooksPath"),
+        ),
+        (
+            OsString::from("GIT_CONFIG_VALUE_0"),
+            OsString::from("/fixture/git/hooks"),
+        ),
         (OsString::from("GIT_PREFIX"), OsString::new()),
     ]);
 

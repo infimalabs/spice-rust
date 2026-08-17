@@ -44,7 +44,9 @@ struct EnvironmentPolicy {
 /// tree. The generated-hook process fixture contributes three private log and
 /// exit-control names, and the installed pre-commit launcher contributes its
 /// private appliance marker. Those references oblige the ledger to account all
-/// twenty names. They are named here rather than added to [`SpiceVariable`],
+/// twenty original names. Compiler-receipt admission also observes four
+/// operational launcher names which remain outside the typed product-variable
+/// vocabulary. All twenty-four are named here rather than added to [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
 /// would claim ownership Spice does not have.
 ///
@@ -60,6 +62,7 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_INDEX_FILE",                       // env-policy: allow
     "GIT_WORK_TREE",                        // env-policy: allow
     "SPICE_CANVAS_BINARY",                  // env-policy: allow
+    "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",  // env-policy: allow
     "SPICE_FIXTURE_RERUN",                  // env-policy: allow
     "SPICE_HOOKS",                          // env-policy: allow
     "SPICE_HOOK_ARGV_LOG",                  // env-policy: allow
@@ -67,9 +70,12 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "SPICE_HOOK_STDIN_LOG",                 // env-policy: allow
     "SPICE_INBOX",                          // env-policy: allow
     "SPICE_LANE",                           // env-policy: allow
+    "SPICE_MOUNTED_COMMAND",                // env-policy: allow
     "SPICE_NATIVE_SHELL",                   // env-policy: allow
     "SPICE_PROOF",                          // env-policy: allow
+    "SPICE_RUNTIME_PYTHON",                 // env-policy: allow
     "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE", // env-policy: allow
+    "SPICE_VISIBLE_PROG",                   // env-policy: allow
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",  // env-policy: allow
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",   // env-policy: allow
     "TMPDIR",                               // env-policy: allow

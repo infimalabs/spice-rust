@@ -11,9 +11,10 @@ use gate::{
     BatteryReceipt, GateId, Selector, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
 };
 use spice::gate::{
-    FullVerifierEvidence, PreparedBattery, SemanticFullVerifierAdmission,
-    admit_full_verifier_evidence, admit_merge_parent_full_verifier_evidence,
-    admit_semantic_full_verifier_evidence, prepare_strict,
+    FullVerifierEvidence, FullVerifierEvidenceAdmission, FullVerifierEvidenceStage,
+    PreparedBattery, SemanticFullVerifierAdmission, admit_full_verifier_evidence,
+    admit_merge_parent_full_verifier_evidence, admit_semantic_full_verifier_evidence,
+    inspect_full_verifier_evidence, prepare_strict,
 };
 use spice::repository::Repository;
 
@@ -106,8 +107,10 @@ fn concurrent_linked_worktree_state_receipts_compose_and_remain_source_bound() {
 fn concurrent_state_receipt_fixture_process() {
     let left = env::current_dir().expect("fixture current directory");
     let right = configure_concurrent_state_fixture(&left);
+    bind_operational_generation("left-generation");
     let (left_repository, left_prepared, left_compiler, left_battery) =
         capture_concurrent_verifier(&left);
+    bind_operational_generation("right-generation");
     let (right_repository, right_prepared, right_compiler, right_battery) =
         capture_concurrent_verifier(&right);
     assert_ne!(left_prepared.source(), right_prepared.source());
@@ -135,6 +138,16 @@ fn concurrent_state_receipt_fixture_process() {
         &left_evidence,
     );
     env::set_current_dir(&left).expect("return to fixture root for cleanup");
+}
+
+fn bind_operational_generation(generation: &str) {
+    // SAFETY: the fixture runs as the sole exact test in a private subprocess;
+    // no sibling thread reads or writes these process variables.
+    unsafe {
+        env::set_var("SPICE_COMMAND_PLAN_EXECUTION_DIGEST", generation); // env-policy: allow
+        env::set_var("SPICE_RUNTIME_PYTHON", format!("/{generation}/python")); // env-policy: allow
+        env::set_var("SPICE_SHELL_HOOK_INSTALLED_APPLIANCE", generation); // env-policy: allow
+    }
 }
 
 fn configure_concurrent_state_fixture(left: &Path) -> PathBuf {
@@ -252,12 +265,12 @@ fn assert_retained_evidence_is_source_bound(
     left_evidence
         .publish(right_repository)
         .expect("copy foreign-source evidence into right worktree");
-    assert!(
-        admit_full_verifier_evidence(right_repository, Selector::staged())
-            .expect("probe foreign-source evidence")
-            .is_none(),
-        "state composition must not weaken exact staged-source admission",
-    );
+    let admission = inspect_full_verifier_evidence(right_repository, Selector::staged())
+        .expect("probe foreign-source evidence");
+    let FullVerifierEvidenceAdmission::Unavailable(miss) = admission else {
+        panic!("state composition must not weaken exact staged-source admission");
+    };
+    assert_eq!(miss.stage(), FullVerifierEvidenceStage::Source);
 }
 
 #[test]
@@ -488,8 +501,10 @@ fn admitted_merge(repository: &Repository) -> Box<spice::gate::AdmittedSemanticV
 #[ignore = "subprocess fixture with isolated cwd and compiler environment"]
 fn semantic_lifecycle_fixture_process() {
     let root = env::current_dir().expect("fixture current directory");
+    stage_protected_source_change(&root);
     let repository = Repository::discover(&root).expect("discover fixture repository");
     let evidence = publish_producer_evidence(&repository);
+    assert_source_gate_reuses_complete_evidence(&root);
     assert_pre_commit_reuses_complete_evidence(&root);
 
     reject_cross_worktree_reuse(&root, &evidence);
@@ -570,6 +585,45 @@ fn semantic_lifecycle_fixture_process() {
             .count(),
         1,
         "Canvas current-source build must execute exactly once:\n{trunk}",
+    );
+}
+
+fn stage_protected_source_change(root: &Path) {
+    fs::write(
+        root.join("app/src/lib.rs"),
+        "pub fn app_fixture() {\n    let _protected_source = true;\n}\n",
+    )
+    .expect("write protected staged source change");
+    git(root, &["add", "app/src/lib.rs"]);
+}
+
+fn assert_source_gate_reuses_complete_evidence(root: &Path) {
+    let cargo_log = fixture_peer(root, "cargo.log");
+    let trunk_log = fixture_peer(root, "trunk.log");
+    fs::write(&cargo_log, "").expect("clear Cargo execution log");
+    fs::write(&trunk_log, "").expect("clear Trunk execution log");
+    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(["gate", "selection"])
+        .current_dir(root)
+        .output()
+        .expect("launch staged-source selection leaf");
+    assert!(
+        output.status.success(),
+        "staged-source selection refused exact evidence: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    let cargo = fs::read_to_string(cargo_log).expect("read Cargo execution log");
+    assert!(
+        cargo.lines().all(|line| line == "--version"),
+        "staged-source selection fell through to focused Cargo execution:\n{cargo}",
+    );
+    let trunk = fs::read_to_string(trunk_log).expect("read Trunk execution log");
+    assert!(
+        trunk.lines().all(|line| line == "--version"),
+        "staged-source selection fell through to focused Trunk execution:\n{trunk}",
     );
 }
 
@@ -721,12 +775,12 @@ fn reject_compiler_contract_drift(repository: &Repository) {
     let mut drifted = original.clone();
     drifted.extend_from_slice(b"\n# compiler contract drift\n");
     fs::write(&cargo, drifted).expect("move compiler executable bytes");
-    assert!(
-        admit_full_verifier_evidence(repository, Selector::staged())
-            .expect("probe drifted compiler contract")
-            .is_none(),
-        "exact evidence must not cross compiler executable drift",
-    );
+    let admission = inspect_full_verifier_evidence(repository, Selector::staged())
+        .expect("probe drifted compiler contract");
+    let FullVerifierEvidenceAdmission::Unavailable(miss) = admission else {
+        panic!("exact evidence must not cross compiler executable drift");
+    };
+    assert_eq!(miss.stage(), FullVerifierEvidenceStage::Compiler);
     fs::write(&cargo, original).expect("restore compiler executable bytes");
     let mut permissions = fs::metadata(&cargo)
         .expect("read restored Cargo wrapper")

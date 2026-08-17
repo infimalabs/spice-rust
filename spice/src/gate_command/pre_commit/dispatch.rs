@@ -90,7 +90,20 @@ pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, 
     let expected_source = initial.source().clone();
     drop(initial);
     write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
-    let admitted = full_verifier_evidence()?;
+    let (admitted, miss) = match full_verifier_evidence()? {
+        spice::gate::FullVerifierEvidenceAdmission::Admitted(admitted) => (Some(*admitted), None),
+        spice::gate::FullVerifierEvidenceAdmission::Unavailable(miss) => {
+            writeln!(
+                progress,
+                "[change-gate-full-verifier] disposition=miss stage={} detail={:?}",
+                miss.stage().as_str(),
+                miss.detail(),
+            )
+            .map_err(worker_io_failure)?;
+            progress.flush().map_err(worker_io_failure)?;
+            (None, Some(miss))
+        }
+    };
     let dispatch = configured::Dispatch::capture().map_err(configured_failure)?;
     let source = dispatch.source().clone();
     if source != expected_source {
@@ -102,7 +115,8 @@ pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, 
             fault: false,
         });
     }
-    let (packaged, full_verifier, dispatch) = packaged(progress, dispatch, &source, admitted)?;
+    let (packaged, full_verifier, dispatch) = packaged(progress, dispatch, &source, admitted)
+        .map_err(|failure| with_full_verifier_miss(failure, miss.as_ref()))?;
 
     let configured = if dispatch.has_configured() {
         write_phase(
@@ -117,7 +131,8 @@ pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, 
             .saturating_sub(configured::cleanup_reserve());
         dispatch
             .execute_configured(remaining, Cancellation::Never)
-            .map_err(configured_failure)?
+            .map_err(configured_failure)
+            .map_err(|failure| with_full_verifier_miss(failure, miss.as_ref()))?
     } else {
         None
     };
@@ -189,8 +204,7 @@ fn packaged(
     Ok((Some(report), None, dispatch))
 }
 
-fn full_verifier_evidence()
--> Result<Option<spice::gate::AdmittedFullVerifierEvidence>, WorkerFailure> {
+fn full_verifier_evidence() -> Result<spice::gate::FullVerifierEvidenceAdmission, WorkerFailure> {
     let current = env::current_dir().map_err(|error| WorkerFailure {
         reason: "gate::pre-commit-working-directory-unavailable".to_owned(),
         detail: error.to_string(),
@@ -201,11 +215,58 @@ fn full_verifier_evidence()
         detail: error.to_string(),
         fault: true,
     })?;
-    spice::gate::admit_full_verifier_evidence(&repository, gate::Selector::staged()).map_err(
+    spice::gate::inspect_full_verifier_evidence(&repository, gate::Selector::staged()).map_err(
         |error| WorkerFailure {
             reason: error.reason().to_owned(),
             detail: error.detail().to_owned(),
             fault: error.is_fault(),
         },
     )
+}
+
+fn with_full_verifier_miss(
+    mut failure: WorkerFailure,
+    miss: Option<&spice::gate::FullVerifierEvidenceMiss>,
+) -> WorkerFailure {
+    let Some(miss) = miss else {
+        return failure;
+    };
+    failure.detail = format!(
+        "full-verifier admission missed at stage={}: {}; {}",
+        miss.stage().as_str(),
+        miss.detail(),
+        failure.detail,
+    );
+    failure
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_failure_retains_the_exact_full_verifier_miss_stage() {
+        let miss = spice::gate::FullVerifierEvidenceMiss::new(
+            spice::gate::FullVerifierEvidenceStage::Compiler,
+            "compiler receipt authority differs",
+        );
+        let failure = with_full_verifier_miss(
+            WorkerFailure {
+                reason: "gate::configured-refused".to_owned(),
+                detail: "configured source gate refused".to_owned(),
+                fault: false,
+            },
+            Some(&miss),
+        );
+
+        assert_eq!(failure.reason, "gate::configured-refused");
+        assert_eq!(
+            failure.detail,
+            concat!(
+                "full-verifier admission missed at stage=compiler: ",
+                "compiler receipt authority differs; configured source gate refused",
+            ),
+        );
+        assert!(!failure.fault);
+    }
 }
