@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, OnceLock};
 use wire::{Digest, Domain};
 
 use super::manifest_contract::{
@@ -323,14 +324,27 @@ impl FocusedArmReport {
 /// ```compile_fail,E0277
 /// let report: gate::BatteryReport = serde_json::from_slice(b"{}").expect("no way in");
 /// ```
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BatteryReport {
     version: u64,
     gate_set: Digest,
     context: BatteryContext,
     results: Vec<BatteryArmResult>,
+    #[serde(skip)]
+    canonical: OnceLock<Arc<[u8]>>,
 }
+
+impl PartialEq for BatteryReport {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version
+            && self.gate_set == other.gate_set
+            && self.context == other.context
+            && self.results == other.results
+    }
+}
+
+impl Eq for BatteryReport {}
 
 /// The report shape exactly as it is spelled on disk, admitted nowhere else.
 #[derive(Debug, Deserialize)]
@@ -349,6 +363,7 @@ impl From<RawReport> for BatteryReport {
             gate_set: raw.gate_set,
             context: raw.context,
             results: raw.results,
+            canonical: OnceLock::new(),
         }
     }
 }
@@ -386,7 +401,21 @@ impl BatteryReport {
 
     /// Canonical JSON bytes for the complete report.
     pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
-        wire::encode(self)
+        self.canonical().map(|bytes| bytes.as_ref().to_vec())
+    }
+
+    /// Shared canonical bytes for receipt minting and durable evidence.
+    ///
+    /// The report is immutable and its cache is excluded from both serialized
+    /// and equality identity. Every proof consumer therefore reuses the exact
+    /// first encoding without creating a second representation of the report.
+    pub(super) fn canonical(&self) -> Result<Arc<[u8]>, serde_json::Error> {
+        if let Some(bytes) = self.canonical.get() {
+            return Ok(Arc::clone(bytes));
+        }
+        let bytes = Arc::<[u8]>::from(wire::encode(self)?);
+        let _ = self.canonical.set(Arc::clone(&bytes));
+        Ok(self.canonical.get().map_or(bytes, Arc::clone))
     }
 
     /// Decode only a canonical, complete, correctly ordered current report.
@@ -456,6 +485,7 @@ pub fn run_battery(
         gate_set,
         context,
         results,
+        canonical: OnceLock::new(),
     };
     report.validate()?;
     Ok(report)

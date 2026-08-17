@@ -208,7 +208,24 @@ impl BatteryReceipt {
     ///
     /// Returns the encoder error when the receipt cannot be rendered.
     pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
-        wire::encode(self)
+        let version = wire::encode(&self.version)?;
+        let manifest = wire::encode(&self.manifest)?;
+        let baseline = wire::encode(&self.baseline)?;
+        let report = wire::encode(&self.report)?;
+        let run = self.run.canonical()?;
+        let mut bytes = Vec::with_capacity(run.len());
+        bytes.extend_from_slice(b"{\"version\":");
+        bytes.extend_from_slice(&version);
+        bytes.extend_from_slice(b",\"manifest\":");
+        bytes.extend_from_slice(&manifest);
+        bytes.extend_from_slice(b",\"baseline\":");
+        bytes.extend_from_slice(&baseline);
+        bytes.extend_from_slice(b",\"report\":");
+        bytes.extend_from_slice(&report);
+        bytes.extend_from_slice(b",\"run\":");
+        bytes.extend_from_slice(&run);
+        bytes.push(b'}');
+        Ok(bytes)
     }
 
     /// Identity of these exact retained bytes.
@@ -356,7 +373,7 @@ fn manifest_digest() -> Digest {
 
 fn report_digest(run: &BatteryReport) -> Digest {
     let bytes = run
-        .encode()
+        .canonical()
         .expect("the report schema contains only finite JSON values");
     Digest::compute(Domain::GateBatteryReport, &bytes)
 }
