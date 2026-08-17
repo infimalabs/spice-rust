@@ -218,56 +218,49 @@ pub(super) fn selection_plan(
             }
             continue;
         }
-        let owner = inventory
-            .packages
-            .iter()
-            .filter(|package| absolute.starts_with(&package.root))
-            .max_by_key(|package| package.root.components().count());
-        match owner {
-            Some(package) => {
-                if package_wide_source(changed, package, &absolute) {
-                    select_reached_package_targets(
-                        inventory, package, changed, &mut tests, &mut edges,
-                    )?;
-                    continue;
-                }
-                let direct_targets = package
-                    .declared_targets
-                    .iter()
-                    .filter(|target| target_reaches_source(target, &absolute))
-                    .collect::<Vec<_>>();
-                if direct_targets.is_empty() {
+        let claims = source_claims(inventory, changed, &absolute);
+        if claims.is_empty() {
+            match containing_package(inventory, &absolute) {
+                Some(package) => {
                     escalations.insert(CargoReachEscalation::unreached_in_package(
                         changed,
                         &package.name,
                     ));
-                } else {
-                    let reaches_dependents = direct_targets
-                        .iter()
-                        .any(|target| target_reaches_dependents(target));
-                    if reaches_dependents {
-                        select_reached_package_targets(
-                            inventory, package, changed, &mut tests, &mut edges,
-                        )?;
-                    } else {
-                        let direct_tests = package
-                            .targets
-                            .iter()
-                            .filter(|target| target_reaches_source(target, &absolute))
-                            .collect::<Vec<_>>();
-                        if direct_tests.is_empty() {
-                            escalations.insert(CargoReachEscalation::unreached_in_package(
-                                changed,
-                                &package.name,
-                            ));
-                        } else {
-                            select_targets(package, direct_tests, changed, &mut tests, &mut edges)?;
-                        }
-                    }
+                }
+                None => {
+                    escalations.insert(CargoReachEscalation::outside_package(changed));
                 }
             }
-            None => {
-                escalations.insert(CargoReachEscalation::outside_package(changed));
+            continue;
+        }
+        for claim in claims {
+            if claim.package_wide
+                || claim
+                    .targets
+                    .iter()
+                    .any(|target| target_reaches_dependents(target))
+            {
+                select_reached_package_targets(
+                    inventory,
+                    claim.package,
+                    changed,
+                    &mut tests,
+                    &mut edges,
+                )?;
+                continue;
+            }
+            let direct_tests = claim
+                .targets
+                .into_iter()
+                .filter(|target| claim.package.targets.contains(target))
+                .collect::<Vec<_>>();
+            if direct_tests.is_empty() {
+                escalations.insert(CargoReachEscalation::unreached_in_package(
+                    changed,
+                    &claim.package.name,
+                ));
+            } else {
+                select_targets(claim.package, direct_tests, changed, &mut tests, &mut edges)?;
             }
         }
     }
@@ -319,34 +312,29 @@ pub(super) fn cargo_check_selections(
             continue;
         }
         let absolute = selected_root.join(changed);
-        let owner = inventory
-            .packages
-            .iter()
-            .filter(|package| absolute.starts_with(&package.root))
-            .max_by_key(|package| package.root.components().count());
-        let Some(package) = owner else {
+        let claims = source_claims(inventory, changed, &absolute);
+        if claims.is_empty() {
             select_all_package_checks(inventory.packages.iter(), &mut reached);
             continue;
-        };
-        let direct_targets = package
-            .declared_targets
-            .iter()
-            .filter(|target| target_reaches_source(target, &absolute))
-            .collect::<Vec<_>>();
-        if package_wide_source(changed, package, &absolute)
-            || direct_targets
-                .iter()
-                .any(|target| target_reaches_dependents(target))
-        {
-            select_all_package_checks(reverse_dependency_closure(inventory, package), &mut reached);
-        } else if direct_targets.is_empty() {
-            select_all_package_checks(inventory.packages.iter(), &mut reached);
-        } else {
+        }
+        for claim in claims {
+            if claim.package_wide
+                || claim
+                    .targets
+                    .iter()
+                    .any(|target| target_reaches_dependents(target))
+            {
+                select_all_package_checks(
+                    reverse_dependency_closure(inventory, claim.package),
+                    &mut reached,
+                );
+                continue;
+            }
             let targets = reached
-                .entry(package.id.as_str())
+                .entry(claim.package.id.as_str())
                 .or_insert_with(|| Some(BTreeSet::new()));
             if let Some(targets) = targets {
-                for target in direct_targets {
+                for target in claim.targets {
                     targets.insert(cargo_target_selection(target)?);
                 }
             }
@@ -386,6 +374,55 @@ pub(super) fn cargo_check_selections(
                 })
         })
         .collect())
+}
+
+struct SourceClaim<'a> {
+    package: &'a PackageInventory,
+    targets: Vec<&'a TargetIdentity>,
+    package_wide: bool,
+}
+
+/// Derive every target claim before selecting a package. Exact target roots,
+/// `#[path]`, and `include!` reach may cross package roots; the conservative
+/// library-directory fallback belongs only to the deepest containing package.
+fn source_claims<'a>(
+    inventory: &'a Inventory,
+    changed: &str,
+    absolute: &Path,
+) -> Vec<SourceClaim<'a>> {
+    let containing = containing_package(inventory, absolute);
+    inventory
+        .packages
+        .iter()
+        .filter_map(|package| {
+            let targets = package
+                .declared_targets
+                .iter()
+                .filter(|target| {
+                    target_explicitly_reaches_source(target, absolute)
+                        || (containing.is_some_and(|owner| owner.id == package.id)
+                            && target_reaches_source(target, absolute))
+                })
+                .collect::<Vec<_>>();
+            let package_wide = package_wide_source(changed, package, absolute);
+            (!targets.is_empty() || package_wide).then_some(SourceClaim {
+                package,
+                targets,
+                package_wide,
+            })
+        })
+        .collect()
+}
+
+fn containing_package<'a>(
+    inventory: &'a Inventory,
+    absolute: &Path,
+) -> Option<&'a PackageInventory> {
+    inventory
+        .packages
+        .iter()
+        .filter(|package| absolute.starts_with(&package.root))
+        .max_by_key(|package| package.root.components().count())
 }
 
 fn select_all_package_checks<'a>(
@@ -543,13 +580,17 @@ fn select_package_targets(
 /// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
 /// module declaration establishes; ordinary directory proximity is not reach.
 fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
-    if source == target.source {
+    if target_explicitly_reaches_source(target, source) {
         return true;
     }
     let direct_root = target_is_library(target)
         .then(|| target.source.parent())
         .flatten();
     direct_root.is_some_and(|root| source.starts_with(root))
+}
+
+fn target_explicitly_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
+    source == target.source
         || target
             .declared_path_sources
             .iter()
