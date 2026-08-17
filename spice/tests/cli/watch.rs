@@ -1,5 +1,13 @@
 use super::*;
 
+#[path = "watch/cleanup.rs"]
+mod cleanup;
+#[cfg(test)]
+#[path = "watch/tests.rs"]
+mod tests;
+
+use cleanup::{ChildControl, ExitOrigin};
+
 const WATCH_TEST_BOUND: Duration = Duration::from_secs(30);
 const RECEIVE_SLICE: Duration = Duration::from_millis(250);
 const CLEANUP_RESERVE: Duration = Duration::from_secs(2);
@@ -7,7 +15,7 @@ const CLEANUP_RESERVE: Duration = Duration::from_secs(2);
 #[test]
 fn watch_follows_a_real_filesystem_notification_then_reconciles_tape() {
     let scratch = Scratch::new("watch-notification");
-    let (_, tape) = session(scratch.path());
+    let (tape_path, tape) = session(scratch.path());
     let root = scratch.path().to_string_lossy().into_owned();
     let started = Instant::now();
     let deadline = started + WATCH_TEST_BOUND;
@@ -15,21 +23,23 @@ fn watch_follows_a_real_filesystem_notification_then_reconciles_tape() {
 
     watch.assert_initial_cursor();
     watch.await_readiness(scratch.path());
-    if let Err(error) = tape.tee(&record(CODEX_PROSE)) {
-        watch.fail(format!("post-readiness tape write failed: {error}"));
-    }
-    watch.await_tape_event();
+    let locus = match tape.tee(&record(CODEX_PROSE)) {
+        Ok(locus) => locus,
+        Err(error) => watch.fail(format!("post-readiness tape write failed: {error}")),
+    };
+    watch.await_tape_event(ExpectedTapeEvent::new(tape_path, locus));
     watch.finish();
     scratch.remove();
 }
 
 /// Panic-safe ownership of the endless watcher and both pipe readers.
 struct WatchProcess {
-    child: Option<std::process::Child>,
+    child: Option<Box<dyn ChildControl>>,
     stdout: Option<mpsc::Receiver<String>>,
     stdout_reader: Option<std::thread::JoinHandle<Result<(), String>>>,
     stderr_reader: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
     status: Option<std::process::ExitStatus>,
+    exit_origin: Option<ExitOrigin>,
     stderr: Vec<u8>,
     observations: Vec<StreamOutcome>,
     cleanup_errors: Vec<String>,
@@ -39,24 +49,68 @@ struct WatchProcess {
 }
 
 /// Reap a spawned child even if pipe or reader setup panics before admission.
-struct LaunchChild(Option<std::process::Child>);
+struct LaunchChild {
+    child: Option<std::process::Child>,
+    deadline: Instant,
+}
 
 impl LaunchChild {
-    fn child(&mut self) -> &mut std::process::Child {
-        self.0.as_mut().expect("launch child remains owned")
+    fn new(child: std::process::Child, deadline: Instant) -> Self {
+        Self {
+            child: Some(child),
+            deadline,
+        }
     }
 
-    fn admit(mut self) -> std::process::Child {
-        self.0.take().expect("launch child remains owned")
+    fn child(&mut self) -> &mut std::process::Child {
+        self.child.as_mut().expect("launch child remains owned")
+    }
+
+    fn admit(mut self) -> Box<dyn ChildControl> {
+        Box::new(self.child.take().expect("launch child remains owned"))
     }
 }
 
 impl Drop for LaunchChild {
     fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+        if let Some(child) = self.child.take() {
+            cleanup::terminate_launch_child(child, self.deadline);
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExpectedTapeEvent {
+    tape: PathBuf,
+    span: Span,
+}
+
+impl ExpectedTapeEvent {
+    fn new(tape: PathBuf, locus: tape::Locus) -> Self {
+        Self {
+            tape,
+            span: locus.into(),
+        }
+    }
+
+    fn appears_in(&self, outcome: &StreamOutcome) -> bool {
+        outcome.observations.iter().any(|observation| {
+            matches!(
+                observation,
+                Observation::Event {
+                    lane,
+                    dialect: Dialect::Codex,
+                    tape,
+                    spans,
+                    event: SurfaceEvent::Prose { text, phase, media },
+                } if lane == "lane-a"
+                    && tape == &self.tape
+                    && spans.as_slice() == [self.span]
+                    && text == CODEX_PROSE_TEXT
+                    && phase.is_none()
+                    && media.is_empty()
+            )
+        })
     }
 }
 
@@ -68,7 +122,7 @@ impl WatchProcess {
             .env_remove(steer::hook::INBOX)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = LaunchChild(Some(child.spawn().expect("watch launches")));
+        let mut child = LaunchChild::new(child.spawn().expect("watch launches"), deadline);
         let stdout = child.child().stdout.take().expect("stdout is piped");
         let stderr = child.child().stderr.take().expect("stderr is piped");
 
@@ -106,6 +160,7 @@ impl WatchProcess {
             stderr: Vec::new(),
             observations: Vec::new(),
             cleanup_errors: Vec::new(),
+            exit_origin: None,
             phase: "spawn",
             started,
             deadline,
@@ -152,7 +207,7 @@ impl WatchProcess {
         );
     }
 
-    fn await_tape_event(&mut self) {
+    fn await_tape_event(&mut self, expected: ExpectedTapeEvent) {
         self.receive_until(
             "tape event reconciliation",
             || Ok(()),
@@ -162,10 +217,7 @@ impl WatchProcess {
                         "reconciliation emitted the wrong mode: {outcome:?}"
                     ));
                 }
-                Ok(outcome
-                    .observations
-                    .iter()
-                    .any(|observation| matches!(observation, Observation::Event { .. })))
+                Ok(expected.appears_in(outcome))
             },
         );
     }
@@ -266,144 +318,12 @@ impl WatchProcess {
         match child.try_wait() {
             Ok(Some(status)) => {
                 self.status = Some(status);
+                self.exit_origin = Some(ExitOrigin::Natural);
                 self.child.take();
                 Some(status.to_string())
             }
             Ok(None) => None,
             Err(error) => Some(format!("liveness probe failed: {error}")),
-        }
-    }
-
-    fn finish(mut self) {
-        self.phase = "shutdown";
-        self.shutdown();
-        let failed = self.status.is_none()
-            || self.status.is_some_and(|status| status.success())
-            || !self.cleanup_errors.is_empty()
-            || self.remaining().is_zero();
-        if failed {
-            panic!("{}", self.diagnostic("watch fixture cleanup failed"));
-        }
-    }
-
-    fn fail(&mut self, detail: String) -> ! {
-        let phase = self.phase;
-        self.shutdown();
-        panic!("{}", self.diagnostic_at(phase, &detail));
-    }
-
-    fn shutdown(&mut self) {
-        self.stop_child();
-        self.join_stdout();
-        self.join_stderr();
-        if self.remaining().is_zero() {
-            self.cleanup_errors
-                .push("cleanup exhausted the test-wide deadline".to_owned());
-        }
-    }
-
-    fn stop_child(&mut self) {
-        if self.status.is_some() {
-            self.child.take();
-            return;
-        }
-        let Some(mut child) = self.child.take() else {
-            self.cleanup_errors
-                .push("watch child handle was already absent".to_owned());
-            return;
-        };
-        match child.try_wait() {
-            Ok(Some(status)) => self.status = Some(status),
-            Ok(None) => self.terminate_and_reap(&mut child, "watch"),
-            Err(error) => {
-                self.cleanup_errors
-                    .push(format!("watch liveness probe failed: {error}"));
-                self.terminate_and_reap(&mut child, "watch after probe failure");
-            }
-        }
-    }
-
-    fn terminate_and_reap(&mut self, child: &mut std::process::Child, context: &str) {
-        if let Err(error) = child.kill() {
-            self.cleanup_errors
-                .push(format!("{context} kill failed: {error}"));
-        }
-        match child.wait() {
-            Ok(status) => self.status = Some(status),
-            Err(error) => self
-                .cleanup_errors
-                .push(format!("{context} reap failed: {error}")),
-        }
-    }
-
-    fn join_stdout(&mut self) {
-        if let Some(reader) = self.stdout_reader.take() {
-            match reader.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => self
-                    .cleanup_errors
-                    .push(format!("watch stdout read failed: {error}")),
-                Err(_) => self
-                    .cleanup_errors
-                    .push("watch stdout reader panicked".to_owned()),
-            }
-        }
-        let Some(receiver) = self.stdout.take() else {
-            return;
-        };
-        for line in receiver.try_iter() {
-            match wire::decode::<StreamOutcome>(line.as_bytes()) {
-                Ok(outcome) => self.observations.push(outcome),
-                Err(error) => self.cleanup_errors.push(format!(
-                    "shutdown stdout DTO was invalid: {error}; line={line:?}"
-                )),
-            }
-        }
-    }
-
-    fn join_stderr(&mut self) {
-        let Some(reader) = self.stderr_reader.take() else {
-            return;
-        };
-        match reader.join() {
-            Ok(Ok(bytes)) => self.stderr = bytes,
-            Ok(Err(error)) => self
-                .cleanup_errors
-                .push(format!("watch stderr read failed: {error}")),
-            Err(_) => self
-                .cleanup_errors
-                .push("watch stderr reader panicked".to_owned()),
-        }
-    }
-
-    fn diagnostic(&self, detail: &str) -> String {
-        self.diagnostic_at(self.phase, detail)
-    }
-
-    fn diagnostic_at(&self, phase: &str, detail: &str) -> String {
-        let status = self.status.map_or_else(
-            || "running or unavailable".to_owned(),
-            |status| status.to_string(),
-        );
-        format!(
-            "{detail}; phase={phase}; child={status}; elapsed={:?}; remaining={:?}; stderr={:?}; cleanup_errors={:?}; outcomes={:#?}",
-            self.started.elapsed(),
-            self.remaining(),
-            String::from_utf8_lossy(&self.stderr),
-            self.cleanup_errors,
-            self.observations,
-        )
-    }
-}
-
-impl Drop for WatchProcess {
-    fn drop(&mut self) {
-        if self.child.is_some()
-            || self.stdout.is_some()
-            || self.stdout_reader.is_some()
-            || self.stderr_reader.is_some()
-        {
-            self.shutdown();
         }
     }
 }
