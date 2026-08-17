@@ -716,6 +716,91 @@ fn dependency_expansion_revalidates_path_package_target_and_check_reach() {
     );
 }
 
+#[test]
+fn dependency_reach_refuses_cross_source_provenance_and_rooted_cycles() {
+    let tracked = strings(&[
+        "Cargo.toml",
+        "gate/Cargo.toml",
+        "gate/src/lib.rs",
+        "wire/Cargo.toml",
+        "wire/src/lib.rs",
+    ]);
+    let policy = policy(&tracked, false, None, &[], &[], &[]);
+    let report = selection(&["gate/src/lib.rs", "wire/src/lib.rs"], &policy);
+    let gate_path = ChangeReachObject::Path {
+        path: "gate/src/lib.rs".to_owned(),
+    };
+    let wire_path = ChangeReachObject::Path {
+        path: "wire/src/lib.rs".to_owned(),
+    };
+    let package = ChangeReachObject::Package {
+        package: "wire".to_owned(),
+    };
+    let target = ChangeReachObject::Target {
+        package: "wire".to_owned(),
+        target: "lib:wire".to_owned(),
+    };
+
+    let mut cross_source_provenance = vec![
+        ChangeReachEdge::changed("gate/src/lib.rs", gate_path.clone()),
+        ChangeReachEdge::changed("wire/src/lib.rs", wire_path.clone()),
+        ChangeReachEdge::dependency("gate/src/lib.rs", wire_path.clone(), package.clone()),
+    ];
+    cross_source_provenance.sort();
+    let error = report
+        .clone()
+        .with_reach(replace_arm_reach(
+            &report,
+            GateId::RustTypecheck,
+            vec![gate_path.clone(), wire_path.clone(), package.clone()],
+            cross_source_provenance,
+        ))
+        .expect_err("dependency provenance cannot cross changed-source roots");
+    assert!(
+        error.detail().contains("unproven dependency source"),
+        "{error}"
+    );
+
+    let mut cyclic_provenance = vec![
+        ChangeReachEdge::changed("gate/src/lib.rs", gate_path.clone()),
+        ChangeReachEdge::changed("wire/src/lib.rs", wire_path.clone()),
+        ChangeReachEdge::dependency("wire/src/lib.rs", wire_path.clone(), package.clone()),
+        ChangeReachEdge::dependency("wire/src/lib.rs", package.clone(), target.clone()),
+        ChangeReachEdge::dependency("wire/src/lib.rs", target.clone(), package.clone()),
+    ];
+    cyclic_provenance.sort();
+    let error = report
+        .clone()
+        .with_reach(replace_arm_reach(
+            &report,
+            GateId::RustTypecheck,
+            vec![gate_path, wire_path, package, target],
+            cyclic_provenance,
+        ))
+        .expect_err("rooted dependency cycles cannot enter canonical reach");
+    assert!(error.detail().contains("dependency cycle"), "{error}");
+}
+
+fn replace_arm_reach(
+    report: &ChangeSelectionReport,
+    gate_id: GateId,
+    mut objects: Vec<ChangeReachObject>,
+    provenance: Vec<ChangeReachEdge>,
+) -> Vec<ChangeArmReach> {
+    objects.sort();
+    report
+        .reach()
+        .iter()
+        .map(|reach| {
+            if reach.gate_id() == gate_id {
+                ChangeArmReach::focused(gate_id, objects.clone(), provenance.clone())
+            } else {
+                reach.clone()
+            }
+        })
+        .collect()
+}
+
 fn reach_mutation_fixture() -> ChangeSelectionReport {
     select_current_source_change_gates(
         source(),
