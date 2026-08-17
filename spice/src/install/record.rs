@@ -151,10 +151,15 @@ impl InstallRecord {
     }
 
     fn validate_with_content(&self, historical: bool) -> Result<(), InstallError> {
-        let migratable = historical
+        let rollback_migratable = historical
             && self.version == super::MIGRATABLE_RECORD_VERSION
             && self.plan.version == super::MIGRATABLE_RECORD_VERSION;
-        if self.version != RECORD_VERSION && !migratable {
+        let forward_migratable = historical
+            && self.version == super::FORWARD_MIGRATABLE_RECORD_VERSION
+            && self.plan.version == super::FORWARD_MIGRATABLE_RECORD_VERSION
+            && self.status == InstallStatus::Complete
+            && super::binary_operation(&self.plan).is_some();
+        if self.version != RECORD_VERSION && !rollback_migratable && !forward_migratable {
             return Err(InstallError::InvalidRecord(format!(
                 "install record version {} is not {RECORD_VERSION}",
                 self.version
@@ -215,8 +220,8 @@ impl InstallRecord {
     /// separately authorized before any durable receipt is replaced.
     fn repair_missing_retirement_witnesses(&mut self) -> Result<Digest, InstallError> {
         let original_digest = self.plan_digest.clone();
-        if self.version != RECORD_VERSION
-            || self.plan.version != super::PLAN_VERSION
+        if self.version != super::FORWARD_MIGRATABLE_RECORD_VERSION
+            || self.plan.version != super::FORWARD_MIGRATABLE_RECORD_VERSION
             || self.status != InstallStatus::Complete
             || super::binary_operation(&self.plan).is_none()
             || self.plan.rollback_archive.is_none()

@@ -47,6 +47,8 @@ pub(super) fn launcher(common_git: &Path, hook: GitHook) -> Result<Vec<u8>, Inst
 }
 
 const PRE_COMMIT_ENVIRONMENT: &str = concat!(
+    "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE=1\n",
+    "export SPICE_SHELL_HOOK_INSTALLED_APPLIANCE\n",
     "git_exec_path=${GIT_EXEC_PATH-}\n",
     "case ${PATH-} in\n",
     "  \"$git_exec_path\":*) PATH=${PATH#\"$git_exec_path\":}; export PATH ;;\n",
@@ -102,6 +104,11 @@ mod tests {
 
         assert_eq!(text.lines().next(), Some("#!/bin/sh -eu"));
         assert!(text.contains("unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n"));
+        assert!(text.contains(&format!(
+            "{}=1\nexport {}\n",
+            super::super::INSTALLED_PRE_COMMIT_ENVIRONMENT,
+            super::super::INSTALLED_PRE_COMMIT_ENVIRONMENT,
+        )));
         assert!(text.ends_with(concat!(
             "exec '/tmp/space tab\tquote'\\''$`\\common/",
             ".spice-install/bin/spice' gate pre-commit \"$@\"\n"

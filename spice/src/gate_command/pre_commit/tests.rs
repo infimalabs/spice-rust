@@ -16,6 +16,32 @@ fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
 }
 
 #[test]
+fn appliance_generation_fence_is_canonical_bound_or_explicitly_unbound() {
+    let uncached = ApplianceGenerationFence::unbound();
+    let uncached_document = uncached.encode().expect("encode uncached fence");
+    assert_eq!(uncached_document, OsStr::new(r#"{"version":1}"#));
+    assert_eq!(
+        ApplianceGenerationFence::decode(&uncached_document).expect("decode uncached fence"),
+        uncached,
+    );
+
+    let appliance = Digest::compute(wire::Domain::InstallPlan, b"appliance");
+    let bound = ApplianceGenerationFence::bound(appliance.clone());
+    let encoded = bound.encode().expect("encode bound fence");
+    assert_eq!(
+        ApplianceGenerationFence::decode(&encoded).expect("decode bound fence"),
+        bound,
+    );
+    assert_eq!(bound.expected(), Some(&appliance));
+
+    let invalid = ApplianceGenerationFence {
+        version: APPLIANCE_GENERATION_FENCE_VERSION + 1,
+        ..bound
+    };
+    assert!(invalid.encode().is_err());
+}
+
+#[test]
 fn run_enters_supervision_with_only_private_worker_artifacts() {
     let phase = Cell::new(0);
     let answer = run_with(|files| {

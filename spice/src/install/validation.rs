@@ -14,15 +14,18 @@ fn validate_plan_version(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<bool, InstallError> {
-    let migratable = content == GeneratedContentAuthority::HistoricalReceipt
-        && plan.version == MIGRATABLE_RECORD_VERSION;
-    if plan.version != PLAN_VERSION && !migratable {
+    let historical = content == GeneratedContentAuthority::HistoricalReceipt
+        && matches!(
+            plan.version,
+            MIGRATABLE_RECORD_VERSION | FORWARD_MIGRATABLE_RECORD_VERSION
+        );
+    if plan.version != PLAN_VERSION && !historical {
         return Err(InstallError::InvalidRecord(format!(
             "install plan version {} is not {PLAN_VERSION}",
             plan.version
         )));
     }
-    Ok(migratable)
+    Ok(plan.version == MIGRATABLE_RECORD_VERSION)
 }
 
 fn validate_operation_inventory(
