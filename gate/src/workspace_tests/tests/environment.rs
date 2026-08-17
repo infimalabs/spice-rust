@@ -139,6 +139,7 @@ fn selected_tree_execution_rewrites_external_cargo_outputs_to_writable_root() {
     let inventory = Inventory {
         target_directory: PathBuf::from("/selected/target"),
         build_directory: PathBuf::from("/machine/cargo-build/hash"),
+        binary_outputs: Vec::new(),
         packages: vec![quick_package()],
     };
     let environment = inventory
@@ -168,6 +169,7 @@ fn reusable_workspace_execution_preserves_prepared_cargo_outputs() {
     let inventory = Inventory {
         target_directory: PathBuf::from("/worktree/target"),
         build_directory: PathBuf::from("/worktree/target/spice-gate-native-stable-build-v1"),
+        binary_outputs: Vec::new(),
         packages: vec![quick_package()],
     };
     let environment = inventory

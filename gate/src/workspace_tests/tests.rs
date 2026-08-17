@@ -349,11 +349,30 @@ fn metadata_inventory_keeps_library_binary_and_integration_targets() {
                 id: "fixture-id".to_owned(),
                 name: "fixture".to_owned(),
                 manifest_path: root.join("Cargo.toml"),
+                features: BTreeMap::from([
+                    ("default".to_owned(), vec!["runner".to_owned()]),
+                    ("runner".to_owned(), Vec::new()),
+                    ("disabled".to_owned(), Vec::new()),
+                ]),
                 targets: vec![
                     target(&root, "fixture", &["lib"], true),
                     target(&root, "fixture", &["bin"], true),
                     target(&root, "resident", &["test"], true),
                     target(&root, "build-script-build", &["custom-build"], false),
+                    MetadataTarget {
+                        name: "default-runner".to_owned(),
+                        kind: vec!["bin".to_owned()],
+                        test: false,
+                        src_path: root.join("src/default-runner.rs"),
+                        required_features: vec!["runner".to_owned()],
+                    },
+                    MetadataTarget {
+                        name: "disabled-runner".to_owned(),
+                        kind: vec!["bin".to_owned()],
+                        test: false,
+                        src_path: root.join("src/disabled-runner.rs"),
+                        required_features: vec!["disabled".to_owned()],
+                    },
                 ],
             }],
         },
@@ -369,7 +388,195 @@ fn metadata_inventory_keeps_library_binary_and_integration_targets() {
             .collect::<Vec<_>>(),
         ["bin:fixture", "lib:fixture", "test:resident"]
     );
+    assert_eq!(
+        inventory.binary_outputs,
+        [
+            BinaryOutput {
+                package_id: "fixture-id".to_owned(),
+                package_name: "fixture".to_owned(),
+                target_name: "default-runner".to_owned(),
+            },
+            BinaryOutput {
+                package_id: "fixture-id".to_owned(),
+                package_name: "fixture".to_owned(),
+                target_name: "fixture".to_owned(),
+            },
+        ],
+        "metadata retains unconditional and default-enabled binary publications only"
+    );
     fs::remove_dir_all(root).expect("metadata fixture removes");
+}
+
+#[test]
+fn successful_prebuild_repairs_a_missing_cargo_bin_exe_publication() {
+    let root = fixture_root("workspace-stale-binary-repair");
+    let programs = root.join("programs");
+    let target = root.join("target");
+    let deps = target.join("debug/deps");
+    let fingerprints = target.join("debug/.fingerprint/fixture");
+    fs::create_dir_all(&programs).expect("repair program directory creates");
+    fs::create_dir_all(&deps).expect("stale test output directory creates");
+    fs::create_dir_all(&fingerprints).expect("stale fingerprint directory creates");
+    let stale_test = executable(&deps, "resident-deadbeef", "#!/bin/sh\nexit 0\n");
+    let fingerprint = fingerprints.join("test-integration-test-resident");
+    fs::write(&fingerprint, "fresh\n").expect("stale fingerprint writes");
+    let published = executable(&target.join("debug"), "fixture-tool", "#!/bin/sh\nexit 0\n");
+    fs::remove_file(&published).expect("published binary is removed after prebuild state exists");
+    let cargo = executable(
+        &programs,
+        "cargo",
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' \"$*\" >> \"$FIXTURE_ROOT/commands.log\"\n",
+            "if [ \"$1\" = build ]; then\n",
+            "  /bin/mkdir -p \"$CARGO_TARGET_DIR/debug\"\n",
+            "  printf '#!/bin/sh\\nexit 0\\n' > \"$CARGO_TARGET_DIR/debug/fixture-tool\"\n",
+            "  /bin/chmod 755 \"$CARGO_TARGET_DIR/debug/fixture-tool\"\n",
+            "fi\n",
+        ),
+    );
+    let environment = binary_output_environment(&root, &programs);
+    let inventory = binary_output_inventory(&root);
+    let mut output = Vec::new();
+
+    prebuild_all_tests(
+        &root,
+        &environment,
+        cargo.as_os_str(),
+        &inventory,
+        &mut output,
+    )
+    .expect("canonical no-run prebuild repairs its missing binary publication");
+    prebuild_all_tests(
+        &root,
+        &environment,
+        cargo.as_os_str(),
+        &inventory,
+        &mut output,
+    )
+    .expect("warm canonical prebuild reuses the repaired binary publication");
+
+    assert!(executable_file(&published));
+    assert!(
+        stale_test.is_file(),
+        "the fresh test binary remains reusable"
+    );
+    assert_eq!(
+        fs::read_to_string(fingerprint).expect("fingerprint remains readable"),
+        "fresh\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("commands.log"))
+            .expect("repair commands read")
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            "test --locked --workspace --all-targets --no-run",
+            "build --locked --package fixture-id --bin fixture-tool",
+            "test --locked --workspace --all-targets --no-run",
+        ]
+    );
+    fs::remove_dir_all(root).expect("stale binary repair fixture removes");
+}
+
+#[test]
+fn prebuild_rejects_a_repair_that_does_not_publish_the_owned_binary() {
+    let root = fixture_root("workspace-missing-binary-refusal");
+    let programs = root.join("programs");
+    fs::create_dir_all(&programs).expect("refusal program directory creates");
+    let cargo = executable(&programs, "cargo", "#!/bin/sh\nexit 0\n");
+    let environment = binary_output_environment(&root, &programs);
+    let inventory = binary_output_inventory(&root);
+    let expected = root.join("target/debug/fixture-tool");
+    let mut output = Vec::new();
+
+    let error = prebuild_all_tests(
+        &root,
+        &environment,
+        cargo.as_os_str(),
+        &inventory,
+        &mut output,
+    )
+    .expect_err("a successful Cargo status cannot replace the missing output postcondition")
+    .to_string();
+
+    assert!(error.contains(&expected.display().to_string()), "{error}");
+    assert!(error.contains("package \"fixture\""), "{error}");
+    assert!(error.contains("binary target \"fixture-tool\""), "{error}");
+    fs::remove_dir_all(root).expect("missing binary refusal fixture removes");
+}
+
+#[test]
+fn prebuilt_execution_refuses_a_missing_cargo_bin_exe_before_any_shard_starts() {
+    let root = fixture_root("workspace-prebuilt-binary-guard");
+    let programs = root.join("programs");
+    fs::create_dir_all(root.join("src")).expect("prebuilt guard source directory creates");
+    fs::create_dir_all(&programs).expect("prebuilt guard program directory creates");
+    fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("prebuilt guard manifest writes");
+    fs::write(root.join("src/main.rs"), "fn main() {}\n")
+        .expect("prebuilt guard binary source writes");
+    let metadata = serde_json::json!({
+        "packages": [{
+            "id": "fixture-id",
+            "name": "fixture",
+            "manifest_path": root.join("Cargo.toml"),
+            "targets": [{
+                "name": "fixture-tool",
+                "kind": ["bin"],
+                "test": true,
+                "src_path": root.join("src/main.rs"),
+            }],
+        }],
+        "workspace_members": ["fixture-id"],
+        "target_directory": root.join("target"),
+        "build_directory": root.join("target/cargo-build"),
+    });
+    fs::write(
+        root.join("metadata.json"),
+        serde_json::to_vec(&metadata).expect("prebuilt guard metadata encodes"),
+    )
+    .expect("prebuilt guard metadata writes");
+    executable(
+        &programs,
+        "cargo",
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' \"$1\" >> \"$FIXTURE_ROOT/commands.log\"\n",
+            "if [ \"$1\" = metadata ]; then\n",
+            "  /bin/cat \"$FIXTURE_ROOT/metadata.json\"\n",
+            "  exit 0\n",
+            "fi\n",
+            "printf 'unexpected shard launch\\n' >&2\n",
+            "exit 70\n",
+        ),
+    );
+    let mut entries = binary_output_environment(&root, &programs)
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<_, _>>();
+    entries.insert(OsString::from(SHARED_OUTPUTS_ENV), OsString::from("1"));
+    let environment = Environment::new(entries).expect("prebuilt guard environment admits");
+    let expected = root.join("target/debug/fixture-tool");
+    let mut output = Vec::new();
+
+    let error = run_prebuilt_shared_at(&root, environment, 1, &mut output)
+        .expect_err("prebuilt runner rejects its missing binary publication")
+        .to_string();
+
+    assert!(error.contains(&expected.display().to_string()), "{error}");
+    assert!(error.contains("package \"fixture\""), "{error}");
+    assert!(error.contains("binary target \"fixture-tool\""), "{error}");
+    assert_eq!(
+        fs::read_to_string(root.join("commands.log"))
+            .expect("prebuilt guard commands read")
+            .lines()
+            .collect::<Vec<_>>(),
+        ["metadata"],
+        "binary validation refuses before Cargo receives a shard command"
+    );
+    assert!(!String::from_utf8_lossy(&output).contains("stage=start"));
+    fs::remove_dir_all(root).expect("prebuilt binary guard fixture removes");
 }
 
 #[test]
@@ -390,11 +597,13 @@ fn metadata_inventory_refuses_a_target_without_readable_source_weight() {
                 id: "fixture-id".to_owned(),
                 name: "fixture".to_owned(),
                 manifest_path: root.join("Cargo.toml"),
+                features: BTreeMap::new(),
                 targets: vec![MetadataTarget {
                     name: "missing".to_owned(),
                     kind: vec!["test".to_owned()],
                     test: true,
                     src_path: missing.clone(),
+                    required_features: Vec::new(),
                 }],
             }],
         },
@@ -1020,6 +1229,11 @@ fn fixture_inventory() -> Inventory {
     Inventory {
         target_directory: PathBuf::from("/workspace/target"),
         build_directory: PathBuf::from("/workspace/target/cargo-build"),
+        binary_outputs: vec![BinaryOutput {
+            package_id: "fixture-b-id".to_owned(),
+            package_name: "fixture-b".to_owned(),
+            target_name: "fixture-b".to_owned(),
+        }],
         packages: vec![
             PackageInventory {
                 id: "fixture-a-id".to_owned(),
@@ -1051,6 +1265,39 @@ fn fixture_inventory() -> Inventory {
     }
 }
 
+fn binary_output_inventory(root: &Path) -> Inventory {
+    Inventory {
+        packages: Vec::new(),
+        binary_outputs: vec![BinaryOutput {
+            package_id: "fixture-id".to_owned(),
+            package_name: "fixture".to_owned(),
+            target_name: "fixture-tool".to_owned(),
+        }],
+        target_directory: root.join("target"),
+        build_directory: root.join("target/cargo-build"),
+    }
+}
+
+fn binary_output_environment(root: &Path, programs: &Path) -> Environment {
+    Environment::new([
+        (OsString::from("FIXTURE_ROOT"), root.as_os_str().to_owned()),
+        (
+            OsString::from(CARGO_TARGET_DIR),
+            root.join("target").into_os_string(),
+        ),
+        (
+            OsString::from(CARGO_BUILD_BUILD_DIR),
+            root.join("target/cargo-build").into_os_string(),
+        ),
+        (
+            OsString::from("PATH"),
+            env::join_paths([programs, Path::new("/usr/bin"), Path::new("/bin")])
+                .expect("binary output fixture PATH composes"),
+        ),
+    ])
+    .expect("binary output fixture environment admits")
+}
+
 fn target(root: &Path, name: &str, kind: &[&str], test: bool) -> MetadataTarget {
     let source = match kind.first().copied() {
         Some("lib") => root.join("src/lib.rs"),
@@ -1062,6 +1309,7 @@ fn target(root: &Path, name: &str, kind: &[&str], test: bool) -> MetadataTarget 
         kind: kind.iter().map(|kind| (*kind).to_owned()).collect(),
         test,
         src_path: source,
+        required_features: Vec::new(),
     }
 }
 

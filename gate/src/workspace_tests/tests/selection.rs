@@ -83,18 +83,21 @@ fn staged_path_module_selects_only_its_declaring_integration_target() {
                 id: "fixture-id".to_owned(),
                 name: "fixture".to_owned(),
                 manifest_path: root.join("fixture/Cargo.toml"),
+                features: BTreeMap::new(),
                 targets: vec![
                     MetadataTarget {
                         name: "other".to_owned(),
                         kind: vec!["test".to_owned()],
                         test: true,
                         src_path: tests.join("other.rs"),
+                        required_features: Vec::new(),
                     },
                     MetadataTarget {
                         name: "resident".to_owned(),
                         kind: vec!["test".to_owned()],
                         test: true,
                         src_path: tests.join("resident.rs"),
+                        required_features: Vec::new(),
                     },
                 ],
             }],

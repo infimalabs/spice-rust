@@ -263,14 +263,14 @@ pub fn prebuild_shared_at(
     environment: Environment,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
-    let (_, environment, policy) =
+    let (inventory, environment, policy) =
         prepare_execution(root, environment, WORKSPACE_TEST_CONCURRENCY_CAP)?;
     if !policy.shared_outputs {
         return Err(WorkspaceTestError::new(
             "shared workspace-test prebuild requires shared Cargo output authority",
         ));
     }
-    prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)?;
+    prebuild_all_tests(root, &environment, OsStr::new("cargo"), &inventory, output)?;
     prebuild_canvas_launcher(root, &environment, OsStr::new("cargo"), output)
 }
 
@@ -307,7 +307,9 @@ fn run_at_with_prebuild(
     }
     let execution = WorkspaceTestExecution::from_inventory(&inventory);
     if prebuild && policy.shared_outputs {
-        prebuild_all_tests(root, &environment, OsStr::new("cargo"), output)?;
+        prebuild_all_tests(root, &environment, OsStr::new("cargo"), &inventory, output)?;
+    } else if !prebuild {
+        validate_prebuilt_binary_outputs(&inventory, &environment)?;
     }
     let targets_per_shard = if prebuild {
         TARGETS_PER_SHARD
@@ -367,6 +369,7 @@ fn prebuild_all_tests(
     root: &Path,
     environment: &Environment,
     cargo: &OsStr,
+    inventory: &Inventory,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
     run_prebuild_command(
@@ -383,7 +386,116 @@ fn prebuild_all_tests(
             "--no-run",
         ],
         "workspace-test prebuild",
-    )
+    )?;
+    repair_missing_binary_outputs(root, environment, cargo, inventory, output)
+}
+
+fn repair_missing_binary_outputs(
+    root: &Path,
+    environment: &Environment,
+    cargo: &OsStr,
+    inventory: &Inventory,
+    output: &mut impl Write,
+) -> Result<(), WorkspaceTestError> {
+    for missing in missing_binary_outputs(inventory, environment)? {
+        let command = format!(
+            "cargo build --locked --package {:?} --bin {:?}",
+            missing.binary.package_id, missing.binary.target_name,
+        );
+        let owner = format!(
+            "CARGO_BIN_EXE repair for package {:?} binary target {:?} at {}",
+            missing.binary.package_name,
+            missing.binary.target_name,
+            missing.path.display(),
+        );
+        run_prebuild_command(
+            root,
+            environment,
+            cargo,
+            output,
+            &command,
+            [
+                OsStr::new("build"),
+                OsStr::new("--locked"),
+                OsStr::new("--package"),
+                OsStr::new(&missing.binary.package_id),
+                OsStr::new("--bin"),
+                OsStr::new(&missing.binary.target_name),
+            ],
+            &owner,
+        )?;
+    }
+    validate_prebuilt_binary_outputs(inventory, environment)
+}
+
+fn validate_prebuilt_binary_outputs(
+    inventory: &Inventory,
+    environment: &Environment,
+) -> Result<(), WorkspaceTestError> {
+    let missing = missing_binary_outputs(inventory, environment)?;
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let detail = missing
+        .iter()
+        .map(|missing| {
+            format!(
+                "{} (package {:?}, binary target {:?})",
+                missing.path.display(),
+                missing.binary.package_name,
+                missing.binary.target_name,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(WorkspaceTestError::new(format!(
+        "prebuilt CARGO_BIN_EXE output is missing or not executable: {detail}"
+    )))
+}
+
+fn missing_binary_outputs<'a>(
+    inventory: &'a Inventory,
+    environment: &Environment,
+) -> Result<Vec<MissingBinaryOutput<'a>>, WorkspaceTestError> {
+    let target_directory = environment
+        .entries()
+        .iter()
+        .find_map(|(name, value)| {
+            (name == OsStr::new(CARGO_TARGET_DIR)).then(|| PathBuf::from(value))
+        })
+        .ok_or_else(|| {
+            WorkspaceTestError::new("prebuilt CARGO_BIN_EXE validation requires CARGO_TARGET_DIR")
+        })?;
+    Ok(inventory
+        .binary_outputs
+        .iter()
+        .filter_map(|binary| {
+            let path = target_directory.join("debug").join(format!(
+                "{}{}",
+                binary.target_name,
+                std::env::consts::EXE_SUFFIX,
+            ));
+            (!executable_file(&path)).then_some(MissingBinaryOutput { binary, path })
+        })
+        .collect())
+}
+
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(target_family = "unix")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(target_family = "unix"))]
+    {
+        true
+    }
 }
 
 fn prebuild_canvas_launcher(
@@ -403,15 +515,19 @@ fn prebuild_canvas_launcher(
     )
 }
 
-fn run_prebuild_command<const N: usize>(
+fn run_prebuild_command<I, S>(
     root: &Path,
     environment: &Environment,
     cargo: &OsStr,
     output: &mut impl Write,
     command: &str,
-    arguments: [&str; N],
+    arguments: I,
     owner: &str,
-) -> Result<(), WorkspaceTestError> {
+) -> Result<(), WorkspaceTestError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
     writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
     output.flush().map_err(output_error)?;
     let started = Instant::now();
@@ -647,6 +763,8 @@ struct MetadataPackage {
     name: String,
     manifest_path: PathBuf,
     targets: Vec<MetadataTarget>,
+    #[serde(default)]
+    features: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -655,6 +773,20 @@ struct MetadataTarget {
     kind: Vec<String>,
     test: bool,
     src_path: PathBuf,
+    #[serde(default)]
+    required_features: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct BinaryOutput {
+    package_id: String,
+    package_name: String,
+    target_name: String,
+}
+
+struct MissingBinaryOutput<'a> {
+    binary: &'a BinaryOutput,
+    path: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -684,6 +816,7 @@ struct PackageInventory {
 #[derive(Clone, Debug)]
 struct Inventory {
     packages: Vec<PackageInventory>,
+    binary_outputs: Vec<BinaryOutput>,
     target_directory: PathBuf,
     build_directory: PathBuf,
 }
@@ -768,6 +901,7 @@ impl Inventory {
         }
         Ok(Self {
             packages,
+            binary_outputs: self.binary_outputs.clone(),
             target_directory: self.target_directory.clone(),
             build_directory: self.build_directory.clone(),
         })
@@ -848,6 +982,13 @@ fn inventory_from_metadata(
         .workspace_members
         .into_iter()
         .collect::<BTreeSet<_>>();
+    let mut binary_outputs = metadata
+        .packages
+        .iter()
+        .filter(|package| members.contains(&package.id))
+        .flat_map(package_binary_outputs)
+        .collect::<Vec<_>>();
+    binary_outputs.sort();
     let mut packages = metadata
         .packages
         .into_iter()
@@ -862,9 +1003,50 @@ fn inventory_from_metadata(
     }
     Ok(Inventory {
         packages,
+        binary_outputs,
         target_directory,
         build_directory,
     })
+}
+
+fn package_binary_outputs(package: &MetadataPackage) -> Vec<BinaryOutput> {
+    let enabled = default_feature_closure(&package.features);
+    package
+        .targets
+        .iter()
+        .filter(|target| target.kind.iter().any(|kind| kind == "bin"))
+        .filter(|target| {
+            target
+                .required_features
+                .iter()
+                .all(|feature| enabled.contains(feature))
+        })
+        .map(|target| BinaryOutput {
+            package_id: package.id.clone(),
+            package_name: package.name.clone(),
+            target_name: target.name.clone(),
+        })
+        .collect()
+}
+
+fn default_feature_closure(features: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
+    let mut enabled = BTreeSet::new();
+    let mut pending = features
+        .contains_key("default")
+        .then(|| "default".to_owned())
+        .into_iter()
+        .collect::<VecDeque<_>>();
+    while let Some(feature) = pending.pop_front() {
+        if !enabled.insert(feature.clone()) {
+            continue;
+        }
+        for member in features.get(&feature).into_iter().flatten() {
+            if features.contains_key(member) && !enabled.contains(member) {
+                pending.push_back(member.clone());
+            }
+        }
+    }
+    enabled
 }
 
 include!("workspace_tests/source_reach.rs");
