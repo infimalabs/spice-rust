@@ -3,9 +3,9 @@ use std::ffi::OsString;
 use super::*;
 use crate::verify_execution::{
     FULL_VERIFIER_ABSOLUTE_RUNTIME, FULL_VERIFIER_PROCESS_BOUNDS, FULL_VERIFIER_PROGRESS_BOUNDS,
-    FULL_VERIFIER_PROGRESS_INACTIVITY, ProcessBounds, ProgressLeaseBounds, SignalGuard,
-    StreamingRunError, is_live_progress_record, run_bounded_process_streaming,
-    write_deferred_supervisor_output,
+    FULL_VERIFIER_PROGRESS_INACTIVITY, ProcessBounds, ProgressLeaseBounds, ProgressSource,
+    SignalGuard, StreamingRunError, is_lease_renewal_record, is_live_progress_record,
+    run_bounded_process_streaming, run_process_with_progress, write_deferred_supervisor_output,
 };
 
 const NON_COOPERATIVE_CHILD_TEST: &str =
@@ -27,6 +27,50 @@ impl std::io::Write for RefusingOutput {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+#[test]
+fn nested_workspace_and_browser_elapsed_heartbeats_do_not_advance_the_action_cursor() {
+    assert!(
+        !ProgressSource::WorkspaceStdout
+            .advances(b"[rust-test] stage=progress elapsed_ms=30000 running=6\n")
+    );
+    assert!(
+        ProgressSource::WorkspaceStdout
+            .advances(b"[rust-test] stage=terminal shard=41/157 disposition=success\n")
+    );
+    assert!(
+        !ProgressSource::BrowserStdout
+            .advances(b"canvas shard progress elapsed_ms=30002 running=ownership remaining=2\n")
+    );
+    assert!(ProgressSource::BrowserStdout.advances(b"CANVAS-SHARD {\"kind\":\"scenario-end\"}\n"));
+    assert!(ProgressSource::CargoStderr.advances(b"    Checking gate v0.0.0\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn observed_child_output_advances_a_cursor_without_changing_complete_capture() {
+    let cursor = Arc::new(AtomicU64::new(0));
+    let observed = Arc::clone(&cursor);
+    let run = run_process_with_progress(
+        "selected child-output progress fixture",
+        "/bin/sh",
+        ["-c", "printf 'stdout-record\\n'; printf 'one\\ntwo\\n' >&2"],
+        &CancellationToken::new(),
+        1,
+        &[],
+        ProgressSource::CargoStderr,
+        Arc::new(move || {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }),
+    )
+    .expect("the selected child stream is observed and completely captured");
+    let CommandRun::Exited(output) = run else {
+        panic!("the output-progress fixture did not exit: {run:?}");
+    };
+    assert_eq!(cursor.load(Ordering::Relaxed), 2);
+    assert_eq!(output.stdout, b"stdout-record\n");
+    assert_eq!(output.stderr, b"one\ntwo\n");
 }
 
 fn fixture_progress_bounds(
@@ -69,11 +113,14 @@ fn outer_supervisor_has_a_tight_progress_lease_inside_one_absolute_limit() {
 }
 
 #[test]
-fn compiler_shard_browser_and_terminal_progress_are_live_and_deferred_output_is_byte_complete() {
+fn verifier_diagnostics_are_live_but_only_genuine_transitions_and_cursors_renew() {
     let scheduler = b"[verify] scheduler workers=3\n";
     let compiler = b"[verify] stage=progress ordinal=3/13 identity=compiler\n";
     let shard = b"[verify] stage=progress ordinal=9/13 identity=workspace-tests\n";
     let browser = b"[verify] stage=progress ordinal=8/13 identity=browser\n";
+    let setup = b"[verify] stage=setup-progress identity=workspace-prebuild\n";
+    let advancement = b"[verify] stage=advance ordinal=9/13 cursor=41 identity=workspace-tests\n";
+    let setup_advancement = b"[verify] stage=setup-advance cursor=7 identity=workspace-prebuild\n";
     let terminal = b"[verify] stage=terminal ordinal=13/13\n";
     let action = b"compiler output\n";
     let final_record = b"final action bytes";
@@ -81,7 +128,26 @@ fn compiler_shard_browser_and_terminal_progress_are_live_and_deferred_output_is_
     assert!(is_live_progress_record(compiler));
     assert!(is_live_progress_record(shard));
     assert!(is_live_progress_record(browser));
+    assert!(is_live_progress_record(setup));
+    assert!(is_live_progress_record(advancement));
+    assert!(is_live_progress_record(setup_advancement));
     assert!(is_live_progress_record(terminal));
+    for diagnostic in [
+        scheduler.as_slice(),
+        compiler.as_slice(),
+        shard.as_slice(),
+        browser.as_slice(),
+        setup.as_slice(),
+    ] {
+        assert!(
+            !is_lease_renewal_record(diagnostic),
+            "elapsed or scheduler state alone must not renew: {}",
+            String::from_utf8_lossy(diagnostic)
+        );
+    }
+    assert!(is_lease_renewal_record(advancement));
+    assert!(is_lease_renewal_record(setup_advancement));
+    assert!(is_lease_renewal_record(terminal));
     assert!(!is_live_progress_record(action));
     assert!(!is_live_progress_record(
         &[b"[verify] ".as_slice(), &vec![b'x'; 8 * 1024]].concat()
@@ -105,7 +171,7 @@ fn compiler_shard_browser_and_terminal_progress_are_live_and_deferred_output_is_
 
 #[cfg(unix)]
 #[test]
-fn active_progress_renews_the_inactivity_lease_past_its_original_deadline() {
+fn cpu_saturated_progress_renews_the_inactivity_lease_past_its_original_deadline() {
     let bounds = fixture_progress_bounds(Duration::from_millis(80), Duration::from_secs(1));
     let executable = std::env::current_exe().expect("resolve the xtask unit-test process");
     let count = OsString::from("6");
@@ -191,7 +257,8 @@ fn trickle_progress_cannot_renew_past_the_absolute_process_tree_limit() {
 #[cfg(unix)]
 #[test]
 fn silent_progress_lease_reaps_a_non_cooperative_in_process_verifier() {
-    let bounds = fixture_progress_bounds(Duration::from_millis(200), Duration::from_secs(2));
+    let progress_interval = Duration::from_millis(60);
+    let bounds = fixture_progress_bounds(progress_interval * 3, Duration::from_secs(2));
     let executable = std::env::current_exe().expect("resolve the xtask unit-test process");
     let started = Instant::now();
     let mut live = Vec::new();
@@ -214,10 +281,12 @@ fn silent_progress_lease_reaps_a_non_cooperative_in_process_verifier() {
     let stdout = String::from_utf8(output.stdout).expect("fixture stdout is UTF-8");
     let stderr = String::from_utf8(output.stderr).expect("fixture stderr is UTF-8");
     let transcript = format!("{stdout}{stderr}");
-    assert_eq!(
-        String::from_utf8(live).expect("live fixture output is UTF-8"),
-        "[verify] stage=progress ordinal=1/13 fixture=non-cooperative\n"
+    let live = String::from_utf8(live).expect("live fixture output is UTF-8");
+    assert!(
+        live.matches("stage=progress ordinal=1/13").count() >= 2,
+        "the compressed scheduler stayed responsive without renewing the lease: {live:?}"
     );
+    assert!(!live.contains("stage=advance"));
     let pid = transcript
         .lines()
         .find_map(|line| {
@@ -260,7 +329,7 @@ fn streaming_outer_supervisor_preserves_interruption_and_group_cleanup() {
         [
             "-c",
             concat!(
-                "printf '[verify] stage=progress ordinal=1/13 fixture=cancelled\\n'; ",
+                "printf '[verify] stage=advance ordinal=1/13 cursor=1 fixture=cancelled\\n'; ",
                 "sleep 30 & printf '%s %s\\n' \"$$\" \"$!\" > \"$PID_FILE\"; wait"
             ),
         ],
@@ -278,7 +347,7 @@ fn streaming_outer_supervisor_preserves_interruption_and_group_cleanup() {
     let CommandRun::Cancelled(output) = run else {
         panic!("streaming fixture did not report cancellation: {run:?}");
     };
-    let progress = "[verify] stage=progress ordinal=1/13 fixture=cancelled\n";
+    let progress = "[verify] stage=advance ordinal=1/13 cursor=1 fixture=cancelled\n";
     assert_eq!(
         String::from_utf8(live).expect("live output is UTF-8"),
         progress
@@ -307,7 +376,7 @@ fn live_output_failure_cancels_and_reaps_the_supervised_group() {
             "-c",
             concat!(
                 "sleep 30 & printf '%s %s\\n' \"$$\" \"$!\" > \"$PID_FILE\"; ",
-                "printf '[verify] stage=progress ordinal=1/13 fixture=closed-output\\n'; wait"
+                "printf '[verify] stage=advance ordinal=1/13 cursor=1 fixture=closed-output\\n'; wait"
             ),
         ],
         &std::env::current_dir().expect("resolve output failure fixture cwd"),
@@ -336,17 +405,19 @@ fn non_cooperative_in_process_verifier_fixture() {
     let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))
         .expect("install fixture signal bridge");
     println!("{SUPERVISOR_PID_MARKER}{}", std::process::id());
-    println!("[verify] stage=progress ordinal=1/13 fixture=non-cooperative");
     std::io::stdout().flush().expect("flush fixture pid marker");
 
     let runner = TimedRunner::uniform(Duration::from_secs(60));
-    let _ = verify_with_deadline(
+    let mut output = std::io::stdout();
+    let _ = verify_with_deadline_and_rebalance(
         &runner,
-        &mut Vec::new(),
+        &mut output,
         Budget::fixture(1, 1, 0),
         cancellation,
         interrupted,
-        Duration::from_millis(10),
+        Duration::from_secs(10),
+        Duration::from_millis(60),
+        |budget| budget,
     );
     drop(signal_guard);
 }
@@ -371,8 +442,16 @@ fn progress_lease_child_fixture() {
     // launches the inner verifier directly, so align this fixture's first frame.
     println!();
     for index in 0..count {
-        println!("[verify] stage=progress ordinal=1/13 fixture=lease-renewal index={index}");
+        println!(
+            "[verify] stage=advance ordinal=1/13 cursor={} fixture=lease-renewal index={index}",
+            index + 1
+        );
         std::io::stdout().flush().expect("flush lease progress");
-        thread::sleep(Duration::from_millis(interval));
+        let until = Instant::now() + Duration::from_millis(interval);
+        let mut value = u64::try_from(index).expect("small progress fixture index");
+        while Instant::now() < until {
+            value = std::hint::black_box(value.rotate_left(7).wrapping_add(0x9e37_79b9));
+        }
+        std::hint::black_box(value);
     }
 }

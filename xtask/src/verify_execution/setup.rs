@@ -4,29 +4,30 @@ use std::io::{self, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use sill::CancellationToken;
 
 use super::{
-    ActionCompletion, Budget, Disposition, NodeState, Runner, STRUCTURAL_PREFLIGHT_LABEL,
-    VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, WorkerCompletion, execute_battery, execute_process,
-    failure, panic_detail,
+    ActionCompletion, ActionProgress, Budget, Disposition, NodeState, ProgressState, Runner,
+    STRUCTURAL_PREFLIGHT_LABEL, VerifyError, WORKSPACE_TEST_PREBUILD_LABEL, WorkerCompletion,
+    execute_battery, execute_process, failure, panic_detail,
 };
 
 pub(super) struct SetupRun<Rebalance> {
     structural_completed: bool,
     structural_failure: Option<VerifyError>,
     workspace_prebuild_started: bool,
-    workspace_prebuild_progress: Option<(Instant, Duration)>,
+    workspace_prebuild_progress: Option<ProgressState>,
     workspace_prebuilt: bool,
     prebuild_failure: Option<VerifyError>,
     output_fault: Option<io::Error>,
     rebalance: Option<Rebalance>,
+    progress_interval: std::time::Duration,
 }
 
 impl<Rebalance> SetupRun<Rebalance> {
-    pub(super) const fn new(rebalance: Rebalance) -> Self {
+    pub(super) const fn new(rebalance: Rebalance, progress_interval: std::time::Duration) -> Self {
         Self {
             structural_completed: false,
             structural_failure: None,
@@ -36,6 +37,7 @@ impl<Rebalance> SetupRun<Rebalance> {
             prebuild_failure: None,
             output_fault: None,
             rebalance: Some(rebalance),
+            progress_interval,
         }
     }
 
@@ -91,19 +93,26 @@ impl<Rebalance> SetupRun<Rebalance> {
     }
 
     pub(super) fn write_due_progress(&mut self, output: &mut impl Write) -> io::Result<()> {
-        let Some((started, next_progress)) = &mut self.workspace_prebuild_progress else {
+        let Some(progress) = &mut self.workspace_prebuild_progress else {
             return Ok(());
         };
-        if started.elapsed() < *next_progress {
+        let Some((elapsed, cursor)) = progress.due_cursor() else {
             return Ok(());
+        };
+        match cursor {
+            Some(cursor) => writeln!(
+                output,
+                "[verify] stage=setup-advance elapsed_ms={} cursor={} identity={WORKSPACE_TEST_PREBUILD_LABEL:?}",
+                elapsed.as_millis(),
+                cursor,
+            )?,
+            None => writeln!(
+                output,
+                "[verify] stage=setup-progress elapsed_ms={} identity={WORKSPACE_TEST_PREBUILD_LABEL:?}",
+                elapsed.as_millis(),
+            )?,
         }
-        writeln!(
-            output,
-            "[verify] stage=setup-progress elapsed_ms={} identity={WORKSPACE_TEST_PREBUILD_LABEL:?}",
-            next_progress.as_millis(),
-        )?;
         output.flush()?;
-        *next_progress += super::PROGRESS_INTERVAL;
         Ok(())
     }
 }
@@ -137,9 +146,16 @@ impl<Rebalance: FnOnce(Budget) -> Budget> SetupRun<Rebalance> {
             && workspace_test_prebuild_ready(nodes)
             && *running < budget.workers
         {
-            if let Err(error) =
-                start_workspace_test_prebuild(scope, runner, output, cancellation, budget, sender)
-            {
+            let progress = ProgressState::new(Instant::now(), self.progress_interval);
+            if let Err(error) = start_workspace_test_prebuild(
+                scope,
+                runner,
+                output,
+                cancellation,
+                budget,
+                sender,
+                progress.callback(),
+            ) {
                 self.prebuild_failure = Some(VerifyError::Launch {
                     label: WORKSPACE_TEST_PREBUILD_LABEL,
                     source: error,
@@ -148,7 +164,7 @@ impl<Rebalance: FnOnce(Budget) -> Budget> SetupRun<Rebalance> {
                 return None;
             }
             self.workspace_prebuild_started = true;
-            self.workspace_prebuild_progress = Some((Instant::now(), super::PROGRESS_INTERVAL));
+            self.workspace_prebuild_progress = Some(progress);
             *running += 1;
         }
         if !self.workspace_prebuilt
@@ -255,6 +271,7 @@ fn start_workspace_test_prebuild<'scope, 'env: 'scope, R: Runner + 'env>(
     cancellation: &CancellationToken,
     budget: Budget,
     sender: &mpsc::Sender<WorkerCompletion>,
+    progress: ActionProgress,
 ) -> io::Result<()> {
     writeln!(
         output,
@@ -268,7 +285,7 @@ fn start_workspace_test_prebuild<'scope, 'env: 'scope, R: Runner + 'env>(
         .spawn_scoped(scope, move || {
             let started = Instant::now();
             let mut completion = panic::catch_unwind(AssertUnwindSafe(|| {
-                execute_workspace_test_prebuild(runner, &cancellation, budget)
+                execute_workspace_test_prebuild(runner, &cancellation, budget, progress)
             }))
             .unwrap_or_else(|payload| {
                 failure(
@@ -289,10 +306,11 @@ fn execute_workspace_test_prebuild<R: Runner>(
     runner: &R,
     cancellation: &CancellationToken,
     budget: Budget,
+    progress: ActionProgress,
 ) -> ActionCompletion {
     let started = Instant::now();
     let mut completion = execute_process(
-        runner.workspace_test_prebuild(cancellation, budget.cargo_jobs),
+        runner.workspace_test_prebuild_with_progress(cancellation, budget.cargo_jobs, progress),
         WORKSPACE_TEST_PREBUILD_LABEL,
         |source| VerifyError::Launch {
             label: WORKSPACE_TEST_PREBUILD_LABEL,

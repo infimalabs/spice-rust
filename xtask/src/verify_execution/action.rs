@@ -6,6 +6,7 @@ pub(super) fn execute_action<R: Runner>(
     cancellation: &CancellationToken,
     budget: Budget,
     readiness: Option<ActionReadiness>,
+    progress: ActionProgress,
 ) -> ActionCompletion {
     match action {
         Action::EntryPoint => match runner.entry_point() {
@@ -13,7 +14,7 @@ pub(super) fn execute_action<R: Runner>(
             Err(detail) => failure(VerifyError::EntryPoint(detail), Disposition::Error),
         },
         Action::Format => execute_process(
-            runner.format(cancellation, budget.cargo_jobs),
+            runner.format_with_progress(cancellation, budget.cargo_jobs, progress),
             FORMAT_LABEL,
             |source| VerifyError::Launch {
                 label: FORMAT_LABEL,
@@ -26,13 +27,19 @@ pub(super) fn execute_action<R: Runner>(
         ),
         Action::Command(step) => execute_process(
             match readiness {
-                Some(readiness) => runner.run_with_readiness(
+                Some(readiness) => runner.run_with_readiness_and_progress(
                     step,
                     cancellation,
                     command_cargo_jobs(step, budget),
                     readiness,
+                    progress,
                 ),
-                None => runner.run(step, cancellation, command_cargo_jobs(step, budget)),
+                None => runner.run_with_progress(
+                    step,
+                    cancellation,
+                    command_cargo_jobs(step, budget),
+                    progress,
+                ),
             },
             step.label,
             |source| VerifyError::Launch {
@@ -44,9 +51,16 @@ pub(super) fn execute_action<R: Runner>(
                 code,
             },
         ),
-        Action::Browser => execute_browser(runner.browser(cancellation, budget.cargo_jobs)),
+        Action::Browser => {
+            execute_browser(runner.browser_with_progress(cancellation, budget.cargo_jobs, progress))
+        }
         Action::WorkspaceTests => execute_process(
-            runner.workspace_tests(cancellation, budget.cargo_jobs, budget.workspace_workers),
+            runner.workspace_tests_with_progress(
+                cancellation,
+                budget.cargo_jobs,
+                budget.workspace_workers,
+                progress,
+            ),
             crate::WORKSPACE_TEST_LABEL,
             |source| VerifyError::Launch {
                 label: crate::WORKSPACE_TEST_LABEL,

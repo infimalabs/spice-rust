@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -22,7 +22,7 @@ use sill::{
 use super::ENTRY_POINT_LABEL;
 use super::verify_timing::{self, Conclusion, Disposition, Stage};
 use super::{
-    Action, ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun,
+    Action, ActionProgress, ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun,
     CANVAS_APP_LABEL, CommandRun, FORMAT_LABEL, ProcessOutput, RunError, Runner, SCOPED_COMMANDS,
     STRUCTURAL_PREFLIGHT_LABEL, Status, VERIFY_ACTIONS, VerifyError, WORKSPACE_TEST_PREBUILD_LABEL,
     valid_package_name,
@@ -35,12 +35,13 @@ mod setup;
 use action::{
     execute_action, execute_battery, execute_process, failure, panic_detail, write_failure_summary,
 };
-pub(super) use process::run_process;
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) use process::run_process_at;
+pub(super) use process::ProgressSource;
 use process::{
     SignalGuard, StreamingRunError, active_peer_cargo_jobs, run_bounded_process_streaming,
 };
+pub(super) use process::{run_process, run_process_with_progress};
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) use process::{run_process_at, run_process_at_with_progress};
 #[cfg(test)]
 use {action::success, process::count_peer_cargo};
 
@@ -265,11 +266,50 @@ impl Budget {
 
 enum NodeState {
     Pending,
-    Running {
-        started: Instant,
-        next_progress: Duration,
-    },
+    Running(ProgressState),
     Complete(ActionCompletion),
+}
+
+struct ProgressState {
+    started: Instant,
+    interval: Duration,
+    next_report: Duration,
+    cursor: Arc<AtomicU64>,
+    reported_cursor: u64,
+}
+
+impl ProgressState {
+    fn new(started: Instant, interval: Duration) -> Self {
+        Self {
+            started,
+            interval,
+            next_report: interval,
+            cursor: Arc::new(AtomicU64::new(0)),
+            reported_cursor: 0,
+        }
+    }
+
+    fn callback(&self) -> ActionProgress {
+        let cursor = Arc::clone(&self.cursor);
+        Arc::new(move || {
+            cursor.fetch_add(1, Ordering::Relaxed);
+        })
+    }
+
+    fn due_cursor(&mut self) -> Option<(Duration, Option<u64>)> {
+        if self.started.elapsed() < self.next_report {
+            return None;
+        }
+        let elapsed = self.next_report;
+        self.next_report += self.interval;
+        let cursor = self.cursor.load(Ordering::Relaxed);
+        if cursor == self.reported_cursor {
+            Some((elapsed, None))
+        } else {
+            self.reported_cursor = cursor;
+            Some((elapsed, Some(cursor)))
+        }
+    }
 }
 
 struct ActionCompletion {
@@ -410,6 +450,24 @@ fn is_live_progress_record(record: &[u8]) -> bool {
     record.len() <= FULL_VERIFIER_LIVE_RECORD_LIMIT && record.starts_with(b"[verify] ")
 }
 
+fn is_lease_renewal_record(record: &[u8]) -> bool {
+    if !is_live_progress_record(record) {
+        return false;
+    }
+    let body = &record[b"[verify] ".len()..];
+    [
+        b"stage=advance ".as_slice(),
+        b"stage=setup-advance ".as_slice(),
+        b"stage=start ".as_slice(),
+        b"stage=terminal ".as_slice(),
+        b"stage=setup ".as_slice(),
+        b"stage=setup-terminal ".as_slice(),
+        b"scheduler-rebalanced ".as_slice(),
+    ]
+    .iter()
+    .any(|prefix| body.starts_with(prefix))
+}
+
 pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> {
     let cancellation = CancellationToken::new();
     let interrupted = Arc::new(AtomicBool::new(false));
@@ -422,6 +480,7 @@ pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> 
         cancellation,
         interrupted,
         FULL_VERIFIER_TEST_RUNTIME,
+        PROGRESS_INTERVAL,
         |_| Budget::detect(),
     );
     drop(signal_guard);
@@ -462,10 +521,15 @@ fn verify_with_deadline<R: Runner>(
         cancellation,
         interrupted,
         runtime,
+        PROGRESS_INTERVAL,
         |budget| budget,
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the verifier control rim keeps timing policy and rebalance authority explicit"
+)]
 fn verify_with_deadline_and_rebalance<R: Runner>(
     runner: &R,
     output: &mut impl Write,
@@ -473,6 +537,7 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
     cancellation: CancellationToken,
     interrupted: Arc<AtomicBool>,
     runtime: Duration,
+    progress_interval: Duration,
     rebalance: impl FnOnce(Budget) -> Budget,
 ) -> Result<(), VerifyError> {
     debug_assert_eq!(VERIFY_ACTIONS.len(), PREREQUISITES.len());
@@ -484,9 +549,15 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
         prebuild_failure,
         output_fault,
         deadline_exceeded,
-    } = schedule_graph(runner, output, budget, &cancellation, runtime, |initial| {
-        rebalance(initial).after_workspace_prebuild()
-    });
+    } = schedule_graph(
+        runner,
+        output,
+        budget,
+        &cancellation,
+        runtime,
+        progress_interval,
+        |initial| rebalance(initial).after_workspace_prebuild(),
+    );
     if let Some(error) = output_fault {
         return Err(VerifyError::Output(error));
     }
@@ -571,6 +642,7 @@ fn schedule_graph<R: Runner>(
     mut budget: Budget,
     cancellation: &CancellationToken,
     runtime: Duration,
+    progress_interval: Duration,
     rebalance: impl FnOnce(Budget) -> Budget,
 ) -> GraphRun {
     let (sender, receiver) = mpsc::channel::<WorkerCompletion>();
@@ -583,7 +655,7 @@ fn schedule_graph<R: Runner>(
     let mut deadline_exceeded = false;
     let mut test_phase_started = None;
     let mut canvas_app_ready = false;
-    let mut setups = setup::SetupRun::new(rebalance);
+    let mut setups = setup::SetupRun::new(rebalance, progress_interval);
 
     thread::scope(|scope| {
         loop {
@@ -630,6 +702,7 @@ fn schedule_graph<R: Runner>(
                     &mut failure_seen,
                     &mut output_fault,
                     &mut test_phase_started,
+                    progress_interval,
                     setups.test_branches_ready(),
                     canvas_app_ready,
                 );
@@ -714,6 +787,7 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
     failure_seen: &mut bool,
     output_fault: &mut Option<io::Error>,
     test_phase_started: &mut Option<Instant>,
+    progress_interval: Duration,
     test_branches_ready: bool,
     canvas_app_ready: bool,
 ) {
@@ -738,12 +812,19 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
         if test_phase_started.is_none() && starts_test_phase_deadline(action) {
             *test_phase_started = Some(started);
         }
-        match spawn_action(scope, runner, action, index, budget, cancellation, sender) {
+        let progress = ProgressState::new(started, progress_interval);
+        match spawn_action(
+            scope,
+            runner,
+            action,
+            index,
+            budget,
+            cancellation,
+            sender,
+            progress.callback(),
+        ) {
             Ok(()) => {
-                nodes[index] = NodeState::Running {
-                    started,
-                    next_progress: PROGRESS_INTERVAL,
-                };
+                nodes[index] = NodeState::Running(progress);
                 *running += 1;
             }
             Err(source) => {
@@ -779,6 +860,10 @@ fn test_phase_complete(nodes: &[NodeState]) -> bool {
         .all(|(index, _)| matches!(nodes[index], NodeState::Complete(_)))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the action thread receives explicit scheduling, cancellation, and progress authority"
+)]
 fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
     scope: &'scope thread::Scope<'scope, 'env>,
     runner: &'scope R,
@@ -787,6 +872,7 @@ fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
     budget: Budget,
     cancellation: &CancellationToken,
     sender: &mpsc::Sender<WorkerCompletion>,
+    progress: ActionProgress,
 ) -> io::Result<()> {
     let sender = sender.clone();
     let cancellation = cancellation.clone();
@@ -805,7 +891,7 @@ fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
                 }) as ActionReadiness
             });
             let mut completion = panic::catch_unwind(AssertUnwindSafe(|| {
-                execute_action(runner, action, &cancellation, budget, readiness)
+                execute_action(runner, action, &cancellation, budget, readiness, progress)
             }))
             .unwrap_or_else(|payload| {
                 failure(
@@ -904,24 +990,27 @@ fn write_due_progress<Rebalance>(
         return;
     }
     for (index, node) in nodes.iter_mut().enumerate() {
-        let NodeState::Running {
-            started,
-            next_progress,
-        } = node
-        else {
+        let NodeState::Running(progress) = node else {
             continue;
         };
-        if started.elapsed() >= *next_progress {
-            if let Err(error) = verify_timing::write_progress(
+        let Some((elapsed, cursor)) = progress.due_cursor() else {
+            continue;
+        };
+        let result = match cursor {
+            Some(cursor) => verify_timing::write_advancement(
                 output,
                 stage(index, VERIFY_ACTIONS[index]),
-                *next_progress,
-            ) {
-                output_fault.get_or_insert(error);
-                cancellation.cancel();
-                *failure_seen = true;
+                elapsed,
+                cursor,
+            ),
+            None => {
+                verify_timing::write_progress(output, stage(index, VERIFY_ACTIONS[index]), elapsed)
             }
-            *next_progress += PROGRESS_INTERVAL;
+        };
+        if let Err(error) = result {
+            output_fault.get_or_insert(error);
+            cancellation.cancel();
+            *failure_seen = true;
         }
     }
 }

@@ -136,6 +136,7 @@ fn run_benchmark_route(runner: &TimedRunner, mode: BenchmarkMode) {
                     // The serial control deliberately withholds readiness so it
                     // continues to measure the retired all-compiler barrier.
                     None,
+                    Arc::new(|| {}),
                 )
                 .result
                 .expect("serial fixture action succeeds");

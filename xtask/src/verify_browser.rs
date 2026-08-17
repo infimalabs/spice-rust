@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sill::CancellationToken;
 
-use super::{BROWSER_LABEL, CommandRun, RunError};
+use super::{ActionProgress, BROWSER_LABEL, CommandRun, RunError};
 
 const RECEIPT_FLAG: &str = "--spice-coverage-receipt";
 const PREBUILT_APP_FLAG: &str = "--spice-prebuilt-app";
@@ -32,25 +32,54 @@ pub(super) fn run(
     cancellation: &CancellationToken,
     cargo_jobs: usize,
 ) -> Result<BrowserRun, RunError> {
+    run_inner(cancellation, cargo_jobs, None)
+}
+
+pub(super) fn run_with_progress(
+    cancellation: &CancellationToken,
+    cargo_jobs: usize,
+    progress: ActionProgress,
+) -> Result<BrowserRun, RunError> {
+    run_inner(cancellation, cargo_jobs, Some(progress))
+}
+
+fn run_inner(
+    cancellation: &CancellationToken,
+    cargo_jobs: usize,
+    progress: Option<ActionProgress>,
+) -> Result<BrowserRun, RunError> {
     let receipt = receipt_path();
     remove_receipt(&receipt).map_err(RunError::Launch)?;
     let environment = BrowserEnvironment::detect()?;
     let overrides = environment.overrides();
-    let process = super::verify_execution::run_process(
-        BROWSER_LABEL,
-        "npm",
-        [
-            std::ffi::OsString::from("run"),
-            std::ffi::OsString::from("test:canvas"),
-            std::ffi::OsString::from("--"),
-            std::ffi::OsString::from(RECEIPT_FLAG),
-            receipt.as_os_str().to_owned(),
-            std::ffi::OsString::from(PREBUILT_APP_FLAG),
-        ],
-        cancellation,
-        cargo_jobs,
-        &overrides,
-    )?;
+    let arguments = [
+        std::ffi::OsString::from("run"),
+        std::ffi::OsString::from("test:canvas"),
+        std::ffi::OsString::from("--"),
+        std::ffi::OsString::from(RECEIPT_FLAG),
+        receipt.as_os_str().to_owned(),
+        std::ffi::OsString::from(PREBUILT_APP_FLAG),
+    ];
+    let process = match progress {
+        Some(progress) => super::verify_execution::run_process_with_progress(
+            BROWSER_LABEL,
+            "npm",
+            arguments,
+            cancellation,
+            cargo_jobs,
+            &overrides,
+            super::verify_execution::ProgressSource::BrowserStdout,
+            progress,
+        ),
+        None => super::verify_execution::run_process(
+            BROWSER_LABEL,
+            "npm",
+            arguments,
+            cancellation,
+            cargo_jobs,
+            &overrides,
+        ),
+    }?;
     let completed = receipt_completed(&receipt);
     remove_receipt(&receipt).map_err(|error| RunError::Cleanup(error.to_string()))?;
     Ok(BrowserRun { process, completed })

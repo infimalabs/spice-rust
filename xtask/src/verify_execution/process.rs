@@ -28,6 +28,39 @@ where
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "observed action processes retain the ordinary rim plus progress source and authority"
+)]
+pub(crate) fn run_process_with_progress<I, S, P>(
+    label: &str,
+    program: P,
+    arguments: I,
+    cancellation: &CancellationToken,
+    cargo_jobs: usize,
+    overrides: &[(&str, &OsStr)],
+    source: ProgressSource,
+    progress: ActionProgress,
+) -> Result<CommandRun, RunError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    P: Into<OsString>,
+{
+    let cwd = std::env::current_dir().map_err(RunError::Launch)?;
+    run_process_at_with_progress(
+        label,
+        program,
+        arguments,
+        &cwd,
+        cancellation,
+        cargo_jobs,
+        overrides,
+        source,
+        progress,
+    )
+}
+
 pub(crate) fn run_process_at<I, S, P>(
     label: &str,
     program: P,
@@ -52,6 +85,90 @@ where
         overrides,
         ACTION_PROCESS_BOUNDS,
     )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "observed action processes retain the ordinary rim plus stream and progress authority"
+)]
+pub(crate) fn run_process_at_with_progress<I, S, P>(
+    label: &str,
+    program: P,
+    arguments: I,
+    cwd: &Path,
+    cancellation: &CancellationToken,
+    cargo_jobs: usize,
+    overrides: &[(&str, &OsStr)],
+    source: ProgressSource,
+    progress: ActionProgress,
+) -> Result<CommandRun, RunError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    P: Into<OsString>,
+{
+    let spec = bounded_process_spec(
+        label,
+        program,
+        arguments,
+        cwd,
+        cancellation,
+        Some(cargo_jobs),
+        overrides,
+        ACTION_PROCESS_BOUNDS,
+    )?;
+    let observation = Observation::new(
+        source.stream(),
+        ACTION_PROCESS_BOUNDS.output_limit,
+        FULL_VERIFIER_LIVE_QUEUE_CAPACITY,
+        Arc::new(OutputProgressObserver { progress, source }),
+    )
+    .map_err(|error| RunError::Launch(io::Error::new(io::ErrorKind::InvalidInput, error)))?;
+    let running = sill::spawn_observed(spec, observation).map_err(RunError::Launch)?;
+    let outcome = wait_bounded(running, cancellation, ACTION_PROCESS_BOUNDS)?;
+    command_run_from_outcome(label, &outcome)
+}
+
+struct OutputProgressObserver {
+    progress: ActionProgress,
+    source: ProgressSource,
+}
+
+impl RecordObserver for OutputProgressObserver {
+    fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
+        if self.source.advances(record.bytes()) {
+            (self.progress)();
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ProgressSource {
+    CargoStderr,
+    #[cfg(not(target_arch = "wasm32"))]
+    WorkspaceStdout,
+    BrowserStdout,
+}
+
+impl ProgressSource {
+    const fn stream(self) -> OutputStream {
+        match self {
+            Self::CargoStderr => OutputStream::Stderr,
+            Self::BrowserStdout => OutputStream::Stdout,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::WorkspaceStdout => OutputStream::Stdout,
+        }
+    }
+
+    pub(super) fn advances(self, record: &[u8]) -> bool {
+        match self {
+            Self::CargoStderr => true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::WorkspaceStdout => !record.starts_with(b"[rust-test] stage=progress "),
+            Self::BrowserStdout => !record.starts_with(b"canvas shard progress "),
+        }
+    }
 }
 
 #[expect(
@@ -159,14 +276,22 @@ pub(super) enum StreamingRunError {
 
 #[derive(Debug)]
 struct LiveProgressObserver {
-    records: mpsc::SyncSender<Vec<u8>>,
+    records: mpsc::SyncSender<LiveVerifierRecord>,
+}
+
+struct LiveVerifierRecord {
+    bytes: Vec<u8>,
+    renews_lease: bool,
 }
 
 impl RecordObserver for LiveProgressObserver {
     fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
         if is_live_progress_record(record.bytes()) {
             self.records
-                .send(record.bytes().to_vec())
+                .send(LiveVerifierRecord {
+                    bytes: record.bytes().to_vec(),
+                    renews_lease: is_lease_renewal_record(record.bytes()),
+                })
                 .map_err(|error| ObserveError::new(error.to_string()))?;
         }
         Ok(())
@@ -315,30 +440,32 @@ fn force_timed_out(run: CommandRun) -> CommandRun {
 }
 
 fn drain_live_progress(
-    records: &mpsc::Receiver<Vec<u8>>,
+    records: &mpsc::Receiver<LiveVerifierRecord>,
     output: &mut impl Write,
 ) -> io::Result<bool> {
     let mut wrote = false;
+    let mut renews_lease = false;
     while let Ok(record) = records.try_recv() {
-        output.write_all(&record)?;
+        output.write_all(&record.bytes)?;
+        renews_lease |= record.renews_lease;
         wrote = true;
     }
     if wrote {
         output.flush()?;
     }
-    Ok(wrote)
+    Ok(renews_lease)
 }
 
 /// Observation completion and process completion are separate threads. After
 /// the child exits, wait one bounded live poll after the last record so a final
 /// terminal record cannot remain between the observer and its queue.
 fn drain_final_live_progress(
-    records: &mpsc::Receiver<Vec<u8>>,
+    records: &mpsc::Receiver<LiveVerifierRecord>,
     output: &mut impl Write,
 ) -> io::Result<bool> {
     let mut wrote = drain_live_progress(records, output)?;
     while let Ok(record) = records.recv_timeout(FULL_VERIFIER_LIVE_POLL) {
-        output.write_all(&record)?;
+        output.write_all(&record.bytes)?;
         wrote = true;
     }
     if wrote {
