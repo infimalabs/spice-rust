@@ -64,7 +64,7 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 18] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 21] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
     // control-plane boundary after authored release approval. Each count
@@ -97,6 +97,13 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 18] = [
     // remote shape and never name a production remote.
     ("spice/src/task_git/resolution_tests.rs", "clone", 1),
     ("spice/src/task_git/resolution_tests.rs", "push", 3),
+    // Dirty-footprint recovery fixtures use one local bare remote to prove
+    // replay against a synchronized peer baseline. These are fixture-only
+    // transports; production recovery continues through task_git's existing
+    // fetch/push control-plane boundary.
+    ("spice/src/task_git/recovery_tests.rs", "clone", 1),
+    ("spice/src/task_git/recovery_tests.rs", "pull", 1),
+    ("spice/src/task_git/recovery_tests.rs", "push", 3),
     ("spice/src/task_git/tests.rs", "clone", 1),
     ("spice/src/task_git/tests.rs", "fetch", 1),
     ("spice/src/task_git/tests.rs", "ls-remote", 2),
