@@ -57,7 +57,7 @@ pub use maintenance::{
     InstallTempInspection, inspect_temporary_records, reclaim_temporary_records,
 };
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
-use model::{ObservedFile, RepositoryIdentity};
+use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
 
 const PLAN_VERSION: u16 = 9;
 const RECORD_VERSION: u16 = 9;
