@@ -28,8 +28,9 @@ struct JavascriptInventory {
 pub(in crate::toolchain) fn javascript_unused(
     declaration: ToolchainDeclaration,
     root: &Path,
+    reached_paths: &[String],
 ) -> Analysis {
-    let inventory = match javascript_inventory(root) {
+    let inventory = match javascript_inventory(root, reached_paths) {
         Ok(inventory) => inventory,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -107,8 +108,11 @@ pub(in crate::toolchain) fn javascript_unused(
 /// reach production symbols through a sandbox namespace as `context.symbol`, so
 /// a property identifier is a genuine test-side reference and is counted only
 /// under a configured test path, where that is what it means.
-fn javascript_inventory(root: &Path) -> Result<JavascriptInventory, String> {
-    let sources = javascript_sources(root)?;
+fn javascript_inventory(
+    root: &Path,
+    reached_paths: &[String],
+) -> Result<JavascriptInventory, String> {
+    let sources = javascript_sources(root, reached_paths)?;
     let mut declarations = Vec::new();
     let mut references: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for (path, source, in_test) in &sources {
@@ -172,18 +176,13 @@ fn javascript_inventory(root: &Path) -> Result<JavascriptInventory, String> {
     })
 }
 
-fn javascript_sources(root: &Path) -> Result<Vec<(String, String, bool)>, String> {
-    let walked = Jurisdiction::walk(root, &Ignore::default())
-        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
-    let mut paths: Vec<String> = walked
-        .measurable()
-        .map(|entry| entry.path().to_owned())
-        .filter(|path| !excluded(path))
-        .filter(|path| {
-            extension(path).is_some_and(|found| JAVASCRIPT_EXTENSIONS.contains(&found.as_str()))
-        })
-        .collect();
-    paths.sort();
+fn javascript_sources(
+    root: &Path,
+    reached_paths: &[String],
+) -> Result<Vec<(String, String, bool)>, String> {
+    let paths = selected_changes(root, reached_paths, |path| {
+        extension(path).is_some_and(|found| JAVASCRIPT_EXTENSIONS.contains(&found.as_str()))
+    });
 
     paths
         .into_iter()

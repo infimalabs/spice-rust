@@ -18,6 +18,8 @@ use wire::Digest;
 use crate::GateId;
 
 mod current_source;
+#[cfg(not(target_arch = "wasm32"))]
+mod language_reach;
 mod policy;
 mod reach;
 
@@ -29,6 +31,8 @@ pub(crate) use current_source::{
 pub use current_source::{
     select_current_source_change_gates, select_current_source_change_gates_with_full_verifier,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use language_reach::compile_language_reach;
 pub use policy::{ChangeSelectionPolicy, ChangeSelectionPolicyInputs};
 pub use reach::{
     ChangeArmReach, ChangeReachAuthority, ChangeReachEdge, ChangeReachMode, ChangeReachObject,

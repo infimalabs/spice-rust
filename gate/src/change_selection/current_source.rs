@@ -140,6 +140,32 @@ fn configuration_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> 
         )));
     }
     let mut gates = vec![GateId::RepoShape];
+    if path == "pyproject.toml" {
+        gates.extend([
+            GateId::PythonTypecheck,
+            GateId::Reachability,
+            GateId::SymbolReachability,
+            GateId::PythonUnused,
+            GateId::AssertionFreeTests,
+            GateId::PrivateInternals,
+        ]);
+    }
+    if path == "pyrightconfig.json" {
+        gates.extend([
+            GateId::PythonTypecheck,
+            GateId::Reachability,
+            GateId::SymbolReachability,
+            GateId::PythonUnused,
+            GateId::AssertionFreeTests,
+            GateId::PrivateInternals,
+        ]);
+    }
+    if matches!(
+        path,
+        "package.json" | "package-lock.json" | "jsconfig.json" | "tsconfig.json"
+    ) {
+        gates.push(GateId::JavascriptUnused);
+    }
     if frontend_path(path) || matches!(path, "package.json" | "package-lock.json") {
         gates.push(GateId::CanvasWebTypecheck);
     }

@@ -91,10 +91,8 @@ pub(super) fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding
                 message: "mismatched types".to_owned(),
             },
         ),
-        // Python typechecking has no compiled analysis yet, which is why
-        // `owed_analyzer` still names the one it is owed, so there is no
-        // producer to ask. Pyright's own diagnostics carry a column, and this
-        // literal stands in for it until the analysis that parses one lands.
+        // Pyright's diagnostics carry a zero-based character offset. The
+        // compiled analysis normalizes that into this positive report column.
         GateId::PythonTypecheck => (
             format!("python/{suffix}.py"),
             Some(7),

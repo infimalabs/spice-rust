@@ -10,8 +10,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use super::{Analysis, excluded, extension, plural, source_line};
-use crate::jurisdiction::{Ignore, Jurisdiction};
+use super::{Analysis, extension, plural, source_line};
 use crate::structural::{StructuralPattern, scan_csharp_symbols};
 use crate::toolchain::{
     ArmFinding, ArmOutcome, CsharpUnusedStatus, FindingDetail, ToolchainDeclaration,
@@ -58,8 +57,9 @@ const CSHARP_PUBLISHING_MODIFIERS: &[&str] = &["public", "protected", "internal"
 pub(in crate::toolchain) fn csharp_unused(
     declaration: ToolchainDeclaration,
     root: &Path,
+    reached_paths: &[String],
 ) -> Analysis {
-    let sources = match csharp_sources(root) {
+    let sources = match csharp_sources(root, reached_paths) {
         Ok(sources) => sources,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -263,16 +263,10 @@ fn csharp_retention_note(retained: &BTreeMap<&str, usize>) -> String {
     )
 }
 
-fn csharp_sources(root: &Path) -> Result<Vec<(String, String)>, String> {
-    let walked = Jurisdiction::walk(root, &Ignore::default())
-        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
-    let mut paths: Vec<String> = walked
-        .measurable()
-        .map(|entry| entry.path().to_owned())
-        .filter(|path| !excluded(path))
-        .filter(|path| extension(path).is_some_and(|found| found == "cs"))
-        .collect();
-    paths.sort();
+fn csharp_sources(root: &Path, reached_paths: &[String]) -> Result<Vec<(String, String)>, String> {
+    let paths = super::selected_changes(root, reached_paths, |path| {
+        extension(path).is_some_and(|found| found == "cs")
+    });
 
     paths
         .into_iter()

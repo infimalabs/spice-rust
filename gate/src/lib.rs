@@ -71,6 +71,8 @@ pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use change_selection::compile_language_reach;
 pub use change_selection::{
     CHANGE_SELECTION_REPORT_VERSION, ChangeArmReach, ChangeReachAuthority, ChangeReachEdge,
     ChangeReachMode, ChangeReachObject, ChangeReachOrigin, ChangeSelectionEdge,

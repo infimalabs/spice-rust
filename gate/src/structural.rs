@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator};
+use tree_sitter::{Language, Node, Parser, Query, QueryCursor, StreamingIterator};
 use tree_sitter_language::LanguageFn;
 
 /// One language-independent structural pattern identity.
@@ -80,6 +80,24 @@ pub struct StructuralMatch {
     start_byte: usize,
     end_byte: usize,
     captures: Vec<StructuralCapture>,
+}
+
+/// Parsed module edges whose spelling can alter a JavaScript component.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct JavascriptModuleDependencies {
+    /// Literal `import`, re-export, dynamic-import, and `require` specifiers.
+    pub(crate) specifiers: Vec<String>,
+}
+
+/// Parsed namespace and include edges whose spelling can alter a C# component.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CsharpModuleDependencies {
+    /// Namespaces declared by this compilation unit.
+    pub(crate) namespaces: Vec<String>,
+    /// Namespaces imported by this compilation unit.
+    pub(crate) imports: Vec<String>,
+    /// Literal `#load` paths included by a C# script.
+    pub(crate) includes: Vec<String>,
 }
 
 impl StructuralMatch {
@@ -402,6 +420,176 @@ pub(crate) fn scan_csharp_symbols(
         CSHARP_SYMBOL_PATTERNS,
         CSHARP_SYMBOL_BINDINGS,
     )
+}
+
+/// Parse JavaScript module-loading syntax into literal dependency specifiers.
+///
+/// Dynamic module expressions are rejected rather than guessed. The reach
+/// compiler turns that rejection into an explicit exhaustive language-graph
+/// plan before any focused analyzer can run.
+pub(crate) fn scan_javascript_module_dependencies(
+    source: &str,
+) -> Result<JavascriptModuleDependencies, String> {
+    let tree = parse_tree("javascript", source).map_err(|error| error.to_string())?;
+    let mut specifiers = Vec::new();
+    visit_nodes(tree.root_node(), &mut |node| match node.kind() {
+        "import_statement" | "export_statement" => {
+            if let Some(source_node) = node.child_by_field_name("source") {
+                specifiers.push(javascript_string(source_node, source)?);
+            }
+            Ok(())
+        }
+        "call_expression" => {
+            let Some(function) = node.child_by_field_name("function") else {
+                return Ok(());
+            };
+            let function_text = function.utf8_text(source.as_bytes()).unwrap_or_default();
+            if function.kind() != "import" && function_text != "require" {
+                return Ok(());
+            }
+            let arguments = node
+                .child_by_field_name("arguments")
+                .ok_or_else(|| "javascript module loader has no parsed argument list".to_owned())?;
+            let mut cursor = arguments.walk();
+            let named = arguments.named_children(&mut cursor).collect::<Vec<_>>();
+            if named.len() != 1 || named[0].kind() != "string" {
+                return Err(
+                    "javascript module loader uses a dynamic or unsupported specifier".to_owned(),
+                );
+            }
+            specifiers.push(javascript_string(named[0], source)?);
+            Ok(())
+        }
+        _ => Ok(()),
+    })?;
+    specifiers.sort();
+    specifiers.dedup();
+    Ok(JavascriptModuleDependencies { specifiers })
+}
+
+/// Parse C# namespaces and script includes into dependency vocabulary.
+///
+/// `#r` and non-literal `#load` directives are refused because their resolved
+/// compilation inventory depends on authorities this parser does not own.
+pub(crate) fn scan_csharp_module_dependencies(
+    source: &str,
+) -> Result<CsharpModuleDependencies, String> {
+    let tree = parse_tree("csharp", source).map_err(|error| error.to_string())?;
+    let mut namespaces = Vec::new();
+    let mut imports = Vec::new();
+    visit_nodes(tree.root_node(), &mut |node| {
+        let destination = match node.kind() {
+            "namespace_declaration" | "file_scoped_namespace_declaration" => &mut namespaces,
+            "using_directive" => &mut imports,
+            _ => return Ok(()),
+        };
+        let Some(name) = node.child_by_field_name("name") else {
+            if node.kind() == "using_directive" {
+                let text = node.utf8_text(source.as_bytes()).unwrap_or_default();
+                let imported = text
+                    .trim()
+                    .strip_prefix("using ")
+                    .and_then(|value| value.strip_suffix(';'))
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty() && !value.contains('='));
+                if let Some(imported) = imported {
+                    destination.push(imported.trim_start_matches("static ").to_owned());
+                    return Ok(());
+                }
+            }
+            return Err(format!("{} has no parsed name", node.kind()));
+        };
+        let name = name
+            .utf8_text(source.as_bytes())
+            .map_err(|error| format!("{} name is not valid UTF-8: {error}", node.kind()))?;
+        destination.push(name.to_owned());
+        Ok(())
+    })?;
+
+    let mut includes = Vec::new();
+    for line in source.lines().map(str::trim) {
+        if line.starts_with("#r") {
+            return Err("csharp dependency graph does not resolve #r directives".to_owned());
+        }
+        let Some(value) = line.strip_prefix("#load") else {
+            continue;
+        };
+        let value = value.trim();
+        if value.len() < 2 || !value.starts_with('"') || !value.ends_with('"') {
+            return Err("csharp #load uses a dynamic or malformed path".to_owned());
+        }
+        let path = &value[1..value.len() - 1];
+        if path.is_empty() || path.contains(['\\', '\0', '\r', '\n']) {
+            return Err("csharp #load path uses an unsupported escape".to_owned());
+        }
+        includes.push(path.to_owned());
+    }
+    namespaces.sort();
+    namespaces.dedup();
+    imports.sort();
+    imports.dedup();
+    includes.sort();
+    includes.dedup();
+    Ok(CsharpModuleDependencies {
+        namespaces,
+        imports,
+        includes,
+    })
+}
+
+fn parse_tree(language: &str, source: &str) -> Result<tree_sitter::Tree, StructuralScanError> {
+    let grammar = grammar(language)?;
+    let language: Language = grammar.language.into();
+    let mut parser = Parser::new();
+    parser
+        .set_language(&language)
+        .map_err(|error| StructuralScanError::Grammar {
+            language: grammar.name,
+            reason: error.to_string(),
+        })?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or(StructuralScanError::ParseStopped {
+            language: grammar.name,
+        })?;
+    if tree.root_node().has_error() {
+        return Err(StructuralScanError::MalformedSource {
+            language: grammar.name,
+        });
+    }
+    Ok(tree)
+}
+
+fn visit_nodes(
+    node: Node<'_>,
+    visit: &mut impl FnMut(Node<'_>) -> Result<(), String>,
+) -> Result<(), String> {
+    visit(node)?;
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        visit_nodes(child, visit)?;
+    }
+    Ok(())
+}
+
+fn javascript_string(node: Node<'_>, source: &str) -> Result<String, String> {
+    let text = node
+        .utf8_text(source.as_bytes())
+        .map_err(|error| format!("javascript module specifier is not valid UTF-8: {error}"))?;
+    let bytes = text.as_bytes();
+    if bytes.len() < 2
+        || !matches!(
+            (bytes[0], bytes[bytes.len() - 1]),
+            (b'\'', b'\'') | (b'"', b'"')
+        )
+    {
+        return Err("javascript module specifier is not a quoted string".to_owned());
+    }
+    let value = &text[1..text.len() - 1];
+    if value.is_empty() || value.contains(['\\', '\0', '\r', '\n']) {
+        return Err("javascript module specifier uses an unsupported escape".to_owned());
+    }
+    Ok(value.to_owned())
 }
 
 fn grammar(language: &str) -> Result<&'static GrammarBinding, StructuralScanError> {

@@ -71,13 +71,14 @@ impl ProbeFixture {
         let source = ToolchainSource {
             root: &self.tree,
             repository: &self.root,
+            paths: &[],
             rim: RimCapture::new(
                 self.rim.clone(),
                 Some(OsString::from(search_path)),
                 Vec::new(),
             )
             .expect("the fixture rim directory is absolute"),
-            formatter_reach: None,
+            reached_paths: None,
             baselines: None,
             identity: None,
             verifier_environment: &[],

@@ -31,6 +31,7 @@ pub struct HygieneSource<'a> {
     jurisdiction: Jurisdiction,
     digest: Digest,
     suppressed: Vec<SuppressedPath>,
+    reached_paths: Option<BTreeSet<String>>,
 }
 
 impl<'a> HygieneSource<'a> {
@@ -45,6 +46,27 @@ impl<'a> HygieneSource<'a> {
         tree: &'a SelectedTree,
         contract: &Contract,
     ) -> Result<Self, HygieneAnalysisError> {
+        Self::capture_inner(tree, contract, None)
+    }
+
+    /// Capture one dependency-expanded focused hygiene component.
+    pub(crate) fn capture_focused(
+        tree: &'a SelectedTree,
+        contract: &Contract,
+        reached_paths: &[String],
+    ) -> Result<Self, HygieneAnalysisError> {
+        Self::capture_inner(
+            tree,
+            contract,
+            Some(reached_paths.iter().cloned().collect()),
+        )
+    }
+
+    fn capture_inner(
+        tree: &'a SelectedTree,
+        contract: &Contract,
+        reached_paths: Option<BTreeSet<String>>,
+    ) -> Result<Self, HygieneAnalysisError> {
         let (ignore, provenance) = hygiene_ignore(contract)?;
         let jurisdiction = Jurisdiction::walk(tree.root(), &ignore).map_err(|error| {
             HygieneAnalysisError::Source(format!("hygiene source jurisdiction: {error}"))
@@ -52,12 +74,23 @@ impl<'a> HygieneSource<'a> {
         let digest = jurisdiction.tree_digest().map_err(|error| {
             HygieneAnalysisError::Source(format!("hygiene source tree identity: {error}"))
         })?;
-        let suppressed = suppressed_candidates(&jurisdiction, &ignore, &provenance)?;
+        let mut suppressed = suppressed_candidates(&jurisdiction, &ignore, &provenance)?;
+        if let Some(reached) = &reached_paths {
+            suppressed.retain(|candidate| {
+                reached.iter().any(|path| {
+                    path == &candidate.path
+                        || path
+                            .strip_prefix(&candidate.path)
+                            .is_some_and(|tail| tail.starts_with('/'))
+                })
+            });
+        }
         Ok(Self {
             root: tree.root(),
             jurisdiction,
             digest,
             suppressed,
+            reached_paths,
         })
     }
 
@@ -87,6 +120,10 @@ impl<'a> HygieneSource<'a> {
     #[must_use]
     pub fn suppressed(&self) -> &[SuppressedPath] {
         &self.suppressed
+    }
+
+    fn reached_paths(&self) -> Option<&BTreeSet<String>> {
+        self.reached_paths.as_ref()
     }
 }
 
@@ -119,7 +156,12 @@ pub(crate) fn acquire_hygiene_arm(
     let configuration = configuration
         .clone()
         .with_suppressions(source.suppressed().to_vec())?;
-    analyze_hygiene_arm(source.jurisdiction(), &configuration, gate_id)
+    analyze_hygiene_arm(
+        source.jurisdiction(),
+        &configuration,
+        gate_id,
+        source.reached_paths(),
+    )
 }
 
 /// Acquire one hygiene arm over only its authored path reach.
@@ -149,7 +191,8 @@ pub(crate) fn acquire_hygiene_arm_reached(
         .cloned()
         .collect();
     let configuration = configuration.clone().with_suppressions(suppressions)?;
-    analyze_hygiene_arm(&jurisdiction, &configuration, gate_id)
+    let reached_paths = reached.iter().cloned().collect();
+    analyze_hygiene_arm(&jurisdiction, &configuration, gate_id, Some(&reached_paths))
 }
 
 /// Everything the walk withheld from measurement, paired with the rule that

@@ -15,10 +15,12 @@ impl Corpus {
         jurisdiction: &Jurisdiction,
         configuration: &HygieneConfiguration,
         started: Instant,
+        reached_paths: Option<&BTreeSet<String>>,
     ) -> (u32, Self, Terminal) {
         let paths: Vec<_> = jurisdiction
             .measurable()
             .filter(|entry| is_python_path(entry.path()))
+            .filter(|entry| reached_paths.is_none_or(|reached| reached.contains(entry.path())))
             .map(|entry| entry.path().to_owned())
             .collect();
         let selected_files = u32::try_from(paths.len()).unwrap_or(u32::MAX);
@@ -157,6 +159,7 @@ impl Corpus {
         &self,
         traversal: HygieneTraversal,
         configuration: &HygieneConfiguration,
+        focused: bool,
     ) -> AnalysisEvidence {
         match traversal {
             HygieneTraversal::ImportGraph => AnalysisEvidence::GraphConstruction {
@@ -214,6 +217,7 @@ impl Corpus {
                 let stale = configuration
                     .private_exceptions
                     .iter()
+                    .filter(|exception| !focused || self.private_exception_relevant(exception))
                     .filter(|exception| !couplings.iter().any(|item| exception.matches(item)))
                     .count();
                 AnalysisEvidence::PrivateBoundaryResolution {
@@ -243,13 +247,14 @@ impl Corpus {
         &self,
         gate: GateId,
         configuration: &HygieneConfiguration,
+        focused: bool,
     ) -> Vec<HygieneFinding> {
         match gate {
             GateId::Reachability => self.reachability_findings(),
             GateId::SymbolReachability => self.symbol_reachability_findings(),
             GateId::PythonUnused => self.python_unused_findings(),
             GateId::AssertionFreeTests => self.assertion_free_findings(),
-            GateId::PrivateInternals => self.private_findings(configuration),
+            GateId::PrivateInternals => self.private_findings(configuration, focused),
             _ => Vec::new(),
         }
     }
@@ -368,7 +373,11 @@ impl Corpus {
             .collect()
     }
 
-    fn private_findings(&self, configuration: &HygieneConfiguration) -> Vec<HygieneFinding> {
+    fn private_findings(
+        &self,
+        configuration: &HygieneConfiguration,
+        focused: bool,
+    ) -> Vec<HygieneFinding> {
         let couplings = self.private_couplings();
         let mut findings: Vec<_> = couplings
             .iter()
@@ -387,6 +396,7 @@ impl Corpus {
             configuration
                 .private_exceptions
                 .iter()
+                .filter(|exception| !focused || self.private_exception_relevant(exception))
                 .filter(|exception| !couplings.iter().any(|item| exception.matches(item)))
                 .map(|exception| HygieneFinding {
                     path: "spice-rust.toml".to_owned(),
@@ -398,6 +408,18 @@ impl Corpus {
                 }),
         );
         findings
+    }
+
+    fn private_exception_relevant(&self, exception: &PrivateCouplingException) -> bool {
+        self.tests()
+            .any(|(_, test)| test.name == exception.test_name)
+            || self.modules.keys().any(|module| {
+                exception.target == *module
+                    || exception
+                        .target
+                        .strip_prefix(module)
+                        .is_some_and(|tail| tail.starts_with('.'))
+            })
     }
 
     /// Rank the modules the suite reaches by how much of the suite reaches them.

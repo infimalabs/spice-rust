@@ -348,6 +348,7 @@ pub(crate) fn analyze_hygiene_arm(
     jurisdiction: &Jurisdiction,
     configuration: &HygieneConfiguration,
     gate_id: GateId,
+    reached_paths: Option<&BTreeSet<String>>,
 ) -> Result<HygieneMeasurement, HygieneAnalysisError> {
     if !HYGIENE_ARMS.iter().any(|arm| arm.id == gate_id) {
         return Err(HygieneAnalysisError::Measurement(
@@ -367,9 +368,14 @@ pub(crate) fn analyze_hygiene_arm(
             .map_err(HygieneAnalysisError::Measurement);
         }
     };
-    let measurement =
-        AnalyzerRun::execute_arm_at(snapshot.jurisdiction(), configuration, started, gate_id)
-            .map_err(HygieneAnalysisError::Measurement)?;
+    let measurement = AnalyzerRun::execute_arm_at(
+        snapshot.jurisdiction(),
+        configuration,
+        started,
+        gate_id,
+        reached_paths,
+    )
+    .map_err(HygieneAnalysisError::Measurement)?;
     match snapshot.verify() {
         Ok(None) if elapsed_ms(started) > configuration.deadline_ms => {
             timeout_measurement(configuration, gate_id, elapsed_ms(started))
@@ -570,6 +576,7 @@ struct AnalyzerRun<'a> {
     selected_files: u32,
     corpus: Corpus,
     terminal: Terminal,
+    focused: bool,
 }
 
 impl<'a> AnalyzerRun<'a> {
@@ -586,8 +593,15 @@ impl<'a> AnalyzerRun<'a> {
         configuration: &'a HygieneConfiguration,
         started: Instant,
         gate_id: GateId,
+        reached_paths: Option<&BTreeSet<String>>,
     ) -> Result<HygieneMeasurement, HygieneError> {
-        let run = Self::prepare(jurisdiction, configuration, &NativeExecution, started);
+        let run = Self::prepare(
+            jurisdiction,
+            configuration,
+            &NativeExecution,
+            started,
+            reached_paths,
+        );
         let declaration = HYGIENE_ARMS
             .into_iter()
             .find(|declaration| declaration.id == gate_id)
@@ -610,7 +624,7 @@ impl<'a> AnalyzerRun<'a> {
         boundary: &'a dyn ExecutionBoundary,
         started: Instant,
     ) -> Result<HygieneReport, HygieneError> {
-        let run = Self::prepare(jurisdiction, configuration, boundary, started);
+        let run = Self::prepare(jurisdiction, configuration, boundary, started, None);
         let observations = HYGIENE_ARMS.map(|arm| run.observe(arm));
         measure_hygiene(observations)
     }
@@ -620,13 +634,15 @@ impl<'a> AnalyzerRun<'a> {
         configuration: &'a HygieneConfiguration,
         boundary: &'a dyn ExecutionBoundary,
         started: Instant,
+        reached_paths: Option<&BTreeSet<String>>,
     ) -> Self {
         let project_markers = jurisdiction
             .measurable()
             .filter(|entry| matches!(entry.path(), "pyproject.toml" | "spice-rust.toml"))
             .map(|entry| entry.path().to_owned())
             .collect();
-        let (selected_files, corpus, terminal) = Corpus::load(jurisdiction, configuration, started);
+        let (selected_files, corpus, terminal) =
+            Corpus::load(jurisdiction, configuration, started, reached_paths);
         Self {
             configuration,
             boundary,
@@ -635,6 +651,7 @@ impl<'a> AnalyzerRun<'a> {
             selected_files,
             corpus,
             terminal,
+            focused: reached_paths.is_some(),
         }
     }
 
@@ -747,7 +764,9 @@ impl<'a> AnalyzerRun<'a> {
                 findings: Vec::new(),
             };
         }
-        let findings = self.corpus.findings(declaration.id, self.configuration);
+        let findings = self
+            .corpus
+            .findings(declaration.id, self.configuration, self.focused);
         if self.elapsed_ms() > self.configuration.deadline_ms {
             return self.timeout_observation(declaration.id);
         }
@@ -810,7 +829,7 @@ impl<'a> AnalyzerRun<'a> {
         for traversal in declaration.traversals {
             let item = self
                 .corpus
-                .traversal_evidence(*traversal, self.configuration);
+                .traversal_evidence(*traversal, self.configuration, self.focused);
             if !evidence
                 .iter()
                 .any(|existing| evidence_rank(existing) == evidence_rank(&item))

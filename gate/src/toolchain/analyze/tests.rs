@@ -84,9 +84,51 @@ fn compiled_javascript_extensions_cover_exactly_the_declared_globs() {
     assert_eq!(declared, expected);
 }
 
+#[test]
+fn focused_language_analyzers_do_not_parse_or_report_unreached_peers() {
+    let fixture = DecodingFixture::new();
+    fs::write(fixture.root.join("app/selected.js"), "const unused = 1;\n")
+        .expect("write selected JavaScript source");
+    fs::write(fixture.root.join("app/broken.js"), "const = ;\n")
+        .expect("write unrelated malformed JavaScript source");
+    fs::write(
+        fixture.root.join("app/Selected.cs"),
+        "class Selected { private int unused; }\n",
+    )
+    .expect("write selected C# source");
+    fs::write(fixture.root.join("app/Broken.cs"), "class {\n")
+        .expect("write unrelated malformed C# source");
+
+    let javascript = javascript_unused(
+        declaration(GateId::JavascriptUnused).expect("JavaScript arm is declared"),
+        &fixture.root,
+        &["app/selected.js".to_owned()],
+    );
+    assert_eq!(javascript.outcome, ArmOutcome::Findings);
+    assert!(
+        javascript
+            .findings
+            .iter()
+            .all(|finding| { finding.path.as_deref() == Some("app/selected.js") })
+    );
+
+    let csharp = csharp_unused(
+        declaration(GateId::CsharpUnusedCandidates).expect("C# arm is declared"),
+        &fixture.root,
+        &["app/Selected.cs".to_owned()],
+    );
+    assert_eq!(csharp.outcome, ArmOutcome::Findings);
+    assert!(
+        csharp
+            .findings
+            .iter()
+            .all(|finding| finding.path.as_deref() == Some("app/Selected.cs"))
+    );
+}
+
 /// Every declared arm routes somewhere named, so one more cannot drift in.
 #[test]
-fn every_declared_arm_has_a_named_analysis_or_a_named_owed_analyzer() {
+fn every_declared_arm_has_a_named_compiled_analysis() {
     for declaration in TOOLCHAIN_ARMS {
         let compiled = matches!(
             declaration.id,
@@ -95,16 +137,15 @@ fn every_declared_arm_has_a_named_analysis_or_a_named_owed_analyzer() {
                 | GateId::Taste
                 | GateId::JavascriptUnused
                 | GateId::CsharpUnusedCandidates
+                | GateId::PythonTypecheck
                 | GateId::RustTypecheck
                 | GateId::CanvasWebTypecheck
                 | GateId::EnvPolicy
                 | GateId::EnvNameLedger
         );
-        let owed = crate::toolchain::acquire::owed_analyzer(declaration.id);
-        assert_eq!(
+        assert!(
             compiled,
-            owed.is_none(),
-            "{} is both compiled and owed, or neither",
+            "{} has no compiled analysis",
             declaration.id.as_str()
         );
     }
@@ -116,7 +157,7 @@ fn rust_workspace_applicability_is_settled_before_cargo_discovery() {
     assert!(fixture.root.join("app/src/lib.rs").is_file());
     assert!(!fixture.root.join("Cargo.toml").exists());
     let declaration = declaration(GateId::RustTypecheck).expect("Rust arm is declared");
-    let analysis = before_tools(declaration, &fixture.root, None)
+    let analysis = before_tools(declaration, &fixture.root, None, &[])
         .expect("a tree without a workspace manifest is inapplicable");
     assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
     assert!(
@@ -672,6 +713,7 @@ fn a_source_read_refusal_terminates_every_decoding_arm() {
             env_name_ledger_with(
                 declaration(GateId::EnvNameLedger).expect("env-name-ledger declaration"),
                 &fixture.root,
+                &settings,
                 &[],
                 refused_source,
                 |_| true,
