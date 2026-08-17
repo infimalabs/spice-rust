@@ -72,6 +72,33 @@ fn compiled_prose_extensions_cover_exactly_the_declared_globs() {
 }
 
 #[test]
+fn formatter_process_receives_only_changed_rust_sources() {
+    let fixture = CanvasFixture::new("formatter-reach", true);
+    let rustfmt = fixture.script("rustfmt", "exit 0");
+    let programs = BTreeMap::from([(
+        FORMATTER,
+        rustfmt.to_str().expect("UTF-8 formatter fixture"),
+    )]);
+
+    let analysis = formatters(
+        declaration(GateId::Formatters).expect("formatters is declared"),
+        &fixture.root,
+        Some(&["core/src/lib.rs".to_owned()]),
+        &canvas_exit_bounds(),
+        &programs,
+    );
+
+    assert_eq!(analysis.outcome, ArmOutcome::Passed);
+    let invocations = fixture.log_lines();
+    let [invocation] = invocations.as_slice() else {
+        panic!("formatter must run exactly once")
+    };
+    assert!(invocation.contains("core/src/lib.rs"), "{invocation}");
+    assert!(!invocation.contains("other/src/lib.rs"), "{invocation}");
+    assert!(!invocation.contains("app/src/lib.rs"), "{invocation}");
+}
+
+#[test]
 fn compiled_javascript_extensions_cover_exactly_the_declared_globs() {
     let declared = declaration(GateId::JavascriptUnused)
         .expect("javascript-unused is declared")
@@ -206,6 +233,52 @@ fn canvas_runs_both_declared_commands_in_order_from_their_owned_directories() {
             ),
         ]
     );
+}
+
+#[test]
+fn canvas_reverse_dependency_reach_runs_for_core_but_skips_unrelated_packages() {
+    let reached = CanvasFixture::new("reverse-reached", true);
+    let reached_cargo = reached.script("cargo", "exit 0");
+    let reached_trunk = reached.script("trunk", "exit 0");
+
+    let analysis = reached.analyze_tree_changes(
+        &reached.root,
+        &["core/src/lib.rs".to_owned()],
+        &reached_cargo,
+        &reached_trunk,
+        &canvas_exit_bounds(),
+    );
+
+    assert_eq!(analysis.outcome, ArmOutcome::Passed);
+    assert_eq!(reached.log_lines().len(), 2);
+
+    let unrelated = CanvasFixture::new("reverse-unrelated", true);
+    let unrelated_cargo = unrelated.script("cargo", "exit 0");
+    let unrelated_trunk = unrelated.script("trunk", "exit 0");
+    let analysis = unrelated.analyze_tree_changes(
+        &unrelated.root,
+        &["other/src/lib.rs".to_owned()],
+        &unrelated_cargo,
+        &unrelated_trunk,
+        &canvas_exit_bounds(),
+    );
+
+    assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
+    assert!(unrelated.log_lines().is_empty());
+
+    let no_trunk = CanvasFixture::new("reverse-no-trunk", true);
+    let cargo = no_trunk.script("cargo", "exit 0");
+    let programs = BTreeMap::from([(CARGO, cargo.to_str().expect("UTF-8 cargo stub"))]);
+    let analysis = canvas_web_typecheck(
+        declaration(GateId::CanvasWebTypecheck).expect("canvas arm is declared"),
+        &no_trunk.root,
+        &no_trunk.output,
+        &["other/src/lib.rs".to_owned()],
+        &canvas_exit_bounds(),
+        &programs,
+    );
+    assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
+    assert!(no_trunk.log_lines().is_empty());
 }
 
 #[test]
@@ -783,13 +856,9 @@ impl CanvasFixture {
         let root = base.join("tree");
         let output = base.join("repository");
         fs::create_dir_all(&output).expect("create canvas output fixture");
-        fs::create_dir_all(root.join("app/src")).expect("create canvas fixture tree");
-        fs::write(root.join("app/src/lib.rs"), "pub fn canvas() {}\n")
-            .expect("write canvas source");
+        Self::write_sources(&root);
         if applicable {
-            fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("write workspace manifest");
-            fs::write(root.join("app/index.html"), "<main></main>\n")
-                .expect("write canvas entrypoint");
+            Self::write_workspace(&root);
         }
         let log = root.join("calls.log");
         Self {
@@ -813,14 +882,62 @@ impl CanvasFixture {
     /// A second selected tree in the same repository, analyzable on its own.
     fn second_tree(&self, name: &str) -> PathBuf {
         let tree = self.base.join(name);
-        fs::create_dir_all(tree.join("app/src")).expect("create second canvas tree");
-        fs::write(tree.join("app/src/lib.rs"), "pub fn canvas() {}\n")
-            .expect("write second canvas source");
-        fs::write(tree.join("Cargo.toml"), "[workspace]\n")
-            .expect("write second workspace manifest");
-        fs::write(tree.join("app/index.html"), "<main></main>\n")
-            .expect("write second canvas entrypoint");
+        Self::write_sources(&tree);
+        Self::write_workspace(&tree);
         tree
+    }
+
+    fn write_sources(tree: &Path) {
+        for (package, source) in [
+            ("app", "pub fn canvas() {}\n"),
+            ("core", "pub fn core() {}\n"),
+            ("other", "pub fn other() {}\n"),
+        ] {
+            fs::create_dir_all(tree.join(package).join("src"))
+                .expect("create canvas package fixture");
+            fs::write(tree.join(package).join("src/lib.rs"), source)
+                .expect("write canvas package source");
+        }
+    }
+
+    fn write_workspace(tree: &Path) {
+        fs::write(
+            tree.join("Cargo.toml"),
+            concat!(
+                "[workspace]\nmembers = [\"app\", \"core\", \"other\"]\nresolver = \"3\"\n",
+                "[workspace.package]\nedition = \"2024\"\n",
+            ),
+        )
+        .expect("write canvas workspace manifest");
+        fs::write(
+            tree.join("app/Cargo.toml"),
+            concat!(
+                "[package]\nname = \"app\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+                "[dependencies]\ncore = { path = \"../core\" }\n",
+            ),
+        )
+        .expect("write canvas app manifest");
+        for package in ["core", "other"] {
+            fs::write(
+                tree.join(package).join("Cargo.toml"),
+                format!(
+                    "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n"
+                ),
+            )
+            .expect("write canvas package manifest");
+        }
+        fs::write(
+            tree.join("Cargo.lock"),
+            concat!(
+                "version = 4\n\n",
+                "[[package]]\nname = \"app\"\nversion = \"0.0.0\"\n",
+                "dependencies = [\"core\"]\n\n",
+                "[[package]]\nname = \"core\"\nversion = \"0.0.0\"\n\n",
+                "[[package]]\nname = \"other\"\nversion = \"0.0.0\"\n",
+            ),
+        )
+        .expect("write canvas workspace lock");
+        fs::write(tree.join("app/index.html"), "<main></main>\n").expect("write canvas entrypoint");
     }
 
     fn script(&self, name: &str, body: &str) -> PathBuf {
@@ -830,9 +947,23 @@ impl CanvasFixture {
             !log.contains('\''),
             "fixture log path cannot be shell quoted"
         );
+        let cargo = env!("CARGO");
+        assert!(!cargo.contains('\''), "Cargo path cannot be shell quoted");
         fs::write(
             &path,
-            format!("#!/bin/sh\nprintf '%s|%s\\n' \"$(pwd)\" \"$*\" >> '{log}'\n{body}\n"),
+            format!(
+                concat!(
+                    "#!/bin/sh\n",
+                    "if [ \"$1\" = metadata ]; then\n",
+                    "  exec '{cargo}' \"$@\"\n",
+                    "fi\n",
+                    "printf '%s|%s\\n' \"$(pwd)\" \"$*\" >> '{log}'\n",
+                    "{body}\n",
+                ),
+                cargo = cargo,
+                log = log,
+                body = body,
+            ),
         )
         .expect("write canvas tool stub");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
@@ -845,6 +976,17 @@ impl CanvasFixture {
     }
 
     fn analyze_tree(&self, tree: &Path, cargo: &Path, trunk: &Path, bounds: &Bounds) -> Analysis {
+        self.analyze_tree_changes(tree, &["app/index.html".to_owned()], cargo, trunk, bounds)
+    }
+
+    fn analyze_tree_changes(
+        &self,
+        tree: &Path,
+        changes: &[String],
+        cargo: &Path,
+        trunk: &Path,
+        bounds: &Bounds,
+    ) -> Analysis {
         let programs = BTreeMap::from([
             (CARGO, cargo.to_str().expect("UTF-8 cargo stub")),
             (TRUNK, trunk.to_str().expect("UTF-8 trunk stub")),
@@ -853,6 +995,7 @@ impl CanvasFixture {
             declaration(GateId::CanvasWebTypecheck).expect("canvas arm is declared"),
             tree,
             &self.output,
+            changes,
             bounds,
             &programs,
         )

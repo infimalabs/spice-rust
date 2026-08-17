@@ -15,7 +15,7 @@ use crate::toolchain::{ArmOutcome, FindingDetail};
 pub(in crate::toolchain) struct CompileInvocation<'a> {
     pub(super) name: &'static str,
     pub(super) program: &'a str,
-    pub(super) arguments: &'static [&'static str],
+    pub(super) arguments: &'a [&'a str],
     pub(super) cwd: &'a Path,
 }
 

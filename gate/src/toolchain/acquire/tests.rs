@@ -255,6 +255,36 @@ fn a_program_no_entry_holds_is_still_missing() {
     );
 }
 
+#[test]
+fn canvas_defers_only_trunk_refusal_until_cargo_reach_is_known() {
+    let declaration = TOOLCHAIN_ARMS
+        .into_iter()
+        .find(|declaration| declaration.id == GateId::CanvasWebTypecheck)
+        .expect("canvas declaration exists");
+    let cargo = declaration.tools[0];
+    let tools = [
+        ToolEvidence::Identified {
+            name: cargo.name.to_owned(),
+            requested_program: cargo.program.to_owned(),
+            resolved_program: "/fixture/cargo".to_owned(),
+            version: cargo.exact_version.to_owned(),
+            digest: "cargo-digest".to_owned(),
+        },
+        ToolEvidence::Missing {
+            name: declaration.tools[1].name.to_owned(),
+            requested_program: declaration.tools[1].program.to_owned(),
+        },
+    ];
+
+    assert!(analyzer_refusal(declaration, &tools).is_none());
+    assert_eq!(
+        refusal(declaration, &tools)
+            .expect("complete tool refusal still requires Trunk")
+            .outcome,
+        ArmOutcome::ToolUnavailable
+    );
+}
+
 /// A file that shadows a program name but has no executable mode cannot be
 /// launched, and says so before an emulator can claim its bytes.
 #[test]

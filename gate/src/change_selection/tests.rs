@@ -165,7 +165,13 @@ fn a_differently_shaped_rust_repository_uses_policy_not_package_names() {
             .expect_err("out-of-workspace Rust input must refuse");
         assert_eq!(error.detail(), format!("{path:?} {condition}"));
     }
-    for authority in ["Cargo.lock", "rust-toolchain.toml"] {
+    for authority in [
+        ".cargo/config",
+        ".cargo/config.toml",
+        "Cargo.lock",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+    ] {
         let error = select_change_gates(source(), &strings(&[authority]), &policy)
             .expect_err("repository build authorities must refuse");
         assert_eq!(
@@ -289,7 +295,7 @@ fn admitted_parent_authority_selects_complete_exhaustive_reach_only_for_known_au
 }
 
 #[test]
-fn generic_selection_has_no_spice_frontend_or_workspace_topology() {
+fn generic_selection_defers_canvas_topology_to_canonical_cargo_reach() {
     let tracked = strings(&[
         "Cargo.toml",
         "app/browser/canvas-coordinator.mjs",
@@ -313,7 +319,7 @@ fn generic_selection_has_no_spice_frontend_or_workspace_topology() {
             GateId::RustTypecheck,
         ],
     );
-    assert!(!report.gate_ids().contains(&GateId::CanvasWebTypecheck));
+    assert!(report.gate_ids().contains(&GateId::CanvasWebTypecheck));
 }
 
 #[test]
@@ -392,6 +398,7 @@ fn current_source_override_retains_the_richer_workspace_selector() {
             GateId::Complexity,
             GateId::MagicNumbers,
             GateId::Formatters,
+            GateId::RustTypecheck,
             GateId::MarkdownLinks,
         ])
         .into_iter()

@@ -37,6 +37,80 @@ use selection::{
 #[cfg(test)]
 use selection::{CargoReachEscalationReason, selection_report};
 
+/// Exact workspace packages reached through canonical retained Cargo metadata.
+pub(crate) struct WorkspacePackageReach {
+    checks: Vec<CargoCheckSelection>,
+    roots: Vec<PathBuf>,
+}
+
+impl WorkspacePackageReach {
+    pub(crate) fn cargo_check_arguments(&self) -> Vec<Vec<String>> {
+        let mut invocations = Vec::new();
+        let all_targets = self
+            .checks
+            .iter()
+            .filter(|check| check.all_targets)
+            .collect::<Vec<_>>();
+        if !all_targets.is_empty() {
+            let mut arguments = vec![
+                "check".to_owned(),
+                "--locked".to_owned(),
+                "--all-targets".to_owned(),
+            ];
+            for check in all_targets {
+                arguments.extend(["--package".to_owned(), check.name.clone()]);
+            }
+            invocations.push(arguments);
+        }
+        for check in self.checks.iter().filter(|check| !check.all_targets) {
+            let mut arguments = vec![
+                "check".to_owned(),
+                "--locked".to_owned(),
+                "--package".to_owned(),
+                check.name.clone(),
+            ];
+            for target in &check.targets {
+                arguments.extend([target.flag.to_owned(), target.name.clone()]);
+            }
+            invocations.push(arguments);
+        }
+        invocations
+    }
+
+    pub(crate) fn reaches_root(&self, root: &Path) -> bool {
+        let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        self.roots.contains(&root)
+    }
+}
+
+pub(crate) fn workspace_package_reach_at(
+    root: &Path,
+    changed_sources: &[String],
+    environment: &Environment,
+    cargo: &OsStr,
+) -> Result<WorkspacePackageReach, WorkspaceTestError> {
+    let inventory = acquire_inventory(root, environment, cargo)?;
+    let checks = selection::cargo_check_selections(&inventory, root, changed_sources)?;
+    Ok(WorkspacePackageReach {
+        roots: checks.iter().map(|check| check.root.clone()).collect(),
+        checks,
+    })
+}
+
+#[derive(Clone, Debug)]
+struct CargoCheckSelection {
+    name: String,
+    root: PathBuf,
+    all_targets: bool,
+    targets: Vec<CargoTargetSelection>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CargoTargetSelection {
+    flag: &'static str,
+    name: String,
+}
+
 /// Whether the compiled Cargo workspace engine applies to this selected tree.
 ///
 /// This predicate runs before metadata or tool discovery, so an undeclared or
@@ -797,9 +871,16 @@ struct MetadataPackage {
     id: String,
     name: String,
     manifest_path: PathBuf,
+    #[serde(default)]
+    dependencies: Vec<MetadataDependency>,
     targets: Vec<MetadataTarget>,
     #[serde(default)]
     features: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct MetadataDependency {
+    path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -845,6 +926,8 @@ struct PackageInventory {
     id: String,
     name: String,
     root: PathBuf,
+    dependencies: Vec<PathBuf>,
+    declared_targets: Vec<TargetIdentity>,
     targets: Vec<TargetIdentity>,
 }
 
@@ -915,6 +998,8 @@ impl Inventory {
                     id: package.id.clone(),
                     name: package.name.clone(),
                     root: package.root.clone(),
+                    dependencies: package.dependencies.clone(),
+                    declared_targets: package.declared_targets.clone(),
                     targets,
                 })
             })
@@ -1036,6 +1121,8 @@ fn inventory_from_metadata(
             "cargo metadata named no workspace packages",
         ));
     }
+    validate_unique_workspace_packages(&packages)?;
+    validate_workspace_dependencies(&packages, root)?;
     Ok(Inventory {
         packages,
         binary_outputs,
@@ -1082,6 +1169,52 @@ fn default_feature_closure(features: &BTreeMap<String, Vec<String>>) -> BTreeSet
         }
     }
     enabled
+}
+
+fn validate_unique_workspace_packages(
+    packages: &[PackageInventory],
+) -> Result<(), WorkspaceTestError> {
+    let mut names = BTreeSet::new();
+    let mut roots = BTreeMap::new();
+    for package in packages {
+        if !names.insert(package.name.as_str()) {
+            return Err(WorkspaceTestError::new(format!(
+                "workspace package name {:?} is ambiguous for Cargo --package",
+                package.name
+            )));
+        }
+        if let Some(previous) = roots.insert(package.root.as_path(), package.name.as_str()) {
+            return Err(WorkspaceTestError::new(format!(
+                "workspace packages {previous:?} and {:?} share root {}",
+                package.name,
+                package.root.display(),
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_workspace_dependencies(
+    packages: &[PackageInventory],
+    root: &Path,
+) -> Result<(), WorkspaceTestError> {
+    let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    for package in packages {
+        for dependency in &package.dependencies {
+            if dependency.starts_with(&root)
+                && !packages
+                    .iter()
+                    .any(|candidate| candidate.root == *dependency)
+            {
+                return Err(WorkspaceTestError::new(format!(
+                    "workspace package {:?} depends on unowned local path {}",
+                    package.name,
+                    dependency.display(),
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 include!("workspace_tests/source_reach.rs");
@@ -1178,6 +1311,8 @@ fn partition_package(
             id: package.id.clone(),
             name: package.name.clone(),
             root: package.root.clone(),
+            dependencies: package.dependencies.clone(),
+            declared_targets: package.declared_targets.clone(),
             targets,
         })
         .collect()

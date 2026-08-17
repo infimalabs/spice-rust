@@ -538,10 +538,28 @@ fn compiler_fixture_repository(fixture: &Fixture) -> PathBuf {
     let repository = production_repository(&fixture.root);
     fs::write(
         repository.join("Cargo.toml"),
-        "[workspace]\nmembers = []\nresolver = \"3\"\n",
+        concat!(
+            "[workspace]\nmembers = [\"app\"]\nresolver = \"3\"\n",
+            "[package]\nname = \"compiler-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        ),
     )
     .expect("fixture Cargo manifest");
-    fs::write(repository.join("Cargo.lock"), "version = 4\n").expect("fixture Cargo lock");
+    fs::write(
+        repository.join("Cargo.lock"),
+        concat!(
+            "version = 4\n\n",
+            "[[package]]\nname = \"app\"\nversion = \"0.0.0\"\n\n",
+            "[[package]]\nname = \"compiler-fixture\"\nversion = \"0.0.0\"\n",
+        ),
+    )
+    .expect("fixture Cargo lock");
+    fs::create_dir_all(repository.join("app/src")).expect("fixture app source directory");
+    fs::write(
+        repository.join("app/Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .expect("fixture app manifest");
+    fs::write(repository.join("app/src/lib.rs"), "pub fn app() {}\n").expect("fixture app source");
     fs::write(
         repository.join("app/index.html"),
         "<!doctype html><title>fixture</title>\n",
@@ -557,6 +575,11 @@ fn install_compiler_programs(fixture: &Fixture) -> (PathBuf, PathBuf, PathBuf) {
     fs::create_dir(&programs).expect("compiler program directory");
     let cargo_log = fixture.root.join("compiler-cargo-log");
     let trunk_log = fixture.root.join("compiler-trunk-log");
+    let real_cargo = env!("CARGO");
+    assert!(
+        !real_cargo.contains('\''),
+        "fixture Cargo path is shell safe"
+    );
     let executable = |path: &Path, body: String| {
         fs::write(path, body).expect("write compiler fixture program");
         fs::set_permissions(path, fs::Permissions::from_mode(0o755))
@@ -572,9 +595,11 @@ fn install_compiler_programs(fixture: &Fixture) -> (PathBuf, PathBuf, PathBuf) {
                 "  exit 0\n",
                 "fi\n",
                 "printf '%s\\n' \"$*\" >> '{}'\n",
+                "if [ \"$1\" = metadata ]; then exec '{real_cargo}' \"$@\"; fi\n",
                 "exit 0\n",
             ),
-            cargo_log.display()
+            cargo_log.display(),
+            real_cargo = real_cargo,
         ),
     );
     executable(
@@ -637,7 +662,10 @@ fn compiler_evidence(
 
 fn assert_fallback_compiler_trace(cargo_log: &Path, trunk_log: &Path) {
     let cargo = fs::read_to_string(cargo_log).expect("read fallback Cargo trace");
-    assert!(cargo.contains("check --locked --workspace --all-targets"));
+    assert!(
+        cargo.contains("check --locked --all-targets --package app --package compiler-fixture"),
+        "{cargo}"
+    );
     assert!(cargo.contains("check --locked --package app --target wasm32-unknown-unknown"));
     let trunk = fs::read_to_string(trunk_log).expect("read fallback Trunk trace");
     assert_eq!(

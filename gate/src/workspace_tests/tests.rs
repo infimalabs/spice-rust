@@ -35,6 +35,7 @@ const CONFIGURED_BOUNDARY_TEST: &str = concat!(
 );
 
 mod environment;
+mod metadata;
 mod partition;
 mod reach_escalation;
 mod selection;
@@ -327,88 +328,6 @@ fn cargo_target_arguments_preserve_library_binary_and_integration_semantics() {
 }
 
 #[test]
-fn metadata_inventory_keeps_library_binary_and_integration_targets() {
-    let root = fixture_root("workspace-metadata-inventory");
-    fs::create_dir_all(root.join("src")).expect("metadata source root creates");
-    fs::create_dir_all(root.join("tests")).expect("metadata test root creates");
-    fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("metadata manifest fixture writes");
-    fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n")
-        .expect("metadata library source writes");
-    fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("metadata binary source writes");
-    fs::write(
-        root.join("tests/resident.rs"),
-        "#[test]\nfn resident() {}\n",
-    )
-    .expect("metadata integration source writes");
-    let root = fs::canonicalize(root).expect("metadata fixture root canonicalizes");
-    let inventory = inventory_from_metadata(
-        Metadata {
-            workspace_members: vec!["fixture-id".to_owned()],
-            target_directory: root.join("target"),
-            build_directory: root.join("target/cargo-build"),
-            packages: vec![MetadataPackage {
-                id: "fixture-id".to_owned(),
-                name: "fixture".to_owned(),
-                manifest_path: root.join("Cargo.toml"),
-                features: BTreeMap::from([
-                    ("default".to_owned(), vec!["runner".to_owned()]),
-                    ("runner".to_owned(), Vec::new()),
-                    ("disabled".to_owned(), Vec::new()),
-                ]),
-                targets: vec![
-                    target(&root, "fixture", &["lib"], true),
-                    target(&root, "fixture", &["bin"], true),
-                    target(&root, "resident", &["test"], true),
-                    target(&root, "build-script-build", &["custom-build"], false),
-                    MetadataTarget {
-                        name: "default-runner".to_owned(),
-                        kind: vec!["bin".to_owned()],
-                        test: false,
-                        src_path: root.join("src/default-runner.rs"),
-                        required_features: vec!["runner".to_owned()],
-                    },
-                    MetadataTarget {
-                        name: "disabled-runner".to_owned(),
-                        kind: vec!["bin".to_owned()],
-                        test: false,
-                        src_path: root.join("src/disabled-runner.rs"),
-                        required_features: vec!["disabled".to_owned()],
-                    },
-                ],
-            }],
-        },
-        &root,
-    )
-    .expect("fixture metadata admits");
-
-    assert_eq!(
-        inventory.packages[0]
-            .targets
-            .iter()
-            .map(TargetIdentity::display)
-            .collect::<Vec<_>>(),
-        ["bin:fixture", "lib:fixture", "test:resident"]
-    );
-    assert_eq!(
-        inventory.binary_outputs,
-        [
-            BinaryOutput {
-                package_id: "fixture-id".to_owned(),
-                package_name: "fixture".to_owned(),
-                target_name: "default-runner".to_owned(),
-            },
-            BinaryOutput {
-                package_id: "fixture-id".to_owned(),
-                package_name: "fixture".to_owned(),
-                target_name: "fixture".to_owned(),
-            },
-        ],
-        "metadata retains unconditional and default-enabled binary publications only"
-    );
-    fs::remove_dir_all(root).expect("metadata fixture removes");
-}
-
-#[test]
 fn successful_prebuild_repairs_a_missing_cargo_bin_exe_publication() {
     let root = fixture_root("workspace-stale-binary-repair");
     let programs = root.join("programs");
@@ -598,6 +517,7 @@ fn metadata_inventory_refuses_a_target_without_readable_source_weight() {
                 id: "fixture-id".to_owned(),
                 name: "fixture".to_owned(),
                 manifest_path: root.join("Cargo.toml"),
+                dependencies: Vec::new(),
                 features: BTreeMap::new(),
                 targets: vec![MetadataTarget {
                     name: "missing".to_owned(),
@@ -1204,18 +1124,21 @@ fn pid_path_ready(path: &Path) -> bool {
 }
 
 fn quick_package() -> PackageInventory {
+    let targets = vec![TargetIdentity {
+        package: "quick-id".to_owned(),
+        kind: "test".to_owned(),
+        name: "quick".to_owned(),
+        source: PathBuf::from("/workspace/quick/tests/quick.rs"),
+        declared_path_sources: Vec::new(),
+        source_bytes: 1,
+    }];
     PackageInventory {
         id: "quick-id".to_owned(),
         name: "quick".to_owned(),
         root: PathBuf::from("/workspace/quick"),
-        targets: vec![TargetIdentity {
-            package: "quick-id".to_owned(),
-            kind: "test".to_owned(),
-            name: "quick".to_owned(),
-            source: PathBuf::from("/workspace/quick/tests/quick.rs"),
-            declared_path_sources: Vec::new(),
-            source_bytes: 1,
-        }],
+        dependencies: Vec::new(),
+        declared_targets: targets.clone(),
+        targets,
     }
 }
 
@@ -1240,6 +1163,15 @@ fn fixture_inventory() -> Inventory {
                 id: "fixture-a-id".to_owned(),
                 name: "fixture-a".to_owned(),
                 root: PathBuf::from("/workspace/fixture-a"),
+                dependencies: Vec::new(),
+                declared_targets: vec![TargetIdentity {
+                    package: "fixture-a-id".to_owned(),
+                    kind: "lib".to_owned(),
+                    name: "fixture-a".to_owned(),
+                    source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
+                    declared_path_sources: Vec::new(),
+                    source_bytes: 1,
+                }],
                 targets: vec![TargetIdentity {
                     package: "fixture-a-id".to_owned(),
                     kind: "lib".to_owned(),
@@ -1253,6 +1185,15 @@ fn fixture_inventory() -> Inventory {
                 id: "fixture-b-id".to_owned(),
                 name: "fixture-b".to_owned(),
                 root: PathBuf::from("/workspace/fixture-b"),
+                dependencies: Vec::new(),
+                declared_targets: vec![TargetIdentity {
+                    package: "fixture-b-id".to_owned(),
+                    kind: "bin".to_owned(),
+                    name: "fixture-b".to_owned(),
+                    source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
+                    declared_path_sources: Vec::new(),
+                    source_bytes: 1,
+                }],
                 targets: vec![TargetIdentity {
                     package: "fixture-b-id".to_owned(),
                     kind: "bin".to_owned(),
@@ -1303,6 +1244,7 @@ fn target(root: &Path, name: &str, kind: &[&str], test: bool) -> MetadataTarget 
     let source = match kind.first().copied() {
         Some("lib") => root.join("src/lib.rs"),
         Some("bin") => root.join("src/main.rs"),
+        Some("custom-build") => root.join("build.rs"),
         _ => root.join(format!("tests/{name}.rs")),
     };
     MetadataTarget {

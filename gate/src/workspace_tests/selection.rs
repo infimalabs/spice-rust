@@ -82,11 +82,14 @@ pub(super) fn package_inventory(
     root: &Path,
 ) -> Result<PackageInventory, WorkspaceTestError> {
     let selected_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let manifest = if package.manifest_path.is_absolute() {
-        package.manifest_path.clone()
-    } else {
-        selected_root.join(&package.manifest_path)
-    };
+    if !package.manifest_path.is_absolute() {
+        return Err(WorkspaceTestError::new(format!(
+            "workspace package {:?} metadata named relative manifest {}",
+            package.name,
+            package.manifest_path.display(),
+        )));
+    }
+    let manifest = package.manifest_path.clone();
     let manifest = fs::canonicalize(&manifest).unwrap_or(manifest);
     let package_root = manifest.parent().ok_or_else(|| {
         WorkspaceTestError::new(format!(
@@ -102,16 +105,37 @@ pub(super) fn package_inventory(
             selected_root.display(),
         )));
     }
-    let mut targets = package
+    let mut dependencies = package
+        .dependencies
+        .into_iter()
+        .filter_map(|dependency| dependency.path)
+        .map(|path| {
+            if !path.is_absolute() {
+                return Err(WorkspaceTestError::new(format!(
+                    "workspace package {:?} metadata named relative dependency {}",
+                    package.name,
+                    path.display(),
+                )));
+            }
+            Ok(fs::canonicalize(&path).unwrap_or(path))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    dependencies.sort();
+    dependencies.dedup();
+    let mut declared_targets = package
         .targets
         .into_iter()
-        .filter(|target| target.test)
         .map(|target| {
-            let source = if target.src_path.is_absolute() {
-                target.src_path
-            } else {
-                selected_root.join(target.src_path)
-            };
+            let test = target.test;
+            if !target.src_path.is_absolute() {
+                return Err(WorkspaceTestError::new(format!(
+                    "workspace package {:?} target {:?} metadata named relative source {}",
+                    package.name,
+                    target.name,
+                    target.src_path.display(),
+                )));
+            }
+            let source = target.src_path;
             let source = fs::canonicalize(&source).unwrap_or(source);
             if !source.starts_with(&selected_root) {
                 return Err(WorkspaceTestError::new(format!(
@@ -123,21 +147,35 @@ pub(super) fn package_inventory(
             }
             let declared_path_sources = declared_path_sources(&source)?;
             let source_bytes = target_source_bytes(&source, &declared_path_sources)?;
-            Ok(TargetIdentity {
-                package: package.id.clone(),
-                kind: target.kind.join("+"),
-                name: target.name,
-                source,
-                declared_path_sources,
-                source_bytes,
-            })
+            Ok((
+                test,
+                TargetIdentity {
+                    package: package.id.clone(),
+                    kind: target.kind.join("+"),
+                    name: target.name,
+                    source,
+                    declared_path_sources,
+                    source_bytes,
+                },
+            ))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    targets.sort();
+    declared_targets.sort_by(|left, right| left.1.cmp(&right.1));
+    let targets = declared_targets
+        .iter()
+        .filter(|(test, _)| *test)
+        .map(|(_, target)| target.clone())
+        .collect();
+    let declared_targets = declared_targets
+        .into_iter()
+        .map(|(_, target)| target)
+        .collect();
     Ok(PackageInventory {
         id: package.id,
         name: package.name,
         root: package_root.to_path_buf(),
+        dependencies,
+        declared_targets,
         targets,
     })
 }
@@ -175,11 +213,13 @@ pub(super) fn selection_plan(
         match owner {
             Some(package) => {
                 if package_wide_source(changed, package, &absolute) {
-                    select_package_targets(package, changed, &mut tests, &mut edges)?;
+                    select_reached_package_targets(
+                        inventory, package, changed, &mut tests, &mut edges,
+                    )?;
                     continue;
                 }
                 let direct_targets = package
-                    .targets
+                    .declared_targets
                     .iter()
                     .filter(|target| target_reaches_source(target, &absolute))
                     .collect::<Vec<_>>();
@@ -189,21 +229,27 @@ pub(super) fn selection_plan(
                         &package.name,
                     ));
                 } else {
-                    let reaches_library = direct_targets
+                    let reaches_dependents = direct_targets
                         .iter()
-                        .any(|target| target_is_library(target));
-                    let reached_targets = if reaches_library {
-                        package.targets.iter().collect::<Vec<_>>()
+                        .any(|target| target_reaches_dependents(target));
+                    if reaches_dependents {
+                        select_reached_package_targets(
+                            inventory, package, changed, &mut tests, &mut edges,
+                        )?;
                     } else {
-                        direct_targets
-                    };
-                    for target in reached_targets {
-                        let test = format!("{}::{}", package.name, target.display());
-                        tests.insert(test.clone());
-                        edges.insert(
-                            crate::TestSelectionEdge::new(changed.clone(), test)
-                                .map_err(|error| WorkspaceTestError::new(error.to_string()))?,
-                        );
+                        let direct_tests = package
+                            .targets
+                            .iter()
+                            .filter(|target| target_reaches_source(target, &absolute))
+                            .collect::<Vec<_>>();
+                        if direct_tests.is_empty() {
+                            escalations.insert(CargoReachEscalation::unreached_in_package(
+                                changed,
+                                &package.name,
+                            ));
+                        } else {
+                            select_targets(package, direct_tests, changed, &mut tests, &mut edges)?;
+                        }
                     }
                 }
             }
@@ -241,6 +287,167 @@ pub(super) fn selection_report(
     selection_plan(inventory, root, source, changed_sources).map(|plan| plan.into_parts().0)
 }
 
+pub(super) fn cargo_check_selections(
+    inventory: &Inventory,
+    root: &Path,
+    changed_sources: &[String],
+) -> Result<Vec<CargoCheckSelection>, WorkspaceTestError> {
+    let selected_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut reached = BTreeMap::<&str, Option<BTreeSet<CargoTargetSelection>>>::new();
+    if changed_sources.is_empty() {
+        select_all_package_checks(inventory.packages.iter(), &mut reached);
+    }
+    for changed in changed_sources
+        .iter()
+        .filter(|path| test_relevant_source(path))
+    {
+        if workspace_wide_source(changed) {
+            select_all_package_checks(inventory.packages.iter(), &mut reached);
+            continue;
+        }
+        let absolute = selected_root.join(changed);
+        let owner = inventory
+            .packages
+            .iter()
+            .filter(|package| absolute.starts_with(&package.root))
+            .max_by_key(|package| package.root.components().count());
+        let Some(package) = owner else {
+            select_all_package_checks(inventory.packages.iter(), &mut reached);
+            continue;
+        };
+        let direct_targets = package
+            .declared_targets
+            .iter()
+            .filter(|target| target_reaches_source(target, &absolute))
+            .collect::<Vec<_>>();
+        if package_wide_source(changed, package, &absolute)
+            || direct_targets
+                .iter()
+                .any(|target| target_reaches_dependents(target))
+        {
+            select_all_package_checks(reverse_dependency_closure(inventory, package), &mut reached);
+        } else if direct_targets.is_empty() {
+            select_all_package_checks(inventory.packages.iter(), &mut reached);
+        } else {
+            let targets = reached
+                .entry(package.id.as_str())
+                .or_insert_with(|| Some(BTreeSet::new()));
+            if let Some(targets) = targets {
+                for target in direct_targets {
+                    targets.insert(cargo_target_selection(target)?);
+                }
+            }
+        }
+    }
+    Ok(inventory
+        .packages
+        .iter()
+        .filter_map(|package| {
+            reached
+                .get(package.id.as_str())
+                .map(|targets| CargoCheckSelection {
+                    name: package.name.clone(),
+                    root: package.root.clone(),
+                    all_targets: targets.is_none(),
+                    targets: targets
+                        .as_ref()
+                        .map(|targets| targets.iter().cloned().collect())
+                        .unwrap_or_default(),
+                })
+        })
+        .collect())
+}
+
+fn select_all_package_checks<'a>(
+    packages: impl IntoIterator<Item = &'a PackageInventory>,
+    reached: &mut BTreeMap<&'a str, Option<BTreeSet<CargoTargetSelection>>>,
+) {
+    for package in packages {
+        reached.insert(package.id.as_str(), None);
+    }
+}
+
+fn cargo_target_selection(
+    target: &TargetIdentity,
+) -> Result<CargoTargetSelection, WorkspaceTestError> {
+    let flag = target
+        .kind
+        .split('+')
+        .find_map(|kind| match kind {
+            "bin" => Some("--bin"),
+            "test" => Some("--test"),
+            "example" => Some("--example"),
+            "bench" => Some("--bench"),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            WorkspaceTestError::new(format!(
+                "workspace target {} has no exact Cargo check selector",
+                target.display()
+            ))
+        })?;
+    Ok(CargoTargetSelection {
+        flag,
+        name: target.name.clone(),
+    })
+}
+
+fn select_reached_package_targets(
+    inventory: &Inventory,
+    package: &PackageInventory,
+    changed: &str,
+    tests: &mut BTreeSet<String>,
+    edges: &mut BTreeSet<crate::TestSelectionEdge>,
+) -> Result<(), WorkspaceTestError> {
+    for reached in reverse_dependency_closure(inventory, package) {
+        select_package_targets(reached, changed, tests, edges)?;
+    }
+    Ok(())
+}
+
+fn reverse_dependency_closure<'a>(
+    inventory: &'a Inventory,
+    package: &'a PackageInventory,
+) -> Vec<&'a PackageInventory> {
+    let mut reached = BTreeSet::from([package.id.as_str()]);
+    let mut pending = VecDeque::from([package.root.as_path()]);
+    while let Some(root) = pending.pop_front() {
+        for dependent in &inventory.packages {
+            if dependent
+                .dependencies
+                .iter()
+                .any(|dependency| dependency == root)
+                && reached.insert(dependent.id.as_str())
+            {
+                pending.push_back(&dependent.root);
+            }
+        }
+    }
+    inventory
+        .packages
+        .iter()
+        .filter(|candidate| reached.contains(candidate.id.as_str()))
+        .collect()
+}
+
+fn select_targets<'a>(
+    package: &PackageInventory,
+    targets: impl IntoIterator<Item = &'a TargetIdentity>,
+    changed: &str,
+    tests: &mut BTreeSet<String>,
+    edges: &mut BTreeSet<crate::TestSelectionEdge>,
+) -> Result<(), WorkspaceTestError> {
+    for target in targets {
+        let test = format!("{}::{}", package.name, target.display());
+        tests.insert(test.clone());
+        edges.insert(
+            crate::TestSelectionEdge::new(changed.to_owned(), test)
+                .map_err(|error| WorkspaceTestError::new(error.to_string()))?,
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn exhaustive_selection_report(
     inventory: &Inventory,
     source: wire::Digest,
@@ -275,8 +482,11 @@ pub(super) fn test_relevant_source(path: &str) -> bool {
 fn workspace_wide_source(path: &str) -> bool {
     matches!(
         path,
-        "Cargo.toml"
+        ".cargo/config"
+            | ".cargo/config.toml"
+            | "Cargo.toml"
             | "Cargo.lock"
+            | "rust-toolchain"
             | "rust-toolchain.toml"
             | "spice-rust.toml"
             | "baseline.toml"
@@ -296,15 +506,7 @@ fn select_package_targets(
     tests: &mut BTreeSet<String>,
     edges: &mut BTreeSet<crate::TestSelectionEdge>,
 ) -> Result<(), WorkspaceTestError> {
-    for target in &package.targets {
-        let test = format!("{}::{}", package.name, target.display());
-        tests.insert(test.clone());
-        edges.insert(
-            crate::TestSelectionEdge::new(changed.to_owned(), test)
-                .map_err(|error| WorkspaceTestError::new(error.to_string()))?,
-        );
-    }
-    Ok(())
+    select_targets(package, &package.targets, changed, tests, edges)
 }
 
 /// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
@@ -330,4 +532,8 @@ fn target_is_library(target: &TargetIdentity) -> bool {
             "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro"
         )
     })
+}
+
+fn target_reaches_dependents(target: &TargetIdentity) -> bool {
+    target_is_library(target) || target.kind.split('+').any(|kind| kind == "custom-build")
 }

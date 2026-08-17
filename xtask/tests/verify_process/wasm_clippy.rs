@@ -35,7 +35,7 @@ fn install_wasm_programs(fixture: &Fixture) -> WasmPrograms {
                 "  exit 0\n",
                 "fi\n",
                 "if [ \"$1\" = metadata ]; then\n",
-                "  printf '%s\\n' '{metadata}'\n",
+                "  printf '%s\\n' \"{metadata}\"\n",
                 "  exit 0\n",
                 "fi\n",
                 "if [ \"$*\" = \"test --locked --workspace --all-targets --no-run\" ]; then\n",
@@ -52,7 +52,7 @@ fn install_wasm_programs(fixture: &Fixture) -> WasmPrograms {
             ),
             cargo_log = cargo_log.display(),
             path_name = PROCESS_PATH,
-            metadata = wasm_fixture_metadata(),
+            metadata = wasm_fixture_metadata().replace('"', "\\\""),
         ),
     );
     let launcher = programs.join("verify");
@@ -81,11 +81,11 @@ fn wasm_fixture_metadata() -> String {
         "packages": [{
             "id": "app 0.0.0 (path+file:///fixture)",
             "name": "app",
-            "manifest_path": "Cargo.toml",
+            "manifest_path": "$PWD/Cargo.toml",
             "targets": [{
                 "name": "app",
                 "kind": ["lib"],
-                "src_path": "src/lib.rs",
+                "src_path": "$PWD/src/lib.rs",
                 "test": true,
             }],
         }],

@@ -526,7 +526,7 @@ fn examine(
     environment_names: &[String],
     tools: &[ToolEvidence],
 ) -> Analysis {
-    if let Some(refusal) = refusal(declaration, tools) {
+    if let Some(refusal) = analyzer_refusal(declaration, tools) {
         return refusal;
     }
     if let Some(reused) = reusable_verifier_analysis(declaration, source, bounds, tools) {
@@ -559,6 +559,7 @@ fn examine(
                 declaration,
                 source.root,
                 source.repository,
+                source.changes(),
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
@@ -566,6 +567,7 @@ fn examine(
                 declaration,
                 source.root,
                 source.repository,
+                source.changes(),
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
@@ -674,6 +676,33 @@ fn reusable_verifier_analysis(
 /// two happened to each program so the refusal is actionable rather than merely
 /// correct.
 fn refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<Analysis> {
+    refusal_for(declaration.id, declaration.tools, tools)
+}
+
+/// Canvas may decide from exact Cargo metadata that Trunk is outside the
+/// selected closure. Every other analyzer requires all declared programs
+/// before it can establish applicability.
+fn analyzer_refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<Analysis> {
+    if declaration.id != GateId::CanvasWebTypecheck {
+        return refusal(declaration, tools);
+    }
+    let cargo = declaration
+        .tools
+        .iter()
+        .position(|requirement| requirement.program == "cargo")
+        .expect("canvas declaration retains its Cargo metadata authority");
+    refusal_for(
+        declaration.id,
+        std::slice::from_ref(&declaration.tools[cargo]),
+        std::slice::from_ref(&tools[cargo]),
+    )
+}
+
+fn refusal_for(
+    gate_id: GateId,
+    declared: &[ToolRequirement],
+    tools: &[ToolEvidence],
+) -> Option<Analysis> {
     let unusable: Vec<String> = tools
         .iter()
         .filter_map(|evidence| match evidence {
@@ -696,14 +725,13 @@ fn refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<
             ArmOutcome::ToolUnavailable,
             format!(
                 "{} has no usable declared program: {}",
-                declaration.id.as_str(),
+                gate_id.as_str(),
                 unusable.join("; ")
             ),
         ));
     }
 
-    let drifted: Vec<String> = declaration
-        .tools
+    let drifted: Vec<String> = declared
         .iter()
         .zip(tools)
         .filter_map(|(requirement, evidence)| match evidence {
@@ -725,7 +753,7 @@ fn refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<
             ArmOutcome::UnsupportedVersion,
             format!(
                 "{} left its exact version contract: {}",
-                declaration.id.as_str(),
+                gate_id.as_str(),
                 drifted.join("; ")
             ),
         ));
@@ -736,10 +764,10 @@ fn refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<
 
 /// Every declared program of one arm, keyed by the name that requested it.
 ///
-/// Only reached once [`refusal`] has ruled out every unusable program, so an
-/// arm arriving here has one identified row per declared tool. The path handed
-/// on is the one the probe already ran, so an analysis cannot reach a second
-/// file under the same declared name.
+/// Normally reached once [`refusal`] has ruled out every unusable program.
+/// Canvas may arrive with only exact Cargo so metadata can decide whether Trunk
+/// belongs to the selected closure. Every retained path is the one its probe
+/// already ran, so an analysis cannot reach a second file under the same name.
 fn resolved_programs(
     declaration: ToolchainDeclaration,
     tools: &[ToolEvidence],

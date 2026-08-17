@@ -278,7 +278,9 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
             field: "toolchain.channel",
         },
         tools: RUST_TYPECHECK_TOOLS,
-        analysis: &["cargo check --locked --workspace --all-targets"],
+        analysis: &[
+            "cargo check --locked --package <each reached package> <--all-targets or exact reached target flags>",
+        ],
     },
     ToolchainDeclaration {
         id: GateId::CanvasWebTypecheck,
