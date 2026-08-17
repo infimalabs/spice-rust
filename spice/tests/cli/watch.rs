@@ -6,7 +6,7 @@ mod cleanup;
 #[path = "watch/tests.rs"]
 mod tests;
 
-use cleanup::{ChildControl, ExitOrigin};
+use cleanup::{ExitOrigin, WatchEvent};
 
 const WATCH_TEST_BOUND: Duration = Duration::from_secs(30);
 const RECEIVE_SLICE: Duration = Duration::from_millis(250);
@@ -34,10 +34,8 @@ fn watch_follows_a_real_filesystem_notification_then_reconciles_tape() {
 
 /// Panic-safe ownership of the endless watcher and both pipe readers.
 struct WatchProcess {
-    child: Option<Box<dyn ChildControl>>,
-    stdout: Option<mpsc::Receiver<String>>,
-    stdout_reader: Option<std::thread::JoinHandle<Result<(), String>>>,
-    stderr_reader: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
+    process: Option<sill::Running>,
+    events: mpsc::Receiver<WatchEvent>,
     status: Option<std::process::ExitStatus>,
     exit_origin: Option<ExitOrigin>,
     stderr: Vec<u8>,
@@ -46,37 +44,6 @@ struct WatchProcess {
     phase: &'static str,
     started: Instant,
     deadline: Instant,
-}
-
-/// Reap a spawned child even if pipe or reader setup panics before admission.
-struct LaunchChild {
-    child: Option<std::process::Child>,
-    deadline: Instant,
-}
-
-impl LaunchChild {
-    fn new(child: std::process::Child, deadline: Instant) -> Self {
-        Self {
-            child: Some(child),
-            deadline,
-        }
-    }
-
-    fn child(&mut self) -> &mut std::process::Child {
-        self.child.as_mut().expect("launch child remains owned")
-    }
-
-    fn admit(mut self) -> Box<dyn ChildControl> {
-        Box::new(self.child.take().expect("launch child remains owned"))
-    }
-}
-
-impl Drop for LaunchChild {
-    fn drop(&mut self) {
-        if let Some(child) = self.child.take() {
-            cleanup::terminate_launch_child(child, self.deadline);
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,46 +83,11 @@ impl ExpectedTapeEvent {
 
 impl WatchProcess {
     fn spawn(root: &str, started: Instant, deadline: Instant) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_spice"));
-        child
-            .args(["--json", "watch", root])
-            .env_remove(steer::hook::INBOX)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = LaunchChild::new(child.spawn().expect("watch launches"), deadline);
-        let stdout = child.child().stdout.take().expect("stdout is piped");
-        let stderr = child.child().stderr.take().expect("stderr is piped");
-
-        let (sender, receiver) = mpsc::channel();
-        let stdout_reader = std::thread::Builder::new()
-            .name("watch-fixture-stdout".to_owned())
-            .spawn(move || {
-                for line in BufReader::new(stdout).lines() {
-                    let line = line.map_err(|error| error.to_string())?;
-                    if sender.send(line).is_err() {
-                        break;
-                    }
-                }
-                Ok(())
-            })
-            .expect("stdout reader launches");
-        let stderr_reader = std::thread::Builder::new()
-            .name("watch-fixture-stderr".to_owned())
-            .spawn(move || {
-                let mut stderr = stderr;
-                let mut bytes = Vec::new();
-                stderr
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| error.to_string())?;
-                Ok(bytes)
-            })
-            .expect("stderr reader launches");
+        let (process, events) = cleanup::spawn_watch(root, deadline).expect("watch launches");
 
         Self {
-            child: Some(child.admit()),
-            stdout: Some(receiver),
-            stdout_reader: Some(stdout_reader),
-            stderr_reader: Some(stderr_reader),
+            process: Some(process),
+            events,
             status: None,
             stderr: Vec::new(),
             observations: Vec::new(),
@@ -235,18 +167,22 @@ impl WatchProcess {
             if remaining.is_zero() {
                 self.fail("the single test-wide observation budget expired".to_owned());
             }
-            let received = self
-                .stdout
-                .as_ref()
-                .expect("stdout receiver remains owned")
-                .recv_timeout(remaining.min(RECEIVE_SLICE));
+            let received = self.events.recv_timeout(remaining.min(RECEIVE_SLICE));
             match received {
-                Ok(line) => match self.decode_and_match(line, &mut matches) {
+                Ok(WatchEvent::Record(record)) => match self.decode_and_match(record, &mut matches)
+                {
                     Some(outcome) => return outcome,
                     None => continue,
                 },
+                Ok(WatchEvent::Exited) => {
+                    self.exit_origin = Some(ExitOrigin::Natural);
+                    self.fail("watch exited before explicit fixture termination".to_owned());
+                }
+                Ok(WatchEvent::Failed(detail)) => {
+                    self.fail(format!("watch output observation failed: {detail}"));
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    self.resume_after_timeout(&mut before_slice);
+                    self.run_before_slice(&mut before_slice);
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => self.fail_disconnected(),
             }
@@ -261,13 +197,14 @@ impl WatchProcess {
 
     fn decode_and_match(
         &mut self,
-        line: String,
+        record: Vec<u8>,
         matches: &mut impl FnMut(&StreamOutcome) -> Result<bool, String>,
     ) -> Option<StreamOutcome> {
-        let outcome = match wire::decode::<StreamOutcome>(line.as_bytes()) {
+        let outcome = match wire::decode::<StreamOutcome>(&record) {
             Ok(outcome) => outcome,
             Err(error) => self.fail(format!(
-                "watch emitted an invalid stream DTO: {error}; line={line:?}"
+                "watch emitted an invalid stream DTO: {error}; record={:?}",
+                String::from_utf8_lossy(&record)
             )),
         };
         self.observations.push(outcome.clone());
@@ -278,20 +215,8 @@ impl WatchProcess {
         }
     }
 
-    fn resume_after_timeout(&mut self, before_slice: &mut impl FnMut() -> Result<(), String>) {
-        if let Some(status) = self.poll_status_if_exited() {
-            self.fail(format!("watch exited early; child={status}"));
-        }
-        self.run_before_slice(before_slice);
-    }
-
     fn fail_disconnected(&mut self) -> ! {
-        let status = self
-            .poll_status_if_exited()
-            .unwrap_or_else(|| "running with a closed stdout pipe".to_owned());
-        self.fail(format!(
-            "watch stdout reader disconnected early; child={status}"
-        ));
+        self.fail("watch observation channel disconnected early".to_owned());
     }
 
     fn require(&mut self, condition: bool, detail: String) {
@@ -306,24 +231,5 @@ impl WatchProcess {
 
     fn remaining(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
-    }
-
-    fn poll_status_if_exited(&mut self) -> Option<String> {
-        if let Some(status) = self.status {
-            return Some(status.to_string());
-        }
-        let Some(child) = self.child.as_mut() else {
-            return Some("missing child handle".to_owned());
-        };
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                self.status = Some(status);
-                self.exit_origin = Some(ExitOrigin::Natural);
-                self.child.take();
-                Some(status.to_string())
-            }
-            Ok(None) => None,
-            Err(error) => Some(format!("liveness probe failed: {error}")),
-        }
     }
 }

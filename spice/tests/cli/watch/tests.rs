@@ -50,7 +50,6 @@ fn reconciliation_requires_the_exact_post_tee_identity_and_payload() {
     );
     let wrong_payload = prose(&expected_tape, expected_span, "not the durable target");
     let exact = prose(&expected_tape, expected_span, CODEX_PROSE_TEXT);
-
     let canary = Observation::Canary {
         lane: "lane-a".to_owned(),
         dialect: Dialect::Codex,
@@ -64,146 +63,23 @@ fn reconciliation_requires_the_exact_post_tee_identity_and_payload() {
     assert!(expected.appears_in(&outcome(vec![canary, exact])));
 }
 
-#[test]
-fn cleanup_timeout_evidence_names_the_original_single_bound_and_pending_work() {
-    let detail = cleanup::cleanup_deadline_detail();
-
-    assert!(detail.contains("original 30s test-wide deadline"));
-    assert!(detail.contains("kill/reap"));
-    assert!(detail.contains("stdout/stderr drain completion"));
-}
-
 #[cfg(unix)]
 mod unix {
     use super::*;
 
-    use std::io;
-    use std::os::unix::process::ExitStatusExt as _;
     use std::panic::AssertUnwindSafe;
-    use std::process::ExitStatus;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::mpsc::{Receiver, Sender};
-    use std::thread::JoinHandle;
-
-    use cleanup::{CleanupJob, CleanupWorker};
-
-    #[derive(Default)]
-    struct Calls {
-        probes: AtomicUsize,
-        kills: AtomicUsize,
-        reaps: AtomicUsize,
-    }
-
-    enum Probe {
-        Natural(Option<ExitStatus>),
-        Running,
-    }
-
-    struct FakeChild {
-        calls: Arc<Calls>,
-        live: Arc<AtomicBool>,
-        probe: Probe,
-        status: ExitStatus,
-        reaped: Option<Sender<()>>,
-    }
-
-    impl FakeChild {
-        fn natural(status: ExitStatus, calls: Arc<Calls>, live: Arc<AtomicBool>) -> Self {
-            Self {
-                calls,
-                live,
-                probe: Probe::Natural(Some(status)),
-                status,
-                reaped: None,
-            }
-        }
-
-        fn running(
-            status: ExitStatus,
-            calls: Arc<Calls>,
-            live: Arc<AtomicBool>,
-            reaped: Sender<()>,
-        ) -> Self {
-            Self {
-                calls,
-                live,
-                probe: Probe::Running,
-                status,
-                reaped: Some(reaped),
-            }
-        }
-    }
-
-    impl ChildControl for FakeChild {
-        fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-            self.calls.probes.fetch_add(1, Ordering::SeqCst);
-            match &mut self.probe {
-                Probe::Natural(status) => Ok(status.take()),
-                Probe::Running => Ok(None),
-            }
-        }
-
-        fn kill(&mut self) -> io::Result<()> {
-            self.calls.kills.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-
-        fn wait(&mut self) -> io::Result<ExitStatus> {
-            self.calls.reaps.fetch_add(1, Ordering::SeqCst);
-            if let Some(reaped) = self.reaped.take() {
-                let _ = reaped.send(());
-            }
-            Ok(self.status)
-        }
-    }
-
-    impl Drop for FakeChild {
-        fn drop(&mut self) {
-            self.live.store(false, Ordering::SeqCst);
-        }
-    }
-
-    struct ReaderLife(Arc<AtomicBool>);
-
-    impl Drop for ReaderLife {
-        fn drop(&mut self) {
-            self.0.store(false, Ordering::SeqCst);
-        }
-    }
-
-    fn stdout_reader(live: Arc<AtomicBool>) -> JoinHandle<Result<(), String>> {
-        std::thread::spawn(move || {
-            let _life = ReaderLife(live);
-            Ok(())
-        })
-    }
-
-    fn stderr_reader(
-        live: Arc<AtomicBool>,
-        release: Option<Receiver<()>>,
-        bytes: &'static [u8],
-    ) -> JoinHandle<Result<Vec<u8>, String>> {
-        std::thread::spawn(move || {
-            let _life = ReaderLife(live);
-            if let Some(release) = release {
-                release
-                    .recv()
-                    .map_err(|error| format!("release disconnected: {error}"))?;
-            }
-            Ok(bytes.to_vec())
-        })
-    }
 
     #[test]
     fn natural_exit_after_the_expected_dto_is_refused_with_drained_evidence() {
-        let status = ExitStatus::from_raw(17 << 8);
-        let calls = Arc::new(Calls::default());
-        let child_live = Arc::new(AtomicBool::new(true));
-        let stdout_live = Arc::new(AtomicBool::new(true));
-        let stderr_live = Arc::new(AtomicBool::new(true));
-        let (sender, receiver) = mpsc::channel();
-        drop(sender);
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(2);
+        let (process, events) = cleanup::spawn_fixture(
+            "printf 'fatal-after-event' >&2; exit 17",
+            Duration::from_secs(1),
+        )
+        .expect("natural-exit fixture launches");
+        let pid = process.id();
+        await_exit(&events);
         let target = outcome(vec![prose(
             Path::new("/fixture-root/lane-a/codex"),
             Span {
@@ -213,28 +89,17 @@ mod unix {
             },
             CODEX_PROSE_TEXT,
         )]);
-        let started = Instant::now();
         let watch = WatchProcess {
-            child: Some(Box::new(FakeChild::natural(
-                status,
-                Arc::clone(&calls),
-                Arc::clone(&child_live),
-            ))),
-            stdout: Some(receiver),
-            stdout_reader: Some(stdout_reader(Arc::clone(&stdout_live))),
-            stderr_reader: Some(stderr_reader(
-                Arc::clone(&stderr_live),
-                None,
-                b"fatal-after-event",
-            )),
+            process: Some(process),
+            events,
             status: None,
-            exit_origin: None,
+            exit_origin: Some(ExitOrigin::Natural),
             stderr: Vec::new(),
             observations: vec![target],
             cleanup_errors: Vec::new(),
             phase: "tape event reconciliation",
             started,
-            deadline: started + Duration::from_secs(2),
+            deadline,
         };
 
         let panic = std::panic::catch_unwind(AssertUnwindSafe(|| watch.finish()))
@@ -245,64 +110,77 @@ mod unix {
         assert!(diagnostic.contains("exit status: 17"));
         assert!(diagnostic.contains("fatal-after-event"));
         assert!(diagnostic.contains(CODEX_PROSE_TEXT));
-        assert_eq!(calls.probes.load(Ordering::SeqCst), 1);
-        assert_eq!(calls.kills.load(Ordering::SeqCst), 0);
-        assert_eq!(calls.reaps.load(Ordering::SeqCst), 0);
-        assert!(!child_live.load(Ordering::SeqCst));
-        assert!(!stdout_live.load(Ordering::SeqCst));
-        assert!(!stderr_live.load(Ordering::SeqCst));
+        assert!(diagnostic.contains("cleanup_errors=[]"));
+        assert!(!process_exists(pid), "natural child {pid} was not reaped");
     }
 
     #[test]
-    fn stuck_pipe_cleanup_times_out_then_finishes_without_a_second_reap_or_leak() {
-        let status = ExitStatus::from_raw(9);
-        let calls = Arc::new(Calls::default());
-        let child_live = Arc::new(AtomicBool::new(true));
-        let stdout_live = Arc::new(AtomicBool::new(true));
-        let stderr_live = Arc::new(AtomicBool::new(true));
-        let (reaped_sender, reaped) = mpsc::channel();
-        let (release, blocked) = mpsc::channel();
-        let (stdout_sender, stdout) = mpsc::channel();
-        drop(stdout_sender);
-        let job = CleanupJob::new(
-            Some(Box::new(FakeChild::running(
-                status,
-                Arc::clone(&calls),
-                Arc::clone(&child_live),
-                reaped_sender,
-            ))),
-            Some(stdout),
-            Some(stdout_reader(Arc::clone(&stdout_live))),
-            Some(stderr_reader(
-                Arc::clone(&stderr_live),
-                Some(blocked),
-                b"drained-after-release",
-            )),
-            None,
-            None,
+    fn stuck_pipe_cleanup_times_out_reaps_once_and_leaves_no_process_or_reader() {
+        let script = concat!(
+            "trap '' TERM; ",
+            "(trap '' TERM; exec /bin/sleep 60) & ",
+            "printf '%s\\n' \"$!\"; wait"
         );
-        let worker = CleanupWorker::spawn(job);
-        reaped
-            .recv_timeout(Duration::from_secs(1))
-            .expect("the worker reaps before the pipe-drain stall");
-        let observed = Instant::now();
-        let Err(worker) = worker.wait_until(observed + Duration::from_millis(20)) else {
-            panic!("the blocked stderr drain must consume the cleanup deadline");
-        };
+        let (process, events) = cleanup::spawn_fixture(script, Duration::from_millis(20))
+            .expect("stuck-pipe fixture launches");
+        let parent = process.id();
+        let descendant = await_pid(&events);
+        let started = Instant::now();
+        let waited = process
+            .wait()
+            .expect("deadline kills the group, reaps once, and joins captures");
 
-        assert!(observed.elapsed() < Duration::from_secs(1));
-        assert_eq!(calls.probes.load(Ordering::SeqCst), 1);
-        assert_eq!(calls.kills.load(Ordering::SeqCst), 1);
-        assert_eq!(calls.reaps.load(Ordering::SeqCst), 1);
-        release.send(()).expect("release the blocked stderr drain");
-        let Ok(report) = worker.wait_until(Instant::now() + Duration::from_secs(1)) else {
-            panic!("released cleanup must publish completion");
-        };
-        assert!(report.is_ok());
-        assert_eq!(calls.reaps.load(Ordering::SeqCst), 1);
-        assert!(!child_live.load(Ordering::SeqCst));
-        assert!(!stdout_live.load(Ordering::SeqCst));
-        assert!(!stderr_live.load(Ordering::SeqCst));
+        assert!(matches!(waited.completion(), sill::Completion::TimedOut(_)));
+        assert!(waited.outputs_drained());
+        assert!(waited.stdout().is_some_and(sill::CapturedOutput::complete));
+        assert!(waited.stderr().is_some_and(sill::CapturedOutput::complete));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!process_exists(parent), "parent {parent} survived cleanup");
+        assert!(
+            !process_exists(descendant),
+            "pipe-holding descendant {descendant} survived cleanup"
+        );
+    }
+
+    fn await_exit(events: &mpsc::Receiver<WatchEvent>) {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(1))
+                .expect("natural child exit is observed")
+            {
+                WatchEvent::Exited => return,
+                WatchEvent::Record(_) => {}
+                WatchEvent::Failed(detail) => panic!("observation failed: {detail}"),
+            }
+        }
+    }
+
+    fn await_pid(events: &mpsc::Receiver<WatchEvent>) -> u32 {
+        match events
+            .recv_timeout(Duration::from_secs(1))
+            .expect("descendant pid record is observed")
+        {
+            WatchEvent::Record(record) => std::str::from_utf8(&record)
+                .expect("pid record is UTF-8")
+                .trim()
+                .parse()
+                .expect("pid record is numeric"),
+            WatchEvent::Exited => panic!("stuck fixture exited before publishing its pid"),
+            WatchEvent::Failed(detail) => panic!("observation failed: {detail}"),
+        }
+    }
+
+    fn process_exists(pid: u32) -> bool {
+        let pid = rustix::process::Pid::from_raw(
+            pid.try_into()
+                .expect("fixture pid fits the native pid type"),
+        )
+        .expect("fixture pid is positive");
+        match rustix::process::test_kill_process(pid) {
+            Ok(()) | Err(rustix::io::Errno::PERM) => true,
+            Err(rustix::io::Errno::SRCH) => false,
+            Err(error) => panic!("process liveness probe failed: {error}"),
+        }
     }
 
     fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
