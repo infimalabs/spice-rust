@@ -343,7 +343,6 @@ dependencies = [
  "base64",
  "bus",
  "constant_time_eq",
- "fold",
  "futures-util",
  "journal",
  "serde",
@@ -596,7 +595,6 @@ dependencies = [
  "atomic",
  "serde",
  "serde_json",
- "sill",
  "thiserror 2.0.19",
  "toml",
  "wire",
@@ -2299,7 +2297,6 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
- "sill",
  "wire",
 ]
 
@@ -2345,16 +2342,11 @@ name = "lane"
 version = "0.0.0"
 dependencies = [
  "atomic",
- "bus",
- "consent",
- "fold",
  "journal",
  "listen",
  "serde",
  "sill",
- "steer",
  "tape",
- "taste",
  "vendor",
  "wire",
 ]
@@ -3367,7 +3359,6 @@ name = "taste"
 version = "0.0.0"
 dependencies = [
  "gate",
- "journal",
  "listen",
  "serde",
  "toml",

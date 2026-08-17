@@ -32,11 +32,10 @@
 //! This crate still owns only replayable reductions over explicit inputs, so
 //! identical fact streams and supplied instants produce identical lane state.
 //!
-//! The crate is the widest row in the lattice, sitting above journal, bus,
-//! vendor, tape, steer, consent, listen, fold, taste, atomic, and sill. It
-//! reaches the plane-crossing vocabulary through [`journal::crossing`] rather
-//! than depending on wire directly, so the one vocabulary stays the one every
-//! row reads.
+//! The crate sits directly above journal, vendor, tape, listen, atomic, sill,
+//! and wire. It does not declare unrelated resident control-plane crates merely
+//! to order the dependency lattice; `spice` composes those peers at the process
+//! boundary.
 //!
 //! Time arrives as an argument. [`hold`] compares deadlines it was handed and
 //! [`renew`] is told whether an occupant is alive; neither consults a clock, so

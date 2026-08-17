@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 gate = { path = "../gate" }
-journal = { path = "../journal" }
 listen = { path = "../listen" }
 serde = { version = "1.0.229", features = ["derive"] }
 # Decoding only, and ordered. `display` would add an encoder this crate has no
