@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use listen::{EventKind, Mode, Observation, StreamOutcome};
+use listen::{Dialect, EventKind, Mode, Observation, Span, StreamOutcome, SurfaceEvent};
 use rusqlite::{Connection, params};
 use spice::placeholder::PlaceholderReason;
 use tape::Tape;
@@ -26,6 +26,7 @@ const FAULT_EXIT: i32 = 1;
 
 const CODEX_PROSE: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
+const CODEX_PROSE_TEXT: &str = "working";
 
 struct Scratch(PathBuf);
 
