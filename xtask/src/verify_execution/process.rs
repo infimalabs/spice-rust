@@ -173,6 +173,28 @@ impl RecordObserver for LiveProgressObserver {
     }
 }
 
+struct ProgressLease {
+    inactivity: Duration,
+    last_observed: Instant,
+}
+
+impl ProgressLease {
+    fn new(inactivity: Duration) -> Self {
+        Self {
+            inactivity,
+            last_observed: Instant::now(),
+        }
+    }
+
+    fn renew(&mut self) {
+        self.last_observed = Instant::now();
+    }
+
+    fn remaining(&self) -> Duration {
+        self.inactivity.saturating_sub(self.last_observed.elapsed())
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the streaming process boundary retains the ordinary rim plus its explicit sink"
@@ -185,7 +207,7 @@ pub(super) fn run_bounded_process_streaming<I, S, P>(
     cancellation: &CancellationToken,
     cargo_jobs: Option<usize>,
     overrides: &[(&str, &OsStr)],
-    bounds: ProcessBounds,
+    bounds: ProgressLeaseBounds,
     output: &mut impl Write,
 ) -> Result<CommandRun, StreamingRunError>
 where
@@ -193,15 +215,24 @@ where
     S: Into<OsString>,
     P: Into<OsString>,
 {
+    if bounds.inactivity.is_zero() || bounds.inactivity > bounds.process.runtime {
+        return Err(StreamingRunError::Process(RunError::Launch(
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the verifier progress inactivity lease must be nonzero and no longer than its absolute runtime",
+            ),
+        )));
+    }
+    let process_cancellation = CancellationToken::new();
     let spec = bounded_process_spec(
         label,
         program,
         arguments,
         cwd,
-        cancellation,
+        &process_cancellation,
         cargo_jobs,
         overrides,
-        bounds,
+        bounds.process,
     )
     .map_err(StreamingRunError::Process)?;
     let (records, received) = mpsc::sync_channel(FULL_VERIFIER_LIVE_QUEUE_CAPACITY);
@@ -220,18 +251,42 @@ where
     let mut running = sill::spawn_observed(spec, observation)
         .map_err(RunError::Launch)
         .map_err(StreamingRunError::Process)?;
+    let mut lease = ProgressLease::new(bounds.inactivity);
+    let mut inactivity_expired = false;
 
     let outcome = loop {
-        if let Err(error) = drain_live_progress(&received, output) {
-            cancellation.cancel();
-            drop(received);
-            let _cleanup = wait_after_stop_request(running, bounds);
-            return Err(StreamingRunError::Output(error));
+        let progress = match drain_live_progress(&received, output) {
+            Ok(progress) => progress,
+            Err(error) => {
+                cancellation.cancel();
+                process_cancellation.cancel();
+                drop(received);
+                let _cleanup = wait_after_stop_request(running, bounds.process);
+                return Err(StreamingRunError::Output(error));
+            }
+        };
+        if progress {
+            lease.renew();
         }
-        if cancellation.is_cancelled() || running.runtime_remaining().is_zero() {
-            break wait_after_stop_request(running, bounds).map_err(StreamingRunError::Process)?;
+        if cancellation.is_cancelled() {
+            process_cancellation.cancel();
+            break wait_after_stop_request(running, bounds.process)
+                .map_err(StreamingRunError::Process)?;
         }
-        let observation = FULL_VERIFIER_LIVE_POLL.min(running.runtime_remaining());
+        if running.runtime_remaining().is_zero() {
+            break wait_after_stop_request(running, bounds.process)
+                .map_err(StreamingRunError::Process)?;
+        }
+        let lease_remaining = lease.remaining();
+        if lease_remaining.is_zero() {
+            inactivity_expired = true;
+            process_cancellation.cancel();
+            break wait_after_stop_request(running, bounds.process)
+                .map_err(StreamingRunError::Process)?;
+        }
+        let observation = FULL_VERIFIER_LIVE_POLL
+            .min(running.runtime_remaining())
+            .min(lease_remaining);
         match running
             .wait_for(observation)
             .map_err(|error| RunError::Cleanup(error.to_string()))
@@ -241,14 +296,28 @@ where
             WaitStep::Running(next) => running = *next,
         }
     };
-    drain_live_progress(&received, output).map_err(StreamingRunError::Output)?;
-    command_run_from_outcome(label, &outcome).map_err(StreamingRunError::Process)
+    drain_final_live_progress(&received, output).map_err(StreamingRunError::Output)?;
+    let run = command_run_from_outcome(label, &outcome).map_err(StreamingRunError::Process)?;
+    Ok(if inactivity_expired {
+        force_timed_out(run)
+    } else {
+        run
+    })
+}
+
+fn force_timed_out(run: CommandRun) -> CommandRun {
+    let output = match run {
+        CommandRun::Exited(output)
+        | CommandRun::Cancelled(output)
+        | CommandRun::TimedOut(output) => output,
+    };
+    CommandRun::TimedOut(output)
 }
 
 fn drain_live_progress(
     records: &mpsc::Receiver<Vec<u8>>,
     output: &mut impl Write,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     let mut wrote = false;
     while let Ok(record) = records.try_recv() {
         output.write_all(&record)?;
@@ -257,7 +326,25 @@ fn drain_live_progress(
     if wrote {
         output.flush()?;
     }
-    Ok(())
+    Ok(wrote)
+}
+
+/// Observation completion and process completion are separate threads. After
+/// the child exits, wait one bounded live poll after the last record so a final
+/// terminal record cannot remain between the observer and its queue.
+fn drain_final_live_progress(
+    records: &mpsc::Receiver<Vec<u8>>,
+    output: &mut impl Write,
+) -> io::Result<bool> {
+    let mut wrote = drain_live_progress(records, output)?;
+    while let Ok(record) = records.recv_timeout(FULL_VERIFIER_LIVE_POLL) {
+        output.write_all(&record)?;
+        wrote = true;
+    }
+    if wrote {
+        output.flush()?;
+    }
+    Ok(wrote)
 }
 
 #[expect(

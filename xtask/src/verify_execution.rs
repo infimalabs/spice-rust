@@ -103,12 +103,19 @@ const MAX_CONCURRENT_CARGO_ACTIONS: usize = 2;
 /// test-phase runtime. Compiler setup can be cold once; it is still serialized
 /// for low contention, but it does not consume the test runtime budget.
 const FULL_VERIFIER_TEST_RUNTIME: Duration = Duration::from_secs(3 * 60);
-/// Give the child-owned scheduler enough room to report and reap after the
-/// test-phase deadline while remaining well inside the five-minute wall guard.
-const FULL_VERIFIER_SUPERVISOR_RUNTIME: Duration = Duration::from_secs(296);
-const FULL_VERIFIER_HARD_RUNTIME: Duration = Duration::from_secs(5 * 60);
-const FULL_VERIFIER_LABEL: &str =
-    "full verifier five-minute envelope (three-minute test-phase cutoff)";
+/// A healthy child emits a trusted scheduler, setup, action, or terminal record
+/// at least every 30 seconds. Permit two missed progress intervals before the
+/// outer supervisor stops a silent process tree.
+const FULL_VERIFIER_PROGRESS_INACTIVITY: Duration = Duration::from_secs(90);
+/// Progress may renew the inactivity lease, but it can never carry the complete
+/// process tree beyond this wall-time ceiling. Cleanup consumes the final three
+/// seconds of the ceiling below.
+const FULL_VERIFIER_ABSOLUTE_RUNTIME: Duration = Duration::from_secs(15 * 60);
+const FULL_VERIFIER_PROCESS_RUNTIME: Duration = Duration::from_secs(15 * 60 - 3);
+const FULL_VERIFIER_LABEL: &str = concat!(
+    "full verifier progress lease (three-minute test-phase cutoff; ",
+    "fifteen-minute absolute ceiling)"
+);
 const FULL_VERIFIER_CHILD_COMMAND: &str = "__verify-system";
 /// Hard-supervisor cleanup is a last resort after the child-owned soft deadline.
 const FULL_VERIFIER_TERMINATION_GRACE: Duration = Duration::from_secs(1);
@@ -140,6 +147,12 @@ struct ProcessBounds {
     output_limit: usize,
 }
 
+#[derive(Clone, Copy)]
+struct ProgressLeaseBounds {
+    inactivity: Duration,
+    process: ProcessBounds,
+}
+
 const ACTION_PROCESS_BOUNDS: ProcessBounds = ProcessBounds {
     runtime: PROCESS_RUNTIME,
     output_drain: OUTPUT_DRAIN,
@@ -148,18 +161,22 @@ const ACTION_PROCESS_BOUNDS: ProcessBounds = ProcessBounds {
     output_limit: OUTPUT_LIMIT,
 };
 const FULL_VERIFIER_PROCESS_BOUNDS: ProcessBounds = ProcessBounds {
-    runtime: FULL_VERIFIER_SUPERVISOR_RUNTIME,
+    runtime: FULL_VERIFIER_PROCESS_RUNTIME,
     output_drain: FULL_VERIFIER_OUTPUT_DRAIN,
     reap: FULL_VERIFIER_REAP_DEADLINE,
     grace: FULL_VERIFIER_TERMINATION_GRACE,
     output_limit: FULL_VERIFIER_OUTPUT_LIMIT,
+};
+const FULL_VERIFIER_PROGRESS_BOUNDS: ProgressLeaseBounds = ProgressLeaseBounds {
+    inactivity: FULL_VERIFIER_PROGRESS_INACTIVITY,
+    process: FULL_VERIFIER_PROCESS_BOUNDS,
 };
 const _: () = assert!(
     FULL_VERIFIER_PROCESS_BOUNDS.runtime.as_secs()
         + FULL_VERIFIER_PROCESS_BOUNDS.grace.as_secs()
         + FULL_VERIFIER_PROCESS_BOUNDS.reap.as_secs()
         + FULL_VERIFIER_PROCESS_BOUNDS.output_drain.as_secs()
-        < FULL_VERIFIER_HARD_RUNTIME.as_secs()
+        == FULL_VERIFIER_ABSOLUTE_RUNTIME.as_secs()
 );
 const _: () =
     assert!(FULL_VERIFIER_PROCESS_BOUNDS.runtime.as_secs() > FULL_VERIFIER_TEST_RUNTIME.as_secs());
@@ -320,7 +337,7 @@ pub(super) fn verify_supervised(output: &mut impl Write) -> Result<(), VerifyErr
         &cancellation,
         None,
         &[],
-        FULL_VERIFIER_PROCESS_BOUNDS,
+        FULL_VERIFIER_PROGRESS_BOUNDS,
         output,
     );
     let run = match run {
@@ -532,7 +549,8 @@ fn write_scheduler_start(
         output,
         concat!(
             "[verify] scheduler workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={} action_count={} deadline_scope=test-phase deadline_ms={}"
+            "active_peer_cargo_jobs={} workspace_workers={} action_count={} deadline_scope=test-phase deadline_ms={} ",
+            "supervisor_inactivity_ms={} supervisor_absolute_ms={}"
         ),
         budget.workers,
         budget.cargo_jobs,
@@ -540,6 +558,8 @@ fn write_scheduler_start(
         budget.workspace_workers,
         VERIFY_ACTIONS.len(),
         runtime.as_millis(),
+        FULL_VERIFIER_PROGRESS_INACTIVITY.as_millis(),
+        FULL_VERIFIER_ABSOLUTE_RUNTIME.as_millis(),
     )
     .map_err(VerifyError::Output)?;
     output.flush().map_err(VerifyError::Output)
@@ -636,6 +656,7 @@ fn schedule_graph<R: Runner>(
             }
             write_due_progress(
                 &mut nodes,
+                &mut setups,
                 output,
                 cancellation,
                 &mut failure_seen,
@@ -868,13 +889,20 @@ fn deferred_workspace_failure_ready(nodes: &[NodeState]) -> bool {
         )
 }
 
-fn write_due_progress(
+fn write_due_progress<Rebalance>(
     nodes: &mut [NodeState],
+    setups: &mut setup::SetupRun<Rebalance>,
     output: &mut impl Write,
     cancellation: &CancellationToken,
     failure_seen: &mut bool,
     output_fault: &mut Option<io::Error>,
 ) {
+    if let Err(error) = setups.write_due_progress(output) {
+        output_fault.get_or_insert(error);
+        cancellation.cancel();
+        *failure_seen = true;
+        return;
+    }
     for (index, node) in nodes.iter_mut().enumerate() {
         let NodeState::Running {
             started,
