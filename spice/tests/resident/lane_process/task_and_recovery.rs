@@ -1,5 +1,522 @@
 use super::*;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+
+struct RecoveryProcessFixture {
+    fixture: Fixture,
+    resident: RunningResident,
+    lane: wire::CanonicalUuid,
+    task: wire::intent::TaskAnswer,
+}
+
+impl RecoveryProcessFixture {
+    fn new(name: &str) -> Self {
+        let fixture = Fixture::new(name);
+        configure_fake_vendor(&fixture);
+        let mut config = fs::read_to_string(fixture.root.join("spice-rust.toml"))
+            .expect("negative recovery fixture configuration reads");
+        config.push_str("\n[tasks]\nstems = [\"spice\"]\n");
+        fs::write(fixture.root.join("spice-rust.toml"), config)
+            .expect("negative recovery fixture project policy writes");
+        initialize_task_git_fixture(&fixture);
+        fs::write(fixture.root.join("conflict.txt"), "baseline\n")
+            .expect("conflict baseline writes");
+        fixture_git(&fixture, &["add", "conflict.txt"]);
+        fixture_git(&fixture, &["commit", "-m", "negative recovery baseline"]);
+        establish_task_baseline(&fixture);
+        let mut resident = RunningResident::spawn(&fixture);
+        resident.assert_ready(&fixture);
+        let seated = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+            &fixture,
+            &["lane", "add", "--life", "Drain", "--vendor", "claude"],
+            true,
+            None,
+        ));
+        let task = add_next_action_task(&fixture, seated.lane, "Retain a refused dirty handoff");
+        Self {
+            fixture,
+            resident,
+            lane: seated.lane,
+            task,
+        }
+    }
+
+    fn recover(&self) -> Output {
+        invoke_args(
+            &self.fixture,
+            &["task", "recover", &self.task.task.to_string()],
+            true,
+            Some(self.lane),
+        )
+    }
+
+    fn finish(self) {
+        let Self {
+            fixture,
+            resident,
+            lane,
+            task: _,
+        } = self;
+        let drained = invoke_args(&fixture, &["lane", "drain", &lane.to_string()], true, None);
+        assert!(
+            drained.status.success(),
+            "drain failed: {:?}",
+            drained.stderr
+        );
+        let down = invoke(&fixture, "down");
+        assert!(down.status.success(), "down failed: {:?}", down.stderr);
+        assert!(resident.wait().status.success(), "resident failed");
+    }
+}
+
+fn assert_quarantine_contains(fixture: &Fixture, expected: &[u8]) {
+    let objects = fixture.root.join(".git/spice-task-recovery/objects");
+    assert!(
+        fs::read_dir(&objects)
+            .expect("retained recovery objects enumerate")
+            .map(
+                |entry| fs::read(entry.expect("recovery object entry reads").path())
+                    .expect("recovery object reads")
+            )
+            .any(|bytes| bytes == expected),
+        "the retained quarantine no longer contains the refused handoff bytes",
+    );
+}
+
+fn assert_recovery_claim_was_committed(fixture: &Fixture) {
+    let snapshot = journal::JournalReader::open(fixture.journal())
+        .expect("refused recovery journal reads")
+        .fact_snapshot()
+        .expect("refused recovery facts read");
+    assert!(snapshot.facts().iter().any(|fact| {
+        fact.fact.kind() == FactKind::ClaimWon && fact.fact.body()["recovery"].as_str().is_some()
+    }));
+}
+
+fn assert_actionable_quarantine_refusal(output: &Output, expected: &str) {
+    assert_eq!(output.status.code(), Some(REFUSAL_EXIT));
+    let Outcome::Refusal(refusal) = outcome(output) else {
+        panic!("retained quarantine must answer with a refusal");
+    };
+    assert_eq!(refusal.reason(), expected);
+    assert!(
+        refusal.explanation().contains("quarantine"),
+        "retained recovery refusal has no actionable quarantine guidance: {refusal:?}",
+    );
+}
+
+#[test]
+fn explicit_recovery_process_refuses_unsupported_trees_preclaim() {
+    let fifo = RecoveryProcessFixture::new("task-recover-fifo");
+    let fifo_path = fifo.fixture.root.join("handoff.fifo");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo_path)
+            .status()
+            .expect("mkfifo launches")
+            .success(),
+    );
+    fs::write(fifo.fixture.root.join("ordinary.txt"), b"ordinary\n")
+        .expect("ordinary handoff writes");
+    assert_eq!(refusal_reason(&fifo.recover()), "git::recovery-file-kind");
+    assert!(fifo_path.exists());
+    assert_eq!(
+        fs::read(fifo.fixture.root.join("ordinary.txt")).expect("ordinary bytes read"),
+        b"ordinary\n",
+    );
+    assert!(!fifo.fixture.root.join(".git/spice-task-recovery").exists());
+    fifo.finish();
+
+    let nested = RecoveryProcessFixture::new("task-recover-nested");
+    let nested_root = nested.fixture.root.join("nested");
+    fixture_git(
+        &nested.fixture,
+        &["init", nested_root.to_str().expect("UTF-8 nested path")],
+    );
+    fs::write(nested_root.join("payload.txt"), b"nested bytes\n").expect("nested handoff writes");
+    assert_eq!(
+        refusal_reason(&nested.recover()),
+        "git::recovery-nested-repository",
+    );
+    assert_eq!(
+        fs::read(nested_root.join("payload.txt")).expect("nested bytes read"),
+        b"nested bytes\n",
+    );
+    assert!(
+        !nested
+            .fixture
+            .root
+            .join(".git/spice-task-recovery")
+            .exists()
+    );
+    nested.finish();
+}
+
+#[test]
+fn explicit_recovery_process_retains_a_quarantine_when_another_client_wins_the_claim_race() {
+    let raced = RecoveryProcessFixture::new("task-recover-claim-race");
+    let control = raced.fixture.root.join(".git/recovery-race-control");
+    let first = control.join("first-fetch");
+    let once = control.join("first-fetch-owner");
+    let release = control.join("release");
+    let upload_pack = control.join("upload-pack");
+    fs::create_dir(&control).expect("claim-race control directory creates");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&release)
+            .status()
+            .expect("claim-race release FIFO creates")
+            .success(),
+    );
+    fs::write(
+        &upload_pack,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "set -eu\n",
+                "if [ ! -d {once} ]; then\n",
+                "  mkdir {once}\n",
+                "  printf first > {first}\n",
+                "  IFS= read -r released < {release}\n",
+                "fi\n",
+                "exec git-upload-pack \"$@\"\n",
+            ),
+            once = shell_word(&once.display().to_string()),
+            first = shell_word(&first.display().to_string()),
+            release = shell_word(&release.display().to_string()),
+        ),
+    )
+    .expect("claim-race upload-pack wrapper writes");
+    fs::set_permissions(&upload_pack, fs::Permissions::from_mode(0o700))
+        .expect("claim-race upload-pack wrapper becomes executable");
+    fixture_git(
+        &raced.fixture,
+        &[
+            "config",
+            "remote.origin.uploadpack",
+            upload_pack.to_str().expect("UTF-8 upload-pack path"),
+        ],
+    );
+    fs::write(
+        raced.fixture.root.join("raced-handoff.txt"),
+        b"do not lose\n",
+    )
+    .expect("claim-race handoff writes");
+
+    let mut interrupted = None;
+    wait_for_event(
+        &control,
+        || {
+            let child = Command::new(env!("CARGO_BIN_EXE_spice"))
+                .arg("--json")
+                .args(["task", "recover", &raced.task.task.to_string()])
+                .current_dir(&raced.fixture.root)
+                .env(steer::hook::LANE, raced.lane.to_string())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("interrupted recovery client launches");
+            interrupted = Some(child);
+        },
+        || first.is_file().then_some(()),
+    );
+    let winner = invoke_args(&raced.fixture, &["task", "next"], true, Some(raced.lane));
+    let winner = reply_body::<wire::intent::ClaimAnswer>(&winner);
+    assert_eq!(winner.task, raced.task.task);
+    fs::write(&release, b"release\n").expect("release interrupted recovery fetch");
+    let interrupted = interrupted
+        .expect("recovery client was retained")
+        .wait_with_output()
+        .expect("interrupted recovery client exits");
+
+    assert_actionable_quarantine_refusal(&interrupted, "git::recovery-board-ambiguous");
+    assert_quarantine_contains(&raced.fixture, b"do not lose\n");
+    assert!(
+        !raced.fixture.root.join("raced-handoff.txt").exists(),
+        "an ambiguous client replayed bytes under the winning ordinary claim",
+    );
+    raced.finish();
+}
+
+#[test]
+fn explicit_recovery_process_retains_postclaim_collision_and_conflict() {
+    let collision = RecoveryProcessFixture::new("task-recover-collision");
+    fs::write(
+        collision.fixture.root.join("collision.txt"),
+        b"handoff collision\n",
+    )
+    .expect("collision handoff writes");
+    peer_commit(&collision.fixture, "collision.txt", "baseline collision\n");
+    let refused = collision.recover();
+    assert_actionable_quarantine_refusal(&refused, "git::recovery-untracked-collision");
+    assert_eq!(
+        fs::read(collision.fixture.root.join("collision.txt")).expect("baseline collision reads"),
+        b"baseline collision\n",
+    );
+    assert_quarantine_contains(&collision.fixture, b"handoff collision\n");
+    assert_recovery_claim_was_committed(&collision.fixture);
+    let retried = collision.recover();
+    assert_actionable_quarantine_refusal(&retried, "git::recovery-untracked-collision");
+    assert_quarantine_contains(&collision.fixture, b"handoff collision\n");
+    collision.finish();
+
+    let conflict = RecoveryProcessFixture::new("task-recover-conflict");
+    fs::write(
+        conflict.fixture.root.join("conflict.txt"),
+        b"handoff conflict\n",
+    )
+    .expect("conflict handoff writes");
+    fixture_git(&conflict.fixture, &["add", "conflict.txt"]);
+    peer_commit(&conflict.fixture, "conflict.txt", "baseline conflict\n");
+    let refused = conflict.recover();
+    assert_actionable_quarantine_refusal(&refused, "git::recovery-replay-conflict");
+    assert!(
+        git_stdout(&conflict.fixture.root, &["status", "--short"])
+            .lines()
+            .any(|line| line == "UU conflict.txt"),
+        "three-way replay leaves complete conflict stages",
+    );
+    assert_eq!(
+        git_stdout(
+            &conflict.fixture.root,
+            &["ls-files", "--unmerged", "conflict.txt"],
+        )
+        .lines()
+        .count(),
+        3,
+    );
+    assert_quarantine_contains(&conflict.fixture, b"handoff conflict\n");
+    assert_recovery_claim_was_committed(&conflict.fixture);
+    let retried = conflict.recover();
+    assert_actionable_quarantine_refusal(&retried, "git::recovery-conflict-retained");
+    assert_quarantine_contains(&conflict.fixture, b"handoff conflict\n");
+    conflict.finish();
+}
+
+struct DirtyRecoveryFingerprint {
+    status: String,
+    index: String,
+    staged: Vec<u8>,
+}
+
+fn initialize_dirty_recovery_fixture(fixture: &Fixture) {
+    configure_fake_vendor(fixture);
+    let mut config = fs::read_to_string(fixture.root.join("spice-rust.toml"))
+        .expect("recovery fixture configuration reads");
+    config.push_str("\n[tasks]\nstems = [\"spice\"]\n");
+    fs::write(fixture.root.join("spice-rust.toml"), config)
+        .expect("recovery fixture project policy writes");
+    initialize_task_git_fixture(fixture);
+    fs::write(fixture.root.join("layered.bin"), b"base\0layer\n").expect("layered baseline writes");
+    fs::write(fixture.root.join("deleted.txt"), b"delete me\n").expect("deleted baseline writes");
+    fs::write(fixture.root.join("script.sh"), b"#!/bin/sh\nexit 0\n")
+        .expect("executable baseline writes");
+    fixture_git(fixture, &["add", "layered.bin", "deleted.txt", "script.sh"]);
+    fixture_git(fixture, &["commit", "-m", "recovery fixture baseline"]);
+    establish_task_baseline(fixture);
+}
+
+fn write_dirty_recovery_generation(fixture: &Fixture) -> DirtyRecoveryFingerprint {
+    fs::write(fixture.root.join("layered.bin"), b"staged\0generation\n")
+        .expect("staged generation writes");
+    fixture_git(fixture, &["add", "layered.bin"]);
+    fs::write(fixture.root.join("layered.bin"), b"unstaged\0generation\n")
+        .expect("unstaged generation writes");
+    fs::remove_file(fixture.root.join("deleted.txt")).expect("tracked deletion writes");
+    fs::set_permissions(
+        fixture.root.join("script.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .expect("executable mode writes");
+    fixture_git(fixture, &["add", "script.sh"]);
+    fs::write(fixture.root.join("untracked.bin"), [0, 1, 2, 0xfe, 0xff])
+        .expect("untracked bytes write");
+    fs::set_permissions(
+        fixture.root.join("untracked.bin"),
+        fs::Permissions::from_mode(0o751),
+    )
+    .expect("untracked mode writes");
+    let staged = Command::new("git")
+        .args([
+            "-C",
+            fixture.root.to_str().expect("UTF-8 fixture root"),
+            "show",
+            ":layered.bin",
+        ])
+        .output()
+        .expect("staged bytes read before recovery");
+    assert!(staged.status.success(), "staged bytes are readable");
+    DirtyRecoveryFingerprint {
+        status: git_stdout(&fixture.root, &["status", "--porcelain=v1"]),
+        index: dirty_recovery_index(fixture),
+        staged: staged.stdout,
+    }
+}
+
+fn dirty_recovery_index(fixture: &Fixture) -> String {
+    git_stdout(
+        &fixture.root,
+        &[
+            "ls-files",
+            "--stage",
+            "--",
+            "layered.bin",
+            "script.sh",
+            "deleted.txt",
+        ],
+    )
+}
+
+fn assert_replayed_dirty_generation(fixture: &Fixture, fingerprint: &DirtyRecoveryFingerprint) {
+    assert_eq!(
+        git_stdout(&fixture.root, &["status", "--porcelain=v1"]),
+        fingerprint.status,
+        "replay restores the exact staged/unstaged/deleted/untracked footprint",
+    );
+    assert_eq!(
+        dirty_recovery_index(fixture),
+        fingerprint.index,
+        "replay restores exact blob identities, executable bits, and index stages",
+    );
+    let replayed_stage = Command::new("git")
+        .args([
+            "-C",
+            fixture.root.to_str().expect("UTF-8 fixture root"),
+            "show",
+            ":layered.bin",
+        ])
+        .output()
+        .expect("replayed staged bytes read");
+    assert!(
+        replayed_stage.status.success(),
+        "replayed stage is readable"
+    );
+    assert_eq!(replayed_stage.stdout, fingerprint.staged);
+    assert_eq!(
+        fs::read(fixture.root.join("layered.bin")).expect("replayed worktree bytes read"),
+        b"unstaged\0generation\n",
+    );
+    assert!(!fixture.root.join("deleted.txt").exists());
+    assert_eq!(
+        fs::metadata(fixture.root.join("script.sh"))
+            .expect("replayed executable metadata reads")
+            .permissions()
+            .mode()
+            & 0o111,
+        0o111,
+    );
+    assert_eq!(
+        fs::read(fixture.root.join("untracked.bin")).expect("replayed untracked bytes read"),
+        [0, 1, 2, 0xfe, 0xff],
+    );
+    assert_eq!(
+        fs::metadata(fixture.root.join("untracked.bin"))
+            .expect("replayed untracked metadata reads")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o751,
+    );
+}
+
+fn assert_recovery_claim_boundary(
+    fixture: &Fixture,
+    task: &wire::intent::TaskAnswer,
+    synchronized: &str,
+) {
+    assert!(
+        spice::task_git::pending_recovery(
+            &spice::repository::Repository::discover(&fixture.root)
+                .expect("replayed repository resolves"),
+        )
+        .expect("retired recovery inspects")
+        .is_none(),
+        "successful replay retires its private quarantine",
+    );
+    let facts = journal::JournalReader::open(fixture.journal())
+        .expect("recovery journal reads")
+        .fact_snapshot()
+        .expect("recovery facts read");
+    let won = facts
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact.kind() == FactKind::ClaimWon
+                && fact.fact.body()["recovery"].as_str().is_some()
+        })
+        .expect("explicit recovery journals one recovery claim");
+    assert_eq!(
+        won.fact.body()["task"],
+        serde_json::json!(task.task.born().unwrap())
+    );
+    assert_eq!(won.fact.body()["git"]["head"], synchronized);
+    assert_eq!(won.fact.body()["git"]["integrated"], synchronized);
+    assert_eq!(won.fact.body()["git"]["upstream"], "origin/main");
+    assert_eq!(won.fact.body()["git"]["upstream_head"], synchronized);
+    assert_eq!(won.fact.body()["git"]["local_commits"], 0);
+    assert!(
+        spice::task_git::Recovery::is_transaction(
+            won.fact.body()["recovery"]
+                .as_str()
+                .expect("recovery claim names its transaction"),
+        ),
+        "claim journals the exact content-addressed recovery identity",
+    );
+    drop(facts);
+}
+
+#[test]
+fn explicit_dirty_handoff_recovery_synchronizes_claim_and_replays_exactly() {
+    let fixture = Fixture::new("task-recover-dirty-handoff");
+    initialize_dirty_recovery_fixture(&fixture);
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+    let seated = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &["lane", "add", "--life", "Drain", "--vendor", "claude"],
+        true,
+        None,
+    ));
+    let task = add_next_action_task(&fixture, seated.lane, "Recover a byte-exact dirty handoff");
+    let synchronized = peer_commit(&fixture, "upstream.txt", "synchronized baseline\n");
+    let fingerprint = write_dirty_recovery_generation(&fixture);
+
+    let recovered = invoke_args(
+        &fixture,
+        &["task", "recover", &task.task.to_string()],
+        true,
+        Some(seated.lane),
+    );
+    let answer = reply_body::<wire::intent::ClaimAnswer>(&recovered);
+    assert_eq!(
+        (answer.task, answer.holder),
+        (task.task.clone(), Actor::Lane(seated.lane)),
+        "the explicit process command claims only its named handoff task",
+    );
+    assert_eq!(
+        git_stdout(&fixture.root, &["rev-parse", "HEAD"]),
+        synchronized,
+    );
+    assert_replayed_dirty_generation(&fixture, &fingerprint);
+    assert_recovery_claim_boundary(&fixture, &task, &synchronized);
+
+    let drained = invoke_args(
+        &fixture,
+        &["lane", "drain", &seated.lane.to_string()],
+        true,
+        None,
+    );
+    assert!(
+        drained.status.success(),
+        "drain failed: {:?}",
+        drained.stderr
+    );
+    let down = invoke(&fixture, "down");
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
 #[test]
 fn typed_task_commands_retain_the_ambient_lane_principal() {
     let fixture = Fixture::new("lane-task-principal");

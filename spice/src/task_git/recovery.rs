@@ -910,6 +910,11 @@ fn admitted_path(worktree: &Path, written: &str) -> Result<PathBuf, Error> {
     Ok(worktree.join(relative))
 }
 
+#[cfg(test)]
+pub(super) fn admitted_path_for_test(worktree: &Path, written: &str) -> Result<PathBuf, Error> {
+    admitted_path(worktree, written)
+}
+
 fn union_paths(left: &[String], right: &[String]) -> Vec<String> {
     left.iter()
         .chain(right)

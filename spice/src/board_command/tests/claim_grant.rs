@@ -125,6 +125,73 @@ fn a_readable_seat_lets_the_boundary_refusal_reach_the_caller() {
 }
 
 #[test]
+fn ordinary_next_capture_and_steal_possessions_remain_dirty_fail_closed() {
+    let (root, bus, epoch, seats) = fixture("claim-dirty-possession-regression", 1);
+    let lane_root = root.join("lane");
+    fs::create_dir(&lane_root).expect("lane worktree exists");
+    git(&lane_root, &["init", "-b", "main"]);
+    git(&lane_root, &["config", "user.email", "fixture@example.com"]);
+    git(&lane_root, &["config", "user.name", "Fixture"]);
+    fs::write(lane_root.join("README.md"), "base\n").expect("write lane base");
+    git(&lane_root, &["add", "README.md"]);
+    git(&lane_root, &["commit", "-m", "base"]);
+    let repository = Repository::discover(&lane_root).expect("discover lane repository");
+    point_seat_at(&bus, epoch, &seats[0], repository.worktree_root());
+    let actor = Actor::Lane(seats[0].lane);
+    add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "DIRTY-possession",
+        "Keep ordinary claims fail closed",
+        Some("todo"),
+    );
+    let snapshot = validated_snapshot(
+        &bus,
+        actor.clone(),
+        &guard_projects(),
+        &board::NextConfig::default(),
+    )
+    .expect("dirty possession snapshot validates");
+    let winner = guard_winner(&snapshot.answer, &actor);
+    let command = fixture_command(
+        epoch,
+        actor,
+        CommandKind::ClaimWin,
+        claim_expected(&snapshot.answer, &winner, &seats[0]),
+        &ClaimWin {
+            rule: "next".parse().expect("ordinary next rule"),
+            recovery: None,
+        },
+    );
+    fs::write(lane_root.join("handoff.txt"), "ordinary dirty bytes\n")
+        .expect("ordinary dirty handoff writes");
+
+    for (label, possession) in [
+        ("next", Possession::Next),
+        ("capture", Possession::Capture),
+        ("steal", Possession::Steal),
+    ] {
+        assert_eq!(
+            grant_reason(claim_git_boundary(
+                Some(&repository),
+                &snapshot,
+                &command,
+                &snapshot.entries[0],
+                possession,
+            )),
+            "git::worktree-dirty",
+            "ordinary {label} acquired a dirty lane without explicit recovery",
+        );
+        assert_eq!(
+            fs::read_to_string(lane_root.join("handoff.txt")).expect("dirty bytes remain"),
+            "ordinary dirty bytes\n",
+        );
+    }
+    clean(&root, bus);
+}
+
+#[test]
 fn recovery_claim_uses_the_sealed_synchronized_boundary_before_replay() {
     let (root, bus, epoch, seats) = fixture("claim-recovery-boundary", 1);
     let lane_root = root.join("lane");
