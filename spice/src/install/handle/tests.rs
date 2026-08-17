@@ -124,6 +124,38 @@ fn receipt_publication_rejects_reused_native_generation_with_different_content()
 }
 
 #[test]
+fn receipt_publication_restores_a_different_winner_from_the_final_exchange_window() {
+    let root = test_root("receipt-final-exchange-aba");
+    let target = root.join("target");
+    let destination = target.join("file");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(&destination, b"expected receipt").unwrap();
+    let admitted = admitted_file(&root, &target, "target/file");
+    let expected_file = admitted.observe().unwrap().unwrap();
+    let expected = ReceiptGeneration::observed(&expected_file);
+
+    let error = admitted
+        .publish_receipt_with(
+            &FileImage::new(0o644, b"loser receipt".to_vec()),
+            Some(expected.clone()),
+            || {
+                fs::write(&destination, b"winner receipt").unwrap();
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+    let winner = admitted.observe().unwrap().unwrap();
+    assert_eq!(winner.generation, expected.native());
+    assert!(!expected.matches(&winner));
+    assert!(matches!(error, InstallError::GenerationChanged(_)));
+    assert_eq!(winner.image.bytes(), b"winner receipt");
+    assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
+    drop(admitted);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn replaced_destination_at_removal_is_restored_on_refusal() {
     let root = test_root("remove-replacement");
     let target = root.join("target");
