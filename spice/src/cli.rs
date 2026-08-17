@@ -343,6 +343,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["task", "list"]
             | ["task", "status"]
             | ["task", "next"]
+            | ["task", "recover"]
             | ["task", "reclaim"]
             | ["task", "add"]
             | ["task", "capture"]

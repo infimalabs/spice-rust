@@ -56,6 +56,7 @@ fn claim_won() -> body::ClaimWon {
         }),
         until: instant("2030-04-12T18:44:09.271828Z"),
         git: None,
+        recovery: None,
         source: proven(),
     }
 }

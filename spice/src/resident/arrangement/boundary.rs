@@ -192,6 +192,7 @@ fn seed_active_claim(
                     .parse()
                     .expect("fixture claim expiry"),
                 git: None,
+                recovery: None,
                 source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Pending(added),
@@ -208,6 +209,7 @@ fn seed_active_claim(
         lane,
         occupant,
         epoch,
+        recovery: None,
         disposition: wire::ClaimDisposition::Active,
     });
     commit(bus, write).expect("fixture claim commits");

@@ -111,6 +111,7 @@ fn peer_entry(
         lane: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
         occupant: uuid("019fbbde-5105-75a3-a76a-722afde1e409"),
         epoch: uuid("019fbbde-5105-75a3-a76a-722afde1e410"),
+        recovery: None,
         disposition: ClaimDisposition::Active,
     };
     Entry::new(
@@ -262,6 +263,7 @@ fn affinity_history_keeps_only_the_most_recent_claimed_cell() {
                     }),
                     until: instant("2026-08-01T06:10:00.000Z"),
                     git: None,
+                    recovery: None,
                     source: body::SourceBoundary::Proven { heads: Vec::new() },
                 },
                 FactCause::Root,

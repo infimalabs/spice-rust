@@ -316,11 +316,12 @@ fn a_nonfinal_review_phase_prints_the_transition_it_can_accept() {
     let answer = assert_committed(issue(
         &bus,
         epoch,
-        lane,
+        lane.clone(),
         CommandKind::ClaimWin,
         claim_expected(&available, &task, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
     let CommandAnswer::Claim(claim) = answer else {
@@ -833,6 +834,7 @@ fn task_status_names_the_claim_the_asking_principal_holds() {
         claim_expected(&available, &held, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
 
@@ -920,7 +922,10 @@ fn capture_claims_one_exact_eligible_non_allocator_task() {
             Witness::Eligibility { rule: rule.clone() },
             residency(&available, &seats[0]),
         ],
-        &ClaimWin { rule },
+        &ClaimWin {
+            rule,
+            recovery: None,
+        },
     ));
 
     let claimed = board(&bus, epoch, lane);
@@ -934,6 +939,221 @@ fn capture_claims_one_exact_eligible_non_allocator_task() {
             .disposition,
         ClaimDisposition::Active,
     );
+    clean(&root, bus);
+}
+
+#[test]
+fn exact_recovery_names_one_ready_task_and_journals_its_transaction() {
+    let (root, bus, epoch, seats) = fixture("recover-exact", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let alpha = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECOVER-alpha1",
+        "Allocator winner",
+        Some("todo"),
+    );
+    let beta = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECOVER-beta01",
+        "Exact recovery target",
+        Some("todo"),
+    );
+    let available = board(&bus, epoch, lane.clone());
+    let entries = actor_entries(&available).expect("recovery board entries are valid");
+    assert_eq!(
+        board::select(
+            &entries,
+            &lane,
+            allocation_subscription(&available.residency.body, &lane)
+                .expect("fixture lane subscription"),
+            available.allocation_band,
+            available.recent_cell.as_ref(),
+        )
+        .expect("allocator winner")
+        .entry()
+        .handle(),
+        &alpha,
+    );
+    let heads = at(&available, &beta);
+    let rule: Name = "recover".parse().expect("recovery rule");
+    let transaction = "a".repeat(40);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility { rule: rule.clone() },
+            residency(&available, &seats[0]),
+        ],
+        &ClaimWin {
+            rule,
+            recovery: Some(transaction.clone()),
+        },
+    ));
+
+    let claimed = board(&bus, epoch, lane);
+    assert!(at(&claimed, &alpha).claim.is_none());
+    let claim = at(&claimed, &beta)
+        .claim
+        .as_ref()
+        .expect("recovery claim is active");
+    assert_eq!(claim.body.recovery.as_deref(), Some(transaction.as_str()));
+    clean(&root, bus);
+}
+
+#[test]
+fn recovery_identity_is_admitted_only_by_the_recover_rule() {
+    let (root, bus, epoch, seats) = fixture("recover-rule", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECOVER-rule01",
+        "Rule-bound recovery",
+        Some("todo"),
+    );
+    let available = board(&bus, epoch, lane.clone());
+    let heads = at(&available, &task);
+    let rule: Name = "next".parse().expect("next rule");
+    let refused = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility { rule: rule.clone() },
+            residency(&available, &seats[0]),
+        ],
+        &ClaimWin {
+            rule,
+            recovery: Some("a".repeat(40)),
+        },
+    );
+    assert!(
+        matches!(
+            refused,
+            Outcome::Refusal(ref refusal) if refusal.reason() == "git::recovery-rule-mismatch"
+        ),
+        "ordinary next admitted a recovery identity: {refused:?}",
+    );
+    let recover: Name = "recover".parse().expect("recovery rule");
+    for (identity, reason) in [
+        (None, "git::recovery-transaction-missing"),
+        (Some("a".repeat(39)), "git::recovery-transaction-invalid"),
+    ] {
+        let refused = issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility {
+                    rule: recover.clone(),
+                },
+                residency(&available, &seats[0]),
+            ],
+            &ClaimWin {
+                rule: recover.clone(),
+                recovery: identity,
+            },
+        );
+        assert!(
+            matches!(refused, Outcome::Refusal(ref refusal) if refusal.reason() == reason),
+            "invalid recovery identity did not refuse as {reason}: {refused:?}",
+        );
+    }
+    assert!(
+        at(&board(&bus, epoch, Actor::Lane(seats[0].lane)), &task)
+            .claim
+            .is_none()
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn recovery_restart_classifies_only_its_exact_claim_as_postclaim() {
+    let (root, bus, epoch, seats) = fixture("recover-restart", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECOVER-restart",
+        "Restart-visible recovery",
+        Some("todo"),
+    );
+    let available = board(&bus, epoch, lane.clone());
+    let transaction = "b".repeat(40);
+    let boundary = GitBoundary {
+        head: "synchronized-head".to_owned(),
+        integrated: "synchronized-head".to_owned(),
+        upstream: Some("origin/main".to_owned()),
+        upstream_head: Some("synchronized-head".to_owned()),
+        local_commits: 0,
+    };
+    let sealed = recovery_preflight(&available, &task)
+        .expect("ready task admits recovery preflight")
+        .seal(boundary);
+    assert!(matches!(
+        recovery_board_state(&available, &task, &transaction, &sealed),
+        RecoveryBoardState::PreClaim
+    ));
+
+    let heads = at(&available, &task);
+    let rule: Name = "recover".parse().expect("recovery rule");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility { rule: rule.clone() },
+            residency(&available, &seats[0]),
+        ],
+        &ClaimWin {
+            rule,
+            recovery: Some(transaction.clone()),
+        },
+    ));
+    let claimed = board(&bus, epoch, lane);
+    assert!(matches!(
+        recovery_board_state(&claimed, &task, &transaction, &sealed),
+        RecoveryBoardState::PostClaim { .. }
+    ));
+
+    let mut impostor = claimed.clone();
+    impostor
+        .tasks
+        .iter_mut()
+        .find(|heads| heads.statement.body.handle == task)
+        .expect("claimed task remains visible")
+        .claim
+        .as_mut()
+        .expect("claimed task")
+        .body
+        .recovery = None;
+    assert!(matches!(
+        recovery_board_state(&impostor, &task, &transaction, &sealed),
+        RecoveryBoardState::Ambiguous(_)
+    ));
     clean(&root, bus);
 }
 
@@ -1011,7 +1231,10 @@ fn capture_for(
             Witness::Eligibility { rule: rule.clone() },
             residency(&available, seat),
         ],
-        &ClaimWin { rule },
+        &ClaimWin {
+            rule,
+            recovery: None,
+        },
     ));
     let CommandAnswer::Claim(answer) = answer else {
         panic!("claim win returned another answer shape: {answer:?}");
@@ -1050,7 +1273,10 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
             },
             residency(&available, &seats[0]),
         ],
-        &ClaimWin { rule: capture },
+        &ClaimWin {
+            rule: capture,
+            recovery: None,
+        },
     ));
 
     let held = board(&bus, epoch, rival.clone());
@@ -1074,7 +1300,10 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
         rival.clone(),
         CommandKind::ClaimWin,
         witnesses(&capture),
-        &ClaimWin { rule: capture },
+        &ClaimWin {
+            rule: capture,
+            recovery: None,
+        },
     );
     assert!(
         matches!(
@@ -1092,7 +1321,10 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
         rival.clone(),
         CommandKind::ClaimWin,
         witnesses(&steal),
-        &ClaimWin { rule: steal },
+        &ClaimWin {
+            rule: steal,
+            recovery: None,
+        },
     ));
 
     // The lease the holder still had did not delay the transfer, and the
@@ -1134,6 +1366,7 @@ fn reclaim_renews_only_the_lane_owned_claim_and_survives_restart() {
         claim_expected(&available, &held_task, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
     let held = board(&bus, epoch, lane.clone());

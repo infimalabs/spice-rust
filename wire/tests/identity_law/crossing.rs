@@ -359,6 +359,7 @@ fn cover_claim_heads(covered: &mut BTreeSet<String>) {
                 lane: first_uuid,
                 occupant: second_uuid,
                 epoch: first_uuid,
+                recovery: None,
                 disposition: ClaimDisposition::Active,
             },
             ClaimHead {
@@ -372,6 +373,7 @@ fn cover_claim_heads(covered: &mut BTreeSet<String>) {
                 lane: second_uuid,
                 occupant: first_uuid,
                 epoch: second_uuid,
+                recovery: None,
                 disposition: ClaimDisposition::Lapsed,
             },
         ],

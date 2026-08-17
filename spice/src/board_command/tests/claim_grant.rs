@@ -59,6 +59,7 @@ fn grant_fixture(
         expected,
         &ClaimWin {
             rule: "next".parse().expect("claim grant fixture rule"),
+            recovery: None,
         },
     );
     (bus, resident, snapshot, command)
@@ -78,7 +79,8 @@ fn a_seat_that_cannot_be_read_is_reported_before_a_boundary_that_cannot_be_captu
             Some(&resident),
             &snapshot,
             &command,
-            false
+            &snapshot.entries[0],
+            Possession::Next,
         )),
         "git::worktree-unresolved",
         "the boundary step must refuse on these inputs, or the order is a choice of one",
@@ -90,6 +92,7 @@ fn a_seat_that_cannot_be_read_is_reported_before_a_boundary_that_cannot_be_captu
             &command,
             Some(&resident),
             &snapshot,
+            &snapshot.entries[0],
             Possession::Next,
         )),
         "claim::lane-mismatch",
@@ -113,9 +116,159 @@ fn a_readable_seat_lets_the_boundary_refusal_reach_the_caller() {
             &command,
             Some(&resident),
             &snapshot,
+            &snapshot.entries[0],
             Possession::Next,
         )),
         "git::worktree-unresolved",
         "a seat that reads clean leaves the boundary refusal as the first one",
+    );
+}
+
+#[test]
+fn recovery_claim_uses_the_sealed_synchronized_boundary_before_replay() {
+    let (root, bus, epoch, seats) = fixture("claim-recovery-boundary", 1);
+    let lane_root = root.join("lane");
+    fs::create_dir(&lane_root).expect("lane worktree exists");
+    git(&lane_root, &["init", "-b", "main"]);
+    git(&lane_root, &["config", "user.email", "fixture@example.com"]);
+    git(&lane_root, &["config", "user.name", "Fixture"]);
+    fs::write(lane_root.join("README.md"), "base\n").expect("write lane base");
+    git(&lane_root, &["add", "README.md"]);
+    git(&lane_root, &["commit", "-m", "base"]);
+    let repository = Repository::discover(&lane_root).expect("discover lane repository");
+    point_seat_at(&bus, epoch, &seats[0], repository.worktree_root());
+
+    let actor = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECOVER-boundary",
+        "Recover at a sealed boundary",
+        Some("todo"),
+    );
+    let available = board(&bus, epoch, actor.clone());
+    fs::write(lane_root.join("handoff.txt"), "handoff\n").expect("write dirty handoff");
+    let recovery =
+        spice::task_git::quarantine_for_recovery(&repository).expect("quarantine dirty handoff");
+    let boundary = spice::task_git::synchronize_recovery(&repository, &recovery)
+        .expect("synchronize clean lane");
+    let sealed = recovery_preflight(&available, &task)
+        .expect("ready task admits recovery")
+        .seal(boundary.clone());
+    spice::task_git::bind_recovery_claim(&repository, &recovery, sealed)
+        .expect("seal recovery claim");
+
+    let heads = at(&available, &task);
+    let rule: Name = "recover".parse().expect("recovery rule");
+    let transaction = recovery.transaction().to_owned();
+    let command = fixture_command(
+        epoch,
+        actor.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility { rule: rule.clone() },
+            residency(&available, &seats[0]),
+        ],
+        &ClaimWin {
+            rule,
+            recovery: Some(transaction.clone()),
+        },
+    );
+    assert_committed(claim_win(
+        &bus,
+        &command,
+        match command.body() {
+            wire::intent::Intent::ClaimWin(win) => win,
+            _ => unreachable!("fixture command is a claim win"),
+        },
+        Some(&repository),
+        &guard_projects(),
+        &board::NextConfig::default(),
+    ));
+
+    let claimed = board(&bus, epoch, actor);
+    let claim = at(&claimed, &task)
+        .claim
+        .as_ref()
+        .expect("recovery claim committed");
+    assert_eq!(claim.body.recovery.as_deref(), Some(transaction.as_str()));
+    let facts = bus.fact_snapshot().expect("claim facts read");
+    let won = facts
+        .facts()
+        .iter()
+        .find(|fact| fact.seq == claim.position)
+        .expect("claim head names its fact");
+    assert_eq!(
+        won.fact.body().get("git"),
+        Some(&serde_json::to_value(&boundary).expect("boundary encodes")),
+    );
+    assert_eq!(
+        won.fact
+            .body()
+            .get("recovery")
+            .and_then(|value| value.as_str()),
+        Some(transaction.as_str()),
+    );
+
+    spice::task_git::replay_recovery(&repository, &recovery).expect("replay under active claim");
+    assert_eq!(
+        fs::read_to_string(lane_root.join("handoff.txt")).expect("read replayed handoff"),
+        "handoff\n"
+    );
+    assert!(
+        spice::task_git::pending_recovery(&repository)
+            .expect("inspect retired recovery")
+            .is_none()
+    );
+    clean(&root, bus);
+}
+
+fn point_seat_at(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, worktree: &Path) {
+    let before = board(bus, epoch, Actor::Operator);
+    let mut residency = before.residency.body;
+    let row = residency
+        .lanes
+        .iter_mut()
+        .find(|row| row.lane == seat.lane)
+        .expect("fixture lane exists");
+    row.worktree = worktree.display().to_string();
+    let origin = format!("resident:{epoch}")
+        .parse()
+        .expect("fixture resident origin");
+    let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+    let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
+    let started = write
+        .fact(
+            body::LaneStarted {
+                lane: seat.lane,
+                occupant: seat.occupant,
+                epoch,
+                group: 0,
+            },
+            FactCause::Existing(before.residency.position),
+        )
+        .expect("fixture lane movement fact builds");
+    write.residency_head(started, move |_| residency);
+    assert!(matches!(
+        bus.commit(write).expect("fixture lane movement commits"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+fn git(worktree: &Path, arguments: &[&str]) {
+    let output = std::process::Command::new("git")
+        .args(arguments)
+        .current_dir(worktree)
+        .output()
+        .expect("git fixture command starts");
+    assert!(
+        output.status.success(),
+        "git {arguments:?} failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
     );
 }

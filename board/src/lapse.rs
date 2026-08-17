@@ -592,6 +592,7 @@ mod tests {
                 expiry: instant(20),
                 maximum: instant(35),
                 git: None,
+                recovery: None,
                 source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
         )
@@ -606,6 +607,7 @@ mod tests {
                     expected,
                     body: intent::ClaimWin {
                         rule: "next".parse().expect("rule"),
+                        recovery: None,
                     },
                 },
                 uuid(22),

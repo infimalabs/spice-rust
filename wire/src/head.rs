@@ -120,6 +120,13 @@ pub struct ClaimHead {
     pub occupant: CanonicalUuid,
     /// Resident generation under which the claim was won.
     pub epoch: CanonicalUuid,
+    /// Dirty-handoff transaction whose replay this claim authorizes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub recovery: Option<String>,
     /// Whether the win remains active or how it ended.
     pub disposition: ClaimDisposition,
 }

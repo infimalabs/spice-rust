@@ -16,6 +16,7 @@ use std::os::unix::ffi::OsStringExt as _;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Component, Path, PathBuf};
+use wire::{Actor, CanonicalUuid, Phase, Seq, TaskStamp};
 
 const RECOVERY_DIRECTORY: &str = "spice-task-recovery";
 const MANIFEST_FILE: &str = "manifest.json";
@@ -37,6 +38,46 @@ impl Recovery {
     pub fn transaction(&self) -> &str {
         &self.transaction
     }
+
+    /// Whether text has the one spelling used by recovery content addresses.
+    #[must_use]
+    pub fn is_transaction(text: &str) -> bool {
+        text.len() == 40
+            && text
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+}
+
+/// Exact board claim one synchronized quarantine is allowed to open.
+///
+/// This intent is written before the board mutation crosses its journal
+/// boundary.  On restart the board's current heads therefore decide whether
+/// the transaction is still pre-claim and must roll back, or is the exact
+/// post-claim generation that may replay.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryClaim {
+    /// Actor authenticated for the claim.
+    pub actor: Actor,
+    /// Durable identity of the one named task.
+    pub task: TaskStamp,
+    /// Statement head witnessed before the claim.
+    pub statement: Seq,
+    /// Workflow head witnessed before the claim.
+    pub workflow: Seq,
+    /// Workflow phase witnessed before the claim.
+    pub phase: Phase,
+    /// Claim head witnessed before the claim, absent only for never-held work.
+    pub claim: Option<Seq>,
+    /// Lane bound to the claim.
+    pub lane: CanonicalUuid,
+    /// Occupant bound to the lane.
+    pub occupant: CanonicalUuid,
+    /// Resident epoch that may commit the claim.
+    pub epoch: CanonicalUuid,
+    /// Synchronized Git boundary the claim must journal.
+    pub boundary: GitBoundary,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -65,6 +106,8 @@ struct Manifest {
     version: u32,
     transaction: String,
     state: RecoveryState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim: Option<RecoveryClaim>,
     payload: Payload,
 }
 
@@ -167,6 +210,7 @@ pub fn quarantine_for_recovery(repository: &Repository) -> Result<Recovery, Erro
         version: RECOVERY_VERSION,
         transaction,
         state: RecoveryState::Captured,
+        claim: None,
         payload,
     };
     write_manifest(&root, &manifest)?;
@@ -186,6 +230,7 @@ pub(super) fn capture_recovery_for_test(repository: &Repository) -> Result<Recov
         version: RECOVERY_VERSION,
         transaction,
         state: RecoveryState::Captured,
+        claim: None,
         payload,
     };
     write_manifest(&root, &manifest)?;
@@ -243,6 +288,79 @@ fn resume_quarantine(repository: &Repository, recovery: Recovery) -> Result<Reco
         | RecoveryState::Synchronized { .. }
         | RecoveryState::Replaying { .. }
         | RecoveryState::Conflict { .. } => Ok(recovery),
+    }
+}
+
+/// Durably bind a synchronized quarantine to one exact board claim intent.
+pub fn bind_recovery_claim(
+    repository: &Repository,
+    recovery: &Recovery,
+    claim: RecoveryClaim,
+) -> Result<(), Error> {
+    let root = recovery_root(repository);
+    let mut manifest = read_expected(&root, recovery)?;
+    let boundary = synchronized_boundary(&manifest)?;
+    if boundary != claim.boundary {
+        return Err(recovery_refusal(
+            "git::recovery-claim-boundary-mismatch",
+            format!(
+                "recovery synchronized at {boundary:?}, but claim intent names {:?}",
+                claim.boundary
+            ),
+            "retain the quarantine and retry only against its exact synchronized boundary",
+        ));
+    }
+    match &manifest.claim {
+        Some(existing) if existing == &claim => return Ok(()),
+        Some(existing) => {
+            return Err(recovery_refusal(
+                "git::recovery-claim-ambiguous",
+                format!("sealed claim {existing:?}; requested claim {claim:?}"),
+                "retain the quarantine and resume only its originally sealed task claim",
+            ));
+        }
+        None => {}
+    }
+    manifest.claim = Some(claim);
+    write_manifest(&root, &manifest)
+}
+
+/// Read the exact board claim intent sealed beside a recovery transaction.
+pub fn recovery_claim(
+    repository: &Repository,
+    recovery: &Recovery,
+) -> Result<Option<RecoveryClaim>, Error> {
+    let root = recovery_root(repository);
+    let manifest = read_expected(&root, recovery)?;
+    let Some(claim) = manifest.claim.clone() else {
+        return Ok(None);
+    };
+    let boundary = synchronized_boundary(&manifest)?;
+    if boundary != claim.boundary {
+        return Err(recovery_refusal(
+            "git::recovery-claim-boundary-mismatch",
+            format!(
+                "recovery state names {boundary:?}, but sealed claim names {:?}",
+                claim.boundary
+            ),
+            "retain the quarantine and inspect its manifest before retrying",
+        ));
+    }
+    Ok(Some(claim))
+}
+
+fn synchronized_boundary(manifest: &Manifest) -> Result<GitBoundary, Error> {
+    match &manifest.state {
+        RecoveryState::Synchronized { boundary }
+        | RecoveryState::Replaying { boundary }
+        | RecoveryState::Conflict { boundary, .. } => Ok(boundary.clone()),
+        RecoveryState::Captured | RecoveryState::Quarantined | RecoveryState::Syncing { .. } => {
+            Err(recovery_refusal(
+                "git::recovery-claim-not-synchronized",
+                "the quarantine has no completed synchronized boundary",
+                "restore the pre-claim generation or complete synchronization before claiming",
+            ))
+        }
     }
 }
 

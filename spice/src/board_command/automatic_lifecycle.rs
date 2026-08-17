@@ -270,6 +270,7 @@ fn mint_claim(
             expiry,
             maximum,
             git: Some(git),
+            recovery: None,
             source,
         },
     )

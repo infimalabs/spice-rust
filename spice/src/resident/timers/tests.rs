@@ -420,6 +420,7 @@ fn seed_write(authority: &Authority) -> JournalWrite {
                     upstream_head: Some("baseline".to_owned()),
                     local_commits: 1,
                 }),
+                recovery: None,
                 source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Pending(added),
@@ -486,6 +487,7 @@ fn attach_heads(
         lane,
         occupant,
         epoch,
+        recovery: None,
         disposition: ClaimDisposition::Active,
     });
     let lease_task = authority.born();
@@ -589,8 +591,11 @@ fn capture_lapsed_task(fixture: &Fixture, heads: &TaskHeads) {
                 epoch: fixture.authority.epoch,
             },
         ],
-        body: serde_json::to_value(wire::intent::ClaimWin { rule: capture })
-            .expect("capture intent encodes"),
+        body: serde_json::to_value(wire::intent::ClaimWin {
+            rule: capture,
+            recovery: None,
+        })
+        .expect("capture intent encodes"),
     }
     .admit(&Accepted {
         wire: WireVersion::CURRENT,

@@ -297,6 +297,7 @@ fn add_claimed_task(journal: &mut Journal, offset: u64, actor: Actor) -> TaskSta
                 }),
                 until: instant(),
                 git: None,
+                recovery: None,
                 source: SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
@@ -314,6 +315,7 @@ fn add_claimed_task(journal: &mut Journal, offset: u64, actor: Actor) -> TaskSta
         lane,
         occupant,
         epoch,
+        recovery: None,
         disposition: ClaimDisposition::Active,
     });
     let lease_task = task.clone();

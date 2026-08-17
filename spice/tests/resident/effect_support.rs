@@ -99,6 +99,7 @@ pub(super) fn seed_active_claim(fixture: &Fixture) {
                 }),
                 until: expiry,
                 git: None,
+                recovery: None,
                 source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Existing(
@@ -117,6 +118,7 @@ pub(super) fn seed_active_claim(fixture: &Fixture) {
         lane,
         occupant,
         epoch,
+        recovery: None,
         disposition: ClaimDisposition::Active,
     });
     claim.lease_head(task, won, move |_| LeaseHead {

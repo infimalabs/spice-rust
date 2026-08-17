@@ -85,7 +85,10 @@ fn capture_parked(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandl
             Witness::Eligibility { rule: rule.clone() },
             residency(&available, seat),
         ],
-        &ClaimWin { rule },
+        &ClaimWin {
+            rule,
+            recovery: None,
+        },
     ));
     lane
 }

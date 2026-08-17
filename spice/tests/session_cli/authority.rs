@@ -393,6 +393,7 @@ fn mint_claim(
             expiry: instant(40),
             maximum: instant(50),
             git: None,
+            recovery: None,
             source: body::SourceBoundary::Proven { heads: Vec::new() },
         },
     )

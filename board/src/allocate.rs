@@ -47,6 +47,8 @@ pub struct Mint<'a> {
     pub maximum: Instant,
     /// Worktree boundary recorded with the claim, for callers that have one.
     pub git: Option<body::GitBoundary>,
+    /// Dirty-handoff transaction authorized by this claim, when any.
+    pub recovery: Option<String>,
     /// Accounted transcript the won phase opens at.
     ///
     /// Read by the caller rather than here, because this writer is handed an
@@ -140,6 +142,7 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
         expiry,
         maximum,
         git,
+        recovery,
         source,
         ..
     } = request;
@@ -154,6 +157,7 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
                 cell: Some(cell.clone()),
                 until: expiry,
                 git,
+                recovery: recovery.clone(),
                 source,
             },
             cause,
@@ -167,6 +171,7 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
         lane,
         occupant,
         epoch,
+        recovery,
         disposition: ClaimDisposition::Active,
     });
     write.lease_head(task, won, move |_| LeaseHead {
