@@ -508,6 +508,16 @@ pub enum LawError {
         /// Predicate class the row does not name.
         extra: WitnessKind,
     },
+    /// A required predicate names another subject than the command body.
+    #[error("{command} requires a {kind:?} witness bound to {target}")]
+    SubjectMismatch {
+        /// Command whose law was violated.
+        command: CommandKind,
+        /// Predicate class whose subject does not match the body.
+        kind: WitnessKind,
+        /// Body subject the predicate must name.
+        target: String,
+    },
 }
 
 impl CommandKind {
@@ -751,6 +761,26 @@ impl CommandKind {
                 return Err(LawError::Missing {
                     command: self,
                     missing: *required,
+                });
+            }
+        }
+        if let (
+            Self::TaskWake,
+            Intent::TaskWake(wake @ crate::intent::TaskWake { into: Some(_), .. }),
+        ) = (self, body)
+        {
+            let target = wake.task.born().ok();
+            let target_is_witnessed = expected.iter().any(|witness| {
+                matches!(
+                    (witness, target.as_ref()),
+                    (Witness::Task { task, .. }, Some(target)) if task == target
+                )
+            });
+            if !target_is_witnessed {
+                return Err(LawError::SubjectMismatch {
+                    command: self,
+                    kind: WitnessKind::Task,
+                    target: wake.task.to_string(),
                 });
             }
         }
