@@ -2,6 +2,81 @@
 
 use super::*;
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum CargoReachEscalationReason {
+    OutsidePackage,
+    UnreachedInPackage { package: String },
+}
+
+impl CargoReachEscalationReason {
+    pub(super) const fn kind(&self) -> &'static str {
+        match self {
+            Self::OutsidePackage => "outside-package",
+            Self::UnreachedInPackage { .. } => "unreached-in-package",
+        }
+    }
+
+    pub(super) fn package(&self) -> Option<&str> {
+        match self {
+            Self::OutsidePackage => None,
+            Self::UnreachedInPackage { package } => Some(package),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct CargoReachEscalation {
+    source: String,
+    reason: CargoReachEscalationReason,
+}
+
+impl CargoReachEscalation {
+    fn outside_package(source: &str) -> Self {
+        Self {
+            source: source.to_owned(),
+            reason: CargoReachEscalationReason::OutsidePackage,
+        }
+    }
+
+    fn unreached_in_package(source: &str, package: &str) -> Self {
+        Self {
+            source: source.to_owned(),
+            reason: CargoReachEscalationReason::UnreachedInPackage {
+                package: package.to_owned(),
+            },
+        }
+    }
+
+    pub(super) fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub(super) const fn reason(&self) -> &CargoReachEscalationReason {
+        &self.reason
+    }
+}
+
+pub(super) struct SelectionPlan {
+    report: crate::TestSelectionReport,
+    escalations: Vec<CargoReachEscalation>,
+}
+
+impl SelectionPlan {
+    #[cfg(test)]
+    pub(super) fn report(&self) -> &crate::TestSelectionReport {
+        &self.report
+    }
+
+    #[cfg(test)]
+    pub(super) fn escalations(&self) -> &[CargoReachEscalation] {
+        &self.escalations
+    }
+
+    pub(super) fn into_parts(self) -> (crate::TestSelectionReport, Vec<CargoReachEscalation>) {
+        (self.report, self.escalations)
+    }
+}
+
 pub(super) fn package_inventory(
     package: MetadataPackage,
     root: &Path,
@@ -67,12 +142,12 @@ pub(super) fn package_inventory(
     })
 }
 
-pub(super) fn selection_report(
+pub(super) fn selection_plan(
     inventory: &Inventory,
     root: &Path,
     source: wire::Digest,
     changed_sources: &[String],
-) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
+) -> Result<SelectionPlan, WorkspaceTestError> {
     let selected_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut build_sources = changed_sources
         .iter()
@@ -81,7 +156,7 @@ pub(super) fn selection_report(
         .collect::<Vec<_>>();
     build_sources.sort();
     build_sources.dedup();
-    let mut unmapped = Vec::new();
+    let mut escalations = BTreeSet::new();
     let mut tests = BTreeSet::new();
     let mut edges = BTreeSet::new();
     for changed in &build_sources {
@@ -109,7 +184,10 @@ pub(super) fn selection_report(
                     .filter(|target| target_reaches_source(target, &absolute))
                     .collect::<Vec<_>>();
                 if direct_targets.is_empty() {
-                    unmapped.push(changed.clone());
+                    escalations.insert(CargoReachEscalation::unreached_in_package(
+                        changed,
+                        &package.name,
+                    ));
                 } else {
                     let reaches_library = direct_targets
                         .iter()
@@ -129,22 +207,38 @@ pub(super) fn selection_report(
                     }
                 }
             }
-            None => unmapped.push(changed.clone()),
+            None => {
+                escalations.insert(CargoReachEscalation::outside_package(changed));
+            }
         }
     }
-    for changed in &unmapped {
+    for escalation in &escalations {
         for package in &inventory.packages {
-            select_package_targets(package, changed, &mut tests, &mut edges)?;
+            select_package_targets(package, escalation.source(), &mut tests, &mut edges)?;
         }
     }
-    crate::TestEvidenceGraph::select_tests(
+    let report = crate::TestEvidenceGraph::select_tests(
         source,
         build_sources,
         tests.into_iter().collect(),
         edges.into_iter().collect(),
         crate::CoverageCompleteness::Complete,
     )
-    .map_err(|error| WorkspaceTestError::new(error.to_string()))
+    .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
+    Ok(SelectionPlan {
+        report,
+        escalations: escalations.into_iter().collect(),
+    })
+}
+
+#[cfg(test)]
+pub(super) fn selection_report(
+    inventory: &Inventory,
+    root: &Path,
+    source: wire::Digest,
+    changed_sources: &[String],
+) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
+    selection_plan(inventory, root, source, changed_sources).map(|plan| plan.into_parts().0)
 }
 
 pub(super) fn exhaustive_selection_report(

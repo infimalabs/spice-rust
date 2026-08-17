@@ -7,15 +7,17 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
     let inventory = fixture_inventory();
     let source = wire::Digest::compute(wire::Domain::GateTree, b"selected Rust tree");
 
-    let report = selection_report(
+    let plan = selection_plan(
         &inventory,
         Path::new("/workspace"),
         source.clone(),
         &["fixture-a/src/behavior.rs".to_owned()],
     )
     .expect("workspace reach graph selects tests");
+    let report = plan.report();
 
     assert!(report.admits());
+    assert!(plan.escalations().is_empty());
     assert_eq!(report.source(), &source);
     assert_eq!(report.changed_sources(), ["fixture-a/src/behavior.rs"]);
     assert_eq!(report.engines(), ["cargo-workspace"]);
@@ -28,7 +30,7 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
             .all(|edge| edge.source() == "fixture-a/src/behavior.rs")
     );
     assert_eq!(
-        crate::TestSelectionReport::decode(&report.encode().expect("encode selection"))
+        &crate::TestSelectionReport::decode(&report.encode().expect("encode selection"))
             .expect("decode selection"),
         report
     );
@@ -157,15 +159,17 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
         source_bytes: 1,
     });
 
-    let report = selection_report(
+    let plan = selection_plan(
         &inventory,
         Path::new("/workspace"),
         wire::Digest::compute(wire::Domain::GateTree, b"library-dependent tests"),
         &["fixture-a/src/behavior.rs".to_owned()],
     )
     .expect("library reach expands through its package test targets");
+    let report = plan.report();
 
     assert!(report.admits());
+    assert!(plan.escalations().is_empty());
     assert_eq!(
         report.tests(),
         ["fixture-a::lib:fixture-a", "fixture-a::test:behavior"]
@@ -216,14 +220,16 @@ fn package_manifest_and_build_script_select_every_test_target_in_their_package()
     });
 
     for source in ["fixture-a/Cargo.toml", "fixture-a/build.rs"] {
-        let report = selection_report(
+        let plan = selection_plan(
             &inventory,
             Path::new("/workspace"),
             wire::Digest::compute(wire::Domain::GateTree, source.as_bytes()),
             &[source.to_owned()],
         )
         .expect("package-wide build source selects tests");
+        let report = plan.report();
 
+        assert!(plan.escalations().is_empty());
         assert!(report.admits());
         assert_eq!(
             report.tests(),
@@ -237,14 +243,16 @@ fn package_manifest_and_build_script_select_every_test_target_in_their_package()
 fn workspace_and_gate_authorities_select_the_complete_test_inventory() {
     let inventory = fixture_inventory();
     for source in ["Cargo.lock", "spice-rust.toml"] {
-        let report = selection_report(
+        let plan = selection_plan(
             &inventory,
             Path::new("/workspace"),
             wire::Digest::compute(wire::Domain::GateTree, source.as_bytes()),
             &[source.to_owned()],
         )
         .expect("workspace authority selects every test target");
+        let report = plan.report();
 
+        assert!(plan.escalations().is_empty());
         assert!(report.admits());
         assert_eq!(
             report.tests(),
@@ -283,15 +291,27 @@ fn explicit_exhaustive_mode_maps_even_unknown_non_build_paths_to_every_target() 
 
 #[test]
 fn rust_source_inside_a_package_but_outside_target_roots_escalates_to_the_workspace() {
-    let report = selection_report(
+    let plan = selection_plan(
         &fixture_inventory(),
         Path::new("/workspace"),
         wire::Digest::compute(wire::Domain::GateTree, b"unreachable package source"),
         &["fixture-a/tools/unreachable.rs".to_owned()],
     )
     .expect("unreachable package source remains reportable");
+    let report = plan.report();
 
     assert!(report.admits());
+    assert_eq!(plan.escalations().len(), 1);
+    assert_eq!(
+        plan.escalations()[0].source(),
+        "fixture-a/tools/unreachable.rs"
+    );
+    assert_eq!(
+        plan.escalations()[0].reason(),
+        &CargoReachEscalationReason::UnreachedInPackage {
+            package: "fixture-a".to_owned(),
+        }
+    );
     assert_eq!(
         report.tests(),
         ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
@@ -308,15 +328,22 @@ fn rust_source_inside_a_package_but_outside_target_roots_escalates_to_the_worksp
 
 #[test]
 fn rust_source_outside_workspace_packages_escalates_to_the_workspace() {
-    let report = selection_report(
+    let plan = selection_plan(
         &fixture_inventory(),
         Path::new("/workspace"),
         wire::Digest::compute(wire::Domain::GateTree, b"unknown Rust tree"),
         &["tools/outside.rs".to_owned()],
     )
     .expect("unknown selection remains reportable");
+    let report = plan.report();
 
     assert!(report.admits());
+    assert_eq!(plan.escalations().len(), 1);
+    assert_eq!(plan.escalations()[0].source(), "tools/outside.rs");
+    assert_eq!(
+        plan.escalations()[0].reason(),
+        &CargoReachEscalationReason::OutsidePackage
+    );
     assert_eq!(
         report.tests(),
         ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
@@ -335,23 +362,74 @@ fn rust_source_outside_workspace_packages_escalates_to_the_workspace() {
 
 #[test]
 fn partially_mapped_rust_sources_retain_edges_and_escalate_unknown_reach() {
-    let report = selection_report(
+    let plan = selection_plan(
         &fixture_inventory(),
         Path::new("/workspace"),
         wire::Digest::compute(wire::Domain::GateTree, b"incomplete Rust tree"),
         &[
+            "tools/outside.rs".to_owned(),
             "fixture-a/src/behavior.rs".to_owned(),
+            "fixture-a/tools/unreachable.rs".to_owned(),
             "tools/outside.rs".to_owned(),
         ],
     )
     .expect("incomplete selection remains reportable");
+    let report = plan.report();
 
     assert!(report.admits());
+    assert_eq!(
+        report.changed_sources(),
+        [
+            "fixture-a/src/behavior.rs",
+            "fixture-a/tools/unreachable.rs",
+            "tools/outside.rs",
+        ],
+        "selected sources are canonical, sorted, and deduplicated"
+    );
+    assert_eq!(
+        plan.escalations()
+            .iter()
+            .map(|escalation| (
+                escalation.source(),
+                escalation.reason().kind(),
+                escalation.reason().package(),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "fixture-a/tools/unreachable.rs",
+                "unreached-in-package",
+                Some("fixture-a"),
+            ),
+            ("tools/outside.rs", "outside-package", None),
+        ],
+        "escalations retain typed reasons in stable source order without duplicating inputs"
+    );
+    let mut diagnostics = Vec::new();
+    write_reach_escalations(&mut diagnostics, plan.escalations())
+        .expect("render mixed reach escalations");
+    assert_eq!(
+        String::from_utf8(diagnostics)
+            .expect("reach escalation diagnostics are UTF-8")
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            concat!(
+                "[rust-test-reach-escalation] ",
+                "source=\"fixture-a/tools/unreachable.rs\" ",
+                "reason=unreached-in-package package=\"fixture-a\""
+            ),
+            concat!(
+                "[rust-test-reach-escalation] source=\"tools/outside.rs\" ",
+                "reason=outside-package"
+            ),
+        ]
+    );
     assert_eq!(
         report.tests(),
         ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
     );
-    assert_eq!(report.edges().len(), 3);
+    assert_eq!(report.edges().len(), 5);
     assert_eq!(
         report
             .edges()
