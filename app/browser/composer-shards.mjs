@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 
-import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
 /// Production resolves one destination per primary shard, in one order
 /// (`primary_stream_link` in app/src/browser/watchband.rs): the last rendered
-/// card owned by that exact lane, and only when the lane has rendered no card
-/// at all the explicitly named lineage-stream default. Both branches are read
-/// back off the live DOM rather than spelled out here, because a hand-written
-/// anchor id is precisely what went stale when that resolver landed.
+/// agent-message card owned by that exact lane, and only when the lane has
+/// rendered no message card at all the explicitly named lineage-stream
+/// default. Both branches are read back off the live DOM rather than spelled
+/// out here, because a hand-written anchor id is precisely what went stale
+/// when that resolver landed.
 export async function primaryDestination(team, lane) {
   const link = team.locator(
     `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-link`,
@@ -15,19 +16,22 @@ export async function primaryDestination(team, lane) {
   const href = await link.getAttribute("href");
   const label = await link.getAttribute("aria-label");
   const rendered = await team
-    .locator(`.team-activity-grid .mosaic-message-card[data-agent-lane="${lane}"]`)
+    .locator(
+      `.team-activity-grid .mosaic-message-card[data-card-kind="agent-message"]`
+        + `[data-agent-lane="${lane}"]`,
+    )
     .evaluateAll((cards) => cards.map((card) => card.id));
   if (rendered.length === 0) {
     const stream = await team.locator(".team-activity-grid").getAttribute("id");
-    assert.match(stream, /^lineage-stream-/, "the no-card default names the lineage stream");
-    assert.equal(href, `#${stream}`, `${lane} renders no card and takes the lineage default`);
+    assert.match(stream, /^lineage-stream-/, "the no-message default names the lineage stream");
+    assert.equal(href, `#${stream}`, `${lane} renders no message and takes the lineage default`);
     assert.equal(label, "Jump to lineage activity", `${lane} announces the lineage default`);
     return { link, href, rendered };
   }
   assert.equal(
     href,
     `#${rendered.at(-1)}`,
-    `${lane} links to the latest card it owns rather than merely one of them`,
+    `${lane} links to its latest agent message rather than another owned card`,
   );
   assert.match(
     label,
@@ -35,6 +39,34 @@ export async function primaryDestination(team, lane) {
     `${lane} announces its own latest activity, not the lineage default`,
   );
   return { link, href, rendered };
+}
+
+async function appendPrimaryDestinationProbe(team, fixture, lane, ordinal) {
+  const text = `primary destination ordering witness ${ordinal} ${crypto.randomUUID()}`;
+  await reply(fixture, ["steer", lane, text]);
+  const inbox = await reply(fixture, ["inbox", lane]);
+  const pending = inbox.body.lanes[0].pending.find((directive) => directive.text === text);
+  assert.ok(pending, `the primary destination probe reached ${lane}`);
+  const card = team.locator(
+    `.mosaic-message-card[data-card-kind="directive"][data-agent-lane="${lane}"]`
+      + `[data-directive="${pending.directive}"]`,
+  );
+  await card.waitFor({ timeout: TRANSITION_MS });
+  const order = await team
+    .locator(`.team-activity-grid .mosaic-message-card[data-agent-lane="${lane}"]`)
+    .evaluateAll((cards) => cards.map((candidate) => ({
+      directive: candidate.dataset.directive,
+      kind: candidate.dataset.cardKind,
+    })).map((candidate, index) => ({ ...candidate, index })));
+  const latestMessage = order.filter((candidate) => candidate.kind === "agent-message").at(-1);
+  const probe = order.find((candidate) => candidate.directive === pending.directive);
+  assert.ok(latestMessage, `${lane} renders an agent message before the ordering probe`);
+  assert.ok(probe, `${lane} renders the exact ordering probe directive`);
+  assert.ok(
+    probe.index > latestMessage.index,
+    `${lane} renders a newer directive after its latest agent message: ${JSON.stringify(order)}`,
+  );
+  return { card, directive: pending.directive };
 }
 
 /// A draft shard shows the operator what they typed and nothing built from it:
@@ -142,6 +174,7 @@ async function assertHorizontalComposerStrip(page, team) {
 /** Exercise the quote-created shard, source-link, drawer, and scroll contract. */
 export async function assertComposerShards({
   page,
+  fixture,
   team,
   quoteLane,
   quoteActivity,
@@ -271,13 +304,18 @@ export async function assertComposerShards({
   );
 
   const primarySources = [];
-  for (const lane of [seeded.lane, seeded.quoteLane]) {
+  const destinationLanes = [seeded.lane, seeded.quoteLane];
+  const destinationProbes = [];
+  for (const [index, lane] of destinationLanes.entries()) {
+    destinationProbes.push(await appendPrimaryDestinationProbe(team, fixture, lane, index + 1));
+  }
+  for (const lane of destinationLanes) {
     const { link, href, rendered } = await primaryDestination(team, lane);
-    assert.ok(rendered.length > 1, `${lane} owns several cards, so "latest" is a real choice`);
+    assert.ok(rendered.length, `${lane} owns an agent message before its newer directive`);
     assert.match(
       href,
-      /^#message-(?:agent|directive)-/,
-      "a primary shard with activity links to a real source card",
+      /^#message-agent-/,
+      "a primary shard with agent prose links to a real agent-message source card",
     );
     const primarySource = page.locator(href);
     // Counted rather than waited for, so a destination nothing renders names
@@ -291,6 +329,11 @@ export async function assertComposerShards({
       await primarySource.getAttribute("data-agent-lane"),
       lane,
       "the primary shard target belongs to that exact agent",
+    );
+    assert.equal(
+      await primarySource.getAttribute("data-card-kind"),
+      "agent-message",
+      "a newer directive never displaces the primary shard's message destination",
     );
     await link.click();
     assert.equal(await page.evaluate(() => window.location.hash), href);
@@ -315,6 +358,10 @@ export async function assertComposerShards({
     .evaluateAll((agents) => agents.map((agent) => agent.dataset.agentLane));
   assert.ok(seatedLanes.length > 2, "the lineage seats more agents than the two proven above");
   for (const lane of seatedLanes) await primaryDestination(team, lane);
+  for (const probe of destinationProbes) {
+    await reply(fixture, ["steer", "cancel", probe.directive]);
+    await probe.card.waitFor({ state: "detached", timeout: TRANSITION_MS });
+  }
 
   await nestedCard.click();
   let previewShard = quoteLane
