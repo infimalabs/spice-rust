@@ -147,14 +147,14 @@ impl GateRepository {
         .expect("write staged source with selected-target marker");
     }
 
-    pub(super) fn write_selected_test_with_state_writer(&self, marker: &Path) {
+    pub(super) fn write_selected_test_with_state_removal(&self, marker: &Path) {
         let marker = format!("{:?}", marker.to_string_lossy());
-        let state = format!(
-            "{:?}",
-            self.path()
-                .join(".git/.spice-rs/data/gate-state.json")
-                .to_string_lossy(),
-        );
+        let state = self.path().join(".git/.spice-rs/data/gate-state.json");
+        fs::create_dir_all(state.parent().expect("gate-state parent"))
+            .expect("create stale gate-state parent");
+        fs::write(&state, b"{\"version\":1,\"latches\":[],\"claims\":[]}")
+            .expect("seed present canonical gate state");
+        let state = format!("{:?}", state.to_string_lossy());
         fs::write(
             self.path().join("src/lib.rs"),
             format!(
@@ -171,25 +171,23 @@ impl GateRepository {
                     "    writeln!(marker, \"canonical selected target executed\")\n",
                     "        .expect(\"append selected-target execution marker\");\n",
                     "    let state = std::path::Path::new({state});\n",
-                    "    std::fs::create_dir_all(state.parent().expect(\"gate-state parent\"))\n",
-                    "        .expect(\"create concurrent gate-state parent\");\n",
-                    "    std::fs::write(state, b\"{{\\\"version\\\":1,\\\"latches\\\":[],\\\"claims\\\":[]}}\")\n",
-                    "        .expect(\"publish concurrent canonical gate state\");\n",
+                    "    std::fs::remove_file(state)\n",
+                    "        .expect(\"remove the captured gate state before publication\");\n",
                     "}}\n",
                 ),
                 marker = marker,
                 state = state,
             ),
         )
-        .expect("write staged source with selected-target state writer");
+        .expect("write staged source with selected-target state removal");
         let output = Command::new("rustfmt")
             .args(["--edition", "2024"])
             .arg(self.path().join("src/lib.rs"))
             .output()
-            .expect("launch rustfmt for concurrent state-writer fixture");
+            .expect("launch rustfmt for stale state-removal fixture");
         assert!(
             output.status.success(),
-            "format concurrent state-writer fixture: {}",
+            "format stale state-removal fixture: {}",
             String::from_utf8_lossy(&output.stderr),
         );
     }
@@ -232,11 +230,12 @@ pub(super) fn git_output(root: &Path, arguments: &[&str]) -> std::process::Outpu
     output
 }
 
-/// Build an isolated fixture command without inheriting an outer gate selection.
+/// Build a fixture command isolated from an outer installed gate selection.
 pub(super) fn fixture_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     command
         .env_remove("GIT_INDEX_FILE") // env-policy: allow
+        .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
         .env_remove(wire::SpiceVariable::PreCommitPaths.as_str())
         .env_remove(wire::SpiceVariable::PreCommitSource.as_str());
     command

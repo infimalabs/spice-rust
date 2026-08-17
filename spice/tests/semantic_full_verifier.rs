@@ -19,7 +19,7 @@ use spice::gate::{
 use spice::repository::Repository;
 
 #[test]
-fn full_verifier_semantic_reuse_crosses_the_complete_evidence_lifecycle() {
+fn full_verifier_retries_stale_state_and_crosses_the_complete_evidence_lifecycle() {
     let fixture = Fixture::new();
     fixture.write_repository();
     fixture.write_tools();
@@ -503,7 +503,7 @@ fn semantic_lifecycle_fixture_process() {
     let root = env::current_dir().expect("fixture current directory");
     stage_protected_source_change(&root);
     let repository = Repository::discover(&root).expect("discover fixture repository");
-    let evidence = publish_producer_evidence(&repository);
+    let evidence = publish_producer_evidence_after_state_disappears(&repository);
     assert_source_gate_reuses_complete_evidence(&root);
     assert_pre_commit_reuses_complete_evidence(&root);
 
@@ -666,6 +666,24 @@ fn assert_pre_commit_reuses_complete_evidence(root: &Path) {
 }
 
 fn publish_producer_evidence(repository: &Repository) -> FullVerifierEvidence {
+    publish_producer_evidence_with_state_removal(repository, None)
+}
+
+fn publish_producer_evidence_after_state_disappears(
+    repository: &Repository,
+) -> FullVerifierEvidence {
+    let state = gate::current_state_path(repository.common_dir());
+    fs::create_dir_all(state.parent().expect("gate-state parent"))
+        .expect("create full-verifier gate-state parent");
+    fs::write(&state, b"{\"version\":1,\"latches\":[],\"claims\":[]}")
+        .expect("seed present full-verifier gate state");
+    publish_producer_evidence_with_state_removal(repository, Some(&state))
+}
+
+fn publish_producer_evidence_with_state_removal(
+    repository: &Repository,
+    disappearing_state: Option<&Path>,
+) -> FullVerifierEvidence {
     let mut prepared = prepare_strict(Selector::staged()).expect("prepare producer source");
     let compiler = compiler_evidence(&mut prepared);
     let battery = prepared
@@ -689,8 +707,17 @@ fn publish_producer_evidence(repository: &Repository) -> FullVerifierEvidence {
             })
             .collect::<Vec<_>>(),
     );
+    if let Some(state) = disappearing_state {
+        fs::remove_file(state).expect("remove captured full-verifier gate state");
+    }
     let evidence = FullVerifierEvidence::mint(repository, 1, &battery, &compiler, &prepared)
         .expect("mint complete full-verifier evidence");
+    if let Some(state) = disappearing_state {
+        assert!(
+            state.is_file(),
+            "fresh full-verifier retry anchor did not republish gate state",
+        );
+    }
     let encoded = evidence.encode().expect("serialize complete evidence");
     assert!(!encoded.is_empty());
     evidence

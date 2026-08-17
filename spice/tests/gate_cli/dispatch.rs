@@ -360,7 +360,7 @@ fn explicitly_trusted_source_override_runs_one_public_spice_leaf_through_the_hoo
     clippy::disallowed_methods,
     reason = "the configured process-boundary fixture must preserve the invoking test PATH"
 )]
-fn configured_source_gate_composes_a_concurrent_state_writer_under_continuous_peer_cargo() {
+fn configured_source_gate_retries_stale_state_without_repeating_selected_tests() {
     let repository = configured_source_gate_repository();
     let first = run_commit_worker(repository.path());
     let failure = terminal_failure(&first);
@@ -375,9 +375,10 @@ fn configured_source_gate_composes_a_concurrent_state_writer_under_continuous_pe
         .expect("trust refusal digest is canonical");
     grant_fixture_trust(&repository, digest);
 
-    let scratch = Scratch::new("configured-state-composition");
+    let scratch = Scratch::new("configured-stale-state-retry");
     let marker = scratch.path().join("selected-tests.log");
-    repository.write_selected_test_with_state_writer(&marker);
+    let progress = scratch.path().join("gate-progress.log");
+    repository.write_selected_test_with_state_removal(&marker);
     repository.add("src/lib.rs");
     repository.install_pre_commit();
 
@@ -386,7 +387,10 @@ fn configured_source_gate_composes_a_concurrent_state_writer_under_continuous_pe
             .map(|directory| directory.join("cargo"))
             .find(|candidate| candidate.is_file())
             .expect("locate real Cargo on PATH");
+    let test_executable = std::env::current_exe().expect("resolve gate CLI test executable");
     assert!(!real_cargo.to_string_lossy().contains('\''));
+    assert!(!test_executable.to_string_lossy().contains('\''));
+    assert!(!progress.to_string_lossy().contains('\''));
     let programs = scratch.path().join("programs");
     fs::create_dir(&programs).expect("create configured source-gate program directory");
     let cargo = programs.join("cargo");
@@ -397,11 +401,16 @@ fn configured_source_gate_composes_a_concurrent_state_writer_under_continuous_pe
                 "#!/bin/sh\n",
                 "if [ \"${{1-}}\" = \"__peer-load\" ]; then read _; exit 0; fi\n",
                 "if [ \"$*\" = \"run --quiet --locked --package spice --bin spice -- gate selection\" ]; then\n",
-                "  exec '{}' gate selection\n",
+                "  '{}' --ignored --exact dispatch::configured_source_gate_selection_fixture_process --nocapture >'{}' 2>&1\n",
+                "  status=$?\n",
+                "  if [ \"$status\" -ne 0 ]; then /bin/cat '{}' >&2; fi\n",
+                "  exit \"$status\"\n",
                 "fi\n",
                 "exec '{}' \"$@\"\n",
             ),
-            env!("CARGO_BIN_EXE_spice"),
+            test_executable.display(),
+            progress.display(),
+            progress.display(),
             real_cargo.display(),
         ),
     );
@@ -436,10 +445,40 @@ fn configured_source_gate_composes_a_concurrent_state_writer_under_continuous_pe
         peers.0.iter().all(|peer| process_exists(peer.id())),
         "peer Cargo fixtures did not remain live through pre-commit completion",
     );
+    assert_configured_stale_retry(&repository, &marker, &progress);
+}
+
+fn assert_configured_stale_retry(repository: &GateRepository, marker: &Path, progress: &Path) {
     assert_eq!(
         fs::read_to_string(marker).expect("read selected-test executions"),
         "canonical selected target executed\n",
-        "conflict-aware state publication reran an already-complete selected test",
+        "stale state publication reran an already-complete selected test",
+    );
+    let progress = fs::read_to_string(progress).expect("read configured gate progress");
+    let stale_retry = "[change-gate-state] disposition=stale-retry publication_attempt=1";
+    assert_eq!(
+        progress.lines().filter(|line| *line == stale_retry).count(),
+        1,
+        "configured gate did not report exactly one typed stale retry: {progress}",
+    );
+    assert!(
+        repository
+            .path()
+            .join(".git/.spice-rs/data/gate-state.json")
+            .is_file(),
+        "fresh retry anchor did not republish gate state",
+    );
+}
+
+#[test]
+#[ignore = "subprocess fixture exposing configured change-gate progress"]
+fn configured_source_gate_selection_fixture_process() {
+    let mut progress = std::io::stdout();
+    let report = spice::change_gate::run_current_source(&mut progress)
+        .expect("run configured current-source selection");
+    assert!(
+        report.admits(),
+        "configured current-source selection refused"
     );
 }
 
