@@ -3,7 +3,7 @@
 use wire::intent::{BodyShape, CommandAnswer, Intent, StateAnswer};
 use wire::{
     Accepted, Actor, CanonicalUuid, Command, CommandKind, CommandRejection, Outcome, Reply,
-    ReplyPosition, ResidentState, WireVersion, Witness,
+    ReplyPosition, ResidentState, Seq, WireVersion, Witness,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -112,4 +112,58 @@ fn missing_witness_and_wrong_body_stop_before_business_logic() {
         Err(CommandRejection::Fault(wire::Fault { ref reason, .. }))
             if reason == "command::body-undecodable"
     ));
+}
+
+fn wake(into: Option<&str>, statement: bool) -> Command<serde_json::Value> {
+    let task: wire::TaskStamp = "0000000B".parse().expect("fixture task stamp");
+    let mut expected = vec![
+        Witness::Workflow {
+            task: task.clone(),
+            head: Seq::new(10).expect("fixture workflow head"),
+            phase: "todo".parse().expect("fixture phase"),
+        },
+        Witness::Deferral {
+            task: task.clone(),
+            head: Seq::new(10).expect("fixture deferral head"),
+            deferred: true,
+        },
+    ];
+    if statement {
+        expected.push(Witness::Task {
+            task,
+            head: Seq::new(9).expect("fixture statement head"),
+        });
+    }
+    Command {
+        v: WireVersion::CURRENT,
+        id: uuid(5),
+        epoch: uuid(1),
+        kind: CommandKind::TaskWake,
+        expected,
+        body: into.map_or_else(
+            || serde_json::json!({ "task": "SPICE-aBcD" }),
+            |project| serde_json::json!({ "task": "SPICE-aBcD", "into": project }),
+        ),
+    }
+}
+
+#[test]
+fn wake_promotion_requires_statement_authority_but_plain_wake_does_not() {
+    let Err(CommandRejection::Refusal(refusal)) =
+        wake(Some("board.test"), false).admit(&accepted(Actor::Operator))
+    else {
+        panic!("promotion without a task witness must refuse");
+    };
+    assert_eq!(refusal.reason(), "command::witness-law");
+
+    let plain = wake(None, false)
+        .admit(&accepted(Actor::Operator))
+        .expect("plain wake retains workflow and deferral authority");
+    assert!(matches!(
+        plain.body(),
+        Intent::TaskWake(wire::intent::TaskWake { into: None, .. })
+    ));
+    wake(Some("board.test"), true)
+        .admit(&accepted(Actor::Operator))
+        .expect("promotion with exact statement authority admits");
 }

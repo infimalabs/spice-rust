@@ -731,6 +731,32 @@ impl CommandKind {
         }
     }
 
+    fn required_for_intent(self, body: &Intent) -> &'static [WitnessKind] {
+        if matches!(
+            (self, body),
+            (Self::TaskWake, Intent::TaskWake(wake)) if wake.into.is_some()
+        ) {
+            return &[
+                WitnessKind::Workflow,
+                WitnessKind::Deferral,
+                WitnessKind::Task,
+            ];
+        }
+        self.law().required
+    }
+
+    fn witnessed_intent(self, expected: &[Witness], body: &Intent) -> Result<(), LawError> {
+        for required in self.required_for_intent(body) {
+            if !expected.iter().any(|witness| witness.kind() == *required) {
+                return Err(LawError::Missing {
+                    command: self,
+                    missing: *required,
+                });
+            }
+        }
+        Ok(())
+    }
+
     const fn non_task_law(self) -> Law {
         match self {
             Self::DocApply => Law::APPLY,
@@ -1060,17 +1086,7 @@ impl Command<serde_json::Value> {
             )));
         }
         if let Err(error) = self.witnessed() {
-            return Err(CommandRejection::Refusal(Refusal::bare(
-                RefusalDiagnostic::new(
-                    "command::witness-law",
-                    Some(error.to_string()),
-                    Some(format!("{:?}", law.required)),
-                    Some(format!(
-                        "{:?}",
-                        self.expected.iter().map(Witness::kind).collect::<Vec<_>>()
-                    )),
-                ),
-            )));
+            return Err(witness_law_rejection(error, law.required, &self.expected));
         }
         let encoded = serde_json::to_vec(&self.body).map_err(|error| {
             CommandRejection::Fault(Fault {
@@ -1086,6 +1102,13 @@ impl Command<serde_json::Value> {
                 detail: error.to_string(),
             })
         })?;
+        if let Err(error) = self.kind.witnessed_intent(&self.expected, &body) {
+            return Err(witness_law_rejection(
+                error,
+                self.kind.required_for_intent(&body),
+                &self.expected,
+            ));
+        }
         Ok(AdmittedCommand {
             id: self.id,
             epoch: self.epoch,
@@ -1095,6 +1118,22 @@ impl Command<serde_json::Value> {
             body,
         })
     }
+}
+
+fn witness_law_rejection(
+    error: LawError,
+    required: &[WitnessKind],
+    expected: &[Witness],
+) -> CommandRejection {
+    CommandRejection::Refusal(Refusal::bare(RefusalDiagnostic::new(
+        "command::witness-law",
+        Some(error.to_string()),
+        Some(format!("{required:?}")),
+        Some(format!(
+            "{:?}",
+            expected.iter().map(Witness::kind).collect::<Vec<_>>()
+        )),
+    )))
 }
 
 impl<B: Serialize> Command<B> {
