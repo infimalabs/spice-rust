@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sill::CancellationToken;
 
@@ -18,6 +18,7 @@ pub(super) struct SetupRun<Rebalance> {
     structural_completed: bool,
     structural_failure: Option<VerifyError>,
     workspace_prebuild_started: bool,
+    workspace_prebuild_progress: Option<(Instant, Duration)>,
     workspace_prebuilt: bool,
     prebuild_failure: Option<VerifyError>,
     output_fault: Option<io::Error>,
@@ -30,6 +31,7 @@ impl<Rebalance> SetupRun<Rebalance> {
             structural_completed: false,
             structural_failure: None,
             workspace_prebuild_started: false,
+            workspace_prebuild_progress: None,
             workspace_prebuilt: false,
             prebuild_failure: None,
             output_fault: None,
@@ -82,9 +84,27 @@ impl<Rebalance> SetupRun<Rebalance> {
         output: &mut impl Write,
         cancellation: &CancellationToken,
     ) {
+        self.workspace_prebuild_progress = None;
         self.workspace_prebuilt = completion.result.is_ok();
         let rendered = render_workspace_test_prebuild(completion, output);
         self.record(rendered, false, cancellation);
+    }
+
+    pub(super) fn write_due_progress(&mut self, output: &mut impl Write) -> io::Result<()> {
+        let Some((started, next_progress)) = &mut self.workspace_prebuild_progress else {
+            return Ok(());
+        };
+        if started.elapsed() < *next_progress {
+            return Ok(());
+        }
+        writeln!(
+            output,
+            "[verify] stage=setup-progress elapsed_ms={} identity={WORKSPACE_TEST_PREBUILD_LABEL:?}",
+            next_progress.as_millis(),
+        )?;
+        output.flush()?;
+        *next_progress += super::PROGRESS_INTERVAL;
+        Ok(())
     }
 }
 
@@ -128,6 +148,7 @@ impl<Rebalance: FnOnce(Budget) -> Budget> SetupRun<Rebalance> {
                 return None;
             }
             self.workspace_prebuild_started = true;
+            self.workspace_prebuild_progress = Some((Instant::now(), super::PROGRESS_INTERVAL));
             *running += 1;
         }
         if !self.workspace_prebuilt
