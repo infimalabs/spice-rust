@@ -206,6 +206,18 @@ pub(super) fn finish_recovery_capture_for_test(
 }
 
 #[cfg(test)]
+pub(super) fn journal_syncing_for_test(
+    repository: &Repository,
+    recovery: &Recovery,
+    boundary: GitBoundary,
+) -> Result<(), Error> {
+    let root = recovery_root(repository);
+    let mut manifest = read_expected(&root, recovery)?;
+    manifest.state = RecoveryState::Syncing { boundary };
+    write_manifest(&root, &manifest)
+}
+
+#[cfg(test)]
 pub(super) fn journal_replaying_for_test(
     repository: &Repository,
     recovery: &Recovery,

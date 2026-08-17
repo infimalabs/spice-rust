@@ -280,6 +280,87 @@ fn configuration_movement_refuses_before_cleaning_until_the_seal_is_restored() {
 }
 
 #[test]
+fn post_quarantine_configuration_movement_refuses_before_fetch_or_head_advance() {
+    let fixture = Fixture::new("dirty-config-sync");
+    fs::write(fixture.agent.join("dirty.txt"), "dirty\n").expect("write dirty bytes");
+    let original = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+    let recovery = quarantine_for_recovery(&fixture.repository()).expect("quarantine dirty lane");
+    fixture.peer_commit("peer.txt", "peer\n");
+    assert_eq!(
+        stdout(&fixture.agent, &["rev-parse", "refs/remotes/origin/main"]),
+        original
+    );
+    let original_merge = stdout(&fixture.agent, &["config", "--get", "branch.main.merge"]);
+    git(
+        &fixture.agent,
+        &["config", "branch.main.merge", "refs/heads/other"],
+    );
+
+    let error = synchronize_recovery(&fixture.repository(), &recovery)
+        .expect_err("moved configuration refuses synchronization");
+
+    assert_eq!(error.reason(), "git::recovery-snapshot-moved");
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), original);
+    assert_eq!(
+        stdout(&fixture.agent, &["rev-parse", "refs/remotes/origin/main"]),
+        original
+    );
+    git(
+        &fixture.agent,
+        &["config", "branch.main.merge", &original_merge],
+    );
+    restore_recovery(&fixture.repository(), &recovery)
+        .expect("restore exact handoff after synchronization refusal");
+    assert_eq!(
+        fs::read_to_string(fixture.agent.join("dirty.txt")).expect("read restored dirty bytes"),
+        "dirty\n"
+    );
+}
+
+#[test]
+fn syncing_restart_checks_configuration_before_resuming_fetch() {
+    let fixture = Fixture::new("dirty-config-sync-restart");
+    fs::write(fixture.agent.join("dirty.txt"), "dirty\n").expect("write dirty bytes");
+    let original = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+    let recovery = quarantine_for_recovery(&fixture.repository()).expect("quarantine dirty lane");
+    let upstream = fixture.peer_commit("peer.txt", "peer\n");
+    let boundary = boundary(
+        upstream.clone(),
+        upstream.clone(),
+        Some("origin/main"),
+        Some(upstream),
+        0,
+    );
+    journal_syncing_for_test(&fixture.repository(), &recovery, boundary)
+        .expect("journal interrupted synchronization");
+    let original_remote = stdout(&fixture.agent, &["remote", "get-url", "origin"]);
+    git(
+        &fixture.agent,
+        &["config", "remote.origin.url", "/does/not/exist"],
+    );
+
+    let error = synchronize_recovery(&fixture.repository(), &recovery)
+        .expect_err("moved configuration refuses synchronization restart");
+
+    assert_eq!(error.reason(), "git::recovery-snapshot-moved");
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), original);
+    assert_eq!(
+        stdout(&fixture.agent, &["rev-parse", "refs/remotes/origin/main"]),
+        original
+    );
+    git(
+        &fixture.agent,
+        &["config", "remote.origin.url", &original_remote],
+    );
+    restore_recovery(&fixture.repository(), &recovery)
+        .expect("restore exact handoff after restart refusal");
+    assert_eq!(
+        fs::read_to_string(fixture.agent.join("dirty.txt")).expect("read restored dirty bytes"),
+        "dirty\n"
+    );
+}
+
+#[test]
 fn unsupported_fifo_refuses_before_cleaning_any_other_path() {
     let fixture = Fixture::new("dirty-fifo");
     let fifo = fixture.agent.join("handoff.fifo");

@@ -903,6 +903,7 @@ pub use recovery::{
 #[cfg(test)]
 use recovery::{
     capture_recovery_for_test, finish_recovery_capture_for_test, journal_replaying_for_test,
+    journal_syncing_for_test,
 };
 mod transaction;
 use transaction::*;
