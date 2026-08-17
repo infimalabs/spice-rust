@@ -287,6 +287,120 @@ fn public_dependency_commits(
     );
 }
 
+fn assert_unwitnessed_promotion_refuses(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    parked: &TaskHandle,
+    heads: &BoardTask,
+    facts: usize,
+) {
+    let rejected = wire::Command {
+        v: wire::WireVersion::CURRENT,
+        id: uuid(9_001),
+        epoch,
+        kind: CommandKind::TaskWake,
+        expected: vec![workflow_witness(heads), deferral_witness(heads)],
+        body: serde_json::to_value(TaskWake {
+            task: parked.clone(),
+            into: Some("board.test".to_owned()),
+        })
+        .expect("promotion body encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    });
+    assert!(matches!(
+        rejected,
+        Err(wire::CommandRejection::Refusal(ref refusal))
+            if refusal.reason() == "command::witness-law"
+    ));
+    assert_eq!(
+        fact_count(bus),
+        facts,
+        "unwitnessed promotion reached a fact write",
+    );
+}
+
+fn stale_promotion_after_edit(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+    parked: &TaskHandle,
+    held_heads: &BoardTask,
+) -> BoardAnswer {
+    let stale_statement = statement_witness(held_heads);
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskEdit,
+        vec![stale_statement.clone()],
+        &TaskEdit {
+            task: parked.clone(),
+            title: None,
+            description: Some("Edited during promotion capture".to_owned()),
+            acceptance: Vec::new(),
+            priority: None,
+            project: None,
+        },
+    ));
+    let edited = board(bus, epoch, lane.clone());
+    let edited_heads = at(&edited, parked);
+    let facts = fact_count(bus);
+    let stale = issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskWake,
+        vec![
+            workflow_witness(edited_heads),
+            deferral_witness(edited_heads),
+            stale_statement,
+        ],
+        &TaskWake {
+            task: parked.clone(),
+            into: Some("board.test".to_owned()),
+        },
+    );
+    assert!(matches!(stale, Outcome::Refusal(_)));
+    assert_eq!(fact_count(bus), facts, "stale promotion overwrote an edit");
+    edited
+}
+
+fn assert_claimed_oops_cannot_finish(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+    parked: &TaskHandle,
+    held: &BoardAnswer,
+    seat: &Seat,
+) {
+    let facts = fact_count(bus);
+    let refused = issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        progress_witnesses(held, at(held, parked), seat.lane, seat.occupant, false)
+            .expect("claimed oops has progress witnesses"),
+        &TaskDone {
+            task: parked.clone(),
+            validation: "triage is understood".to_owned(),
+        },
+    );
+    assert!(matches!(
+        refused,
+        Outcome::Refusal(ref refusal) if refusal.reason() == "task::promotion-required"
+    ));
+    assert_eq!(
+        fact_count(bus),
+        facts,
+        "oops completion refusal wrote facts"
+    );
+}
+
 #[test]
 fn wake_into_is_the_only_unclaimed_oops_project_exit() {
     let (root, bus, epoch, _seats) = fixture("oops-unclaimed-promotion", 1);
@@ -294,6 +408,7 @@ fn wake_into_is_the_only_unclaimed_oops_project_exit() {
     let visible = board(&bus, epoch, Actor::Operator);
     let heads = at(&visible, &parked);
     let facts = fact_count(&bus);
+    assert_unwitnessed_promotion_refuses(&bus, epoch, &parked, heads, facts);
     let plain = issue(
         &bus,
         epoch,
@@ -412,28 +527,11 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
     let held_heads = at(&held, &parked);
     let claim = held_heads.claim.clone().expect("triage capture claim");
     let lease = held_heads.lease.clone().expect("triage capture lease");
+    assert_claimed_oops_cannot_finish(&bus, epoch, &lane, &parked, &held, &seats[0]);
+
+    let edited = stale_promotion_after_edit(&bus, epoch, &lane, &parked, held_heads);
+    let edited_heads = at(&edited, &parked);
     let facts = fact_count(&bus);
-    let refused = issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::TaskDone,
-        progress_witnesses(&held, held_heads, seats[0].lane, seats[0].occupant, false)
-            .expect("claimed oops has progress witnesses"),
-        &TaskDone {
-            task: parked.clone(),
-            validation: "triage is understood".to_owned(),
-        },
-    );
-    assert!(matches!(
-        refused,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "task::promotion-required"
-    ));
-    assert_eq!(
-        fact_count(&bus),
-        facts,
-        "oops completion refusal wrote facts"
-    );
 
     let CommandAnswer::Task(answer) = assert_committed(issue(
         &bus,
@@ -441,9 +539,9 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
         lane.clone(),
         CommandKind::TaskWake,
         vec![
-            workflow_witness(held_heads),
-            deferral_witness(held_heads),
-            statement_witness(held_heads),
+            workflow_witness(edited_heads),
+            deferral_witness(edited_heads),
+            statement_witness(edited_heads),
         ],
         &TaskWake {
             task: parked.clone(),
@@ -464,7 +562,11 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
     assert_eq!(promoted_heads.lease.as_ref(), Some(&lease));
     assert_eq!(
         promoted_heads.statement.body.born,
-        held_heads.statement.body.born
+        edited_heads.statement.body.born
+    );
+    assert_eq!(
+        promoted_heads.statement.body.description.as_deref(),
+        Some("Edited during promotion capture"),
     );
 
     assert_committed(issue(
