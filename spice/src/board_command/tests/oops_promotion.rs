@@ -326,6 +326,54 @@ fn assert_unwitnessed_promotion_refuses(
     );
 }
 
+fn assert_unrelated_promotion_witness_refuses(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    parked: &TaskHandle,
+    heads: &BoardTask,
+    unrelated: &BoardTask,
+    facts: usize,
+) {
+    let unrelated_statement = statement_witness(unrelated);
+    let rejected = wire::Command {
+        v: wire::WireVersion::CURRENT,
+        id: uuid(9_002),
+        epoch,
+        kind: CommandKind::TaskWake,
+        expected: vec![
+            workflow_witness(heads),
+            deferral_witness(heads),
+            unrelated_statement.clone(),
+            unrelated_statement,
+        ],
+        body: serde_json::to_value(TaskWake {
+            task: parked.clone(),
+            into: Some("board.test".to_owned()),
+        })
+        .expect("promotion body encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    });
+    let Err(wire::CommandRejection::Refusal(refusal)) = rejected else {
+        panic!("promotion carrying only unrelated statement authority must refuse");
+    };
+    assert_eq!(refusal.reason(), "command::witness-law");
+    assert!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::witness)
+            .is_some_and(|witness| witness.contains(&parked.to_string()))
+    );
+    assert_eq!(
+        fact_count(bus),
+        facts,
+        "unrelated statement authority reached a fact write",
+    );
+}
+
 fn stale_promotion_after_edit(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -367,7 +415,11 @@ fn stale_promotion_after_edit(
             into: Some("board.test".to_owned()),
         },
     );
-    assert!(matches!(stale, Outcome::Refusal(_)));
+    assert!(matches!(
+        stale,
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "task::promotion-statement-witness-moved"
+    ));
     assert_eq!(fact_count(bus), facts, "stale promotion overwrote an edit");
     edited
 }
@@ -408,10 +460,20 @@ fn assert_claimed_oops_cannot_finish(
 fn wake_into_is_the_only_unclaimed_oops_project_exit() {
     let (root, bus, epoch, _seats) = fixture("oops-unclaimed-promotion", 1);
     let parked = add_parked(&bus, epoch, "OOPS-promote01");
+    let unrelated = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "OOPS-unrelated",
+        "Unrelated public task",
+        Some("todo"),
+    );
     let visible = board(&bus, epoch, Actor::Operator);
     let heads = at(&visible, &parked);
+    let unrelated_heads = at(&visible, &unrelated);
     let facts = fact_count(&bus);
     assert_unwitnessed_promotion_refuses(&bus, epoch, &parked, heads, facts);
+    assert_unrelated_promotion_witness_refuses(&bus, epoch, &parked, heads, unrelated_heads, facts);
     let plain = issue(
         &bus,
         epoch,
@@ -459,6 +521,8 @@ fn wake_into_is_the_only_unclaimed_oops_project_exit() {
             workflow_witness(heads),
             deferral_witness(heads),
             statement_witness(heads),
+            statement_witness(heads),
+            statement_witness(unrelated_heads),
         ],
         &TaskWake {
             task: parked.clone(),
@@ -534,6 +598,7 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
 
     let edited = stale_promotion_after_edit(&bus, epoch, &lane, &parked, held_heads);
     let edited_heads = at(&edited, &parked);
+    let child_heads = at(&edited, &child);
     let facts = fact_count(&bus);
 
     let CommandAnswer::Task(answer) = assert_committed(issue(
@@ -545,6 +610,8 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
             workflow_witness(edited_heads),
             deferral_witness(edited_heads),
             statement_witness(edited_heads),
+            statement_witness(edited_heads),
+            statement_witness(child_heads),
         ],
         &TaskWake {
             task: parked.clone(),

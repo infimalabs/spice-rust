@@ -428,6 +428,39 @@ pub(super) fn task_wake(
     )
 }
 
+fn validate_promotion_entry(
+    entry: &Entry,
+    command: &wire::AdmittedCommand,
+    wake: &TaskWake,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let current_statement = Witness::Task {
+        task: entry.born().clone(),
+        head: entry.statement().revision,
+    };
+    if !command.expected().contains(&current_statement) {
+        return Err(refusal(
+            "task::promotion-statement-witness-moved",
+            Some(format!("{} current={current_statement:?}", entry.handle())),
+            "read the board again and retry with the current target statement witness",
+        ));
+    }
+    if !is_oops(entry) {
+        return Err(refusal(
+            "task::promotion-refused",
+            Some(format!("{} project={}", entry.handle(), entry.project())),
+            "use --into only to promote a task currently parked in .oops",
+        ));
+    }
+    if entry.workflow().completion.is_some() {
+        return Err(refusal(
+            "task::settled",
+            Some(wake.task.to_string()),
+            "promote only pending .oops work",
+        ));
+    }
+    Ok(())
+}
+
 fn promote_oops(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -451,19 +484,8 @@ fn promote_oops(
             "read board and name one current task handle",
         );
     };
-    if !is_oops(entry) {
-        return refusal(
-            "task::promotion-refused",
-            Some(format!("{} project={}", entry.handle(), entry.project())),
-            "use --into only to promote a task currently parked in .oops",
-        );
-    }
-    if entry.workflow().completion.is_some() {
-        return refusal(
-            "task::settled",
-            Some(wake.task.to_string()),
-            "promote only pending .oops work",
-        );
+    if let Err(outcome) = validate_promotion_entry(entry, command, wake) {
+        return outcome;
     }
     let project = match projects.admit_manual_creation(requested) {
         Ok(project) => project,
