@@ -306,12 +306,27 @@ pub fn prepare_free(repository: &Repository, task: &str) -> Result<(), Error> {
 
 /// Safely advance a clean lane before allocator possession is minted.
 pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
+    prepare_claim_observed(repository, |_| Ok(()))
+}
+
+/// Safely advance a clean lane while durably observing the exact target first.
+///
+/// Dirty-handoff recovery uses the observation to journal the only HEAD the
+/// ordinary claim boundary may install. The ordinary allocator calls the same
+/// implementation with an inert observer, so recovery cannot acquire a subtly
+/// different fetch, ancestry, fast-forward, or boundary law.
+fn prepare_claim_observed(
+    repository: &Repository,
+    mut observe: impl FnMut(&GitBoundary) -> Result<(), Error>,
+) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
     require_clean(root, "task next")?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let Some(target) = resolve_target(root)? else {
-        return Ok(boundary(before.clone(), before, None, None, 0));
+        let boundary = boundary(before.clone(), before, None, None, 0);
+        observe(&boundary)?;
+        return Ok(boundary);
     };
     fetch(root, &target)?;
     let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
@@ -332,6 +347,14 @@ pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
             ),
         ));
     }
+    let planned = boundary(
+        upstream_head.clone(),
+        upstream_head.clone(),
+        Some(&target.baseline),
+        Some(upstream_head.clone()),
+        0,
+    );
+    observe(&planned)?;
     if before != upstream_head {
         if !is_ancestor(root, &before, &upstream_head)? {
             return Err(Error::refusal(
@@ -357,13 +380,7 @@ pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
             "advance lane to task baseline",
         )?;
     }
-    Ok(boundary(
-        upstream_head.clone(),
-        upstream_head.clone(),
-        Some(&target.baseline),
-        Some(upstream_head),
-        0,
-    ))
+    Ok(planned)
 }
 
 /// GIT-04, at agent launch: advance opportunistically and never raise.
@@ -872,7 +889,16 @@ mod landing;
 use landing::require_landing_within_footprint;
 mod launch;
 pub use launch::{LaunchAdvance, LaunchSkip};
+mod recovery;
 mod resolution;
+pub use recovery::{
+    Recovery, pending_recovery, quarantine_for_recovery, replay_recovery, restore_recovery,
+    synchronize_recovery,
+};
+#[cfg(test)]
+use recovery::{
+    capture_recovery_for_test, finish_recovery_capture_for_test, journal_replaying_for_test,
+};
 mod transaction;
 use transaction::*;
 mod command;
@@ -882,6 +908,8 @@ use command::*;
 mod command_tests;
 #[cfg(test)]
 mod landing_tests;
+#[cfg(test)]
+mod recovery_tests;
 #[cfg(test)]
 mod resolution_tests;
 #[cfg(test)]
