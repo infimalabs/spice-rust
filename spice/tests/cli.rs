@@ -222,6 +222,25 @@ fn root_help_exposes_the_generated_command_families() {
             "root help omitted {family}: {stdout}"
         );
     }
+    assert!(stdout.contains("-V, --version"), "{stdout}");
+}
+
+#[test]
+fn top_level_version_flags_are_repository_free_and_byte_identical() {
+    let scratch = Scratch::new("top-level-version");
+    let before = directory_state(scratch.path());
+    let short = invoke_at(&["-V"], scratch.path());
+    let long = invoke_at(&["--version"], scratch.path());
+    let expected = format!("spice {}\n", env!("CARGO_PKG_VERSION")).into_bytes();
+
+    for spoken in [&short, &long] {
+        assert_eq!(spoken.code, Some(0));
+        assert_eq!(spoken.out, expected);
+        assert!(spoken.err.is_empty());
+    }
+    assert_eq!(short.out, long.out);
+    assert_eq!(directory_state(scratch.path()), before);
+    scratch.remove();
 }
 
 #[test]

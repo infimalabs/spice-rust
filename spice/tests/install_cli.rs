@@ -501,6 +501,45 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
 }
 
 #[test]
+fn installed_and_current_source_version_flags_are_byte_identical() {
+    let mut fixture = Fixture::new("top-level-version");
+    fixture.executable = PathBuf::from(env!("CARGO_BIN_EXE_spice"));
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let receipt: InstallReceipt = reply_body(fixture.invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", preview.digest()),
+    ]));
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+
+    let outside = fixture.root.with_extension("version-cwd");
+    fs::create_dir(&outside).expect("create non-repository version working directory");
+    assert!(Repository::discover(&outside).is_err());
+    let expected = format!("spice {}\n", env!("CARGO_PKG_VERSION")).into_bytes();
+    for flag in ["-V", "--version"] {
+        let source = Command::new(env!("CARGO_BIN_EXE_spice"))
+            .arg(flag)
+            .current_dir(&outside)
+            .env_remove(steer::hook::INBOX)
+            .output()
+            .expect("current-source Spice launches");
+        let installed = Command::new(fixture.installed_binary())
+            .arg(flag)
+            .current_dir(&outside)
+            .env_remove(steer::hook::INBOX)
+            .output()
+            .expect("installed Spice launches");
+        assert!(source.status.success());
+        assert!(installed.status.success());
+        assert_eq!(source.stdout, expected);
+        assert_eq!(installed.stdout, source.stdout);
+        assert!(source.stderr.is_empty());
+        assert!(installed.stderr.is_empty());
+    }
+    fs::remove_dir(&outside).expect("remove non-repository version working directory");
+}
+
+#[test]
 fn large_migration_payload_never_crosses_the_cli_reply_boundary() {
     let migration = LargeMigration::new("bounded-migration");
     let fixture = &migration.fixture;
