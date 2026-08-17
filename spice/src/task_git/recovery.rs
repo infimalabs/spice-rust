@@ -206,6 +206,18 @@ pub(super) fn finish_recovery_capture_for_test(
 }
 
 #[cfg(test)]
+pub(super) fn journal_syncing_for_test(
+    repository: &Repository,
+    recovery: &Recovery,
+    boundary: GitBoundary,
+) -> Result<(), Error> {
+    let root = recovery_root(repository);
+    let mut manifest = read_expected(&root, recovery)?;
+    manifest.state = RecoveryState::Syncing { boundary };
+    write_manifest(&root, &manifest)
+}
+
+#[cfg(test)]
 pub(super) fn journal_replaying_for_test(
     repository: &Repository,
     recovery: &Recovery,
@@ -241,6 +253,7 @@ pub fn synchronize_recovery(
 ) -> Result<GitBoundary, Error> {
     let root = recovery_root(repository);
     let manifest = read_expected(&root, recovery)?;
+    verify_synchronization_identity(repository, &manifest)?;
     match manifest.state.clone() {
         RecoveryState::Synchronized { boundary }
         | RecoveryState::Replaying { boundary }
@@ -253,19 +266,50 @@ pub fn synchronize_recovery(
         }
         RecoveryState::Quarantined => {}
     }
+    verify_text(
+        "pre-synchronization HEAD",
+        &manifest.payload.head,
+        &current_head(repository.worktree_root())?,
+    )?;
     require_clean(repository.worktree_root(), "task recovery synchronization")?;
+    let sealed = manifest.clone();
     let mut journaled = manifest;
-    let boundary = prepare_claim_observed(repository, |boundary| {
-        journaled.state = RecoveryState::Syncing {
-            boundary: boundary.clone(),
-        };
-        write_manifest(&root, &journaled)
-    })?;
+    let boundary = prepare_claim_observed(
+        repository,
+        || verify_synchronization_identity(repository, &sealed),
+        |boundary| {
+            journaled.state = RecoveryState::Syncing {
+                boundary: boundary.clone(),
+            };
+            write_manifest(&root, &journaled)
+        },
+    )?;
     journaled.state = RecoveryState::Synchronized {
         boundary: boundary.clone(),
     };
     write_manifest(&root, &journaled)?;
     Ok(boundary)
+}
+
+fn verify_synchronization_identity(
+    repository: &Repository,
+    manifest: &Manifest,
+) -> Result<(), Error> {
+    verify_manifest_identity(repository, manifest)?;
+    verify_text(
+        "symbolic ref",
+        &manifest.payload.reference,
+        &required_read(
+            repository.worktree_root(),
+            &["symbolic-ref", "HEAD"],
+            "verify synchronization symbolic HEAD",
+        )?,
+    )?;
+    verify_text(
+        "configuration",
+        &manifest.payload.configuration,
+        &configuration(repository.worktree_root())?,
+    )
 }
 
 fn resume_synchronization(
@@ -287,7 +331,12 @@ fn resume_synchronization(
         ));
     }
     if head == manifest.payload.head {
-        let resumed = prepare_claim_observed(repository, |_| Ok(()))?;
+        let sealed = manifest.clone();
+        let resumed = prepare_claim_observed(
+            repository,
+            || verify_synchronization_identity(repository, &sealed),
+            |_| Ok(()),
+        )?;
         if resumed != boundary {
             return Err(recovery_refusal(
                 "git::recovery-baseline-moved",
