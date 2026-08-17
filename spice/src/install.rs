@@ -59,11 +59,14 @@ pub use maintenance::{
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, RepositoryIdentity};
 
-const PLAN_VERSION: u16 = 8;
-const RECORD_VERSION: u16 = 8;
+const PLAN_VERSION: u16 = 9;
+const RECORD_VERSION: u16 = 9;
 const RETIREMENT_WITNESS_MISMATCH: &str =
     "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
+const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
+/// Environment marker exported only by the installed pre-commit launcher.
+pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
 const LEGACY_RECORD_VERSIONS: [(u16, &str); 5] = [
     (2, "SURFACE-1kJRGpf2"),
     (3, "HOOKS-1kJQnmG8"),

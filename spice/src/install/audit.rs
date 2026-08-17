@@ -119,8 +119,14 @@ pub fn audit_appliance(
     let receipt = loaded.receipt;
     let repairable = loaded.refresh.is_repairable();
     let record = &loaded.refresh.loaded().record;
-    if let Some(audit) = receipt_state_audit(current_binary, record, &installed, &preview, &receipt)
-    {
+    if let Some(audit) = receipt_state_audit(
+        current_binary,
+        record,
+        &installed,
+        &preview,
+        &receipt,
+        repairable,
+    ) {
         return Ok(audit);
     }
     if let Some(audit) = progress_audit(
@@ -191,8 +197,9 @@ fn receipt_state_audit(
     installed: &Path,
     preview: &str,
     receipt: &Digest,
+    repairable: bool,
 ) -> Option<ApplianceAudit> {
-    let detail = if record.version != super::RECORD_VERSION {
+    let detail = if record.version != super::RECORD_VERSION && !repairable {
         format!(
             "installed-appliance receipt version {} requires the version-{} forward migration",
             record.version,

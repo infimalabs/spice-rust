@@ -91,7 +91,8 @@ test_engines = ["cargo-workspace"]
 #
 # Session forensics reads the live Codex or Claude identity and the selected
 # agent vendor. `steer` owns the four hook/session names. The configured commit
-# executor owns the staged-path JSON and source-digest handoff names. A supervised launch
+# executor owns the staged-path JSON and source-digest handoff names, while the
+# installed pre-commit launcher owns its appliance marker. A supervised launch
 # separates the installed outer shell from the native shell restored by its
 # inner stage, while the wrapper reads the lane's rendered inbox and lane-bound
 # commands carry that lane identity. `gate` owns the mutation seed and attempt
@@ -119,7 +120,7 @@ test_engines = ["cargo-workspace"]
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the names Spice owns, so these fourteen are the
+# again. Doctor reports only the typed Spice variables, so these fifteen are the
 # difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
 # rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
 # retained only as coexistence sentinels.
@@ -162,6 +163,7 @@ env_names = [
     "SPICE_RS_NATIVE_SHELL",
     "SPICE_RS_PRE_COMMIT_PATHS",
     "SPICE_RS_PRE_COMMIT_SOURCE",
+    "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE",
     # Selected-tree tests receive these workspace-test fixture authorities.
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",

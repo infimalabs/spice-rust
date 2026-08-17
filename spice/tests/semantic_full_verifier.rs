@@ -583,6 +583,7 @@ fn assert_pre_commit_reuses_complete_evidence(root: &Path) {
             "__gate-pre-commit-worker",
             progress.to_str().expect("progress path is text"),
             terminal.to_str().expect("terminal path is text"),
+            r#"{"version":1}"#,
         ])
         .current_dir(root)
         .output()

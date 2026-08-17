@@ -153,6 +153,54 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
     refresh_repaired_appliance(fixture, &other);
 }
 
+#[test]
+fn complete_v8_appliance_turns_over_only_through_an_exact_v9_refresh() {
+    let scratch = Scratch::new("complete-v8-forward-refresh");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"versioned appliance");
+    let initial = plan(&repository, Some(&binary)).expect("derive initial appliance plan");
+    apply(&repository, Some(&binary), &initial.digest().unwrap())
+        .expect("install initial appliance");
+
+    let mut historical = read_record(&repository)
+        .unwrap()
+        .expect("installed receipt exists")
+        .record;
+    historical.version = FORWARD_MIGRATABLE_RECORD_VERSION;
+    historical.plan.version = FORWARD_MIGRATABLE_RECORD_VERSION;
+    historical.plan_digest = historical.plan.digest().expect("digest version-8 plan");
+    let historical_digest = historical.plan_digest.clone();
+    fs::write(
+        record_path(&repository).unwrap(),
+        wire::encode(&historical).expect("encode complete version-8 receipt"),
+    )
+    .expect("publish complete version-8 receipt");
+    let before = images(&repository, &historical.plan);
+
+    let audit = audit_appliance(&repository, &binary).expect("audit version-8 appliance");
+    assert_eq!(audit.state(), ApplianceState::StaleReceipt);
+    assert_eq!(audit.receipt(), Some(&historical_digest));
+    assert!(audit.detail().contains("version 8"), "{audit:?}");
+    assert!(audit.detail().contains("version-9"), "{audit:?}");
+
+    let refresh = plan(&repository, Some(&binary)).expect("derive version-9 forward refresh");
+    assert_eq!(refresh.version(), PLAN_VERSION);
+    assert_ne!(refresh.digest().unwrap(), historical_digest);
+    let refusal = apply(&repository, Some(&binary), &historical_digest)
+        .expect_err("the historical digest cannot authorize the forward refresh");
+    assert!(matches!(refusal, InstallError::DigestMismatch { .. }));
+    assert_eq!(images(&repository, &historical.plan), before);
+
+    let receipt = apply(&repository, Some(&binary), &refresh.digest().unwrap())
+        .expect("apply exact version-9 forward refresh");
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    assert!(
+        audit_appliance(&repository, &binary)
+            .expect("audit refreshed appliance")
+            .is_current()
+    );
+}
+
 /// Publish the historical receipt shape that exercises forward-only repair.
 fn publish_pre_witness_v8(fixture: &MigrationFixture, migration: &InstallPlan) -> Digest {
     let migrated = apply(
@@ -167,6 +215,8 @@ fn publish_pre_witness_v8(fixture: &MigrationFixture, migration: &InstallPlan) -
         .unwrap()
         .expect("migrated receipt exists")
         .record;
+    record.version = FORWARD_MIGRATABLE_RECORD_VERSION;
+    record.plan.version = FORWARD_MIGRATABLE_RECORD_VERSION;
     for retirement in &mut record.plan.retirements {
         retirement.superseded = None;
         retirement.rollback = None;

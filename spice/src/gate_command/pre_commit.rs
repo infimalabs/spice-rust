@@ -42,6 +42,7 @@ const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 1024 * 1024;
 const DISPATCH_LOCK: &str = "pre-commit.lock";
+const APPLIANCE_GENERATION_FENCE_VERSION: u64 = 1;
 
 const _: () = assert!(
     WORK_RUNTIME.as_secs()
@@ -379,6 +380,63 @@ struct WorkerFailure {
     fault: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ApplianceGenerationFence {
+    version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    appliance: Option<Digest>,
+}
+
+impl ApplianceGenerationFence {
+    const fn unbound() -> Self {
+        Self {
+            version: APPLIANCE_GENERATION_FENCE_VERSION,
+            appliance: None,
+        }
+    }
+
+    const fn bound(appliance: Digest) -> Self {
+        Self {
+            version: APPLIANCE_GENERATION_FENCE_VERSION,
+            appliance: Some(appliance),
+        }
+    }
+
+    const fn expected(&self) -> Option<&Digest> {
+        self.appliance.as_ref()
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.version != APPLIANCE_GENERATION_FENCE_VERSION {
+            return Err(format!(
+                "unsupported appliance generation fence version {}; expected {APPLIANCE_GENERATION_FENCE_VERSION}",
+                self.version,
+            ));
+        }
+        Ok(())
+    }
+
+    fn encode(&self) -> Result<OsString, String> {
+        self.validate()?;
+        let bytes = wire::encode(self).map_err(|error| error.to_string())?;
+        String::from_utf8(bytes)
+            .map(OsString::from)
+            .map_err(|error| error.to_string())
+    }
+
+    fn decode(document: &OsStr) -> Result<Self, String> {
+        let bytes = document.as_encoded_bytes();
+        let fence: Self = wire::decode(bytes).map_err(|error| error.to_string())?;
+        fence.validate()?;
+        let canonical = wire::encode(&fence).map_err(|error| error.to_string())?;
+        if canonical != bytes {
+            return Err("appliance generation fence is not canonical".to_owned());
+        }
+        Ok(fence)
+    }
+}
+
 struct WorkerFiles {
     root: PathBuf,
     progress: PathBuf,
@@ -446,11 +504,19 @@ pub(super) fn run() -> Outcome<Report> {
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
         return configured::recursion_refusal(&source);
     }
+    let generation = if env::var_os(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT).is_some() {
+        match capture_appliance_generation_fence() {
+            Ok(generation) => generation,
+            Err(failure) => return worker_failure(failure),
+        }
+    } else {
+        ApplianceGenerationFence::unbound()
+    };
     let _dispatch = match DispatchGuard::acquire() {
         Ok(dispatch) => dispatch,
         Err(outcome) => return outcome,
     };
-    run_with(supervise)
+    run_with(|files| supervise(files, &generation))
 }
 
 /// Run the exhaustive evidence worker for one allocator-owned merge resolution.
@@ -572,6 +638,13 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         eprintln!("commit-gate worker requires a terminal path");
         return Some(1);
     };
+    let generation = (worker.as_os_str() == OsStr::new(WORKER_ARGUMENT))
+        .then(|| arguments.next())
+        .flatten();
+    if worker.as_os_str() == OsStr::new(WORKER_ARGUMENT) && generation.is_none() {
+        eprintln!("commit-gate worker requires an appliance generation fence");
+        return Some(1);
+    }
     if arguments.next().is_some() {
         eprintln!("commit-gate worker received trailing arguments");
         return Some(1);
@@ -579,7 +652,13 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
     let result = if worker.as_os_str() == OsStr::new(RESOLUTION_WORKER_ARGUMENT) {
         resolution_worker(Path::new(&progress), Path::new(&terminal))
     } else {
-        worker_run(Path::new(&progress), Path::new(&terminal))
+        worker_run(
+            Path::new(&progress),
+            Path::new(&terminal),
+            generation
+                .as_deref()
+                .expect("the pre-commit worker requires its appliance generation fence"),
+        )
     };
     Some(match result {
         Ok(()) => 0,
@@ -721,10 +800,14 @@ impl ResolutionSelectionEvidence {
     }
 }
 
-fn supervise(files: &WorkerFiles) -> Outcome<Report> {
+fn supervise(files: &WorkerFiles, generation: &ApplianceGenerationFence) -> Outcome<Report> {
     let executable = match env::current_exe() {
         Ok(executable) => executable,
         Err(error) => return fault("gate::pre-commit-executable-unavailable", error),
+    };
+    let generation = match generation.encode() {
+        Ok(generation) => generation,
+        Err(error) => return fault("gate::pre-commit-worker-invalid", error),
     };
     let spec = match worker_spec(
         executable,
@@ -732,6 +815,7 @@ fn supervise(files: &WorkerFiles) -> Outcome<Report> {
             OsString::from(WORKER_ARGUMENT),
             files.progress.as_os_str().to_owned(),
             files.terminal.as_os_str().to_owned(),
+            generation,
         ],
         ProcessBounds::production(),
     ) {
@@ -788,18 +872,113 @@ fn supervise_resolution(files: &WorkerFiles, root: &Path) -> Outcome<()> {
     classify_resolution(files, &waited)
 }
 
-fn worker_run(progress_path: &Path, terminal: &Path) -> io::Result<()> {
+fn worker_run(progress_path: &Path, terminal: &Path, generation: &OsStr) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
     let mut progress = OpenOptions::new().append(true).open(progress_path)?;
     let started = Instant::now();
-    write_phase(&mut progress, &WorkerPhase::Capture)?;
-    match dispatch(&mut progress, started) {
+    let result = ApplianceGenerationFence::decode(generation)
+        .map_err(|detail| WorkerFailure {
+            reason: "gate::pre-commit-generation-fence-invalid".to_owned(),
+            detail,
+            fault: true,
+        })
+        .and_then(|generation| {
+            verify_appliance_generation_fence(&generation)?;
+            write_phase(&mut progress, &WorkerPhase::Capture).map_err(worker_io_failure)?;
+            dispatch(&mut progress, started)
+        });
+    match result {
         Ok(report) => {
             let mut document = vec![REPORT_RECORD];
             document.extend(report.encode().map_err(io::Error::other)?);
             fs::write(terminal, document)
         }
         Err(failure) => write_failure(terminal, &failure),
+    }
+}
+
+fn capture_appliance_generation_fence() -> Result<ApplianceGenerationFence, WorkerFailure> {
+    let current = env::current_dir().map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-working-directory-unavailable".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    let repository = Repository::discover(&current).map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-repository-unresolved".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    current_appliance(&repository, None).map(ApplianceGenerationFence::bound)
+}
+
+fn verify_appliance_generation_fence(
+    generation: &ApplianceGenerationFence,
+) -> Result<(), WorkerFailure> {
+    generation.validate().map_err(|detail| WorkerFailure {
+        reason: "gate::pre-commit-generation-fence-invalid".to_owned(),
+        detail,
+        fault: true,
+    })?;
+    let Some(_) = generation.expected() else {
+        return Ok(());
+    };
+    let current = env::current_dir().map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-working-directory-unavailable".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    let repository = Repository::discover(&current).map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-repository-unresolved".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    current_appliance(&repository, generation.expected()).map(|_| ())
+}
+
+fn current_appliance(
+    repository: &Repository,
+    expected: Option<&Digest>,
+) -> Result<Digest, WorkerFailure> {
+    let executable = env::current_exe().map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-executable-unavailable".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    let audit = spice::install::audit_appliance(repository, &executable).map_err(|error| {
+        WorkerFailure {
+            reason: "gate::pre-commit-appliance-audit-failed".to_owned(),
+            detail: error.to_string(),
+            fault: true,
+        }
+    })?;
+    if let Some(observed) = audit.receipt().filter(|observed| {
+        audit.is_current() && expected.is_none_or(|expected| *observed == expected)
+    }) {
+        return Ok(observed.clone());
+    }
+    let observed = audit.receipt();
+    Err(appliance_generation_moved(
+        expected,
+        format!(
+            "state={}; receipt={}; detail={}",
+            audit.state().as_str(),
+            observed.map_or("absent", Digest::as_str),
+            audit.detail(),
+        ),
+    ))
+}
+
+fn appliance_generation_moved(
+    appliance: Option<&Digest>,
+    observed: impl std::fmt::Display,
+) -> WorkerFailure {
+    WorkerFailure {
+        reason: "gate::pre-commit-appliance-generation-moved".to_owned(),
+        detail: format!(
+            "appliance={}; observed={observed}",
+            appliance.map_or("unavailable", Digest::as_str),
+        ),
+        fault: false,
     }
 }
 

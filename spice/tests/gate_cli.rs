@@ -219,6 +219,7 @@ fn deadline_worker_spec(root: &Path, programs: &Path, progress: &Path, terminal:
                 OsString::from("__gate-pre-commit-worker"),
                 progress.as_os_str().to_owned(),
                 terminal.as_os_str().to_owned(),
+                OsString::from(r#"{"version":1}"#),
             ],
         )
         .expect("declare hidden commit worker"),
@@ -274,10 +275,11 @@ fn run_worker_with_path(root: &Path, worker: &str, path: Option<&Path>) -> Worke
     fs::write(&progress, []).expect("create worker progress file");
     fs::write(&terminal, []).expect("create worker terminal file");
     let mut command = fixture_command(env!("CARGO_BIN_EXE_spice"));
+    command.arg(worker).arg(&progress).arg(&terminal);
+    if worker == "__gate-pre-commit-worker" {
+        command.arg(r#"{"version":1}"#);
+    }
     command
-        .arg(worker)
-        .arg(&progress)
-        .arg(&terminal)
         .current_dir(root)
         .env_remove(PRE_COMMIT_PATHS)
         .env_remove(PRE_COMMIT_SOURCE)
