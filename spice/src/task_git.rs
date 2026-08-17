@@ -306,7 +306,7 @@ pub fn prepare_free(repository: &Repository, task: &str) -> Result<(), Error> {
 
 /// Safely advance a clean lane before allocator possession is minted.
 pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
-    prepare_claim_observed(repository, |_| Ok(()))
+    prepare_claim_observed(repository, || Ok(()), |_| Ok(()))
 }
 
 /// Safely advance a clean lane while durably observing the exact target first.
@@ -314,16 +314,21 @@ pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
 /// Dirty-handoff recovery uses the observation to journal the only HEAD the
 /// ordinary claim boundary may install. The ordinary allocator calls the same
 /// implementation with an inert observer, so recovery cannot acquire a subtly
-/// different fetch, ancestry, fast-forward, or boundary law.
+/// different fetch, ancestry, fast-forward, or boundary law. Recovery's
+/// preflight rechecks its sealed authority after target resolution and before
+/// either the fetch or a no-remote boundary is published.
 fn prepare_claim_observed(
     repository: &Repository,
+    mut preflight: impl FnMut() -> Result<(), Error>,
     mut observe: impl FnMut(&GitBoundary) -> Result<(), Error>,
 ) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
     require_clean(root, "task next")?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
-    let Some(target) = resolve_target(root)? else {
+    let target = resolve_target(root)?;
+    preflight()?;
+    let Some(target) = target else {
         let boundary = boundary(before.clone(), before, None, None, 0);
         observe(&boundary)?;
         return Ok(boundary);
