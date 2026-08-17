@@ -11,10 +11,11 @@ use std::time::{Duration, Instant};
 
 use super::{
     ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget,
-    CancellationToken, CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_TEST_RUNTIME,
-    PREREQUISITES, PROGRESS_INTERVAL, ProcessOutput, RunError, Runner, Status, VERIFY_ACTIONS,
-    VerifyError, count_peer_cargo, ready_nodes, run_process, success, verify_package_with_control,
-    verify_with_control, verify_with_deadline, verify_with_deadline_and_rebalance,
+    CancellationToken, CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_ABSOLUTE_RUNTIME,
+    FULL_VERIFIER_TEST_RUNTIME, PREREQUISITES, PROGRESS_INTERVAL, ProcessOutput, RunError, Runner,
+    Status, VERIFY_ACTIONS, VerifyError, count_peer_cargo, ready_nodes, run_process,
+    starts_test_phase_deadline, success, verify_package_with_control, verify_with_control,
+    verify_with_deadline, verify_with_deadline_and_rebalance,
 };
 use crate::verify_timing::Disposition;
 use crate::{ScopedCommand, Step, WORKSPACE_TEST_LABEL, landing};
@@ -69,10 +70,8 @@ fn publish_detached_fixture_identity(identity_path: &std::path::Path, identity: 
 struct TimedRunner {
     delays: BTreeMap<&'static str, Duration>,
     prebuild_delay: Duration,
-    canvas_ready_delay: Duration,
     calls: Mutex<Vec<&'static str>>,
     cargo_jobs: Mutex<Vec<(&'static str, usize)>>,
-    timeline: Mutex<Vec<(&'static str, bool)>>,
     failures: BTreeSet<&'static str>,
     active: AtomicUsize,
     peak: AtomicUsize,
@@ -115,10 +114,8 @@ impl TimedRunner {
         Self {
             delays,
             prebuild_delay: Duration::ZERO,
-            canvas_ready_delay: Duration::ZERO,
             calls: Mutex::new(Vec::new()),
             cargo_jobs: Mutex::new(Vec::new()),
-            timeline: Mutex::new(Vec::new()),
             failures: BTreeSet::new(),
             active: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
@@ -128,11 +125,6 @@ impl TimedRunner {
 
     fn with_prebuild_delay(mut self, delay: Duration) -> Self {
         self.prebuild_delay = delay;
-        self
-    }
-
-    fn with_canvas_ready_delay(mut self, delay: Duration) -> Self {
-        self.canvas_ready_delay = delay;
         self
     }
 
@@ -152,10 +144,6 @@ impl TimedRunner {
         readiness: Option<ActionReadiness>,
     ) -> bool {
         self.calls.lock().expect("timed calls lock").push(label);
-        self.timeline
-            .lock()
-            .expect("timed timeline lock")
-            .push((label, false));
         let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
         self.peak.fetch_max(active, Ordering::AcqRel);
         let delay = self
@@ -170,27 +158,17 @@ impl TimedRunner {
         black_box(value);
         match readiness {
             Some(readiness) => {
-                let before_ready = self.canvas_ready_delay.min(delay);
-                thread::sleep(before_ready);
                 readiness();
-                thread::sleep(delay.saturating_sub(before_ready));
+                thread::sleep(delay);
             }
             None => thread::sleep(delay),
         }
         self.active.fetch_sub(1, Ordering::AcqRel);
-        self.timeline
-            .lock()
-            .expect("timed timeline lock")
-            .push((label, true));
         !cancellation.is_some_and(CancellationToken::is_cancelled)
     }
 
     fn calls(&self) -> Vec<&'static str> {
         self.calls.lock().expect("timed calls lock").clone()
-    }
-
-    fn timeline(&self) -> Vec<(&'static str, bool)> {
-        self.timeline.lock().expect("timed timeline lock").clone()
     }
 
     fn jobs_for(&self, label: &'static str) -> Vec<usize> {
@@ -684,115 +662,71 @@ fn end_to_end_deadline_cancels_the_graph_before_another_action_starts() {
     assert!(output.contains("primary_ordinal=deadline"));
 }
 
-#[test]
-fn overlapped_prebuild_reserves_test_and_terminal_work_inside_the_outer_envelope() {
-    const PROPORTIONAL_TEST_RUNTIME: Duration = Duration::from_millis(540);
-    const PROPORTIONAL_OUTER_RUNTIME: Duration = Duration::from_millis(888);
-    const PREBUILD_DELAY: Duration = Duration::from_millis(160);
-    const CANVAS_READY_DELAY: Duration = Duration::from_millis(40);
-    let mut delays = VERIFY_ACTIONS
-        .iter()
-        .map(|action| (action.label(), Duration::from_millis(15)))
-        .collect::<BTreeMap<_, _>>();
-    for action in &VERIFY_ACTIONS[4..=5] {
-        delays.insert(action.label(), Duration::from_millis(120));
-    }
-    delays.insert(VERIFY_ACTIONS[6].label(), Duration::from_millis(220));
-    delays.insert(BROWSER_LABEL, Duration::from_millis(240));
-    delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(420));
-    for action in &VERIFY_ACTIONS[9..=11] {
-        delays.insert(action.label(), Duration::from_millis(15));
-    }
-    delays.insert(landing::LABEL, Duration::from_millis(15));
-    let through_native_clippy = VERIFY_ACTIONS[..=3]
-        .iter()
-        .map(|action| delays[action.label()])
-        .sum::<Duration>();
-    let through_wasm_check = through_native_clippy
-        + VERIFY_ACTIONS[4..=5]
-            .iter()
-            .map(|action| delays[action.label()])
-            .sum::<Duration>();
-    let prebuild_complete = through_native_clippy + PREBUILD_DELAY;
-    let canvas_ready = through_wasm_check + CANVAS_READY_DELAY;
-    let workspace_start = prebuild_complete.max(canvas_ready);
-    let canvas_complete = through_wasm_check + delays[VERIFY_ACTIONS[6].label()];
-    let workspace_complete = workspace_start + delays[VERIFY_ACTIONS[8].label()];
-    let browser_complete = canvas_complete + delays[BROWSER_LABEL];
-    let test_phase_start = workspace_start.min(canvas_complete);
-    let test_branches_complete = workspace_complete.max(browser_complete);
-    let documentation_complete =
-        workspace_complete + delays[VERIFY_ACTIONS[9].label()] + delays[VERIFY_ACTIONS[10].label()];
-    let battery_complete = test_branches_complete + delays[VERIFY_ACTIONS[11].label()];
-    let terminal_complete = documentation_complete.max(battery_complete) + delays[landing::LABEL];
-    let old_workspace_complete = canvas_complete + delays[VERIFY_ACTIONS[8].label()];
-    let old_test_branches_complete = old_workspace_complete.max(browser_complete);
-    let old_documentation_complete = old_workspace_complete
-        + delays[VERIFY_ACTIONS[9].label()]
-        + delays[VERIFY_ACTIONS[10].label()];
-    let old_battery_complete = old_test_branches_complete + delays[VERIFY_ACTIONS[11].label()];
-    let old_terminal_complete =
-        old_documentation_complete.max(old_battery_complete) + delays[landing::LABEL];
+fn compressed_verifier_bound(production: Duration) -> Duration {
+    Duration::from_millis(production.as_secs())
+}
 
-    assert_eq!(workspace_start, Duration::from_millis(340));
-    assert_eq!(canvas_complete, Duration::from_millis(520));
-    assert!(workspace_start < canvas_complete);
-    assert!(
-        workspace_complete < old_workspace_complete,
-        "readiness overlap must shorten the native branch relative to the retired Canvas barrier"
-    );
-    assert!(
-        test_branches_complete - test_phase_start < PROPORTIONAL_TEST_RUNTIME,
-        "both test branches must fit inside the proportional test-phase budget"
-    );
-    assert_eq!(terminal_complete, Duration::from_millis(805));
-    assert!(
-        terminal_complete < PROPORTIONAL_OUTER_RUNTIME,
-        "the overlapped terminal tail must fit inside its supervisor analogue"
-    );
-    assert_eq!(old_terminal_complete, Duration::from_millis(985));
-    assert!(
-        old_terminal_complete >= PROPORTIONAL_OUTER_RUNTIME,
-        "the old Canvas-complete barrier must fail the same supervisor analogue"
-    );
-
-    let runner = TimedRunner::new(delays, 0)
-        .with_prebuild_delay(PREBUILD_DELAY)
-        .with_canvas_ready_delay(CANVAS_READY_DELAY);
+fn run_compressed_schedule(
+    runner: &TimedRunner,
+    test_runtime: Duration,
+    outer_runtime: Duration,
+) -> (Result<(), VerifyError>, String, Duration) {
     let mut output = Vec::new();
-
+    let started = Instant::now();
     let result = verify_with_deadline(
-        &runner,
+        runner,
         &mut output,
-        Budget::fixture(3, 1, 0),
+        Budget::from_observation(FIXTURE_CPU_COUNT, Some(0)),
         CancellationToken::new(),
         Arc::new(AtomicBool::new(false)),
-        Duration::from_secs(5),
+        test_runtime,
     );
-    result.expect("overlapped setup leaves test and terminal work inside the outer envelope");
-    let calls = runner.calls();
-    let output = String::from_utf8(output).expect("scheduler output is UTF-8");
-    assert_line_order(
-        &output,
-        "stage=setup identity=\"native test and Canvas launcher prebuild (workspace-test setup)\"",
-        "stage=start ordinal=5/13",
-    );
-    assert_terminal_exit_zero(&output, 9, VERIFY_ACTIONS[8].label());
-    assert_terminal_success(&output, 13, VERIFY_ACTIONS[12].label());
-    assert_exactly_once(&calls);
-    let timeline = runner.timeline();
-    let workspace_start = timeline
-        .iter()
-        .position(|event| *event == (VERIFY_ACTIONS[8].label(), false))
-        .expect("workspace tests started");
-    let final_canvas_compiler_end = timeline
-        .iter()
-        .position(|event| *event == (VERIFY_ACTIONS[6].label(), true))
-        .expect("final Canvas compiler completed");
+    let elapsed = started.elapsed();
     assert!(
-        workspace_start < final_canvas_compiler_end,
-        "the prebuilt native root must overlap the final Canvas tail: {timeline:?}"
+        elapsed < outer_runtime,
+        "the compressed verifier crossed its proportional outer-supervisor bound: \
+         elapsed={elapsed:?} bound={outer_runtime:?}"
     );
+    (
+        result,
+        String::from_utf8(output).expect("scheduler output is UTF-8"),
+        elapsed,
+    )
+}
+
+#[test]
+fn compressed_full_verifier_enforces_its_declared_bounds() {
+    let test_runtime = compressed_verifier_bound(FULL_VERIFIER_TEST_RUNTIME);
+    let outer_runtime = compressed_verifier_bound(FULL_VERIFIER_ABSOLUTE_RUNTIME);
+    assert!(test_runtime < outer_runtime);
+
+    let admitted = TimedRunner::uniform(Duration::from_millis(2))
+        .with_prebuild_delay(Duration::from_millis(2));
+    let (result, output, _) = run_compressed_schedule(&admitted, test_runtime, outer_runtime);
+    result.expect("the complete compressed schedule fits both proportional bounds");
+    assert!(output.contains(&format!(
+        "deadline_scope=test-phase deadline_ms={}",
+        test_runtime.as_millis()
+    )));
+
+    let mut crossing_delays = VERIFY_ACTIONS
+        .iter()
+        .map(|action| (action.label(), Duration::from_millis(2)))
+        .collect::<BTreeMap<_, _>>();
+    let test_branch = VERIFY_ACTIONS
+        .iter()
+        .copied()
+        .find(|action| starts_test_phase_deadline(*action))
+        .expect("the full verifier declares a test-phase branch");
+    crossing_delays.insert(test_branch.label(), test_runtime.saturating_mul(3));
+    let crossing =
+        TimedRunner::new(crossing_delays, 0).with_prebuild_delay(Duration::from_millis(2));
+    let (result, output, _) = run_compressed_schedule(&crossing, test_runtime, outer_runtime);
+    assert!(
+        matches!(result, Err(VerifyError::TimedOut { .. })),
+        "a test branch crossing the declared deadline must be refused: {result:?}"
+    );
+    assert!(output.contains("primary_ordinal=deadline"));
 }
 
 #[test]
