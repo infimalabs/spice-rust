@@ -433,6 +433,177 @@ fn syncing_restart_checks_configuration_before_resuming_fetch() {
 }
 
 #[test]
+fn symbolic_ref_head_and_index_movement_each_refuse_the_sealed_generation() {
+    for movement in ["reference", "head", "index"] {
+        let fixture = Fixture::new(&format!("dirty-{movement}-movement"));
+        fs::write(fixture.agent.join("dirty.txt"), "dirty\n").expect("write dirty bytes");
+        let original_head = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+        let index = fs::read(fixture.agent.join(".git/index")).expect("read sealed index");
+        let recovery =
+            capture_recovery_for_test(&fixture.repository()).expect("seal dirty generation");
+
+        match movement {
+            "reference" => git(&fixture.agent, &["switch", "-c", "moved-reference"]),
+            "head" => git(
+                &fixture.agent,
+                &["commit", "--allow-empty", "-m", "move HEAD"],
+            ),
+            "index" => {
+                fs::write(fixture.agent.join("index-only.txt"), "index movement\n")
+                    .expect("write index movement");
+                git(&fixture.agent, &["add", "index-only.txt"]);
+            }
+            _ => unreachable!("fixture enumerates every movement"),
+        }
+
+        let error = finish_recovery_capture_for_test(&fixture.repository(), &recovery)
+            .expect_err("moved recovery witness refuses capture CAS");
+        let expected = if movement == "index" {
+            "git::recovery-object-mismatch"
+        } else {
+            "git::recovery-snapshot-moved"
+        };
+        assert_eq!(error.reason(), expected, "{movement}");
+        assert!(pending_recovery(&fixture.repository()).unwrap().is_some());
+
+        match movement {
+            "reference" => git(&fixture.agent, &["switch", "main"]),
+            "head" => git(&fixture.agent, &["reset", "--soft", &original_head]),
+            "index" => {
+                fs::write(fixture.agent.join(".git/index"), &index).expect("restore sealed index");
+                fs::remove_file(fixture.agent.join("index-only.txt"))
+                    .expect("remove index movement");
+            }
+            _ => unreachable!("fixture enumerates every movement"),
+        }
+        restore_recovery(&fixture.repository(), &recovery)
+            .expect("restored witness admits exact rollback");
+        assert_eq!(
+            fs::read_to_string(fixture.agent.join("dirty.txt")).expect("read restored bytes"),
+            "dirty\n",
+        );
+    }
+}
+
+#[test]
+fn moved_remote_baseline_refuses_an_interrupted_sync_and_retains_quarantine() {
+    let fixture = Fixture::new("dirty-baseline-movement");
+    fs::write(fixture.agent.join("dirty.txt"), "dirty\n").expect("write dirty bytes");
+    let recovery = quarantine_for_recovery(&fixture.repository()).expect("quarantine dirty lane");
+    let first = fixture.peer_commit("first.txt", "first\n");
+    journal_syncing_for_test(
+        &fixture.repository(),
+        &recovery,
+        boundary(
+            first.clone(),
+            first.clone(),
+            Some("origin/main"),
+            Some(first),
+            0,
+        ),
+    )
+    .expect("journal first observed baseline");
+    fixture.peer_commit("second.txt", "second\n");
+
+    let error = synchronize_recovery(&fixture.repository(), &recovery)
+        .expect_err("moved baseline refuses interrupted synchronization");
+
+    assert_eq!(error.reason(), "git::recovery-baseline-moved");
+    assert!(pending_recovery(&fixture.repository()).unwrap().is_some());
+    assert!(
+        fs::read_dir(fixture.agent.join(".git/spice-task-recovery/objects"))
+            .expect("retained baseline-race objects enumerate")
+            .map(
+                |entry| fs::read(entry.expect("recovery object entry").path())
+                    .expect("recovery object reads")
+            )
+            .any(|bytes| bytes == b"dirty\n"),
+        "an ambiguous moved baseline discarded the quarantined handoff bytes",
+    );
+}
+
+#[test]
+fn recovery_refuses_after_its_repository_moves_and_keeps_private_objects() {
+    let fixture = Fixture::new("dirty-repository-movement");
+    fs::write(fixture.agent.join("dirty.txt"), "dirty\n").expect("write dirty bytes");
+    let recovery = quarantine_for_recovery(&fixture.repository()).expect("quarantine dirty lane");
+    let moved = fixture._scratch.0.join("moved-agent");
+    fs::rename(&fixture.agent, &moved).expect("move sealed worktree");
+    let repository = Repository::discover(&moved).expect("discover moved repository");
+
+    let error = synchronize_recovery(&repository, &recovery)
+        .expect_err("repository seal refuses a moved worktree");
+
+    assert_eq!(error.reason(), "git::recovery-repository-moved");
+    assert!(moved.join(".git/spice-task-recovery/objects").is_dir());
+}
+
+#[test]
+fn unsafe_recovery_paths_refuse_escape_and_symlink_traversal() {
+    let fixture = Fixture::new("dirty-unsafe-paths");
+    let escape = recovery::admitted_path_for_test(&fixture.agent, "../outside")
+        .expect_err("parent traversal cannot become a recovery path");
+    assert_eq!(escape.reason(), "git::recovery-path-escape");
+
+    let outside = fixture._scratch.0.join("outside");
+    fs::create_dir(&outside).expect("outside fixture directory exists");
+    std::os::unix::fs::symlink(&outside, fixture.agent.join("unsafe-parent"))
+        .expect("unsafe parent symlink exists");
+    let traversal = recovery::admitted_path_for_test(&fixture.agent, "unsafe-parent/payload.txt")
+        .expect_err("recovery cannot follow a symlink parent");
+    assert_eq!(traversal.reason(), "git::recovery-symlink-traversal");
+    assert!(!outside.join("payload.txt").exists());
+}
+
+#[test]
+fn durable_preclaim_and_postclaim_restart_stages_are_idempotent() {
+    let fixture = Fixture::new("dirty-stage-restarts");
+    fs::write(fixture.agent.join("handoff.txt"), "handoff\n").expect("write handoff");
+    let recovery = quarantine_for_recovery(&fixture.repository()).expect("quarantine handoff");
+    assert_eq!(
+        quarantine_for_recovery(&fixture.repository()).expect("quarantine restart resumes"),
+        recovery,
+    );
+    let upstream = fixture.peer_commit("peer.txt", "peer\n");
+    journal_syncing_for_test(
+        &fixture.repository(),
+        &recovery,
+        boundary(
+            upstream.clone(),
+            upstream.clone(),
+            Some("origin/main"),
+            Some(upstream.clone()),
+            0,
+        ),
+    )
+    .expect("journal interrupted synchronization");
+    let synchronized = synchronize_recovery(&fixture.repository(), &recovery)
+        .expect("interrupted synchronization resumes");
+    assert_eq!(synchronized.head, upstream);
+    assert_eq!(
+        synchronize_recovery(&fixture.repository(), &recovery)
+            .expect("synchronized restart is idempotent"),
+        synchronized,
+    );
+    let claim = claim_intent(synchronized);
+    bind_recovery_claim(&fixture.repository(), &recovery, claim.clone())
+        .expect("bind postclaim intent");
+    bind_recovery_claim(&fixture.repository(), &recovery, claim)
+        .expect("bound claim restart is idempotent");
+    journal_replaying_for_test(&fixture.repository(), &recovery)
+        .expect("journal postclaim replay interruption");
+
+    replay_recovery(&fixture.repository(), &recovery)
+        .expect("postclaim replay interruption resumes exactly");
+
+    assert_eq!(
+        fs::read_to_string(fixture.agent.join("handoff.txt")).expect("read replayed handoff"),
+        "handoff\n",
+    );
+    assert!(pending_recovery(&fixture.repository()).unwrap().is_none());
+}
+
+#[test]
 fn unsupported_fifo_refuses_before_cleaning_any_other_path() {
     let fixture = Fixture::new("dirty-fifo");
     let fifo = fixture.agent.join("handoff.fifo");
