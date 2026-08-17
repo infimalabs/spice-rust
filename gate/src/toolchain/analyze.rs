@@ -1,11 +1,10 @@
 //! Compiled analyses for the toolchain arms this build answers itself.
 //!
-//! Most of the eight declared analyses are compiled here: the formatter check
-//! over its authorized source inventory, the canvas Wasm check and build, the
-//! workstation-path scanner, the prose scanner, the JavaScript
-//! declaration/reference analysis, and the two environment scanners. Each
-//! reports only what it observed, and [`super::measure_toolchain`] remains the
-//! sole authority that admits it.
+//! Every declared analysis enters through this module: the formatter check,
+//! native and Canvas compilers, workstation-path and prose scanners,
+//! JavaScript and C# declaration/reference analyses, Python typecheck, and the
+//! two environment scanners. Each reports only what it observed, and
+//! [`super::measure_toolchain`] remains the sole authority that admits it.
 //!
 //! Each declaration records its exclusions as English sentences and its
 //! includes as globs. Those strings are the retained evidence and the
@@ -56,10 +55,12 @@ use formatter::{relative_to, reported_roots};
 
 mod compile;
 mod csharp;
+mod python;
 mod rust;
 
 pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
+pub(super) use python::python_typecheck;
 pub(in crate::toolchain) use rust::{
     RUST_BUILD_DIRECTORY, make_cache_writable, synchronize_source,
 };
@@ -156,10 +157,11 @@ impl Analysis {
 pub(super) fn before_tools(
     declaration: ToolchainDeclaration,
     root: &Path,
-    formatter_reach: Option<&[String]>,
+    reached_paths: Option<&[String]>,
+    analysis_paths: &[String],
 ) -> Option<Analysis> {
     match declaration.id {
-        GateId::Formatters => match formatter::formatter_inputs(root, formatter_reach) {
+        GateId::Formatters => match formatter::formatter_inputs(root, reached_paths) {
             Ok(sources) if sources.is_empty() => Some(Analysis::not_applicable(declaration)),
             Ok(_) => None,
             Err(reason) => Some(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
@@ -172,7 +174,7 @@ pub(super) fn before_tools(
         GateId::RustTypecheck if !root.join("Cargo.toml").is_file() => {
             Some(Analysis::not_applicable(declaration))
         }
-        GateId::PythonTypecheck => match python_sources(root) {
+        GateId::PythonTypecheck => match python_sources(root, analysis_paths) {
             Ok(true) => None,
             Ok(false) => Some(Analysis::not_applicable(declaration)),
             Err(reason) => Some(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
@@ -514,23 +516,29 @@ fn env_policy_with(
 pub(super) fn env_name_ledger(
     declaration: ToolchainDeclaration,
     root: &Path,
+    reached_paths: &[String],
     declared_names: &[String],
     chargeable: impl Fn(&str) -> bool,
 ) -> Analysis {
-    env_name_ledger_with(declaration, root, declared_names, read_source, chargeable)
+    env_name_ledger_with(
+        declaration,
+        root,
+        reached_paths,
+        declared_names,
+        read_source,
+        chargeable,
+    )
 }
 
 fn env_name_ledger_with(
     declaration: ToolchainDeclaration,
     root: &Path,
+    reached_paths: &[String],
     declared_names: &[String],
     read_source: SourceReader,
     chargeable: impl Fn(&str) -> bool,
 ) -> Analysis {
-    let sources = match env_sources(root) {
-        Ok(sources) => sources,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-    };
+    let sources = selected_changes(root, reached_paths, env_language);
     if sources.is_empty() {
         return Analysis::not_applicable(declaration);
     }
@@ -619,23 +627,6 @@ fn env_language(path: &str) -> bool {
     !environment::is_scanner_itself(path)
         && extension(path)
             .is_some_and(|found| environment::ENV_EXTENSIONS.contains(&found.as_str()))
-}
-
-/// Every packaged environment-language source in the complete selected tree.
-///
-/// Sorted and deduplicated because each retained locus list has to be strictly
-/// increasing, and the walk order is the only thing that decides it.
-fn env_sources(root: &Path) -> Result<Vec<String>, String> {
-    let walked = Jurisdiction::walk(root, &Ignore::default())
-        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
-    let mut sources: Vec<String> = walked
-        .measurable()
-        .map(|entry| entry.path().to_owned())
-        .filter(|path| !excluded(path) && env_language(path))
-        .collect();
-    sources.sort();
-    sources.dedup();
-    Ok(sources)
 }
 
 mod javascript;
@@ -753,15 +744,14 @@ fn tool_search_path(label: &str, programs: &[&str]) -> Result<std::ffi::OsString
 }
 
 /// Whether the selected tree satisfies the Python declaration's applicability.
-fn python_sources(root: &Path) -> Result<bool, String> {
+fn python_sources(root: &Path, analysis_paths: &[String]) -> Result<bool, String> {
     if !root.join("pyproject.toml").is_file() {
         return Ok(false);
     }
-    let walked = Jurisdiction::walk(root, &Ignore::default())
-        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
-    Ok(walked.measurable().any(|entry| {
-        !built(entry.path())
-            && extension(entry.path()).is_some_and(|found| found == "py" || found == "pyi")
+    Ok(analysis_paths.iter().any(|path| {
+        root.join(path).is_file()
+            && !built(path)
+            && extension(path).is_some_and(|found| found == "py" || found == "pyi")
     }))
 }
 

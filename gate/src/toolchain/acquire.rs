@@ -169,8 +169,9 @@ impl std::error::Error for RimDirectoryError {}
 pub struct ToolchainSource<'a> {
     root: &'a Path,
     repository: &'a Path,
+    paths: &'a [String],
     rim: RimCapture,
-    formatter_reach: Option<Vec<String>>,
+    reached_paths: Option<Vec<String>>,
     baselines: Option<&'a BaselineCapture>,
     identity: Option<&'a Digest>,
     verifier_environment: &'a [(OsString, OsString)],
@@ -189,8 +190,9 @@ impl<'a> ToolchainSource<'a> {
         Self {
             root: tree.root(),
             repository: tree.repository(),
+            paths: tree.paths(),
             rim,
-            formatter_reach: None,
+            reached_paths: None,
             baselines: None,
             identity: None,
             verifier_environment: &[],
@@ -213,13 +215,14 @@ impl<'a> ToolchainSource<'a> {
         verifier_environment: &'a [(OsString, OsString)],
         verifier_evidence: &'a [VerifierCompilerEvidence],
         verifier_evidence_required: bool,
-        formatter_reach: Option<&[String]>,
+        reached_paths: Option<&[String]>,
     ) -> Self {
         Self {
             root: tree.root(),
             repository: tree.repository(),
+            paths: tree.paths(),
             rim,
-            formatter_reach: formatter_reach.map(<[String]>::to_vec),
+            reached_paths: reached_paths.map(<[String]>::to_vec),
             baselines: Some(baselines),
             identity: Some(identity),
             verifier_environment,
@@ -272,9 +275,17 @@ impl<'a> ToolchainSource<'a> {
         self.rim.changes()
     }
 
-    /// Validated authored paths for a focused formatter arm, when narrowed.
-    fn formatter_reach(&self) -> Option<&[String]> {
-        self.formatter_reach.as_deref()
+    /// Validated paths for one focused arm, when narrowed.
+    fn reached_paths(&self) -> Option<&[String]> {
+        self.reached_paths.as_deref()
+    }
+
+    /// Paths one analyzer is authorized to consume in this capture.
+    ///
+    /// Complete batteries retain the complete selected tree. A focused arm
+    /// receives dependency-expanded paths through the command rim.
+    pub(super) fn analysis_paths(&self) -> &[String] {
+        self.reached_paths.as_deref().unwrap_or(self.paths)
     }
 
     /// Whether this pending merge inherited one selected path verbatim.
@@ -383,7 +394,16 @@ fn scoped_declaration(
     mut declaration: ToolchainDeclaration,
     source: &ToolchainSource<'_>,
 ) -> ToolchainDeclaration {
-    if declaration.id == GateId::Formatters && source.formatter_reach().is_some() {
+    if source.reached_paths().is_some()
+        && matches!(
+            declaration.id,
+            GateId::Formatters
+                | GateId::JavascriptUnused
+                | GateId::CsharpUnusedCandidates
+                | GateId::PythonTypecheck
+                | GateId::EnvNameLedger
+        )
+    {
         declaration.jurisdiction.input = TreeInput::SelectedChanges;
     }
     declaration
@@ -409,9 +429,12 @@ pub(crate) fn acquire_verifier_tools(
             gate_id.as_str()
         ));
     }
-    if let Some(analysis) =
-        analyze::before_tools(declaration, source.root(), source.formatter_reach())
-    {
+    if let Some(analysis) = analyze::before_tools(
+        declaration,
+        source.root(),
+        source.reached_paths(),
+        source.analysis_paths(),
+    ) {
         return if analysis.outcome == ArmOutcome::NotApplicable {
             Ok(Err(analysis.reason))
         } else {
@@ -435,9 +458,12 @@ fn observe(
     bounds: &Bounds,
     environment_names: &[String],
 ) -> ArmObservation {
-    if let Some(analysis) =
-        analyze::before_tools(declaration, source.root(), source.formatter_reach())
-    {
+    if let Some(analysis) = analyze::before_tools(
+        declaration,
+        source.root(),
+        source.reached_paths(),
+        source.analysis_paths(),
+    ) {
         return observation(declaration, analysis, Vec::new());
     }
     let tools: Vec<ToolEvidence> = declaration
@@ -491,9 +517,8 @@ fn observation(
 ///
 /// Evidence is read before analysis because an arm whose program is absent or
 /// at the wrong version has nothing to measure with; the refusal it earns says
-/// so and no analysis is attempted. Every remaining identity is named outright:
-/// a ninth declared arm brings a ninth [`GateId`], which makes
-/// [`owed_analyzer`] fail to compile until it is answered for.
+/// so and no analysis is attempted. Every identity is named outright, so a new
+/// [`GateId`] fails to compile here until its one current analysis is supplied.
 fn examine(
     declaration: ToolchainDeclaration,
     source: &ToolchainSource<'_>,
@@ -526,7 +551,7 @@ fn examine(
             GateId::Formatters => analyze::formatters(
                 declaration,
                 source.root,
-                source.formatter_reach(),
+                source.reached_paths(),
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
@@ -552,17 +577,30 @@ fn examine(
                 let changes = source.chargeable_changes();
                 analyze::taste(declaration, source.root, &changes)
             }
-            GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
-            GateId::CsharpUnusedCandidates => analyze::csharp_unused(declaration, source.root),
+            GateId::JavascriptUnused => {
+                analyze::javascript_unused(declaration, source.root, source.analysis_paths())
+            }
+            GateId::CsharpUnusedCandidates => {
+                analyze::csharp_unused(declaration, source.root, source.analysis_paths())
+            }
+            GateId::PythonTypecheck => analyze::python_typecheck(
+                declaration,
+                source.root,
+                source.analysis_paths(),
+                bounds,
+                &resolved_programs(declaration, tools),
+            ),
             GateId::EnvPolicy => {
                 let changes = source.chargeable_changes();
                 analyze::env_policy(declaration, source.root, &changes)
             }
-            GateId::EnvNameLedger => {
-                analyze::env_name_ledger(declaration, source.root, environment_names, |path| {
-                    !source.merge_inherits(path)
-                })
-            }
+            GateId::EnvNameLedger => analyze::env_name_ledger(
+                declaration,
+                source.root,
+                source.analysis_paths(),
+                environment_names,
+                |path| !source.merge_inherits(path),
+            ),
             id => Analysis::terminal(
                 ArmOutcome::ParseFailure,
                 format!(
@@ -721,12 +759,8 @@ fn resolved_programs(
 
 /// The exact analyzer one identity is still owed, or `None` once nothing is.
 ///
-/// Nothing is owed in two cases, and neither is a gap: every compiled variant
-/// named in the match below answers for itself, and an identity that is not a
-/// toolchain arm is not this family's to compile at all. No sentence here
-/// carries a count, because a count goes stale the moment an analysis lands.
-/// Every identity is named outright, so a new [`GateId`] fails to compile here
-/// rather than receiving a sentence written for something else.
+/// Every compiled variant is named explicitly so adding an arm or completing
+/// an analyzer changes this exhaustive contract at compile time.
 pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
     match id {
         GateId::Formatters
@@ -736,11 +770,9 @@ pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
         | GateId::CanvasWebTypecheck
         | GateId::JavascriptUnused
         | GateId::CsharpUnusedCandidates
+        | GateId::PythonTypecheck
         | GateId::EnvPolicy
         | GateId::EnvNameLedger => None,
-        GateId::PythonTypecheck => {
-            Some("compile the pyright error-level analysis over selected sources")
-        }
         GateId::MergeIntegrity
         | GateId::PlanPhase
         | GateId::RepoShape

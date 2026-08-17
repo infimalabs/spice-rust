@@ -485,8 +485,12 @@ impl<'trace> RepositoryExecutor<'trace> {
             |gate_id| vec![gate_id],
         );
         self.record_analyses(ArmFamily::Hygiene, analyses);
-        let source = HygieneSource::capture(&self.tree, &self.contract)
-            .map_err(|error| error.to_string())?;
+        let source = if let Some(reached) = &self.reached_paths {
+            HygieneSource::capture_focused(&self.tree, &self.contract, reached)
+        } else {
+            HygieneSource::capture(&self.tree, &self.contract)
+        }
+        .map_err(|error| error.to_string())?;
         if let Some(gate_id) = self.selected {
             let report = match &self.reached_paths {
                 Some(reached) => {
@@ -778,7 +782,7 @@ fn record_capture_analyses(
     }
 }
 
-const PATH_LOCAL_ARMS: [GateId; 10] = [
+const PATH_LOCAL_ARMS: [GateId; 18] = [
     GateId::RepoDocs,
     GateId::Formatters,
     GateId::LocalPaths,
@@ -789,6 +793,25 @@ const PATH_LOCAL_ARMS: [GateId; 10] = [
     GateId::MagicNumbers,
     GateId::MarkdownLinks,
     GateId::AssertionFreeTests,
+    GateId::JavascriptUnused,
+    GateId::CsharpUnusedCandidates,
+    GateId::PythonTypecheck,
+    GateId::EnvNameLedger,
+    GateId::Reachability,
+    GateId::SymbolReachability,
+    GateId::PythonUnused,
+    GateId::PrivateInternals,
+];
+
+const DEPENDENCY_PATH_ARMS: [GateId; 8] = [
+    GateId::JavascriptUnused,
+    GateId::CsharpUnusedCandidates,
+    GateId::PythonTypecheck,
+    GateId::EnvNameLedger,
+    GateId::Reachability,
+    GateId::SymbolReachability,
+    GateId::PythonUnused,
+    GateId::PrivateInternals,
 ];
 
 fn path_local_reach(
@@ -833,7 +856,7 @@ fn path_local_reach(
         .filter(|edge| edge.gate_id() == gate_id)
         .map(|edge| edge.source().to_owned())
         .collect::<Vec<_>>();
-    if paths != direct {
+    if !DEPENDENCY_PATH_ARMS.contains(&gate_id) && paths != direct {
         return Err(BatteryError::new(format!(
             "focused path-local arm {gate_id} reach does not equal its direct authored path selection"
         )));

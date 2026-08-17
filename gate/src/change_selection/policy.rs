@@ -132,6 +132,18 @@ impl ChangeSelectionPolicy {
         gates.into_iter().collect()
     }
 
+    /// Compiled package-root selectors used by language dependency reach.
+    #[must_use]
+    pub fn package_roots(&self) -> &[String] {
+        &self.package_roots
+    }
+
+    /// Compiled test-root selectors used by language dependency reach.
+    #[must_use]
+    pub fn test_paths(&self) -> &[String] {
+        &self.test_paths
+    }
+
     pub(super) fn gates_for_path(&self, path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
         if self.policy_authority(path) {
             return Err(ChangeSelectionError::new(format!(
@@ -187,6 +199,7 @@ impl ChangeSelectionPolicy {
             gates.insert(GateId::MagicNumbers);
         }
 
+        self.extend_language_authority_gates(path, &mut gates);
         let extension = extension(path);
         match extension.as_str() {
             "rs" => {
@@ -240,9 +253,6 @@ impl ChangeSelectionPolicy {
             "toml" if path == "rust-toolchain.toml" && self.rust_workspace() => {
                 gates.extend([GateId::Formatters, GateId::RustTypecheck]);
             }
-            "toml" if path == "pyproject.toml" && self.python_project() => {
-                gates.extend([GateId::RepoShape, GateId::PythonTypecheck]);
-            }
             "lock" if path == "Cargo.lock" && self.rust_workspace() => {
                 gates.insert(GateId::RustTypecheck);
             }
@@ -269,6 +279,28 @@ impl ChangeSelectionPolicy {
 
     fn python_project(&self) -> bool {
         contains_exact(&self.tracked_sources, "pyproject.toml")
+    }
+
+    fn javascript_project(&self) -> bool {
+        self.tracked_sources
+            .iter()
+            .any(|path| matches!(extension(path).as_str(), "js" | "mjs" | "cjs"))
+    }
+
+    fn extend_language_authority_gates(&self, path: &str, gates: &mut BTreeSet<GateId>) {
+        match path {
+            "pyproject.toml" | "pyrightconfig.json" if self.python_project() => {
+                gates.extend([GateId::RepoShape, GateId::PythonTypecheck]);
+                gates.extend(PYTHON_HYGIENE);
+                gates.insert(GateId::AssertionFreeTests);
+            }
+            "package.json" | "package-lock.json" | "jsconfig.json" | "tsconfig.json"
+                if self.javascript_project() =>
+            {
+                gates.insert(GateId::JavascriptUnused);
+            }
+            _ => {}
+        }
     }
 
     fn python_source(&self, path: &str) -> bool {

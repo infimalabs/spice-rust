@@ -340,7 +340,7 @@ fn root_package_relative_imports_retain_known_modules_and_symbols() {
     let configuration = HygieneConfiguration::new(["__init__.py"], ["tests"])
         .expect("root-package fixture roots are admitted");
     let jurisdiction = tree.jurisdiction();
-    let (_, corpus, terminal) = Corpus::load(&jurisdiction, &configuration, Instant::now());
+    let (_, corpus, terminal) = Corpus::load(&jurisdiction, &configuration, Instant::now(), None);
     assert!(matches!(terminal, Terminal::Parsed));
     assert!(corpus.edges.contains(&(String::new(), "used".to_owned())));
     assert!(corpus.resolved_references().iter().any(|reference| {
@@ -521,7 +521,7 @@ fn assert_test_policy_findings(report: &HygieneReport) {
 fn native_run_derives_all_five_arms_from_multifile_python() {
     let tree = multifile_tree();
     let jurisdiction = tree.jurisdiction();
-    let (_, corpus, terminal) = Corpus::load(&jurisdiction, &configuration(), Instant::now());
+    let (_, corpus, terminal) = Corpus::load(&jurisdiction, &configuration(), Instant::now(), None);
     assert!(matches!(terminal, Terminal::Parsed));
     assert_relative_package_graph(&corpus);
     let report =
@@ -536,6 +536,75 @@ fn native_run_derives_all_five_arms_from_multifile_python() {
         .expect("clean source-derived hygiene report");
     assert!(clean_report.arms.iter().all(|measurement| {
         measurement.outcome == HygieneOutcome::Passed && measurement.findings.is_empty()
+    }));
+}
+
+#[test]
+fn focused_corpus_does_not_parse_an_unreached_malformed_python_component() {
+    let tree = FixtureTree::new();
+    tree.write("src/selected.py", "VALUE = 1\n");
+    tree.write("other/broken.py", "def broken(:\n");
+    let jurisdiction = tree.jurisdiction();
+    let reached = BTreeSet::from(["src/selected.py".to_owned()]);
+    let configuration =
+        HygieneConfiguration::new(["src"], ["tests"]).expect("focused fixture roots are admitted");
+
+    let (selected, corpus, terminal) = Corpus::load(
+        &jurisdiction,
+        &configuration,
+        Instant::now(),
+        Some(&reached),
+    );
+
+    assert_eq!(selected, 1);
+    assert!(matches!(terminal, Terminal::Parsed));
+    assert!(corpus.edges.is_empty());
+}
+
+#[test]
+fn focused_private_internals_ignores_unreached_stale_exception_rows() {
+    let tree = FixtureTree::new();
+    tree.write("app/__init__.py", "\n");
+    tree.write("app/_private.py", "VALUE = 1\n");
+    tree.write(
+        "tests/test_private.py",
+        "from app import _private\n\ndef test_private():\n    assert _private.VALUE\n",
+    );
+    let jurisdiction = tree.jurisdiction();
+    let reached = BTreeSet::from([
+        "app/__init__.py".to_owned(),
+        "app/_private.py".to_owned(),
+        "tests/test_private.py".to_owned(),
+    ]);
+    let configuration = HygieneConfiguration::new(["app"], ["tests"])
+        .expect("private fixture roots are admitted")
+        .with_private_exceptions([PrivateCouplingException::new(
+            "test_unrelated",
+            "other._private",
+        )
+        .expect("unrelated exception is admitted")]);
+
+    let measurement = analyze_hygiene_arm(
+        &jurisdiction,
+        &configuration,
+        GateId::PrivateInternals,
+        Some(&reached),
+    )
+    .expect("focused private-internals analysis completes");
+
+    assert!(measurement.findings.iter().any(|finding| {
+        matches!(
+            &finding.detail,
+            HygieneFindingDetail::PrivateCoupling { target, .. }
+                if target == "app._private"
+        )
+    }));
+    assert!(!measurement.findings.iter().any(|finding| {
+        matches!(
+            &finding.detail,
+            HygieneFindingDetail::StalePrivateException { test_name, target }
+                if test_name == "test_unrelated" && target == "other._private"
+        )
     }));
 }
 
