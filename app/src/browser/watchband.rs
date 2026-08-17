@@ -436,10 +436,6 @@ fn primary_stream_link(
         ActivityCard::Agent {
             member, message, ..
         } if member.lane == lane => Some(agent_message_source_id(message)),
-        ActivityCard::Directive {
-            lane: card_lane,
-            directive,
-        } if *card_lane == lane => Some(directive_source_id(directive)),
         ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
     });
     source.map_or_else(

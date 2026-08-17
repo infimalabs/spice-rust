@@ -487,6 +487,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
 
   await assertComposerShards({
     page,
+    fixture,
     team,
     quoteLane,
     quoteActivity,
