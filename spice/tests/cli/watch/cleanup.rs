@@ -1,31 +1,18 @@
 use super::*;
 
-use std::any::Any;
-use std::io;
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::process::{Child, ExitStatus};
-use std::sync::mpsc::{Receiver, TryRecvError};
-use std::thread::JoinHandle;
+use std::ffi::{OsStr, OsString};
+use std::sync::Arc;
 
-pub(super) trait ChildControl: Send {
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>>;
-    fn kill(&mut self) -> io::Result<()>;
-    fn wait(&mut self) -> io::Result<ExitStatus>;
-}
+use sill::{
+    Argv, Cancellation, Completion, Deadlines, Environment, Observation, ObserveError,
+    ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
+    RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy, WaitStep,
+};
 
-impl ChildControl for Child {
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        Child::try_wait(self)
-    }
-
-    fn kill(&mut self) -> io::Result<()> {
-        Child::kill(self)
-    }
-
-    fn wait(&mut self) -> io::Result<ExitStatus> {
-        Child::wait(self)
-    }
-}
+const OUTPUT_LIMIT: usize = 1024 * 1024;
+const OUTPUT_QUEUE: usize = 64;
+const OUTPUT_DRAIN: Duration = Duration::from_millis(500);
+const REAP_DEADLINE: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ExitOrigin {
@@ -33,236 +20,113 @@ pub(super) enum ExitOrigin {
     FixtureTermination,
 }
 
-pub(super) struct CleanupJob {
-    child: Option<Box<dyn ChildControl>>,
-    stdout: Option<Receiver<String>>,
-    stdout_reader: Option<JoinHandle<Result<(), String>>>,
-    stderr_reader: Option<JoinHandle<Result<Vec<u8>, String>>>,
-    status: Option<ExitStatus>,
-    exit_origin: Option<ExitOrigin>,
+pub(super) enum WatchEvent {
+    Record(Vec<u8>),
+    Exited,
+    Failed(String),
 }
 
-pub(super) struct CleanupReport {
-    status: Option<ExitStatus>,
-    exit_origin: Option<ExitOrigin>,
-    stderr: Vec<u8>,
-    observations: Vec<StreamOutcome>,
-    errors: Vec<String>,
+struct WatchObserver {
+    events: mpsc::Sender<WatchEvent>,
 }
 
-impl CleanupJob {
-    pub(super) fn new(
-        child: Option<Box<dyn ChildControl>>,
-        stdout: Option<Receiver<String>>,
-        stdout_reader: Option<JoinHandle<Result<(), String>>>,
-        stderr_reader: Option<JoinHandle<Result<Vec<u8>, String>>>,
-        status: Option<ExitStatus>,
-        exit_origin: Option<ExitOrigin>,
-    ) -> Self {
-        Self {
-            child,
-            stdout,
-            stdout_reader,
-            stderr_reader,
-            status,
-            exit_origin,
-        }
+impl RecordObserver for WatchObserver {
+    fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
+        self.events
+            .send(WatchEvent::Record(record.bytes().to_vec()))
+            .map_err(|error| ObserveError::new(format!("watch record receiver closed: {error}")))
     }
 
-    fn from_watch(watch: &mut WatchProcess) -> Self {
-        Self::new(
-            watch.child.take(),
-            watch.stdout.take(),
-            watch.stdout_reader.take(),
-            watch.stderr_reader.take(),
-            watch.status,
-            watch.exit_origin,
+    fn failed(&self, failure: &sill::ObservationFailure) {
+        let _ = self.events.send(WatchEvent::Failed(failure.to_string()));
+    }
+
+    fn exited(&self) {
+        let _ = self.events.send(WatchEvent::Exited);
+    }
+}
+
+pub(super) fn spawn_watch(
+    root: &str,
+    deadline: Instant,
+) -> Result<(sill::Running, mpsc::Receiver<WatchEvent>), String> {
+    let runtime = deadline
+        .saturating_duration_since(Instant::now())
+        .saturating_sub(CLEANUP_RESERVE);
+    let argv = Argv::new(
+        env!("CARGO_BIN_EXE_spice"),
+        [
+            OsString::from("--json"),
+            OsString::from("watch"),
+            root.into(),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    spawn_observed(argv, watch_environment()?, runtime)
+}
+
+#[cfg(all(test, unix))]
+pub(super) fn spawn_fixture(
+    script: &str,
+    runtime: Duration,
+) -> Result<(sill::Running, mpsc::Receiver<WatchEvent>), String> {
+    let argv = Argv::new(
+        "/bin/sh",
+        [
+            OsString::from("-c"),
+            OsString::from(script),
+            OsString::from("watch-cleanup-fixture"),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    spawn_observed(argv, Environment::empty(), runtime)
+}
+
+fn spawn_observed(
+    argv: Argv,
+    environment: Environment,
+    runtime: Duration,
+) -> Result<(sill::Running, mpsc::Receiver<WatchEvent>), String> {
+    let (sender, events) = mpsc::channel();
+    let observation = Observation::new(
+        OutputStream::Stdout,
+        OUTPUT_LIMIT,
+        OUTPUT_QUEUE,
+        Arc::new(WatchObserver { events: sender }),
+    )
+    .map_err(|error| error.to_string())?;
+    let capture = StreamPolicy::Capture {
+        limit: OUTPUT_LIMIT,
+    };
+    let spec = Spec {
+        argv,
+        cwd: std::env::current_dir().map_err(|error| error.to_string())?,
+        environment,
+        group: ProcessGroup::New,
+        deadlines: Deadlines::new(runtime, OUTPUT_DRAIN, REAP_DEADLINE)
+            .map_err(|error| error.to_string())?,
+        wait: WaitPolicy::new(
+            "real watch fixture",
+            Cancellation::Never,
+            RestartDisposition::Never,
         )
-    }
-
-    fn run(mut self) -> CleanupReport {
-        let mut errors = Vec::new();
-        self.stop_child(&mut errors);
-        let observations = self.finish_stdout(&mut errors);
-        let stderr = self.finish_stderr(&mut errors);
-        CleanupReport {
-            status: self.status,
-            exit_origin: self.exit_origin,
-            stderr,
-            observations,
-            errors,
-        }
-    }
-
-    fn stop_child(&mut self, errors: &mut Vec<String>) {
-        if self.status.is_some() {
-            self.child.take();
-            return;
-        }
-        let Some(mut child) = self.child.take() else {
-            errors.push("watch child handle was already absent".to_owned());
-            return;
-        };
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                self.status = Some(status);
-                self.exit_origin = Some(ExitOrigin::Natural);
-            }
-            Ok(None) => self.terminate_and_reap(child.as_mut(), "watch", errors),
-            Err(error) => {
-                errors.push(format!("watch liveness probe failed: {error}"));
-                self.terminate_and_reap(child.as_mut(), "watch after probe failure", errors);
-            }
-        }
-    }
-
-    fn terminate_and_reap(
-        &mut self,
-        child: &mut dyn ChildControl,
-        context: &str,
-        errors: &mut Vec<String>,
-    ) {
-        self.exit_origin = Some(ExitOrigin::FixtureTermination);
-        if let Err(error) = child.kill() {
-            errors.push(format!("{context} kill failed: {error}"));
-        }
-        match child.wait() {
-            Ok(status) => self.status = Some(status),
-            Err(error) => errors.push(format!("{context} reap failed: {error}")),
-        }
-    }
-
-    fn finish_stdout(&mut self, errors: &mut Vec<String>) -> Vec<StreamOutcome> {
-        if let Some(reader) = self.stdout_reader.take() {
-            match reader.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => errors.push(format!("watch stdout read failed: {error}")),
-                Err(_) => errors.push("watch stdout reader panicked".to_owned()),
-            }
-        }
-        let Some(receiver) = self.stdout.take() else {
-            return Vec::new();
-        };
-        receiver
-            .try_iter()
-            .filter_map(
-                |line| match wire::decode::<StreamOutcome>(line.as_bytes()) {
-                    Ok(outcome) => Some(outcome),
-                    Err(error) => {
-                        errors.push(format!(
-                            "shutdown stdout DTO was invalid: {error}; line={line:?}"
-                        ));
-                        None
-                    }
-                },
-            )
-            .collect()
-    }
-
-    fn finish_stderr(&mut self, errors: &mut Vec<String>) -> Vec<u8> {
-        let Some(reader) = self.stderr_reader.take() else {
-            return Vec::new();
-        };
-        match reader.join() {
-            Ok(Ok(bytes)) => bytes,
-            Ok(Err(error)) => {
-                errors.push(format!("watch stderr read failed: {error}"));
-                Vec::new()
-            }
-            Err(_) => {
-                errors.push("watch stderr reader panicked".to_owned());
-                Vec::new()
-            }
-        }
-    }
+        .map_err(|error| error.to_string())?,
+        output: Output::new(StdinPolicy::Null, capture, capture),
+        redaction: Redaction::All,
+        grace: Duration::ZERO,
+    };
+    sill::spawn_observed(spec, observation)
+        .map(|running| (running, events))
+        .map_err(|error| error.to_string())
 }
 
-pub(super) struct CleanupWorker {
-    report: Receiver<Result<CleanupReport, String>>,
-    done: Receiver<()>,
-    pending: Option<Result<CleanupReport, String>>,
-}
-
-impl CleanupWorker {
-    pub(super) fn spawn(job: CleanupJob) -> Self {
-        let (report_sender, report) = mpsc::channel();
-        let (done_sender, done) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("watch-fixture-cleanup".to_owned())
-            .spawn(move || {
-                let result = catch_unwind(AssertUnwindSafe(|| job.run()))
-                    .map_err(|panic| panic_detail(panic.as_ref()));
-                let _ = report_sender.send(result);
-                let _ = done_sender.send(());
-            })
-            .expect("watch cleanup worker launches");
-        Self {
-            report,
-            done,
-            pending: None,
-        }
-    }
-
-    pub(super) fn wait_until(
-        mut self,
-        deadline: Instant,
-    ) -> Result<Result<CleanupReport, String>, Self> {
-        if self.pending.is_none() {
-            match receive_by(&self.report, deadline) {
-                Ok(report) => self.pending = Some(report),
-                Err(ReceiveByError::Timeout) => return Err(self),
-                Err(ReceiveByError::Disconnected) => {
-                    self.pending = Some(Err("watch cleanup worker disconnected".to_owned()));
-                }
-            }
-        }
-        match receive_by(&self.done, deadline) {
-            Ok(()) | Err(ReceiveByError::Disconnected) => {
-                Ok(self.pending.take().expect("cleanup report is retained"))
-            }
-            Err(ReceiveByError::Timeout) => Err(self),
-        }
-    }
-}
-
-enum ReceiveByError {
-    Timeout,
-    Disconnected,
-}
-
-fn receive_by<T>(receiver: &Receiver<T>, deadline: Instant) -> Result<T, ReceiveByError> {
-    match receiver.try_recv() {
-        Ok(value) => return Ok(value),
-        Err(TryRecvError::Disconnected) => return Err(ReceiveByError::Disconnected),
-        Err(TryRecvError::Empty) => {}
-    }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        return Err(ReceiveByError::Timeout);
-    }
-    receiver
-        .recv_timeout(remaining)
-        .map_err(|error| match error {
-            mpsc::RecvTimeoutError::Timeout => ReceiveByError::Timeout,
-            mpsc::RecvTimeoutError::Disconnected => ReceiveByError::Disconnected,
-        })
-}
-
-fn panic_detail(panic: &(dyn Any + Send)) -> String {
-    panic
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| {
-            panic
-                .downcast_ref::<&str>()
-                .map(|detail| (*detail).to_owned())
-        })
-        .unwrap_or_else(|| "watch cleanup worker panicked".to_owned())
-}
-
-pub(super) fn terminate_launch_child(child: Child, deadline: Instant) {
-    let job = CleanupJob::new(Some(Box::new(child)), None, None, None, None, None);
-    let _ = CleanupWorker::spawn(job).wait_until(deadline);
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the integration fixture preserves the launched CLI environment except for its steering inbox"
+)]
+fn watch_environment() -> Result<Environment, String> {
+    Environment::new(std::env::vars_os().filter(|(name, _)| name != OsStr::new(steer::hook::INBOX)))
+        .map_err(|error| error.to_string())
 }
 
 impl WatchProcess {
@@ -292,33 +156,85 @@ impl WatchProcess {
     }
 
     fn shutdown(&mut self) {
-        if self.child.is_none()
-            && self.stdout.is_none()
-            && self.stdout_reader.is_none()
-            && self.stderr_reader.is_none()
-        {
+        let Some(process) = self.process.take() else {
             return;
-        }
-        let worker = CleanupWorker::spawn(CleanupJob::from_watch(self));
-        match worker.wait_until(self.deadline) {
-            Ok(Ok(report)) => self.accept_cleanup(report),
-            Ok(Err(error)) => self
+        };
+        let waited = if self.exit_origin == Some(ExitOrigin::Natural) {
+            process.wait()
+        } else {
+            match process.wait_for(Duration::ZERO) {
+                Ok(WaitStep::Exited(waited)) => {
+                    self.exit_origin = Some(ExitOrigin::Natural);
+                    Ok(waited)
+                }
+                Ok(WaitStep::Running(process)) => {
+                    self.exit_origin = Some(ExitOrigin::FixtureTermination);
+                    if let Err(error) = process.signal_kill() {
+                        self.cleanup_errors
+                            .push(format!("watch process-group kill failed: {error}"));
+                    }
+                    process.wait()
+                }
+                Err(error) => Err(error),
+            }
+        };
+        match waited {
+            Ok(waited) => self.accept_waited(&waited),
+            Err(error) => self
                 .cleanup_errors
-                .push(format!("watch cleanup worker failed: {error}")),
-            Err(_) => self.cleanup_errors.push(cleanup_deadline_detail()),
+                .push(format!("watch process cleanup failed: {error}")),
         }
+        self.drain_events();
         if self.remaining().is_zero() {
-            self.cleanup_errors
-                .push("cleanup exhausted the test-wide deadline".to_owned());
+            self.cleanup_errors.push(format!(
+                "kill/reap and stdout/stderr drain exceeded the original {WATCH_TEST_BOUND:?} test-wide deadline"
+            ));
         }
     }
 
-    fn accept_cleanup(&mut self, mut report: CleanupReport) {
-        self.status = report.status;
-        self.exit_origin = report.exit_origin;
-        self.stderr = report.stderr;
-        self.observations.append(&mut report.observations);
-        self.cleanup_errors.append(&mut report.errors);
+    fn accept_waited(&mut self, waited: &WaitOutcome) {
+        self.status = Some(waited.completion().status());
+        if matches!(waited.completion(), Completion::TimedOut(_)) {
+            self.cleanup_errors
+                .push("watch process reached its supervised runtime deadline".to_owned());
+        }
+        if !waited.outputs_drained() {
+            self.cleanup_errors
+                .push("watch stdout/stderr did not drain within the original deadline".to_owned());
+        }
+        if let Some(stderr) = waited.stderr() {
+            self.stderr = stderr.bytes().to_vec();
+            if stderr.truncated() {
+                self.cleanup_errors
+                    .push("watch stderr exceeded the fixture capture limit".to_owned());
+            }
+            if !stderr.complete() {
+                self.cleanup_errors
+                    .push("watch stderr capture was incomplete".to_owned());
+            }
+        }
+        if let Some(failure) = waited.observation_failure() {
+            self.cleanup_errors
+                .push(format!("watch output observation failed: {failure}"));
+        }
+    }
+
+    fn drain_events(&mut self) {
+        while let Ok(event) = self.events.try_recv() {
+            match event {
+                WatchEvent::Record(record) => match wire::decode::<StreamOutcome>(&record) {
+                    Ok(outcome) => self.observations.push(outcome),
+                    Err(error) => self.cleanup_errors.push(format!(
+                        "shutdown stdout DTO was invalid: {error}; record={:?}",
+                        String::from_utf8_lossy(&record)
+                    )),
+                },
+                WatchEvent::Exited => {}
+                WatchEvent::Failed(detail) => self
+                    .cleanup_errors
+                    .push(format!("watch output observation failed: {detail}")),
+            }
+        }
     }
 
     fn diagnostic(&self, detail: &str) -> String {
@@ -342,19 +258,9 @@ impl WatchProcess {
     }
 }
 
-pub(super) fn cleanup_deadline_detail() -> String {
-    format!(
-        "cleanup exceeded the original {WATCH_TEST_BOUND:?} test-wide deadline before kill/reap and stdout/stderr drain completion"
-    )
-}
-
 impl Drop for WatchProcess {
     fn drop(&mut self) {
-        if self.child.is_some()
-            || self.stdout.is_some()
-            || self.stdout_reader.is_some()
-            || self.stderr_reader.is_some()
-        {
+        if self.process.is_some() {
             self.shutdown();
         }
     }
