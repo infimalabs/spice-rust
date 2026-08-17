@@ -24,15 +24,21 @@ pub(in crate::toolchain) fn canvas_web_typecheck(
     changes: &[String],
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
+    deferred_trunk_refusal: Option<Analysis>,
 ) -> Analysis {
     let removal = Cell::new(None);
+    let tools = CanvasTools {
+        cargo: programs.get(CARGO).copied(),
+        trunk: programs.get(TRUNK).copied(),
+        deferred_trunk_refusal,
+    };
     let analysis = canvas_analysis(
         declaration,
         root,
         repository,
         changes,
         bounds,
-        programs,
+        tools,
         &removal,
     );
     match removal.take() {
@@ -41,19 +47,25 @@ pub(in crate::toolchain) fn canvas_web_typecheck(
     }
 }
 
+struct CanvasTools<'a> {
+    cargo: Option<&'a str>,
+    trunk: Option<&'a str>,
+    deferred_trunk_refusal: Option<Analysis>,
+}
+
 fn canvas_analysis(
     declaration: ToolchainDeclaration,
     root: &Path,
     repository: &Path,
     changes: &[String],
     bounds: &Bounds,
-    programs: &BTreeMap<&str, &str>,
+    tools: CanvasTools<'_>,
     removal: &Cell<Option<String>>,
 ) -> Analysis {
     if !root.join("Cargo.toml").is_file() || !root.join("app/index.html").is_file() {
         return Analysis::not_applicable(declaration);
     }
-    let Some(cargo) = programs.get(CARGO) else {
+    let Some(cargo) = tools.cargo else {
         return Analysis::terminal(
             ArmOutcome::ToolUnavailable,
             format!("{} declares no {CARGO} program", declaration.id.as_str()),
@@ -65,7 +77,7 @@ fn canvas_analysis(
         Ok(source) => source,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let metadata_environment = match tool_environment("canvas reach", &[*cargo]) {
+    let metadata_environment = match tool_environment("canvas reach", &[cargo]) {
         Ok(environment) => environment,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -84,7 +96,10 @@ fn canvas_analysis(
             Err(error) => return Analysis::terminal(ArmOutcome::ParseFailure, error.to_string()),
         }
     }
-    let Some(trunk) = programs.get(TRUNK) else {
+    if let Some(refusal) = tools.deferred_trunk_refusal {
+        return refusal;
+    }
+    let Some(trunk) = tools.trunk else {
         return Analysis::terminal(
             ArmOutcome::ToolUnavailable,
             format!("{} declares no {TRUNK} program", declaration.id.as_str()),

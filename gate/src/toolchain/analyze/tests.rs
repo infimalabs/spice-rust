@@ -276,9 +276,86 @@ fn canvas_reverse_dependency_reach_runs_for_core_but_skips_unrelated_packages() 
         &["other/src/lib.rs".to_owned()],
         &canvas_exit_bounds(),
         &programs,
+        None,
     );
     assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
     assert!(no_trunk.log_lines().is_empty());
+}
+
+#[test]
+fn canvas_surfaces_each_deferred_trunk_refusal_only_after_reach() {
+    let declaration = declaration(GateId::CanvasWebTypecheck).expect("canvas arm is declared");
+    let gate = declaration.id.as_str();
+    let cases = [
+        (
+            "missing",
+            ArmOutcome::ToolUnavailable,
+            format!("{gate} has no usable declared program: trunk did not resolve"),
+        ),
+        (
+            "unprobed",
+            ArmOutcome::ToolUnavailable,
+            format!(
+                "{gate} has no usable declared program: trunk resolved to /fixture/trunk and exited with 3"
+            ),
+        ),
+        (
+            "drifted",
+            ArmOutcome::UnsupportedVersion,
+            format!(
+                "{gate} left its exact version contract: trunk is {:?} and not {:?}",
+                "trunk 0.0.0", "trunk 0.21.14",
+            ),
+        ),
+    ];
+
+    for (label, outcome, reason) in cases {
+        let unrelated = CanvasFixture::new(&format!("deferred-{label}-unrelated"), true);
+        let cargo = unrelated.script("cargo", "exit 0");
+        let trunk = (outcome == ArmOutcome::UnsupportedVersion)
+            .then(|| unrelated.script("trunk", "exit 70"));
+        let programs = canvas_programs(&cargo, trunk.as_deref());
+        let analysis = canvas_web_typecheck(
+            declaration,
+            &unrelated.root,
+            &unrelated.output,
+            &["other/src/lib.rs".to_owned()],
+            &canvas_exit_bounds(),
+            &programs,
+            Some(Analysis::terminal(outcome, reason.clone())),
+        );
+        assert_eq!(analysis.outcome, ArmOutcome::NotApplicable, "{label}");
+        assert!(unrelated.log_lines().is_empty(), "{label}");
+
+        let reached = CanvasFixture::new(&format!("deferred-{label}-reached"), true);
+        let cargo = reached.script("cargo", "exit 0");
+        let trunk =
+            (outcome == ArmOutcome::UnsupportedVersion).then(|| reached.script("trunk", "exit 70"));
+        let programs = canvas_programs(&cargo, trunk.as_deref());
+        let analysis = canvas_web_typecheck(
+            declaration,
+            &reached.root,
+            &reached.output,
+            &["core/src/lib.rs".to_owned()],
+            &canvas_exit_bounds(),
+            &programs,
+            Some(Analysis::terminal(outcome, reason.clone())),
+        );
+        assert_eq!(analysis.outcome, outcome, "{label}");
+        assert_eq!(analysis.reason, reason, "{label}");
+        assert!(
+            reached.log_lines().is_empty(),
+            "{label} launched a compiler before surfacing retained tool evidence"
+        );
+    }
+}
+
+fn canvas_programs<'a>(cargo: &'a Path, trunk: Option<&'a Path>) -> BTreeMap<&'a str, &'a str> {
+    let mut programs = BTreeMap::from([(CARGO, cargo.to_str().expect("UTF-8 cargo stub"))]);
+    if let Some(trunk) = trunk {
+        programs.insert(TRUNK, trunk.to_str().expect("UTF-8 Trunk stub"));
+    }
+    programs
 }
 
 #[test]
@@ -998,6 +1075,7 @@ impl CanvasFixture {
             changes,
             bounds,
             &programs,
+            None,
         )
     }
 

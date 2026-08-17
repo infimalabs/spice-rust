@@ -262,27 +262,80 @@ fn canvas_defers_only_trunk_refusal_until_cargo_reach_is_known() {
         .find(|declaration| declaration.id == GateId::CanvasWebTypecheck)
         .expect("canvas declaration exists");
     let cargo = declaration.tools[0];
-    let tools = [
-        ToolEvidence::Identified {
-            name: cargo.name.to_owned(),
-            requested_program: cargo.program.to_owned(),
-            resolved_program: "/fixture/cargo".to_owned(),
-            version: cargo.exact_version.to_owned(),
-            digest: "cargo-digest".to_owned(),
-        },
-        ToolEvidence::Missing {
-            name: declaration.tools[1].name.to_owned(),
-            requested_program: declaration.tools[1].program.to_owned(),
-        },
+    let trunk = declaration.tools[1];
+    let exact_cargo = identified(cargo, "/fixture/cargo", cargo.exact_version);
+    let drifted_trunk = "trunk 0.0.0";
+    let deferred = [
+        (
+            ToolEvidence::Missing {
+                name: trunk.name.to_owned(),
+                requested_program: trunk.program.to_owned(),
+            },
+            ArmOutcome::ToolUnavailable,
+            format!(
+                "{} has no usable declared program: trunk did not resolve",
+                declaration.id.as_str()
+            ),
+        ),
+        (
+            ToolEvidence::Unprobed {
+                name: trunk.name.to_owned(),
+                requested_program: trunk.program.to_owned(),
+                resolved_program: "/fixture/trunk".to_owned(),
+                failure: ProbeFailure::Refused { code: 3 },
+            },
+            ArmOutcome::ToolUnavailable,
+            format!(
+                "{} has no usable declared program: trunk resolved to /fixture/trunk and exited with 3",
+                declaration.id.as_str()
+            ),
+        ),
+        (
+            identified(trunk, "/fixture/trunk", drifted_trunk),
+            ArmOutcome::UnsupportedVersion,
+            format!(
+                "{} left its exact version contract: trunk is {drifted_trunk:?} and not {:?}",
+                declaration.id.as_str(),
+                trunk.exact_version,
+            ),
+        ),
     ];
 
-    assert!(analyzer_refusal(declaration, &tools).is_none());
+    for (trunk_evidence, outcome, reason) in deferred {
+        let tools = [exact_cargo.clone(), trunk_evidence];
+        assert!(analyzer_refusal(declaration, &tools).is_none());
+        let refusal = refusal(declaration, &tools)
+            .expect("complete tool refusal still requires reached Trunk");
+        assert_eq!(refusal.outcome, outcome);
+        assert_eq!(refusal.reason, reason);
+    }
+
+    let cargo_drift = "cargo 0.0.0";
+    let tools = [
+        identified(cargo, "/fixture/cargo", cargo_drift),
+        identified(trunk, "/fixture/trunk", trunk.exact_version),
+    ];
+    let refusal = analyzer_refusal(declaration, &tools)
+        .expect("Cargo drift refuses before metadata can decide Canvas reach");
+    assert_eq!(refusal.outcome, ArmOutcome::UnsupportedVersion);
     assert_eq!(
-        refusal(declaration, &tools)
-            .expect("complete tool refusal still requires Trunk")
-            .outcome,
-        ArmOutcome::ToolUnavailable
+        refusal.reason,
+        format!(
+            "{} left its exact version contract: cargo is {cargo_drift:?} and not {:?}",
+            declaration.id.as_str(),
+            cargo.exact_version,
+        )
     );
+}
+
+fn identified(requirement: ToolRequirement, resolved: &str, version: &str) -> ToolEvidence {
+    ToolEvidence::Identified {
+        name: requirement.name.to_owned(),
+        requested_program: requirement.program.to_owned(),
+        resolved_program: resolved.to_owned(),
+        version: version.to_owned(),
+        digest: format!("{}-digest", requirement.program),
+    }
 }
 
 /// A file that shadows a program name but has no executable mode cannot be

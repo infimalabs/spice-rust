@@ -570,6 +570,7 @@ fn examine(
                 source.changes(),
                 bounds,
                 &resolved_programs(declaration, tools),
+                refusal(declaration, tools),
             ),
             GateId::LocalPaths => {
                 let changes = source.chargeable_changes();
