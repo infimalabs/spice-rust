@@ -59,8 +59,8 @@ rustix = { version = "1.1.4", features = ["fs", "process"] }
 socket2 = "0.6.5"
 
 [[test]]
-name = "semantic_full_verifier"
-path = "tests/semantic_full_verifier/mod.rs"
+name = "hook_appliance"
+path = "tests/hook_appliance/mod.rs"
 
 [lints]
 workspace = true

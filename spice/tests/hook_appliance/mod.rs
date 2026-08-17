@@ -1,7 +1,5 @@
 #[cfg(unix)]
-mod hook_appliance;
+mod appliance;
 #[cfg(unix)]
 mod install_git_hooks;
 mod pre_commit_policy;
-#[cfg(unix)]
-mod semantic;

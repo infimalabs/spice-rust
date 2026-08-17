@@ -28,7 +28,7 @@ fn full_verifier_retries_stale_state_and_crosses_the_complete_evidence_lifecycle
         .args([
             "--ignored",
             "--exact",
-            "semantic::semantic_lifecycle_fixture_process",
+            "semantic_lifecycle_fixture_process",
             "--nocapture",
         ])
         .current_dir(&fixture.repository)
@@ -56,7 +56,7 @@ fn admitted_parent_archives_compose_one_normal_two_parent_commit() {
         .args([
             "--ignored",
             "--exact",
-            "semantic::merge_parent_fixture_process",
+            "merge_parent_fixture_process",
             "--nocapture",
         ])
         .current_dir(&fixture.repository)
@@ -84,7 +84,7 @@ fn concurrent_linked_worktree_state_receipts_compose_and_remain_source_bound() {
         .args([
             "--ignored",
             "--exact",
-            "semantic::concurrent_state_receipt_fixture_process",
+            "concurrent_state_receipt_fixture_process",
             "--nocapture",
         ])
         .current_dir(&fixture.repository)
