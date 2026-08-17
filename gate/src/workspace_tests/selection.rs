@@ -127,6 +127,18 @@ pub(super) fn package_inventory(
         .into_iter()
         .map(|target| {
             let test = target.test;
+            let mut required_features = target.required_features;
+            required_features.sort();
+            required_features.dedup();
+            if let Some(feature) = required_features
+                .iter()
+                .find(|feature| !package.features.contains_key(feature.as_str()))
+            {
+                return Err(WorkspaceTestError::new(format!(
+                    "workspace package {:?} target {:?} requires undeclared feature {:?}",
+                    package.name, target.name, feature,
+                )));
+            }
             if !target.src_path.is_absolute() {
                 return Err(WorkspaceTestError::new(format!(
                     "workspace package {:?} target {:?} metadata named relative source {}",
@@ -153,6 +165,7 @@ pub(super) fn package_inventory(
                     package: package.id.clone(),
                     kind: target.kind.join("+"),
                     name: target.name,
+                    required_features,
                     source,
                     declared_path_sources,
                     source_bytes,
@@ -349,6 +362,23 @@ pub(super) fn cargo_check_selections(
                     name: package.name.clone(),
                     root: package.root.clone(),
                     all_targets: targets.is_none(),
+                    required_features: targets
+                        .as_ref()
+                        .map(|targets| {
+                            targets
+                                .iter()
+                                .flat_map(|target| target.required_features.iter().cloned())
+                                .collect::<BTreeSet<_>>()
+                        })
+                        .unwrap_or_else(|| {
+                            package
+                                .declared_targets
+                                .iter()
+                                .flat_map(|target| target.required_features.iter().cloned())
+                                .collect()
+                        })
+                        .into_iter()
+                        .collect(),
                     targets: targets
                         .as_ref()
                         .map(|targets| targets.iter().cloned().collect())
@@ -389,6 +419,7 @@ fn cargo_target_selection(
     Ok(CargoTargetSelection {
         flag,
         name: target.name.clone(),
+        required_features: target.required_features.clone(),
     })
 }
 

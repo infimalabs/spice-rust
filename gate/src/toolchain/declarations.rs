@@ -279,7 +279,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
         },
         tools: RUST_TYPECHECK_TOOLS,
         analysis: &[
-            "cargo check --locked --package <each reached package> <--all-targets or exact reached target flags>",
+            "cargo check --locked --package <each reached package> <--all-targets or exact reached target flags> <--features exact package-qualified required features>",
         ],
     },
     ToolchainDeclaration {

@@ -57,8 +57,18 @@ impl WorkspacePackageReach {
                 "--locked".to_owned(),
                 "--all-targets".to_owned(),
             ];
-            for check in all_targets {
+            for check in &all_targets {
                 arguments.extend(["--package".to_owned(), check.name.clone()]);
+            }
+            if let Some(features) =
+                qualified_required_features(all_targets.iter().flat_map(|check| {
+                    check
+                        .required_features
+                        .iter()
+                        .map(|feature| (check.name.as_str(), feature.as_str()))
+                }))
+            {
+                arguments.extend(["--features".to_owned(), features]);
             }
             invocations.push(arguments);
         }
@@ -71,6 +81,14 @@ impl WorkspacePackageReach {
             ];
             for target in &check.targets {
                 arguments.extend([target.flag.to_owned(), target.name.clone()]);
+            }
+            if let Some(features) = qualified_required_features(
+                check
+                    .required_features
+                    .iter()
+                    .map(|feature| (check.name.as_str(), feature.as_str())),
+            ) {
+                arguments.extend(["--features".to_owned(), features]);
             }
             invocations.push(arguments);
         }
@@ -103,12 +121,24 @@ struct CargoCheckSelection {
     root: PathBuf,
     all_targets: bool,
     targets: Vec<CargoTargetSelection>,
+    required_features: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct CargoTargetSelection {
     flag: &'static str,
     name: String,
+    required_features: Vec<String>,
+}
+
+fn qualified_required_features<'a>(
+    features: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<String> {
+    let features = features
+        .into_iter()
+        .map(|(package, feature)| format!("{package}/{feature}"))
+        .collect::<BTreeSet<_>>();
+    (!features.is_empty()).then(|| features.into_iter().collect::<Vec<_>>().join(","))
 }
 
 /// Whether the compiled Cargo workspace engine applies to this selected tree.
@@ -450,19 +480,33 @@ fn prebuild_all_tests(
     inventory: &Inventory,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
+    let features = qualified_required_features(inventory.packages.iter().flat_map(|package| {
+        package.targets.iter().flat_map(|target| {
+            target
+                .required_features
+                .iter()
+                .map(|feature| (package.name.as_str(), feature.as_str()))
+        })
+    }));
+    let mut arguments = ["test", "--locked", "--workspace", "--all-targets"]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+    let mut command = "cargo test --locked --workspace --all-targets".to_owned();
+    if let Some(features) = features {
+        arguments.extend([OsString::from("--features"), OsString::from(&features)]);
+        command.push_str(" --features ");
+        command.push_str(&features);
+    }
+    arguments.push(OsString::from("--no-run"));
+    command.push_str(" --no-run");
     run_prebuild_command(
         root,
         environment,
         cargo,
         output,
-        "cargo test --locked --workspace --all-targets --no-run",
-        [
-            "test",
-            "--locked",
-            "--workspace",
-            "--all-targets",
-            "--no-run",
-        ],
+        &command,
+        arguments,
         "workspace-test prebuild",
     )?;
     repair_missing_binary_outputs(root, environment, cargo, inventory, output)
@@ -889,7 +933,7 @@ struct MetadataTarget {
     kind: Vec<String>,
     test: bool,
     src_path: PathBuf,
-    #[serde(default)]
+    #[serde(rename = "required-features", default)]
     required_features: Vec<String>,
 }
 
@@ -910,6 +954,7 @@ struct TargetIdentity {
     package: String,
     kind: String,
     name: String,
+    required_features: Vec<String>,
     source: PathBuf,
     declared_path_sources: Vec<PathBuf>,
     source_bytes: u64,

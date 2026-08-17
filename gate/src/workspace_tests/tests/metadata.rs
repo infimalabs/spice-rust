@@ -80,6 +80,25 @@ fn metadata_inventory_keeps_library_binary_and_integration_targets() {
         "ownership retains every declared target independently of default-feature publication",
     );
     assert_eq!(
+        package
+            .declared_targets
+            .iter()
+            .map(|target| (target.display(), target.required_features.clone()))
+            .collect::<Vec<_>>(),
+        [
+            ("bin:default-runner".to_owned(), vec!["runner".to_owned()]),
+            (
+                "bin:disabled-runner".to_owned(),
+                vec!["disabled".to_owned()],
+            ),
+            ("bin:fixture".to_owned(), Vec::new()),
+            ("custom-build:build-script-build".to_owned(), Vec::new()),
+            ("lib:fixture".to_owned(), Vec::new()),
+            ("test:resident".to_owned(), Vec::new()),
+        ],
+        "inventory retains each target's canonical required-feature authority",
+    );
+    assert_eq!(
         inventory.binary_outputs,
         [
             BinaryOutput {
