@@ -175,6 +175,7 @@ fn seed_claim(fixture: &Fixture, seed: &mut JournalWrite, added: PendingFact) {
                 }),
                 until: fixture.expiry,
                 git: None,
+                recovery: None,
                 source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Pending(added),
@@ -195,6 +196,7 @@ fn seed_claim(fixture: &Fixture, seed: &mut JournalWrite, added: PendingFact) {
         lane,
         occupant,
         epoch,
+        recovery: None,
         disposition: wire::ClaimDisposition::Active,
     });
     let task = fixture.task.clone();

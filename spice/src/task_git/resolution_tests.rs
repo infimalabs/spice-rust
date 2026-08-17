@@ -128,6 +128,7 @@ impl ClaimFixture {
             lane: uuid(1),
             occupant: uuid(2),
             epoch: uuid(3),
+            recovery: None,
             disposition,
         };
         let lease = LeaseHead {

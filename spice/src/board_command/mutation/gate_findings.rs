@@ -67,7 +67,7 @@ enum GateFindingAction {
         task: wire::TaskStamp,
         heads: GateFindingHeads,
         transition: board::Transition,
-        claim: ClaimHead,
+        claim: Box<ClaimHead>,
         source: body::SourceBoundary,
     },
     RecoveryPending {
@@ -574,7 +574,7 @@ fn plan_gate_findings(
                 task: entry.born().clone(),
                 heads,
                 transition,
-                claim,
+                claim: Box::new(claim),
                 source,
             }
         } else {

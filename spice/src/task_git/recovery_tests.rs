@@ -184,6 +184,78 @@ fn preclaim_restore_recovers_the_exact_original_dirty_generation() {
     );
 }
 
+fn claim_intent(boundary: GitBoundary) -> RecoveryClaim {
+    RecoveryClaim {
+        actor: wire::Actor::Lane(
+            "018f82d4-6f59-7d06-92e3-bce913116301"
+                .parse()
+                .expect("fixture lane"),
+        ),
+        task: wire::TaskStamp::for_millis(1_700_000_000_000).expect("fixture task"),
+        statement: wire::Seq::new(11).expect("statement head"),
+        workflow: wire::Seq::new(12).expect("workflow head"),
+        phase: "todo".parse().expect("fixture phase"),
+        claim: None,
+        lane: "018f82d4-6f59-7d06-92e3-bce913116301"
+            .parse()
+            .expect("fixture lane"),
+        occupant: "018f82d4-6f59-7d06-92e3-bce913116302"
+            .parse()
+            .expect("fixture occupant"),
+        epoch: "018f82d4-6f59-7d06-92e3-bce913116303"
+            .parse()
+            .expect("fixture epoch"),
+        boundary,
+    }
+}
+
+#[test]
+fn synchronized_recovery_seals_one_exact_restart_visible_claim_intent() {
+    let fixture = Fixture::new("dirty-claim-intent");
+    fs::write(fixture.agent.join("handoff.txt"), "handoff\n").expect("write handoff");
+    let recovery = quarantine_for_recovery(&fixture.repository()).expect("quarantine handoff");
+    let boundary =
+        synchronize_recovery(&fixture.repository(), &recovery).expect("synchronize claim boundary");
+    let mut wrong = claim_intent(boundary.clone());
+    wrong.boundary.head = "moved-head".to_owned();
+    let error = bind_recovery_claim(&fixture.repository(), &recovery, wrong)
+        .expect_err("a moved claim boundary is refused before binding");
+    assert_eq!(error.reason(), "git::recovery-claim-boundary-mismatch");
+    assert_eq!(
+        recovery_claim(&fixture.repository(), &recovery).expect("claim remains unbound"),
+        None
+    );
+
+    let claim = claim_intent(boundary);
+
+    bind_recovery_claim(&fixture.repository(), &recovery, claim.clone())
+        .expect("bind exact claim intent");
+    bind_recovery_claim(&fixture.repository(), &recovery, claim.clone())
+        .expect("exact retry is idempotent");
+
+    let restarted = pending_recovery(&fixture.repository())
+        .expect("inspect restarted recovery")
+        .expect("recovery remains pending");
+    assert_eq!(restarted, recovery);
+    assert_eq!(
+        recovery_claim(&fixture.repository(), &restarted).expect("read sealed claim"),
+        Some(claim.clone())
+    );
+
+    let mut moved = claim;
+    moved.workflow = wire::Seq::new(13).expect("moved workflow head");
+    let error = bind_recovery_claim(&fixture.repository(), &recovery, moved)
+        .expect_err("another claim intent cannot replace the sealed one");
+    assert_eq!(error.reason(), "git::recovery-claim-ambiguous");
+    assert!(pending_recovery(&fixture.repository()).unwrap().is_some());
+
+    restore_recovery(&fixture.repository(), &recovery).expect("restore preclaim generation");
+    assert_eq!(
+        fs::read_to_string(fixture.agent.join("handoff.txt")).expect("read restored handoff"),
+        "handoff\n"
+    );
+}
+
 #[test]
 fn untracked_collision_refuses_without_overwriting_either_copy() {
     let fixture = Fixture::new("dirty-collision");

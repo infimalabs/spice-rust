@@ -147,6 +147,7 @@ fn seed_claim(journal: &mut Journal, fixture: &AllocationFixture) {
                 cell: Some(fixture.cell.clone()),
                 until: instant(),
                 git: None,
+                recovery: None,
                 source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             crate::FactCause::Root,
@@ -165,6 +166,7 @@ fn seed_claim(journal: &mut Journal, fixture: &AllocationFixture) {
         lane,
         occupant,
         epoch,
+        recovery: None,
         disposition: ClaimDisposition::Active,
     });
     let lease_task = fixture.task.clone();
@@ -207,6 +209,7 @@ fn seed_free(journal: &mut Journal, fixture: &AllocationFixture) {
         lane,
         occupant,
         epoch,
+        recovery: None,
         disposition: ClaimDisposition::Freed,
     });
     journal.apply(free).expect("free commits");

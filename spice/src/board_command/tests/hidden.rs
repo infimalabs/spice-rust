@@ -139,7 +139,10 @@ fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() 
         lane.clone(),
         CommandKind::ClaimWin,
         claim_expected(&available, &public, &seats[0]),
-        &ClaimWin { rule },
+        &ClaimWin {
+            rule,
+            recovery: None,
+        },
     ));
     let claimed = board(&bus, epoch, lane);
     assert!(at(&claimed, &hidden).claim.is_none());

@@ -449,6 +449,17 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "board::next"
     ),
     row!(
+        ["task", "recover"],
+        "task recover HANDLE",
+        Lane,
+        Command,
+        [ClaimWon],
+        [Resident, LaneCapability, Toolful],
+        TASK_GIT_TOOLS,
+        Reply,
+        "board::recover"
+    ),
+    row!(
         ["task", "reclaim"],
         "task reclaim [HANDLE] [--lease-seconds SECONDS]",
         Lane,

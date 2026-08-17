@@ -65,6 +65,7 @@ fn one_captured_band_drives_board_answer_server_selection_and_guard_replay() {
         claim_expected(&available, &lower, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
         &allocation,
     ));
@@ -112,6 +113,7 @@ pub(super) fn advance_task_to_review(
         claim_expected(&available, task, seat),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
     let held = board(bus, epoch, lane.clone());
@@ -150,6 +152,7 @@ pub(super) fn claim_and_complete_task(
         claim_expected(&available, task, seat),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
     let held = board(bus, epoch, lane.clone());
@@ -185,6 +188,7 @@ pub(super) fn complete_review_with_finding(
         claim_expected(&reviewable, task, seat),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
     let assigned = board(bus, epoch, lane.clone());
@@ -330,6 +334,7 @@ fn an_unclean_review_needs_follow_up_tracking_and_clean_does_not() {
         claim_expected(&reviewable, &task, &seats[1]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
     let assigned = board(&bus, epoch, lane_two.clone());
@@ -417,6 +422,7 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
         claim_expected(&reviewable, &reviewed, &seats[1]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
     let linked = add(
@@ -665,6 +671,7 @@ fn shape_case_418_inserts_plan_for_bare_review_followup() {
         claim_expected(&assigned, &reviewed, &seats[1]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
     let assigned = board(&bus, epoch, lane_two.clone());
@@ -1204,6 +1211,7 @@ fn claim_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, lane: &Actor, task: 
         claim_expected(&available, task, seat),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
 }

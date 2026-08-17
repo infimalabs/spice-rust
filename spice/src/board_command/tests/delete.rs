@@ -184,6 +184,7 @@ fn hold(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, lane: &Actor, task: &TaskH
         claim_expected(&available, task, seat),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
 }
@@ -392,6 +393,7 @@ fn a_withdrawn_prerequisite_releases_the_task_that_waited_on_it() {
         claim_expected(&available, &dependent, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     )) else {
         panic!("a claim answers with a claim");

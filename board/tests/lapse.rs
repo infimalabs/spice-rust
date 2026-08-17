@@ -128,6 +128,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
             expiry: instant(20),
             maximum: instant(35),
             git: None,
+            recovery: None,
             source,
         },
     )
@@ -142,6 +143,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
                 expected,
                 body: intent::ClaimWin {
                     rule: "next".parse().expect("rule"),
+                    recovery: None,
                 },
             },
             uuid(22),
@@ -521,6 +523,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 }),
                 until: instant(20),
                 git: None,
+                recovery: None,
                 source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
@@ -537,6 +540,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
         lane: uuid(20),
         occupant: uuid(21),
         epoch: uuid(22),
+        recovery: None,
         disposition: ClaimDisposition::Active,
     });
     journal.apply(write).expect("seed malformed claim");

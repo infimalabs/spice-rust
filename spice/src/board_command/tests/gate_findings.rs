@@ -641,6 +641,7 @@ fn gate_findings_use_the_active_claim_as_origin_when_present() {
         claim_expected(&before, &parent, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
+            recovery: None,
         },
     ));
 
@@ -1047,7 +1048,10 @@ fn claim_gate_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHand
             Witness::Eligibility { rule: rule.clone() },
             residency(&ready, seat),
         ],
-        &ClaimWin { rule },
+        &ClaimWin {
+            rule,
+            recovery: None,
+        },
     ));
     lane
 }

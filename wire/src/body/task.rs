@@ -330,6 +330,13 @@ pub struct ClaimWon {
         deserialize_with = "crate::optional::present"
     )]
     pub git: Option<GitBoundary>,
+    /// Dirty-handoff transaction whose replay this claim authorizes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub recovery: Option<String>,
     /// Accounted transcript the possessed phase opens at.
     #[serde(
         default = "SourceBoundary::unrecorded",

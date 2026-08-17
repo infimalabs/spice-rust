@@ -105,7 +105,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 102);
+    assert_eq!(contracts().len(), 103);
 
     let unaccounted = contracts()
         .iter()
@@ -118,7 +118,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 102);
+    assert_eq!(landed, 103);
     assert_eq!(landing(&["gate", "commit-msg"]), Landing::Landed);
     assert_eq!(landing(&["gate", "reference-transaction"]), Landing::Landed);
     assert_eq!(landing(&["gate", "selection"]), Landing::Landed);
@@ -570,6 +570,7 @@ fn tool_postures_follow_the_closed_command_order() {
             ),
             ("up".to_owned(), vec![JUDGE_EXECUTABLE]),
             ("task next".to_owned(), vec!["git"]),
+            ("task recover".to_owned(), vec!["git"]),
             ("task capture".to_owned(), vec!["git"]),
             ("task done".to_owned(), vec!["git", JUDGE_EXECUTABLE],),
             ("task review".to_owned(), vec!["git"]),
@@ -819,6 +820,7 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "install", "--apply=digest"],
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],
+        &["spice", "task", "recover", "TASK-1k4Q5gJw"],
         &["spice", "config", "key", "value"],
         &["spice", "config", "key", "value", "--apply=digest"],
     ] {
@@ -853,6 +855,7 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "doctor", "garbage"][..],
         &["spice", "watch", "root", "--once"],
         &["spice", "task", "add"],
+        &["spice", "task", "recover"],
         &["spice", "task", "depends", "TASK"],
         &["spice", "lane", "add", "--life", "Sprint"],
         &["spice", "install", "--apply=digest", "--unapply"],

@@ -362,6 +362,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "list"]
         | ["task", "status"]
         | ["task", "next"]
+        | ["task", "recover"]
         | ["task", "reclaim"]
         | ["task", "add"]
         | ["task", "capture"]

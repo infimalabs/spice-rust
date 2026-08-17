@@ -207,6 +207,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["board", "handout"][..], CommandKind::BoardHandout),
         (&["task", "list"][..], CommandKind::BoardRead),
         (&["task", "next"][..], CommandKind::ClaimWin),
+        (&["task", "recover"][..], CommandKind::ClaimWin),
         (&["task", "status"][..], CommandKind::BoardRead),
         (&["task", "reclaim"][..], CommandKind::ClaimRenew),
         (&["task", "capture"][..], CommandKind::ClaimWin),

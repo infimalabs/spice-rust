@@ -776,6 +776,7 @@ impl Facts {
             }),
             until: instant(50),
             git: None,
+            recovery: None,
             source,
         });
     }

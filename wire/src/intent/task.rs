@@ -637,15 +637,23 @@ pub struct ClaimWarning {
     pub surface: Vec<String>,
 }
 
-/// Run the eligibility query and atomically win its claim.
+/// Run the named eligibility rule and atomically win its claim.
 ///
-/// No handle appears: naming one would make this a request for a particular
-/// task rather than a query, and the query and the win share one transaction.
+/// Ordinary allocation rules select from board state. Explicit recovery binds
+/// the exact task through its sealed transaction and matching witnesses, so the
+/// recovery identity is the sole additional selector carried by this intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClaimWin {
     /// Named eligibility rule the query runs.
     pub rule: Name,
+    /// Exact dirty-handoff transaction, present only for explicit recovery.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub recovery: Option<String>,
 }
 
 /// Pass possession to a successor with ancestor lineage preserved.

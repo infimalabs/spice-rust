@@ -172,6 +172,7 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
         expected: claim_expected(&steer, &manual, seat),
         body: serde_json::to_value(&ClaimWin {
             rule: next_rule.clone(),
+            recovery: None,
         })
         .expect("stale allocator command encodes"),
     }

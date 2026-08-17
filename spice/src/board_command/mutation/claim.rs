@@ -48,7 +48,7 @@ pub(in crate::board_command) fn claim_plan(
     let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
     let selected = claim_selection(&snapshot, command, possession)?.clone();
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
-    let grant = claim_grant(bus, command, repository, &snapshot, possession)?;
+    let grant = claim_grant(bus, command, repository, &snapshot, &selected, possession)?;
     let next = projected_claim_next_action(
         &snapshot,
         &selected,
@@ -58,6 +58,7 @@ pub(in crate::board_command) fn claim_plan(
         grant.at,
         grant.expiry,
         grant.maximum,
+        win.recovery.clone(),
         projects,
     );
     Ok(ClaimPlan {
@@ -116,11 +117,12 @@ pub(in crate::board_command) fn claim_grant(
     command: &wire::AdmittedCommand,
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
+    selected: &Entry,
     possession: Possession,
 ) -> Result<ClaimGrant, Outcome<CommandAnswer>> {
     let (lane, occupant) = claim_residency(command)?;
     let (at, expiry, maximum) = claim_deadlines()?;
-    let git = claim_git_boundary(repository, snapshot, command, possession.captures())?;
+    let git = claim_git_boundary(repository, snapshot, command, selected, possession)?;
     let source = claim_source_boundary(bus, &lane)?;
     Ok(ClaimGrant {
         lane,
@@ -174,7 +176,7 @@ pub(in crate::board_command) fn commit_claim(
         &mut write,
         &snapshot,
         command,
-        possession.captures(),
+        possession.named(),
         &task,
         projects,
     );
@@ -189,6 +191,7 @@ pub(in crate::board_command) fn commit_claim(
         grant.expiry,
         grant.maximum,
         grant.git,
+        win.recovery.clone(),
         grant.source,
     ) {
         return outcome;
@@ -229,6 +232,7 @@ fn projected_claim_next_action(
     at: Instant,
     expiry: Instant,
     maximum: Instant,
+    recovery: Option<String>,
     projects: &ProjectPolicy,
 ) -> Option<Box<str>> {
     let mut workflow = selected.workflow().clone();
@@ -250,6 +254,7 @@ fn projected_claim_next_action(
             lane,
             occupant,
             epoch: command.epoch(),
+            recovery,
             disposition: ClaimDisposition::Active,
         }),
         Some(LeaseHead {
@@ -274,24 +279,46 @@ pub(in crate::board_command) enum Possession {
     Capture,
     /// The caller names a task and takes it from its current holder.
     Steal,
+    /// The caller names one unclaimed task for a sealed dirty handoff.
+    Recover,
 }
 
 impl Possession {
-    /// Whether the lane's local commits become this claim's boundary.
-    const fn captures(self) -> bool {
+    /// Whether the caller names the exact task rather than running allocation.
+    const fn named(self) -> bool {
         !matches!(self, Self::Next)
     }
 }
 
 fn possession_rule(win: &ClaimWin) -> Result<Possession, Outcome<CommandAnswer>> {
-    match win.rule.as_str() {
-        "next" => Ok(Possession::Next),
-        "capture" => Ok(Possession::Capture),
-        "steal" => Ok(Possession::Steal),
+    match (win.rule.as_str(), win.recovery.as_deref()) {
+        ("next", None) => Ok(Possession::Next),
+        ("capture", None) => Ok(Possession::Capture),
+        ("steal", None) => Ok(Possession::Steal),
+        ("recover", Some(transaction))
+            if spice::task_git::Recovery::is_transaction(transaction) =>
+        {
+            Ok(Possession::Recover)
+        }
+        ("recover", None) => Err(refusal(
+            "git::recovery-transaction-missing",
+            None,
+            "start recovery through `spice task recover HANDLE`",
+        )),
+        ("recover", Some(transaction)) => Err(refusal(
+            "git::recovery-transaction-invalid",
+            Some(transaction.to_owned()),
+            "use the content-addressed transaction sealed by task recovery",
+        )),
+        ("next" | "capture" | "steal", Some(transaction)) => Err(refusal(
+            "git::recovery-rule-mismatch",
+            Some(transaction.to_owned()),
+            "use recovery identity only with the explicit recover possession rule",
+        )),
         _ => Err(refusal(
             "board::allocator-rule",
             Some(win.rule.to_string()),
-            "use the next, capture or steal possession rule",
+            "use the next, capture, steal or recover possession rule",
         )),
     }
 }
@@ -301,7 +328,7 @@ fn claim_selection<'a>(
     command: &wire::AdmittedCommand,
     possession: Possession,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    if !possession.captures() {
+    if !possession.named() {
         let subscription =
             allocation_subscription(&snapshot.answer.residency.body, command.actor())?;
         let selected = board::select(
@@ -374,11 +401,17 @@ fn claim_selection<'a>(
             "claim::steal-ineligible",
             "steal only a ready, pending task",
         ),
-        _ => (
+        Possession::Recover => (
+            board::eligible_entry(&snapshot.entries, entry, command.actor()),
+            "git::recovery-task-ineligible",
+            "recover only an unclaimed, ready, pending task",
+        ),
+        Possession::Capture => (
             board::capturable_entry(&snapshot.entries, entry, command.actor()),
             "claim::capture-ineligible",
             "capture only an unclaimed, ready, pending task",
         ),
+        Possession::Next => unreachable!("allocator possession returned above"),
     };
     if admitted {
         Ok(entry)
@@ -433,18 +466,138 @@ pub(in crate::board_command) fn claim_git_boundary(
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
-    capture: bool,
+    selected: &Entry,
+    possession: Possession,
 ) -> Result<Option<GitBoundary>, Outcome<CommandAnswer>> {
     let Some(resident) = repository else {
         return Ok(None);
     };
     let lane = task_repository(snapshot, command, resident)?;
-    let result = if capture {
-        spice::task_git::capture(&lane).map(|capture| capture.boundary)
-    } else {
-        spice::task_git::prepare_claim(&lane)
+    let result = match possession {
+        Possession::Capture | Possession::Steal => {
+            spice::task_git::capture(&lane).map(|capture| capture.boundary)
+        }
+        Possession::Next => spice::task_git::prepare_claim(&lane),
+        Possession::Recover => {
+            return recovery_git_boundary(&lane, command, selected).map(Some);
+        }
     };
     result.map(Some).map_err(task_git_outcome)
+}
+
+fn recovery_git_boundary(
+    repository: &Repository,
+    command: &wire::AdmittedCommand,
+    selected: &Entry,
+) -> Result<GitBoundary, Outcome<CommandAnswer>> {
+    let recovery = spice::task_git::pending_recovery(repository)
+        .map_err(task_git_outcome)?
+        .ok_or_else(|| {
+            refusal(
+                "git::recovery-transaction-missing",
+                None,
+                "start recovery through `spice task recover HANDLE`",
+            )
+        })?;
+    let transaction = match command.body() {
+        wire::intent::Intent::ClaimWin(win) => win.recovery.as_deref(),
+        _ => None,
+    }
+    .expect("recover possession admission requires a transaction");
+    if recovery.transaction() != transaction {
+        return Err(refusal(
+            "git::recovery-transaction-mismatch",
+            Some(format!(
+                "retained recovery is {}, but the claim names {transaction}",
+                recovery.transaction()
+            )),
+            "resume only the retained recovery transaction",
+        ));
+    }
+    let sealed = spice::task_git::recovery_claim(repository, &recovery)
+        .map_err(task_git_outcome)?
+        .ok_or_else(|| {
+            refusal(
+                "git::recovery-claim-unbound",
+                Some(format!("recovery {transaction} has no sealed board claim")),
+                "restore the pre-claim generation and restart explicit recovery",
+            )
+        })?;
+    let workflow = command.expected().iter().find_map(|witness| match witness {
+        Witness::Workflow { task, head, phase } if task == selected.born() => {
+            Some((*head, phase.clone()))
+        }
+        _ => None,
+    });
+    let statement = command.expected().iter().find_map(|witness| match witness {
+        Witness::Task { task, head } if task == selected.born() => Some(*head),
+        _ => None,
+    });
+    let claim = command.expected().iter().find_map(|witness| match witness {
+        Witness::Claim { task, head } if task == selected.born() => Some(*head),
+        _ => None,
+    });
+    let residency = command.expected().iter().find_map(|witness| match witness {
+        Witness::Residency {
+            lane,
+            occupant,
+            epoch,
+        } => Some((*lane, *occupant, *epoch)),
+        _ => None,
+    });
+    let Some((workflow, phase)) = workflow else {
+        return Err(refusal(
+            "git::recovery-workflow-witness",
+            None,
+            "read the current task and restart explicit recovery",
+        ));
+    };
+    let Some(statement) = statement else {
+        return Err(refusal(
+            "git::recovery-task-witness",
+            None,
+            "read the current task and restart explicit recovery",
+        ));
+    };
+    let Some((lane, occupant, epoch)) = residency else {
+        return Err(refusal(
+            "git::recovery-residency-witness",
+            None,
+            "retry through the currently seated lane",
+        ));
+    };
+    if sealed.actor != *command.actor()
+        || sealed.task != *selected.born()
+        || sealed.statement != statement
+        || sealed.workflow != workflow
+        || sealed.phase != phase
+        || sealed.claim != claim.flatten()
+        || sealed.lane != lane
+        || sealed.occupant != occupant
+        || sealed.epoch != epoch
+    {
+        return Err(refusal(
+            "git::recovery-claim-moved",
+            Some(format!(
+                "sealed claim intent no longer matches task {}",
+                selected.handle()
+            )),
+            "retain the quarantine and inspect the moved actor/task/workflow/claim/residency state",
+        ));
+    }
+    let boundary =
+        spice::task_git::synchronize_recovery(repository, &recovery).map_err(task_git_outcome)?;
+    if boundary != sealed.boundary {
+        return Err(refusal(
+            "git::recovery-claim-boundary-mismatch",
+            Some(format!(
+                "sealed boundary {:?}; synchronized boundary {boundary:?}",
+                sealed.boundary
+            )),
+            "retain the quarantine and inspect the moved Git boundary",
+        ));
+    }
+    Ok(boundary)
 }
 
 /// Read the lane's accounted transcript boundary for the claim heads.
@@ -465,13 +618,13 @@ fn guard_claim(
     write: &mut JournalWrite,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
-    capture: bool,
+    named: bool,
     task: &TaskHandle,
     projects: &ProjectPolicy,
 ) {
     let expected = command.expected().to_vec();
     let heads = allocation_heads(&snapshot.answer);
-    if capture {
+    if named {
         guard_capture(write, expected, heads, command.actor().clone());
     } else {
         guard_allocation(
@@ -511,6 +664,7 @@ fn append_claim_heads(
     expiry: Instant,
     maximum: Instant,
     git: Option<GitBoundary>,
+    recovery: Option<String>,
     source: body::SourceBoundary,
 ) -> Result<(), Outcome<CommandAnswer>> {
     board::allocate::mint(
@@ -527,6 +681,7 @@ fn append_claim_heads(
             expiry,
             maximum,
             git,
+            recovery,
             source,
         },
     )

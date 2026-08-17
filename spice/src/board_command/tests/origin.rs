@@ -42,7 +42,10 @@ fn add_and_claim_causal_parent(
             },
             residency(&before, seat),
         ],
-        &ClaimWin { rule: capture },
+        &ClaimWin {
+            rule: capture,
+            recovery: None,
+        },
     ));
     (parent, lane, ack)
 }

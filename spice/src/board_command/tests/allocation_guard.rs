@@ -373,6 +373,7 @@ fn claim_next_command(
 fn next_rule() -> ClaimWin {
     ClaimWin {
         rule: "next".parse().expect("allocator rule"),
+        recovery: None,
     }
 }
 
@@ -550,7 +551,10 @@ fn capture_and_steal_refuse_when_the_actor_already_holds_an_active_claim() {
                 Witness::Eligibility { rule: rule.clone() },
                 residency(&visible, &seats[0]),
             ],
-            &ClaimWin { rule },
+            &ClaimWin {
+                rule,
+                recovery: None,
+            },
         );
         assert!(
             matches!(

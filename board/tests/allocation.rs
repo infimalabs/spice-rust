@@ -162,7 +162,12 @@ fn source_boundary(lane: CanonicalUuid) -> body::SourceBoundary {
 }
 
 /// Open a transaction on the fixture's task and mint one claim into it.
-fn minted(journal: &mut Journal, git: Option<body::GitBoundary>, source: body::SourceBoundary) {
+fn minted(
+    journal: &mut Journal,
+    git: Option<body::GitBoundary>,
+    recovery: Option<String>,
+    source: body::SourceBoundary,
+) {
     let task = stamp("BOARD-a1");
     let actor = Actor::Lane(uuid(20));
     let mut write = JournalWrite::new(
@@ -185,6 +190,7 @@ fn minted(journal: &mut Journal, git: Option<body::GitBoundary>, source: body::S
             expiry: instant(20),
             maximum: instant(35),
             git,
+            recovery,
             source,
         },
     )
@@ -206,6 +212,7 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
     let mut journal = fixture();
     minted(
         &mut journal,
+        None,
         None,
         body::SourceBoundary::Proven { heads: Vec::new() },
     );
@@ -247,12 +254,14 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
         disposition,
         claimed,
         cell,
+        recovery,
     } = entry.claim().expect("minting writes a claim head");
     assert_eq!(actor, &Actor::Lane(uuid(20)));
     assert_eq!(*fact, claim.seq);
     assert_eq!(*claimed, claim.seq);
     assert_eq!(cell.project, "board.allocate");
     assert_eq!(cell.phase, phase("todo"));
+    assert_eq!(recovery, &None);
     assert_eq!(*lane, uuid(20));
     assert_eq!(*occupant, uuid(21));
     assert_eq!(*epoch, uuid(22));
@@ -293,7 +302,13 @@ fn a_caller_supplied_boundary_reaches_the_claim() {
         upstream_head: Some("a-baseline-commit".to_owned()),
         local_commits: 2,
     };
-    minted(&mut journal, Some(boundary), source_boundary(uuid(20)));
+    let recovery = "a".repeat(40);
+    minted(
+        &mut journal,
+        Some(boundary),
+        Some(recovery.clone()),
+        source_boundary(uuid(20)),
+    );
 
     let facts = journal.fact_snapshot().expect("claim fact stream");
     let claim = facts
@@ -328,6 +343,27 @@ fn a_caller_supplied_boundary_reaches_the_claim() {
     assert_eq!(
         git.get("local_commits").and_then(|value| value.as_u64()),
         Some(2)
+    );
+    assert_eq!(
+        claim
+            .fact
+            .body()
+            .get("recovery")
+            .and_then(|value| value.as_str()),
+        Some(recovery.as_str()),
+        "the claim fact binds the explicit dirty-handoff transaction",
+    );
+
+    let snapshot = Snapshot::read(&journal, &projects()).expect("claimed board");
+    let entry = snapshot
+        .entries()
+        .iter()
+        .find(|entry| entry.handle() == &handle("BOARD-a1"))
+        .expect("the claimed task is on the board");
+    assert_eq!(
+        entry.claim().and_then(|head| head.recovery.as_deref()),
+        Some(recovery.as_str()),
+        "restart-visible claim authority retains the recovery transaction",
     );
 
     let head = claim
