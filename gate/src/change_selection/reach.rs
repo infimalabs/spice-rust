@@ -1,6 +1,6 @@
 //! Canonical object reach carried by one ordinary change-selection report.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -298,6 +298,8 @@ fn validate_arm_reach(
         validate_provenance(reach, edge, changed_sources, selection_edges)?;
     }
     validate_proven_objects(reach)?;
+    validate_dependency_sources(reach)?;
+    validate_dependency_graph(reach)?;
     validate_selection_edges(reach, selection_edges)
 }
 
@@ -326,6 +328,94 @@ fn validate_proven_objects(reach: &ChangeArmReach) -> Result<(), ChangeSelection
     } else {
         Err(ChangeSelectionError::new(format!(
             "selected arm {} has an unproven reach object in its dependency graph",
+            reach.gate_id
+        )))
+    }
+}
+
+fn validate_dependency_sources(reach: &ChangeArmReach) -> Result<(), ChangeSelectionError> {
+    let mut proven = reach
+        .provenance
+        .iter()
+        .filter_map(|edge| match &edge.origin {
+            ChangeReachOrigin::Changed { source } => Some((source.clone(), edge.object.clone())),
+            ChangeReachOrigin::Always | ChangeReachOrigin::Dependency { .. } => None,
+        })
+        .collect::<BTreeSet<_>>();
+    loop {
+        let before = proven.len();
+        for edge in &reach.provenance {
+            if let ChangeReachOrigin::Dependency { source, via } = &edge.origin
+                && proven.contains(&(source.clone(), via.clone()))
+            {
+                proven.insert((source.clone(), edge.object.clone()));
+            }
+        }
+        if proven.len() == before {
+            break;
+        }
+    }
+    if let Some(edge) = reach.provenance.iter().find(|edge| {
+        matches!(
+            &edge.origin,
+            ChangeReachOrigin::Dependency { source, via }
+                if !proven.contains(&(source.clone(), via.clone()))
+        )
+    }) {
+        Err(ChangeSelectionError::new(format!(
+            "selected arm {} has dependency provenance through an unproven dependency source: {:?}",
+            reach.gate_id, edge.origin
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_dependency_graph(reach: &ChangeArmReach) -> Result<(), ChangeSelectionError> {
+    let mut indegree = reach
+        .objects
+        .iter()
+        .cloned()
+        .map(|object| (object, 0_usize))
+        .collect::<BTreeMap<_, _>>();
+    let mut dependents = BTreeMap::<ChangeReachObject, BTreeSet<ChangeReachObject>>::new();
+    for edge in &reach.provenance {
+        let ChangeReachOrigin::Dependency { via, .. } = &edge.origin else {
+            continue;
+        };
+        if dependents
+            .entry(via.clone())
+            .or_default()
+            .insert(edge.object.clone())
+        {
+            *indegree
+                .get_mut(&edge.object)
+                .expect("validated dependency object belongs to reach") += 1;
+        }
+    }
+    let mut ready = indegree
+        .iter()
+        .filter(|(_, degree)| **degree == 0)
+        .map(|(object, _)| object.clone())
+        .collect::<Vec<_>>();
+    let mut visited = 0_usize;
+    while let Some(object) = ready.pop() {
+        visited += 1;
+        for dependent in dependents.get(&object).into_iter().flatten() {
+            let degree = indegree
+                .get_mut(dependent)
+                .expect("validated dependency object belongs to reach");
+            *degree -= 1;
+            if *degree == 0 {
+                ready.push(dependent.clone());
+            }
+        }
+    }
+    if visited == reach.objects.len() {
+        Ok(())
+    } else {
+        Err(ChangeSelectionError::new(format!(
+            "selected arm {} has a dependency cycle in its reach graph",
             reach.gate_id
         )))
     }
