@@ -657,6 +657,14 @@ fn shard_spec(
     for target in &shard.targets {
         arguments.extend(target_arguments(target)?);
     }
+    if let Some(features) = qualified_required_features(shard.targets.iter().flat_map(|target| {
+        target
+            .required_features
+            .iter()
+            .map(|feature| (shard.name.as_str(), feature.as_str()))
+    })) {
+        arguments.extend([OsString::from("--features"), OsString::from(features)]);
+    }
     if policy.shared_outputs {
         arguments.extend([
             OsString::from("--"),

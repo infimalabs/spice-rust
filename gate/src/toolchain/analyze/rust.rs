@@ -879,7 +879,7 @@ mod tests {
 
         assert_eq!(
             [format!(
-                "{CARGO} check --locked --package <each reached package> <--all-targets or exact reached target flags>"
+                "{CARGO} check --locked --package <each reached package> <--all-targets or exact reached target flags> <--features exact package-qualified required features>"
             )],
             declared
         );

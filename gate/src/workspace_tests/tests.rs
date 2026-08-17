@@ -38,6 +38,7 @@ mod environment;
 mod metadata;
 mod partition;
 mod reach_escalation;
+mod required_features;
 mod selection;
 
 #[test]
@@ -1128,6 +1129,7 @@ fn quick_package() -> PackageInventory {
         package: "quick-id".to_owned(),
         kind: "test".to_owned(),
         name: "quick".to_owned(),
+        required_features: Vec::new(),
         source: PathBuf::from("/workspace/quick/tests/quick.rs"),
         declared_path_sources: Vec::new(),
         source_bytes: 1,
@@ -1168,6 +1170,7 @@ fn fixture_inventory() -> Inventory {
                     package: "fixture-a-id".to_owned(),
                     kind: "lib".to_owned(),
                     name: "fixture-a".to_owned(),
+                    required_features: Vec::new(),
                     source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
                     declared_path_sources: Vec::new(),
                     source_bytes: 1,
@@ -1176,6 +1179,7 @@ fn fixture_inventory() -> Inventory {
                     package: "fixture-a-id".to_owned(),
                     kind: "lib".to_owned(),
                     name: "fixture-a".to_owned(),
+                    required_features: Vec::new(),
                     source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
                     declared_path_sources: Vec::new(),
                     source_bytes: 1,
@@ -1190,6 +1194,7 @@ fn fixture_inventory() -> Inventory {
                     package: "fixture-b-id".to_owned(),
                     kind: "bin".to_owned(),
                     name: "fixture-b".to_owned(),
+                    required_features: Vec::new(),
                     source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
                     declared_path_sources: Vec::new(),
                     source_bytes: 1,
@@ -1198,6 +1203,7 @@ fn fixture_inventory() -> Inventory {
                     package: "fixture-b-id".to_owned(),
                     kind: "bin".to_owned(),
                     name: "fixture-b".to_owned(),
+                    required_features: Vec::new(),
                     source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
                     declared_path_sources: Vec::new(),
                     source_bytes: 1,
@@ -1261,6 +1267,7 @@ fn target_identity(kind: &str, name: &str) -> TargetIdentity {
         package: "fixture-id".to_owned(),
         kind: kind.to_owned(),
         name: name.to_owned(),
+        required_features: Vec::new(),
         source: PathBuf::from(format!("/workspace/{kind}/{name}.rs")),
         declared_path_sources: Vec::new(),
         source_bytes: 1,
