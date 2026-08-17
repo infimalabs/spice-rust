@@ -87,6 +87,94 @@ fn a_verified_receipt_is_byte_stable_across_repeated_verification() {
     );
 }
 
+#[test]
+fn receipt_encoding_reuses_one_byte_identical_canonical_report() {
+    let fixture = Fixture::new();
+    let (_, receipt) = minted(&fixture, &fixture_baseline("cached canonical report"));
+
+    let first = receipt.run().canonical().expect("first canonical report");
+    let second = receipt.run().canonical().expect("reused canonical report");
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &second),
+        "immutable report bytes must be shared rather than serialized again",
+    );
+    assert_eq!(
+        receipt.encode().expect("optimized receipt encoding"),
+        wire::encode(&receipt).expect("derived canonical receipt encoding"),
+        "receipt framing must remain byte-identical to the canonical serializer",
+    );
+
+    let cloned = receipt.clone();
+    let cloned_bytes = cloned.run().canonical().expect("cloned canonical report");
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &cloned_bytes),
+        "receipt clones must retain the same immutable representation",
+    );
+    assert_eq!(cloned, receipt, "the cache cannot participate in identity");
+}
+
+#[test]
+#[ignore = "requires durable verifier evidence in the current worktree"]
+fn production_receipt_encoding_benchmark() {
+    const PAIR_COUNT: usize = 3;
+    const MAX_MEDIAN_WALL_RATIO: f64 = 0.75;
+
+    let repository = gix::discover(".").expect("discover the benchmark worktree");
+    let path = repository
+        .git_dir()
+        .join(".spice-rs/full-verifier-evidence.json");
+    let document = fs::read(path).expect("read durable full-verifier evidence");
+    let envelope: serde_json::Value = wire::decode(&document).expect("decode verifier evidence");
+    let receipt_bytes = envelope["battery"]
+        .as_str()
+        .expect("verifier evidence carries a battery receipt")
+        .as_bytes();
+    let receipt = BatteryReceipt::verify(receipt_bytes).expect("admit durable battery receipt");
+    let reference = wire::encode(&receipt).expect("reference canonical receipt encoding");
+    let optimized = receipt
+        .encode()
+        .expect("optimized canonical receipt encoding");
+    assert_eq!(
+        optimized, reference,
+        "optimization must preserve exact bytes"
+    );
+
+    let measure = |optimized: bool| {
+        let started = std::time::Instant::now();
+        let bytes = if optimized {
+            receipt.encode().expect("optimized receipt encoding")
+        } else {
+            wire::encode(&receipt).expect("reference receipt encoding")
+        };
+        std::hint::black_box(bytes);
+        started.elapsed().as_nanos()
+    };
+    let pairs = (0..PAIR_COUNT)
+        .map(|ordinal| {
+            if ordinal % 2 == 0 {
+                (measure(false), measure(true))
+            } else {
+                let optimized = measure(true);
+                (measure(false), optimized)
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut ratios = pairs
+        .iter()
+        .map(|(reference, optimized)| *optimized as f64 / *reference as f64)
+        .collect::<Vec<_>>();
+    ratios.sort_by(f64::total_cmp);
+    let median = ratios[PAIR_COUNT / 2];
+    println!(
+        "[battery-receipt-benchmark] bytes={} median_wall_ratio={median:.3} pairs={pairs:?}",
+        reference.len(),
+    );
+    assert!(
+        median <= MAX_MEDIAN_WALL_RATIO,
+        "cached production encoding did not cut median wall time by at least 25%: {pairs:?}",
+    );
+}
+
 /// A pair this build does not carry is evidence about foreign bytes and nothing
 /// more, so verification hands the bytes back exactly as they arrived.
 ///
