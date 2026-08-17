@@ -457,6 +457,11 @@ fn reached_report(
         state_run,
     )
     .expect("capture reached production arm");
+    assert_eq!(
+        capture.execution_objects(),
+        selection.reach_for(gate_id).map(|reach| reach.objects()),
+        "focused capture must retain exactly its validated reach objects"
+    );
     capture
         .execute_arm_report(gate_id)
         .expect("execute reached production arm")

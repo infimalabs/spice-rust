@@ -1067,6 +1067,15 @@ impl<'trace> BatteryCapture<'trace> {
         self.executor.changes()
     }
 
+    /// Objects retained from the validated reach plan for a focused recapture.
+    ///
+    /// Standalone selected arms and complete batteries have no authored reach
+    /// plan and therefore return `None`.
+    #[must_use]
+    pub fn execution_objects(&self) -> Option<&[crate::ChangeReachObject]> {
+        self.executor.execution_objects()
+    }
+
     /// Execute the existing canonical mutation profile over this same source.
     ///
     /// # Errors
