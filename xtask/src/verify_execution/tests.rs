@@ -21,6 +21,10 @@ use crate::verify_timing::Disposition;
 use crate::{ScopedCommand, Step, WORKSPACE_TEST_LABEL, landing};
 
 const FIXTURE_CPU_COUNT: usize = 16;
+const SIX_AGENT_TARGET: usize = 6;
+const CPUS_PER_AGENT_TARGET: usize = 2;
+const SIX_AGENT_CPU_COUNT: usize = SIX_AGENT_TARGET * CPUS_PER_AGENT_TARGET;
+const SIX_AGENT_PEER_COUNT: usize = SIX_AGENT_TARGET - 1;
 const BENCHMARK_CPU_ITERATIONS: u64 = 10_000_000;
 const DETACHED_WORKSPACE_SHARD_TEST: &str =
     "verify_execution::tests::detached_workspace_shard_fixture";
@@ -429,7 +433,7 @@ fn peer_cargo_pressure_continuously_scales_outer_and_workspace_worker_budgets() 
 }
 
 #[test]
-fn cargo_probe_excludes_current_ancestors_and_owned_descendants() {
+fn cargo_probe_finds_five_external_roots_for_the_six_agent_target() {
     let listing = concat!(
         "10 1 cargo\n",
         "20 10 xtask\n",
@@ -439,8 +443,77 @@ fn cargo_probe_excludes_current_ancestors_and_owned_descendants() {
         "24 23 /toolchains/bin/cargo\n",
         "30 1 /toolchains/bin/cargo\n",
         "31 30 rustc\n",
+        "40 1 cargo\n",
+        "41 40 rustc\n",
+        "50 1 /toolchains/bin/cargo\n",
+        "51 50 rustc\n",
+        "60 1 cargo\n",
+        "61 60 rustc\n",
+        "70 1 /toolchains/bin/cargo\n",
+        "71 70 rustc\n",
     );
-    assert_eq!(count_peer_cargo(listing, 20), 1);
+    assert_eq!(
+        count_peer_cargo(listing, 20),
+        SIX_AGENT_PEER_COUNT,
+        "the current verifier joins five external Cargo roots without charging its ancestor or owned descendants"
+    );
+}
+
+#[test]
+fn six_agent_pressure_retains_two_cpu_fairness_through_rebalance_and_cleanup() {
+    let budget = Budget::from_observation(SIX_AGENT_CPU_COUNT, Some(SIX_AGENT_PEER_COUNT));
+    assert_eq!(budget.workers, 1);
+    assert_eq!(budget.cargo_jobs, CPUS_PER_AGENT_TARGET);
+    assert_eq!(budget.compiler_cargo_jobs, CPUS_PER_AGENT_TARGET);
+    assert_eq!(budget.workspace_workers, CPUS_PER_AGENT_TARGET);
+
+    let mut delays = VERIFY_ACTIONS
+        .iter()
+        .map(|action| (action.label(), Duration::from_millis(2)))
+        .collect::<BTreeMap<_, _>>();
+    delays.insert(BROWSER_LABEL, Duration::from_millis(40));
+    delays.insert(WORKSPACE_TEST_LABEL, Duration::from_millis(40));
+    let runner = TimedRunner::new(delays, 0).with_prebuild_delay(Duration::from_millis(2));
+    let mut output = Vec::new();
+
+    verify_with_deadline_and_rebalance(
+        &runner,
+        &mut output,
+        budget,
+        CancellationToken::new(),
+        Arc::new(AtomicBool::new(false)),
+        Duration::from_secs(1),
+        PROGRESS_INTERVAL,
+        |_| Budget::from_observation(SIX_AGENT_CPU_COUNT, Some(SIX_AGENT_PEER_COUNT)),
+    )
+    .expect("the full schedule completes under the six-agent fairness target");
+
+    let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+    assert!(output.contains(concat!(
+        "scheduler workers=1 cargo_jobs=2 active_peer_cargo_jobs=5 ",
+        "workspace_workers=2"
+    )));
+    assert!(output.contains(concat!(
+        "scheduler-rebalanced trigger=workspace-test-setup workers=2 cargo_jobs=2 ",
+        "active_peer_cargo_jobs=5 workspace_workers=2 compiler_cargo_jobs=2"
+    )));
+    assert_eq!(
+        runner.jobs_for(WORKSPACE_TEST_LABEL),
+        [CPUS_PER_AGENT_TARGET]
+    );
+    for label in VERIFY_ACTIONS.iter().filter_map(|action| match action {
+        super::Action::Command(step) if step.uses_verifier_compiler_contract() => Some(step.label),
+        _ => None,
+    }) {
+        assert_eq!(
+            runner.jobs_for(label),
+            [CPUS_PER_AGENT_TARGET],
+            "the six-agent compiler contract must retain its two-CPU grant for {label:?}"
+        );
+    }
+    assert_eq!(runner.peak.load(Ordering::Acquire), 2);
+    assert_eq!(runner.active.load(Ordering::Acquire), 0);
+    assert_exactly_once(&runner.calls());
 }
 
 #[test]
