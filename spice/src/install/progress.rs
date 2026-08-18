@@ -10,68 +10,35 @@ pub(super) fn apply_with_interruption(
     expected: &Digest,
     interrupt_after_write: Option<usize>,
 ) -> Result<InstallReceipt, InstallError> {
-    let (mut record, mut record_generation, fresh) =
-        prepare_apply(repository, spice_binary, expected)?;
+    let (mut record, record_generation, fresh) = prepare_apply(repository, spice_binary, expected)?;
     if record.status == InstallStatus::Complete {
         return Ok(record.receipt());
     }
-
-    let generated = record
-        .plan
-        .operations
-        .iter()
-        .map(|operation| {
-            materialize_generated(operation, spice_binary, &record.plan.repository.common_git)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let _rollback_lock = record.plan.lock_rollback(repository)?;
+    let generated = materialize_operations(&record, spice_binary)?;
     if fresh {
         record.plan.validate_pristine(repository)?;
     } else {
         record.plan.validate_for_repository(repository)?;
     }
-    record_generation = Some(match record_generation {
+    record.plan.publish_staged_rollback(repository)?;
+    let mut record_generation = match record_generation {
         Some(generation) => write_record(repository, &record, generation)?,
         None => write_initial_record(repository, &record)?,
-    });
-    while record.completed < record.plan.operations.len() {
-        let index = record.completed;
-        record_generation = Some(apply_operation(
-            repository,
-            &mut record,
-            &generated[index],
-            index,
-            record_generation.expect("the install record was published"),
-        )?);
-        if interrupt_after_write == Some(index) {
-            return Err(InstallError::Interrupted { operation: index });
-        }
-        record.completed += 1;
-        record_generation = Some(write_record(
-            repository,
-            &record,
-            record_generation.expect("the install record was published"),
-        )?);
-    }
-    while record.completed < record.plan.operations.len() + record.plan.retirements.len() {
-        let index = record.completed - record.plan.operations.len();
-        let step = record.completed;
-        let parent = retire_path(repository, &record.plan.retirements[index])?;
-        record.retired_parents[index] = parent;
-        record_generation = Some(write_record(
-            repository,
-            &record,
-            record_generation.expect("the install record was published"),
-        )?);
-        if interrupt_after_write == Some(step) {
-            return Err(InstallError::Interrupted { operation: step });
-        }
-        record.completed += 1;
-        record_generation = Some(write_record(
-            repository,
-            &record,
-            record_generation.expect("the install record was published"),
-        )?);
-    }
+    };
+    record_generation = apply_file_operations(
+        repository,
+        &mut record,
+        &generated,
+        record_generation,
+        interrupt_after_write,
+    )?;
+    record_generation = apply_retirements(
+        repository,
+        &mut record,
+        record_generation,
+        interrupt_after_write,
+    )?;
     record_generation = apply_activation(
         repository,
         &mut record,
@@ -79,20 +46,76 @@ pub(super) fn apply_with_interruption(
         interrupt_after_write,
     )?;
     record.status = InstallStatus::Complete;
-    write_record(
-        repository,
-        &record,
-        record_generation.expect("the install record was published"),
-    )?;
+    write_record(repository, &record, record_generation)?;
     Ok(record.receipt())
+}
+
+fn apply_file_operations(
+    repository: &Repository,
+    record: &mut InstallRecord,
+    generated: &[FileImage],
+    mut record_generation: ReceiptGeneration,
+    interrupt_after_write: Option<usize>,
+) -> Result<ReceiptGeneration, InstallError> {
+    while record.completed < record.plan.operations.len() {
+        let index = record.completed;
+        record_generation = apply_operation(
+            repository,
+            record,
+            &generated[index],
+            index,
+            record_generation,
+        )?;
+        if interrupt_after_write == Some(index) {
+            return Err(InstallError::Interrupted { operation: index });
+        }
+        record.completed += 1;
+        record_generation = write_record(repository, record, record_generation)?;
+    }
+    Ok(record_generation)
+}
+
+fn apply_retirements(
+    repository: &Repository,
+    record: &mut InstallRecord,
+    mut record_generation: ReceiptGeneration,
+    interrupt_after_write: Option<usize>,
+) -> Result<ReceiptGeneration, InstallError> {
+    while record.completed < record.plan.operations.len() + record.plan.retirements.len() {
+        let index = record.completed - record.plan.operations.len();
+        let step = record.completed;
+        let parent = retire_path(repository, &record.plan.retirements[index])?;
+        record.retired_parents[index] = parent;
+        record_generation = write_record(repository, record, record_generation)?;
+        if interrupt_after_write == Some(step) {
+            return Err(InstallError::Interrupted { operation: step });
+        }
+        record.completed += 1;
+        record_generation = write_record(repository, record, record_generation)?;
+    }
+    Ok(record_generation)
+}
+
+fn materialize_operations(
+    record: &InstallRecord,
+    spice_binary: Option<&Path>,
+) -> Result<Vec<FileImage>, InstallError> {
+    record
+        .plan
+        .operations
+        .iter()
+        .map(|operation| {
+            materialize_generated(operation, spice_binary, &record.plan.repository.common_git)
+        })
+        .collect()
 }
 
 fn apply_activation(
     repository: &Repository,
     record: &mut InstallRecord,
-    mut record_generation: Option<ReceiptGeneration>,
+    mut record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
-) -> Result<Option<ReceiptGeneration>, InstallError> {
+) -> Result<ReceiptGeneration, InstallError> {
     let activation_step = record.plan.operations.len() + record.plan.retirements.len();
     if record.plan.hook_activation.is_some() && record.completed == activation_step {
         let index = record.completed;
@@ -101,11 +124,7 @@ fn apply_activation(
             return Err(InstallError::Interrupted { operation: index });
         }
         record.completed += 1;
-        record_generation = Some(write_record(
-            repository,
-            record,
-            record_generation.expect("the install record was published"),
-        )?);
+        record_generation = write_record(repository, record, record_generation)?;
     }
     Ok(record_generation)
 }
@@ -297,7 +316,8 @@ pub(super) fn unapply_with_interruption(
     let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
     let mut record = loaded.record;
     let mut record_generation = loaded.generation;
-    let rollback = record.plan.rollback_state()?;
+    let _rollback_lock = record.plan.lock_rollback(repository)?;
+    let rollback = record.plan.validated_rollback_state(repository)?;
     // Reversal is an executable direction, not historical inspection. Finish
     // it with the build that owns the live receipt; a newer build should derive
     // and apply its refresh instead of withdrawing the appliance.
@@ -305,48 +325,29 @@ pub(super) fn unapply_with_interruption(
     match record.status {
         InstallStatus::Applying => return Err(InstallError::ApplyInProgress),
         InstallStatus::Uninstalled => {
-            verify_progress(repository, &record)?;
+            verify_progress_with_rollback(repository, &record, rollback.as_ref())?;
             return Ok(record.receipt());
         }
         InstallStatus::Complete => {
-            verify_progress(repository, &record)?;
+            verify_progress_with_rollback(repository, &record, rollback.as_ref())?;
             record.status = InstallStatus::Unapplying;
             record.completed = 0;
             record.restored.fill(None);
             record.restored_retirements.fill(None);
             record_generation = write_record(repository, &record, record_generation)?;
         }
-        InstallStatus::Unapplying => verify_progress(repository, &record)?,
+        InstallStatus::Unapplying => {
+            verify_progress_with_rollback(repository, &record, rollback.as_ref())?;
+        }
     }
 
-    while record.completed < record.plan.operation_count() {
-        if let Some(generation) = reverse_activation(
-            repository,
-            &mut record,
-            record_generation.clone(),
-            interrupt_after_write,
-        )? {
-            record_generation = generation;
-            continue;
-        }
-        if let Some(generation) = reverse_retirement(
-            repository,
-            &mut record,
-            rollback.as_ref(),
-            record_generation.clone(),
-            interrupt_after_write,
-        )? {
-            record_generation = generation;
-            continue;
-        }
-        record_generation = reverse_file_operation(
-            repository,
-            &mut record,
-            rollback.as_ref(),
-            record_generation,
-            interrupt_after_write,
-        )?;
-    }
+    record_generation = reverse_operations(
+        repository,
+        &mut record,
+        rollback.as_ref(),
+        record_generation,
+        interrupt_after_write,
+    )?;
     record.status = InstallStatus::Uninstalled;
     let receipt = record.receipt();
     if let Some(rollback) = &rollback {
@@ -362,6 +363,44 @@ pub(super) fn unapply_with_interruption(
         write_record(repository, &record, record_generation)?;
     }
     Ok(receipt)
+}
+
+fn reverse_operations(
+    repository: &Repository,
+    record: &mut InstallRecord,
+    rollback: Option<&RollbackState>,
+    mut record_generation: ReceiptGeneration,
+    interrupt_after_write: Option<usize>,
+) -> Result<ReceiptGeneration, InstallError> {
+    while record.completed < record.plan.operation_count() {
+        if let Some(generation) = reverse_activation(
+            repository,
+            record,
+            record_generation.clone(),
+            interrupt_after_write,
+        )? {
+            record_generation = generation;
+            continue;
+        }
+        if let Some(generation) = reverse_retirement(
+            repository,
+            record,
+            rollback,
+            record_generation.clone(),
+            interrupt_after_write,
+        )? {
+            record_generation = generation;
+            continue;
+        }
+        record_generation = reverse_file_operation(
+            repository,
+            record,
+            rollback,
+            record_generation,
+            interrupt_after_write,
+        )?;
+    }
+    Ok(record_generation)
 }
 
 fn reverse_retirement(
@@ -505,15 +544,23 @@ pub(super) fn verify_progress(
     repository: &Repository,
     record: &InstallRecord,
 ) -> Result<(), InstallError> {
+    let rollback = match record.status {
+        InstallStatus::Complete => None,
+        InstallStatus::Applying | InstallStatus::Unapplying | InstallStatus::Uninstalled => {
+            record.plan.validated_rollback_state(repository)?
+        }
+    };
+    verify_progress_with_rollback(repository, record, rollback.as_ref())
+}
+
+fn verify_progress_with_rollback(
+    repository: &Repository,
+    record: &InstallRecord,
+    rollback: Option<&RollbackState>,
+) -> Result<(), InstallError> {
     record.validate_loaded_for_repository(repository)?;
-    let rollback = record.plan.rollback_state()?;
-    verify_file_progress(
-        repository,
-        record,
-        rollback.as_ref(),
-        reversed_file_count(record),
-    )?;
-    verify_retirement_progress(repository, record, rollback.as_ref())?;
+    verify_file_progress(repository, record, rollback, reversed_file_count(record))?;
+    verify_retirement_progress(repository, record, rollback)?;
     verify_activation_progress(record)
 }
 
@@ -745,8 +792,7 @@ pub(super) fn verify_refresh_progress(
         }
         return Err(drift(operation, observed));
     }
-    let rollback = record.plan.rollback_state()?;
-    verify_retirement_progress(repository, record, rollback.as_ref())?;
+    verify_retirement_progress(repository, record, None)?;
     if let Some(activation) = &record.plan.hook_activation {
         hook_activation::verify_refreshable(activation)?;
     }

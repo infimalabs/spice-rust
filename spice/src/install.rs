@@ -59,12 +59,13 @@ pub use maintenance::{
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
 
-const PLAN_VERSION: u16 = 9;
-const RECORD_VERSION: u16 = 9;
+const PLAN_VERSION: u16 = 10;
+const RECORD_VERSION: u16 = 10;
 const RETIREMENT_WITNESS_MISMATCH: &str =
     "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
 const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
+const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
 const LEGACY_RECORD_VERSIONS: [(u16, &str); 5] = [
@@ -230,10 +231,53 @@ impl InstallPlan {
         validation::validate_plan(self, content)
     }
 
-    fn rollback_state(&self) -> Result<Option<RollbackState>, InstallError> {
+    fn rollback_state(
+        &self,
+        repository: &Repository,
+    ) -> Result<Option<RollbackState>, InstallError> {
         self.rollback_archive
             .as_ref()
-            .map(RollbackArchive::decode)
+            .map(|archive| archive.decode(repository))
+            .transpose()
+    }
+
+    fn validated_rollback_state(
+        &self,
+        repository: &Repository,
+    ) -> Result<Option<RollbackState>, InstallError> {
+        let rollback = self.rollback_state(repository)?;
+        if let Some(rollback) = &rollback {
+            self.validate_rollback_state(rollback)?;
+        }
+        Ok(rollback)
+    }
+
+    fn staged_rollback_state(&self) -> Result<Option<RollbackState>, InstallError> {
+        self.rollback_archive
+            .as_ref()
+            .map(RollbackArchive::staged_state)
+            .transpose()
+            .map(Option::flatten)
+    }
+
+    fn validate_rollback_storage(&self, repository: &Repository) -> Result<(), InstallError> {
+        self.rollback_archive
+            .as_ref()
+            .map_or(Ok(()), |archive| archive.validate_stored(repository))
+    }
+
+    fn publish_staged_rollback(&self, repository: &Repository) -> Result<(), InstallError> {
+        self.rollback_archive
+            .as_ref()
+            .map_or(Ok(()), |archive| archive.publish_staged(repository))
+    }
+
+    fn lock_rollback(
+        &self,
+        repository: &Repository,
+    ) -> Result<Option<rollback::RollbackLock>, InstallError> {
+        self.has_rollback_archive()
+            .then(|| rollback::acquire_lock(repository))
             .transpose()
     }
 
@@ -563,7 +607,7 @@ fn build_plan_over(
             operations: rollback_operations,
             retirements: rollback_retirements,
         })?),
-        None => rollback_archive.cloned(),
+        None => current_rollback_archive(rollback_archive)?,
     };
     let plan = InstallPlan {
         version: PLAN_VERSION,
@@ -576,6 +620,12 @@ fn build_plan_over(
     };
     plan.validate_pristine(repository)?;
     Ok(plan)
+}
+
+fn current_rollback_archive(
+    archive: Option<&RollbackArchive>,
+) -> Result<Option<RollbackArchive>, InstallError> {
+    archive.map(RollbackArchive::to_current).transpose()
 }
 
 fn retirement(

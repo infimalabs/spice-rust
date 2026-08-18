@@ -185,6 +185,297 @@ fn record_digest_tampering_refuses_before_unapply_mutation() {
 }
 
 #[cfg(unix)]
+#[derive(Clone, Copy)]
+enum RollbackBlobTamper {
+    Missing,
+    Content,
+    Truncated,
+    Symlink,
+    HardLink,
+    Mode,
+    ManifestLength,
+    ManifestLimit,
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_blob_shape_content_and_manifest_fail_closed_before_install_mutation() {
+    for (index, tamper) in [
+        RollbackBlobTamper::Missing,
+        RollbackBlobTamper::Content,
+        RollbackBlobTamper::Truncated,
+        RollbackBlobTamper::Symlink,
+        RollbackBlobTamper::HardLink,
+        RollbackBlobTamper::Mode,
+        RollbackBlobTamper::ManifestLength,
+        RollbackBlobTamper::ManifestLimit,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        rollback_blob_refusal_case(index, tamper);
+    }
+}
+
+#[cfg(unix)]
+fn rollback_blob_refusal_case(index: usize, tamper: RollbackBlobTamper) {
+    let (scratch, repository, binary, migration, blobs, blob) = rollback_blob_fixture(index);
+    let before_receipt = fs::read(record_path(&repository).unwrap()).unwrap();
+    let before_images = images(&repository, &migration);
+    tamper_rollback_blob(tamper, &scratch, &repository, &blobs, &blob);
+    let refusal = plan(&repository, Some(&binary)).expect_err("unsafe rollback blob must refuse");
+    assert!(
+        matches!(
+            refusal,
+            InstallError::InvalidRecord(_) | InstallError::Io { .. } | InstallError::State(_)
+        ),
+        "unexpected rollback refusal: {refusal:?}",
+    );
+    assert_eq!(images(&repository, &migration), before_images);
+    if !matches!(
+        tamper,
+        RollbackBlobTamper::ManifestLength | RollbackBlobTamper::ManifestLimit
+    ) {
+        assert_eq!(
+            fs::read(record_path(&repository).unwrap()).unwrap(),
+            before_receipt,
+        );
+    }
+}
+
+#[cfg(unix)]
+fn rollback_blob_fixture(
+    index: usize,
+) -> (Scratch, Repository, PathBuf, InstallPlan, PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = Scratch::new(&format!("rollback-blob-refusal-{index}"));
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"rollback blob fixture executable");
+    let initial = plan(&repository, Some(&binary)).expect("plan initial fixture appliance");
+    apply(&repository, Some(&binary), &initial.digest().unwrap())
+        .expect("install initial fixture appliance");
+    record::publish_test_version_7_receipt(&repository).expect("publish version-7 fixture receipt");
+    let migration = plan(&repository, Some(&binary)).expect("plan rollback-blob fixture migration");
+    apply(&repository, Some(&binary), &migration.digest().unwrap())
+        .expect("apply rollback-blob fixture migration");
+    let blobs = repository
+        .admit_state()
+        .unwrap()
+        .install_rollback_blobs()
+        .to_path_buf();
+    assert_eq!(
+        fs::metadata(&blobs).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+    let blob = fs::read_dir(&blobs)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "gz"))
+        .expect("fixture owns one rollback blob");
+    (scratch, repository, binary, migration, blobs, blob)
+}
+
+#[cfg(unix)]
+fn tamper_rollback_blob(
+    tamper: RollbackBlobTamper,
+    scratch: &Scratch,
+    repository: &Repository,
+    blobs: &Path,
+    blob: &Path,
+) {
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    match tamper {
+        RollbackBlobTamper::Missing => fs::remove_file(blob).unwrap(),
+        RollbackBlobTamper::Content => {
+            let mut bytes = fs::read(blob).unwrap();
+            let middle = bytes.len() / 2;
+            bytes[middle] ^= 0xff;
+            fs::write(blob, bytes).unwrap();
+        }
+        RollbackBlobTamper::Truncated => {
+            let file = fs::OpenOptions::new().write(true).open(blob).unwrap();
+            file.set_len(file.metadata().unwrap().len() - 1).unwrap();
+        }
+        RollbackBlobTamper::Symlink => {
+            let outside = scratch.join("outside-rollback");
+            fs::write(&outside, fs::read(blob).unwrap()).unwrap();
+            fs::remove_file(blob).unwrap();
+            symlink(outside, blob).unwrap();
+        }
+        RollbackBlobTamper::HardLink => {
+            fs::hard_link(blob, blobs.join("unreferenced-peer")).unwrap();
+        }
+        RollbackBlobTamper::Mode => {
+            fs::set_permissions(blob, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        RollbackBlobTamper::ManifestLength | RollbackBlobTamper::ManifestLimit => {
+            tamper_rollback_manifest(tamper, repository, blob);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn tamper_rollback_manifest(tamper: RollbackBlobTamper, repository: &Repository, blob: &Path) {
+    let mut record = read_record(repository).unwrap().unwrap().record;
+    let stored_bytes = if matches!(tamper, RollbackBlobTamper::ManifestLimit) {
+        u64::MAX
+    } else {
+        fs::metadata(blob).unwrap().len() + 1
+    };
+    record
+        .plan
+        .rollback_archive
+        .as_mut()
+        .unwrap()
+        .set_stored_bytes_for_test(stored_bytes);
+    record.plan_digest = record.plan.digest().unwrap();
+    fs::write(
+        record_path(repository).unwrap(),
+        wire::encode(&record).unwrap(),
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_blob_reclamation_protects_current_and_retains_unsafe_candidates() {
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::time::{Duration, SystemTime};
+
+    let scratch = Scratch::new("rollback-blob-reclamation");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"rollback cleanup fixture executable");
+    let initial = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &initial.digest().unwrap()).unwrap();
+    record::publish_test_version_7_receipt(&repository).unwrap();
+    let migration = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &migration.digest().unwrap()).unwrap();
+
+    let record = read_record(&repository).unwrap().unwrap().record;
+    let protected = record
+        .plan
+        .rollback_archive
+        .as_ref()
+        .and_then(RollbackArchive::stored_digest)
+        .cloned()
+        .expect("current receipt names one protected blob");
+    let directory = repository
+        .admit_state()
+        .unwrap()
+        .install_rollback_blobs()
+        .to_path_buf();
+    let current = directory.join(format!("{protected}.gz"));
+    let current_bytes = fs::read(&current).unwrap();
+    let orphan = directory.join(format!("{}.gz", "a".repeat(64)));
+    fs::write(&orphan, b"unreferenced").unwrap();
+    fs::set_permissions(&orphan, fs::Permissions::from_mode(0o600)).unwrap();
+    let staged = directory.join(format!(
+        ".spice-install-rollback-{}-999.tmp",
+        std::process::id()
+    ));
+    fs::write(&staged, b"staged").unwrap();
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o600)).unwrap();
+    let unsafe_name = directory.join(format!("{}.gz", "b".repeat(64)));
+    fs::write(&unsafe_name, b"unsafe").unwrap();
+    fs::set_permissions(&unsafe_name, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let _lock = rollback::acquire_lock(&repository).unwrap();
+    let future = SystemTime::now() + Duration::from_secs(2 * 60 * 60);
+    let inspection = rollback::inspect_unreferenced(&repository, Some(&protected), future).unwrap();
+    assert_eq!(inspection.reclaimable_count, 2);
+    assert!(orphan.exists());
+    assert!(staged.exists());
+    assert_eq!(fs::read(&current).unwrap(), current_bytes);
+    assert!(unsafe_name.exists());
+    assert!(
+        inspection
+            .unsafe_candidates
+            .iter()
+            .any(|candidate| candidate.contains(&"b".repeat(64)))
+    );
+    let report = rollback::reclaim_unreferenced(&repository, Some(&protected), future).unwrap();
+    assert_eq!(report.reclaimable_count, 2);
+    assert!(!orphan.exists());
+    assert!(!staged.exists());
+    assert_eq!(fs::read(current).unwrap(), current_bytes);
+    assert!(unsafe_name.exists());
+    assert!(
+        report
+            .unsafe_candidates
+            .iter()
+            .any(|candidate| candidate.contains(&"b".repeat(64)))
+    );
+}
+
+#[test]
+fn complete_admission_is_shallow_but_unapply_validates_the_rollback_body() {
+    let scratch = Scratch::new("rollback-blob-semantic-boundary");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"rollback semantic fixture executable");
+    let initial = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &initial.digest().unwrap()).unwrap();
+    record::publish_test_version_7_receipt(&repository).unwrap();
+    let migration = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &migration.digest().unwrap()).unwrap();
+
+    let directory = repository
+        .admit_state()
+        .unwrap()
+        .install_rollback_blobs()
+        .to_path_buf();
+    let blob = fs::read_dir(&directory)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let invalid_compressed = vec![0xa5; fs::metadata(&blob).unwrap().len() as usize];
+    let mut record = read_record(&repository).unwrap().unwrap().record;
+    record
+        .plan
+        .rollback_archive
+        .as_mut()
+        .unwrap()
+        .reseal_stored_bytes_for_test(&invalid_compressed);
+    let replacement_blob = directory.join(format!(
+        "{}.gz",
+        record
+            .plan
+            .rollback_archive
+            .as_ref()
+            .and_then(RollbackArchive::stored_digest)
+            .unwrap()
+    ));
+    record.plan_digest = record.plan.digest().unwrap();
+    fs::rename(&blob, &replacement_blob).unwrap();
+    fs::write(&replacement_blob, &invalid_compressed).unwrap();
+    fs::write(
+        record_path(&repository).unwrap(),
+        wire::encode(&record).unwrap(),
+    )
+    .unwrap();
+    let before_receipt = fs::read(record_path(&repository).unwrap()).unwrap();
+    let before_images = images(&repository, &migration);
+
+    let preview = plan(&repository, Some(&binary))
+        .expect("complete-state admission verifies stored bytes without expanding them");
+    assert_eq!(preview.digest().unwrap(), record.plan_digest);
+    assert_eq!(images(&repository, &migration), before_images);
+
+    let refusal = unapply(&repository).expect_err("unapply must expand before mutation");
+    assert!(
+        matches!(refusal, InstallError::InvalidRecord(reason) if reason.contains("decompress"))
+    );
+    assert_eq!(images(&repository, &migration), before_images);
+    assert_eq!(
+        fs::read(record_path(&repository).unwrap()).unwrap(),
+        before_receipt,
+    );
+}
+
+#[cfg(unix)]
 #[test]
 fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
     use std::os::unix::fs::symlink;

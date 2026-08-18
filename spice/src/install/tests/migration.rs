@@ -48,7 +48,7 @@ fn large_rollback_archive_stays_private_to_bounded_public_replies() {
     let private_plan = migration
         .canonical_bytes()
         .expect("large private migration plan encodes");
-    assert!(private_plan.len() > PRIVATE_MINIMUM);
+    assert!(private_plan.len() < PUBLIC_MAXIMUM);
 
     let preview = InstallPreview::from_plan(migration.clone()).expect("project large preview");
     let summary = preview
@@ -124,12 +124,7 @@ fn large_rollback_archive_stays_private_to_bounded_public_replies() {
     assert_eq!(repeated, applied);
     assert_public_install_value(&repeated, PUBLIC_MAXIMUM);
 
-    let private_record =
-        fs::read(record_path(&fixture.repository).unwrap()).expect("read large private receipt");
-    assert!(private_record.len() > PRIVATE_MINIMUM);
-    let private_document: serde_json::Value =
-        serde_json::from_slice(&private_record).expect("private receipt is JSON");
-    assert!(private_document["plan"]["rollback_archive"]["payload"].is_string());
+    assert_private_receipt_manifest(&fixture.repository, PUBLIC_MAXIMUM);
 
     let removed = unapply(&fixture.repository).expect("reverse large migration");
     assert_eq!(removed.status(), InstallStatus::Uninstalled);
@@ -154,7 +149,7 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
 }
 
 #[test]
-fn complete_v8_appliance_turns_over_only_through_an_exact_v9_refresh() {
+fn complete_v8_appliance_turns_over_only_through_an_exact_v10_refresh() {
     let scratch = Scratch::new("complete-v8-forward-refresh");
     let repository = scratch.repository();
     let binary = scratch.binary(b"versioned appliance");
@@ -181,9 +176,9 @@ fn complete_v8_appliance_turns_over_only_through_an_exact_v9_refresh() {
     assert_eq!(audit.state(), ApplianceState::StaleReceipt);
     assert_eq!(audit.receipt(), Some(&historical_digest));
     assert!(audit.detail().contains("version 8"), "{audit:?}");
-    assert!(audit.detail().contains("version-9"), "{audit:?}");
+    assert!(audit.detail().contains("version-10"), "{audit:?}");
 
-    let refresh = plan(&repository, Some(&binary)).expect("derive version-9 forward refresh");
+    let refresh = plan(&repository, Some(&binary)).expect("derive version-10 forward refresh");
     assert_eq!(refresh.version(), PLAN_VERSION);
     assert_ne!(refresh.digest().unwrap(), historical_digest);
     let refusal = apply(&repository, Some(&binary), &historical_digest)
@@ -192,13 +187,380 @@ fn complete_v8_appliance_turns_over_only_through_an_exact_v9_refresh() {
     assert_eq!(images(&repository, &historical.plan), before);
 
     let receipt = apply(&repository, Some(&binary), &refresh.digest().unwrap())
-        .expect("apply exact version-9 forward refresh");
+        .expect("apply exact version-10 forward refresh");
     assert_eq!(receipt.status(), InstallStatus::Complete);
     assert!(
         audit_appliance(&repository, &binary)
             .expect("audit refreshed appliance")
             .is_current()
     );
+}
+
+fn assert_private_receipt_manifest(repository: &Repository, maximum: usize) {
+    let bytes = fs::read(record_path(repository).unwrap()).expect("read large private receipt");
+    assert!(bytes.len() < maximum);
+    let document: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("private receipt is JSON");
+    assert!(document["plan"]["rollback_archive"]["stored_digest"].is_string());
+    assert!(
+        document["plan"]["rollback_archive"]
+            .get("payload")
+            .is_none()
+    );
+}
+
+#[test]
+fn complete_v9_inline_receipt_turns_over_to_one_bounded_v10_blob() {
+    const MAX_PRIVATE_RECEIPT: usize = 64 * 1024;
+    const MAX_CHECKPOINT_SERIALIZATION: usize = 2 * 1024 * 1024;
+
+    let fixture = version_7_fixture();
+    let migration = preview_migration(&fixture);
+    let (inline_bytes, inline_digest, blobs) = publish_inline_v9(&fixture, &migration);
+
+    let before = installed_state(&fixture.repository, &migration);
+    let preview = assert_v9_preview(&fixture, &migration, &blobs, &before, MAX_PRIVATE_RECEIPT);
+    assert_v9_digest_refusal(&fixture, &migration, &blobs, &before, &inline_digest);
+
+    let (published_blob, published_blob_bytes, published_blob_modified) =
+        publish_v9_blob_boundary(&fixture, &preview, &blobs, &inline_bytes);
+
+    interrupt_v9_conversion(
+        &fixture,
+        &preview,
+        &published_blob,
+        &published_blob_bytes,
+        published_blob_modified,
+    );
+    let current = resume_v9_conversion(
+        &fixture,
+        &preview,
+        &blobs,
+        MAX_PRIVATE_RECEIPT,
+        MAX_CHECKPOINT_SERIALIZATION,
+    );
+
+    assert_v10_no_change(&fixture, &preview, &blobs, &current);
+
+    rollback::reset_deep_decode_count();
+    reverse_and_assert_version_7(&fixture);
+    assert_eq!(
+        rollback::deep_decode_count(),
+        1,
+        "unapply expands and validates its rollback body exactly once",
+    );
+}
+
+fn publish_inline_v9(
+    fixture: &MigrationFixture,
+    migration: &InstallPlan,
+) -> (Vec<u8>, Digest, PathBuf) {
+    apply(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &migration.digest().unwrap(),
+    )
+    .expect("apply current fixture before publishing version 9");
+    let mut inline = read_record(&fixture.repository)
+        .unwrap()
+        .expect("current receipt exists")
+        .record;
+    inline.plan.rollback_archive = inline
+        .plan
+        .rollback_archive
+        .as_ref()
+        .map(|archive| archive.to_inline(&fixture.repository))
+        .transpose()
+        .expect("derive exact inline version-9 archive");
+    inline.version = INLINE_ROLLBACK_RECORD_VERSION;
+    inline.plan.version = INLINE_ROLLBACK_RECORD_VERSION;
+    inline.plan_digest = inline.plan.digest().expect("digest inline version-9 plan");
+    let inline_digest = inline.plan_digest.clone();
+    let inline_bytes = wire::encode(&inline).expect("encode canonical version-9 receipt");
+    let mut interrupted = inline.clone();
+    interrupted.status = InstallStatus::Applying;
+    fs::write(
+        record_path(&fixture.repository).unwrap(),
+        wire::encode(&interrupted).expect("encode interrupted version-9 receipt"),
+    )
+    .expect("publish interrupted version-9 receipt");
+    let refusal = plan(&fixture.repository, Some(&fixture.binary))
+        .expect_err("interrupted version-9 direction cannot convert");
+    assert!(matches!(refusal, InstallError::InvalidRecord(_)));
+    fs::write(record_path(&fixture.repository).unwrap(), &inline_bytes)
+        .expect("publish canonical version-9 receipt");
+    let blobs = fixture
+        .repository
+        .admit_state()
+        .unwrap()
+        .install_rollback_blobs()
+        .to_path_buf();
+    fs::remove_dir_all(&blobs).expect("remove current fixture blob before inline conversion");
+    (inline_bytes, inline_digest, blobs)
+}
+
+fn assert_v9_preview(
+    fixture: &MigrationFixture,
+    migration: &InstallPlan,
+    blobs: &Path,
+    before: &InstalledState,
+    maximum: usize,
+) -> InstallPlan {
+    rollback::reset_deep_decode_count();
+    let preview = plan(&fixture.repository, Some(&fixture.binary))
+        .expect("preview exact version-9 forward conversion");
+    assert_eq!(
+        rollback::deep_decode_count(),
+        1,
+        "version-9 conversion expands and validates its rollback body exactly once",
+    );
+    assert_eq!(preview.version(), PLAN_VERSION);
+    assert!(preview.canonical_bytes().unwrap().len() < maximum);
+    assert!(!blobs.exists(), "preview must remain side-effect free");
+    assert_eq!(installed_state(&fixture.repository, migration), *before);
+    preview
+}
+
+fn assert_v9_digest_refusal(
+    fixture: &MigrationFixture,
+    migration: &InstallPlan,
+    blobs: &Path,
+    before: &InstalledState,
+    inline_digest: &Digest,
+) {
+    let refusal = apply(&fixture.repository, Some(&fixture.binary), inline_digest)
+        .expect_err("version-9 digest cannot authorize the version-10 receipt");
+    assert!(matches!(refusal, InstallError::DigestMismatch { .. }));
+    assert!(!blobs.exists());
+    assert_eq!(installed_state(&fixture.repository, migration), *before);
+}
+
+fn publish_v9_blob_boundary(
+    fixture: &MigrationFixture,
+    preview: &InstallPlan,
+    blobs: &Path,
+    inline_bytes: &[u8],
+) -> (PathBuf, Vec<u8>, std::time::SystemTime) {
+    {
+        let _lock = rollback::acquire_lock(&fixture.repository).unwrap();
+        preview
+            .publish_staged_rollback(&fixture.repository)
+            .expect("publish conversion blob before its receipt CAS");
+    }
+    assert_eq!(
+        fs::read(record_path(&fixture.repository).unwrap()).unwrap(),
+        inline_bytes,
+        "a publication-boundary interruption leaves the exact version-9 receipt current",
+    );
+    assert_eq!(fs::read_dir(blobs).unwrap().count(), 1);
+    let blob = fs::read_dir(blobs).unwrap().next().unwrap().unwrap().path();
+    let bytes = fs::read(&blob).unwrap();
+    let modified = fs::metadata(&blob).unwrap().modified().unwrap();
+    (blob, bytes, modified)
+}
+
+fn interrupt_v9_conversion(
+    fixture: &MigrationFixture,
+    preview: &InstallPlan,
+    blob: &Path,
+    blob_bytes: &[u8],
+    blob_modified: std::time::SystemTime,
+) {
+    rollback::reset_deep_decode_count();
+    let interrupted = apply_with_interruption(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &preview.digest().unwrap(),
+        Some(0),
+    )
+    .expect_err("interrupt conversion after its first receipt-bound progress write");
+    assert!(matches!(
+        interrupted,
+        InstallError::Interrupted { operation: 0 }
+    ));
+    assert_eq!(
+        rollback::deep_decode_count(),
+        1,
+        "authorized conversion expands and validates its rollback body exactly once",
+    );
+    let interrupted_record = read_record(&fixture.repository).unwrap().unwrap().record;
+    assert_eq!(interrupted_record.version, RECORD_VERSION);
+    assert_eq!(interrupted_record.status, InstallStatus::Applying);
+    assert_eq!(
+        fs::read(blob).unwrap(),
+        blob_bytes,
+        "same-digest publication reuses the synchronized blob",
+    );
+    assert_eq!(
+        fs::metadata(blob).unwrap().modified().unwrap(),
+        blob_modified
+    );
+}
+
+fn resume_v9_conversion(
+    fixture: &MigrationFixture,
+    preview: &InstallPlan,
+    blobs: &Path,
+    receipt_maximum: usize,
+    checkpoint_maximum: usize,
+) -> Vec<u8> {
+    rollback::reset_deep_decode_count();
+    apply(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &preview.digest().unwrap(),
+    )
+    .expect("resume exact version-10 forward conversion");
+    assert_eq!(
+        rollback::deep_decode_count(),
+        1,
+        "interrupted conversion resume expands and validates once before mutation",
+    );
+    let current =
+        fs::read(record_path(&fixture.repository).unwrap()).expect("read bounded current receipt");
+    assert!(current.len() < receipt_maximum);
+    assert!(
+        current.len() * (2 * preview.operation_count() + 1) < checkpoint_maximum,
+        "checkpoint serialization must remain bounded independently of blob size",
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&current).expect("current receipt is JSON");
+    assert_eq!(document["version"], PLAN_VERSION);
+    assert!(
+        document["plan"]["rollback_archive"]
+            .get("payload")
+            .is_none()
+    );
+    assert!(document["plan"]["rollback_archive"]["stored_digest"].is_string());
+    assert_eq!(fs::read_dir(blobs).unwrap().count(), 1);
+    current
+}
+
+fn assert_v10_no_change(
+    fixture: &MigrationFixture,
+    preview: &InstallPlan,
+    blobs: &Path,
+    current: &[u8],
+) {
+    let receipt = record_path(&fixture.repository).unwrap();
+    let receipt_modified = fs::metadata(&receipt).unwrap().modified().unwrap();
+    let blob = fs::read_dir(blobs).unwrap().next().unwrap().unwrap().path();
+    let blob_bytes = fs::read(&blob).unwrap();
+    let blob_modified = fs::metadata(&blob).unwrap().modified().unwrap();
+    rollback::reset_deep_decode_count();
+    apply(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &preview.digest().unwrap(),
+    )
+    .expect("repeat exact current apply without writes");
+    assert_eq!(
+        rollback::deep_decode_count(),
+        0,
+        "no-change current admission never expands the rollback body",
+    );
+    assert_eq!(fs::read(&receipt).unwrap(), current);
+    assert_eq!(
+        fs::metadata(receipt).unwrap().modified().unwrap(),
+        receipt_modified
+    );
+    assert_eq!(fs::read(&blob).unwrap(), blob_bytes);
+    assert_eq!(
+        fs::metadata(blob).unwrap().modified().unwrap(),
+        blob_modified
+    );
+}
+
+#[test]
+fn relocation_rebinds_one_validated_blob_before_reclaiming_the_old_reference() {
+    let mut scratch = Scratch::new("rollback-blob-relocation");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"relocatable rollback appliance");
+    let initial = plan(&repository, Some(&binary)).expect("plan initial relocation appliance");
+    apply(&repository, Some(&binary), &initial.digest().unwrap())
+        .expect("install initial relocation appliance");
+    record::publish_test_version_7_receipt(&repository)
+        .expect("publish relocation version-7 fixture");
+    let migration = plan(&repository, Some(&binary)).expect("plan relocation migration");
+    apply(&repository, Some(&binary), &migration.digest().unwrap())
+        .expect("apply relocation migration");
+
+    let before = read_record(&repository).unwrap().unwrap().record;
+    let old_digest = before
+        .plan
+        .rollback_archive
+        .as_ref()
+        .and_then(RollbackArchive::stored_digest)
+        .cloned()
+        .expect("migration receipt references a rollback blob");
+    let old_root = scratch.path().to_path_buf();
+    let moved_root = old_root.with_extension("relocated");
+    fs::rename(&old_root, &moved_root).expect("relocate rollback fixture repository");
+    scratch.0 = moved_root;
+    let moved = scratch.repository();
+    let moved_binary = scratch.join("build/spice");
+    let blobs = moved
+        .admit_state()
+        .unwrap()
+        .install_rollback_blobs()
+        .to_path_buf();
+    let old_blob = blobs.join(format!("{old_digest}.gz"));
+    assert!(old_blob.is_file());
+
+    rollback::reset_deep_decode_count();
+    let relocated = plan(&moved, Some(&moved_binary)).expect("preview relocated appliance");
+    assert_eq!(
+        rollback::deep_decode_count(),
+        1,
+        "relocation expands and validates the old rollback body exactly once",
+    );
+    let new_digest = relocated
+        .rollback_archive
+        .as_ref()
+        .and_then(RollbackArchive::stored_digest)
+        .cloned()
+        .expect("relocated plan references its rebound rollback blob");
+    assert_ne!(new_digest, old_digest);
+    let new_blob = blobs.join(format!("{new_digest}.gz"));
+    assert!(!new_blob.exists(), "relocation preview remains zero-write");
+    assert_eq!(fs::read_dir(&blobs).unwrap().count(), 1);
+
+    rollback::reset_deep_decode_count();
+    apply(&moved, Some(&moved_binary), &relocated.digest().unwrap())
+        .expect("publish relocated appliance authority");
+    assert_eq!(
+        rollback::deep_decode_count(),
+        1,
+        "relocation apply expands and validates the old rollback body exactly once",
+    );
+    assert!(old_blob.is_file());
+    assert!(new_blob.is_file());
+    let current = read_record(&moved).unwrap().unwrap().record;
+    assert_eq!(
+        current
+            .plan
+            .rollback_archive
+            .as_ref()
+            .and_then(RollbackArchive::stored_digest),
+        Some(&new_digest),
+    );
+
+    reclaim_relocated_blob(&moved, &old_blob, &new_blob, &new_digest);
+}
+
+fn reclaim_relocated_blob(
+    repository: &Repository,
+    old_blob: &Path,
+    new_blob: &Path,
+    new_digest: &Digest,
+) {
+    let _lock = rollback::acquire_lock(repository).unwrap();
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(2 * 60 * 60);
+    let reclaimed = rollback::reclaim_unreferenced(repository, Some(new_digest), future)
+        .expect("reclaim superseded relocation blob");
+    assert_eq!(reclaimed.reclaimable_count, 1);
+    assert!(!old_blob.exists());
+    assert!(new_blob.is_file());
 }
 
 /// Publish the historical receipt shape that exercises forward-only repair.
@@ -215,6 +577,13 @@ fn publish_pre_witness_v8(fixture: &MigrationFixture, migration: &InstallPlan) -
         .unwrap()
         .expect("migrated receipt exists")
         .record;
+    record.plan.rollback_archive = record
+        .plan
+        .rollback_archive
+        .as_ref()
+        .map(|archive| archive.to_inline(&fixture.repository))
+        .transpose()
+        .expect("convert fixture rollback archive to exact version-8 shape");
     record.version = FORWARD_MIGRATABLE_RECORD_VERSION;
     record.plan.version = FORWARD_MIGRATABLE_RECORD_VERSION;
     for retirement in &mut record.plan.retirements {
@@ -258,7 +627,7 @@ fn assert_forward_repair_plan(
     assert_ne!(repair.digest().unwrap(), *pre_witness_digest);
     assert!(repair.canonical_bytes().unwrap().len() < MAX_COMPACT_PLAN_BYTES);
     let rollback = repair
-        .rollback_state()
+        .rollback_state(&fixture.repository)
         .expect("decode repaired rollback archive")
         .expect("repair retains rollback state");
     assert!(
@@ -335,7 +704,7 @@ fn refresh_repaired_appliance(fixture: MigrationFixture, other: &Path) {
     let refresh = plan(&fixture.repository, Some(other))
         .expect("derive a normal refresh after the forward repair");
     let rollback = refresh
-        .rollback_state()
+        .rollback_state(&fixture.repository)
         .expect("decode refreshed rollback archive")
         .expect("refresh retains rollback state");
     assert!(
@@ -410,7 +779,7 @@ fn retirement_tamper_refuses_inertly(tamper: RetirementTamper) {
         .record;
     let mut rollback = record
         .plan
-        .rollback_state()
+        .rollback_state(&fixture.repository)
         .expect("decode rollback before tampering")
         .expect("migration retains rollback state");
     match tamper {
@@ -442,6 +811,10 @@ fn retirement_tamper_refuses_inertly(tamper: RetirementTamper) {
     }
     record.plan.rollback_archive =
         Some(RollbackArchive::new(&rollback).expect("reseal coherent tampered rollback archive"));
+    record
+        .plan
+        .publish_staged_rollback(&fixture.repository)
+        .expect("publish resealed tampered rollback blob");
     record.plan_digest = record
         .plan
         .digest()
@@ -453,24 +826,18 @@ fn retirement_tamper_refuses_inertly(tamper: RetirementTamper) {
     .expect("publish coherent tampered receipt");
 
     let before = installed_state(&fixture.repository, &migration);
-    let preview = plan(&fixture.repository, Some(&fixture.binary))
-        .expect_err("preview must refuse the mismatched retirement image");
-    assert_retirement_witness_refusal(&preview);
-    assert_eq!(installed_state(&fixture.repository, &migration), before);
-
-    let audit = audit_appliance(&fixture.repository, &fixture.binary)
-        .expect("audit classifies the invalid receipt");
-    assert_eq!(audit.state(), ApplianceState::StaleReceipt);
-    assert!(
-        audit
-            .detail()
-            .contains("does not match its retirement witnesses"),
-        "{audit:?}"
-    );
+    if matches!(tamper, RetirementTamper::Witness) {
+        let refusal = plan(&fixture.repository, Some(&fixture.binary))
+            .expect_err("receipt-visible witness mismatch refuses shallow admission");
+        assert_retirement_witness_refusal(&refusal);
+    } else {
+        plan(&fixture.repository, Some(&fixture.binary))
+            .expect("ordinary complete admission does not expand rollback bodies");
+    }
     assert_eq!(installed_state(&fixture.repository, &migration), before);
 
     let reversal = unapply(&fixture.repository)
-        .expect_err("unapply must refuse the mismatched retirement image");
+        .expect_err("unapply must semantically validate rollback before mutation");
     assert_retirement_witness_refusal(&reversal);
     assert_eq!(installed_state(&fixture.repository, &migration), before);
 }
@@ -573,7 +940,7 @@ fn preview_migration(fixture: &MigrationFixture) -> InstallPlan {
     assert!(migration.has_rollback_archive());
     assert!(migration.canonical_bytes().unwrap().len() < MAX_COMPACT_PLAN_BYTES);
     let rollback = migration
-        .rollback_state()
+        .rollback_state(&fixture.repository)
         .expect("decode migration rollback")
         .expect("migration owns rollback state");
     assert_eq!(rollback.record.bytes(), fixture.prior_record);

@@ -125,6 +125,7 @@ pub struct StatePaths {
     learnings: PathBuf,
     full_verifier_evidence: PathBuf,
     full_verifier_evidence_archive: PathBuf,
+    install_rollback_blobs: PathBuf,
 }
 
 impl StatePaths {
@@ -150,6 +151,7 @@ impl StatePaths {
             inbox: worktree_runtime.join("inbox"),
             full_verifier_evidence: worktree_runtime.join("full-verifier-evidence.json"),
             full_verifier_evidence_archive: runtime.join("full-verifier-evidence"),
+            install_rollback_blobs: runtime.join("install-rollback"),
             learnings: runtime.join("learnings"),
             artifact_data,
             runtime,
@@ -180,6 +182,12 @@ impl StatePaths {
     #[must_use]
     pub fn full_verifier_evidence_archive(&self) -> &Path {
         &self.full_verifier_evidence_archive
+    }
+
+    /// Repository-common content-addressed install rollback bodies.
+    #[must_use]
+    pub fn install_rollback_blobs(&self) -> &Path {
+        &self.install_rollback_blobs
     }
 
     /// Parent of the Rust authority database.
@@ -322,6 +330,7 @@ impl StatePaths {
             &self.artifact_data,
             self.artifacts(),
             self.full_verifier_evidence_archive(),
+            self.install_rollback_blobs(),
         ];
         for path in [self.worktree_runtime(), self.inbox()] {
             if !paths.contains(&path) {
