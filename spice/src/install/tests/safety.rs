@@ -184,6 +184,50 @@ fn record_digest_tampering_refuses_before_unapply_mutation() {
     assert_eq!(images(&repository, &planned), generated);
 }
 
+#[test]
+fn current_record_refuses_a_historical_plan_version_without_mutation() {
+    let scratch = Scratch::new("record-plan-version-mismatch");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"version-closure fixture executable");
+    let initial = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &initial.digest().unwrap()).unwrap();
+    record::publish_test_version_7_receipt(&repository).unwrap();
+    let migration = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &migration.digest().unwrap()).unwrap();
+    let installed = images(&repository, &migration);
+
+    let mut record = read_record(&repository).unwrap().unwrap().record;
+    assert_eq!(record.version, RECORD_VERSION);
+    record.plan.rollback_archive = Some(
+        record
+            .plan
+            .rollback_archive
+            .as_ref()
+            .expect("migration receipt owns rollback authority")
+            .to_inline(&repository)
+            .unwrap(),
+    );
+    record.plan.version = INLINE_ROLLBACK_RECORD_VERSION;
+    record.plan_digest = record.plan.digest().unwrap();
+    let mismatched = wire::encode(&record).unwrap();
+    fs::write(record_path(&repository).unwrap(), &mismatched).unwrap();
+
+    let error = match read_record(&repository) {
+        Err(error) => error,
+        Ok(_) => panic!("a current record cannot carry a historical plan version"),
+    };
+    assert!(matches!(
+        error,
+        InstallError::InvalidRecord(detail)
+            if detail == "install record and plan versions do not match"
+    ));
+    assert_eq!(
+        fs::read(record_path(&repository).unwrap()).unwrap(),
+        mismatched,
+    );
+    assert_eq!(images(&repository, &migration), installed);
+}
+
 #[cfg(unix)]
 #[derive(Clone, Copy)]
 enum RollbackBlobTamper {
