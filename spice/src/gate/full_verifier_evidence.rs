@@ -17,6 +17,7 @@ use crate::gate::environment::exact_evidence_environment;
 use crate::repository::Repository;
 
 mod semantic;
+mod storage;
 
 pub use semantic::{AdmittedSemanticVerifierEvidence, SemanticFullVerifierAdmission};
 
@@ -217,6 +218,8 @@ impl FullVerifierEvidence {
         let archive_bytes = merge_parent
             .encode()
             .map_err(|error| format!("encode merge-parent evidence: {error}"))?;
+        let archive_bytes = storage::compress_document(&archive_bytes)
+            .map_err(|error| format!("compress merge-parent evidence: {error}"))?;
         let exact_bytes = self
             .encode()
             .map_err(|error| format!("encode full-verifier evidence: {error}"))?;
@@ -227,7 +230,9 @@ impl FullVerifierEvidence {
         atomic::Destination::new(paths.full_verifier_evidence())
             .map_err(|error| format!("resolve full-verifier destination: {error}"))?
             .publish(|staged| staged.write_all(&exact_bytes))
-            .map_err(|error| format!("publish full-verifier evidence: {error}"))
+            .map_err(|error| format!("publish full-verifier evidence: {error}"))?;
+        storage::groom_archive(paths.full_verifier_evidence_archive())
+            .map_err(|error| format!("groom full-verifier archive: {error}"))
     }
 }
 
@@ -734,6 +739,14 @@ fn admit_archived_merge_parent(
         }
     };
     let unavailable = |detail| Ok(ArchivedMergeParent::Unavailable(detail));
+    let document = match storage::expand_document(document) {
+        Ok(document) => document,
+        Err(error) => {
+            return Ok(ArchivedMergeParent::Unavailable(format!(
+                "merge parent {parent} archived evidence is unreadable: {error}"
+            )));
+        }
+    };
     let evidence = match MergeParentEvidence::decode(&document) {
         Ok(evidence) => evidence,
         Err(detail) => return unavailable(detail),

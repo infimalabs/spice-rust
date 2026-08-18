@@ -11,26 +11,33 @@ import { launchBrowser } from "./headless-launch.mjs";
 /// ready, so a raw read undercounts and the reload equality below would
 /// compare a partial paint against the durable truth. Hold until the card
 /// count survives a quiet window, and refuse past the deadline naming the
-/// count still in motion.
+/// count still in motion. The probe only counts cards; the full lattice
+/// invariant battery runs once, on the settled state, exactly as often as
+/// the unsettled reader ran it.
 const ARRIVAL_QUIET_MS = 500;
 const ARRIVAL_DEADLINE_MS = 15_000;
+const ARRIVAL_PROBE_MS = 125;
+
+function mosaicCardCount(page) {
+  return page.locator('[data-pane="agent-console"] .mosaic-message-card').count();
+}
 
 async function settledMosaicCards(page, label) {
   const startedAt = Date.now();
-  let cards = await assertMosaicLattice(page, false);
+  let count = await mosaicCardCount(page);
   let quietSince = Date.now();
   while (Date.now() - quietSince < ARRIVAL_QUIET_MS) {
     if (Date.now() - startedAt > ARRIVAL_DEADLINE_MS) {
       throw new Error(
-        `${label}: Mosaic cards kept arriving past the settle deadline at ${cards.length}`,
+        `${label}: Mosaic cards kept arriving past the settle deadline at ${count}`,
       );
     }
-    await page.waitForTimeout(125);
-    const current = await assertMosaicLattice(page, false);
-    if (current.length !== cards.length) quietSince = Date.now();
-    cards = current;
+    await page.waitForTimeout(ARRIVAL_PROBE_MS);
+    const current = await mosaicCardCount(page);
+    if (current !== count) quietSince = Date.now();
+    count = current;
   }
-  return cards;
+  return assertMosaicLattice(page, false);
 }
 
 export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {

@@ -388,7 +388,8 @@ fn assert_malformed_merge_receipt_fails_closed(repository: &Repository) {
     .expect("one parent archive")
     .expect("read parent archive entry")
     .path();
-    let original = fs::read(&archive).expect("read archived parent bundle");
+    let stored = fs::read(&archive).expect("read archived parent bundle");
+    let original = expand_archived_bundle(&stored);
     let marker = b"\"compiler\":\"{";
     let offset = original
         .windows(marker.len())
@@ -396,15 +397,37 @@ fn assert_malformed_merge_receipt_fails_closed(repository: &Repository) {
         .expect("locate merge compiler receipt")
         + marker.len()
         - 1;
-    let mut malformed = original.clone();
+    let mut malformed = original;
     malformed[offset] = b'x';
-    fs::write(&archive, malformed).expect("malform merge compiler receipt");
+    fs::write(&archive, compress_archived_bundle(&malformed))
+        .expect("malform merge compiler receipt");
     assert!(matches!(
         admit_merge_parent_full_verifier_evidence(repository)
             .expect("probe malformed merge compiler receipt"),
         SemanticFullVerifierAdmission::Unavailable { .. },
     ));
-    fs::write(&archive, original).expect("restore merge compiler receipt");
+    fs::write(&archive, stored).expect("restore merge compiler receipt");
+}
+
+/// Archived bundles are gzip at rest; the malformed-receipt probe must corrupt
+/// the plain document and return it through the same container so admission
+/// exercises the receipt decoder rather than the storage sniff.
+fn expand_archived_bundle(stored: &[u8]) -> Vec<u8> {
+    use std::io::Read as _;
+    let mut plain = Vec::new();
+    flate2::read::GzDecoder::new(stored)
+        .read_to_end(&mut plain)
+        .expect("expand archived parent bundle");
+    plain
+}
+
+fn compress_archived_bundle(plain: &[u8]) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(plain)
+        .expect("compress malformed parent bundle");
+    encoder.finish().expect("finish malformed parent bundle")
 }
 
 fn assert_resolution_input_invalidates_compilers(root: &Path, repository: &Repository) {
