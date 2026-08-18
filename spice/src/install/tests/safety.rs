@@ -244,7 +244,14 @@ enum RollbackBlobTamper {
 #[cfg(unix)]
 #[test]
 fn rollback_blob_shape_content_and_manifest_fail_closed_before_install_mutation() {
-    for (index, tamper) in [
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (scratch, repository, binary, migration, blobs, blob) = rollback_blob_fixture(0);
+    let before_receipt = fs::read(record_path(&repository).unwrap()).unwrap();
+    let before_images = images(&repository, &migration);
+    let blob_bytes = fs::read(&blob).unwrap();
+    let blob_mode = fs::metadata(&blob).unwrap().permissions().mode();
+    for tamper in [
         RollbackBlobTamper::Missing,
         RollbackBlobTamper::Content,
         RollbackBlobTamper::Truncated,
@@ -253,38 +260,70 @@ fn rollback_blob_shape_content_and_manifest_fail_closed_before_install_mutation(
         RollbackBlobTamper::Mode,
         RollbackBlobTamper::ManifestLength,
         RollbackBlobTamper::ManifestLimit,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        rollback_blob_refusal_case(index, tamper);
+    ] {
+        tamper_rollback_blob(tamper, &scratch, &repository, &blobs, &blob);
+        let refusal =
+            plan(&repository, Some(&binary)).expect_err("unsafe rollback blob must refuse");
+        assert!(
+            matches!(
+                refusal,
+                InstallError::InvalidRecord(_) | InstallError::Io { .. } | InstallError::State(_)
+            ),
+            "unexpected rollback refusal: {refusal:?}",
+        );
+        assert_eq!(images(&repository, &migration), before_images);
+        if !matches!(
+            tamper,
+            RollbackBlobTamper::ManifestLength | RollbackBlobTamper::ManifestLimit
+        ) {
+            assert_eq!(
+                fs::read(record_path(&repository).unwrap()).unwrap(),
+                before_receipt,
+            );
+        }
+        restore_rollback_blob(
+            tamper,
+            &repository,
+            &blobs,
+            &blob,
+            &blob_bytes,
+            blob_mode,
+            &before_receipt,
+        );
     }
 }
 
 #[cfg(unix)]
-fn rollback_blob_refusal_case(index: usize, tamper: RollbackBlobTamper) {
-    let (scratch, repository, binary, migration, blobs, blob) = rollback_blob_fixture(index);
-    let before_receipt = fs::read(record_path(&repository).unwrap()).unwrap();
-    let before_images = images(&repository, &migration);
-    tamper_rollback_blob(tamper, &scratch, &repository, &blobs, &blob);
-    let refusal = plan(&repository, Some(&binary)).expect_err("unsafe rollback blob must refuse");
-    assert!(
-        matches!(
-            refusal,
-            InstallError::InvalidRecord(_) | InstallError::Io { .. } | InstallError::State(_)
-        ),
-        "unexpected rollback refusal: {refusal:?}",
-    );
-    assert_eq!(images(&repository, &migration), before_images);
-    if !matches!(
-        tamper,
-        RollbackBlobTamper::ManifestLength | RollbackBlobTamper::ManifestLimit
-    ) {
-        assert_eq!(
-            fs::read(record_path(&repository).unwrap()).unwrap(),
-            before_receipt,
-        );
+fn restore_rollback_blob(
+    tamper: RollbackBlobTamper,
+    repository: &Repository,
+    blobs: &Path,
+    blob: &Path,
+    blob_bytes: &[u8],
+    blob_mode: u32,
+    receipt: &[u8],
+) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    match tamper {
+        RollbackBlobTamper::HardLink => {
+            fs::remove_file(blobs.join("unreferenced-peer")).unwrap();
+        }
+        RollbackBlobTamper::ManifestLength | RollbackBlobTamper::ManifestLimit => {
+            fs::write(record_path(repository).unwrap(), receipt).unwrap();
+        }
+        _ => {
+            if fs::symlink_metadata(blob).is_ok() {
+                fs::remove_file(blob).unwrap();
+            }
+            fs::write(blob, blob_bytes).unwrap();
+            fs::set_permissions(blob, fs::Permissions::from_mode(blob_mode)).unwrap();
+        }
     }
+    assert_eq!(fs::read(blob).unwrap(), blob_bytes);
+    assert_eq!(fs::metadata(blob).unwrap().permissions().mode(), blob_mode);
+    assert_eq!(fs::read(record_path(repository).unwrap()).unwrap(), receipt);
+    assert!(!blobs.join("unreferenced-peer").exists());
 }
 
 #[cfg(unix)]

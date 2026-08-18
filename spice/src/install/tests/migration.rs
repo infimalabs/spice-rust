@@ -835,7 +835,7 @@ fn resealed_retirement_images_must_match_their_exact_plan_witnesses() {
 }
 
 fn retirement_tamper_refuses_inertly(tamper: RetirementTamper) {
-    let fixture = version_7_fixture();
+    let fixture = compact_version_7_fixture();
     if matches!(tamper, RetirementTamper::Invented) {
         fs::remove_file(&fixture.legacy_guard).expect("remove absent-image fixture sidecar");
     }
@@ -943,9 +943,23 @@ fn installed_state(repository: &Repository, migration: &InstallPlan) -> Installe
 }
 
 fn version_7_fixture() -> MigrationFixture {
+    version_7_fixture_with_assets(
+        vec![b's'; LARGE_BINARY_BYTES],
+        vec![b'x'; LARGE_BINARY_BYTES],
+    )
+}
+
+fn compact_version_7_fixture() -> MigrationFixture {
+    version_7_fixture_with_assets(
+        b"current spice fixture".to_vec(),
+        b"retired xtask fixture".to_vec(),
+    )
+}
+
+fn version_7_fixture_with_assets(binary_bytes: Vec<u8>, xtask_bytes: Vec<u8>) -> MigrationFixture {
     let scratch = Scratch::new("version-7-migration");
     let repository = scratch.repository();
-    let binary = scratch.binary(&vec![b's'; LARGE_BINARY_BYTES]);
+    let binary = scratch.binary(&binary_bytes);
     let initial = plan(&repository, Some(&binary)).expect("plan fixture appliance");
     apply(&repository, Some(&binary), &initial.digest().unwrap())
         .expect("install fixture appliance");
@@ -953,7 +967,6 @@ fn version_7_fixture() -> MigrationFixture {
 
     let legacy_xtask = repository.common_dir().join(RETIRED_XTASK_PATH);
     let legacy_guard = repository.common_dir().join(RETIRED_XTASK_GUARD_PATH);
-    let xtask_bytes = vec![b'x'; LARGE_BINARY_BYTES];
     let guard_bytes = b"0123456789abcdef\n".to_vec();
     fs::write(&legacy_xtask, &xtask_bytes).expect("publish legacy xtask");
     set_test_mode(&legacy_xtask, EXECUTABLE_MODE);

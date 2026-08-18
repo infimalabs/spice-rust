@@ -38,7 +38,7 @@ const FAULT_EXIT: i32 = 1;
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const PRE_COMMIT_PATHS: &str = wire::SpiceVariable::PreCommitPaths.as_str();
 const PRE_COMMIT_SOURCE: &str = wire::SpiceVariable::PreCommitSource.as_str();
-const COMMIT_WORKER_STARTUP_ALLOWANCE: Duration = Duration::from_secs(6);
+const COMMIT_WORKER_STARTUP_ALLOWANCE: Duration = Duration::from_secs(15);
 const COMMIT_WORKER_CONTAINMENT_RUNTIME: Duration = Duration::from_secs(2);
 const COMPACT_CHANGE_REPORT_MAX_BYTES: usize = 128 * 1_024;
 

@@ -196,27 +196,25 @@ fn allocator_owned_authority_resolution_runs_evidence_then_publishes() {
 
 #[test]
 fn incomplete_or_tampered_merge_control_state_refuses_before_evidence() {
-    for (ordinal, (name, state, value)) in [
+    let claim = ClaimFixture::new(10, ClaimDisposition::Active);
+    let actor = claim.actor.to_string();
+    let meta = claim.metadata(&actor);
+    let fixture = Fixture::new("merge-control-refusal");
+    fixture.pause(meta);
+    fixture.resolve();
+    for (name, state, value) in [
         ("missing-head", "MERGE_HEAD", None),
         ("multiple-heads", "MERGE_HEAD", Some("bad\nbad\n")),
         ("malformed-head", "MERGE_HEAD", Some("not-an-object\n")),
         ("wrong-origin", "ORIG_HEAD", Some("bad\n")),
         ("wrong-mode", "MERGE_MODE", Some("ff\n")),
         ("wrong-message", "MERGE_MSG", Some("tampered\n")),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let claim = ClaimFixture::new(10 + ordinal as i64, ClaimDisposition::Active);
-        let actor = claim.actor.to_string();
-        let meta = claim.metadata(&actor);
-        let fixture = Fixture::new(name);
-        fixture.pause(meta);
-        fixture.resolve();
+    ] {
         let path = git_state_path(&fixture.agent, state).expect("state path");
+        let original = fs::read(&path).expect("read original merge state");
         match value {
-            Some(value) => fs::write(path, value).expect("tamper state"),
-            None => fs::remove_file(path).expect("remove state"),
+            Some(value) => fs::write(&path, value).expect("tamper state"),
+            None => fs::remove_file(&path).expect("remove state"),
         }
         let called = Cell::new(false);
 
@@ -234,6 +232,8 @@ fn incomplete_or_tampered_merge_control_state_refuses_before_evidence() {
             ),
             "{name}: {refusal}",
         );
+        fs::write(&path, &original).expect("restore original merge state");
+        assert_eq!(fs::read(path).expect("read restored merge state"), original,);
     }
 }
 
@@ -328,23 +328,24 @@ fn source_evidence_cannot_authorize_a_merge_only_peer_path_rewrite() {
 
 #[test]
 fn post_evidence_index_ref_and_configuration_movement_refuse_before_commit() {
-    for (ordinal, name) in ["index", "ref", "configuration"].into_iter().enumerate() {
-        let claim = ClaimFixture::new(300 + ordinal as i64, ClaimDisposition::Active);
-        let actor = claim.actor.to_string();
-        let meta = claim.metadata(&actor);
-        let fixture = Fixture::new(name);
-        let (agent, _) = fixture.pause(meta);
-        fixture.resolve();
-        let before = output(&fixture.agent, &["rev-parse", "HEAD"]);
-
+    let claim = ClaimFixture::new(300, ClaimDisposition::Active);
+    let actor = claim.actor.to_string();
+    let meta = claim.metadata(&actor);
+    let fixture = Fixture::new("post-evidence-movement");
+    let (agent, _) = fixture.pause(meta);
+    fixture.resolve();
+    let before = output(&fixture.agent, &["rev-parse", "HEAD"]);
+    let resolved = fixture.agent.join("gate/src/change_selection.rs");
+    let resolved_bytes = fs::read(&resolved).expect("read resolved authority");
+    let index = git_state_path(&fixture.agent, "index").expect("index path");
+    let index_bytes = fs::read(&index).expect("read resolved index");
+    let tree = output(&fixture.agent, &["write-tree"]);
+    let upstream = output(&fixture.agent, &["rev-parse", "refs/remotes/origin/main"]);
+    for name in ["index", "ref", "configuration"] {
         let refusal = publish_claimed(&fixture.repository(), meta, &claim.active(), || {
             match name {
                 "index" => {
-                    fs::write(
-                        fixture.agent.join("gate/src/change_selection.rs"),
-                        "moved after evidence\n",
-                    )
-                    .expect("move resolution index");
+                    fs::write(&resolved, "moved after evidence\n").expect("move resolution index");
                     git(&fixture.agent, &["add", "gate/src/change_selection.rs"]);
                 }
                 "ref" => git(
@@ -366,6 +367,31 @@ fn post_evidence_index_ref_and_configuration_movement_refuse_before_commit() {
             "{name}: {refusal}",
         );
         assert_eq!(output(&fixture.agent, &["rev-parse", "HEAD"]), before);
+        match name {
+            "index" => {
+                fs::write(&resolved, &resolved_bytes).expect("restore resolved authority");
+                fs::write(&index, &index_bytes).expect("restore resolved index");
+            }
+            "ref" => git(
+                &fixture.agent,
+                &["update-ref", "refs/remotes/origin/main", &upstream],
+            ),
+            "configuration" => git(&fixture.agent, &["config", "--unset", "resolution.moved"]),
+            _ => unreachable!(),
+        }
+        assert_eq!(output(&fixture.agent, &["write-tree"]), tree);
+        assert_eq!(
+            output(&fixture.agent, &["rev-parse", "refs/remotes/origin/main"]),
+            upstream,
+        );
+        let configuration = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&fixture.agent)
+            .args(["config", "--get", "resolution.moved"])
+            .output()
+            .expect("inspect restored resolution configuration");
+        assert_eq!(configuration.status.code(), Some(1));
+        assert!(configuration.stdout.is_empty());
     }
 }
 
