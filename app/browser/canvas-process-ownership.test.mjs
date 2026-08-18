@@ -12,6 +12,11 @@ import {
   readProcessTable,
 } from "./canvas-process-ownership.mjs";
 
+// Under the C locale /bin/ps caret-escapes non-UTF-8 argv bytes (0xff renders
+// as M-^?), so the invalid-byte fixture below would never be observable. Pin a
+// UTF-8 locale before any process-table read so every launcher sees raw bytes.
+process.env.LC_ALL = "en_US.UTF-8";
+
 const SLEEP = "setTimeout(() => {}, 30_000)";
 const INVALID_ARGV = [
   "import os, sys",
