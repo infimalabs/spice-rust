@@ -105,7 +105,7 @@ fn session_proof_horizon(paths: &RuntimePaths) -> Duration {
     // proof horizon, including under the canonical coordinator's load.
     #[cfg(feature = "test-short-horizons")]
     if paths.runtime.join("test-short-session-proof").is_file() {
-        return Duration::from_secs(3);
+        return Duration::from_secs(8);
     }
     #[cfg(not(feature = "test-short-horizons"))]
     let _ = paths;
