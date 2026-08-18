@@ -814,6 +814,7 @@ dependencies = [
  "atomic",
  "blake2",
  "csv",
+ "flate2",
  "gix",
  "gix-diff",
  "gix-glob",

@@ -2,14 +2,14 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, Cursor, Read as _};
+use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
 use gate::Selector;
 use wire::Digest;
 
-use super::{FullVerifierEvidence, semantic};
+use super::{ExactEvidenceDocument, load_exact_full_verifier_evidence, semantic};
 use crate::gate::{GIT, prepare_strict_at};
 use crate::repository::Repository;
 
@@ -24,20 +24,13 @@ pub(super) fn protected_sources(
         let paths = linked
             .admit_state()
             .map_err(|error| format!("admit linked worktree {}: {error}", root.display()))?;
-        match fs::read(paths.full_verifier_evidence()) {
-            Ok(stored) => {
-                let document = expand_exact_document(&stored).map_err(|error| {
-                    format!(
-                        "read linked-worktree exact receipt {}: {error}",
-                        paths.full_verifier_evidence().display(),
-                    )
-                })?;
-                let evidence = FullVerifierEvidence::decode(&document).map_err(|error| {
-                    format!(
-                        "validate linked-worktree exact receipt {}: {error}",
-                        paths.full_verifier_evidence().display(),
-                    )
-                })?;
+        match load_exact_full_verifier_evidence(&paths).map_err(|error| {
+            format!(
+                "load linked-worktree exact receipt {}: {error}",
+                paths.full_verifier_evidence().display(),
+            )
+        })? {
+            ExactEvidenceDocument::Loaded { evidence, .. } => {
                 let semantic = semantic::SemanticEvidence::decode(evidence.semantic.as_bytes())
                     .map_err(|error| {
                         format!(
@@ -47,10 +40,10 @@ pub(super) fn protected_sources(
                     })?;
                 protected.insert(semantic.source().to_string());
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
+            ExactEvidenceDocument::Missing => {}
+            ExactEvidenceDocument::Unavailable(detail) => {
                 return Err(format!(
-                    "read linked-worktree exact receipt {}: {error}",
+                    "validate linked-worktree exact receipt {}: {detail}",
                     paths.full_verifier_evidence().display(),
                 ));
             }
@@ -58,39 +51,6 @@ pub(super) fn protected_sources(
         protect_open_merge_parents(&linked, &mut protected)?;
     }
     Ok(protected)
-}
-
-fn expand_exact_document(stored: &[u8]) -> Result<Vec<u8>, String> {
-    const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
-    const MAX_EXACT_BYTES: usize = 64 * 1024 * 1024;
-    if !stored.starts_with(&GZIP_MAGIC) {
-        if stored.len() > MAX_EXACT_BYTES {
-            return Err(format!(
-                "plain exact receipt exceeds {MAX_EXACT_BYTES} bytes",
-            ));
-        }
-        return Ok(stored.to_vec());
-    }
-    let mut document = Vec::new();
-    let mut decoder = flate2::bufread::GzDecoder::new(Cursor::new(stored));
-    (&mut decoder)
-        .take(u64::try_from(MAX_EXACT_BYTES + 1).expect("bounded exact length fits u64"))
-        .read_to_end(&mut document)
-        .map_err(|error| format!("decompress exact receipt: {error}"))?;
-    if document.len() > MAX_EXACT_BYTES {
-        return Err(format!(
-            "compressed exact receipt expands beyond {MAX_EXACT_BYTES} bytes",
-        ));
-    }
-    let consumed = usize::try_from(decoder.into_inner().position())
-        .map_err(|_| "compressed exact receipt position does not fit this platform".to_owned())?;
-    if consumed != stored.len() {
-        return Err(format!(
-            "compressed exact receipt consumed {consumed} of {} bytes",
-            stored.len(),
-        ));
-    }
-    Ok(document)
 }
 
 fn linked_worktrees(repository: &Repository) -> Result<Vec<PathBuf>, String> {
@@ -233,8 +193,6 @@ fn canonical_object_id(object: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write as _;
-
     use super::*;
 
     #[test]
@@ -262,29 +220,6 @@ mod tests {
         assert!(parse_linked_worktrees(b"worktree /work/a\0HEAD not-an-id\0\0").is_err());
         assert!(
             parse_linked_worktrees(b"HEAD 1111111111111111111111111111111111111111\0\0").is_err()
-        );
-    }
-
-    #[test]
-    fn protection_reads_plain_and_current_gzip_exact_documents_identically() {
-        let plain = b"exact receipt".repeat(1024);
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        encoder.write_all(&plain).expect("compress exact fixture");
-        let gzip = encoder.finish().expect("finish exact fixture");
-        assert_eq!(
-            expand_exact_document(&plain).expect("read plain exact"),
-            plain
-        );
-        assert_eq!(
-            expand_exact_document(&gzip).expect("read gzip exact"),
-            plain
-        );
-        let mut trailing = gzip;
-        trailing.push(0);
-        assert!(
-            expand_exact_document(&trailing)
-                .expect_err("trailing exact-receipt bytes refuse")
-                .contains("consumed")
         );
     }
 }

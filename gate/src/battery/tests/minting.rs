@@ -1,5 +1,9 @@
 //! Minting, verifying, and publishing one receipt over one report.
 
+use std::io::Read as _;
+
+use flate2::read::GzDecoder;
+
 use super::*;
 
 #[test]
@@ -123,7 +127,15 @@ fn production_receipt_encoding_benchmark() {
     let path = repository
         .git_dir()
         .join(".spice-rs/full-verifier-evidence.json");
-    let document = fs::read(path).expect("read durable full-verifier evidence");
+    let stored = fs::read(path).expect("read durable full-verifier evidence");
+    assert!(
+        stored.starts_with(&[0x1f, 0x8b]),
+        "current durable full-verifier evidence must use its gzip container",
+    );
+    let mut document = Vec::new();
+    GzDecoder::new(stored.as_slice())
+        .read_to_end(&mut document)
+        .expect("expand durable full-verifier evidence");
     let envelope: serde_json::Value = wire::decode(&document).expect("decode verifier evidence");
     let receipt_bytes = envelope["battery"]
         .as_str()
