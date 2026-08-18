@@ -16,6 +16,7 @@ use super::{PreparedBattery, RunError, prepare, prepare_strict};
 use crate::gate::environment::exact_evidence_environment;
 use crate::repository::Repository;
 
+mod reachability;
 mod semantic;
 mod storage;
 
@@ -212,27 +213,19 @@ impl FullVerifierEvidence {
             .as_ref()
             .ok_or_else(|| "full-verifier publication lacks merge-parent evidence".to_owned())?;
         let semantic = semantic::MergeSemanticEvidence::decode(merge_parent.semantic.as_bytes())?;
-        let archive = paths
-            .full_verifier_evidence_archive()
-            .join(format!("{}.json", semantic.source()));
         let archive_bytes = merge_parent
             .encode()
             .map_err(|error| format!("encode merge-parent evidence: {error}"))?;
-        let archive_bytes = storage::compress_document(&archive_bytes)
-            .map_err(|error| format!("compress merge-parent evidence: {error}"))?;
         let exact_bytes = self
             .encode()
             .map_err(|error| format!("encode full-verifier evidence: {error}"))?;
-        atomic::Destination::new(&archive)
-            .map_err(|error| format!("resolve full-verifier archive destination: {error}"))?
-            .publish(|staged| staged.write_all(&archive_bytes))
-            .map_err(|error| format!("publish full-verifier archive: {error}"))?;
+        let archive = storage::LockedArchive::acquire(&paths)?;
+        let protected = reachability::protected_sources(repository, semantic.source())?;
+        archive.publish_and_groom(&semantic.source().to_string(), &archive_bytes, &protected)?;
         atomic::Destination::new(paths.full_verifier_evidence())
             .map_err(|error| format!("resolve full-verifier destination: {error}"))?
             .publish(|staged| staged.write_all(&exact_bytes))
-            .map_err(|error| format!("publish full-verifier evidence: {error}"))?;
-        storage::groom_archive(paths.full_verifier_evidence_archive())
-            .map_err(|error| format!("groom full-verifier archive: {error}"))
+            .map_err(|error| format!("publish full-verifier evidence: {error}"))
     }
 }
 
@@ -617,6 +610,8 @@ pub fn admit_merge_parent_full_verifier_evidence(
     let paths = repository
         .admit_state()
         .map_err(|error| RunError::fault("gate::full-verifier-state-unavailable", error))?;
+    let archive = storage::LockedArchive::acquire(&paths)
+        .map_err(|error| RunError::fault("gate::full-verifier-evidence-unavailable", error))?;
     let current = match prepare_merge_candidate(repository) {
         Ok(current) => current,
         Err(detail) => {
@@ -627,6 +622,7 @@ pub fn admit_merge_parent_full_verifier_evidence(
     for parent in parents {
         match admit_archived_merge_parent(
             repository,
+            &archive,
             paths.full_verifier_evidence_archive(),
             &parent,
             &current,
@@ -711,6 +707,7 @@ enum ArchivedMergeParent {
 
 fn admit_archived_merge_parent(
     repository: &Repository,
+    locked_archive: &storage::LockedArchive,
     archive_root: &Path,
     parent: &str,
     current: &MergeCandidateEvidence,
@@ -724,9 +721,9 @@ fn admit_archived_merge_parent(
         }
     };
     let archive = archive_root.join(format!("{}.json", prepared.source()));
-    let document = match fs::read(&archive) {
-        Ok(document) => document,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+    let document = match locked_archive.read(&archive) {
+        Ok(Some(document)) => document,
+        Ok(None) => {
             return Ok(ArchivedMergeParent::Unavailable(format!(
                 "merge parent {parent} has no archived full-verifier evidence"
             )));
@@ -734,19 +731,11 @@ fn admit_archived_merge_parent(
         Err(error) => {
             return Err(RunError::fault(
                 "gate::full-verifier-evidence-unavailable",
-                format!("{}: {error}", archive.display()),
+                error,
             ));
         }
     };
     let unavailable = |detail| Ok(ArchivedMergeParent::Unavailable(detail));
-    let document = match storage::expand_document(document) {
-        Ok(document) => document,
-        Err(error) => {
-            return Ok(ArchivedMergeParent::Unavailable(format!(
-                "merge parent {parent} archived evidence is unreadable: {error}"
-            )));
-        }
-    };
     let evidence = match MergeParentEvidence::decode(&document) {
         Ok(evidence) => evidence,
         Err(detail) => return unavailable(detail),

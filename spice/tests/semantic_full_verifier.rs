@@ -18,6 +18,11 @@ use spice::gate::{
 };
 use spice::repository::Repository;
 
+const ARCHIVE_BUNDLE_NAME_BYTES: usize = 64 + ".json".len();
+const ARCHIVE_CONTAINER_MAGIC: &[u8; 8] = b"SPVARC\0\0";
+const ARCHIVE_CONTAINER_VERSION: u32 = 1;
+const ARCHIVE_CONTAINER_HEADER_BYTES: usize = ARCHIVE_CONTAINER_MAGIC.len() + 4 + 8 + 8 + 32;
+
 #[test]
 fn full_verifier_retries_stale_state_and_crosses_the_complete_evidence_lifecycle() {
     let fixture = Fixture::new();
@@ -283,6 +288,7 @@ fn merge_parent_fixture_process() {
     let repository = open_parent_merge(&root, &right_head);
 
     assert_initial_merge_parent_reuse(&repository);
+    assert_forward_migration_preserves_merge_admission(&repository);
     assert_malformed_merge_receipt_fails_closed(&repository);
     assert_resolution_input_invalidates_compilers(&root, &repository);
     assert_protected_resolution_executes_fresh(&root, &repository);
@@ -376,6 +382,38 @@ fn assert_initial_merge_parent_reuse(repository: &Repository) {
     );
 }
 
+fn assert_forward_migration_preserves_merge_admission(repository: &Repository) {
+    let before = admitted_merge(repository);
+    let archive_root = repository
+        .admit_state()
+        .expect("admit migration fixture state")
+        .full_verifier_evidence_archive()
+        .to_path_buf();
+    for entry in fs::read_dir(&archive_root).expect("list migration fixture archive") {
+        let path = entry.expect("migration archive entry").path();
+        let is_bundle = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.len() == ARCHIVE_BUNDLE_NAME_BYTES && name.ends_with(".json"));
+        if !is_bundle {
+            continue;
+        }
+        let stored = fs::read(&path).expect("read current migration fixture bundle");
+        fs::write(&path, compress_raw_gzip(&expand_archived_bundle(&stored)))
+            .expect("restore recognized raw-gzip predecessor bundle");
+    }
+    fs::remove_file(archive_root.join("FORMAT")).expect("remove current migration marker");
+
+    let after = admitted_merge(repository);
+    assert_eq!(before.reusable_gate_ids(), after.reusable_gate_ids());
+    assert_eq!(before.invalidated_gate_ids(), after.invalidated_gate_ids());
+    assert_eq!(before.diagnostics(), after.diagnostics());
+    assert_eq!(
+        fs::read(archive_root.join("FORMAT")).expect("read republished migration marker"),
+        b"spice/full-verifier-archive/v1\n",
+    );
+}
+
 fn assert_malformed_merge_receipt_fails_closed(repository: &Repository) {
     let archive = fs::read_dir(
         repository
@@ -384,7 +422,13 @@ fn assert_malformed_merge_receipt_fails_closed(repository: &Repository) {
             .full_verifier_evidence_archive(),
     )
     .expect("read merge parent archive")
-    .next()
+    .find(|entry| {
+        entry.as_ref().is_ok_and(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.len() == ARCHIVE_BUNDLE_NAME_BYTES && name.ends_with(".json")
+            })
+        })
+    })
     .expect("one parent archive")
     .expect("read parent archive entry")
     .path();
@@ -409,13 +453,17 @@ fn assert_malformed_merge_receipt_fails_closed(repository: &Repository) {
     fs::write(&archive, stored).expect("restore merge compiler receipt");
 }
 
-/// Archived bundles are gzip at rest; the malformed-receipt probe must corrupt
-/// the plain document and return it through the same container so admission
-/// exercises the receipt decoder rather than the storage sniff.
+/// Archived bundles use the version-one integrity-checked gzip container. The
+/// malformed-receipt probe must reseal its changed plain bytes so admission
+/// exercises the receipt decoder rather than stopping at container integrity.
 fn expand_archived_bundle(stored: &[u8]) -> Vec<u8> {
     use std::io::Read as _;
+    assert_eq!(
+        &stored[..ARCHIVE_CONTAINER_MAGIC.len()],
+        ARCHIVE_CONTAINER_MAGIC,
+    );
     let mut plain = Vec::new();
-    flate2::read::GzDecoder::new(stored)
+    flate2::read::GzDecoder::new(&stored[ARCHIVE_CONTAINER_HEADER_BYTES..])
         .read_to_end(&mut plain)
         .expect("expand archived parent bundle");
     plain
@@ -427,7 +475,32 @@ fn compress_archived_bundle(plain: &[u8]) -> Vec<u8> {
     encoder
         .write_all(plain)
         .expect("compress malformed parent bundle");
-    encoder.finish().expect("finish malformed parent bundle")
+    let payload = encoder.finish().expect("finish malformed parent bundle");
+    let mut stored = Vec::with_capacity(ARCHIVE_CONTAINER_HEADER_BYTES + payload.len());
+    stored.extend_from_slice(ARCHIVE_CONTAINER_MAGIC);
+    stored.extend_from_slice(&ARCHIVE_CONTAINER_VERSION.to_be_bytes());
+    stored.extend_from_slice(
+        &u64::try_from(plain.len())
+            .expect("plain fixture length fits u64")
+            .to_be_bytes(),
+    );
+    stored.extend_from_slice(
+        &u64::try_from(payload.len())
+            .expect("stored fixture length fits u64")
+            .to_be_bytes(),
+    );
+    stored.extend_from_slice(blake3::hash(plain).as_bytes());
+    stored.extend_from_slice(&payload);
+    stored
+}
+
+fn compress_raw_gzip(plain: &[u8]) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(plain)
+        .expect("compress predecessor parent bundle");
+    encoder.finish().expect("finish predecessor parent bundle")
 }
 
 fn assert_resolution_input_invalidates_compilers(root: &Path, repository: &Repository) {
