@@ -137,7 +137,6 @@ export async function seatAgentTeam(
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
   await waitForElement(page, "first external agent seat renders", AGENT_SEAT_MS,
     console.locator(".team-detail-card").nth(0));
-  const firstSeatedAt = Date.now();
 
   const firstSnapshot = await reply(fixture, ["lane"]);
   const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
@@ -191,7 +190,6 @@ export async function seatAgentTeam(
 
   return {
     console,
-    firstSeatedAt,
     host,
     seated,
     teamWorktrees,
@@ -203,9 +201,7 @@ export async function seatAgentTeam(
       lane: lane.lane,
       prose: index === 0
         ? "newest lane prose witness"
-        : index === 1
-          ? "periodic live witness"
-          : agentProse(teamWorktrees[index]),
+        : agentProse(teamWorktrees[index]),
     })),
   };
 }
@@ -226,7 +222,6 @@ export async function assertAgentConversation(
   );
   const {
     console,
-    firstSeatedAt,
     host,
     seated,
     teamWorktrees,
@@ -491,8 +486,6 @@ export async function assertAgentConversation(
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);
   }
-  const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
-  await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
   return {
     lane: team.lane,
     quoteLane: team.quoteLane,

@@ -14,9 +14,9 @@
 /// the wire and not just in the status text.
 import assert from "node:assert/strict";
 
+import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import {
   CONNECT_MS,
-  HALF_OPEN_DETECT_MS,
   RECONNECT_MS,
   assertGenerationOnline,
   chooseCanvasView,
@@ -82,11 +82,18 @@ export async function assertHalfOpenSocketRecovers(page, monitor, route, epoch, 
   // client's retry, which arms within the base delay and would then hand the
   // replacement socket a withheld handshake and a nondeterministic socket count.
   await duringOutage();
+  await page.clock.fastForward(LIVENESS_PROBE_MS);
+  await new Promise(setImmediate);
+  assert.ok(
+    stalled.toServer > sentBefore,
+    "the first silence interval sends a probe on the still-open socket",
+  );
+  await page.clock.fastForward(LIVENESS_PROBE_MS);
   await observedBoundedWait(
     page,
     "canvas reports offline after inbound frames are withheld without a close",
-    HALF_OPEN_DETECT_MS,
-    () => page.waitForSelector(".status.offline", { timeout: HALF_OPEN_DETECT_MS }),
+    CONNECT_MS,
+    () => page.waitForSelector(".status.offline", { timeout: CONNECT_MS }),
   );
   // Restored before anything else is read. The counters below are already
   // recorded, but the client's next attempt is not: it arms on the base delay,
@@ -95,10 +102,6 @@ export async function assertHalfOpenSocketRecovers(page, monitor, route, epoch, 
 
   // The socket was never closed from either end, so an offline status here can
   // only have come from the client deciding the connection was dead.
-  assert.ok(
-    stalled.toServer > sentBefore,
-    "the client spoke on the stalled socket rather than only waiting on it",
-  );
   assert.equal(
     stalled.toClient,
     deliveredBefore,

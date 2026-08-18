@@ -47,8 +47,8 @@ export const HANDSHAKE_TIMEOUT_MS = readDeadlineMs(
 ///
 /// One interval is not the detection bound. A quiet board is silent too, so the
 /// first interval only buys the right to ask; the second is the one during which
-/// silence means something. A half-open socket is therefore detected after two
-/// of these, which is what [`HALF_OPEN_DETECT_MS`] spends.
+/// silence means something. The half-open browser proof advances these two
+/// intervals separately so it observes the probe before advancing to failure.
 export const LIVENESS_PROBE_MS = readDeadlineMs("LIVENESS_PROBE_MILLIS", "browser.rs");
 
 /// The shortest the client ever sleeps before retrying.
