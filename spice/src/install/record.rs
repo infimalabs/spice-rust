@@ -11,7 +11,7 @@ use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
     InstallStatus, LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
-    ReceiptGeneration, Repository, RepositoryIdentity,
+    ReceiptGeneration, Repository, RepositoryIdentity, RollbackArchive,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -151,6 +151,11 @@ impl InstallRecord {
     }
 
     fn validate_with_content(&self, historical: bool) -> Result<(), InstallError> {
+        if self.version != self.plan.version {
+            return Err(InstallError::InvalidRecord(
+                "install record and plan versions do not match".to_owned(),
+            ));
+        }
         let rollback_migratable = historical
             && self.version == super::MIGRATABLE_RECORD_VERSION
             && self.plan.version == super::MIGRATABLE_RECORD_VERSION;
@@ -407,6 +412,41 @@ pub(super) fn read_record_for_refresh(
         }
         Err(error) => Err(error),
     }
+}
+
+pub(super) fn stored_rollback_digest(
+    repository: &Repository,
+) -> Result<Option<Digest>, InstallError> {
+    let Some(loaded) = decode_record(repository)? else {
+        return Ok(None);
+    };
+    let record = loaded.record;
+    record.validate_loaded()?;
+    if record.repository.common_git == repository.common_dir() {
+        record.repository.validate(repository)?;
+        record.plan.validate_repository_binding(repository)?;
+    } else {
+        if !matches!(
+            record.status,
+            InstallStatus::Complete | InstallStatus::Uninstalled
+        ) {
+            return Err(InstallError::InvalidRecord(
+                "an interrupted install cannot be relocated".to_owned(),
+            ));
+        }
+        if record.repository.common_git.exists() {
+            return Err(InstallError::InvalidRecord(
+                "install record was copied while its owning repository still exists".to_owned(),
+            ));
+        }
+    }
+    record.plan.validate_rollback_storage(repository)?;
+    Ok(record
+        .plan
+        .rollback_archive
+        .as_ref()
+        .and_then(RollbackArchive::stored_digest)
+        .cloned())
 }
 
 fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {

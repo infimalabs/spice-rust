@@ -111,20 +111,7 @@ fn large_rollback_archive_stays_private_to_bounded_public_replies() {
         Some(InstallStageKind::HookActivation),
     );
 
-    let digest = migration.digest().expect("large migration has a digest");
-    assert_eq!(preview.digest(), &digest);
-    let applied =
-        apply(&fixture.repository, Some(&fixture.binary), &digest).expect("apply large migration");
-    assert_eq!(applied.status(), InstallStatus::Complete);
-    assert_eq!(applied.completed(), migration.operation_count());
-    assert_eq!(applied.plan(), preview.plan());
-    assert_public_install_value(&applied, PUBLIC_MAXIMUM);
-    let repeated =
-        apply(&fixture.repository, Some(&fixture.binary), &digest).expect("repeat large migration");
-    assert_eq!(repeated, applied);
-    assert_public_install_value(&repeated, PUBLIC_MAXIMUM);
-
-    assert_private_receipt_manifest(&fixture.repository, PUBLIC_MAXIMUM);
+    apply_large_migration(&fixture, &migration, &preview, PUBLIC_MAXIMUM);
 
     let removed = unapply(&fixture.repository).expect("reverse large migration");
     assert_eq!(removed.status(), InstallStatus::Uninstalled);
@@ -134,6 +121,40 @@ fn large_rollback_archive_stays_private_to_bounded_public_replies() {
         fixture.xtask_bytes,
     );
     assert_eq!(mode(&fixture.legacy_xtask), EXECUTABLE_MODE);
+}
+
+fn apply_large_migration(
+    fixture: &MigrationFixture,
+    migration: &InstallPlan,
+    preview: &InstallPreview,
+    public_maximum: usize,
+) {
+    let digest = migration.digest().expect("large migration has a digest");
+    assert_eq!(preview.digest(), &digest);
+    rollback::reset_blob_write_count();
+    let applied =
+        apply(&fixture.repository, Some(&fixture.binary), &digest).expect("apply large migration");
+    assert_eq!(
+        rollback::blob_write_count(),
+        1,
+        "a fresh migration writes its large rollback blob exactly once",
+    );
+    assert_eq!(applied.status(), InstallStatus::Complete);
+    assert_eq!(applied.completed(), migration.operation_count());
+    assert_eq!(applied.plan(), preview.plan());
+    assert_public_install_value(&applied, public_maximum);
+
+    rollback::reset_blob_write_count();
+    let repeated =
+        apply(&fixture.repository, Some(&fixture.binary), &digest).expect("repeat large migration");
+    assert_eq!(
+        rollback::blob_write_count(),
+        0,
+        "a complete no-change apply does not write the rollback blob",
+    );
+    assert_eq!(repeated, applied);
+    assert_public_install_value(&repeated, public_maximum);
+    assert_private_receipt_manifest(&fixture.repository, public_maximum);
 }
 
 #[test]
@@ -341,12 +362,18 @@ fn publish_v9_blob_boundary(
     blobs: &Path,
     inline_bytes: &[u8],
 ) -> (PathBuf, Vec<u8>, std::time::SystemTime) {
+    rollback::reset_blob_write_count();
     {
         let _lock = rollback::acquire_lock(&fixture.repository).unwrap();
         preview
             .publish_staged_rollback(&fixture.repository)
             .expect("publish conversion blob before its receipt CAS");
     }
+    assert_eq!(
+        rollback::blob_write_count(),
+        1,
+        "the conversion publishes its large rollback blob with one write",
+    );
     assert_eq!(
         fs::read(record_path(&fixture.repository).unwrap()).unwrap(),
         inline_bytes,
@@ -367,6 +394,7 @@ fn interrupt_v9_conversion(
     blob_modified: std::time::SystemTime,
 ) {
     rollback::reset_deep_decode_count();
+    rollback::reset_blob_write_count();
     let interrupted = apply_with_interruption(
         &fixture.repository,
         Some(&fixture.binary),
@@ -382,6 +410,11 @@ fn interrupt_v9_conversion(
         rollback::deep_decode_count(),
         1,
         "authorized conversion expands and validates its rollback body exactly once",
+    );
+    assert_eq!(
+        rollback::blob_write_count(),
+        0,
+        "retrying after blob publication validates and reuses it without another large write",
     );
     let interrupted_record = read_record(&fixture.repository).unwrap().unwrap().record;
     assert_eq!(interrupted_record.version, RECORD_VERSION);
@@ -405,6 +438,7 @@ fn resume_v9_conversion(
     checkpoint_maximum: usize,
 ) -> Vec<u8> {
     rollback::reset_deep_decode_count();
+    rollback::reset_blob_write_count();
     apply(
         &fixture.repository,
         Some(&fixture.binary),
@@ -415,6 +449,11 @@ fn resume_v9_conversion(
         rollback::deep_decode_count(),
         1,
         "interrupted conversion resume expands and validates once before mutation",
+    );
+    assert_eq!(
+        rollback::blob_write_count(),
+        0,
+        "receipt-bound resume reuses the published rollback blob without writing it again",
     );
     let current =
         fs::read(record_path(&fixture.repository).unwrap()).expect("read bounded current receipt");
@@ -507,6 +546,19 @@ fn relocation_rebinds_one_validated_blob_before_reclaiming_the_old_reference() {
     let old_blob = blobs.join(format!("{old_digest}.gz"));
     assert!(old_blob.is_file());
 
+    let protected = record::stored_rollback_digest(&moved)
+        .expect("read the durable pre-relocation reference")
+        .expect("the moved receipt still references its old rollback blob");
+    assert_eq!(protected, old_digest);
+    {
+        let _lock = rollback::acquire_lock(&moved).unwrap();
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(2 * 60 * 60);
+        let retained = rollback::reclaim_unreferenced(&moved, Some(&protected), future)
+            .expect("retain the blob referenced by the still-durable moved receipt");
+        assert_eq!(retained.reclaimable_count, 0);
+    }
+    assert!(old_blob.is_file());
+
     rollback::reset_deep_decode_count();
     let relocated = plan(&moved, Some(&moved_binary)).expect("preview relocated appliance");
     assert_eq!(
@@ -526,12 +578,18 @@ fn relocation_rebinds_one_validated_blob_before_reclaiming_the_old_reference() {
     assert_eq!(fs::read_dir(&blobs).unwrap().count(), 1);
 
     rollback::reset_deep_decode_count();
+    rollback::reset_blob_write_count();
     apply(&moved, Some(&moved_binary), &relocated.digest().unwrap())
         .expect("publish relocated appliance authority");
     assert_eq!(
         rollback::deep_decode_count(),
         1,
         "relocation apply expands and validates the old rollback body exactly once",
+    );
+    assert_eq!(
+        rollback::blob_write_count(),
+        1,
+        "relocation writes its rebound rollback blob exactly once",
     );
     assert!(old_blob.is_file());
     assert!(new_blob.is_file());
@@ -661,6 +719,7 @@ fn assert_repair_rejects_another_build(
 }
 
 fn interrupt_and_resume_forward_repair(fixture: &MigrationFixture, repair: &InstallPlan) {
+    rollback::reset_blob_write_count();
     let interrupted = apply_with_interruption(
         &fixture.repository,
         Some(&fixture.binary),
@@ -673,18 +732,29 @@ fn interrupt_and_resume_forward_repair(fixture: &MigrationFixture, repair: &Inst
         InstallError::Interrupted { operation: 0 }
     ));
     assert_eq!(
+        rollback::blob_write_count(),
+        0,
+        "the forward repair reuses its already-present content-addressed rollback blob",
+    );
+    assert_eq!(
         inspect(&fixture.repository)
             .expect("inspect interrupted repair")
             .expect("interrupted repair receipt exists")
             .status(),
         InstallStatus::Applying
     );
+    rollback::reset_blob_write_count();
     let repaired = apply(
         &fixture.repository,
         Some(&fixture.binary),
         &repair.digest().unwrap(),
     )
     .expect("resume the exact repair plan");
+    assert_eq!(
+        rollback::blob_write_count(),
+        0,
+        "the interrupted repair resume reuses its rollback blob",
+    );
     assert_eq!(repaired.status(), InstallStatus::Complete);
     assert!(
         audit_appliance(&fixture.repository, &fixture.binary)
@@ -718,8 +788,14 @@ fn refresh_repaired_appliance(fixture: MigrationFixture, other: &Path) {
             })
     );
     assert!(refresh.canonical_bytes().unwrap().len() < MAX_COMPACT_PLAN_BYTES);
+    rollback::reset_blob_write_count();
     apply(&fixture.repository, Some(other), &refresh.digest().unwrap())
         .expect("apply a normal refresh after the forward repair");
+    assert_eq!(
+        rollback::blob_write_count(),
+        0,
+        "ordinary refresh checkpoints reuse the digest-bound rollback manifest",
+    );
     assert!(
         audit_appliance(&fixture.repository, other)
             .expect("audit refreshed repaired appliance")

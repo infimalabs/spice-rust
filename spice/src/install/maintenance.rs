@@ -131,13 +131,7 @@ fn scan_rollback_blobs(
     let _lock = reclaim
         .then(|| super::rollback::acquire_lock(repository))
         .transpose()?;
-    let protected = super::record::read_record(repository)?.and_then(|loaded| {
-        loaded
-            .record
-            .plan
-            .rollback_archive
-            .and_then(|archive| archive.stored_digest().cloned())
-    });
+    let protected = super::record::stored_rollback_digest(repository)?;
     let blobs = if reclaim {
         super::rollback::reclaim_unreferenced(repository, protected.as_ref(), now)?
     } else {

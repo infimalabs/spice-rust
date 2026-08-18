@@ -41,6 +41,7 @@ static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 thread_local! {
     static DEEP_DECODE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BLOB_WRITE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Default)]
@@ -495,15 +496,18 @@ impl RollbackBlob {
             Mode::empty(),
         )
         .map_err(|source| InstallError::io("open migration rollback blob", &path, source.into()))?;
-        let mut file = File::from(descriptor);
-        validate_blob_file(&file, &path, self.stored_bytes)?;
+        self.read_file_and_validate(File::from(descriptor), &path)
+    }
+
+    fn read_file_and_validate(&self, mut file: File, path: &Path) -> Result<Vec<u8>, InstallError> {
+        validate_blob_file(&file, path, self.stored_bytes)?;
         let capacity = usize::try_from(self.stored_bytes)
             .map_err(|_| invalid("migration rollback blob length does not fit memory"))?;
         let mut compressed = Vec::with_capacity(capacity);
         Read::by_ref(&mut file)
             .take(self.stored_bytes.saturating_add(1))
             .read_to_end(&mut compressed)
-            .map_err(|source| InstallError::io("read migration rollback blob", &path, source))?;
+            .map_err(|source| InstallError::io("read migration rollback blob", path, source))?;
         self.validate_compressed(&compressed)?;
         Ok(compressed)
     }
@@ -554,6 +558,16 @@ pub(super) fn reset_deep_decode_count() {
 #[cfg(test)]
 pub(super) fn deep_decode_count() -> usize {
     DEEP_DECODE_COUNT.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(super) fn reset_blob_write_count() {
+    BLOB_WRITE_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(super) fn blob_write_count() -> usize {
+    BLOB_WRITE_COUNT.with(std::cell::Cell::get)
 }
 
 fn blob_name(digest: &Digest) -> String {
@@ -997,6 +1011,28 @@ fn publish_blob(
         .expect("creating the rollback directory returns a descriptor");
     let name = blob_name(&blob.stored_digest);
     let path = blob_path(repository, &name)?;
+    match unix_fs::openat(
+        &directory,
+        OsStr::new(&name),
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) {
+        Ok(descriptor) => {
+            blob.read_file_and_validate(File::from(descriptor), &path)?;
+            directory.sync_all().map_err(|source| {
+                InstallError::io("synchronize migration rollback directory", &path, source)
+            })?;
+            return Ok(());
+        }
+        Err(rustix::io::Errno::NOENT) => {}
+        Err(source) => {
+            return Err(InstallError::io(
+                "open existing migration rollback blob",
+                &path,
+                source.into(),
+            ));
+        }
+    }
     let temporary = temporary_name();
     let descriptor = unix_fs::openat(
         &directory,
@@ -1013,9 +1049,17 @@ fn publish_blob(
     })?;
     let mut staged = File::from(descriptor);
     let result = (|| {
+        staged
+            .set_permissions(fs::Permissions::from_mode(BLOB_MODE))
+            .map_err(|source| {
+                InstallError::io("set staged migration rollback blob mode", &path, source)
+            })?;
+        #[cfg(test)]
+        BLOB_WRITE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
         staged.write_all(bytes).map_err(|source| {
             InstallError::io("write staged migration rollback blob", &path, source)
         })?;
+        validate_blob_file(&staged, &path, blob.stored_bytes)?;
         staged.sync_all().map_err(|source| {
             InstallError::io("synchronize staged migration rollback blob", &path, source)
         })?;
