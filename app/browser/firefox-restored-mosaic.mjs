@@ -6,6 +6,33 @@ import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
 import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 
+/// A ready lattice settles layout, not delivery: under verifier load the
+/// initial card stream can still be arriving when measurements first report
+/// ready, so a raw read undercounts and the reload equality below would
+/// compare a partial paint against the durable truth. Hold until the card
+/// count survives a quiet window, and refuse past the deadline naming the
+/// count still in motion.
+const ARRIVAL_QUIET_MS = 500;
+const ARRIVAL_DEADLINE_MS = 15_000;
+
+async function settledMosaicCards(page, label) {
+  const startedAt = Date.now();
+  let cards = await assertMosaicLattice(page, false);
+  let quietSince = Date.now();
+  while (Date.now() - quietSince < ARRIVAL_QUIET_MS) {
+    if (Date.now() - startedAt > ARRIVAL_DEADLINE_MS) {
+      throw new Error(
+        `${label}: Mosaic cards kept arriving past the settle deadline at ${cards.length}`,
+      );
+    }
+    await page.waitForTimeout(125);
+    const current = await assertMosaicLattice(page, false);
+    if (current.length !== cards.length) quietSince = Date.now();
+    cards = current;
+  }
+  return cards;
+}
+
 export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
   const firefox = await launchBrowser("firefox");
   const context = await firefox.newContext({
@@ -19,13 +46,13 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
     await chooseCanvasView(page, "Agents");
     const console = page.locator('[data-pane="agent-console"]');
     await console.getByRole("tab", { name: /^Compose/ }).click();
-    const before = await assertMosaicLattice(page, false);
+    const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Agents");
     await console.getByRole("tab", { name: /^Compose/ }).click();
-    const restored = await assertMosaicLattice(page, false);
+    const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
 
     await page.waitForTimeout(LIVENESS_PROBE_MS + 500);
