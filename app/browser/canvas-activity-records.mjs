@@ -6,21 +6,6 @@ export const sessionRecord = JSON.stringify({
   session_id: "018f7777-7777-7444-8888-999999999999",
 });
 
-export const activityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: "periodic live witness" }],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
-
 export const triggeredActivityRecord = JSON.stringify({
   type: "assistant",
   message: {

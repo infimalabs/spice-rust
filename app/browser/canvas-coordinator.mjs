@@ -26,7 +26,7 @@ const SHARD_TIMEOUT_MS = 120_000;
 const COORDINATOR_TIMEOUT_MS = 180_000;
 const PROGRESS_MS = 30_000;
 const TERMINATION_GRACE_MS = 30_000;
-const CONCURRENCY = 2;
+const CONCURRENCY = 4;
 
 function coveragePath(arguments_) {
   if (arguments_.length === 0) return null;

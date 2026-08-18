@@ -494,7 +494,6 @@ export async function captureReferenceViewport(page, artifacts) {
   }
   await team.getByText("0 pending", { exact: true }).waitFor();
   await team.getByText("running", { exact: true }).first().waitFor();
-  await team.getByText("running-stale", { exact: true }).first().waitFor();
   await page.screenshot({
     path: join(artifacts, "canvas-reference-agent-details-dark.png"),
     fullPage: false,

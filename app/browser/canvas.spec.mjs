@@ -739,6 +739,7 @@ async function assertStaleGeneration(browser, endpoint, currentEpoch) {
 async function assertHalfOpenSocket(browser, endpoint, epoch, fixture, seeded) {
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
   const page = await context.newPage();
+  await page.clock.install();
   const monitor = monitorPage(page);
   const route = await routeCanvasSocket(page);
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });

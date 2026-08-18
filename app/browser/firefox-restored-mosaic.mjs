@@ -47,6 +47,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
     viewport: { width: 1717, height: 1470 },
   });
   const page = await context.newPage();
+  await page.clock.install();
   const monitor = monitorPage(page);
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
@@ -62,7 +63,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
 
-    await page.waitForTimeout(LIVENESS_PROBE_MS + 500);
+    await page.clock.fastForward(LIVENESS_PROBE_MS + 500);
     const settled = await assertMosaicLattice(page, false);
     const settledKeys = new Set(settled.map((card) => card.key));
     assert.ok(

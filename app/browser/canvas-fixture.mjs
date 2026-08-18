@@ -18,7 +18,6 @@ import { promisify } from "node:util";
 
 import {
   HANDSHAKE_TIMEOUT_MS,
-  LIVENESS_PROBE_MS,
   RECONNECT_BASE_MS,
 } from "./client-deadlines.mjs";
 import {
@@ -29,7 +28,6 @@ import {
 } from "./canvas-build.mjs";
 import {
   TOOL_ACTIVITY_TEXT,
-  activityRecord,
   sessionRecord,
   toolActivityRecord,
   toolResultRecord,
@@ -269,11 +267,6 @@ export async function configureFixture(
     `if [ "$name" != "${noCardWorktree}" ]; then`,
     `  ${concatAgentRecord()}`,
     "fi",
-    "periodic=0",
-    'case "$PWD" in',
-    "  *lane-2) periodic=1 ;;",
-    "esac",
-    "elapsed=0",
     "while :; do",
     "  if [ -f .spice-tool-trigger ]; then",
     "    rm -f .spice-tool-trigger",
@@ -288,11 +281,6 @@ export async function configureFixture(
     `    printf '%s\\n' '${triggeredActivityRecord}'`,
     "  fi",
     "  sleep 1",
-    "  elapsed=$((elapsed + 1))",
-    "  if [ \"$periodic\" -eq 1 ] && [ \"$elapsed\" -ge 20 ]; then",
-    `    printf '%s\\n' '${activityRecord}'`,
-    "    elapsed=0",
-    "  fi",
     "done",
     "",
   ].join("\n"));
@@ -451,9 +439,9 @@ export async function seedAuthority(fixture) {
 // The client has since gained a liveness exchange, which does not change that.
 // It is what *produces* an end for a socket that would otherwise never yield --
 // it cannot delay one that already yielded. So a wait that follows a real close
-// is still bounded by `TRANSITION_MS`, and only a wait on a socket that stopped
-// delivering without closing owes the two probe intervals `HALF_OPEN_DETECT_MS`
-// spends.
+// is still bounded by `TRANSITION_MS`. The half-open browser proof advances
+// the client clock across its two probe intervals instead of spending them on
+// the host.
 //
 // What is not settled before the wait is armed is *this* function. The status
 // element is not part of a permanently rendered chrome: `app/src/browser.rs`
@@ -529,44 +517,6 @@ export const CONNECT_MS = HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
 /// and render those runs measured still stand and the observation is now
 /// expected 700ms sooner rather than invalidated.
 export const RECONNECT_MS = RECONNECT_BASE_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
-
-/// Allowance for drift on a deadline the client waits out rather than beats.
-///
-/// Every other bound here adds `RENDER_SLACK_MS` to a client deadline that the
-/// client comes in far under: a handshake budgeted `HANDSHAKE_TIMEOUT_MS`
-/// completes in 83ms to 90ms, so those sums carry seconds of unspent reserve and
-/// a slow render is absorbed long before it reaches the bound. A liveness
-/// interval is not that kind of deadline. It is a timer, and the client waits out
-/// every millisecond of both of them by design, so the sum below is already spent
-/// down to a render before this wait can succeed at all and the slack is the only
-/// margin it has.
-///
-/// What that margin absorbs is different in kind too. A render is work the
-/// machine either does promptly or does not; timer drift accrues in proportion to
-/// how long the timers run, and these run for thirty seconds on the host this
-/// file already documents at load average 124. So the allowance is a fraction of
-/// the timers rather than a constant, which is also what keeps it correct if the
-/// client's interval moves -- a flat number chosen against today's thirty seconds
-/// would quietly become strict against sixty.
-///
-/// Two observations, 30023ms and 29988ms, against the 30000ms the timers
-/// themselves account for: both land within 23ms of it, and they fall on either
-/// side because the wait arms a little after the client's timer starts rather
-/// than with it, so an elapsed time under the timers is expected and is not
-/// evidence of a short deadline. Ten percent is roughly a hundred and thirty
-/// times that deviation, which is the margin `TRANSITION_MS` above is defended by
-/// rather than a new standard invented here.
-const TIMER_DRIFT_FRACTION = 0.1;
-
-/// Bound for a wait on the client noticing a socket that stopped delivering.
-///
-/// A half-open socket never fires close on its own, so this is not a network
-/// timeout but the client's own two-interval liveness exchange: one interval to
-/// earn the right to ask, a probe, and a second interval in which no answer is
-/// the answer. The intervals are the client's own bound, twice, and are not
-/// picked; only the drift allowance and the render on top of them are.
-export const HALF_OPEN_DETECT_MS =
-  Math.round(2 * LIVENESS_PROBE_MS * (1 + TIMER_DRIFT_FRACTION)) + RENDER_SLACK_MS;
 
 export async function chooseCanvasView(page, name) {
   const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
