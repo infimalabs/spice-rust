@@ -222,10 +222,23 @@ impl FullVerifierEvidence {
         let exact_document = self
             .encode()
             .map_err(|error| format!("encode full-verifier evidence: {error}"))?;
-        let exact_container = exact_storage::encode(&exact_document)?;
-        let archive = storage::LockedArchive::acquire(&paths)?;
-        let protected = reachability::protected_sources(repository, semantic.source())?;
-        archive.publish_and_groom(&semantic.source().to_string(), &archive_bytes, &protected)?;
+        let exact_container = std::thread::scope(|scope| {
+            let exact = scope.spawn(|| exact_storage::encode(&exact_document));
+            let archive_result = (|| {
+                let archive = storage::LockedArchive::acquire(&paths)?;
+                let protected = reachability::protected_sources(repository, semantic.source())?;
+                archive.publish_and_groom(
+                    &semantic.source().to_string(),
+                    &archive_bytes,
+                    &protected,
+                )
+            })();
+            let exact_result = exact
+                .join()
+                .map_err(|_| "exact-evidence compression panicked".to_owned())?;
+            archive_result?;
+            exact_result
+        })?;
         {
             let _exact_lock = exact_evidence_lock(&paths)
                 .map_err(|error| format!("lock full-verifier evidence publication: {error}"))?;
@@ -890,9 +903,6 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Instant;
 
-    use flate2::Compression;
-    use flate2::write::GzEncoder;
-
     use super::*;
 
     #[test]
@@ -1113,6 +1123,18 @@ mod tests {
         FullVerifierEvidence::decode(&canonical).expect("decode production exact evidence");
         let current_container =
             exact_storage::encode(&canonical).expect("compress current container fixture");
+        assert!(
+            current_container.len() <= canonical.len() / 5,
+            "exact container must reduce stored bytes by at least 5:1: plain={} stored={}",
+            canonical.len(),
+            current_container.len(),
+        );
+        eprintln!(
+            "[exact-container-storage] canonical_bytes={} stored_bytes={} ratio={:.2}x",
+            canonical.len(),
+            current_container.len(),
+            canonical.len() as f64 / current_container.len() as f64,
+        );
 
         let scratch = Scratch::new();
         let benchmark_repository = scratch.repository();
@@ -1183,11 +1205,8 @@ mod tests {
     }
 
     fn publish_previous_container(paths: &StatePaths, document: &[u8]) {
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder
-            .write_all(document)
-            .expect("compress previous archive");
-        let archive = encoder.finish().expect("finish previous archive");
+        let archive = storage::encode_benchmark_container(document)
+            .expect("encode unchanged shared archive container");
         publish_benchmark_bytes(
             &paths
                 .full_verifier_evidence_archive()
@@ -1198,7 +1217,16 @@ mod tests {
     }
 
     fn publish_current_container(paths: &StatePaths, document: &[u8]) {
-        let archive = exact_storage::encode(document).expect("compress current archive");
+        let (archive, exact) = std::thread::scope(|scope| {
+            let exact = scope.spawn(|| exact_storage::encode(document));
+            let archive = storage::encode_benchmark_container(document)
+                .expect("encode unchanged shared archive container");
+            let exact = exact
+                .join()
+                .expect("join exact-evidence compression")
+                .expect("compress current exact evidence");
+            (archive, exact)
+        });
         publish_benchmark_bytes(
             &paths
                 .full_verifier_evidence_archive()
@@ -1206,7 +1234,7 @@ mod tests {
             &archive,
         );
         let _exact_lock = exact_evidence_lock(paths).expect("lock current exact publication");
-        publish_compressed_exact_document(paths.full_verifier_evidence(), document)
+        publish_exact_container(paths.full_verifier_evidence(), &exact)
             .expect("publish current exact evidence");
     }
 

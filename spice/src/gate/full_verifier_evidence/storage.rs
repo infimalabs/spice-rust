@@ -221,6 +221,14 @@ fn decode_current_bundle(stored: &[u8]) -> Result<Vec<u8>, String> {
     Ok(plain)
 }
 
+/// Encode the unchanged shared-archive side of the exact-evidence publication
+/// benchmark with the production container. Keeping this helper test-only
+/// prevents the benchmark from inventing a second storage-policy entry point.
+#[cfg(test)]
+pub(super) fn encode_benchmark_container(document: &[u8]) -> Result<Vec<u8>, String> {
+    container::encode(document)
+}
+
 fn validate_plain_bundle(document: &[u8]) -> Result<(), String> {
     MergeParentEvidence::decode(document).map(|_| ())
 }
