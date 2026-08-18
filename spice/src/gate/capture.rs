@@ -12,7 +12,29 @@ pub(super) fn capture_inner_with_reach<'trace>(
 ) -> Result<BatteryCapture<'trace>, RunError> {
     let directory = env::current_dir()
         .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
-    let repository = Repository::discover(&directory)
+    capture_at_inner(
+        &directory, selector, input_mode, selected, trace, state_run, selection,
+    )
+}
+
+pub(super) fn capture_at(
+    directory: &Path,
+    selector: Selector,
+    input_mode: InputMode,
+) -> Result<BatteryCapture<'static>, RunError> {
+    capture_at_inner(directory, selector, input_mode, None, None, None, None)
+}
+
+fn capture_at_inner<'trace>(
+    directory: &Path,
+    selector: Selector,
+    input_mode: InputMode,
+    selected: Option<GateId>,
+    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+    state_run: Option<::gate::BatteryStateRun>,
+    selection: Option<&ChangeSelectionReport>,
+) -> Result<BatteryCapture<'trace>, RunError> {
+    let repository = Repository::discover(directory)
         .map_err(|error| RunError::fault("gate::repository-unresolved", error))?;
     repository.admit_state().map_err(|error| match error {
         StateError::Filesystem { .. } => RunError::fault("gate::state-unavailable", error),

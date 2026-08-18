@@ -1,97 +1,262 @@
-//! At-rest grooming for the repository-common verifier evidence archive.
+//! Versioned at-rest storage for repository-common verifier evidence.
 //!
-//! Archived merge-parent bundles are a cache over re-execution: absence or
-//! drift is admitted as a normal cache miss by every reader, so grooming can
-//! bound the archive without ever changing an admission verdict. Bundles are
-//! stored gzip-compressed and sniffed by magic, never renamed, so one reader
-//! path serves both compressed and legacy plain documents.
+//! One repository-common lock serializes forward migration, publication,
+//! admission reads, and grooming. The current release reads exactly one
+//! integrity-checked container. A missing format marker authorizes one
+//! idempotent sweep from recognized plain or raw-gzip documents; the marker is
+//! published only after every rewrite succeeds.
 
+use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use flate2::Compression;
-use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
+use crate::repository::StatePaths;
 
-/// Gzip member magic; the sniff that keeps at-rest encoding self-describing.
-const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
-/// Newest bundles the publication sweep keeps. Eviction degrades a later
-/// admission to normal re-execution, so the bound needs only to outlast the
-/// merge parents an open resolution can plausibly still name.
-const ARCHIVE_RETAIN_BUNDLES: usize = 12;
+use super::MergeParentEvidence;
+
+mod container;
+mod retention;
+
+#[cfg(test)]
+mod tests;
+
+const ARCHIVE_LOCK_NAME: &str = "full-verifier-evidence-archive";
+const ARCHIVE_LOCK_FILE: &str = "full-verifier-evidence-archive.lock";
+const FORMAT_MARKER_NAME: &str = "FORMAT";
+const FORMAT_MARKER: &[u8] = b"spice/full-verifier-archive/v1\n";
 /// Hex length of a bundle stem: archived names are one source digest each.
-const BUNDLE_STEM_HEX: usize = 64;
+pub(super) const BUNDLE_STEM_HEX: usize = 64;
 
-/// Compress one encoded document for at-rest storage.
-pub(super) fn compress_document(document: &[u8]) -> io::Result<Vec<u8>> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(document)?;
-    encoder.finish()
+/// Exclusive access to the repository-common archive.
+pub(super) struct LockedArchive {
+    root: PathBuf,
+    _possession: sill::Possession,
 }
 
-/// Return the plain document bytes whether stored compressed or legacy plain.
-pub(super) fn expand_document(document: Vec<u8>) -> io::Result<Vec<u8>> {
-    if !document.starts_with(&GZIP_MAGIC) {
-        return Ok(document);
+impl LockedArchive {
+    /// Acquire the common archive lock and finish the current-release migration.
+    pub(super) fn acquire(paths: &StatePaths) -> Result<Self, String> {
+        fs::create_dir_all(paths.locks()).map_err(|error| {
+            format!(
+                "create full-verifier archive lock directory {}: {error}",
+                paths.locks().display(),
+            )
+        })?;
+        fs::create_dir_all(paths.full_verifier_evidence_archive()).map_err(|error| {
+            format!(
+                "create full-verifier archive {}: {error}",
+                paths.full_verifier_evidence_archive().display(),
+            )
+        })?;
+        Self::acquire_at(
+            paths.full_verifier_evidence_archive(),
+            &paths.locks().join(ARCHIVE_LOCK_FILE),
+        )
     }
-    let mut plain = Vec::new();
-    GzDecoder::new(document.as_slice()).read_to_end(&mut plain)?;
-    Ok(plain)
-}
 
-/// Bound the archive to the newest bundles and compress retained plain ones.
-///
-/// Only exact bundle names are groomed; unrecognized entries are retained and
-/// left untouched. A bundle whose modification time cannot be read sorts as
-/// newest so uncertainty always retains.
-pub(super) fn groom_archive(root: &Path) -> Result<(), String> {
-    let (retained, evicted) = partition_retained(bundle_entries(root)?);
-    for path in evicted {
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("evict {}: {error}", path.display())),
+    fn acquire_at(root: &Path, lock_path: &Path) -> Result<Self, String> {
+        let archive = Self::lock_at(root, lock_path)?;
+        archive.ensure_current()?;
+        Ok(archive)
+    }
+
+    fn lock_at(root: &Path, lock_path: &Path) -> Result<Self, String> {
+        let name = sill::LockName::new(ARCHIVE_LOCK_NAME)
+            .expect("the archive lock name is one constant path component");
+        let possession = sill::LockFile::new(name, lock_path)
+            .acquire()
+            .map_err(|error| format!("acquire full-verifier archive lock: {error}"))?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            _possession: possession,
+        })
+    }
+
+    /// Read one current bundle while the common lock prevents peer grooming.
+    pub(super) fn read(&self, path: &Path) -> Result<Option<Vec<u8>>, String> {
+        let stored = match fs::read(path) {
+            Ok(stored) => stored,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("read bundle {}: {error}", path.display())),
+        };
+        decode_current_bundle(&stored)
+            .map(Some)
+            .map_err(|error| format!("decode bundle {}: {error}", path.display()))
+    }
+
+    /// Publish one current bundle and apply a fully validated retention plan.
+    pub(super) fn publish_and_groom(
+        &self,
+        source: &str,
+        plain: &[u8],
+        protected: &BTreeSet<String>,
+    ) -> Result<(), String> {
+        validate_plain_bundle(plain)?;
+        let stored = container::encode(plain)?;
+        let destination = self.root.join(format!("{source}.json"));
+        let plan = retention::plan(&self.root, &destination, &stored, protected)?;
+
+        publish_bytes(&destination, &stored, "publish full-verifier archive")?;
+        for path in plan.evictions() {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("evict {}: {error}", path.display())),
+            }
         }
+        retention::verify_bounds(&self.root)
     }
-    for path in retained {
-        migrate_plain_bundle(&path)?;
+
+    fn ensure_current(&self) -> Result<(), String> {
+        let marker = self.root.join(FORMAT_MARKER_NAME);
+        match fs::read(&marker) {
+            Ok(document) if document == FORMAT_MARKER => return Ok(()),
+            Ok(document) => {
+                return Err(format!(
+                    "archive format marker {} is unsupported: {:?}",
+                    marker.display(),
+                    String::from_utf8_lossy(&document),
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "read archive format marker {}: {error}",
+                    marker.display(),
+                ));
+            }
+        }
+        self.migrate_with(|_| Ok(()))
     }
-    Ok(())
+
+    fn migrate_with(
+        &self,
+        mut after_rewrite: impl FnMut(&Path) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let rewrites = migration_plan(&self.root)?;
+        for (path, stored, modified) in rewrites {
+            publish_migration_bytes(&path, &stored, modified)?;
+            after_rewrite(&path)?;
+        }
+        publish_bytes(
+            &self.root.join(FORMAT_MARKER_NAME),
+            FORMAT_MARKER,
+            "publish full-verifier archive format marker",
+        )
+    }
 }
 
-/// Split bundle paths into the retained newest set and the evicted remainder.
-fn partition_retained(mut entries: Vec<(PathBuf, SystemTime)>) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    entries.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
-    let mut paths = entries.into_iter().map(|(path, _)| path);
-    let retained = paths.by_ref().take(ARCHIVE_RETAIN_BUNDLES).collect();
-    (retained, paths.collect())
-}
-
-fn bundle_entries(root: &Path) -> Result<Vec<(PathBuf, SystemTime)>, String> {
-    let listing =
-        fs::read_dir(root).map_err(|error| format!("list archive {}: {error}", root.display()))?;
-    let mut entries = Vec::new();
+fn migration_plan(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>, SystemTime)>, String> {
+    let listing = fs::read_dir(root)
+        .map_err(|error| format!("list archive {} for migration: {error}", root.display()))?;
+    let mut rewrites = Vec::new();
     for entry in listing {
-        let entry =
-            entry.map_err(|error| format!("read archive entry in {}: {error}", root.display()))?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!("read archive entry in {}: {error}", root.display(),));
+            }
+        };
         let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
+        let Some(name) = name.to_str() else {
+            continue;
+        };
         if !is_bundle_name(name) {
             continue;
         }
-        let newest_on_uncertainty = SystemTime::now();
-        let modified = entry
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .unwrap_or(newest_on_uncertainty);
-        entries.push((entry.path(), modified));
+        let path = entry.path();
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "inspect migration bundle {}: {error}",
+                    path.display(),
+                ));
+            }
+        };
+        if !metadata.file_type().is_file() {
+            return Err(format!(
+                "archive migration refuses non-regular bundle {}",
+                path.display(),
+            ));
+        }
+        let modified = metadata.modified().map_err(|error| {
+            format!(
+                "read migration bundle modification time {}: {error}",
+                path.display(),
+            )
+        })?;
+        let document = match fs::read(&path) {
+            Ok(document) => document,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!("read migration bundle {}: {error}", path.display(),));
+            }
+        };
+        if container::is_current(&document) {
+            decode_current_bundle(&document)
+                .map_err(|error| format!("validate current bundle {}: {error}", path.display()))?;
+            continue;
+        }
+        let plain = container::decode_pre_container(&document)
+            .map_err(|error| format!("decode pre-container bundle {}: {error}", path.display()))?;
+        validate_plain_bundle(&plain).map_err(|error| {
+            format!("validate pre-container bundle {}: {error}", path.display())
+        })?;
+        let stored = container::encode(&plain)
+            .map_err(|error| format!("encode current bundle {}: {error}", path.display()))?;
+        rewrites.push((path, stored, modified));
     }
-    Ok(entries)
+    rewrites.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(rewrites)
 }
 
-fn is_bundle_name(name: &str) -> bool {
+fn decode_current_bundle(stored: &[u8]) -> Result<Vec<u8>, String> {
+    let plain = container::decode(stored)?;
+    validate_plain_bundle(&plain)?;
+    Ok(plain)
+}
+
+fn validate_plain_bundle(document: &[u8]) -> Result<(), String> {
+    MergeParentEvidence::decode(document).map(|_| ())
+}
+
+fn publish_bytes(path: &Path, bytes: &[u8], action: &str) -> Result<(), String> {
+    atomic::Destination::new(path)
+        .map_err(|error| format!("resolve {} for {action}: {error}", path.display()))?
+        .publish(|staged| staged.write_all(bytes))
+        .map_err(|error| format!("{action} {}: {error}", path.display()))
+}
+
+fn publish_migration_bytes(path: &Path, bytes: &[u8], modified: SystemTime) -> Result<(), String> {
+    let destination = atomic::Destination::new(path)
+        .map_err(|error| format!("resolve {} for archive migration: {error}", path.display()))?;
+    let mut staged = destination
+        .stage()
+        .map_err(|error| format!("stage archive migration {}: {error}", path.display()))?;
+    staged
+        .write_all(bytes)
+        .map_err(|error| format!("write archive migration {}: {error}", path.display()))?;
+    fs::File::options()
+        .write(true)
+        .open(staged.temporary_path())
+        .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)))
+        .map_err(|error| {
+            format!(
+                "preserve archive migration modification time {}: {error}",
+                path.display(),
+            )
+        })?;
+    staged
+        .commit()
+        .map_err(|error| format!("publish archive migration {}: {error}", path.display()))
+}
+
+pub(super) fn is_bundle_name(name: &str) -> bool {
     let Some(stem) = name.strip_suffix(".json") else {
         return false;
     };
@@ -99,120 +264,4 @@ fn is_bundle_name(name: &str) -> bool {
         && stem
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-}
-
-/// Rewrite one retained legacy plain bundle to the compressed representation.
-fn migrate_plain_bundle(path: &Path) -> Result<(), String> {
-    let document =
-        fs::read(path).map_err(|error| format!("read bundle {}: {error}", path.display()))?;
-    if document.starts_with(&GZIP_MAGIC) {
-        return Ok(());
-    }
-    let compressed = compress_document(&document)
-        .map_err(|error| format!("compress bundle {}: {error}", path.display()))?;
-    atomic::Destination::new(path)
-        .map_err(|error| format!("resolve bundle {}: {error}", path.display()))?
-        .publish(|staged| staged.write_all(&compressed))
-        .map_err(|error| format!("migrate bundle {}: {error}", path.display()))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::*;
-
-    #[test]
-    fn round_trip_restores_exact_document_bytes() {
-        let document = br#"{"version":1,"battery":"payload"}"#.to_vec();
-        let compressed = compress_document(&document).expect("compress document");
-        assert!(compressed.starts_with(&GZIP_MAGIC));
-        assert_eq!(
-            expand_document(compressed).expect("expand compressed"),
-            document,
-        );
-    }
-
-    #[test]
-    fn plain_documents_pass_through_expansion_unchanged() {
-        let document = br#"{"version":1}"#.to_vec();
-        assert_eq!(
-            expand_document(document.clone()).expect("expand plain"),
-            document,
-        );
-    }
-
-    #[test]
-    fn bundle_names_admit_only_exact_source_digests() {
-        let digest = "a".repeat(BUNDLE_STEM_HEX);
-        assert!(is_bundle_name(&format!("{digest}.json")));
-        assert!(!is_bundle_name(&format!("{digest}.json.tmp")));
-        assert!(!is_bundle_name(&format!("{}.json", "a".repeat(63))));
-        assert!(!is_bundle_name(&format!("{}Z.json", "a".repeat(63))));
-        assert!(!is_bundle_name("full-verifier-evidence.json"));
-    }
-
-    #[test]
-    fn partition_keeps_the_newest_bound_and_evicts_the_rest() {
-        let base = SystemTime::UNIX_EPOCH;
-        let entries = (0..ARCHIVE_RETAIN_BUNDLES + 3)
-            .map(|age| {
-                let path = PathBuf::from(format!("{age}.json"));
-                (path, base + Duration::from_secs(1000 - age as u64))
-            })
-            .collect::<Vec<_>>();
-        let (retained, evicted) = partition_retained(entries);
-        assert_eq!(retained.len(), ARCHIVE_RETAIN_BUNDLES);
-        assert_eq!(
-            evicted,
-            [
-                PathBuf::from(format!("{}.json", ARCHIVE_RETAIN_BUNDLES)),
-                PathBuf::from(format!("{}.json", ARCHIVE_RETAIN_BUNDLES + 1)),
-                PathBuf::from(format!("{}.json", ARCHIVE_RETAIN_BUNDLES + 2)),
-            ],
-        );
-    }
-
-    #[test]
-    fn groom_bounds_migrates_and_retains_foreign_entries() {
-        let root = std::env::temp_dir().join(format!(
-            "spice-evidence-groom-{}-{}",
-            std::process::id(),
-            line!(),
-        ));
-        fs::create_dir_all(&root).expect("create groom fixture root");
-        let width = BUNDLE_STEM_HEX;
-        for ordinal in 0..ARCHIVE_RETAIN_BUNDLES + 2 {
-            let stem = format!("{ordinal:0width$x}");
-            fs::write(root.join(format!("{stem}.json")), b"{\"plain\":true}")
-                .expect("write bundle fixture");
-        }
-        let foreign = root.join("not-a-bundle.txt");
-        fs::write(&foreign, b"foreign").expect("write foreign fixture");
-
-        groom_archive(&root).expect("groom fixture archive");
-
-        let bundles = fs::read_dir(&root)
-            .expect("list groomed root")
-            .map(|entry| entry.expect("groomed entry").path())
-            .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "json")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(bundles.len(), ARCHIVE_RETAIN_BUNDLES);
-        for bundle in &bundles {
-            let stored = fs::read(bundle).expect("read groomed bundle");
-            assert!(stored.starts_with(&GZIP_MAGIC));
-            assert_eq!(
-                expand_document(stored).expect("expand groomed bundle"),
-                b"{\"plain\":true}".to_vec(),
-            );
-        }
-        assert_eq!(
-            fs::read(&foreign).expect("read foreign entry"),
-            b"foreign".to_vec(),
-        );
-        fs::remove_dir_all(&root).expect("remove groom fixture root");
-    }
 }

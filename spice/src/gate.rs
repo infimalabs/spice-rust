@@ -488,6 +488,26 @@ pub fn prepare_strict(selector: Selector) -> Result<PreparedBattery<'static>, Ru
     prepare_with_mode(selector, InputMode::Strict)
 }
 
+/// Capture a strict source from one explicitly named linked worktree.
+///
+/// Archive reachability discovery cannot change the process working directory:
+/// another thread may be preparing or executing the current worktree at the
+/// same time. This path-explicit rim preserves the ordinary strict capture
+/// contract while letting archive grooming resolve open merge parents in every
+/// linked worktree.
+fn prepare_strict_at(
+    directory: &Path,
+    selector: Selector,
+) -> Result<PreparedBattery<'static>, RunError> {
+    let verifier_environment = verifier_environment();
+    capture::capture_at(directory, selector, InputMode::Strict).map(|capture| PreparedBattery {
+        capture,
+        verifier_environment,
+        cargo_jobs: None,
+        verifier_receipt_admitted: false,
+    })
+}
+
 fn prepare_with_mode(
     selector: Selector,
     input_mode: InputMode,
