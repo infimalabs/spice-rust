@@ -142,7 +142,7 @@ impl InstallRecord {
             activation.rebase_main_worktree(repository)?;
         }
         if let Some(archive) = &mut self.plan.rollback_archive {
-            let mut rollback = archive.decode()?;
+            let mut rollback = archive.decode(repository)?;
             rollback.record = rebase_rollback_record(&rollback.record, repository)?;
             *archive = super::RollbackArchive::new(&rollback)?;
         }
@@ -159,7 +159,16 @@ impl InstallRecord {
             && self.plan.version == super::FORWARD_MIGRATABLE_RECORD_VERSION
             && self.status == InstallStatus::Complete
             && super::binary_operation(&self.plan).is_some();
-        if self.version != RECORD_VERSION && !rollback_migratable && !forward_migratable {
+        let inline_migratable = historical
+            && self.version == super::INLINE_ROLLBACK_RECORD_VERSION
+            && self.plan.version == super::INLINE_ROLLBACK_RECORD_VERSION
+            && self.status == InstallStatus::Complete
+            && super::binary_operation(&self.plan).is_some();
+        if self.version != RECORD_VERSION
+            && !rollback_migratable
+            && !forward_migratable
+            && !inline_migratable
+        {
             return Err(InstallError::InvalidRecord(format!(
                 "install record version {} is not {RECORD_VERSION}",
                 self.version
@@ -218,7 +227,10 @@ impl InstallRecord {
     /// retirement archives became witness-bound. The original authored digest
     /// remains the audit identity; the reconstructed plan must be previewed and
     /// separately authorized before any durable receipt is replaced.
-    fn repair_missing_retirement_witnesses(&mut self) -> Result<Digest, InstallError> {
+    fn repair_missing_retirement_witnesses(
+        &mut self,
+        repository: &Repository,
+    ) -> Result<Digest, InstallError> {
         let original_digest = self.plan_digest.clone();
         if self.version != super::FORWARD_MIGRATABLE_RECORD_VERSION
             || self.plan.version != super::FORWARD_MIGRATABLE_RECORD_VERSION
@@ -241,7 +253,7 @@ impl InstallRecord {
         }
         let rollback = self
             .plan
-            .rollback_state()?
+            .rollback_state(repository)?
             .ok_or_else(retirement_witness_mismatch)?;
         if rollback.retirements.len() != self.plan.retirements.len() {
             return Err(InstallError::InvalidRecord(
@@ -384,7 +396,9 @@ pub(super) fn read_record_for_refresh(
     match finish_loaded_record(repository, &mut loaded) {
         Ok(()) => Ok(Some(RefreshRecord::Current(loaded))),
         Err(error) if is_retirement_witness_mismatch(&error) => {
-            let original_digest = loaded.record.repair_missing_retirement_witnesses()?;
+            let original_digest = loaded
+                .record
+                .repair_missing_retirement_witnesses(repository)?;
             finish_loaded_record(repository, &mut loaded)?;
             Ok(Some(RefreshRecord::Repairable {
                 loaded,
@@ -441,6 +455,7 @@ fn finish_loaded_record(
         record.rebase_repository(repository)?;
     }
     record.validate_loaded_for_repository(repository)?;
+    record.plan.validate_rollback_storage(repository)?;
     if record.version != super::MIGRATABLE_RECORD_VERSION {
         loaded.image = None;
     }

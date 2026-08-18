@@ -47,25 +47,25 @@ impl InstallTempInspection {
         self.runtime_present
     }
 
-    /// Number of direct runtime entries examined during the bounded pass.
+    /// Number of runtime and rollback-blob entries examined during bounded passes.
     #[must_use]
     pub const fn examined_entries(&self) -> usize {
         self.examined_entries
     }
 
-    /// Lower bound on entries omitted after the direct-entry cap was reached.
+    /// Lower bound on entries omitted after either entry cap was reached.
     #[must_use]
     pub const fn omitted_entries(&self) -> usize {
         self.omitted_entries
     }
 
-    /// Number of canonical candidates omitted after the action cap.
+    /// Number of canonical candidates omitted after either action cap.
     #[must_use]
     pub const fn omitted_candidates(&self) -> usize {
         self.omitted_candidates
     }
 
-    /// Number of stale dead-owner files that one install invocation can reclaim.
+    /// Number of stale install-publication files one invocation can reclaim.
     #[must_use]
     pub const fn reclaimable_count(&self) -> usize {
         self.reclaimable_count
@@ -77,7 +77,7 @@ impl InstallTempInspection {
         self.reclaimable_bytes
     }
 
-    /// Canonical candidates retained because their shape or ownership is unsafe.
+    /// Candidates retained because their shape or ownership is unsafe.
     #[must_use]
     pub fn unsafe_candidates(&self) -> &[String] {
         &self.unsafe_candidates
@@ -90,22 +90,77 @@ impl InstallTempInspection {
     }
 }
 
-/// Inspect stale install-record publication files without changing runtime state.
+/// Inspect stale install publication files without changing runtime state.
 pub fn inspect_temporary_records(
     repository: &Repository,
 ) -> Result<InstallTempInspection, InstallError> {
-    scan(repository, false, current_time()?, process_state, |_, _| {
-        Ok(())
-    })
+    let now = current_time()?;
+    let mut report = scan(repository, false, now, process_state, |_, _| Ok(()))?;
+    scan_rollback_blobs(repository, now, false, &mut report)?;
+    Ok(report)
 }
 
-/// Reclaim stale install-record publication files before one install request.
+/// Reclaim stale install publication files before one install request.
 pub fn reclaim_temporary_records(
     repository: &Repository,
 ) -> Result<InstallTempInspection, InstallError> {
-    scan(repository, true, current_time()?, process_state, |_, _| {
-        Ok(())
-    })
+    let now = current_time()?;
+    let mut report = scan(repository, true, now, process_state, |_, _| Ok(()))?;
+    scan_rollback_blobs(repository, now, true, &mut report)?;
+    Ok(report)
+}
+
+fn scan_rollback_blobs(
+    repository: &Repository,
+    now: SystemTime,
+    reclaim: bool,
+    report: &mut InstallTempInspection,
+) -> Result<(), InstallError> {
+    let state = repository.admit_state()?;
+    match std::fs::symlink_metadata(state.install_rollback_blobs()) {
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(InstallError::io(
+                "inspect migration rollback directory",
+                state.install_rollback_blobs(),
+                source,
+            ));
+        }
+        Ok(_) => {}
+    }
+    let _lock = reclaim
+        .then(|| super::rollback::acquire_lock(repository))
+        .transpose()?;
+    let protected = super::record::read_record(repository)?.and_then(|loaded| {
+        loaded
+            .record
+            .plan
+            .rollback_archive
+            .and_then(|archive| archive.stored_digest().cloned())
+    });
+    let blobs = if reclaim {
+        super::rollback::reclaim_unreferenced(repository, protected.as_ref(), now)?
+    } else {
+        super::rollback::inspect_unreferenced(repository, protected.as_ref(), now)?
+    };
+    report.examined_entries = report
+        .examined_entries
+        .saturating_add(blobs.examined_entries);
+    report.omitted_entries = report.omitted_entries.saturating_add(blobs.omitted_entries);
+    report.omitted_candidates = report
+        .omitted_candidates
+        .saturating_add(blobs.omitted_candidates);
+    report.reclaimable_count = report
+        .reclaimable_count
+        .saturating_add(blobs.reclaimable_count);
+    report.reclaimable_bytes = report
+        .reclaimable_bytes
+        .checked_add(blobs.reclaimable_bytes)
+        .ok_or_else(|| {
+            InstallError::InvalidRecord("install maintenance byte total overflowed".to_owned())
+        })?;
+    report.unsafe_candidates.extend(blobs.unsafe_candidates);
+    Ok(())
 }
 
 #[cfg(debug_assertions)]

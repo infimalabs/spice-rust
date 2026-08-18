@@ -564,14 +564,25 @@ fn large_migration_payload_never_crosses_the_cli_reply_boundary() {
     assert_eq!(json_applied, text_applied);
 
     let private_record = fs::read(fixture.record()).expect("read private migration receipt");
-    assert!(private_record.len() > MIN_PRIVATE_INSTALL_RECORD);
+    assert!(private_record.len() < MAX_PUBLIC_INSTALL_REPLY);
     let private_document: Value =
         serde_json::from_slice(&private_record).expect("private migration receipt is JSON");
-    let payload = private_document["plan"]["rollback_archive"]["payload"]
+    let archive = &private_document["plan"]["rollback_archive"];
+    assert!(archive.get("payload").is_none());
+    let stored_digest = archive["stored_digest"]
         .as_str()
-        .expect("private migration receipt retains rollback payload");
-    assert!(payload.len() > MIN_PRIVATE_INSTALL_RECORD);
-    let sentinel = &payload[payload.len() / 2..payload.len() / 2 + 64];
+        .expect("private migration receipt binds a rollback blob");
+    let blob = fs::read(
+        fixture
+            .record()
+            .parent()
+            .expect("receipt has a runtime parent")
+            .join("install-rollback")
+            .join(format!("{stored_digest}.gz")),
+    )
+    .expect("read private rollback blob");
+    assert!(blob.len() > MIN_PRIVATE_INSTALL_RECORD);
+    let sentinel = &blob[blob.len() / 2..blob.len() / 2 + 64];
 
     let text_unapply = fixture.invoke(&["install", "--unapply"]);
     let text_removed: InstallReceipt = bounded_install_reply(&text_unapply, false);
@@ -603,7 +614,7 @@ fn large_migration_payload_never_crosses_the_cli_reply_boundary() {
             !spoken
                 .out
                 .windows(sentinel.len())
-                .any(|window| window == sentinel.as_bytes()),
+                .any(|window| window == sentinel),
             "public install reply exposed rollback payload bytes",
         );
     }

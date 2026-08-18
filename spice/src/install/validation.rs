@@ -17,7 +17,9 @@ fn validate_plan_version(
     let historical = content == GeneratedContentAuthority::HistoricalReceipt
         && matches!(
             plan.version,
-            MIGRATABLE_RECORD_VERSION | FORWARD_MIGRATABLE_RECORD_VERSION
+            MIGRATABLE_RECORD_VERSION
+                | FORWARD_MIGRATABLE_RECORD_VERSION
+                | INLINE_ROLLBACK_RECORD_VERSION
         );
     if plan.version != PLAN_VERSION && !historical {
         return Err(InstallError::InvalidRecord(format!(
@@ -119,7 +121,20 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
             RETIREMENT_WITNESS_MISMATCH.to_owned(),
         ));
     }
-    if let Some(rollback) = plan.rollback_state()? {
+    if let Some(archive) = &plan.rollback_archive {
+        archive.validate_structure()?;
+        if plan.version == PLAN_VERSION && archive.is_inline() {
+            return Err(InstallError::InvalidRecord(
+                "current install plan embeds rollback payload bytes".to_owned(),
+            ));
+        }
+        if plan.version != PLAN_VERSION && !archive.is_inline() {
+            return Err(InstallError::InvalidRecord(
+                "historical install plan carries a current rollback manifest".to_owned(),
+            ));
+        }
+    }
+    if let Some(rollback) = plan.staged_rollback_state()? {
         plan.validate_rollback_state(&rollback)?;
     }
     Ok(())
