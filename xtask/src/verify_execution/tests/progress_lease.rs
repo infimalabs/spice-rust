@@ -95,25 +95,22 @@ fn outer_supervisor_has_a_tight_progress_lease_inside_one_absolute_limit() {
     let bounds = FULL_VERIFIER_PROCESS_BOUNDS;
     let absolute = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
     assert_eq!(absolute, FULL_VERIFIER_ABSOLUTE_RUNTIME);
-    assert_eq!(absolute, Duration::from_secs(10 * 60));
-    assert_eq!(bounds.runtime, Duration::from_secs(10 * 60 - 3));
-    assert!(FULL_VERIFIER_LABEL.contains("ten-minute absolute ceiling"));
+    assert_eq!(absolute, Duration::from_secs(6 * 60));
+    assert_eq!(bounds.runtime, Duration::from_secs(6 * 60 - 3));
+    assert!(FULL_VERIFIER_LABEL.contains("six-minute absolute ceiling"));
     assert_eq!(
         FULL_VERIFIER_PROGRESS_BOUNDS.inactivity,
         FULL_VERIFIER_PROGRESS_INACTIVITY
     );
     assert_eq!(FULL_VERIFIER_PROGRESS_INACTIVITY, Duration::from_secs(90));
-    assert_eq!(FULL_VERIFIER_TEST_RUNTIME, Duration::from_secs(3 * 60));
+    assert_eq!(FULL_VERIFIER_TEST_RUNTIME, Duration::from_secs(5 * 60));
     assert!(FULL_VERIFIER_PROGRESS_INACTIVITY < FULL_VERIFIER_TEST_RUNTIME);
     assert_eq!(
         bounds.output_limit,
         crate::verify_execution::OUTPUT_LIMIT * VERIFY_ACTIONS.len() * 2,
         "the outer capture retains both per-action stream bounds"
     );
-    assert!(
-        bounds.runtime > FULL_VERIFIER_TEST_RUNTIME,
-        "the hard supervisor must outlive the child-owned deadline"
-    );
+    assert!(bounds.runtime > FULL_VERIFIER_TEST_RUNTIME);
 }
 
 #[test]

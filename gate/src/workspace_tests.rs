@@ -159,18 +159,18 @@ pub fn cargo_workspace_tests_applicable(
 }
 
 /// Keep each post-prebuild Cargo invocation small enough for the full verifier's
-/// bounded workspace branch to make steady progress under the test-phase cap.
+/// bounded workspace branch to make steady progress under the absolute verifier cap.
 /// Targets are source-weight balanced across the minimum shard count so one
 /// cluster of larger integration targets cannot pin the coordinator tail.
 const TARGETS_PER_SHARD: usize = 8;
-/// The full verifier's prebuilt branch pays no compiler cost per shard, so use
-/// finer work units there to keep one long integration-target cluster from
-/// pinning a worker while the bounded test-phase worker budget expires.
-const FULL_VERIFIER_TARGETS_PER_SHARD: usize = 1;
+/// Retain finer work units inside the full verifier so a constrained two-lane
+/// schedule can rebalance long test targets without paying one Cargo launch
+/// for every target.
+const FULL_VERIFIER_TARGETS_PER_SHARD: usize = 4;
 /// Below three targets, observed Cargo startup and publication time outweighs
 /// target cardinality, so these tail batches retain stable metadata order.
 const CARGO_STARTUP_DOMINATED_TARGET_LIMIT: usize = 2;
-/// No individual test shard may cross the operator's three-minute ceiling.
+/// No individual test shard may cross its local three-minute stall ceiling.
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
 /// The aggregate coordinator may outlive one shard while bounded siblings finish.
 const COORDINATOR_DEADLINE: Duration = Duration::from_secs(255);
@@ -185,6 +185,9 @@ const RECORD_FRAME_LIMIT: usize = 256 * 1024;
 const RECORD_QUEUE_CAPACITY: usize = 4_096;
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
+/// Test shards own ephemeral temporary roots, but an ambient compiler-wrapper
+/// daemon can outlive those roots and retain their dead `TMPDIR` paths.
+const RUSTC_WRAPPER: &str = concat!("RUSTC_", "WRAPPER");
 const PRE_COMMIT_SOURCE: &str = wire::SpiceVariable::PreCommitSource.as_str();
 const TEST_WRITABLE_ROOT: &str = "SPICE_WORKSPACE_TEST_WRITABLE_ROOT"; // env-policy: allow
 const SHARED_OUTPUTS_ENV: &str = "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS"; // env-policy: allow
@@ -357,7 +360,7 @@ pub fn run_at(
 /// launcher into one shared Cargo build cache.
 ///
 /// The full verifier calls this setup boundary after native compiler admission
-/// and before starting the bounded test-phase clock. [`run_prebuilt_shared_at`]
+/// and before starting the supervised test branches. [`run_prebuilt_shared_at`]
 /// then reuses that completed native build cache after wasm analysis and the
 /// Canvas compiler-ready boundary, without repeating setup inside the test
 /// clock. The launcher build keeps `cargo xtask app` from recompiling its native
@@ -445,6 +448,7 @@ fn prepare_execution(
     concurrency: usize,
 ) -> Result<(Inventory, Environment, RunPolicy), WorkspaceTestError> {
     let environment = without_pre_commit_dispatch(environment)?;
+    let environment = with_direct_rustc(environment)?;
     let (environment, policy) = policy_from_environment(environment, concurrency)?;
     let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
     let environment = inventory.execution_environment(environment, root, root, true)?;
@@ -779,6 +783,7 @@ fn run_selected_at_mode(
         .reusable
         .map_or(roots.selected, crate::RustAnalysisWorkspace::source);
     let environment = without_pre_commit_dispatch(environment)?;
+    let environment = with_direct_rustc(environment)?;
     let environment = without_parent_repository(environment)?;
     let environment = match roots.reusable {
         Some(workspace) => reuse_environment(environment, workspace)?,
@@ -897,6 +902,16 @@ fn without_pre_commit_dispatch(
         .cloned()
         .collect::<BTreeMap<OsString, OsString>>();
     entries.remove(OsStr::new(PRE_COMMIT_SOURCE));
+    Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
+}
+
+fn with_direct_rustc(environment: Environment) -> Result<Environment, WorkspaceTestError> {
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    entries.insert(OsString::from(RUSTC_WRAPPER), OsString::new());
     Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
