@@ -109,6 +109,12 @@ impl Fixture {
         let bytes = fs::read(self.canvas()).expect("current discovery reads");
         wire::decode(&bytes).expect("current discovery decodes")
     }
+
+    pub(super) fn use_short_horizon(&self, marker: &str) {
+        fs::create_dir_all(&self.runtime).expect("fixture runtime directory");
+        fs::write(self.runtime.join(marker), b"enabled\n")
+            .expect("fixture short horizon marker writes");
+    }
 }
 
 pub(super) fn copy_cargo_fixture(fixture: &Fixture, worktree: &Path) {
@@ -500,6 +506,17 @@ pub(super) fn fake_down(
     json: bool,
 ) -> (Output, Duration) {
     fs::create_dir_all(&fixture.runtime).expect("fixture runtime directory");
+    if matches!(
+        behavior,
+        FakeBehavior::ReadTimeout
+            | FakeBehavior::OpeningStall
+            | FakeBehavior::TotalDeadlineDrip
+            | FakeBehavior::ControlFrames
+            | FakeBehavior::WriteTimeout
+            | FakeBehavior::ReleaseStall
+    ) {
+        fixture.use_short_horizon("test-short-client-bound");
+    }
     let listener = TcpListener::bind("127.0.0.1:0").expect("fake resident binds");
     let discovery = canvas::Discovery {
         endpoint: format!(

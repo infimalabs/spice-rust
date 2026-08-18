@@ -522,7 +522,7 @@ fn request(
     mapped: MappedCommand,
     discovery: DiscoveryRead,
 ) -> Outcome<CommandAnswer> {
-    let timeout = crate::cli::answer_bound(mapped.kind);
+    let timeout = answer_bound(mapped.kind, &discovery.path);
     let mut session = match open_session(contract, discovery, timeout) {
         Ok(session) => session,
         Err(outcome) => return outcome,
@@ -543,6 +543,24 @@ fn request(
         session.discovery.value.epoch,
         session.discovery.value.capability,
     )
+}
+
+pub(crate) fn answer_bound(kind: CommandKind, discovery_path: &Path) -> Duration {
+    // Only selected integration fixtures publish this private runtime marker.
+    // A featured binary without it remains byte-for-byte production policy at
+    // the decision boundary, including when the verifier shares that binary
+    // with Canvas browser tests.
+    #[cfg(feature = "test-short-horizons")]
+    if kind == CommandKind::UpChange
+        && discovery_path
+            .with_file_name("test-short-client-bound")
+            .is_file()
+    {
+        return Duration::from_secs(3);
+    }
+    #[cfg(not(feature = "test-short-horizons"))]
+    let _ = discovery_path;
+    crate::cli::answer_bound(kind)
 }
 
 struct AuthenticatedSession {

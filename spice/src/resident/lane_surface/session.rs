@@ -188,6 +188,7 @@ pub(in crate::resident) struct DeclarationReporter {
 pub(in crate::resident) struct SessionProof {
     pub(in crate::resident) session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
     pub(in crate::resident) state: Arc<Mutex<DeclarationState>>,
+    pub(in crate::resident) horizon: Duration,
 }
 
 impl DeclarationReporter {
@@ -327,8 +328,12 @@ pub(in crate::resident) fn record_stream(stream: vendor::RecordStream) -> &'stat
 pub(in crate::resident) fn await_session(
     proof: SessionProof,
 ) -> Result<wire::LaneSession, SessionProofError> {
-    let SessionProof { session, state } = proof;
-    match session.recv_timeout(SESSION_PROOF) {
+    let SessionProof {
+        session,
+        state,
+        horizon,
+    } = proof;
+    match session.recv_timeout(horizon) {
         Ok(Ok(declared)) => match session.recv_timeout(SESSION_SETTLE) {
             Ok(Err(error)) => Err(error),
             Ok(Ok(duplicate)) => Err(SessionProofError::Duplicate {

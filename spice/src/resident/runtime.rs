@@ -632,7 +632,7 @@ fn wait_for_release(paths: &ResidentClientPaths) -> CommandResult<()> {
 
 /// Wait one client bound for the resident to surrender its runtime lock.
 fn acquire_released_resident(paths: &ResidentClientPaths) -> CommandResult<Possession> {
-    const RELEASE_BOUND: std::time::Duration = crate::cli::answer_bound(CommandKind::UpChange);
+    let release_bound = crate::command_client::answer_bound(CommandKind::UpChange, &paths.canvas);
 
     let name = LockName::new("resident").expect("resident is a non-empty lock name");
     let lock = LockFile::new(name, &paths.resident);
@@ -644,7 +644,7 @@ fn acquire_released_resident(paths: &ResidentClientPaths) -> CommandResult<Posse
         })
         .map_err(|error| environment_fault("resident::release-failed", &error.to_string()))?;
 
-    match receiver.recv_timeout(RELEASE_BOUND) {
+    match receiver.recv_timeout(release_bound) {
         Ok(Ok(possession)) => Ok(possession),
         Ok(Err(error)) => Err(environment_fault(
             "resident::release-failed",
@@ -652,7 +652,7 @@ fn acquire_released_resident(paths: &ResidentClientPaths) -> CommandResult<Posse
         )),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(environment_fault(
             "canvas::deadline-elapsed",
-            &format!("resident did not release within the {RELEASE_BOUND:?} client bound"),
+            &format!("resident did not release within the {release_bound:?} client bound"),
         )),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(environment_fault(
             "resident::release-failed",

@@ -346,6 +346,7 @@ fn failed_daemon_start_reaps_its_unique_process_group_and_releases_runtime_state
 #[test]
 fn daemon_readiness_timeout_kills_and_reaps_its_exact_process_group() {
     let fixture = Fixture::new("daemon-readiness-timeout");
+    fixture.use_short_horizon("test-short-daemon-arrival");
     let (_pointer, _current) = block_app_pointer(&fixture);
 
     let mut launcher = LauncherGuard::spawn(&fixture, &["up", "--port", "0"]);

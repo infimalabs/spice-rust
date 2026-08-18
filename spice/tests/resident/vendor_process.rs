@@ -760,6 +760,7 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
                 ),
         )
         .expect("malformed Codex vendor installs");
+        fixture.use_short_horizon("test-short-session-proof");
         let mut resident = RunningResident::spawn(&fixture);
         resident.assert_ready(&fixture);
 
