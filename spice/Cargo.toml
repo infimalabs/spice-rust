@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+test-short-horizons = []
+
 [dependencies]
 artifact = { path = "../artifact" }
 atomic = { path = "../atomic" }
@@ -62,6 +65,11 @@ socket2 = "0.6.5"
 [[test]]
 name = "hook_appliance"
 path = "tests/hook_appliance/mod.rs"
+
+[[test]]
+name = "resident"
+path = "tests/resident.rs"
+required-features = ["test-short-horizons"]
 
 [lints]
 workspace = true

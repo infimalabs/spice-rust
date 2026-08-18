@@ -446,7 +446,12 @@ fn down_bounds_release_confirmation_after_the_resident_answers() {
         panic!("a held release lock must fault at the client bound");
     };
     assert_eq!(fault.reason, "canvas::deadline-elapsed");
-    assert!(fault.detail.contains("20s client bound"), "{fault:?}");
+    let expected_bound = if cfg!(feature = "test-short-horizons") {
+        "3s client bound"
+    } else {
+        "20s client bound"
+    };
+    assert!(fault.detail.contains(expected_bound), "{fault:?}");
     assert!(
         !fixture.canvas().exists(),
         "the deadline fault must remain distinct from release-incomplete"

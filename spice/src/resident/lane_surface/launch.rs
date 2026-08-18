@@ -57,6 +57,7 @@ pub(in crate::resident) fn occupant_launch(
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join(name.as_str()))
         .map_err(|error| store_fault("lane::capture-tape-unavailable", &error.to_string()))?;
     let (session_reply, session) = mpsc::sync_channel(4);
+    let horizon = session_proof_horizon(paths);
     let state = Arc::new(Mutex::new(DeclarationState {
         reply: session_reply,
         seen: None,
@@ -89,9 +90,26 @@ pub(in crate::resident) fn occupant_launch(
     Ok(OccupantLaunch {
         spec,
         observation,
-        session: SessionProof { session, state },
+        session: SessionProof {
+            session,
+            state,
+            horizon,
+        },
         git,
     })
+}
+
+fn session_proof_horizon(paths: &RuntimePaths) -> Duration {
+    // The marker exists only in selected integration fixtures. Ordinary
+    // resident launches in this same featured binary retain the production
+    // proof horizon, including under the canonical coordinator's load.
+    #[cfg(feature = "test-short-horizons")]
+    if paths.runtime.join("test-short-session-proof").is_file() {
+        return Duration::from_secs(3);
+    }
+    #[cfg(not(feature = "test-short-horizons"))]
+    let _ = paths;
+    SESSION_PROOF
 }
 
 /// Admit only the durable worktree that still names this repository's root.

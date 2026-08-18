@@ -760,7 +760,11 @@ fn proof(expected: Option<&str>) -> Proof {
             expected: expected.map(str::to_owned),
             state: Arc::clone(&state),
         },
-        session: SessionProof { session, state },
+        session: SessionProof {
+            session,
+            state,
+            horizon: std::time::Duration::from_secs(10),
+        },
     }
 }
 

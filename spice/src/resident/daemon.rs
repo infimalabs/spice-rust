@@ -352,7 +352,8 @@ fn wait_for_ready(
     token: Option<&str>,
     status: &mut UnixStream,
 ) -> Result<canvas::Discovery, Option<Outcome<()>>> {
-    let deadline = Instant::now() + ARRIVAL_HORIZON;
+    let horizon = arrival_horizon(watched);
+    let deadline = Instant::now() + horizon;
     let (sender, receiver) = mpsc::channel();
     wait_for_change(observer, sender.clone());
     wait_for_exit(child.id(), sender.clone());
@@ -365,7 +366,7 @@ fn wait_for_ready(
         if remaining.is_zero() {
             return Err(Some(environment_fault(
                 "resident::daemon-readiness-elapsed",
-                &format!("resident did not become ready within {ARRIVAL_HORIZON:?}"),
+                &format!("resident did not become ready within {horizon:?}"),
             )));
         }
         match receiver.recv_timeout(remaining) {
@@ -412,7 +413,7 @@ fn wait_for_ready(
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 return Err(Some(environment_fault(
                     "resident::daemon-readiness-elapsed",
-                    &format!("resident did not become ready within {ARRIVAL_HORIZON:?}"),
+                    &format!("resident did not become ready within {horizon:?}"),
                 )));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -423,6 +424,19 @@ fn wait_for_ready(
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn arrival_horizon(runtime: &Path) -> Duration {
+    // The feature only makes the selected negative fixture marker legible. A
+    // shared featured appliance with no marker retains production readiness.
+    #[cfg(feature = "test-short-horizons")]
+    if runtime.join("test-short-daemon-arrival").is_file() {
+        return Duration::from_secs(3);
+    }
+    #[cfg(not(feature = "test-short-horizons"))]
+    let _ = runtime;
+    ARRIVAL_HORIZON
 }
 
 #[cfg(unix)]
