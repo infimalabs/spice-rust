@@ -14,8 +14,9 @@ use wire::{Digest, Domain};
 
 use super::{PreparedBattery, RunError, prepare, prepare_strict};
 use crate::gate::environment::exact_evidence_environment;
-use crate::repository::Repository;
+use crate::repository::{Repository, StatePaths};
 
+mod exact_storage;
 mod reachability;
 mod semantic;
 mod storage;
@@ -25,6 +26,7 @@ pub use semantic::{AdmittedSemanticVerifierEvidence, SemanticFullVerifierAdmissi
 const FULL_VERIFIER_EVIDENCE_VERSION: u64 = 3;
 const MERGE_PARENT_EVIDENCE_VERSION: u64 = 1;
 const STATE_PUBLICATION_ATTEMPTS: usize = 4;
+const FULL_VERIFIER_EVIDENCE_LOCK: &str = "full-verifier-evidence";
 const AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/compiler-evidence/v1";
 const MERGE_AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/merge-compiler-evidence/v1";
 const PREPARED_AUTHORITY_PREFIX: &[u8] = b"spice/full-verifier/prepared-compiler-evidence/v1";
@@ -197,6 +199,7 @@ impl FullVerifierEvidence {
         for directory in [
             paths.worktree_runtime(),
             paths.full_verifier_evidence_archive(),
+            paths.locks(),
         ] {
             fs::create_dir_all(directory).map_err(|error| {
                 format!(
@@ -216,16 +219,19 @@ impl FullVerifierEvidence {
         let archive_bytes = merge_parent
             .encode()
             .map_err(|error| format!("encode merge-parent evidence: {error}"))?;
-        let exact_bytes = self
+        let exact_document = self
             .encode()
             .map_err(|error| format!("encode full-verifier evidence: {error}"))?;
+        let exact_container = exact_storage::encode(&exact_document)?;
         let archive = storage::LockedArchive::acquire(&paths)?;
         let protected = reachability::protected_sources(repository, semantic.source())?;
         archive.publish_and_groom(&semantic.source().to_string(), &archive_bytes, &protected)?;
-        atomic::Destination::new(paths.full_verifier_evidence())
-            .map_err(|error| format!("resolve full-verifier destination: {error}"))?
-            .publish(|staged| staged.write_all(&exact_bytes))
-            .map_err(|error| format!("publish full-verifier evidence: {error}"))
+        {
+            let _exact_lock = exact_evidence_lock(&paths)
+                .map_err(|error| format!("lock full-verifier evidence publication: {error}"))?;
+            publish_exact_container(paths.full_verifier_evidence(), &exact_container)?;
+        }
+        Ok(())
     }
 }
 
@@ -445,25 +451,27 @@ pub fn inspect_full_verifier_evidence(
     let paths = repository
         .admit_state()
         .map_err(|error| RunError::fault("gate::full-verifier-state-unavailable", error))?;
-    let document = match fs::read(paths.full_verifier_evidence()) {
-        Ok(document) => document,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+    let (evidence, document) = match load_exact_full_verifier_evidence(&paths)? {
+        ExactEvidenceDocument::Missing => {
             return unavailable(
                 FullVerifierEvidenceStage::Document,
                 "no full-verifier evidence is published for this worktree",
             );
         }
-        Err(error) => {
-            return Err(RunError::fault(
-                "gate::full-verifier-evidence-unavailable",
-                error,
-            ));
+        ExactEvidenceDocument::Unavailable(detail) => {
+            return unavailable(FullVerifierEvidenceStage::Bundle, detail);
         }
+        ExactEvidenceDocument::Loaded { evidence, document } => (*evidence, document),
     };
-    let evidence = match FullVerifierEvidence::decode(&document) {
-        Ok(evidence) => evidence,
-        Err(detail) => return unavailable(FullVerifierEvidenceStage::Bundle, detail),
-    };
+    inspect_loaded_full_verifier_evidence(repository, selector, evidence, document)
+}
+
+fn inspect_loaded_full_verifier_evidence(
+    repository: &Repository,
+    selector: Selector,
+    evidence: FullVerifierEvidence,
+    document: Vec<u8>,
+) -> Result<FullVerifierEvidenceAdmission, RunError> {
     let semantic = match semantic::SemanticEvidence::decode(evidence.semantic.as_bytes()) {
         Ok(semantic) => semantic,
         Err(detail) => {
@@ -547,23 +555,16 @@ pub fn admit_semantic_full_verifier_evidence(
     let paths = repository
         .admit_state()
         .map_err(|error| RunError::fault("gate::full-verifier-state-unavailable", error))?;
-    let document = match fs::read(paths.full_verifier_evidence()) {
-        Ok(document) => document,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+    let (evidence, document) = match load_exact_full_verifier_evidence(&paths)? {
+        ExactEvidenceDocument::Missing => {
             return Ok(SemanticFullVerifierAdmission::Unavailable {
                 detail: "no full-verifier evidence is published for this worktree".to_owned(),
             });
         }
-        Err(error) => {
-            return Err(RunError::fault(
-                "gate::full-verifier-evidence-unavailable",
-                error,
-            ));
+        ExactEvidenceDocument::Unavailable(detail) => {
+            return Ok(SemanticFullVerifierAdmission::Unavailable { detail });
         }
-    };
-    let evidence = match FullVerifierEvidence::decode(&document) {
-        Ok(evidence) => evidence,
-        Err(detail) => return Ok(SemanticFullVerifierAdmission::Unavailable { detail }),
+        ExactEvidenceDocument::Loaded { evidence, document } => (evidence, document),
     };
     let mut prepared = match prepare_strict(selector) {
         Ok(prepared) => prepared,
@@ -589,6 +590,95 @@ pub fn admit_semantic_full_verifier_evidence(
         Ok(admitted) => Ok(SemanticFullVerifierAdmission::Admitted(Box::new(admitted))),
         Err(detail) => Ok(SemanticFullVerifierAdmission::Unavailable { detail }),
     }
+}
+
+enum ExactEvidenceDocument {
+    Missing,
+    Unavailable(String),
+    Loaded {
+        evidence: Box<FullVerifierEvidence>,
+        document: Vec<u8>,
+    },
+}
+
+/// Read the one exact-evidence container and migrate a valid plain-generation
+/// document under the same lock used by current publication. The returned
+/// bytes are always expanded canonical JSON, so at-rest encoding cannot enter
+/// receipt identity.
+fn load_exact_full_verifier_evidence(
+    paths: &StatePaths,
+) -> Result<ExactEvidenceDocument, RunError> {
+    match fs::symlink_metadata(paths.full_verifier_evidence()) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(ExactEvidenceDocument::Missing);
+        }
+        Err(error) => {
+            return Err(RunError::fault(
+                "gate::full-verifier-evidence-unavailable",
+                error,
+            ));
+        }
+    }
+    let _exact_lock = exact_evidence_lock(paths)
+        .map_err(|error| RunError::fault("gate::full-verifier-evidence-lock-unavailable", error))?;
+    let stored = match fs::read(paths.full_verifier_evidence()) {
+        Ok(document) => document,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(ExactEvidenceDocument::Missing);
+        }
+        Err(error) => {
+            return Err(RunError::fault(
+                "gate::full-verifier-evidence-unavailable",
+                error,
+            ));
+        }
+    };
+    let migrate = !exact_storage::is_current(&stored);
+    let document = match if migrate {
+        exact_storage::decode_plain_migration(&stored)
+    } else {
+        exact_storage::decode_current(&stored)
+    } {
+        Ok(document) => document,
+        Err(error) => {
+            return Ok(ExactEvidenceDocument::Unavailable(format!(
+                "expand full-verifier evidence: {error}",
+            )));
+        }
+    };
+    let evidence = match FullVerifierEvidence::decode(&document) {
+        Ok(evidence) => evidence,
+        Err(detail) => return Ok(ExactEvidenceDocument::Unavailable(detail)),
+    };
+    if migrate {
+        publish_compressed_exact_document(paths.full_verifier_evidence(), &document).map_err(
+            |error| RunError::fault("gate::full-verifier-evidence-migration-failed", error),
+        )?;
+    }
+    Ok(ExactEvidenceDocument::Loaded {
+        evidence: Box::new(evidence),
+        document,
+    })
+}
+
+fn exact_evidence_lock(paths: &StatePaths) -> io::Result<sill::Possession> {
+    fs::create_dir_all(paths.locks())?;
+    let name = sill::LockName::new(FULL_VERIFIER_EVIDENCE_LOCK)
+        .expect("full-verifier-evidence is a valid fixed lock name");
+    sill::LockFile::new(name, paths.locks().join(FULL_VERIFIER_EVIDENCE_LOCK)).acquire()
+}
+
+fn publish_compressed_exact_document(path: &Path, document: &[u8]) -> Result<(), String> {
+    let compressed = exact_storage::encode(document)?;
+    publish_exact_container(path, &compressed)
+}
+
+fn publish_exact_container(path: &Path, compressed: &[u8]) -> Result<(), String> {
+    atomic::Destination::new(path)
+        .map_err(|error| format!("resolve full-verifier destination: {error}"))?
+        .publish(|staged| staged.write_all(compressed))
+        .map_err(|error| format!("publish full-verifier evidence: {error}"))
 }
 
 /// Compose two independently admitted parent bundles for one open Git merge.
@@ -795,8 +885,13 @@ fn framed_authority(prefix: &[u8], identity: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant;
+
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
 
     use super::*;
 
@@ -924,6 +1019,306 @@ mod tests {
         );
     }
 
+    #[test]
+    fn exact_document_migrates_valid_plain_bytes_once_and_keeps_identity() {
+        let scratch = Scratch::new();
+        let repository = scratch.repository();
+        let paths = scratch.state_paths(&repository);
+        let evidence = complete_evidence();
+        let canonical = evidence.encode().expect("encode exact evidence");
+        fs::write(paths.full_verifier_evidence(), &canonical).expect("write plain generation");
+        assert!(
+            !paths.locks().exists(),
+            "the previous-generation fixture must not pre-create the lock namespace",
+        );
+
+        let (first, first_document) = loaded_exact(&paths);
+        assert_eq!(first, evidence);
+        assert_eq!(first_document, canonical);
+        assert!(
+            paths.locks().is_dir(),
+            "migration must materialize its serialization namespace",
+        );
+        let migrated = fs::read(paths.full_verifier_evidence()).expect("read migrated evidence");
+        assert!(exact_storage::is_current(&migrated));
+        assert_eq!(
+            exact_storage::decode_current(&migrated).expect("expand migrated evidence"),
+            canonical,
+        );
+
+        let (second, second_document) = loaded_exact(&paths);
+        assert_eq!(second, evidence);
+        assert_eq!(second_document, canonical);
+        assert_eq!(
+            fs::read(paths.full_verifier_evidence()).expect("read stable gzip generation"),
+            migrated,
+            "the current gzip generation must not be republished during admission",
+        );
+        assert_eq!(
+            Digest::compute(Domain::GateReceipt, &first_document),
+            Digest::compute(Domain::GateReceipt, &second_document),
+            "container migration cannot enter exact evidence identity",
+        );
+    }
+
+    #[test]
+    fn absent_exact_document_is_a_miss_without_creating_state() {
+        let scratch = Scratch::new();
+        let repository = scratch.repository();
+        let paths = repository
+            .admit_state()
+            .expect("admit absent fixture state");
+        assert!(matches!(
+            load_exact_full_verifier_evidence(&paths).expect("classify absent evidence"),
+            ExactEvidenceDocument::Missing,
+        ));
+        assert!(
+            !paths.runtime().exists(),
+            "a cache-miss read cannot materialize the absent state namespace",
+        );
+    }
+
+    #[test]
+    fn exact_document_refuses_malformed_containers_without_migrating_them() {
+        let scratch = Scratch::new();
+        let repository = scratch.repository();
+        let paths = scratch.state_paths(&repository);
+        for malformed in [b"{not-json".to_vec(), vec![0x1f, 0x8b, 0x00, 0x01]] {
+            fs::write(paths.full_verifier_evidence(), &malformed)
+                .expect("write malformed evidence");
+            let admission = inspect_full_verifier_evidence(&repository, Selector::staged())
+                .expect("inspect malformed evidence");
+            let FullVerifierEvidenceAdmission::Unavailable(miss) = admission else {
+                panic!("malformed exact evidence cannot admit");
+            };
+            assert_eq!(miss.stage(), FullVerifierEvidenceStage::Bundle);
+            assert_eq!(
+                fs::read(paths.full_verifier_evidence()).expect("read refused evidence"),
+                malformed,
+                "unvalidated bytes cannot enter the migration writer",
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires durable verifier evidence in the current worktree"]
+    fn production_exact_container_benchmark() {
+        const PAIRS: usize = 5;
+        let repository = Repository::discover(".").expect("discover benchmark worktree");
+        let source_paths = repository.admit_state().expect("admit benchmark state");
+        let stored =
+            fs::read(source_paths.full_verifier_evidence()).expect("read durable exact evidence");
+        assert!(exact_storage::is_current(&stored));
+        let canonical = exact_storage::decode_current(&stored).expect("expand exact evidence");
+        FullVerifierEvidence::decode(&canonical).expect("decode production exact evidence");
+        let current_container =
+            exact_storage::encode(&canonical).expect("compress current container fixture");
+
+        let scratch = Scratch::new();
+        let benchmark_repository = scratch.repository();
+        let paths = scratch.state_paths(&benchmark_repository);
+        fs::create_dir_all(paths.full_verifier_evidence_archive())
+            .expect("create benchmark archive");
+        let mut previous_publish = Vec::with_capacity(PAIRS);
+        let mut current_publish = Vec::with_capacity(PAIRS);
+        let mut previous_admit = Vec::with_capacity(PAIRS);
+        let mut current_admit = Vec::with_capacity(PAIRS);
+        for ordinal in 0..PAIRS {
+            measure_pair(
+                ordinal,
+                &mut previous_publish,
+                &mut current_publish,
+                || publish_previous_container(&paths, &canonical),
+                || publish_current_container(&paths, &canonical),
+            );
+            measure_admission_pair(
+                ordinal,
+                &repository,
+                &paths,
+                &canonical,
+                &current_container,
+                &mut previous_admit,
+                &mut current_admit,
+            );
+        }
+        let previous_publish_median = median(&mut previous_publish);
+        let current_publish_median = median(&mut current_publish);
+        let previous_admit_median = median(&mut previous_admit);
+        let current_admit_median = median(&mut current_admit);
+        eprintln!(
+            concat!(
+                "[exact-container-benchmark] canonical_bytes={} ",
+                "previous_publish_ns={:?} current_publish_ns={:?} ",
+                "previous_admit_ns={:?} current_admit_ns={:?}"
+            ),
+            canonical.len(),
+            previous_publish,
+            current_publish,
+            previous_admit,
+            current_admit,
+        );
+        assert_within_timing_contract(previous_publish_median, current_publish_median);
+        assert_within_timing_contract(previous_admit_median, current_admit_median);
+    }
+
+    fn measure_pair(
+        ordinal: usize,
+        previous: &mut Vec<u128>,
+        current: &mut Vec<u128>,
+        mut measure_previous: impl FnMut(),
+        mut measure_current: impl FnMut(),
+    ) {
+        let measure = |samples: &mut Vec<u128>, operation: &mut dyn FnMut()| {
+            let started = Instant::now();
+            operation();
+            samples.push(started.elapsed().as_nanos());
+        };
+        if ordinal.is_multiple_of(2) {
+            measure(previous, &mut measure_previous);
+            measure(current, &mut measure_current);
+        } else {
+            measure(current, &mut measure_current);
+            measure(previous, &mut measure_previous);
+        }
+    }
+
+    fn publish_previous_container(paths: &StatePaths, document: &[u8]) {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(document)
+            .expect("compress previous archive");
+        let archive = encoder.finish().expect("finish previous archive");
+        publish_benchmark_bytes(
+            &paths
+                .full_verifier_evidence_archive()
+                .join("benchmark.json"),
+            &archive,
+        );
+        publish_benchmark_bytes(paths.full_verifier_evidence(), document);
+    }
+
+    fn publish_current_container(paths: &StatePaths, document: &[u8]) {
+        let archive = exact_storage::encode(document).expect("compress current archive");
+        publish_benchmark_bytes(
+            &paths
+                .full_verifier_evidence_archive()
+                .join("benchmark.json"),
+            &archive,
+        );
+        let _exact_lock = exact_evidence_lock(paths).expect("lock current exact publication");
+        publish_compressed_exact_document(paths.full_verifier_evidence(), document)
+            .expect("publish current exact evidence");
+    }
+
+    fn publish_benchmark_bytes(path: &Path, bytes: &[u8]) {
+        atomic::Destination::new(path)
+            .expect("resolve benchmark destination")
+            .publish(|staged| staged.write_all(bytes))
+            .expect("publish benchmark bytes");
+    }
+
+    fn measure_admission_pair(
+        ordinal: usize,
+        repository: &Repository,
+        paths: &StatePaths,
+        canonical: &[u8],
+        current_container: &[u8],
+        previous: &mut Vec<u128>,
+        current: &mut Vec<u128>,
+    ) {
+        let mut previous_sample = || {
+            fs::write(paths.full_verifier_evidence(), canonical)
+                .expect("restore previous container");
+            let started = Instant::now();
+            admit_previous_container(repository, paths);
+            previous.push(started.elapsed().as_nanos());
+        };
+        let mut current_sample = || {
+            fs::write(paths.full_verifier_evidence(), current_container)
+                .expect("restore current container");
+            let started = Instant::now();
+            admit_current_container(repository, paths);
+            current.push(started.elapsed().as_nanos());
+        };
+        if ordinal.is_multiple_of(2) {
+            previous_sample();
+            current_sample();
+        } else {
+            current_sample();
+            previous_sample();
+        }
+    }
+
+    fn admit_previous_container(repository: &Repository, paths: &StatePaths) {
+        let loaded = fs::read(paths.full_verifier_evidence()).expect("read previous container");
+        let evidence = FullVerifierEvidence::decode(&loaded).expect("decode previous container");
+        let admission =
+            inspect_loaded_full_verifier_evidence(repository, Selector::staged(), evidence, loaded)
+                .expect("inspect previous container");
+        assert!(matches!(
+            admission,
+            FullVerifierEvidenceAdmission::Admitted(_)
+        ));
+    }
+
+    fn admit_current_container(repository: &Repository, paths: &StatePaths) {
+        let (evidence, document) = match load_exact_full_verifier_evidence(paths)
+            .expect("load current container during benchmark")
+        {
+            ExactEvidenceDocument::Loaded { evidence, document } => (*evidence, document),
+            ExactEvidenceDocument::Missing | ExactEvidenceDocument::Unavailable(_) => {
+                panic!("current benchmark container must load")
+            }
+        };
+        let admission = inspect_loaded_full_verifier_evidence(
+            repository,
+            Selector::staged(),
+            evidence,
+            document,
+        )
+        .expect("inspect current container");
+        assert!(matches!(
+            admission,
+            FullVerifierEvidenceAdmission::Admitted(_)
+        ));
+    }
+
+    fn median(samples: &mut [u128]) -> u128 {
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    }
+
+    fn assert_within_timing_contract(previous: u128, current: u128) {
+        const NOISE_FLOOR_NS: u128 = 5_000_000;
+        let allowance = (previous / 10).max(NOISE_FLOOR_NS);
+        assert!(
+            current <= previous + allowance,
+            "current median {current}ns exceeds previous {previous}ns plus {allowance}ns",
+        );
+    }
+
+    fn complete_evidence() -> FullVerifierEvidence {
+        FullVerifierEvidence {
+            version: FULL_VERIFIER_EVIDENCE_VERSION,
+            cargo_jobs: 3,
+            battery: "battery".to_owned(),
+            compiler: "compiler".to_owned(),
+            state: "state".to_owned(),
+            semantic: "semantic".to_owned(),
+            merge_parent: None,
+        }
+    }
+
+    fn loaded_exact(paths: &StatePaths) -> (FullVerifierEvidence, Vec<u8>) {
+        match load_exact_full_verifier_evidence(paths).expect("load exact evidence") {
+            ExactEvidenceDocument::Loaded { evidence, document } => (*evidence, document),
+            ExactEvidenceDocument::Missing => panic!("exact evidence unexpectedly missing"),
+            ExactEvidenceDocument::Unavailable(detail) => {
+                panic!("exact evidence unexpectedly unavailable: {detail}")
+            }
+        }
+    }
+
     struct Scratch {
         root: PathBuf,
     }
@@ -938,6 +1333,21 @@ mod tests {
             ));
             fs::create_dir(&root).expect("create evidence fixture");
             Self { root }
+        }
+
+        fn repository(&self) -> Repository {
+            let root = self.root.join("repository");
+            fs::create_dir_all(root.join(".git")).expect("create fixture Git directory");
+            Repository::discover(root).expect("discover fixture repository")
+        }
+
+        fn state_paths(&self, repository: &Repository) -> StatePaths {
+            let paths = repository
+                .admit_state()
+                .expect("admit absent fixture state");
+            fs::create_dir_all(paths.worktree_runtime())
+                .expect("create previous-generation fixture state");
+            paths
         }
     }
 
