@@ -11,8 +11,8 @@ import { monitorPage } from "./canvas-monitor.mjs";
 
 const CANVAS_VERSION_HEADER = "x-spice-canvas-version";
 
-async function assertProtocolReplacement(browser, endpoint, mode) {
-  const auth = `canvas-${mode}-token`;
+async function assertPriorProtocolReplacement(browser, endpoint) {
+  const auth = "canvas-prior-token";
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
   const page = await context.newPage();
   const monitor = monitorPage(page);
@@ -51,19 +51,12 @@ async function assertProtocolReplacement(browser, endpoint, mode) {
     bootstraps += 1;
     if (bootstraps === 1) {
       fulfilledBody = JSON.stringify({ future: "bootstrap-shape" });
-      if (mode === "foreign") {
-        headers[CANVAS_VERSION_HEADER] = String(Number(headers[CANVAS_VERSION_HEADER]) + 1);
-      } else if (mode === "prior") {
-        assert.equal(
-          headers[CANVAS_VERSION_HEADER],
-          "3",
-          "the current application loads one bounded backlog per lane",
-        );
-        headers[CANVAS_VERSION_HEADER] = "2";
-      } else {
-        assert.equal(mode, "absent", `known replacement mode: ${mode}`);
-        delete headers[CANVAS_VERSION_HEADER];
-      }
+      assert.equal(
+        headers[CANVAS_VERSION_HEADER],
+        "3",
+        "the current application loads one bounded backlog per lane",
+      );
+      headers[CANVAS_VERSION_HEADER] = "2";
     }
     await route.fulfill({
       response,
@@ -75,7 +68,7 @@ async function assertProtocolReplacement(browser, endpoint, mode) {
   await page.goto(`${endpoint}#${auth}`, { waitUntil: "networkidle" });
   await waitForPageFunction(
     page,
-    `a Canvas application seeing ${mode} version metadata reloads and connects`,
+    "a Canvas application seeing a prior version reloads and connects",
     CONNECT_MS,
     () => /cursor \d+/.test(document.querySelector(".bar-meta")?.textContent ?? ""),
   );
@@ -97,8 +90,8 @@ async function assertProtocolReplacement(browser, endpoint, mode) {
     observedTopologyRevision,
   );
 
-  assert.equal(bootstraps, 2, `one ${mode} header causes exactly one current-root reload`);
-  assert.equal(sockets, 1, `the ${mode} header opens no socket before the reload`);
+  assert.equal(bootstraps, 2, "one prior header causes exactly one current-root reload");
+  assert.equal(sockets, 1, "the prior header opens no socket before the reload");
   assert.ok(
     Number.isSafeInteger(observedTopologyRevision),
     "the replacement document admits the current topology-bearing lane answer",
@@ -152,13 +145,12 @@ async function assertMalformedProtocolStopsBeforeSocket(browser, endpoint) {
 
 /// Exercise the only pre-socket Canvas clock before strict body decoding.
 ///
-/// A page seeing a prior, foreign, or absent clock replaces its document
-/// without opening a socket. Malformed metadata is not a historical generation
-/// and is therefore reported instead of being silently mapped onto the reload
-/// path.
+/// A page seeing a prior clock replaces its document without opening a socket.
+/// Malformed metadata is not a historical generation and is therefore reported
+/// instead of being silently mapped onto the reload path. The Rust transport
+/// boundary covers the absent and other non-current clock values that take the
+/// same replacement branch.
 export async function assertCanvasProtocolRefresh(browser, endpoint) {
-  await assertProtocolReplacement(browser, endpoint, "prior");
-  await assertProtocolReplacement(browser, endpoint, "foreign");
-  await assertProtocolReplacement(browser, endpoint, "absent");
+  await assertPriorProtocolReplacement(browser, endpoint);
   await assertMalformedProtocolStopsBeforeSocket(browser, endpoint);
 }

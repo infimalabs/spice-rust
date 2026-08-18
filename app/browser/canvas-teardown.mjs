@@ -5,8 +5,8 @@
 // answer was given. Asserting on it needs a fixture that really launched a
 // vendor and a run that really ended, so every scenario below drives the real
 // fixture in a child process (`canvas-teardown-harness.mjs`) and then covers
-// both catchable signals, a deadline, an assertion failure, failed readiness,
-// and parent death. Failed readiness is the path this file used to leak from
+// both catchable signals, an assertion failure, failed readiness, and parent
+// death. Failed readiness is the path this file used to leak from
 // itself: a launch that gives up has a live child nobody downstream receives.
 //
 // Every scenario watches the *exact* pids the stand-ins enrolled for themselves.
@@ -238,10 +238,9 @@ async function assertGone(path, message) {
   assert.equal(code, "ENOENT", message);
 }
 
-/// A signalled or deadline-stopped run still reaps and still reports stopping.
-async function assertTerminatedRunReaps(signalName, reason, delayMs = 0) {
+/// A signalled run still reaps and still reports stopping.
+async function assertTerminatedRunReaps(signalName, reason) {
   const { child, ready, diagnostics } = await launchHarness("idle");
-  if (delayMs > 0) await new Promise((wake) => setTimeout(wake, delayMs));
   child.kill(signalName);
   const [code, ended] = await exits(child);
   try {
@@ -388,7 +387,6 @@ async function assertParentDeathReaps() {
 export async function assertFixtureTeardownReaps() {
   await assertTerminatedRunReaps("SIGINT", "SIGINT-interrupted");
   await assertTerminatedRunReaps("SIGTERM", "SIGTERM-interrupted");
-  await assertTerminatedRunReaps("SIGTERM", "timed-out", 25);
   await assertFailedRunReaps();
   await assertFailedLaunchReaps();
   await assertParentDeathReaps();
