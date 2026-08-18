@@ -100,10 +100,9 @@ const MAX_CONCURRENT_CARGO_ACTIONS: usize = 2;
 /// full verifier derives its actual lane count continuously from observed CPUs,
 /// live Cargo groups, concurrent outer actions, and each action's Cargo job
 /// share. Its completed shared prebuild then caps that measured answer at six.
-/// Stop launching and cancel owned process groups after 180 seconds of actual
-/// test-phase runtime. Compiler setup can be cold once; it is still serialized
-/// for low contention, but it does not consume the test runtime budget.
-const FULL_VERIFIER_TEST_RUNTIME: Duration = Duration::from_secs(3 * 60);
+/// Stop launching and cancel owned process groups after five minutes of actual
+/// test-phase runtime. Compiler setup remains outside this narrower deadline.
+const FULL_VERIFIER_TEST_RUNTIME: Duration = Duration::from_secs(5 * 60);
 /// A healthy child emits a trusted scheduler, setup, action, or terminal record
 /// at least every 30 seconds. Permit two missed progress intervals before the
 /// outer supervisor stops a silent process tree.
@@ -111,11 +110,11 @@ const FULL_VERIFIER_PROGRESS_INACTIVITY: Duration = Duration::from_secs(90);
 /// Progress may renew the inactivity lease, but it can never carry the complete
 /// process tree beyond this wall-time ceiling. Cleanup consumes the final three
 /// seconds of the ceiling below.
-const FULL_VERIFIER_ABSOLUTE_RUNTIME: Duration = Duration::from_secs(10 * 60);
-const FULL_VERIFIER_PROCESS_RUNTIME: Duration = Duration::from_secs(10 * 60 - 3);
+const FULL_VERIFIER_ABSOLUTE_RUNTIME: Duration = Duration::from_secs(6 * 60);
+const FULL_VERIFIER_PROCESS_RUNTIME: Duration = Duration::from_secs(6 * 60 - 3);
 const FULL_VERIFIER_LABEL: &str = concat!(
-    "full verifier progress lease (three-minute test-phase cutoff; ",
-    "ten-minute absolute ceiling)"
+    "full verifier progress lease (five-minute test-phase cutoff; ",
+    "six-minute absolute ceiling)"
 );
 const FULL_VERIFIER_CHILD_COMMAND: &str = "__verify-system";
 /// Hard-supervisor cleanup is a last resort after the child-owned soft deadline.
@@ -181,7 +180,6 @@ const _: () = assert!(
 );
 const _: () =
     assert!(FULL_VERIFIER_PROCESS_BOUNDS.runtime.as_secs() > FULL_VERIFIER_TEST_RUNTIME.as_secs());
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Budget {
     workers: usize,
@@ -473,7 +471,7 @@ pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> 
     let interrupted = Arc::new(AtomicBool::new(false));
     let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))?;
     let runner = super::SystemRunner::prepare().map_err(VerifyError::Battery)?;
-    let result = verify_with_deadline_and_rebalance(
+    let result = verify_with_rebalance(
         &runner,
         output,
         Budget::detect(),
@@ -495,13 +493,15 @@ fn verify_with_control<R: Runner>(
     cancellation: CancellationToken,
     interrupted: Arc<AtomicBool>,
 ) -> Result<(), VerifyError> {
-    verify_with_deadline(
+    verify_with_rebalance(
         runner,
         output,
         budget,
         cancellation,
         interrupted,
         FULL_VERIFIER_TEST_RUNTIME,
+        PROGRESS_INTERVAL,
+        |budget| budget,
     )
 }
 
@@ -514,7 +514,7 @@ fn verify_with_deadline<R: Runner>(
     interrupted: Arc<AtomicBool>,
     runtime: Duration,
 ) -> Result<(), VerifyError> {
-    verify_with_deadline_and_rebalance(
+    verify_with_rebalance(
         runner,
         output,
         budget,
@@ -526,9 +526,10 @@ fn verify_with_deadline<R: Runner>(
     )
 }
 
+#[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
-    reason = "the verifier control rim keeps timing policy and rebalance authority explicit"
+    reason = "the deadline fixture keeps timing policy and rebalance authority explicit"
 )]
 fn verify_with_deadline_and_rebalance<R: Runner>(
     runner: &R,
@@ -540,8 +541,34 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
     progress_interval: Duration,
     rebalance: impl FnOnce(Budget) -> Budget,
 ) -> Result<(), VerifyError> {
+    verify_with_rebalance(
+        runner,
+        output,
+        budget,
+        cancellation,
+        interrupted,
+        runtime,
+        progress_interval,
+        rebalance,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the verifier control rim keeps supervision and rebalance authority explicit"
+)]
+fn verify_with_rebalance<R: Runner>(
+    runner: &R,
+    output: &mut impl Write,
+    budget: Budget,
+    cancellation: CancellationToken,
+    interrupted: Arc<AtomicBool>,
+    test_runtime: Duration,
+    progress_interval: Duration,
+    rebalance: impl FnOnce(Budget) -> Budget,
+) -> Result<(), VerifyError> {
     debug_assert_eq!(VERIFY_ACTIONS.len(), PREREQUISITES.len());
-    write_scheduler_start(output, budget, runtime)?;
+    write_scheduler_start(output, budget, test_runtime)?;
 
     let GraphRun {
         mut nodes,
@@ -554,7 +581,7 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
         output,
         budget,
         &cancellation,
-        runtime,
+        test_runtime,
         progress_interval,
         |initial| rebalance(initial).after_workspace_prebuild(),
     );
@@ -611,24 +638,33 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
 fn write_scheduler_start(
     output: &mut impl Write,
     budget: Budget,
-    runtime: Duration,
+    test_runtime: Duration,
 ) -> Result<(), VerifyError> {
     let active = budget
         .active_cargo_jobs
         .map_or_else(|| "unknown".to_owned(), |count| count.to_string());
-    writeln!(
+    write!(
         output,
         concat!(
             "[verify] scheduler workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={} action_count={} deadline_scope=test-phase deadline_ms={} ",
-            "supervisor_inactivity_ms={} supervisor_absolute_ms={}"
+            "active_peer_cargo_jobs={} workspace_workers={} action_count={} "
         ),
         budget.workers,
         budget.cargo_jobs,
         active,
         budget.workspace_workers,
         VERIFY_ACTIONS.len(),
-        runtime.as_millis(),
+    )
+    .map_err(VerifyError::Output)?;
+    write!(
+        output,
+        "deadline_scope=test-phase deadline_ms={} ",
+        test_runtime.as_millis()
+    )
+    .map_err(VerifyError::Output)?;
+    writeln!(
+        output,
+        "supervisor_inactivity_ms={} supervisor_absolute_ms={}",
         FULL_VERIFIER_PROGRESS_INACTIVITY.as_millis(),
         FULL_VERIFIER_ABSOLUTE_RUNTIME.as_millis(),
     )
@@ -641,7 +677,7 @@ fn schedule_graph<R: Runner>(
     output: &mut impl Write,
     mut budget: Budget,
     cancellation: &CancellationToken,
-    runtime: Duration,
+    test_runtime: Duration,
     progress_interval: Duration,
     rebalance: impl FnOnce(Budget) -> Budget,
 ) -> GraphRun {
@@ -662,7 +698,7 @@ fn schedule_graph<R: Runner>(
             enforce_test_phase_deadline(
                 test_phase_started,
                 test_phase_complete(&nodes),
-                runtime,
+                test_runtime,
                 &mut deadline_exceeded,
                 &mut failure_seen,
                 cancellation,

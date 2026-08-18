@@ -27,6 +27,7 @@ const CONFIGURED_BOUNDARY_TEST: &str = concat!(
     "fn configured_authority_is_confined_to_dispatch() {\n",
     "    assert!(std::env::var_os(\"SPICE_RS_PRE_COMMIT_SOURCE\").is_none());\n",
     "    assert_eq!(std::env::var(\"PASSTHROUGH\").as_deref(), Ok(\"retained\"));\n",
+    "    assert_eq!(std::env::var(\"RUSTC_WRAPPER\").as_deref(), Ok(\"\"));\n",
     "    assert_eq!(\n",
     "        std::env::var(\"SPICE_RS_PRE_COMMIT_PATHS\").as_deref(),\n",
     "        Ok(\"[\\\"tests/gate_cli.rs\\\"]\"),\n",
@@ -607,6 +608,7 @@ fn selected_workspace_runner_executes_the_reported_target_from_changed_rust_sour
             "fn configured_dispatch_does_not_leak_into_gate_cli() {\n",
             "    assert!(std::env::var_os(\"SPICE_RS_PRE_COMMIT_SOURCE\").is_none());\n",
             "    assert_eq!(std::env::var(\"PASSTHROUGH\").as_deref(), Ok(\"retained\"));\n",
+            "    assert_eq!(std::env::var(\"RUSTC_WRAPPER\").as_deref(), Ok(\"\"));\n",
             "}\n",
         ),
     )
@@ -624,6 +626,10 @@ fn selected_workspace_runner_executes_the_reported_target_from_changed_rust_sour
         OsString::from("configured-source"),
     );
     entries.insert(OsString::from("PASSTHROUGH"), OsString::from("retained"));
+    entries.insert(
+        OsString::from(RUSTC_WRAPPER),
+        OsString::from("/ambient/sccache"),
+    );
     let environment = Environment::new(entries).expect("capture isolated test environment");
     let mut output = Vec::new();
 
@@ -1307,6 +1313,7 @@ fn configured_dispatch_boundary_fixture(root: &Path) -> (PathBuf, PathBuf) {
         &format!(
             concat!(
                 "#!/bin/sh\n",
+                "[ -z \"$RUSTC_WRAPPER\" ] || exit 49\n",
                 "printf '%s|%s|%s|%s\\n' \"$1\" ",
                 "\"${{SPICE_RS_PRE_COMMIT_SOURCE-unset}}\" ",
                 "\"${{PASSTHROUGH-unset}}\" ",
@@ -1347,6 +1354,10 @@ fn configured_dispatch_boundary_environment(programs: PathBuf, log: &Path) -> En
         OsString::from("configured-source"),
     );
     entries.insert(OsString::from("PASSTHROUGH"), OsString::from("retained"));
+    entries.insert(
+        OsString::from(RUSTC_WRAPPER),
+        OsString::from("/ambient/sccache"),
+    );
     entries.insert(
         OsString::from("SPICE_RS_PRE_COMMIT_PATHS"), // env-policy: allow
         OsString::from("[\"tests/gate_cli.rs\"]"),

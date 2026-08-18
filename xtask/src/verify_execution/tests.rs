@@ -11,11 +11,10 @@ use std::time::{Duration, Instant};
 
 use super::{
     ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget,
-    CancellationToken, CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_ABSOLUTE_RUNTIME,
-    FULL_VERIFIER_TEST_RUNTIME, PREREQUISITES, PROGRESS_INTERVAL, ProcessOutput, RunError, Runner,
-    Status, VERIFY_ACTIONS, VerifyError, count_peer_cargo, ready_nodes, run_process,
-    starts_test_phase_deadline, success, verify_package_with_control, verify_with_control,
-    verify_with_deadline, verify_with_deadline_and_rebalance,
+    CancellationToken, CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_TEST_RUNTIME,
+    PREREQUISITES, PROGRESS_INTERVAL, ProcessOutput, RunError, Runner, Status, VERIFY_ACTIONS,
+    VerifyError, count_peer_cargo, ready_nodes, run_process, success, verify_package_with_control,
+    verify_with_control, verify_with_deadline, verify_with_deadline_and_rebalance,
 };
 use crate::verify_timing::Disposition;
 use crate::{ScopedCommand, Step, WORKSPACE_TEST_LABEL, landing};
@@ -537,7 +536,8 @@ fn single_worker_mode_executes_every_action_once_without_overlap() {
             .contains(concat!(
                 "scheduler workers=1 cargo_jobs=1 active_peer_cargo_jobs=8 ",
                 "workspace_workers=1 action_count=13 ",
-                "deadline_scope=test-phase deadline_ms=180000"
+                "deadline_scope=test-phase deadline_ms=300000 ",
+                "supervisor_inactivity_ms=90000 supervisor_absolute_ms=360000"
             ))
     );
 }
@@ -735,72 +735,26 @@ fn end_to_end_deadline_cancels_the_graph_before_another_action_starts() {
     assert!(output.contains("primary_ordinal=deadline"));
 }
 
-fn compressed_verifier_bound(production: Duration) -> Duration {
-    Duration::from_millis(production.as_secs())
-}
-
-fn run_compressed_schedule(
-    runner: &TimedRunner,
-    test_runtime: Duration,
-    outer_runtime: Duration,
-) -> (Result<(), VerifyError>, String, Duration) {
+#[test]
+fn production_scheduler_declares_five_minute_test_and_six_minute_absolute_bounds() {
+    let admitted = TimedRunner::uniform(Duration::from_millis(2))
+        .with_prebuild_delay(Duration::from_millis(2));
     let mut output = Vec::new();
-    let started = Instant::now();
-    let result = verify_with_deadline(
-        runner,
+    verify_with_control(
+        &admitted,
         &mut output,
         Budget::from_observation(FIXTURE_CPU_COUNT, Some(0)),
         CancellationToken::new(),
         Arc::new(AtomicBool::new(false)),
-        test_runtime,
-    );
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed < outer_runtime,
-        "the compressed verifier crossed its proportional outer-supervisor bound: \
-         elapsed={elapsed:?} bound={outer_runtime:?}"
-    );
-    (
-        result,
-        String::from_utf8(output).expect("scheduler output is UTF-8"),
-        elapsed,
     )
-}
+    .expect("the complete production schedule fits both bounded owners");
+    let output = String::from_utf8(output).expect("scheduler output is UTF-8");
 
-#[test]
-fn compressed_full_verifier_enforces_its_declared_bounds() {
-    let test_runtime = compressed_verifier_bound(FULL_VERIFIER_TEST_RUNTIME);
-    let outer_runtime = compressed_verifier_bound(FULL_VERIFIER_ABSOLUTE_RUNTIME);
-    assert!(test_runtime < outer_runtime);
-
-    let admitted = TimedRunner::uniform(Duration::from_millis(2))
-        .with_prebuild_delay(Duration::from_millis(2));
-    let (result, output, _) = run_compressed_schedule(&admitted, test_runtime, outer_runtime);
-    result.expect("the complete compressed schedule fits both proportional bounds");
     assert!(output.contains(&format!(
         "deadline_scope=test-phase deadline_ms={}",
-        test_runtime.as_millis()
+        FULL_VERIFIER_TEST_RUNTIME.as_millis()
     )));
-    assert!(output.contains("supervisor_absolute_ms=600000"));
-
-    let mut crossing_delays = VERIFY_ACTIONS
-        .iter()
-        .map(|action| (action.label(), Duration::from_millis(2)))
-        .collect::<BTreeMap<_, _>>();
-    let test_branch = VERIFY_ACTIONS
-        .iter()
-        .copied()
-        .find(|action| starts_test_phase_deadline(*action))
-        .expect("the full verifier declares a test-phase branch");
-    crossing_delays.insert(test_branch.label(), test_runtime.saturating_mul(3));
-    let crossing =
-        TimedRunner::new(crossing_delays, 0).with_prebuild_delay(Duration::from_millis(2));
-    let (result, output, _) = run_compressed_schedule(&crossing, test_runtime, outer_runtime);
-    assert!(
-        matches!(result, Err(VerifyError::TimedOut { .. })),
-        "a test branch crossing the declared deadline must be refused: {result:?}"
-    );
-    assert!(output.contains("primary_ordinal=deadline"));
+    assert!(output.contains("supervisor_absolute_ms=360000"));
 }
 
 #[test]

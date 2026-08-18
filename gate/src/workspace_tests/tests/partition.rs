@@ -92,7 +92,7 @@ fn partition_balances_large_packages_in_stable_target_order() {
 }
 
 #[test]
-fn full_verifier_partition_uses_finer_exact_work_units() {
+fn full_verifier_partition_uses_deterministic_multi_target_work_units() {
     let mut inventory = fixture_inventory();
     inventory.packages[0].targets = (0..TARGETS_PER_SHARD + 1)
         .map(|index| TargetIdentity {
@@ -110,33 +110,26 @@ fn full_verifier_partition_uses_finer_exact_work_units() {
     let full_verifier = partition_with_target_limit(&inventory, FULL_VERIFIER_TARGETS_PER_SHARD);
 
     assert_eq!(ordinary.len(), 3);
-    assert_eq!(
-        full_verifier.len(),
-        inventory
-            .packages
-            .iter()
-            .map(|package| package.targets.len())
-            .sum::<usize>(),
-    );
+    assert_eq!(full_verifier.len(), 4);
+    assert!(full_verifier.iter().any(|shard| shard.targets.len() > 1));
     assert!(
         full_verifier
             .iter()
             .all(|shard| shard.targets.len() <= FULL_VERIFIER_TARGETS_PER_SHARD)
     );
-    assert_eq!(full_verifier[0].targets[0].name, "target-08");
     validate_partition_with_target_limit(
         &inventory,
         &full_verifier,
         FULL_VERIFIER_TARGETS_PER_SHARD,
     )
-    .expect("finer full-verifier partition remains exact");
+    .expect("full-verifier partition remains exact");
     assert_eq!(
         format!("{full_verifier:#?}"),
         format!(
             "{:#?}",
             partition_with_target_limit(&inventory, FULL_VERIFIER_TARGETS_PER_SHARD)
         ),
-        "the finer partition remains deterministic"
+        "the full-verifier partition remains deterministic"
     );
 }
 
