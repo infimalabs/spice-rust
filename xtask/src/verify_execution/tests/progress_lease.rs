@@ -1,12 +1,13 @@
 use std::ffi::OsString;
 
 use super::*;
+use crate::verify_execution::process::OutputProgressObserver;
 use crate::verify_execution::{
     FULL_VERIFIER_ABSOLUTE_RUNTIME, FULL_VERIFIER_LABEL, FULL_VERIFIER_PROCESS_BOUNDS,
-    FULL_VERIFIER_PROGRESS_BOUNDS, FULL_VERIFIER_PROGRESS_INACTIVITY, ProcessBounds,
-    ProgressLeaseBounds, ProgressSource, SignalGuard, StreamingRunError, is_lease_renewal_record,
-    is_live_progress_record, render_supervised_verifier, run_bounded_process_streaming,
-    run_process_with_progress, write_deferred_supervisor_output,
+    FULL_VERIFIER_PROGRESS_BOUNDS, FULL_VERIFIER_PROGRESS_INACTIVITY, FULL_VERIFIER_TEST_BOUNDS,
+    ProcessBounds, ProgressLeaseBounds, ProgressSource, SignalGuard, StreamingRunError,
+    is_lease_renewal_record, is_live_progress_record, render_supervised_verifier,
+    run_bounded_process_streaming, run_process_with_progress, write_deferred_supervisor_output,
 };
 
 const NON_COOPERATIVE_CHILD_TEST: &str =
@@ -41,11 +42,43 @@ fn nested_workspace_and_browser_elapsed_heartbeats_do_not_advance_the_action_cur
             .advances(b"[rust-test] stage=terminal shard=41/157 disposition=success\n")
     );
     assert!(
+        ProgressSource::WorkspaceStdout
+            .advances(b"[rust-test] stage=start shard=42/157 package=\"gate\"\n")
+    );
+    assert!(
+        !ProgressSource::WorkspaceStdout.advances(b"arbitrary test output bytes\n"),
+        "untyped workspace output cannot renew the test lease",
+    );
+    assert!(
         !ProgressSource::BrowserStdout
             .advances(b"canvas shard progress elapsed_ms=30002 running=ownership remaining=2\n")
     );
     assert!(ProgressSource::BrowserStdout.advances(b"CANVAS-SHARD {\"kind\":\"scenario-end\"}\n"));
+    assert!(
+        !ProgressSource::BrowserStdout.advances(b"browser console warning\n"),
+        "untyped browser output cannot renew the test lease",
+    );
     assert!(ProgressSource::CargoStderr.advances(b"    Checking gate v0.0.0\n"));
+}
+
+#[test]
+fn duplicate_typed_action_records_advance_only_once() {
+    let observer = OutputProgressObserver::fixture(ProgressSource::WorkspaceStdout);
+    let first = b"[rust-test] stage=terminal shard=41/49 disposition=success\n";
+    let second = b"[rust-test] stage=start shard=42/49 package=\"gate\"\n";
+
+    assert!(observer.newly_advances(first).expect("first typed record"));
+    assert!(
+        !observer
+            .newly_advances(first)
+            .expect("duplicate typed record")
+    );
+    assert!(observer.newly_advances(second).expect("new typed record"));
+    assert!(
+        !observer
+            .newly_advances(b"arbitrary raw output\n")
+            .expect("raw output classification")
+    );
 }
 
 #[cfg(unix)]
@@ -104,6 +137,11 @@ fn outer_supervisor_has_a_tight_progress_lease_inside_one_absolute_limit() {
     );
     assert_eq!(FULL_VERIFIER_PROGRESS_INACTIVITY, Duration::from_secs(90));
     assert_eq!(FULL_VERIFIER_TEST_RUNTIME, Duration::from_secs(5 * 60));
+    assert_eq!(
+        FULL_VERIFIER_TEST_BOUNDS.inactivity,
+        FULL_VERIFIER_TEST_RUNTIME
+    );
+    assert_eq!(FULL_VERIFIER_TEST_BOUNDS.absolute, bounds.runtime);
     assert!(FULL_VERIFIER_PROGRESS_INACTIVITY < FULL_VERIFIER_TEST_RUNTIME);
     assert_eq!(
         bounds.output_limit,
@@ -149,6 +187,7 @@ fn verifier_diagnostics_are_live_but_only_genuine_transitions_and_cursors_renew(
     let setup = b"[verify] stage=setup-progress identity=workspace-prebuild\n";
     let advancement = b"[verify] stage=advance ordinal=9/13 cursor=41 identity=workspace-tests\n";
     let setup_advancement = b"[verify] stage=setup-advance cursor=7 identity=workspace-prebuild\n";
+    let test_lease = b"[verify] test-lease generation=7 reason=action-9-advance-41 inactivity_remaining_ms=299999 absolute_remaining_ms=250000\n";
     let terminal = b"[verify] stage=terminal ordinal=13/13\n";
     let action = b"compiler output\n";
     let final_record = b"final action bytes";
@@ -159,6 +198,7 @@ fn verifier_diagnostics_are_live_but_only_genuine_transitions_and_cursors_renew(
     assert!(is_live_progress_record(setup));
     assert!(is_live_progress_record(advancement));
     assert!(is_live_progress_record(setup_advancement));
+    assert!(is_live_progress_record(test_lease));
     assert!(is_live_progress_record(terminal));
     for diagnostic in [
         scheduler.as_slice(),
@@ -175,6 +215,10 @@ fn verifier_diagnostics_are_live_but_only_genuine_transitions_and_cursors_renew(
     }
     assert!(is_lease_renewal_record(advancement));
     assert!(is_lease_renewal_record(setup_advancement));
+    assert!(
+        !is_lease_renewal_record(test_lease),
+        "the inner lease cannot renew the outer supervisor with its own diagnostics",
+    );
     assert!(is_lease_renewal_record(terminal));
     assert!(!is_live_progress_record(action));
     assert!(!is_live_progress_record(
