@@ -107,7 +107,6 @@ pub const RETIRED_NAMES: &[RetiredName] = &[
         "deleted",
         &["taskchampion", "task champion"],
     ),
-    RetiredName::new("ceiling", "floor, baseline", &["ceiling"]),
     RetiredName::new("dev", "gate, install", &["dev"]),
     RetiredName::new("deinit", "spice install --unapply", &["deinit"]),
 ];
@@ -206,7 +205,7 @@ mod tests {
 
     use super::*;
 
-    const SOURCE_ROW_COUNT: usize = 25;
+    const SOURCE_ROW_COUNT: usize = 24;
 
     #[test]
     fn every_source_row_carries_a_label_successor_and_unique_spellings() {
