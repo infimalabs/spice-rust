@@ -97,6 +97,7 @@ fn completed(position: u64, task: TaskStamp, author: Actor) -> Envelope<AnyFact>
             task,
             validation: "focused checks pass".to_owned(),
             git: None,
+            verifier: None,
             source: body::SourceBoundary::unrecorded(),
         },
     )

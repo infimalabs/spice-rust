@@ -169,6 +169,10 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
             ("prepare_free", Boundary::ReadOnly),
             ("publish", Boundary::PhaseCompletion),
             ("publish_claimed", Boundary::PhaseCompletion),
+            (
+                "publish_claimed_with_completion_evidence",
+                Boundary::PhaseCompletion,
+            ),
             ("stranded_commits", Boundary::ReadOnly),
         ],
     ),

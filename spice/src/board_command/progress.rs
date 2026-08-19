@@ -281,14 +281,28 @@ pub(super) fn task_done(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let git = match publish_task_boundary(repository, &snapshot, command, entry) {
-        Ok(git) => git,
+    let published = match publish_task_completion_boundary(
+        repository,
+        &snapshot,
+        command,
+        entry,
+        &transition,
+    ) {
+        Ok(published) => published,
         Err(outcome) => return outcome,
     };
     let next = projected_done_next_action(&snapshot, entry, &transition, projects);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
-    let answer = match append_done(&mut write, done, entry, &transition, git, source, next) {
+    let answer = match append_done(
+        &mut write,
+        done,
+        entry,
+        &transition,
+        published,
+        source,
+        next,
+    ) {
         Ok(answer) => answer,
         Err(outcome) => return outcome,
     };
@@ -458,7 +472,7 @@ fn append_done(
     done: &TaskDone,
     entry: &Entry,
     transition: &board::Transition,
-    git: Option<GitBoundary>,
+    published: PublishedTaskBoundary,
     source: body::SourceBoundary,
     next: Option<Box<str>>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
@@ -467,7 +481,8 @@ fn append_done(
             body::TaskDone {
                 task: entry.born().clone(),
                 validation: done.validation.clone(),
-                git,
+                git: published.git,
+                verifier: published.verifier,
                 source,
             },
             FactCause::Root,

@@ -66,6 +66,7 @@ fn task_done() -> body::TaskDone {
         task: stamp(),
         validation: "the fixture validated".to_owned(),
         git: None,
+        verifier: None,
         source: proven(),
     }
 }
@@ -243,7 +244,9 @@ fn every_carrier_stored_before_boundaries_still_reads_through_the_registry() {
     let migrated = body::SourceBoundary::unrecorded();
 
     assert_eq!(registered::<body::ClaimWon>(CLAIM_WON).source, migrated);
-    assert_eq!(registered::<body::TaskDone>(TASK_DONE).source, migrated);
+    let legacy_done = registered::<body::TaskDone>(TASK_DONE);
+    assert_eq!(legacy_done.source, migrated);
+    assert_eq!(legacy_done.verifier, None);
     assert_eq!(
         registered::<body::TaskReviewed>(TASK_REVIEWED).source,
         migrated
@@ -252,6 +255,22 @@ fn every_carrier_stored_before_boundaries_still_reads_through_the_registry() {
         registered::<body::ClaimCarried>(CLAIM_CARRIED).source,
         migrated
     );
+}
+
+#[test]
+fn task_completion_retains_one_structured_exact_tree_verifier_citation() {
+    let mut done = task_done();
+    let verifier = body::FullVerifierReceipt {
+        tree: wire::Digest::compute(wire::Domain::GateReceipt, b"closing-tree"),
+        evidence: wire::Digest::compute(wire::Domain::GateReceipt, b"evidence-bundle"),
+        battery: wire::Digest::compute(wire::Domain::GateBatteryReceipt, b"battery"),
+    };
+    done.verifier = Some(verifier.clone());
+
+    let encoded = wire::encode(&done).expect("completion citation encodes");
+    let decoded: body::TaskDone = wire::decode(&encoded).expect("completion citation decodes");
+
+    assert_eq!(decoded.verifier, Some(verifier));
 }
 
 /// A migrated fact encodes back to exactly the bytes it arrived as.

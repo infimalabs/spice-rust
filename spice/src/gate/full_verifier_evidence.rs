@@ -16,11 +16,15 @@ use super::{PreparedBattery, RunError, prepare, prepare_strict};
 use crate::gate::environment::exact_evidence_environment;
 use crate::repository::{Repository, StatePaths};
 
+mod completion;
 mod exact_storage;
 mod reachability;
 mod semantic;
 mod storage;
 
+pub use completion::{
+    inspect_full_verifier_completion_evidence, requires_full_verifier_completion_evidence,
+};
 pub use semantic::{AdmittedSemanticVerifierEvidence, SemanticFullVerifierAdmission};
 
 const FULL_VERIFIER_EVIDENCE_VERSION: u64 = 3;
@@ -354,7 +358,7 @@ impl AdmittedFullVerifierEvidence {
         &self.source
     }
 
-    /// Identity of the exact canonical bundle consumed by the hook.
+    /// Identity of the canonical bundle consumed by this admission.
     #[must_use]
     pub const fn digest(&self) -> &Digest {
         &self.evidence
