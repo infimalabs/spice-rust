@@ -267,7 +267,7 @@ fn wait_after_stop_request(
     let mut faults = Vec::new();
     #[cfg(unix)]
     let descendants = match descendants::DescendantGroups::discover(running.id()) {
-        Ok(descendants) => {
+        Ok(mut descendants) => {
             if let Err(error) = descendants.terminate() {
                 faults.push(format!(
                     "discoverable descendant termination failed: {error}"
@@ -284,7 +284,7 @@ fn wait_after_stop_request(
     let outcome = running.wait();
 
     #[cfg(unix)]
-    if let Some(descendants) = descendants
+    if let Some(mut descendants) = descendants
         && let Err(error) = descendants.reap(bounds.grace, bounds.reap)
     {
         faults.push(format!("descendant reap failed: {error}"));
