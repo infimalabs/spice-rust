@@ -29,6 +29,9 @@ const BENCHMARK_CPU_ITERATIONS: u64 = 10_000_000;
 const DETACHED_WORKSPACE_SHARD_TEST: &str =
     "verify_execution::tests::detached_workspace_shard_fixture";
 const DETACHED_FIXTURE_CONTRACT_ENVIRONMENT: &str = "DETACHED_IDENTITY_FILE";
+const TERM_FORK_WORKSPACE_SHARD_TEST: &str =
+    "verify_execution::tests::term_fork_workspace_shard_fixture";
+const TERM_FORK_FIXTURE_CONTRACT_ENVIRONMENT: &str = "TERM_FORK_IDENTITY_FILE";
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -36,6 +39,13 @@ struct DetachedFixtureContract {
     identity: PathBuf,
     readiness: PathBuf,
     life_milliseconds: u64,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct TermForkFixtureContract {
+    owner_identity: PathBuf,
+    owner_readiness: PathBuf,
+    detached: DetachedFixtureContract,
 }
 
 fn detached_fixture_contract(
@@ -49,6 +59,25 @@ fn detached_fixture_contract(
         life_milliseconds,
     })
     .expect("serialize detached fixture contract")
+}
+
+fn term_fork_fixture_contract(
+    owner_identity: &std::path::Path,
+    owner_readiness: &std::path::Path,
+    detached_identity: &std::path::Path,
+    detached_readiness: &std::path::Path,
+    life_milliseconds: u64,
+) -> String {
+    serde_json::to_string(&TermForkFixtureContract {
+        owner_identity: owner_identity.to_owned(),
+        owner_readiness: owner_readiness.to_owned(),
+        detached: DetachedFixtureContract {
+            identity: detached_identity.to_owned(),
+            readiness: detached_readiness.to_owned(),
+            life_milliseconds,
+        },
+    })
+    .expect("serialize TERM-fork fixture contract")
 }
 
 fn detached_fixture_life(milliseconds: u64) -> Duration {
@@ -69,6 +98,16 @@ fn read_detached_fixture_contract() -> DetachedFixtureContract {
     serde_json::from_str(&value).expect("detached fixture contract is valid JSON")
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the isolated TERM fixture acquires its typed lifecycle contract at the process rim"
+)]
+fn read_term_fork_fixture_contract() -> TermForkFixtureContract {
+    let value = std::env::var(TERM_FORK_FIXTURE_CONTRACT_ENVIRONMENT)
+        .expect("TERM-fork fixture contract is present");
+    serde_json::from_str(&value).expect("TERM-fork fixture contract is valid JSON")
+}
+
 #[cfg(unix)]
 fn publish_detached_fixture_identity(identity_path: &std::path::Path, identity: &str) {
     let destination = atomic::Destination::new(identity_path)
@@ -82,6 +121,32 @@ fn publish_detached_fixture_identity(identity_path: &std::path::Path, identity: 
     staged
         .commit()
         .expect("publish detached fixture identity atomically");
+}
+
+#[cfg(unix)]
+fn block_fixture_term() -> libc::sigset_t {
+    let mut blocked = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+    let mut previous = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+    // SAFETY: both sets are initialized by libc before they are read, and the
+    // isolated fixture changes only its calling thread's signal mask.
+    unsafe {
+        assert_eq!(libc::sigemptyset(blocked.as_mut_ptr()), 0);
+        assert_eq!(libc::sigaddset(blocked.as_mut_ptr(), libc::SIGTERM), 0);
+        assert_eq!(
+            libc::pthread_sigmask(libc::SIG_BLOCK, blocked.as_ptr(), previous.as_mut_ptr()),
+            0,
+        );
+        previous.assume_init()
+    }
+}
+
+#[cfg(unix)]
+fn restore_fixture_signals(previous: &libc::sigset_t) {
+    // SAFETY: `previous` was initialized by `pthread_sigmask` for this thread.
+    assert_eq!(
+        unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, previous, std::ptr::null_mut()) },
+        0,
+    );
 }
 
 struct TimedRunner {
@@ -951,6 +1016,7 @@ fn early_workspace_failure_cannot_mask_a_later_canvas_compiler_failure() {
 fn detached_workspace_shard_fixture() {
     let started = Instant::now();
     let contract = read_detached_fixture_contract();
+    let previous_signals = block_fixture_term();
     let life = detached_fixture_life(contract.life_milliseconds);
     // SAFETY: this single-threaded fixture process exists only to prove that
     // a workspace-test descendant can leave its action's process group.
@@ -961,15 +1027,70 @@ fn detached_workspace_shard_fixture() {
     let group = unsafe { libc::getpgrp() };
     // SAFETY: a zero PID asks for the calling fixture's session.
     let observed_session = unsafe { libc::getsid(0) };
+    // SAFETY: this reads the parent that launched the isolated fixture.
+    let parent = unsafe { libc::getppid() };
     publish_detached_fixture_identity(
         &contract.identity,
-        &format!("{pid} {group} {observed_session}\n"),
+        &format!("{pid} {group} {observed_session} {parent}\n"),
     );
     std::os::unix::net::UnixDatagram::unbound()
         .expect("create detached fixture readiness sender")
         .send_to(&[1], contract.readiness)
         .expect("announce detached fixture identity publication");
+    restore_fixture_signals(&previous_signals);
     thread::sleep(life.saturating_sub(started.elapsed()));
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "launched exactly by the TERM-handler workspace-shard cancellation test"]
+fn term_fork_workspace_shard_fixture() {
+    let contract = read_term_fork_fixture_contract();
+    let terminated = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(
+        signal_hook::consts::signal::SIGTERM,
+        Arc::clone(&terminated),
+    )
+    .expect("register fixture TERM flag");
+    let pid = std::process::id();
+    // SAFETY: these queries read the fixture's current process identities.
+    let group = unsafe { libc::getpgrp() };
+    // SAFETY: this reads the shell that launched the fixture.
+    let parent = unsafe { libc::getppid() };
+    publish_detached_fixture_identity(
+        &contract.owner_identity,
+        &format!("{pid} {group} {parent}\n"),
+    );
+    std::os::unix::net::UnixDatagram::unbound()
+        .expect("create TERM-fork fixture readiness sender")
+        .send_to(&[1], &contract.owner_readiness)
+        .expect("announce TERM-fork fixture readiness");
+    let started = Instant::now();
+    while !terminated.load(Ordering::Acquire) {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "TERM-fork fixture did not receive cancellation"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    let child_contract =
+        serde_json::to_string(&contract.detached).expect("serialize detached child contract");
+    let mut detached = Command::new(std::env::current_exe().expect("resolve fixture executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            DETACHED_WORKSPACE_SHARD_TEST,
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(DETACHED_FIXTURE_CONTRACT_ENVIRONMENT, child_contract)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("fork detached workspace shard from TERM handler");
+    let _ = detached.wait();
 }
 
 #[test]
@@ -1013,7 +1134,11 @@ fn detached_workspace_fixture_self_terminates_after_its_parent_exits() {
 
     publication.wait(&identity_file);
     let identity = read_pids(&identity_file);
-    assert_eq!(identity.len(), 3, "fixture publishes PID, PGID, and SID");
+    assert_eq!(
+        identity.len(),
+        4,
+        "fixture publishes PID, PGID, SID, and PPID"
+    );
     assert_process_stops_within(
         identity[0],
         "self-deadlined detached workspace fixture",
@@ -1142,14 +1267,78 @@ fn verifier_cancellation_reaps_a_detached_workspace_shard_session() {
     let root = read_pids(&fixture.root_pid_file);
     let detached = read_pids(&fixture.detached_identity_file);
     assert_eq!(root.len(), 1, "fixture publishes one action root PID");
-    assert_eq!(detached.len(), 3, "fixture publishes PID, PGID, and SID");
+    assert_eq!(
+        detached.len(),
+        4,
+        "fixture publishes PID, PGID, SID, and PPID"
+    );
     assert_ne!(root[0], detached[0], "detached shard is a descendant");
     assert_eq!(detached[0], detached[1], "detached shard leads its group");
     assert_eq!(detached[0], detached[2], "detached shard leads its session");
+    assert_eq!(detached[3], root[0], "detached shard names its owner");
     assert_processes_gone(&fixture.root_pid_file, "cancelled workspace action root");
     assert_processes_gone(
         &fixture.detached_identity_file,
         "cancelled detached workspace shard",
+    );
+
+    let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+    assert!(output.contains("disposition=cancelled"), "{output}");
+    assert!(
+        output.contains("primary_ordinal=8 interrupted=false cleanup_faults=0"),
+        "{output}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn verifier_cancellation_reconciles_a_session_forked_during_term_handling() {
+    let fixture = DetachedShardRunner::term_forking();
+    let mut output = Vec::new();
+    let error = verify_with_control(
+        &fixture,
+        &mut output,
+        Budget::fixture(3, 1, 0),
+        CancellationToken::new(),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect_err("browser refusal cancels its TERM-forking workspace shard sibling");
+    assert!(matches!(error, VerifyError::BrowserIncomplete));
+    fixture.wait_for_detached_publication();
+
+    let root = read_pids(&fixture.root_pid_file);
+    let owner = read_pids(
+        fixture
+            .owner_identity_file()
+            .expect("TERM-fork fixture carries an owner identity"),
+    );
+    let detached = read_pids(&fixture.detached_identity_file);
+    assert_eq!(root.len(), 1, "fixture publishes one action root PID");
+    assert_eq!(
+        owner.len(),
+        3,
+        "fixture publishes owner PID, PGID, and PPID"
+    );
+    assert_eq!(
+        detached.len(),
+        4,
+        "fixture publishes late PID, PGID, SID, and PPID"
+    );
+    assert_eq!(owner[1], root[0], "TERM handler remains in the root group");
+    assert_eq!(owner[2], root[0], "action root owns the TERM handler");
+    assert_eq!(detached[3], owner[0], "TERM handler owns the late child");
+    assert_eq!(detached[0], detached[1], "late child leads its group");
+    assert_eq!(detached[0], detached[2], "late child leads its session");
+    assert_processes_gone(&fixture.root_pid_file, "cancelled workspace action root");
+    assert_processes_gone(
+        fixture
+            .owner_identity_file()
+            .expect("TERM-fork fixture carries an owner identity"),
+        "cancelled TERM-handler owner",
+    );
+    assert_processes_gone(
+        &fixture.detached_identity_file,
+        "detached workspace shard forked during TERM handling",
     );
 
     let output = String::from_utf8(output).expect("scheduler output is UTF-8");

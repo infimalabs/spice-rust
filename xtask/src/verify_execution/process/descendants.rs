@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -74,26 +75,75 @@ impl DescendantGroups {
         self.signal(libc::SIGTERM)
     }
 
-    pub(super) fn reap(&mut self, grace: Duration, reap: Duration) -> io::Result<()> {
-        if self.wait_until_terminal(grace, libc::SIGTERM)? {
-            return Ok(());
+    pub(super) fn reap_while_root_terminates(
+        &mut self,
+        grace: Duration,
+        reap: Duration,
+        output_drain: Duration,
+        root_terminal: &AtomicBool,
+    ) -> io::Result<()> {
+        let mut snapshot = process_snapshot;
+        let mut signal_group = kill_process_group;
+        self.reap_while_root_terminates_with(
+            grace,
+            reap,
+            output_drain,
+            root_terminal,
+            &mut snapshot,
+            &mut signal_group,
+        )
+    }
+
+    fn reap_while_root_terminates_with<Snapshot, Signal>(
+        &mut self,
+        grace: Duration,
+        reap: Duration,
+        output_drain: Duration,
+        root_terminal: &AtomicBool,
+        snapshot: &mut Snapshot,
+        signal_group: &mut Signal,
+    ) -> io::Result<()>
+    where
+        Snapshot: FnMut() -> io::Result<Vec<Process>>,
+        Signal: FnMut(u32, libc::c_int) -> io::Result<()>,
+    {
+        let started = Instant::now();
+        let reap_deadline = grace.saturating_add(reap);
+        let absolute_deadline = reap_deadline.saturating_add(output_drain);
+        let mut signal = libc::SIGTERM;
+        let mut observed_terminal = false;
+        loop {
+            let elapsed = started.elapsed();
+            if signal == libc::SIGTERM && elapsed >= grace {
+                signal = libc::SIGKILL;
+                self.observe_and_signal(signal, true, snapshot, signal_group)?;
+            }
+            let root_was_terminal = root_terminal.load(Ordering::Acquire);
+            let live = self.observe_and_signal(signal, false, snapshot, signal_group)?;
+            if root_was_terminal && live.is_empty() {
+                if observed_terminal {
+                    return Ok(());
+                }
+                observed_terminal = true;
+            } else {
+                observed_terminal = false;
+            }
+            let elapsed = started.elapsed();
+            if elapsed >= absolute_deadline || (elapsed >= reap_deadline && !live.is_empty()) {
+                let detail = if !live.is_empty() {
+                    format!("process groups {} remained live", display_groups(&live))
+                } else if !root_terminal.load(Ordering::Acquire) {
+                    "the action process group did not finish inside its cleanup bounds".to_owned()
+                } else {
+                    "the descendant tree did not remain terminal across two observations".to_owned()
+                };
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("{detail} after the {reap:?} reap deadline"),
+                ));
+            }
+            thread::sleep(REAP_POLL.min(absolute_deadline.saturating_sub(elapsed)));
         }
-        self.signal(libc::SIGKILL)?;
-        if self.wait_until_terminal(reap, libc::SIGKILL)? {
-            return Ok(());
-        }
-        let processes = process_snapshot()?;
-        self.reconcile(&processes)?;
-        let live = owned_live_groups(&processes, self.root, &self.groups, &self.members)?;
-        let detail = if live.is_empty() {
-            "the descendant tree did not remain terminal across two observations".to_owned()
-        } else {
-            format!("process groups {} remained live", display_groups(&live))
-        };
-        Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!("{detail} after the {reap:?} reap deadline"),
-        ))
     }
 
     fn signal(&mut self, signal: libc::c_int) -> io::Result<()> {
@@ -101,28 +151,6 @@ impl DescendantGroups {
         let mut signal_group = kill_process_group;
         self.observe_and_signal(signal, true, &mut snapshot, &mut signal_group)
             .map(|_| ())
-    }
-
-    fn wait_until_terminal(&mut self, deadline: Duration, signal: libc::c_int) -> io::Result<bool> {
-        let started = Instant::now();
-        let mut observed_terminal = false;
-        let mut snapshot = process_snapshot;
-        let mut signal_group = kill_process_group;
-        loop {
-            let live = self.observe_and_signal(signal, false, &mut snapshot, &mut signal_group)?;
-            if live.is_empty() {
-                if observed_terminal {
-                    return Ok(true);
-                }
-                observed_terminal = true;
-            } else {
-                observed_terminal = false;
-            }
-            if started.elapsed() >= deadline {
-                return Ok(false);
-            }
-            thread::sleep(REAP_POLL.min(deadline.saturating_sub(started.elapsed())));
-        }
     }
 
     fn observe_and_signal<Snapshot, Signal>(
@@ -443,6 +471,45 @@ mod tests {
         );
         assert_eq!(live, BTreeSet::from([12]));
         assert_eq!(signals, [(12, libc::SIGTERM)]);
+    }
+
+    #[test]
+    fn group_created_while_root_terminates_follows_term_into_the_kill_phase() {
+        let initial = vec![process(10, 1, 10)];
+        let late = process(12, 10, 12);
+        let killed = std::cell::Cell::new(false);
+        let root_terminal = AtomicBool::new(false);
+        let mut descendants =
+            DescendantGroups::from_snapshot(10, &initial).expect("initial tree captures");
+        let mut snapshot = || {
+            Ok(if killed.get() {
+                initial.clone()
+            } else {
+                vec![initial[0], late]
+            })
+        };
+        let mut signals = Vec::new();
+        let mut signal_group = |group, signal| {
+            signals.push((group, signal));
+            if signal == libc::SIGKILL {
+                killed.set(true);
+                root_terminal.store(true, Ordering::Release);
+            }
+            Ok(())
+        };
+
+        descendants
+            .reap_while_root_terminates_with(
+                Duration::from_millis(20),
+                Duration::from_millis(50),
+                Duration::from_millis(50),
+                &root_terminal,
+                &mut snapshot,
+                &mut signal_group,
+            )
+            .expect("late group follows the bounded root cleanup phases");
+
+        assert_eq!(signals, [(12, libc::SIGTERM), (12, libc::SIGKILL)],);
     }
 
     #[test]
