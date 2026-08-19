@@ -8,7 +8,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -31,6 +31,7 @@ use super::{
 mod action;
 mod process;
 mod setup;
+mod test_phase_lease;
 
 use action::{
     execute_action, execute_battery, execute_process, failure, panic_detail, write_failure_summary,
@@ -42,6 +43,10 @@ use process::{
 pub(super) use process::{run_process, run_process_with_progress};
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) use process::{run_process_at, run_process_at_with_progress};
+use test_phase_lease::{
+    Bounds as TestPhaseBounds, Event as TestPhaseEvent, Evidence as TestPhaseEvidence,
+    Lease as TestPhaseLease,
+};
 #[cfg(test)]
 use {action::success, process::count_peer_cargo};
 
@@ -100,8 +105,9 @@ const MAX_CONCURRENT_CARGO_ACTIONS: usize = 2;
 /// full verifier derives its actual lane count continuously from observed CPUs,
 /// live Cargo groups, concurrent outer actions, and each action's Cargo job
 /// share. Its completed shared prebuild then caps that measured answer at six.
-/// Stop launching and cancel owned process groups after five minutes of actual
-/// test-phase runtime. Compiler setup remains outside this narrower deadline.
+/// A test branch that produces no new trusted transition for five minutes is
+/// stalled. Compiler setup remains outside this inactivity lease; the complete
+/// process tree still cannot cross the six-minute absolute supervisor ceiling.
 const FULL_VERIFIER_TEST_RUNTIME: Duration = Duration::from_secs(5 * 60);
 /// A healthy child emits a trusted scheduler, setup, action, or terminal record
 /// at least every 30 seconds. Permit two missed progress intervals before the
@@ -112,8 +118,12 @@ const FULL_VERIFIER_PROGRESS_INACTIVITY: Duration = Duration::from_secs(90);
 /// seconds of the ceiling below.
 const FULL_VERIFIER_ABSOLUTE_RUNTIME: Duration = Duration::from_secs(6 * 60);
 const FULL_VERIFIER_PROCESS_RUNTIME: Duration = Duration::from_secs(6 * 60 - 3);
+const FULL_VERIFIER_TEST_BOUNDS: TestPhaseBounds = TestPhaseBounds {
+    inactivity: FULL_VERIFIER_TEST_RUNTIME,
+    absolute: FULL_VERIFIER_PROCESS_RUNTIME,
+};
 const FULL_VERIFIER_LABEL: &str = concat!(
-    "full verifier progress lease (five-minute test-phase cutoff; ",
+    "full verifier progress lease (five-minute test-phase inactivity; ",
     "six-minute absolute ceiling)"
 );
 const FULL_VERIFIER_CHILD_COMMAND: &str = "__verify-system";
@@ -274,6 +284,7 @@ struct ProgressState {
     next_report: Duration,
     cursor: Arc<AtomicU64>,
     reported_cursor: u64,
+    lease_cursor: u64,
 }
 
 impl ProgressState {
@@ -284,6 +295,7 @@ impl ProgressState {
             next_report: interval,
             cursor: Arc::new(AtomicU64::new(0)),
             reported_cursor: 0,
+            lease_cursor: 0,
         }
     }
 
@@ -306,6 +318,16 @@ impl ProgressState {
         } else {
             self.reported_cursor = cursor;
             Some((elapsed, Some(cursor)))
+        }
+    }
+
+    fn take_lease_cursor(&mut self) -> Option<u64> {
+        let cursor = self.cursor.load(Ordering::Relaxed);
+        if cursor == self.lease_cursor {
+            None
+        } else {
+            self.lease_cursor = cursor;
+            Some(cursor)
         }
     }
 }
@@ -477,7 +499,7 @@ pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> 
         Budget::detect(),
         cancellation,
         interrupted,
-        FULL_VERIFIER_TEST_RUNTIME,
+        FULL_VERIFIER_TEST_BOUNDS,
         PROGRESS_INTERVAL,
         |_| Budget::detect(),
     );
@@ -499,7 +521,7 @@ fn verify_with_control<R: Runner>(
         budget,
         cancellation,
         interrupted,
-        FULL_VERIFIER_TEST_RUNTIME,
+        FULL_VERIFIER_TEST_BOUNDS,
         PROGRESS_INTERVAL,
         |budget| budget,
     )
@@ -520,8 +542,33 @@ fn verify_with_deadline<R: Runner>(
         budget,
         cancellation,
         interrupted,
-        runtime,
+        TestPhaseBounds {
+            inactivity: runtime,
+            absolute: runtime,
+        },
         PROGRESS_INTERVAL,
+        |budget| budget,
+    )
+}
+
+#[cfg(test)]
+fn verify_with_test_bounds<R: Runner>(
+    runner: &R,
+    output: &mut impl Write,
+    budget: Budget,
+    cancellation: CancellationToken,
+    interrupted: Arc<AtomicBool>,
+    bounds: TestPhaseBounds,
+    progress_interval: Duration,
+) -> Result<(), VerifyError> {
+    verify_with_rebalance(
+        runner,
+        output,
+        budget,
+        cancellation,
+        interrupted,
+        bounds,
+        progress_interval,
         |budget| budget,
     )
 }
@@ -547,7 +594,10 @@ fn verify_with_deadline_and_rebalance<R: Runner>(
         budget,
         cancellation,
         interrupted,
-        runtime,
+        TestPhaseBounds {
+            inactivity: runtime,
+            absolute: runtime,
+        },
         progress_interval,
         rebalance,
     )
@@ -563,12 +613,12 @@ fn verify_with_rebalance<R: Runner>(
     budget: Budget,
     cancellation: CancellationToken,
     interrupted: Arc<AtomicBool>,
-    test_runtime: Duration,
+    test_bounds: TestPhaseBounds,
     progress_interval: Duration,
     rebalance: impl FnOnce(Budget) -> Budget,
 ) -> Result<(), VerifyError> {
     debug_assert_eq!(VERIFY_ACTIONS.len(), PREREQUISITES.len());
-    write_scheduler_start(output, budget, test_runtime)?;
+    write_scheduler_start(output, budget, test_bounds)?;
 
     let GraphRun {
         mut nodes,
@@ -581,7 +631,7 @@ fn verify_with_rebalance<R: Runner>(
         output,
         budget,
         &cancellation,
-        test_runtime,
+        test_bounds,
         progress_interval,
         |initial| rebalance(initial).after_workspace_prebuild(),
     );
@@ -638,7 +688,7 @@ fn verify_with_rebalance<R: Runner>(
 fn write_scheduler_start(
     output: &mut impl Write,
     budget: Budget,
-    test_runtime: Duration,
+    test_bounds: TestPhaseBounds,
 ) -> Result<(), VerifyError> {
     let active = budget
         .active_cargo_jobs
@@ -658,8 +708,9 @@ fn write_scheduler_start(
     .map_err(VerifyError::Output)?;
     write!(
         output,
-        "deadline_scope=test-phase deadline_ms={} ",
-        test_runtime.as_millis()
+        "deadline_scope=test-phase inactivity_ms={} absolute_ms={} ",
+        test_bounds.inactivity.as_millis(),
+        test_bounds.absolute.as_millis(),
     )
     .map_err(VerifyError::Output)?;
     writeln!(
@@ -677,7 +728,7 @@ fn schedule_graph<R: Runner>(
     output: &mut impl Write,
     mut budget: Budget,
     cancellation: &CancellationToken,
-    test_runtime: Duration,
+    test_bounds: TestPhaseBounds,
     progress_interval: Duration,
     rebalance: impl FnOnce(Budget) -> Budget,
 ) -> GraphRun {
@@ -689,19 +740,21 @@ fn schedule_graph<R: Runner>(
     let mut failure_seen = false;
     let mut output_fault = None;
     let mut deadline_exceeded = false;
-    let mut test_phase_started = None;
+    let mut test_lease = TestPhaseLease::new(Instant::now(), test_bounds);
     let mut canvas_app_ready = false;
     let mut setups = setup::SetupRun::new(rebalance, progress_interval);
 
     thread::scope(|scope| {
         loop {
+            observe_test_phase_progress(&mut nodes, &mut test_lease);
             enforce_test_phase_deadline(
-                test_phase_started,
+                &test_lease,
                 test_phase_complete(&nodes),
-                test_runtime,
                 &mut deadline_exceeded,
                 &mut failure_seen,
                 cancellation,
+                output,
+                &mut output_fault,
             );
             if !failure_seen && !cancellation.is_cancelled() {
                 if let Some(rebalanced) = setups.advance(
@@ -737,7 +790,7 @@ fn schedule_graph<R: Runner>(
                     &mut running,
                     &mut failure_seen,
                     &mut output_fault,
-                    &mut test_phase_started,
+                    &mut test_lease,
                     progress_interval,
                     setups.test_branches_ready(),
                     canvas_app_ready,
@@ -758,6 +811,7 @@ fn schedule_graph<R: Runner>(
                 &receiver,
                 cancellation,
                 &mut setups,
+                &mut test_lease,
                 output,
                 completion_state,
             ) {
@@ -766,6 +820,7 @@ fn schedule_graph<R: Runner>(
             write_due_progress(
                 &mut nodes,
                 &mut setups,
+                &mut test_lease,
                 output,
                 cancellation,
                 &mut failure_seen,
@@ -793,18 +848,41 @@ fn finish_graph<Rebalance>(
 }
 
 fn enforce_test_phase_deadline(
-    started: Option<Instant>,
+    lease: &TestPhaseLease,
     complete: bool,
-    runtime: Duration,
     deadline_exceeded: &mut bool,
     failure_seen: &mut bool,
     cancellation: &CancellationToken,
+    output: &mut impl Write,
+    output_fault: &mut Option<io::Error>,
 ) {
-    if !*failure_seen && !complete && started.is_some_and(|started| started.elapsed() >= runtime) {
-        *deadline_exceeded = true;
-        *failure_seen = true;
-        cancellation.cancel();
+    if *failure_seen {
+        return;
     }
+    let observed = Instant::now();
+    let Some(expiry) = lease.expiry(observed, complete) else {
+        return;
+    };
+    if let Some(evidence) = lease.current_evidence(observed)
+        && let Err(error) = writeln!(
+            output,
+            concat!(
+                "[verify] test-lease-expired generation={} reason={} last_event={} ",
+                "inactivity_remaining_ms={} absolute_remaining_ms={}"
+            ),
+            evidence.generation,
+            expiry,
+            evidence.reason,
+            evidence.inactivity_remaining.as_millis(),
+            evidence.absolute_remaining.as_millis(),
+        )
+        .and_then(|()| output.flush())
+    {
+        output_fault.get_or_insert(error);
+    }
+    *deadline_exceeded = true;
+    *failure_seen = true;
+    cancellation.cancel();
 }
 
 #[expect(
@@ -822,7 +900,7 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
     running: &mut usize,
     failure_seen: &mut bool,
     output_fault: &mut Option<io::Error>,
-    test_phase_started: &mut Option<Instant>,
+    test_lease: &mut TestPhaseLease,
     progress_interval: Duration,
     test_branches_ready: bool,
     canvas_app_ready: bool,
@@ -845,8 +923,8 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
             break;
         }
         let started = Instant::now();
-        if test_phase_started.is_none() && starts_test_phase_deadline(action) {
-            *test_phase_started = Some(started);
+        if starts_test_phase_deadline(action) {
+            test_lease.renew(started, TestPhaseEvent::ActionStart { ordinal: index + 1 });
         }
         let progress = ProgressState::new(started, progress_interval);
         match spawn_action(
@@ -887,7 +965,8 @@ fn starts_test_phase_deadline(action: Action) -> bool {
 
 /// The test-phase bound protects the two test branches, not their terminal
 /// documentation, evidence, and landing consumers. Those consumers remain
-/// bounded by the child supervisor and its complete 299-second envelope.
+/// bounded by the child's 357-second runtime inside the complete six-minute
+/// supervisor envelope.
 fn test_phase_complete(nodes: &[NodeState]) -> bool {
     VERIFY_ACTIONS
         .iter()
@@ -955,11 +1034,18 @@ fn receive_completion<Rebalance>(
     receiver: &mpsc::Receiver<WorkerCompletion>,
     cancellation: &CancellationToken,
     setups: &mut setup::SetupRun<Rebalance>,
+    test_lease: &mut TestPhaseLease,
     output: &mut impl Write,
     state: CompletionState<'_>,
 ) -> bool {
     match receiver.recv_timeout(SCHEDULER_POLL) {
         Ok(WorkerCompletion::Action { index, completion }) => {
+            if starts_test_phase_deadline(VERIFY_ACTIONS[index]) {
+                test_lease.renew(
+                    Instant::now(),
+                    TestPhaseEvent::ActionTerminal { ordinal: index + 1 },
+                );
+            }
             *state.running -= 1;
             let substantive = !matches!(
                 completion.result,
@@ -974,8 +1060,12 @@ fn receive_completion<Rebalance>(
             false
         }
         Ok(WorkerCompletion::WorkspacePrebuild(completion)) => {
+            let admitted = completion.result.is_ok();
             *state.running -= 1;
             setups.complete_workspace_prebuild(completion, output, cancellation);
+            if admitted {
+                test_lease.renew(Instant::now(), TestPhaseEvent::WorkspacePrebuildTerminal);
+            }
             *state.failure_seen = setups.failed();
             false
         }
@@ -1014,17 +1104,20 @@ fn deferred_workspace_failure_ready(nodes: &[NodeState]) -> bool {
 fn write_due_progress<Rebalance>(
     nodes: &mut [NodeState],
     setups: &mut setup::SetupRun<Rebalance>,
+    test_lease: &mut TestPhaseLease,
     output: &mut impl Write,
     cancellation: &CancellationToken,
     failure_seen: &mut bool,
     output_fault: &mut Option<io::Error>,
 ) {
+    observe_test_phase_progress(nodes, test_lease);
     if let Err(error) = setups.write_due_progress(output) {
         output_fault.get_or_insert(error);
         cancellation.cancel();
         *failure_seen = true;
         return;
     }
+    let mut report_test_advance = false;
     for (index, node) in nodes.iter_mut().enumerate() {
         let NodeState::Running(progress) = node else {
             continue;
@@ -1033,12 +1126,15 @@ fn write_due_progress<Rebalance>(
             continue;
         };
         let result = match cursor {
-            Some(cursor) => verify_timing::write_advancement(
-                output,
-                stage(index, VERIFY_ACTIONS[index]),
-                elapsed,
-                cursor,
-            ),
+            Some(cursor) => {
+                report_test_advance |= starts_test_phase_deadline(VERIFY_ACTIONS[index]);
+                verify_timing::write_advancement(
+                    output,
+                    stage(index, VERIFY_ACTIONS[index]),
+                    elapsed,
+                    cursor,
+                )
+            }
             None => {
                 verify_timing::write_progress(output, stage(index, VERIFY_ACTIONS[index]), elapsed)
             }
@@ -1049,6 +1145,53 @@ fn write_due_progress<Rebalance>(
             *failure_seen = true;
         }
     }
+    if let Some(evidence) = test_lease.take_evidence(Instant::now(), report_test_advance)
+        && let Err(error) = write_test_phase_evidence(output, evidence)
+    {
+        output_fault.get_or_insert(error);
+        cancellation.cancel();
+        *failure_seen = true;
+    }
+}
+
+fn observe_test_phase_progress(nodes: &mut [NodeState], lease: &mut TestPhaseLease) {
+    let observed = Instant::now();
+    for (index, node) in nodes.iter_mut().enumerate() {
+        if !starts_test_phase_deadline(VERIFY_ACTIONS[index]) {
+            continue;
+        }
+        let NodeState::Running(progress) = node else {
+            continue;
+        };
+        let Some(cursor) = progress.take_lease_cursor() else {
+            continue;
+        };
+        lease.renew(
+            observed,
+            TestPhaseEvent::ActionAdvance {
+                ordinal: index + 1,
+                cursor,
+            },
+        );
+    }
+}
+
+fn write_test_phase_evidence(
+    output: &mut impl Write,
+    evidence: TestPhaseEvidence,
+) -> io::Result<()> {
+    writeln!(
+        output,
+        concat!(
+            "[verify] test-lease generation={} reason={} inactivity_remaining_ms={} ",
+            "absolute_remaining_ms={}"
+        ),
+        evidence.generation,
+        evidence.reason,
+        evidence.inactivity_remaining.as_millis(),
+        evidence.absolute_remaining.as_millis(),
+    )?;
+    output.flush()
 }
 
 fn render_completions(

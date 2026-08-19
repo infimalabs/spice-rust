@@ -10,11 +10,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::{
-    ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget,
-    CancellationToken, CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_TEST_RUNTIME,
-    PREREQUISITES, PROGRESS_INTERVAL, ProcessOutput, RunError, Runner, Status, VERIFY_ACTIONS,
-    VerifyError, count_peer_cargo, ready_nodes, run_process, success, verify_package_with_control,
-    verify_with_control, verify_with_deadline, verify_with_deadline_and_rebalance,
+    ActionProgress, ActionReadiness, BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget,
+    CancellationToken, CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_TEST_BOUNDS,
+    FULL_VERIFIER_TEST_RUNTIME, PREREQUISITES, PROGRESS_INTERVAL, ProcessOutput, RunError, Runner,
+    Status, VERIFY_ACTIONS, VerifyError, count_peer_cargo, ready_nodes, run_process, success,
+    verify_package_with_control, verify_with_control, verify_with_deadline,
+    verify_with_deadline_and_rebalance, verify_with_test_bounds,
 };
 use crate::verify_timing::Disposition;
 use crate::{ScopedCommand, Step, WORKSPACE_TEST_LABEL, landing};
@@ -79,6 +80,7 @@ struct TimedRunner {
     active: AtomicUsize,
     peak: AtomicUsize,
     cpu_iterations: u64,
+    progress_interval: Option<Duration>,
 }
 
 impl TimedRunner {
@@ -123,11 +125,18 @@ impl TimedRunner {
             active: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
             cpu_iterations,
+            progress_interval: None,
         }
     }
 
     fn with_prebuild_delay(mut self, delay: Duration) -> Self {
         self.prebuild_delay = delay;
+        self
+    }
+
+    fn with_progress_interval(mut self, interval: Duration) -> Self {
+        assert!(!interval.is_zero());
+        self.progress_interval = Some(interval);
         self
     }
 
@@ -146,6 +155,25 @@ impl TimedRunner {
         cancellation: Option<&CancellationToken>,
         readiness: Option<ActionReadiness>,
     ) -> bool {
+        self.perform_observed(label, cancellation, readiness, None)
+    }
+
+    fn perform_with_progress(
+        &self,
+        label: &'static str,
+        cancellation: Option<&CancellationToken>,
+        progress: ActionProgress,
+    ) -> bool {
+        self.perform_observed(label, cancellation, None, Some(progress))
+    }
+
+    fn perform_observed(
+        &self,
+        label: &'static str,
+        cancellation: Option<&CancellationToken>,
+        readiness: Option<ActionReadiness>,
+        progress: Option<ActionProgress>,
+    ) -> bool {
         self.calls.lock().expect("timed calls lock").push(label);
         let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
         self.peak.fetch_max(active, Ordering::AcqRel);
@@ -159,12 +187,17 @@ impl TimedRunner {
             value = value.rotate_left(7).wrapping_add(index ^ 0x9e37_79b9);
         }
         black_box(value);
-        match readiness {
-            Some(readiness) => {
-                readiness();
-                thread::sleep(delay);
+        if let Some(readiness) = readiness {
+            readiness();
+        }
+        if let Some((interval, progress)) = self.progress_interval.zip(progress) {
+            let started = Instant::now();
+            while started.elapsed() < delay {
+                thread::sleep(interval.min(delay.saturating_sub(started.elapsed())));
+                progress();
             }
-            None => thread::sleep(delay),
+        } else {
+            thread::sleep(delay);
         }
         self.active.fetch_sub(1, Ordering::AcqRel);
         !cancellation.is_some_and(CancellationToken::is_cancelled)
@@ -200,6 +233,21 @@ impl TimedRunner {
         readiness: ActionReadiness,
     ) -> CommandRun {
         if !self.perform_with_readiness(label, Some(cancellation), Some(readiness)) {
+            return timed_command(false);
+        }
+        CommandRun::Exited(ProcessOutput::status_only(Status {
+            success: !self.failures.contains(label),
+            code: Some(i32::from(self.failures.contains(label))),
+        }))
+    }
+
+    fn command_with_progress(
+        &self,
+        label: &'static str,
+        cancellation: &CancellationToken,
+        progress: ActionProgress,
+    ) -> CommandRun {
+        if !self.perform_with_progress(label, Some(cancellation), progress) {
             return timed_command(false);
         }
         CommandRun::Exited(ProcessOutput::status_only(Status {
@@ -273,6 +321,18 @@ impl Runner for TimedRunner {
         })
     }
 
+    fn browser_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        _cargo_jobs: usize,
+        progress: ActionProgress,
+    ) -> Result<BrowserRun, RunError> {
+        Ok(BrowserRun {
+            process: self.command_with_progress(BROWSER_LABEL, cancellation, progress),
+            completed: true,
+        })
+    }
+
     fn workspace_test_prebuild(
         &self,
         cancellation: &CancellationToken,
@@ -293,6 +353,21 @@ impl Runner for TimedRunner {
             cancellation,
             cargo_jobs.min(workspace_workers),
         )
+    }
+
+    fn workspace_tests_with_progress(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        workspace_workers: usize,
+        progress: ActionProgress,
+    ) -> Result<CommandRun, RunError> {
+        let jobs = cargo_jobs.min(workspace_workers);
+        self.cargo_jobs
+            .lock()
+            .expect("timed Cargo jobs lock")
+            .push((crate::WORKSPACE_TEST_LABEL, jobs));
+        Ok(self.command_with_progress(crate::WORKSPACE_TEST_LABEL, cancellation, progress))
     }
 
     fn structural_preflight(
@@ -338,6 +413,20 @@ fn timed_command(completed: bool) -> CommandRun {
     } else {
         CommandRun::Cancelled(output)
     }
+}
+
+#[test]
+fn action_progress_cursor_consumes_each_observed_generation_once() {
+    let mut progress = super::ProgressState::new(Instant::now(), Duration::from_secs(30));
+    let advance = progress.callback();
+    assert_eq!(progress.take_lease_cursor(), None);
+    advance();
+    assert_eq!(progress.take_lease_cursor(), Some(1));
+    assert_eq!(progress.take_lease_cursor(), None);
+    advance();
+    advance();
+    assert_eq!(progress.take_lease_cursor(), Some(3));
+    assert_eq!(progress.take_lease_cursor(), None);
 }
 
 #[test]
@@ -536,7 +625,7 @@ fn single_worker_mode_executes_every_action_once_without_overlap() {
             .contains(concat!(
                 "scheduler workers=1 cargo_jobs=1 active_peer_cargo_jobs=8 ",
                 "workspace_workers=1 action_count=13 ",
-                "deadline_scope=test-phase deadline_ms=300000 ",
+                "deadline_scope=test-phase inactivity_ms=300000 absolute_ms=357000 ",
                 "supervisor_inactivity_ms=90000 supervisor_absolute_ms=360000"
             ))
     );
@@ -561,13 +650,17 @@ fn zero_peer_budget_excludes_cold_setup_and_completes_test_phase_branches() {
     let runner = TimedRunner::new(delays, 0).with_prebuild_delay(prebuild_delay);
     let mut output = Vec::new();
 
-    verify_with_deadline(
+    verify_with_test_bounds(
         &runner,
         &mut output,
         Budget::from_observation(FIXTURE_CPU_COUNT, Some(0)),
         CancellationToken::new(),
         Arc::new(AtomicBool::new(false)),
-        Duration::from_millis(1_800),
+        super::TestPhaseBounds {
+            inactivity: Duration::from_millis(1_800),
+            absolute: Duration::from_millis(3_000),
+        },
+        PROGRESS_INTERVAL,
     )
     .expect("zero-peer fixture completes its test phase inside the bounded test window");
 
@@ -577,7 +670,7 @@ fn zero_peer_budget_excludes_cold_setup_and_completes_test_phase_branches() {
             "scheduler workers=3 cargo_jobs=8 active_peer_cargo_jobs=0 workspace_workers=6"
         )
     );
-    assert!(output.contains("deadline_scope=test-phase deadline_ms=1800"));
+    assert!(output.contains("deadline_scope=test-phase inactivity_ms=1800 absolute_ms=3000"));
     assert_line_order(
         &output,
         "stage=setup identity=\"native test and Canvas launcher prebuild (workspace-test setup)\"",
@@ -681,6 +774,43 @@ fn pressured_rebalance_overlaps_the_two_long_test_phase_branches() {
 }
 
 #[test]
+fn one_worker_distinct_test_progress_renews_inside_the_absolute_bound() {
+    let mut delays = VERIFY_ACTIONS
+        .iter()
+        .map(|action| (action.label(), Duration::from_millis(2)))
+        .collect::<BTreeMap<_, _>>();
+    delays.insert(BROWSER_LABEL, Duration::from_millis(160));
+    delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(160));
+    let runner = TimedRunner::new(delays, 0)
+        .with_prebuild_delay(Duration::from_millis(2))
+        .with_progress_interval(Duration::from_millis(20));
+    let mut output = Vec::new();
+
+    verify_with_test_bounds(
+        &runner,
+        &mut output,
+        Budget::fixture(1, 1, 8),
+        CancellationToken::new(),
+        Arc::new(AtomicBool::new(false)),
+        super::TestPhaseBounds {
+            inactivity: Duration::from_millis(80),
+            absolute: Duration::from_secs(1),
+        },
+        Duration::from_millis(50),
+    )
+    .expect("distinct test progress renews the one-worker test lease");
+
+    let output = String::from_utf8(output).expect("scheduler output is UTF-8");
+    assert!(output.contains("stage=advance ordinal=9/13"));
+    assert!(output.contains("stage=advance ordinal=8/13"));
+    assert!(output.contains("test-lease generation="));
+    assert!(output.contains("reason=action-"));
+    assert!(!output.contains("test-lease-expired"));
+    assert_eq!(runner.peak.load(Ordering::Acquire), 1);
+    assert_exactly_once(&runner.calls());
+}
+
+#[test]
 fn unreadable_post_setup_pressure_uses_the_single_worker_degraded_mode() {
     let runner = TimedRunner::uniform(Duration::from_millis(2))
         .with_prebuild_delay(Duration::from_millis(2));
@@ -710,7 +840,7 @@ fn unreadable_post_setup_pressure_uses_the_single_worker_degraded_mode() {
 }
 
 #[test]
-fn end_to_end_deadline_cancels_the_graph_before_another_action_starts() {
+fn end_to_end_absolute_deadline_cancels_before_another_action_starts() {
     let runner = TimedRunner::uniform(Duration::from_millis(10));
     let mut output = Vec::new();
     let error = verify_with_deadline(
@@ -724,14 +854,14 @@ fn end_to_end_deadline_cancels_the_graph_before_another_action_starts() {
     .expect_err("the complete verifier deadline refuses further work");
 
     assert!(matches!(error, VerifyError::TimedOut { .. }));
-    let expected = VERIFY_ACTIONS[..=6]
+    let expected = VERIFY_ACTIONS[..=3]
         .iter()
-        .chain(&VERIFY_ACTIONS[8..=8])
         .map(|action| action.label())
         .collect::<Vec<_>>();
     assert_eq!(runner.calls(), expected);
     let output = String::from_utf8(output).expect("deadline output is UTF-8");
-    assert!(output.contains("deadline_scope=test-phase deadline_ms=1"));
+    assert!(output.contains("deadline_scope=test-phase inactivity_ms=1 absolute_ms=1"));
+    assert!(output.contains("test-lease-expired generation=1 reason=absolute"));
     assert!(output.contains("primary_ordinal=deadline"));
 }
 
@@ -751,10 +881,12 @@ fn production_scheduler_declares_five_minute_test_and_six_minute_absolute_bounds
     let output = String::from_utf8(output).expect("scheduler output is UTF-8");
 
     assert!(output.contains(&format!(
-        "deadline_scope=test-phase deadline_ms={}",
-        FULL_VERIFIER_TEST_RUNTIME.as_millis()
+        "deadline_scope=test-phase inactivity_ms={} absolute_ms={}",
+        FULL_VERIFIER_TEST_BOUNDS.inactivity.as_millis(),
+        FULL_VERIFIER_TEST_BOUNDS.absolute.as_millis(),
     )));
     assert!(output.contains("supervisor_absolute_ms=360000"));
+    assert!(output.contains("test-lease generation=1 reason=workspace-prebuild-terminal"));
 }
 
 #[test]

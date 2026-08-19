@@ -121,7 +121,11 @@ where
         source.stream(),
         ACTION_PROCESS_BOUNDS.output_limit,
         FULL_VERIFIER_LIVE_QUEUE_CAPACITY,
-        Arc::new(OutputProgressObserver { progress, source }),
+        Arc::new(OutputProgressObserver {
+            progress,
+            source,
+            observed: Mutex::new(BTreeSet::new()),
+        }),
     )
     .map_err(|error| RunError::Launch(io::Error::new(io::ErrorKind::InvalidInput, error)))?;
     let running = sill::spawn_observed(spec, observation).map_err(RunError::Launch)?;
@@ -129,14 +133,39 @@ where
     command_run_from_outcome(label, &outcome)
 }
 
-struct OutputProgressObserver {
+pub(super) struct OutputProgressObserver {
     progress: ActionProgress,
     source: ProgressSource,
+    observed: Mutex<BTreeSet<Vec<u8>>>,
+}
+
+impl OutputProgressObserver {
+    #[cfg(test)]
+    pub(super) fn fixture(source: ProgressSource) -> Self {
+        Self {
+            progress: Arc::new(|| {}),
+            source,
+            observed: Mutex::new(BTreeSet::new()),
+        }
+    }
+
+    pub(super) fn newly_advances(&self, record: &[u8]) -> Result<bool, ObserveError> {
+        if !self.source.advances(record) {
+            return Ok(false);
+        }
+        if matches!(self.source, ProgressSource::CargoStderr) {
+            return Ok(true);
+        }
+        self.observed
+            .lock()
+            .map_err(|error| ObserveError::new(error.to_string()))
+            .map(|mut observed| observed.insert(record.to_vec()))
+    }
 }
 
 impl RecordObserver for OutputProgressObserver {
     fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
-        if self.source.advances(record.bytes()) {
+        if self.newly_advances(record.bytes())? {
             (self.progress)();
         }
         Ok(())
@@ -165,8 +194,11 @@ impl ProgressSource {
         match self {
             Self::CargoStderr => true,
             #[cfg(not(target_arch = "wasm32"))]
-            Self::WorkspaceStdout => !record.starts_with(b"[rust-test] stage=progress "),
-            Self::BrowserStdout => !record.starts_with(b"canvas shard progress "),
+            Self::WorkspaceStdout => {
+                record.starts_with(b"[rust-test] stage=start ")
+                    || record.starts_with(b"[rust-test] stage=terminal ")
+            }
+            Self::BrowserStdout => record.starts_with(b"CANVAS-SHARD {\"kind\":\"scenario-end\""),
         }
     }
 }
