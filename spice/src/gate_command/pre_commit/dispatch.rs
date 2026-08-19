@@ -115,8 +115,9 @@ pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, 
             fault: false,
         });
     }
-    let (packaged, full_verifier, dispatch) = packaged(progress, dispatch, &source, admitted)
-        .map_err(|failure| with_full_verifier_miss(failure, miss.as_ref()))?;
+    let (packaged, full_verifier, mut dispatch) =
+        packaged(progress, dispatch, &source, admitted)
+            .map_err(|failure| with_full_verifier_miss(failure, miss.as_ref()))?;
 
     let configured = if dispatch.has_configured() {
         write_phase(

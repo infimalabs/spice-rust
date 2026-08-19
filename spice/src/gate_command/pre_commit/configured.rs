@@ -358,11 +358,66 @@ impl DispatchPolicy {
     }
 }
 
+/// Semantic staged authority retained across configured pre-commit handoffs.
+struct DispatchAuthority {
+    source: Digest,
+    selected_paths: Vec<String>,
+    staged: gate::tree::StagedAuthority,
+}
+
+impl DispatchAuthority {
+    fn capture(anchor: &spice::gate::PreparedArm<'_>) -> Result<Self, ConfiguredFailure> {
+        let staged = anchor.staged_authority().cloned().ok_or_else(|| {
+            ConfiguredFailure::fault(
+                "gate::pre-commit-staged-source-refused",
+                "configured pre-commit captured a non-staged authority",
+            )
+        })?;
+        Ok(Self {
+            source: anchor.source().clone(),
+            selected_paths: anchor.changes().to_vec(),
+            staged,
+        })
+    }
+
+    fn movement(&self, observed: &Self) -> Option<String> {
+        let staged = self.staged.differences(&observed.staged);
+        let mut movement = Vec::new();
+        if staged.contains(&gate::tree::StagedAuthorityDifference::Tree) {
+            movement.push("staged-tree");
+        }
+        if self.selected_paths != observed.selected_paths {
+            movement.push("selected-paths");
+        }
+        if staged.contains(&gate::tree::StagedAuthorityDifference::RenameBase) {
+            movement.push("rename-base");
+        }
+        if staged.contains(&gate::tree::StagedAuthorityDifference::RenameLineage) {
+            movement.push("rename-lineage");
+        }
+        if self.source != observed.source {
+            movement.push("source-digest");
+        }
+        if movement.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "movement={} expected_source={} observed_source={} expected_selected_paths={} observed_selected_paths={}",
+            json(&movement),
+            self.source,
+            observed.source,
+            json(&self.selected_paths),
+            json(&observed.selected_paths),
+        ))
+    }
+}
+
 /// One typed dispatch policy and one staged source retained for the whole battery.
 pub(super) struct Dispatch {
     repository: Repository,
     policy: DispatchPolicy,
     anchor: spice::gate::PreparedArm<'static>,
+    authority: DispatchAuthority,
 }
 
 impl Dispatch {
@@ -391,10 +446,12 @@ impl Dispatch {
             })?;
         let policy = DispatchPolicy::load(&repository)?;
         policy.verify_selected(anchor.root())?;
-        let dispatch = Self {
+        let authority = DispatchAuthority::capture(&anchor)?;
+        let mut dispatch = Self {
             repository,
             policy,
             anchor,
+            authority,
         };
         dispatch.verify()?;
         Ok(dispatch)
@@ -417,57 +474,81 @@ impl Dispatch {
     }
 
     pub(super) fn source(&self) -> &Digest {
-        self.anchor.source()
+        &self.authority.source
     }
 
     pub(super) fn changes(&self) -> &[String] {
-        self.anchor.changes()
+        &self.authority.selected_paths
     }
 
-    pub(super) fn verify(&self) -> Result<(), ConfiguredFailure> {
-        self.anchor.verify_source().map_err(|error| {
+    pub(super) fn verify(&mut self) -> Result<(), ConfiguredFailure> {
+        match self.anchor.verify_refreshable_source().map_err(|error| {
             ConfiguredFailure::refusal(
                 "gate::pre-commit-staged-source-moved",
                 format!("source={}; {}", self.source(), error.detail()),
             )
-        })?;
+        })? {
+            gate::tree::RefreshableSourceState::Current => {}
+            gate::tree::RefreshableSourceState::IndexChanged => {
+                self.refresh_anchor("index-representation-refresh")?;
+            }
+        }
         self.policy.verify_current(&self.repository)
+    }
+
+    fn refresh_anchor(&mut self, trigger: &str) -> Result<(), ConfiguredFailure> {
+        let anchor = spice::gate::prepare_arm(gate::Selector::staged(), gate::GateId::Staging)
+            .map_err(|error| {
+                ConfiguredFailure::refusal(
+                    "gate::pre-commit-staged-source-moved",
+                    format!(
+                        "trigger={}; staged semantic recapture refused: {}",
+                        json(trigger),
+                        error.detail(),
+                    ),
+                )
+            })?;
+        let observed = DispatchAuthority::capture(&anchor)?;
+        if let Some(movement) = self.authority.movement(&observed) {
+            return Err(ConfiguredFailure::refusal(
+                "gate::pre-commit-staged-source-moved",
+                format!("trigger={}; {movement}", json(trigger)),
+            ));
+        }
+        self.policy.verify_selected(anchor.root())?;
+        self.anchor = anchor;
+        Ok(())
     }
 
     pub(super) fn rebind(self, expected: &Digest) -> Result<Self, ConfiguredFailure> {
         let Self {
             repository,
             policy,
-            anchor: _,
+            anchor,
+            authority,
         } = self;
-        let anchor = spice::gate::prepare_arm(gate::Selector::staged(), gate::GateId::Staging)
-            .map_err(|error| {
-                ConfiguredFailure::refusal(
-                    "gate::pre-commit-staged-source-refused",
-                    error.to_string(),
-                )
-            })?;
-        if anchor.source() != expected {
+        if &authority.source != expected {
             return Err(ConfiguredFailure::refusal(
                 "gate::pre-commit-staged-source-moved",
                 format!(
-                    "dispatcher source {expected} differs from rebound source {}",
-                    anchor.source(),
+                    "dispatcher source {expected} differs from retained source {}",
+                    authority.source,
                 ),
             ));
         }
-        policy.verify_selected(anchor.root())?;
-        let rebound = Self {
+        let mut rebound = Self {
             repository,
             policy,
             anchor,
+            authority,
         };
+        rebound.refresh_anchor("battery-handoff")?;
         rebound.verify()?;
         Ok(rebound)
     }
 
     pub(super) fn execute_configured(
-        &self,
+        &mut self,
         runtime: Duration,
         cancellation: Cancellation,
     ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
@@ -475,7 +556,7 @@ impl Dispatch {
     }
 
     pub(super) fn execute_resolution_configured(
-        &self,
+        &mut self,
         runtime: Duration,
         cancellation: Cancellation,
     ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
@@ -483,7 +564,7 @@ impl Dispatch {
     }
 
     fn execute_configured_mode(
-        &self,
+        &mut self,
         runtime: Duration,
         cancellation: Cancellation,
         mode: ExecutionMode,
@@ -505,15 +586,16 @@ impl Dispatch {
             ));
         }
         let source = self.source().clone();
-        let paths = self.anchor.changes().to_vec();
+        let paths = self.authority.selected_paths.clone();
         let root = self.repository.worktree_root().to_path_buf();
+        let commands = self.policy.commands.clone();
         let mut verify = || {
             self.verify()?;
             self.policy.require_approved(&self.repository)
         };
         verify()?;
         execute_steps(
-            &self.policy.commands,
+            &commands,
             &source,
             &paths,
             &root,

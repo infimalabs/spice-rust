@@ -337,10 +337,23 @@ impl BatteryCapture<'_> {
         self.executor.verify_source()
     }
 
+    /// Preserve index movement as a signal for a reservation-scoped semantic recapture.
+    pub fn verify_refreshable_source(
+        &self,
+    ) -> Result<crate::tree::RefreshableSourceState, BatteryError> {
+        self.executor.verify_refreshable_source()
+    }
+
     /// Every regular path retained by this exact selected source.
     #[must_use]
     pub fn paths(&self) -> &[String] {
         self.executor.paths()
+    }
+
+    /// Canonical staged entries and their exact rename lineage, when staged.
+    #[must_use]
+    pub fn staged_authority(&self) -> Option<&crate::tree::StagedAuthority> {
+        self.executor.staged_authority()
     }
 
     /// Tracked generated-path selectors captured from this selected tree.

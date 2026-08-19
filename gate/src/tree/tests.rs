@@ -6,7 +6,7 @@ use std::sync::{Mutex, PoisonError};
 
 use sill::Acquisition;
 
-use super::{Selector, TreeError};
+use super::{Selector, StagedAuthorityDifference, TreeError};
 
 /// Keep fixture Git child lifetimes disjoint under translated amd64 execution.
 static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
@@ -91,6 +91,45 @@ fn staged_selection_carries_renames_from_its_captured_index() {
 
     assert_eq!(selected.renames().destination("old.txt"), "new.txt");
     assert!(selected.publishes_state());
+}
+
+#[test]
+fn staged_authority_distinguishes_exact_rename_base_and_lineage() {
+    let repository = Repository::new("staged-authority-lineage");
+    repository.write("old.txt", b"selected\n");
+    repository.commit("first rename base");
+    let first = Selector::staged()
+        .materialize(&repository.root)
+        .expect("capture the first staged authority");
+    repository.git(&["commit", "--allow-empty", "-q", "-m", "second rename base"]);
+    let second = Selector::staged()
+        .materialize(&repository.root)
+        .expect("capture an unchanged tree from a different rename base");
+    assert_eq!(
+        first
+            .staged_authority()
+            .expect("first selection is staged")
+            .differences(
+                second
+                    .staged_authority()
+                    .expect("second selection is staged"),
+            ),
+        [StagedAuthorityDifference::RenameBase],
+    );
+
+    repository.git(&["mv", "old.txt", "new.txt"]);
+    let renamed = Selector::staged()
+        .materialize(&repository.root)
+        .expect("capture staged rename lineage");
+    let authority = renamed
+        .staged_authority()
+        .expect("renamed selection is staged");
+    let mut without_lineage = authority.clone();
+    without_lineage.renames = Default::default();
+    assert_eq!(
+        authority.differences(&without_lineage),
+        [StagedAuthorityDifference::RenameLineage],
+    );
 }
 
 #[test]

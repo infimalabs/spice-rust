@@ -133,6 +133,25 @@ impl PreparedArm<'_> {
             .map_err(|error| RunError::refusal("gate::source-moved", error))
     }
 
+    /// Check a staged source while preserving index movement for a semantic recapture.
+    ///
+    /// This is narrower than [`Self::verify_source`]: revision and rename-base
+    /// movement still refuse, while an index seal failure is returned as a
+    /// typed state for the enclosing pre-commit reservation to reacquire.
+    pub fn verify_refreshable_source(
+        &self,
+    ) -> Result<::gate::tree::RefreshableSourceState, RunError> {
+        self.capture
+            .verify_refreshable_source()
+            .map_err(|error| RunError::refusal("gate::source-moved", error))
+    }
+
+    /// Canonical staged entries and exact rename lineage retained by this arm.
+    #[must_use]
+    pub fn staged_authority(&self) -> Option<&::gate::tree::StagedAuthority> {
+        self.capture.staged_authority()
+    }
+
     /// Execute the one canonical focused arm this capture selected.
     ///
     /// # Errors
