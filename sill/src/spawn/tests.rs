@@ -78,6 +78,14 @@ fn one_bounded_stdin_write_is_closed_before_event_driven_completion() {
 
     assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
     assert_eq!(
+        outcome.usage().cpu_time(),
+        outcome
+            .usage()
+            .user_cpu()
+            .saturating_add(outcome.usage().system_cpu()),
+        "the public total retains both kernel-accounted components"
+    );
+    assert_eq!(
         outcome.stdout().expect("stdout captured").bytes(),
         b"received:one complete request"
     );

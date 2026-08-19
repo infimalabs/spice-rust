@@ -162,6 +162,7 @@ fn outer_timeout_names_the_absolute_bound_and_preserves_primary_child_evidence()
             },
             stdout: b"primary_ordinal=8 interrupted=false cleanup_faults=0\n".to_vec(),
             stderr: b"terminated at the absolute process-tree deadline\n".to_vec(),
+            usage: Some(sill::ProcessUsage::default()),
         })),
         &mut output,
         false,

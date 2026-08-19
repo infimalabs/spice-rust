@@ -20,7 +20,8 @@ pub use observe::{
     OutputStream, RecordBoundary, RecordObserver,
 };
 pub use spawn::{
-    CapturedOutput, Completion, Running, WaitError, WaitOutcome, WaitStep, spawn, spawn_observed,
+    CapturedOutput, Completion, ProcessUsage, Running, WaitError, WaitOutcome, WaitStep, spawn,
+    spawn_observed,
 };
 pub use spec::{
     Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,

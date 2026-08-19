@@ -1182,6 +1182,7 @@ fn deterministic_terminals_survive_out_of_order_completion() {
 
 #[rustfmt::skip]
 mod benchmark;
+mod compute;
 
 fn benchmark_arguments(test: &str) -> [&str; 5] {
     [
