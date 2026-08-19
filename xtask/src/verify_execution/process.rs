@@ -281,14 +281,35 @@ fn wait_after_stop_request(
         }
     };
 
+    #[cfg(unix)]
+    let outcome = match descendants {
+        Some(mut descendants) => {
+            let root_terminal = AtomicBool::new(false);
+            let (outcome, descendant_reap) = thread::scope(|scope| {
+                let reaper = scope.spawn(|| {
+                    descendants.reap_while_root_terminates(
+                        bounds.grace,
+                        bounds.reap,
+                        bounds.output_drain,
+                        &root_terminal,
+                    )
+                });
+                let outcome = running.wait();
+                root_terminal.store(true, Ordering::Release);
+                (outcome, reaper.join())
+            });
+            match descendant_reap {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => faults.push(format!("descendant reap failed: {error}")),
+                Err(_) => faults.push("descendant reap worker panicked".to_owned()),
+            }
+            outcome
+        }
+        None => running.wait(),
+    };
+    #[cfg(not(unix))]
     let outcome = running.wait();
 
-    #[cfg(unix)]
-    if let Some(mut descendants) = descendants
-        && let Err(error) = descendants.reap(bounds.grace, bounds.reap)
-    {
-        faults.push(format!("descendant reap failed: {error}"));
-    }
     #[cfg(unix)]
     if !faults.is_empty() {
         if let Err(error) = outcome {

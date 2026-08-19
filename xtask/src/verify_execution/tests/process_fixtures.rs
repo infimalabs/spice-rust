@@ -334,6 +334,8 @@ pub(super) struct DetachedShardRunner {
     pub(super) root_pid_file: PathBuf,
     pub(super) detached_identity_file: PathBuf,
     detached_publication: FixturePublicationObserver,
+    owner_identity_file: Option<PathBuf>,
+    owner_publication: Option<FixturePublicationObserver>,
     test_executable: PathBuf,
 }
 
@@ -388,8 +390,29 @@ impl DetachedShardRunner {
             root_pid_file: fixture_pid_file("detached-shard-root"),
             detached_identity_file: fixture_pid_file("detached-shard-child"),
             detached_publication: FixturePublicationObserver::new("detached-shard"),
+            owner_identity_file: None,
+            owner_publication: None,
             test_executable: std::env::current_exe().expect("fixture test executable resolves"),
         }
+    }
+
+    pub(super) fn term_forking() -> Self {
+        Self {
+            root_pid_file: fixture_pid_file("term-fork-shard-root"),
+            detached_identity_file: fixture_pid_file("term-fork-shard-child"),
+            detached_publication: FixturePublicationObserver::new("term-fork-shard-child"),
+            owner_identity_file: Some(fixture_pid_file("term-fork-shard-owner")),
+            owner_publication: Some(FixturePublicationObserver::new("term-fork-shard-owner")),
+            test_executable: std::env::current_exe().expect("fixture test executable resolves"),
+        }
+    }
+
+    pub(super) fn owner_identity_file(&self) -> Option<&std::path::Path> {
+        self.owner_identity_file.as_deref()
+    }
+
+    pub(super) fn wait_for_detached_publication(&self) {
+        self.detached_publication.wait(&self.detached_identity_file);
     }
 }
 
@@ -398,6 +421,9 @@ impl Drop for DetachedShardRunner {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.root_pid_file);
         let _ = fs::remove_file(&self.detached_identity_file);
+        if let Some(owner_identity) = &self.owner_identity_file {
+            let _ = fs::remove_file(owner_identity);
+        }
     }
 }
 
@@ -522,7 +548,17 @@ impl Runner for DetachedShardRunner {
     }
 
     fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
-        self.detached_publication.wait(&self.detached_identity_file);
+        match (&self.owner_identity_file, &self.owner_publication) {
+            (Some(owner_identity), Some(owner_publication)) => {
+                owner_publication.wait(owner_identity);
+                assert!(
+                    !self.detached_identity_file.exists(),
+                    "late detached shard existed before cancellation"
+                );
+            }
+            (None, None) => self.detached_publication.wait(&self.detached_identity_file),
+            _ => panic!("TERM-fork fixture owner contract is partial"),
+        }
         Ok(BrowserRun {
             process: timed_command(true),
             completed: false,
@@ -543,11 +579,30 @@ impl Runner for DetachedShardRunner {
         jobs: usize,
         _: usize,
     ) -> Result<CommandRun, RunError> {
-        let fixture_contract = detached_fixture_contract(
-            &self.detached_identity_file,
-            self.detached_publication.path(),
-            5000,
-        );
+        let (fixture_test, fixture_environment, fixture_contract) =
+            match (&self.owner_identity_file, &self.owner_publication) {
+                (Some(owner_identity), Some(owner_publication)) => (
+                    TERM_FORK_WORKSPACE_SHARD_TEST,
+                    TERM_FORK_FIXTURE_CONTRACT_ENVIRONMENT,
+                    term_fork_fixture_contract(
+                        owner_identity,
+                        owner_publication.path(),
+                        &self.detached_identity_file,
+                        self.detached_publication.path(),
+                        5000,
+                    ),
+                ),
+                (None, None) => (
+                    DETACHED_WORKSPACE_SHARD_TEST,
+                    DETACHED_FIXTURE_CONTRACT_ENVIRONMENT,
+                    detached_fixture_contract(
+                        &self.detached_identity_file,
+                        self.detached_publication.path(),
+                        5000,
+                    ),
+                ),
+                _ => panic!("TERM-fork fixture owner contract is partial"),
+            };
         run_process(
             WORKSPACE_TEST_LABEL,
             "/bin/sh",
@@ -564,14 +619,11 @@ impl Runner for DetachedShardRunner {
             jobs,
             &[
                 ("ROOT_PID_FILE", self.root_pid_file.as_os_str()),
-                (
-                    DETACHED_FIXTURE_CONTRACT_ENVIRONMENT,
-                    std::ffi::OsStr::new(&fixture_contract),
-                ),
+                (fixture_environment, std::ffi::OsStr::new(&fixture_contract)),
                 ("TEST_EXECUTABLE", self.test_executable.as_os_str()),
                 (
                     "DETACHED_WORKSPACE_SHARD_TEST",
-                    std::ffi::OsStr::new(DETACHED_WORKSPACE_SHARD_TEST),
+                    std::ffi::OsStr::new(fixture_test),
                 ),
             ],
         )
