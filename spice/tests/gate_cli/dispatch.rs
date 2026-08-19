@@ -210,6 +210,123 @@ fn disabled_built_ins_probe_evidence_then_reach_only_the_configured_battery() {
 }
 
 #[test]
+fn full_verifier_lookup_refuses_a_moved_rename_base_with_the_same_staged_tree() {
+    let scratch = Scratch::new("evidence-lookup-rename-base");
+    let marker = scratch.path().join("configured-ran");
+    let repository = configured_command_repository(
+        "must not run after authority movement",
+        &[
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            "printf configured > \"$1\"".to_owned(),
+            "fixture".to_owned(),
+            marker.display().to_string(),
+        ],
+    );
+    grant_current_fixture_policy(&repository);
+    let staged_tree = git_stdout(repository.path(), &["write-tree"]);
+    let selected_paths = git_stdout(repository.path(), &["diff", "--cached", "--name-only"]);
+
+    let boundary = run_commit_worker_across_locked_evidence(&repository, || {
+        let head = String::from_utf8(git_stdout(repository.path(), &["rev-parse", "HEAD"]))
+            .expect("fixture HEAD is UTF-8");
+        let head_tree =
+            String::from_utf8(git_stdout(repository.path(), &["rev-parse", "HEAD^{tree}"]))
+                .expect("fixture HEAD tree is UTF-8");
+        let moved = String::from_utf8(git_stdout(
+            repository.path(),
+            &[
+                "commit-tree",
+                head_tree.trim(),
+                "-p",
+                head.trim(),
+                "-m",
+                "Move only the staged rename base",
+            ],
+        ))
+        .expect("moved fixture commit is UTF-8");
+        git(
+            repository.path(),
+            &["update-ref", "HEAD", moved.trim(), head.trim()],
+        );
+        assert_eq!(git_stdout(repository.path(), &["write-tree"]), staged_tree);
+        assert_eq!(
+            git_stdout(repository.path(), &["diff", "--cached", "--name-only"]),
+            selected_paths,
+        );
+    });
+
+    let failure = terminal_failure(&boundary);
+    assert_eq!(failure["reason"], "gate::pre-commit-staged-source-moved");
+    let detail = failure["detail"]
+        .as_str()
+        .expect("authority movement carries typed evidence");
+    assert!(
+        detail.contains("trigger=\"full-verifier-evidence-lookup\""),
+        "{detail}",
+    );
+    assert!(detail.contains(r#"movement=["rename-base"]"#), "{detail}");
+    assert!(
+        !marker.exists(),
+        "configured work ran after authority movement"
+    );
+}
+
+#[test]
+fn full_verifier_lookup_admits_a_semantic_equivalent_index_stat_refresh() {
+    let scratch = Scratch::new("evidence-lookup-index-refresh");
+    let marker = scratch.path().join("configured-ran");
+    let before_index = scratch.path().join("index.before");
+    let after_index = scratch.path().join("index.after");
+    let repository = configured_command_repository(
+        "run after semantic index refresh",
+        &[
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            "printf configured > \"$1\"".to_owned(),
+            "fixture".to_owned(),
+            marker.display().to_string(),
+        ],
+    );
+    grant_current_fixture_policy(&repository);
+    let staged_tree = git_stdout(repository.path(), &["write-tree"]);
+
+    let boundary = run_commit_worker_across_locked_evidence(&repository, || {
+        fs::copy(repository.path().join(".git/index"), &before_index)
+            .expect("copy pre-refresh index bytes");
+        let touched = fixture_command("/usr/bin/touch")
+            .args(["-t", "200101010101"])
+            .arg(repository.path().join("src/lib.rs"))
+            .output()
+            .expect("refresh fixture source timestamp");
+        assert!(
+            touched.status.success(),
+            "fixture touch failed: {}",
+            String::from_utf8_lossy(&touched.stderr),
+        );
+        git(repository.path(), &["update-index", "--refresh"]);
+        fs::copy(repository.path().join(".git/index"), &after_index)
+            .expect("copy refreshed index bytes");
+        assert_ne!(
+            fs::read(&before_index).expect("read pre-refresh index bytes"),
+            fs::read(&after_index).expect("read refreshed index bytes"),
+            "the fixture did not reproduce an index representation refresh",
+        );
+        assert_eq!(git_stdout(repository.path(), &["write-tree"]), staged_tree);
+    });
+
+    assert_eq!(
+        boundary.terminal.first(),
+        Some(&b'R'),
+        "semantic refresh did not admit: {boundary:?}",
+    );
+    assert_eq!(
+        fs::read_to_string(marker).expect("read configured execution marker"),
+        "configured",
+    );
+}
+
+#[test]
 fn configured_hook_admits_a_semantic_equivalent_index_stat_refresh() {
     let scratch = Scratch::new("configured-index-refresh");
     let before_index = scratch.path().join("index.before");
@@ -611,6 +728,118 @@ fn recursion_marker_refuses_public_and_hidden_dispatcher_entrypoints() {
             .expect("read recursion terminal")
             .is_empty()
     );
+}
+
+fn run_commit_worker_across_locked_evidence(
+    repository: &GateRepository,
+    while_locked: impl FnOnce(),
+) -> WorkerBoundary {
+    let discovered = spice::repository::Repository::discover(repository.path())
+        .expect("discover locked-evidence fixture");
+    let state = discovered
+        .admit_state()
+        .expect("admit locked-evidence fixture state");
+    fs::create_dir_all(state.locks()).expect("create fixture lock directory");
+    fs::create_dir_all(
+        state
+            .full_verifier_evidence()
+            .parent()
+            .expect("evidence path has a parent"),
+    )
+    .expect("create fixture evidence directory");
+    fs::write(
+        state.full_verifier_evidence(),
+        b"malformed fixture evidence",
+    )
+    .expect("publish fixture evidence document");
+    let lock = sill::LockFile::new(
+        sill::LockName::new("full-verifier-evidence").expect("valid fixture lock name"),
+        state.locks().join("full-verifier-evidence"),
+    );
+    let possession = lock.acquire().expect("hold fixture evidence lookup");
+
+    let scratch = Scratch::new("locked-evidence-worker");
+    let progress = scratch.path().join("progress.jsonl");
+    let terminal = scratch.path().join("terminal.bin");
+    fs::write(&progress, []).expect("create worker progress file");
+    fs::write(&terminal, []).expect("create worker terminal file");
+    let mut command = fixture_command(env!("CARGO_BIN_EXE_spice"));
+    command
+        .arg("__gate-pre-commit-worker")
+        .arg(&progress)
+        .arg(&terminal)
+        .arg(r#"{"version":1}"#)
+        .current_dir(repository.path())
+        .env_remove(PRE_COMMIT_PATHS)
+        .env_remove(PRE_COMMIT_SOURCE)
+        .env_remove(steer::hook::INBOX)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = FixtureChild::new(command.spawn().expect("launch locked-evidence worker"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let observed = fs::read_to_string(&progress).expect("read worker progress");
+        if observed.contains(r#"{"phase":"test-selection"}"#) {
+            break;
+        }
+        assert!(
+            child
+                .running()
+                .try_wait()
+                .expect("probe locked-evidence worker")
+                .is_none(),
+            "worker exited before reaching evidence lookup: {observed}",
+        );
+        assert!(
+            Instant::now() < deadline,
+            "worker did not reach the evidence lookup: {observed}",
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    while_locked();
+    drop(possession);
+    let output = child.wait_with_output();
+    assert!(
+        output.status.success(),
+        "worker failed before publishing its boundary: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    WorkerBoundary {
+        progress: fs::read_to_string(progress).expect("read worker progress"),
+        terminal: fs::read(terminal).expect("read worker terminal"),
+    }
+}
+
+struct FixtureChild(Option<std::process::Child>);
+
+impl FixtureChild {
+    fn new(child: std::process::Child) -> Self {
+        Self(Some(child))
+    }
+
+    fn running(&mut self) -> &mut std::process::Child {
+        self.0.as_mut().expect("fixture child is still running")
+    }
+
+    fn wait_with_output(&mut self) -> std::process::Output {
+        self.0
+            .take()
+            .expect("fixture child is still running")
+            .wait_with_output()
+            .expect("join locked-evidence worker")
+    }
+}
+
+impl Drop for FixtureChild {
+    fn drop(&mut self) {
+        let Some(child) = self.0.as_mut() else {
+            return;
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 fn dispatch_repository(builtins: Option<bool>) -> GateRepository {

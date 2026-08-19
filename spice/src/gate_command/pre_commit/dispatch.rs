@@ -87,8 +87,7 @@ pub(super) fn dispatch_resolution(
 pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, WorkerFailure> {
     write_phase(progress, &WorkerPhase::Policy).map_err(worker_io_failure)?;
     let initial = configured::Dispatch::capture().map_err(configured_failure)?;
-    let expected_source = initial.source().clone();
-    drop(initial);
+    let expected_authority = initial.into_authority();
     write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
     let (admitted, miss) = match full_verifier_evidence()? {
         spice::gate::FullVerifierEvidenceAdmission::Admitted(admitted) => (Some(*admitted), None),
@@ -105,16 +104,10 @@ pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, 
         }
     };
     let dispatch = configured::Dispatch::capture().map_err(configured_failure)?;
+    dispatch
+        .verify_authority(&expected_authority, "full-verifier-evidence-lookup")
+        .map_err(configured_failure)?;
     let source = dispatch.source().clone();
-    if source != expected_source {
-        return Err(WorkerFailure {
-            reason: "gate::pre-commit-staged-source-moved".to_owned(),
-            detail: format!(
-                "initial dispatcher source {expected_source} differs from rebound source {source}",
-            ),
-            fault: false,
-        });
-    }
     let (packaged, full_verifier, mut dispatch) =
         packaged(progress, dispatch, &source, admitted)
             .map_err(|failure| with_full_verifier_miss(failure, miss.as_ref()))?;

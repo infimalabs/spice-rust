@@ -359,7 +359,7 @@ impl DispatchPolicy {
 }
 
 /// Semantic staged authority retained across configured pre-commit handoffs.
-struct DispatchAuthority {
+pub(super) struct DispatchAuthority {
     source: Digest,
     selected_paths: Vec<String>,
     staged: gate::tree::StagedAuthority,
@@ -479,6 +479,24 @@ impl Dispatch {
 
     pub(super) fn changes(&self) -> &[String] {
         &self.authority.selected_paths
+    }
+
+    pub(super) fn into_authority(self) -> DispatchAuthority {
+        self.authority
+    }
+
+    pub(super) fn verify_authority(
+        &self,
+        expected: &DispatchAuthority,
+        trigger: &str,
+    ) -> Result<(), ConfiguredFailure> {
+        let Some(movement) = expected.movement(&self.authority) else {
+            return Ok(());
+        };
+        Err(ConfiguredFailure::refusal(
+            "gate::pre-commit-staged-source-moved",
+            format!("trigger={}; {movement}", json(trigger)),
+        ))
     }
 
     pub(super) fn verify(&mut self) -> Result<(), ConfiguredFailure> {
