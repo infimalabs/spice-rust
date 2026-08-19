@@ -44,9 +44,9 @@ struct EnvironmentPolicy {
 /// tree. The generated-hook process fixture contributes three private log and
 /// exit-control names, and the installed pre-commit launcher contributes its
 /// private appliance marker. Those references oblige the ledger to account all
-/// twenty original names. Compiler-receipt admission also observes four
+/// twenty original names. Compiler-receipt admission also observes six
 /// operational launcher names which remain outside the typed product-variable
-/// vocabulary. All twenty-four are named here rather than added to [`SpiceVariable`],
+/// vocabulary. All twenty-six are named here rather than added to [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
 /// would claim ownership Spice does not have.
 ///
@@ -74,7 +74,9 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "SPICE_NATIVE_SHELL",                   // env-policy: allow
     "SPICE_PROOF",                          // env-policy: allow
     "SPICE_RUNTIME_PYTHON",                 // env-policy: allow
+    "SPICE_SELFEXEC_ROOT",                  // env-policy: allow
     "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE", // env-policy: allow
+    "SPICE_STAGED_PATHS",                   // env-policy: allow
     "SPICE_VISIBLE_PROG",                   // env-policy: allow
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",  // env-policy: allow
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",   // env-policy: allow

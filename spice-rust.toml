@@ -102,7 +102,7 @@ test_engines = ["cargo-workspace"]
 # private writable scratch so that isolation remains valid on a read-only proof
 # host.
 #
-# Nine foreign environment names are admitted here. Rust's configured-command
+# Twenty-six foreign environment names are admitted here. Rust's configured-command
 # executor strips Git's three local-environment names before it execs an exact
 # configured argv, and the hooks fixture exports exactly those three to prove
 # the child sees none of them. The Git shadow writes three more, and it is
@@ -113,17 +113,20 @@ test_engines = ["cargo-workspace"]
 # own system config path. The hygiene acquisition fixture fixes the seventh,
 # `TMPDIR`, at its own writable scratch. The verifier writes the eighth to pass
 # the Canvas battery its binary inside that family's isolated Cargo root. Spice
-# owns none of these names and writes all of them. The ledger accounts what the
-# tree references rather than what it invented, so they are counted here; the
+# owns none of these names; the tree either writes or deliberately observes
+# them. The ledger accounts what the tree references rather than what it
+# invented, so they are counted here; the
 # shadow's indexed
 # `GIT_CONFIG_KEY_` and `GIT_CONFIG_VALUE_` pairs are not, because a ledger
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the typed Spice variables, so these fifteen are the
+# again. Doctor reports only the typed Spice variables, so these twenty-six are the
 # difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
 # rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
-# retained only as coexistence sentinels.
+# retained only as coexistence sentinels. Its development bridge's self-exec
+# root and staged-path handoff are likewise observed operational context, not
+# variables this runtime owns.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
@@ -166,7 +169,9 @@ env_names = [
     "SPICE_RS_PRE_COMMIT_PATHS",
     "SPICE_RS_PRE_COMMIT_SOURCE",
     "SPICE_RUNTIME_PYTHON",
+    "SPICE_SELFEXEC_ROOT",
     "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE",
+    "SPICE_STAGED_PATHS",
     "SPICE_VISIBLE_PROG",
     # Selected-tree tests receive these workspace-test fixture authorities.
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",
