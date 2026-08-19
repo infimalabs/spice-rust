@@ -145,6 +145,67 @@ fn verifier_streams_progress_before_exit_and_emits_every_final_byte_once() {
     assert_full_verifier_action_trace(&programs, &fixture.repository, &process_output);
 }
 
+#[test]
+fn verifier_refuses_late_worktree_and_index_divergence_before_publication() {
+    for (label, stage_mutation) in [("worktree", false), ("index", true)] {
+        let fixture = Fixture::new();
+        let programs = install_full_verifier_programs(&fixture);
+        let entered = fixture.root.join(format!("{label}-rustfmt-entered"));
+        let release = fixture.root.join(format!("{label}-rustfmt-release"));
+        install_held_rustfmt(&programs.directory, &entered, &release);
+
+        let child = Command::new(fixture.xtask())
+            .arg("verify")
+            .current_dir(&fixture.repository)
+            .env(PROCESS_PATH, &programs.directory)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("launch verifier held across a source mutation");
+        wait_for_file(&entered);
+        fs::write(
+            fixture.repository.join("src/lib.rs"),
+            format!("pub fn fixture() {{ let _late_{label}_mutation = true; }}\n"),
+        )
+        .expect("move the live verifier source");
+        if stage_mutation {
+            git(&fixture.repository, &["add", "src/lib.rs"]);
+        }
+        fs::write(&release, b"release\n").expect("release the held formatter action");
+        let output = child
+            .wait_with_output()
+            .expect("wait for the source-bound verifier");
+
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{label}: {}",
+            streams(&output)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let expected = if stage_mutation {
+            "announced staged source"
+        } else {
+            "differs from the announced staged index"
+        };
+        assert!(
+            stderr.contains(expected),
+            "{label} divergence produced the wrong refusal: {}",
+            streams(&output),
+        );
+        let repository = spice::repository::Repository::discover(&fixture.repository)
+            .expect("rediscover divergence fixture");
+        assert!(
+            !repository
+                .admit_state()
+                .expect("admit divergence fixture state paths")
+                .full_verifier_evidence()
+                .exists(),
+            "{label} divergence acquired canonical full-verifier evidence",
+        );
+    }
+}
+
 fn install_held_rustfmt(programs: &Path, entered: &Path, release: &Path) {
     fs::remove_file(programs.join("rustfmt")).expect("remove the real rustfmt fixture symlink");
     executable(
@@ -175,16 +236,38 @@ fn install_held_rustfmt(programs: &Path, entered: &Path, release: &Path) {
 fn assert_streamed_verifier(first: &[u8], was_running: bool, output: &std::process::Output) {
     let first = String::from_utf8_lossy(first);
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let announced = first
+        .trim_end()
+        .strip_prefix("[verify] staged-source digest=")
+        .expect("the exact staged source is the first live verifier record");
+    assert_eq!(
+        announced.len(),
+        64,
+        "unexpected staged digest: {announced:?}"
+    );
     assert!(
-        first.starts_with("[verify] scheduler workers="),
-        "unexpected first live record: {first:?}"
+        announced
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        "staged source announcement is not a canonical digest: {announced:?}",
     );
     assert!(
         was_running,
         "the first record was buffered until process exit"
     );
     assert!(output.status.success(), "{}", streams(output));
+    assert_eq!(stdout.matches("[verify] staged-source digest=").count(), 1);
     assert_eq!(stdout.matches("[verify] scheduler workers=").count(), 1);
+    let battery = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|document| document.get("report_bytes").is_some())
+        .expect("full verifier emits its admitted battery identity");
+    assert_eq!(
+        battery["source"].as_str(),
+        Some(announced),
+        "the admitted battery does not name the announced staged source",
+    );
     assert_eq!(stdout.matches("fixture-action-output").count(), 1);
     assert_eq!(
         stdout
@@ -832,6 +915,8 @@ impl Fixture {
             ),
         )
         .expect("write verifier fixture Cargo manifest");
+        fs::write(repository.join(".gitignore"), "/dist/\n/target/\n")
+            .expect("ignore verifier-owned fixture build outputs");
         fs::create_dir(repository.join("app")).expect("create verifier fixture app directory");
         fs::write(repository.join("app/index.html"), "<!doctype html>\n")
             .expect("write verifier fixture Canvas entry point");

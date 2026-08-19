@@ -17,6 +17,7 @@ use spice::gate::{
     inspect_full_verifier_evidence, prepare_strict,
 };
 use spice::repository::Repository;
+use wire::{Digest, Domain};
 
 const ARCHIVE_BUNDLE_NAME_BYTES: usize = 64 + ".json".len();
 const ARCHIVE_CONTAINER_MAGIC: &[u8; 8] = b"SPVARC\0\0";
@@ -218,8 +219,15 @@ fn publish_concurrent_verifier(
     battery: &BatteryReceipt,
 ) -> FullVerifierEvidence {
     env::set_current_dir(worktree).expect("enter publishing worktree");
-    let evidence = FullVerifierEvidence::mint(repository, 1, battery, compiler, prepared)
-        .expect("publish captured state transaction");
+    let evidence = FullVerifierEvidence::mint(
+        repository,
+        1,
+        prepared.source(),
+        battery,
+        compiler,
+        prepared,
+    )
+    .expect("publish captured state transaction");
     evidence
         .publish(repository)
         .expect("publish verifier evidence");
@@ -803,11 +811,26 @@ fn publish_producer_evidence_with_state_removal(
             })
             .collect::<Vec<_>>(),
     );
+    let unintended = Digest::compute(Domain::GateReceipt, b"unannounced staged source");
+    let mismatch =
+        FullVerifierEvidence::mint(repository, 1, &unintended, &battery, &compiler, &prepared)
+            .expect_err("an unannounced source cannot mint full-verifier evidence");
+    assert!(
+        mismatch.contains("differs from admitted battery source"),
+        "unexpected announcement mismatch: {mismatch}",
+    );
     if let Some(state) = disappearing_state {
         fs::remove_file(state).expect("remove captured full-verifier gate state");
     }
-    let evidence = FullVerifierEvidence::mint(repository, 1, &battery, &compiler, &prepared)
-        .expect("mint complete full-verifier evidence");
+    let evidence = FullVerifierEvidence::mint(
+        repository,
+        1,
+        prepared.source(),
+        &battery,
+        &compiler,
+        &prepared,
+    )
+    .expect("mint complete full-verifier evidence");
     if let Some(state) = disappearing_state {
         assert!(
             state.is_file(),

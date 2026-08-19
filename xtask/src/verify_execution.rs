@@ -492,7 +492,15 @@ pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> 
     let cancellation = CancellationToken::new();
     let interrupted = Arc::new(AtomicBool::new(false));
     let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))?;
-    let runner = super::SystemRunner::prepare().map_err(VerifyError::Battery)?;
+    let runner =
+        super::SystemRunner::prepare(cancellation.clone()).map_err(VerifyError::Battery)?;
+    let announced_source = runner.announced_source().map_err(VerifyError::Battery)?;
+    writeln!(output, "[verify] staged-source digest={announced_source}")
+        .map_err(VerifyError::Output)?;
+    output.flush().map_err(VerifyError::Output)?;
+    runner
+        .verify_announced_source()
+        .map_err(VerifyError::Battery)?;
     let result = verify_with_rebalance(
         &runner,
         output,

@@ -175,6 +175,9 @@ const CANVAS_CHECK_LABEL: &str = "cargo check --locked --workspace --target wasm
 const NATIVE_CLIPPY_LABEL: &str = "cargo clippy --locked --workspace --all-targets -- -D warnings";
 const RESIDENT_BUILD_LABEL: &str =
     "cargo build --locked -p spice --bin spice (freshness reference and canvas resident)";
+#[cfg(not(target_arch = "wasm32"))]
+const STAGED_SOURCE_STATUS_LABEL: &str =
+    "git --no-optional-locks status --porcelain=v1 -z --untracked-files=all";
 const FULL_VERIFIER_WORKSPACE_TEST_CONCURRENCY_CAP: usize =
     gate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP;
 const WORKSPACE_TEST_LABEL: &str =
@@ -481,6 +484,7 @@ fn encode_battery_admission(report: &gate::BatteryReport) -> Result<Vec<u8>, Str
 #[cfg(not(target_arch = "wasm32"))]
 struct SystemState {
     battery: Option<spice::gate::PreparedBattery<'static>>,
+    announced_source: Option<wire::Digest>,
     compiler_contracts: Vec<Arc<gate::PreparedVerifierCompiler>>,
     compiler_processes: Vec<gate::VerifierCompilerProcessEvidence>,
     native_workspace: Option<gate::RustAnalysisWorkspace>,
@@ -492,39 +496,50 @@ struct SystemState {
 #[cfg(not(target_arch = "wasm32"))]
 struct SystemRunner {
     state: Mutex<SystemState>,
+    source_cancellation: CancellationToken,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl SystemRunner {
-    fn prepare() -> Result<Self, String> {
+    fn prepare(source_cancellation: CancellationToken) -> Result<Self, String> {
         let battery = spice::gate::prepare_strict(gate::Selector::staged())
             .map_err(|error| error.to_string())?;
-        Ok(Self::from_state(SystemState {
-            battery: Some(battery),
-            compiler_contracts: Vec::new(),
-            compiler_processes: Vec::new(),
-            native_workspace: None,
-            cargo_jobs: None,
-            full_verifier_battery_receipt: None,
-            full_verifier_evidence: None,
-        }))
+        let announced_source = battery.source().clone();
+        Ok(Self::from_state(
+            SystemState {
+                battery: Some(battery),
+                announced_source: Some(announced_source),
+                compiler_contracts: Vec::new(),
+                compiler_processes: Vec::new(),
+                native_workspace: None,
+                cargo_jobs: None,
+                full_verifier_battery_receipt: None,
+                full_verifier_evidence: None,
+            },
+            source_cancellation,
+        ))
     }
 
     fn standalone() -> Self {
-        Self::from_state(SystemState {
-            battery: None,
-            compiler_contracts: Vec::new(),
-            compiler_processes: Vec::new(),
-            native_workspace: None,
-            cargo_jobs: None,
-            full_verifier_battery_receipt: None,
-            full_verifier_evidence: None,
-        })
+        Self::from_state(
+            SystemState {
+                battery: None,
+                announced_source: None,
+                compiler_contracts: Vec::new(),
+                compiler_processes: Vec::new(),
+                native_workspace: None,
+                cargo_jobs: None,
+                full_verifier_battery_receipt: None,
+                full_verifier_evidence: None,
+            },
+            CancellationToken::new(),
+        )
     }
 
-    fn from_state(state: SystemState) -> Self {
+    fn from_state(state: SystemState, source_cancellation: CancellationToken) -> Self {
         Self {
             state: Mutex::new(state),
+            source_cancellation,
         }
     }
 
@@ -541,6 +556,81 @@ impl SystemRunner {
             CANVAS_APP_LABEL => Some(gate::VerifierCompilerStage::CanvasApp),
             _ => None,
         }
+    }
+
+    fn announced_source(&self) -> Result<wire::Digest, String> {
+        self.state
+            .lock()
+            .map_err(|error| format!("verifier state lock poisoned: {error}"))?
+            .announced_source
+            .clone()
+            .ok_or_else(|| "full verifier has no announced staged source".to_owned())
+    }
+
+    fn verify_announced_capture(&self) -> Result<(), String> {
+        let state = self.state().map_err(|error| match error {
+            RunError::Launch(error) => error.to_string(),
+            RunError::Cleanup(detail) => detail,
+        })?;
+        let announced = state
+            .announced_source
+            .as_ref()
+            .ok_or_else(|| "full verifier has no announced staged source".to_owned())?;
+        let prepared = state
+            .battery
+            .as_ref()
+            .ok_or_else(|| "full verifier battery capture is unavailable".to_owned())?;
+        if prepared.source() != announced {
+            return Err(format!(
+                "full verifier prepared source {} differs from announced staged source {announced}",
+                prepared.source(),
+            ));
+        }
+        prepared
+            .verify_source()
+            .map_err(|error| format!("announced staged source {announced} moved: {error}"))
+    }
+
+    fn verify_announced_source(&self) -> Result<(), String> {
+        self.verify_announced_capture()?;
+        let status = verify_execution::run_process(
+            STAGED_SOURCE_STATUS_LABEL,
+            "git",
+            [
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
+            &self.source_cancellation,
+            1,
+            &[],
+        )
+        .map_err(|error| match error {
+            RunError::Launch(error) => {
+                format!("inspect announced staged source worktree: {error}")
+            }
+            RunError::Cleanup(detail) => detail,
+        })?;
+        let status = match status {
+            CommandRun::Exited(output) if output.status.success => output.stdout,
+            CommandRun::Exited(output) => {
+                return Err(format!(
+                    "inspect announced staged source worktree exited with {:?}: {}",
+                    output.status.code,
+                    String::from_utf8_lossy(&output.stderr).trim_end(),
+                ));
+            }
+            CommandRun::Cancelled(_) => {
+                return Err("inspect announced staged source worktree was cancelled".to_owned());
+            }
+            CommandRun::TimedOut(_) => {
+                return Err("inspect announced staged source worktree timed out".to_owned());
+            }
+        };
+        admit_staged_worktree_status(&status)?;
+        self.verify_announced_capture()
     }
 
     fn compiler_contract(
@@ -691,17 +781,54 @@ impl SystemRunner {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn admit_staged_worktree_status(status: &[u8]) -> Result<(), String> {
+    let mut records = status
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty());
+    while let Some(record) = records.next() {
+        if record.len() < 3 || record[2] != b' ' {
+            return Err("Git returned a malformed staged/worktree status inventory".to_owned());
+        }
+        let code = &record[..2];
+        let path = String::from_utf8_lossy(&record[3..]);
+        if code == b"??" {
+            return Err(format!(
+                "untracked worktree path {path:?} is absent from the announced staged source",
+            ));
+        }
+        if code[1] != b' ' {
+            return Err(format!(
+                "worktree path {path:?} differs from the announced staged index ({})",
+                String::from_utf8_lossy(code),
+            ));
+        }
+        if matches!(code[0], b'R' | b'C') && records.next().is_none() {
+            return Err("Git omitted the original path from a staged rename or copy".to_owned());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(target_arch = "wasm32")]
 struct SystemRunner;
 
 #[cfg(target_arch = "wasm32")]
 impl SystemRunner {
-    fn prepare() -> Result<Self, String> {
+    fn prepare(_source_cancellation: CancellationToken) -> Result<Self, String> {
         Ok(Self)
     }
 
     const fn standalone() -> Self {
         Self
+    }
+
+    fn announced_source(&self) -> Result<wire::Digest, String> {
+        Err("announced staged source is unavailable on wasm32".to_owned())
+    }
+
+    fn verify_announced_source(&self) -> Result<(), String> {
+        Err("announced staged source is unavailable on wasm32".to_owned())
     }
 }
 
@@ -1166,6 +1293,7 @@ impl Runner for SystemRunner {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn accept_battery_state(&self) -> Result<(), String> {
+        self.verify_announced_source()?;
         let mut state = self.state().map_err(|error| match error {
             RunError::Launch(error) => error.to_string(),
             RunError::Cleanup(detail) => detail,
@@ -1182,9 +1310,14 @@ impl Runner for SystemRunner {
             .collect::<Result<Vec<_>, _>>()?;
         let repository = spice::repository::Repository::discover(Path::new("."))
             .map_err(|error| error.to_string())?;
+        let announced_source = state
+            .announced_source
+            .as_ref()
+            .ok_or_else(|| "full verifier has no announced staged source".to_owned())?;
         let artifact = spice::gate::FullVerifierEvidence::mint(
             &repository,
             state.cargo_jobs.unwrap_or(1),
+            announced_source,
             &receipt,
             &evidence,
             state
@@ -1199,6 +1332,7 @@ impl Runner for SystemRunner {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn publish_full_verifier_evidence(&self) -> Result<(), String> {
+        self.verify_announced_source()?;
         let evidence = {
             let mut state = self.state().map_err(|error| match error {
                 RunError::Launch(error) => error.to_string(),
