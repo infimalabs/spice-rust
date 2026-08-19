@@ -90,7 +90,7 @@ impl Selector {
         let repo = open_repository(repository)?;
         let mut build = BuildRoot::create()?;
 
-        let (items, source, renames, publishes_state) = match self {
+        let (items, source, renames, staged_authority, publishes_state) = match self {
             Self::Staged => {
                 let before = IndexSeal::capture(&repo)?;
                 let head = head_seal(&repo)?;
@@ -103,7 +103,18 @@ impl Selector {
                 let items = index_items(&index)?;
                 materialize_items(&repo, &build.root, &items)?;
                 let renames = staged_renames(&repo, head_commit, &index)?;
-                (items, SelectionSeal::Index { before, head }, renames, true)
+                let authority = StagedAuthority {
+                    entries: items.clone(),
+                    rename_base: head_commit,
+                    renames: renames.clone(),
+                };
+                (
+                    items,
+                    SelectionSeal::Index { before, head },
+                    renames,
+                    Some(authority),
+                    true,
+                )
             }
             Self::Revision(revision) => {
                 let before = RevisionSeal::capture(&repo, revision)?;
@@ -118,6 +129,7 @@ impl Selector {
                         revision: revision.clone(),
                     },
                     RenameMap::default(),
+                    None,
                     false,
                 )
             }
@@ -131,9 +143,61 @@ impl Selector {
             source,
             items.into_iter().map(|item| item.path).collect(),
             renames,
+            staged_authority,
             publishes_state,
         ))
     }
+}
+
+/// Semantic authority carried by one staged index independently of its on-disk encoding.
+///
+/// Canonical entries retain path, object, and executable mode. Rename authority
+/// additionally retains the exact `HEAD` commit used as the comparison base and
+/// the complete detected old-to-new map.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StagedAuthority {
+    entries: Vec<Item>,
+    rename_base: Option<gix::ObjectId>,
+    renames: RenameMap,
+}
+
+/// One semantic component that differs between staged authority captures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StagedAuthorityDifference {
+    /// A canonical path, object identity, or executable mode moved.
+    Tree,
+    /// The exact `HEAD` commit used for staged rename detection moved.
+    RenameBase,
+    /// The canonical staged rename map moved.
+    RenameLineage,
+}
+
+impl StagedAuthority {
+    /// Name every semantic component that differs in another staged capture.
+    #[must_use]
+    pub fn differences(&self, observed: &Self) -> Vec<StagedAuthorityDifference> {
+        let mut differences = Vec::new();
+        if self.entries != observed.entries {
+            differences.push(StagedAuthorityDifference::Tree);
+        }
+        if self.rename_base != observed.rename_base {
+            differences.push(StagedAuthorityDifference::RenameBase);
+        }
+        if self.renames != observed.renames {
+            differences.push(StagedAuthorityDifference::RenameLineage);
+        }
+        differences
+    }
+}
+
+/// Result of checking a retained source at a boundary allowed to recapture a
+/// semantic-equivalent Git index representation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefreshableSourceState {
+    /// The retained byte-sensitive source seal remains current.
+    Current,
+    /// Only the index seal reported movement; semantic recapture is required.
+    IndexChanged,
 }
 
 /// One private materialization owned for the duration of a gate run.
@@ -149,6 +213,7 @@ pub struct SelectedTree {
     source: SelectionSeal,
     paths: Vec<String>,
     renames: RenameMap,
+    staged_authority: Option<StagedAuthority>,
     publishes_state: bool,
     possession: Option<Possession>,
 }
@@ -187,6 +252,20 @@ impl SelectedTree {
         self.source.verify(&repository)
     }
 
+    /// Check this source while preserving index movement as a recapture signal.
+    ///
+    /// Revision and rename-base movement remains an error. Only an index seal
+    /// failure is classified for the enclosing pre-commit reservation to
+    /// compare against a fresh semantic staged authority.
+    pub(crate) fn verify_refreshable_source(&self) -> Result<RefreshableSourceState, TreeError> {
+        let repository = open_repository(&self.repository)?;
+        match self.source.verify(&repository) {
+            Ok(()) => Ok(RefreshableSourceState::Current),
+            Err(TreeError::IndexChanged { .. }) => Ok(RefreshableSourceState::IndexChanged),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Canonical regular paths carried by this exact selected source.
     #[must_use]
     pub fn paths(&self) -> &[String] {
@@ -197,6 +276,12 @@ impl SelectedTree {
     #[must_use]
     pub(crate) const fn renames(&self) -> &RenameMap {
         &self.renames
+    }
+
+    /// Canonical staged entries and their exact rename lineage.
+    #[must_use]
+    pub(crate) const fn staged_authority(&self) -> Option<&StagedAuthority> {
+        self.staged_authority.as_ref()
     }
 
     /// Whether acceptance of this source may publish current gate state.

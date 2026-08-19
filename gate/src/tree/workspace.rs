@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sill::{Acquisition, LockFile, Possession};
 
 use super::{
-    SelectedTree, SelectionSeal, TreeError, create_private_workspace, make_removable,
-    private_directory,
+    SelectedTree, SelectionSeal, StagedAuthority, TreeError, create_private_workspace,
+    make_removable, private_directory,
 };
 use crate::held_root::{self, HeldRootRemoval};
 use crate::state::RenameMap;
@@ -86,6 +86,7 @@ impl BuildRoot {
         source: SelectionSeal,
         paths: Vec<String>,
         renames: RenameMap,
+        staged_authority: Option<StagedAuthority>,
         publishes_state: bool,
     ) -> SelectedTree {
         SelectedTree {
@@ -95,6 +96,7 @@ impl BuildRoot {
             source,
             paths,
             renames,
+            staged_authority,
             publishes_state,
             possession: self.possession.take(),
         }

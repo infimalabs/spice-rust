@@ -30,7 +30,7 @@ use crate::toolchain::{
     acquire_verifier_tools, environment_baseline_suffixes, measure_toolchain,
     measure_toolchain_arm,
 };
-use crate::tree::{SelectedTree, Selector};
+use crate::tree::{RefreshableSourceState, SelectedTree, Selector, StagedAuthority};
 use crate::{ChangeReachMode, ChangeReachObject, ChangeSelectionReport, GateId};
 
 const FAMILY_COUNT: usize = 4;
@@ -291,9 +291,21 @@ impl<'trace> RepositoryExecutor<'trace> {
             .map_err(|error| BatteryError::new(error.to_string()))
     }
 
+    /// Preserve index movement as a signal for a reservation-scoped semantic recapture.
+    pub(super) fn verify_refreshable_source(&self) -> Result<RefreshableSourceState, BatteryError> {
+        self.tree
+            .verify_refreshable_source()
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
+
     /// Every regular path retained by this selected tree.
     pub(super) fn paths(&self) -> &[String] {
         self.tree.paths()
+    }
+
+    /// Canonical staged entries and their exact rename lineage.
+    pub(super) fn staged_authority(&self) -> Option<&StagedAuthority> {
+        self.tree.staged_authority()
     }
 
     /// Run the canonical mutation profile against this executor's selected tree.

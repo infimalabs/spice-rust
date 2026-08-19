@@ -210,6 +210,98 @@ fn disabled_built_ins_probe_evidence_then_reach_only_the_configured_battery() {
 }
 
 #[test]
+fn configured_hook_admits_a_semantic_equivalent_index_stat_refresh() {
+    let scratch = Scratch::new("configured-index-refresh");
+    let before_index = scratch.path().join("index.before");
+    let after_index = scratch.path().join("index.after");
+    let marker = scratch.path().join("refreshed");
+    let script = concat!(
+        "set -eu; ",
+        "/bin/cp .git/index \"$1\"; ",
+        "/usr/bin/touch -t 200101010101 src/lib.rs; ",
+        "/usr/bin/git update-index --refresh; ",
+        "/bin/cp .git/index \"$2\"; ",
+        "if /usr/bin/cmp -s \"$1\" \"$2\"; then exit 86; fi; ",
+        "printf refreshed > \"$3\"",
+    );
+    let repository = configured_command_repository(
+        "refresh index stat cache",
+        &[
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            script.to_owned(),
+            "fixture".to_owned(),
+            before_index.display().to_string(),
+            after_index.display().to_string(),
+            marker.display().to_string(),
+        ],
+    );
+    grant_current_fixture_policy(&repository);
+    let staged_tree = git_stdout(repository.path(), &["write-tree"]);
+    repository.install_pre_commit();
+
+    let output = fixture_command("/usr/bin/git")
+        .args(["commit", "-qm", "Admit semantic index refresh"])
+        .current_dir(repository.path())
+        .env_remove(PRE_COMMIT_PATHS)
+        .env_remove(PRE_COMMIT_SOURCE)
+        .output()
+        .expect("commit through the configured refresh handoff");
+
+    assert!(
+        output.status.success(),
+        "semantic index refresh failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        fs::read_to_string(marker).expect("read index-refresh marker"),
+        "refreshed",
+    );
+    assert_ne!(
+        fs::read(before_index).expect("read pre-refresh index bytes"),
+        fs::read(after_index).expect("read refreshed index bytes"),
+        "the fixture did not reproduce a Git index representation refresh",
+    );
+    assert_eq!(
+        git_stdout(repository.path(), &["show", "-s", "--format=%T", "HEAD"]),
+        staged_tree,
+        "the admitted refresh changed the semantic staged tree",
+    );
+}
+
+#[test]
+fn configured_handoff_refuses_real_index_content_movement() {
+    let repository = configured_command_repository(
+        "move staged content",
+        &[
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            concat!(
+                "printf '%s\\n' 'pub fn added_during_pre_commit() {}' > src/added.rs; ",
+                "/usr/bin/git add src/added.rs",
+            )
+            .to_owned(),
+        ],
+    );
+    grant_current_fixture_policy(&repository);
+
+    let boundary = run_commit_worker(repository.path());
+    let failure = terminal_failure(&boundary);
+    assert_eq!(failure["reason"], "gate::pre-commit-staged-source-moved");
+    let detail = failure["detail"]
+        .as_str()
+        .expect("staged movement carries typed evidence");
+    assert!(detail.contains("staged-tree"), "{detail}");
+    assert!(detail.contains("selected-paths"), "{detail}");
+    assert!(detail.contains("source-digest"), "{detail}");
+    assert!(
+        detail.contains("trigger=\"index-representation-refresh\""),
+        "{detail}",
+    );
+}
+
+#[test]
 fn disabled_built_ins_without_configured_entries_refuse_before_work() {
     let repository = GateRepository::new();
     let policy = repository.path().join("spice-rust.toml");
@@ -546,6 +638,48 @@ fn dispatch_repository(builtins: Option<bool>) -> GateRepository {
     repository.write_source(2);
     repository.add("src/lib.rs");
     repository
+}
+
+fn configured_command_repository(label: &str, argv: &[String]) -> GateRepository {
+    let repository = GateRepository::new();
+    let policy = repository.path().join("spice-rust.toml");
+    let text = fs::read_to_string(&policy).expect("read fixture policy");
+    let insertion = format!(
+        concat!(
+            "[policy]\n",
+            "pre_commit_builtins = false\n",
+            "pre_commit = [{{ label = {}, run = {} }}]\n",
+        ),
+        serde_json::to_string(label).expect("encode configured fixture label"),
+        serde_json::to_string(argv).expect("encode configured fixture argv"),
+    );
+    fs::write(&policy, text.replacen("[policy]\n", &insertion, 1))
+        .expect("write configured fixture policy");
+    repository.add("spice-rust.toml");
+    git(
+        repository.path(),
+        &["commit", "-qm", "Configure fixture pre-commit command"],
+    );
+    repository.write_source(2);
+    repository.add("src/lib.rs");
+    repository
+}
+
+fn grant_current_fixture_policy(repository: &GateRepository) {
+    let first = run_commit_worker(repository.path());
+    let failure = terminal_failure(&first);
+    assert_eq!(
+        failure["reason"],
+        "gate::pre-commit-configuration-untrusted"
+    );
+    let digest = failure["detail"]
+        .as_str()
+        .and_then(|detail| detail.split_once("digest="))
+        .and_then(|(_, remainder)| remainder.split_whitespace().next())
+        .expect("trust refusal names the configured fixture digest")
+        .parse::<Digest>()
+        .expect("configured fixture digest is canonical");
+    grant_fixture_trust(repository, digest);
 }
 
 fn source_override_repository() -> GateRepository {
