@@ -1,12 +1,11 @@
 #![cfg(unix)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use gate::{
@@ -15,8 +14,8 @@ use gate::{
     CoverageCompleteness, GateId, TestSelectionReport,
 };
 use sill::{
-    Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction, Spec,
-    StdinPolicy, StreamPolicy, WaitPolicy,
+    Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
+    ProcessGroup, Redaction, Running, Spec, StdinPolicy, StreamPolicy, WaitPolicy, WaitStep,
 };
 use spice::change_gate::ChangeGateReport;
 use spice::placeholder::PlaceholderReason;
@@ -40,6 +39,8 @@ const PRE_COMMIT_PATHS: &str = wire::SpiceVariable::PreCommitPaths.as_str();
 const PRE_COMMIT_SOURCE: &str = wire::SpiceVariable::PreCommitSource.as_str();
 const COMMIT_WORKER_STARTUP_ALLOWANCE: Duration = Duration::from_secs(15);
 const COMMIT_WORKER_CONTAINMENT_RUNTIME: Duration = Duration::from_secs(2);
+const FIXTURE_PUBLICATION_INACTIVITY: Duration = Duration::from_secs(5);
+const FIXTURE_PUBLICATION_POLL: Duration = Duration::from_millis(50);
 const COMPACT_CHANGE_REPORT_MAX_BYTES: usize = 128 * 1_024;
 
 #[test]
@@ -444,28 +445,52 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     let terminal = scratch.path().join("terminal.bin");
     fs::write(&progress, []).expect("create deadline progress file");
     fs::write(&terminal, []).expect("create deadline terminal file");
-    let spec = deadline_worker_spec(repository.path(), &programs, &progress, &terminal);
+    let cancellation = CancellationToken::new();
+    let absolute = COMMIT_WORKER_STARTUP_ALLOWANCE + COMMIT_WORKER_CONTAINMENT_RUNTIME;
+    let spec = deadline_worker_spec(
+        repository.path(),
+        &programs,
+        &progress,
+        &terminal,
+        cancellation.clone(),
+    );
 
-    let waited = sill::spawn(spec)
-        .expect("launch hidden commit worker")
-        .wait()
-        .expect("terminate and reap hidden commit worker group");
-
-    assert!(matches!(waited.completion(), Completion::TimedOut(_)));
-    let pid = fs::read_to_string(&tool_pid)
-        .expect("the active gate tool published its descendant")
-        .trim()
-        .parse::<u32>()
-        .expect("gate-tool descendant pid is numeric");
-    for _ in 0..100 {
-        if !process_exists(pid) {
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
+    let running = sill::spawn(spec).expect("launch hidden commit worker");
+    let (running, publication) = await_fixture_publication(
+        running,
+        &cancellation,
+        &progress,
+        &tool_pid,
+        PublicationBounds {
+            inactivity: FIXTURE_PUBLICATION_INACTIVITY,
+            absolute,
+        },
+    )
+    .unwrap_or_else(|detail| panic!("observe active gate-tool descendant: {detail}"));
+    let owned_group = observed_process_group(publication.pid)
+        .expect("inspect published gate-tool descendant ownership");
     assert!(
-        !process_exists(pid),
-        "commit worker deadline leaked gate-tool descendant {pid}"
+        owned_group == Some(running.id()),
+        "published gate-tool descendant {} belongs to group {owned_group:?}, not owned group {}",
+        publication.pid,
+        running.id(),
+    );
+    assert!(publication.generation >= 2, "{publication:?}");
+    assert!(publication.reason.contains("descendant-publication"));
+    assert!(publication.absolute_remaining < absolute);
+
+    cancellation.cancel();
+    let waited = running
+        .wait()
+        .expect("cancel and reap hidden commit worker group");
+
+    assert!(matches!(waited.completion(), Completion::Cancelled(_)));
+    assert!(
+        observed_process_group(publication.pid)
+            .expect("inspect cancelled gate-tool descendant absence")
+            .is_none(),
+        "commit worker cancellation leaked gate-tool descendant {}",
+        publication.pid,
     );
     let progress = fs::read_to_string(progress).expect("read worker phase evidence");
     assert!(
@@ -474,11 +499,314 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     );
 }
 
+#[derive(Clone, Copy)]
+struct PublicationBounds {
+    inactivity: Duration,
+    absolute: Duration,
+}
+
+#[derive(Debug)]
+struct FixturePublication {
+    pid: u32,
+    generation: u64,
+    reason: String,
+    absolute_remaining: Duration,
+}
+
+fn await_fixture_publication(
+    mut running: Running,
+    cancellation: &CancellationToken,
+    progress: &Path,
+    publication: &Path,
+    bounds: PublicationBounds,
+) -> Result<(Running, FixturePublication), String> {
+    let started = Instant::now();
+    let mut last_progress = started;
+    let mut generation = 0_u64;
+    let mut reason = "worker-launch".to_owned();
+    let mut progress_records = BTreeSet::new();
+    loop {
+        match newly_observed_progress(progress, &mut progress_records) {
+            Ok(records) if !records.is_empty() => {
+                generation = generation.saturating_add(records.len() as u64);
+                last_progress = Instant::now();
+                reason = records.last().expect("new records are nonempty").clone();
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return Err(stop_publication_fixture(
+                    running,
+                    cancellation,
+                    format!("read typed worker progress: {error}"),
+                ));
+            }
+        }
+        match published_pid(publication) {
+            Ok(Some(pid)) => {
+                generation = generation.saturating_add(1);
+                reason = "descendant-publication".to_owned();
+                return Ok((
+                    running,
+                    FixturePublication {
+                        pid,
+                        generation,
+                        reason,
+                        absolute_remaining: bounds.absolute.saturating_sub(started.elapsed()),
+                    },
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(stop_publication_fixture(
+                    running,
+                    cancellation,
+                    format!("invalid descendant publication: {error}"),
+                ));
+            }
+        }
+
+        let now = Instant::now();
+        let absolute_remaining = bounds.absolute.saturating_sub(now.duration_since(started));
+        let inactivity_remaining = bounds
+            .inactivity
+            .saturating_sub(now.duration_since(last_progress));
+        let expiry = if absolute_remaining.is_zero() {
+            Some("absolute")
+        } else if inactivity_remaining.is_zero() {
+            Some("inactivity")
+        } else {
+            None
+        };
+        if let Some(expiry) = expiry {
+            return Err(stop_publication_fixture(
+                running,
+                cancellation,
+                format!(
+                    "publication {expiry} expired at generation={generation} reason={reason:?}"
+                ),
+            ));
+        }
+
+        let observation = FIXTURE_PUBLICATION_POLL
+            .min(absolute_remaining)
+            .min(inactivity_remaining);
+        match running
+            .wait_for(observation)
+            .map_err(|error| format!("observe commit worker: {error}"))?
+        {
+            WaitStep::Running(next) => running = *next,
+            WaitStep::Exited(outcome) => {
+                return Err(format!(
+                    "commit worker ended as {:?} before descendant publication; \
+                     generation={generation} reason={reason:?}",
+                    outcome.completion(),
+                ));
+            }
+        }
+    }
+}
+
+fn published_pid(path: &Path) -> std::io::Result<Option<u32>> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if text.is_empty() || !text.ends_with('\n') {
+        return Ok(None);
+    }
+    let mut records = text.lines();
+    let Some(record) = records.next() else {
+        return Ok(None);
+    };
+    if records.next().is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "descendant publication contains more than one record",
+        ));
+    }
+    record
+        .parse::<u32>()
+        .ok()
+        .filter(|pid| *pid > 0)
+        .map(Some)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "descendant PID is not a positive integer",
+            )
+        })
+}
+
+fn observed_process_group(pid: u32) -> std::io::Result<Option<u32>> {
+    let pid = libc::pid_t::try_from(pid).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "descendant PID exceeds pid_t",
+        )
+    })?;
+    // SAFETY: getpgid only observes the exact published process identity.
+    let group = unsafe { libc::getpgid(pid) };
+    if group >= 0 {
+        return u32::try_from(group).map(Some).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "observed process group is negative",
+            )
+        });
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(None)
+    } else {
+        Err(error)
+    }
+}
+
+fn newly_observed_progress(
+    path: &Path,
+    observed: &mut BTreeSet<String>,
+) -> std::io::Result<Vec<String>> {
+    let text = fs::read_to_string(path)?;
+    Ok(text
+        .split_inclusive('\n')
+        .filter_map(|record| record.strip_suffix('\n'))
+        .filter(|record| record.starts_with("[change-gate-") || record.starts_with("[rust-test"))
+        .filter(|record| observed.insert((*record).to_owned()))
+        .map(str::to_owned)
+        .collect())
+}
+
+fn stop_publication_fixture(
+    running: Running,
+    cancellation: &CancellationToken,
+    detail: String,
+) -> String {
+    cancellation.cancel();
+    match running.wait() {
+        Ok(outcome) => format!("{detail}; cleanup={:?}", outcome.completion()),
+        Err(error) => format!("{detail}; cleanup-error={error}"),
+    }
+}
+
+#[test]
+fn fixture_progress_renews_only_for_distinct_typed_records() {
+    let scratch = Scratch::new("typed-publication-progress");
+    let progress = scratch.path().join("progress.jsonl");
+    fs::write(
+        &progress,
+        concat!(
+            "raw compiler bytes\n",
+            "[change-gate-policy] gate=formatters\n",
+            "[change-gate-policy] gate=formatters\n",
+        ),
+    )
+    .expect("write repeated fixture progress");
+    let mut observed = BTreeSet::new();
+
+    assert_eq!(
+        newly_observed_progress(&progress, &mut observed).expect("observe typed progress"),
+        ["[change-gate-policy] gate=formatters"]
+    );
+    assert!(
+        newly_observed_progress(&progress, &mut observed)
+            .expect("observe duplicate progress")
+            .is_empty(),
+        "duplicate and raw bytes renewed the fixture lease",
+    );
+    fs::write(
+        &progress,
+        concat!(
+            "raw compiler bytes\n",
+            "[change-gate-policy] gate=formatters\n",
+            "[rust-test] stage=terminal shard=1/1 disposition=success",
+        ),
+    )
+    .expect("write partial typed fixture progress");
+    assert!(
+        newly_observed_progress(&progress, &mut observed)
+            .expect("observe partial progress")
+            .is_empty(),
+        "partial typed bytes renewed the fixture lease",
+    );
+    fs::write(
+        &progress,
+        concat!(
+            "raw compiler bytes\n",
+            "[change-gate-policy] gate=formatters\n",
+            "[rust-test] stage=terminal shard=1/1 disposition=success\n",
+        ),
+    )
+    .expect("complete newly advanced fixture progress");
+    assert_eq!(
+        newly_observed_progress(&progress, &mut observed).expect("observe new typed progress"),
+        ["[rust-test] stage=terminal shard=1/1 disposition=success"]
+    );
+}
+
+#[test]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the process-boundary fixture preserves the invoking test environment"
+)]
+fn absent_descendant_publication_expires_at_the_inactivity_owner_and_reaps() {
+    let scratch = Scratch::new("absent-descendant-publication");
+    let progress = scratch.path().join("progress.jsonl");
+    let publication = scratch.path().join("never-published.pid");
+    fs::write(&progress, []).expect("create empty fixture progress");
+    let cancellation = CancellationToken::new();
+    let capture = StreamPolicy::Capture { limit: 4096 };
+    let spec = Spec {
+        argv: Argv::new("/bin/sleep", ["30"]).expect("declare silent fixture"),
+        cwd: scratch.path().to_owned(),
+        environment: Environment::new(env::vars_os()).expect("capture silent fixture environment"),
+        group: ProcessGroup::New,
+        deadlines: Deadlines::new(
+            Duration::from_millis(250),
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+        )
+        .expect("declare silent fixture bound"),
+        wait: WaitPolicy::new(
+            "absent descendant publication fixture",
+            Cancellation::Token(cancellation.clone()),
+            sill::RestartDisposition::Never,
+        )
+        .expect("declare silent fixture wait"),
+        output: Output::new(StdinPolicy::Null, capture, capture),
+        redaction: Redaction::All,
+        grace: Duration::from_millis(100),
+    };
+    let started = Instant::now();
+
+    let error = await_fixture_publication(
+        sill::spawn(spec).expect("launch silent fixture"),
+        &cancellation,
+        &progress,
+        &publication,
+        PublicationBounds {
+            inactivity: Duration::from_millis(40),
+            absolute: Duration::from_millis(200),
+        },
+    )
+    .expect_err("silent fixture publication expires");
+
+    assert!(error.contains("publication inactivity expired"), "{error}");
+    assert!(error.contains("cleanup=Cancelled"), "{error}");
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "the process-boundary fixture must preserve the invoking test environment"
 )]
-fn deadline_worker_spec(root: &Path, programs: &Path, progress: &Path, terminal: &Path) -> Spec {
+fn deadline_worker_spec(
+    root: &Path,
+    programs: &Path,
+    progress: &Path,
+    terminal: &Path,
+    cancellation: CancellationToken,
+) -> Spec {
     let mut environment = env::vars_os().collect::<BTreeMap<_, _>>();
     for variable in [
         wire::SpiceVariable::PreCommitPaths,
@@ -513,7 +841,7 @@ fn deadline_worker_spec(root: &Path, programs: &Path, progress: &Path, terminal:
         .expect("declare scaled deadline"),
         wait: WaitPolicy::new(
             "commit worker process-tree fixture",
-            Cancellation::Never,
+            Cancellation::Token(cancellation),
             sill::RestartDisposition::Never,
         )
         .expect("declare worker wait"),

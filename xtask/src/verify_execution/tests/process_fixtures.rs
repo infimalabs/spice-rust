@@ -333,7 +333,52 @@ pub(super) struct FailureRunner {
 pub(super) struct DetachedShardRunner {
     pub(super) root_pid_file: PathBuf,
     pub(super) detached_identity_file: PathBuf,
+    detached_publication: FixturePublicationObserver,
     test_executable: PathBuf,
+}
+
+#[cfg(unix)]
+pub(super) struct FixturePublicationObserver {
+    receiver: std::os::unix::net::UnixDatagram,
+    path: PathBuf,
+}
+
+#[cfg(unix)]
+impl FixturePublicationObserver {
+    pub(super) fn new(label: &str) -> Self {
+        let path = fixture_pid_file(&format!("{label}-ready"));
+        let receiver = std::os::unix::net::UnixDatagram::bind(&path)
+            .expect("bind fixture publication observer");
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("bound fixture publication observation");
+        Self { receiver, path }
+    }
+
+    pub(super) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    pub(super) fn wait(&self, publication: &std::path::Path) {
+        let mut event = [0_u8; 1];
+        let received = self
+            .receiver
+            .recv(&mut event)
+            .expect("fixture publication arrives within its five-second bound");
+        assert_eq!(received, 1, "fixture publication event is exact");
+        assert!(
+            publication.is_file(),
+            "fixture announced publication before committing {}",
+            publication.display(),
+        );
+    }
+}
+
+#[cfg(unix)]
+impl Drop for FixturePublicationObserver {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 #[cfg(unix)]
@@ -342,6 +387,7 @@ impl DetachedShardRunner {
         Self {
             root_pid_file: fixture_pid_file("detached-shard-root"),
             detached_identity_file: fixture_pid_file("detached-shard-child"),
+            detached_publication: FixturePublicationObserver::new("detached-shard"),
             test_executable: std::env::current_exe().expect("fixture test executable resolves"),
         }
     }
@@ -350,13 +396,6 @@ impl DetachedShardRunner {
 #[cfg(unix)]
 impl Drop for DetachedShardRunner {
     fn drop(&mut self) {
-        if let Some(group) = read_first_pid_if_present(&self.detached_identity_file)
-            && process_exists(group)
-        {
-            let _ = Command::new("/bin/kill")
-                .args(["-KILL", &format!("-{group}")])
-                .output();
-        }
         let _ = fs::remove_file(&self.root_pid_file);
         let _ = fs::remove_file(&self.detached_identity_file);
     }
@@ -483,7 +522,7 @@ impl Runner for DetachedShardRunner {
     }
 
     fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
-        wait_for_path(&self.detached_identity_file);
+        self.detached_publication.wait(&self.detached_identity_file);
         Ok(BrowserRun {
             process: timed_command(true),
             completed: false,
@@ -504,6 +543,11 @@ impl Runner for DetachedShardRunner {
         jobs: usize,
         _: usize,
     ) -> Result<CommandRun, RunError> {
+        let fixture_contract = detached_fixture_contract(
+            &self.detached_identity_file,
+            self.detached_publication.path(),
+            5000,
+        );
         run_process(
             WORKSPACE_TEST_LABEL,
             "/bin/sh",
@@ -521,8 +565,8 @@ impl Runner for DetachedShardRunner {
             &[
                 ("ROOT_PID_FILE", self.root_pid_file.as_os_str()),
                 (
-                    "DETACHED_IDENTITY_FILE",
-                    self.detached_identity_file.as_os_str(),
+                    DETACHED_FIXTURE_CONTRACT_ENVIRONMENT,
+                    std::ffi::OsStr::new(&fixture_contract),
                 ),
                 ("TEST_EXECUTABLE", self.test_executable.as_os_str()),
                 (
@@ -571,15 +615,6 @@ pub(super) fn fixture_pid_file(label: &str) -> PathBuf {
 }
 
 #[cfg(unix)]
-fn read_first_pid_if_present(path: &std::path::Path) -> Option<u32> {
-    fs::read_to_string(path)
-        .ok()?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()
-}
-
 #[cfg(unix)]
 fn supervised_sleep(
     pid_file: &std::path::Path,
