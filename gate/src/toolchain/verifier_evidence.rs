@@ -1100,7 +1100,10 @@ pub(super) fn compiler_semantic_authority(
 /// is removed. Source, lockfile, arguments, and every unclassified compiler
 /// variable remain bound to the receipt. Scheduler capacity, launcher plan
 /// identity, installed-appliance generation, and equivalent terminal/session
-/// context are operational and therefore excluded from reusable authority.
+/// context are operational and therefore excluded from reusable authority. The
+/// predecessor's development bridge likewise adds only its worktree self-exec
+/// root and selected-path handoff around a configured pre-commit child; neither
+/// changes the compiler process the Rust gate reconstructs.
 pub(super) fn compiler_authority_environment(
     environment: &[(OsString, OsString)],
 ) -> Vec<(OsString, OsString)> {
@@ -1198,6 +1201,8 @@ fn compiler_environment_authority(name: &OsStr) -> CompilerEnvironmentAuthority 
                 | b"SPICE_RS_PRE_COMMIT_PATHS" // env-policy: allow
                 | b"SPICE_RS_PRE_COMMIT_SOURCE" // env-policy: allow
                 | b"SPICE_RUNTIME_PYTHON" // env-policy: allow
+                | b"SPICE_SELFEXEC_ROOT" // env-policy: allow
+                | b"SPICE_STAGED_PATHS" // env-policy: allow
                 | b"SPICE_VISIBLE_PROG" // env-policy: allow
                 | b"SSH_AUTH_SOCK"
                 | b"TASKRC"

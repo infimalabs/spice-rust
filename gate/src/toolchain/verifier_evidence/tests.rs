@@ -11,6 +11,8 @@ const AUTHORITY: &[u8] = b"one-time verifier authority fixture";
 const CONTAINMENT_ROOT: &str = "GATE_VERIFIER_CONTAINMENT_ROOT";
 const COMPILER_PID: &str = "GATE_VERIFIER_COMPILER_PID";
 const DESCENDANT_PID: &str = "GATE_VERIFIER_DESCENDANT_PID";
+const PREDECESSOR_SELFEXEC_ROOT: &str = "SPICE_SELFEXEC_ROOT"; // env-policy: allow
+const PREDECESSOR_STAGED_PATHS: &str = "SPICE_STAGED_PATHS"; // env-policy: allow
 // Recursive test-harness startup is outside the containment behavior under
 // test. Leave it a deliberate margin while the fake compiler remains live
 // well beyond the supervisor deadline.
@@ -681,6 +683,62 @@ fn canonical_receipt_crosses_private_cargo_materializations() {
             .iter()
             .zip(&consumers)
             .all(|(candidate, consumer)| admits(candidate, consumer))
+    );
+}
+
+#[test]
+fn canonical_receipt_crosses_only_the_predecessor_source_development_pre_commit_rim() {
+    let producer = contract(GateId::RustTypecheck);
+    let evidence = complete_evidence(&producer);
+    let receipt = encode_verifier_compiler_receipt(&[evidence], AUTHORITY)
+        .expect("encode compiler receipt outside the predecessor rim");
+
+    let mut nested = producer.clone();
+    nested.environment.extend([
+        (
+            OsString::from(PREDECESSOR_SELFEXEC_ROOT),
+            OsString::from("/fixture/worktree"),
+        ),
+        (
+            OsString::from(PREDECESSOR_STAGED_PATHS),
+            OsString::from("gate/src/lib.rs\nspice/src/lib.rs"),
+        ),
+    ]);
+    nested.environment.sort();
+    admit_verifier_compiler_receipt(&receipt, &[nested.clone()], AUTHORITY)
+        .expect("predecessor-owned source-development pre-commit context is operational");
+
+    let mut installed = producer.clone();
+    installed.environment.push((
+        OsString::from("SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"), // env-policy: allow
+        OsString::from("1"),
+    ));
+    installed.environment.sort();
+    admit_verifier_compiler_receipt(&receipt, &[installed], AUTHORITY)
+        .expect("the existing installed-hook rim remains operational");
+
+    let mut moved_source = nested.clone();
+    moved_source.source = source(b"moved staged source");
+    assert!(
+        admit_verifier_compiler_receipt(&receipt, &[moved_source], AUTHORITY).is_err(),
+        "a different selected source remains source-bound",
+    );
+
+    let mut moved_tool = nested.clone();
+    moved_tool.tools[0] = tool("cargo", "/different/cargo");
+    assert!(
+        admit_verifier_compiler_receipt(&receipt, &[moved_tool], AUTHORITY).is_err(),
+        "a different compiler tool remains contract-bound",
+    );
+
+    nested.environment.push((
+        OsString::from("RUSTFLAGS"),
+        OsString::from("--cfg=changed_under_predecessor_rim"),
+    ));
+    nested.environment.sort();
+    assert!(
+        admit_verifier_compiler_receipt(&receipt, &[nested], AUTHORITY).is_err(),
+        "an actual compiler input remains semantic under the predecessor rim",
     );
 }
 
