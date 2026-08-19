@@ -58,16 +58,24 @@ struct MergeParentEvidence {
 }
 
 impl FullVerifierEvidence {
-    /// Bind an admitted complete battery and every completed compiler arm.
+    /// Bind the announced staged source to an admitted complete battery and
+    /// every completed compiler arm.
     pub fn mint(
         repository: &Repository,
         cargo_jobs: usize,
+        announced_source: &Digest,
         battery: &BatteryReceipt,
         compiler: &[VerifierCompilerEvidence],
         prepared: &PreparedBattery<'_>,
     ) -> Result<Self, String> {
         if !battery.run().admits() {
             return Err("full-verifier evidence requires an admitted battery receipt".to_owned());
+        }
+        if announced_source != battery.tree() {
+            return Err(format!(
+                "full-verifier announced staged source {announced_source} differs from admitted battery source {}",
+                battery.tree(),
+            ));
         }
         if &prepared.context().map_err(|error| error.to_string())? != battery.run().context() {
             return Err(
@@ -80,6 +88,11 @@ impl FullVerifierEvidence {
                 "full-verifier evidence preparation names a different selected source".to_owned(),
             );
         }
+        prepared.verify_source().map_err(|error| {
+            format!(
+                "full-verifier announced staged source {announced_source} moved before evidence minting: {error}",
+            )
+        })?;
         let closure = GateSemanticClosure::capture(
             prepared.source().clone(),
             prepared.root(),

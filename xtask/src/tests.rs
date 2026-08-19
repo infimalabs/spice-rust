@@ -269,6 +269,27 @@ fn production_readiness_refuses_an_ordinary_command_without_forging_the_event() 
     assert!(!observed.load(Ordering::Acquire));
 }
 
+#[test]
+fn staged_worktree_inventory_allows_only_index_owned_changes() {
+    admit_staged_worktree_status(b"M  src/lib.rs\0A  staged.rs\0R  renamed.rs\0original.rs\0")
+        .expect("staged changes and complete rename pairs match the announced index");
+    assert!(
+        admit_staged_worktree_status(b" M src/lib.rs\0")
+            .expect_err("an unstaged edit diverges from the announced index")
+            .contains("differs from the announced staged index"),
+    );
+    assert!(
+        admit_staged_worktree_status(b"?? untracked.rs\0")
+            .expect_err("an untracked path is absent from the announced source")
+            .contains("absent from the announced staged source"),
+    );
+    assert!(
+        admit_staged_worktree_status(b"R  renamed.rs\0")
+            .expect_err("a rename without its original path is malformed")
+            .contains("omitted the original path"),
+    );
+}
+
 fn fake_command(
     outcome: Outcome,
     cancellation: &CancellationToken,

@@ -227,6 +227,17 @@ impl PreparedBattery<'_> {
             .map_err(|error| RunError::refusal("gate::context-refused", error))
     }
 
+    /// Prove the live selected source still names this full-battery capture.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact staged index, `HEAD`, or repository movement.
+    pub fn verify_source(&self) -> Result<(), RunError> {
+        self.capture
+            .verify_source()
+            .map_err(|error| RunError::refusal("gate::source-moved", error))
+    }
+
     /// Source-independent compiler authorities for semantic receipt comparison.
     pub fn semantic_compiler_authorities(
         &mut self,
