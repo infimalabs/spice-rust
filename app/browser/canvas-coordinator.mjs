@@ -21,12 +21,14 @@ const root = resolve(here, "../..");
 const worker = join(here, "canvas.spec.mjs");
 const COVERAGE_FLAG = "--spice-coverage-receipt";
 const PREBUILT_APP_FLAG = "--spice-prebuilt-app";
+const CONCURRENCY_FLAG = "--spice-concurrency";
 const COVERAGE_RECEIPT = "BROWSER-1kKSWhZk browser coverage complete\n";
 const SHARD_TIMEOUT_MS = 120_000;
 const COORDINATOR_TIMEOUT_MS = 180_000;
 const PROGRESS_MS = 30_000;
 const TERMINATION_GRACE_MS = 30_000;
-const CONCURRENCY = 4;
+const RESIDENT_CONCURRENCY = 4;
+const MAX_CONCURRENCY = 5;
 
 function coveragePath(arguments_) {
   if (arguments_.length === 0) return null;
@@ -40,12 +42,37 @@ function coveragePath(arguments_) {
   return arguments_[1];
 }
 
+function concurrencyFrom(arguments_) {
+  const indexes = arguments_.flatMap((argument, index) =>
+    argument === CONCURRENCY_FLAG ? [index] : []);
+  assert.ok(indexes.length <= 1, `${CONCURRENCY_FLAG} is singular`);
+  if (indexes.length === 0) {
+    return { concurrency: RESIDENT_CONCURRENCY, remaining: arguments_ };
+  }
+  const index = indexes[0];
+  const concurrency = Number(arguments_[index + 1]);
+  assert.ok(
+    Number.isSafeInteger(concurrency)
+      && concurrency >= RESIDENT_CONCURRENCY
+      && concurrency <= MAX_CONCURRENCY,
+    `${CONCURRENCY_FLAG} must be an integer between ${RESIDENT_CONCURRENCY} and ${MAX_CONCURRENCY}`,
+  );
+  return {
+    concurrency,
+    remaining: arguments_.filter((_, candidate) => candidate !== index && candidate !== index + 1),
+  };
+}
+
 function invocation(arguments_) {
   const prebuiltFlags = arguments_.filter((argument) => argument === PREBUILT_APP_FLAG);
   assert.ok(prebuiltFlags.length <= 1, `${PREBUILT_APP_FLAG} is singular`);
+  const { concurrency, remaining } = concurrencyFrom(
+    arguments_.filter((argument) => argument !== PREBUILT_APP_FLAG),
+  );
   return {
+    concurrency,
     prebuiltApp: prebuiltFlags.length === 1,
-    receipt: coveragePath(arguments_.filter((argument) => argument !== PREBUILT_APP_FLAG)),
+    receipt: coveragePath(remaining),
   };
 }
 
@@ -158,11 +185,14 @@ async function runShard(shard) {
 async function coordinate() {
   assertShardInventory();
   assertShardMutationGuard();
-  const { prebuiltApp, receipt } = invocation(process.argv.slice(2));
+  const { concurrency, prebuiltApp, receipt } = invocation(process.argv.slice(2));
   const started = Date.now();
   await buildResident({ app: !prebuiltApp });
   const buildElapsedMs = Date.now() - started;
   assert.ok(buildElapsedMs < COORDINATOR_TIMEOUT_MS, "Canvas build leaves time for its shards");
+  process.stdout.write(
+    `canvas coordinator start concurrency=${concurrency} shards=${CANVAS_SHARDS.length}\n`,
+  );
   let peak = 0;
   const results = [];
   const queue = [...CANVAS_SHARDS];
@@ -177,7 +207,7 @@ async function coordinate() {
     void terminateAll();
   }, COORDINATOR_TIMEOUT_MS - buildElapsedMs);
   try {
-    const runners = Array.from({ length: CONCURRENCY }, async () => {
+    const runners = Array.from({ length: concurrency }, async () => {
       while (queue.length > 0) {
         const shard = queue.shift();
         peak = Math.max(peak, active.size + 1);

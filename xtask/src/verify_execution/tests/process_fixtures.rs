@@ -38,7 +38,7 @@ impl Runner for WorkerPanicRunner {
     ) -> Result<CommandRun, RunError> {
         unreachable!("scoped route is not under test")
     }
-    fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
+    fn browser(&self, _: &CancellationToken, _: usize, _: usize) -> Result<BrowserRun, RunError> {
         panic!("browser crossed a panicked prerequisite")
     }
     fn workspace_test_prebuild(
@@ -105,7 +105,7 @@ impl Runner for CleanupFaultRunner {
     ) -> Result<CommandRun, RunError> {
         unreachable!("scoped route is not under test")
     }
-    fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
+    fn browser(&self, _: &CancellationToken, _: usize, _: usize) -> Result<BrowserRun, RunError> {
         while !self.sibling_started.load(Ordering::Acquire) {
             thread::yield_now();
         }
@@ -208,7 +208,7 @@ impl Runner for InterruptRunner {
     ) -> Result<CommandRun, RunError> {
         unreachable!("scoped route is not under test")
     }
-    fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
+    fn browser(&self, _: &CancellationToken, _: usize, _: usize) -> Result<BrowserRun, RunError> {
         panic!("browser crossed interruption")
     }
     fn workspace_test_prebuild(
@@ -289,7 +289,7 @@ impl Runner for ScopedInterruptRunner {
     ) -> Result<CommandRun, RunError> {
         supervised_sleep(&self.pid_file, cancellation, jobs)
     }
-    fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
+    fn browser(&self, _: &CancellationToken, _: usize, _: usize) -> Result<BrowserRun, RunError> {
         unreachable!("full route is not under test")
     }
     fn workspace_test_prebuild(
@@ -466,7 +466,7 @@ impl Runner for FailureRunner {
     ) -> Result<CommandRun, RunError> {
         unreachable!("scoped route is not under test")
     }
-    fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
+    fn browser(&self, _: &CancellationToken, _: usize, _: usize) -> Result<BrowserRun, RunError> {
         wait_for_path(&self.pid_file);
         Ok(BrowserRun {
             process: timed_command(true),
@@ -547,7 +547,7 @@ impl Runner for DetachedShardRunner {
         unreachable!("scoped route is not under test")
     }
 
-    fn browser(&self, _: &CancellationToken, _: usize) -> Result<BrowserRun, RunError> {
+    fn browser(&self, _: &CancellationToken, _: usize, _: usize) -> Result<BrowserRun, RunError> {
         match (&self.owner_identity_file, &self.owner_publication) {
             (Some(owner_identity), Some(owner_publication)) => {
                 owner_publication.wait(owner_identity);

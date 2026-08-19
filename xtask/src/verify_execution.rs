@@ -96,6 +96,8 @@ const MAX_CONCURRENT_ACTIONS: usize = 3;
 /// reserved for non-Cargo work, so charging every worker a Cargo share leaves
 /// CPU capacity idle throughout the cold compiler path.
 const MAX_CONCURRENT_CARGO_ACTIONS: usize = 2;
+const RESIDENT_CANVAS_SHARD_WORKERS: usize = 4;
+const MAX_CANVAS_SHARD_WORKERS: usize = 5;
 /// The full verifier prebuilds test binaries and the normal Canvas launcher once
 /// in the native compiler output root before parallel shard execution, so every
 /// coordinator lane can reuse the same selected-root build cache while retaining
@@ -196,6 +198,7 @@ struct Budget {
     cargo_jobs: usize,
     compiler_cargo_jobs: usize,
     workspace_workers: usize,
+    canvas_workers: usize,
     active_cargo_jobs: Option<usize>,
 }
 
@@ -213,6 +216,7 @@ impl Budget {
                 cargo_jobs: 1,
                 compiler_cargo_jobs: 1,
                 workspace_workers: 1,
+                canvas_workers: RESIDENT_CANVAS_SHARD_WORKERS,
                 active_cargo_jobs: None,
             };
         };
@@ -234,11 +238,18 @@ impl Budget {
         let workspace_workers = cpu_slots
             .min(workspace_job_cap)
             .clamp(1, super::FULL_VERIFIER_WORKSPACE_TEST_CONCURRENCY_CAP);
+        // Canvas retains its established four-shard resident budget until the
+        // post-compiler observation proves a fifth CPU lane remains after peer
+        // Cargo roots and the prebuilt Rust test lanes are accounted for.
+        let canvas_workers = cpu_slots
+            .saturating_sub(workspace_workers)
+            .clamp(RESIDENT_CANVAS_SHARD_WORKERS, MAX_CANVAS_SHARD_WORKERS);
         Self {
             workers,
             cargo_jobs,
             compiler_cargo_jobs: cargo_jobs,
             workspace_workers,
+            canvas_workers,
             active_cargo_jobs: Some(active),
         }
     }
@@ -262,6 +273,7 @@ impl Budget {
             compiler_cargo_jobs: cargo_jobs,
             workspace_workers: cargo_jobs
                 .clamp(1, super::FULL_VERIFIER_WORKSPACE_TEST_CONCURRENCY_CAP),
+            canvas_workers: RESIDENT_CANVAS_SHARD_WORKERS,
             active_cargo_jobs: Some(active_cargo_jobs),
         }
     }
@@ -705,13 +717,14 @@ fn write_scheduler_start(
         output,
         concat!(
             "[verify] scheduler workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={} action_count={} "
+            "active_peer_cargo_jobs={} workspace_workers={} action_count={} canvas_workers={} "
         ),
         budget.workers,
         budget.cargo_jobs,
         active,
         budget.workspace_workers,
         VERIFY_ACTIONS.len(),
+        budget.canvas_workers,
     )
     .map_err(VerifyError::Output)?;
     write!(

@@ -12,6 +12,7 @@ use super::{ActionProgress, BROWSER_LABEL, CommandRun, RunError};
 
 const RECEIPT_FLAG: &str = "--spice-coverage-receipt";
 const PREBUILT_APP_FLAG: &str = "--spice-prebuilt-app";
+const CONCURRENCY_FLAG: &str = "--spice-concurrency";
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const SPICE_CANVAS_BINARY: &str = "SPICE_CANVAS_BINARY"; // env-policy: allow
 pub(super) const RECEIPT: &[u8] = b"BROWSER-1kKSWhZk browser coverage complete\n";
@@ -31,21 +32,24 @@ pub(super) struct BrowserRun {
 pub(super) fn run(
     cancellation: &CancellationToken,
     cargo_jobs: usize,
+    canvas_workers: usize,
 ) -> Result<BrowserRun, RunError> {
-    run_inner(cancellation, cargo_jobs, None)
+    run_inner(cancellation, cargo_jobs, canvas_workers, None)
 }
 
 pub(super) fn run_with_progress(
     cancellation: &CancellationToken,
     cargo_jobs: usize,
+    canvas_workers: usize,
     progress: ActionProgress,
 ) -> Result<BrowserRun, RunError> {
-    run_inner(cancellation, cargo_jobs, Some(progress))
+    run_inner(cancellation, cargo_jobs, canvas_workers, Some(progress))
 }
 
 fn run_inner(
     cancellation: &CancellationToken,
     cargo_jobs: usize,
+    canvas_workers: usize,
     progress: Option<ActionProgress>,
 ) -> Result<BrowserRun, RunError> {
     let receipt = receipt_path();
@@ -56,6 +60,8 @@ fn run_inner(
         std::ffi::OsString::from("run"),
         std::ffi::OsString::from("test:canvas"),
         std::ffi::OsString::from("--"),
+        std::ffi::OsString::from(CONCURRENCY_FLAG),
+        std::ffi::OsString::from(canvas_workers.to_string()),
         std::ffi::OsString::from(RECEIPT_FLAG),
         receipt.as_os_str().to_owned(),
         std::ffi::OsString::from(PREBUILT_APP_FLAG),

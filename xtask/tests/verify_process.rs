@@ -295,9 +295,10 @@ fn assert_full_verifier_action_trace(
     assert_workspace_test_execution(&programs.cargo_log, repository, output);
     let browser = fs::read_to_string(&programs.browser_log).expect("read verifier browser action");
     assert!(
-        browser.starts_with("run test:canvas -- --spice-coverage-receipt "),
+        browser.starts_with("run test:canvas -- --spice-concurrency "),
         "unexpected browser action: {browser:?}"
     );
+    assert!(browser.contains(" --spice-coverage-receipt "));
     assert!(browser.contains("--spice-prebuilt-app"));
     let expected_binary = expected_resident_binary(repository);
     assert!(

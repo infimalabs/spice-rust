@@ -42,8 +42,11 @@ export const CANVAS_SHARDS = Object.freeze([
       "variant-surfaces",
       "socket-resilience",
       "team-lifecycle",
-      "resident-restart",
     ]),
+  }),
+  Object.freeze({
+    name: "restart",
+    scenarios: Object.freeze(["resident-restart"]),
   }),
 ]);
 
