@@ -8,40 +8,67 @@ use std::time::{Duration, Instant};
 
 const REAP_POLL: Duration = Duration::from_millis(10);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Process {
     pid: u32,
     parent: u32,
     group: u32,
     state: char,
+    started: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ProcessIdentity {
+    pid: u32,
+    group: u32,
+    started: String,
+}
+
+impl From<&Process> for ProcessIdentity {
+    fn from(process: &Process) -> Self {
+        Self {
+            pid: process.pid,
+            group: process.group,
+            started: process.started.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(super) struct DescendantGroups {
+    root: u32,
     groups: BTreeSet<u32>,
+    members: BTreeSet<ProcessIdentity>,
 }
 
 impl DescendantGroups {
     pub(super) fn discover(root: u32) -> io::Result<Self> {
         let processes = process_snapshot()?;
+        let groups = descendant_groups(&processes, root);
         Ok(Self {
-            groups: descendant_groups(&processes, root),
+            root,
+            members: processes
+                .iter()
+                .filter(|process| groups.contains(&process.group))
+                .map(ProcessIdentity::from)
+                .collect(),
+            groups,
         })
     }
 
     pub(super) fn terminate(&self) -> io::Result<()> {
-        signal_groups(&self.groups, libc::SIGTERM)
+        self.signal(libc::SIGTERM)
     }
 
     pub(super) fn reap(&self, grace: Duration, reap: Duration) -> io::Result<()> {
-        if self.groups.is_empty() || wait_until_terminal(&self.groups, grace)? {
+        if self.groups.is_empty() || self.wait_until_terminal(grace)? {
             return Ok(());
         }
-        signal_groups(&self.groups, libc::SIGKILL)?;
-        if wait_until_terminal(&self.groups, reap)? {
+        self.signal(libc::SIGKILL)?;
+        if self.wait_until_terminal(reap)? {
             return Ok(());
         }
-        let live = live_groups(&self.groups)?;
+        let live = owned_live_groups(&process_snapshot()?, self.root, &self.groups, &self.members)?;
         Err(io::Error::new(
             io::ErrorKind::TimedOut,
             format!(
@@ -50,11 +77,37 @@ impl DescendantGroups {
             ),
         ))
     }
+
+    fn signal(&self, signal: libc::c_int) -> io::Result<()> {
+        signal_owned_groups(
+            self.root,
+            &self.groups,
+            &self.members,
+            process_snapshot,
+            kill_process_group,
+            signal,
+        )
+    }
+
+    fn wait_until_terminal(&self, deadline: Duration) -> io::Result<bool> {
+        let started = Instant::now();
+        loop {
+            if owned_live_groups(&process_snapshot()?, self.root, &self.groups, &self.members)?
+                .is_empty()
+            {
+                return Ok(true);
+            }
+            if started.elapsed() >= deadline {
+                return Ok(false);
+            }
+            thread::sleep(REAP_POLL.min(deadline.saturating_sub(started.elapsed())));
+        }
+    }
 }
 
 fn process_snapshot() -> io::Result<Vec<Process>> {
     let output = Command::new("ps")
-        .args(["-Ao", "pid=,ppid=,pgid=,stat="])
+        .args(["-Ao", "pid=,ppid=,pgid=,stat=,lstart="])
         .output()?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
@@ -79,14 +132,16 @@ fn parse_process(line: &str) -> io::Result<Process> {
         .next()
         .and_then(|state| state.chars().next())
         .ok_or_else(|| malformed_listing("state", line))?;
-    if fields.next().is_some() {
-        return Err(malformed_listing("exactly four fields", line));
+    let started = fields.collect::<Vec<_>>();
+    if started.len() != 5 {
+        return Err(malformed_listing("five-field start time", line));
     }
     Ok(Process {
         pid,
         parent,
         group,
         state,
+        started: started.join(" "),
     })
 }
 
@@ -125,18 +180,84 @@ fn descendant_groups(processes: &[Process], root: u32) -> BTreeSet<u32> {
         .collect()
 }
 
-fn signal_groups(groups: &BTreeSet<u32>, signal: libc::c_int) -> io::Result<()> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroupOwnership {
+    Absent,
+    Owned,
+    Drifted,
+}
+
+fn group_ownership(
+    processes: &[Process],
+    root: u32,
+    group: u32,
+    members: &BTreeSet<ProcessIdentity>,
+) -> GroupOwnership {
+    let live = processes
+        .iter()
+        .filter(|process| process.group == group && process.state != 'Z')
+        .collect::<Vec<_>>();
+    if live.is_empty() {
+        return GroupOwnership::Absent;
+    }
+    if live
+        .iter()
+        .any(|process| members.contains(&ProcessIdentity::from(*process)))
+        || descendant_groups(processes, root).contains(&group)
+    {
+        GroupOwnership::Owned
+    } else {
+        GroupOwnership::Drifted
+    }
+}
+
+fn owned_live_groups(
+    processes: &[Process],
+    root: u32,
+    groups: &BTreeSet<u32>,
+    members: &BTreeSet<ProcessIdentity>,
+) -> io::Result<BTreeSet<u32>> {
+    let mut live = BTreeSet::new();
+    for group in groups {
+        match group_ownership(processes, root, *group, members) {
+            GroupOwnership::Absent => {}
+            GroupOwnership::Owned => {
+                live.insert(*group);
+            }
+            GroupOwnership::Drifted => return Err(ownership_drift(root, *group)),
+        }
+    }
+    Ok(live)
+}
+
+fn signal_owned_groups<Snapshot, Signal>(
+    root: u32,
+    groups: &BTreeSet<u32>,
+    members: &BTreeSet<ProcessIdentity>,
+    mut snapshot: Snapshot,
+    mut signal_group: Signal,
+    signal: libc::c_int,
+) -> io::Result<()>
+where
+    Snapshot: FnMut() -> io::Result<Vec<Process>>,
+    Signal: FnMut(u32, libc::c_int) -> io::Result<()>,
+{
     let mut failures = Vec::new();
     for group in groups {
-        let Ok(group) = libc::pid_t::try_from(*group) else {
-            failures.push(format!("{group}: identity exceeds pid_t"));
-            continue;
-        };
-        // SAFETY: the negative identity targets exactly the observed process group.
-        if unsafe { libc::kill(-group, signal) } == -1 {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
-                failures.push(format!("{group}: {error}"));
+        match group_ownership(&snapshot()?, root, *group, members) {
+            GroupOwnership::Absent => continue,
+            GroupOwnership::Drifted => return Err(ownership_drift(root, *group)),
+            GroupOwnership::Owned => {}
+        }
+        if let Err(error) = signal_group(*group, signal) {
+            match error.raw_os_error() {
+                Some(libc::ESRCH) => {}
+                Some(libc::EPERM) => match group_ownership(&snapshot()?, root, *group, members) {
+                    GroupOwnership::Absent => {}
+                    GroupOwnership::Drifted => return Err(ownership_drift(root, *group)),
+                    GroupOwnership::Owned => failures.push(format!("{group}: {error}")),
+                },
+                _ => failures.push(format!("{group}: {error}")),
             }
         }
     }
@@ -150,25 +271,21 @@ fn signal_groups(groups: &BTreeSet<u32>, signal: libc::c_int) -> io::Result<()> 
     }
 }
 
-fn wait_until_terminal(groups: &BTreeSet<u32>, deadline: Duration) -> io::Result<bool> {
-    let started = Instant::now();
-    loop {
-        if live_groups(groups)?.is_empty() {
-            return Ok(true);
-        }
-        if started.elapsed() >= deadline {
-            return Ok(false);
-        }
-        thread::sleep(REAP_POLL.min(deadline.saturating_sub(started.elapsed())));
+fn kill_process_group(group: u32, signal: libc::c_int) -> io::Result<()> {
+    let group = libc::pid_t::try_from(group)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "group identity exceeds pid_t"))?;
+    // SAFETY: the caller immediately revalidated this owned process group.
+    if unsafe { libc::kill(-group, signal) } == -1 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
     }
 }
 
-fn live_groups(groups: &BTreeSet<u32>) -> io::Result<BTreeSet<u32>> {
-    Ok(process_snapshot()?
-        .into_iter()
-        .filter(|process| process.state != 'Z' && groups.contains(&process.group))
-        .map(|process| process.group)
-        .collect())
+fn ownership_drift(root: u32, group: u32) -> io::Error {
+    io::Error::other(format!(
+        "process group {group} is live but no longer descends from owned root {root}"
+    ))
 }
 
 fn display_groups(groups: &BTreeSet<u32>) -> String {
@@ -203,12 +320,133 @@ mod tests {
         assert!(error.to_string().contains("parent PID"), "{error}");
     }
 
-    const fn process(pid: u32, parent: u32, group: u32) -> Process {
+    #[test]
+    fn process_rows_capture_the_complete_start_generation() {
+        let process = parse_process("12 10 12 S Tue Aug 18 12:34:56 2026")
+            .expect("complete process row parses");
+
+        assert_eq!(process.pid, 12);
+        assert_eq!(process.parent, 10);
+        assert_eq!(process.group, 12);
+        assert_eq!(process.state, 'S');
+        assert_eq!(process.started, "Tue Aug 18 12:34:56 2026");
+    }
+
+    #[test]
+    fn ownership_drift_refuses_before_a_foreign_group_is_signalled() {
+        let groups = BTreeSet::from([12]);
+        let owned = [process_with_start(12, 10, 12, "owned-start")];
+        let members = owned.iter().map(ProcessIdentity::from).collect();
+        let foreign = vec![process_with_start(12, 99, 12, "foreign-start")];
+        let mut signals = Vec::new();
+
+        let error = signal_owned_groups(
+            10,
+            &groups,
+            &members,
+            || Ok(foreign.clone()),
+            |group, signal| {
+                signals.push((group, signal));
+                Ok(())
+            },
+            libc::SIGTERM,
+        )
+        .expect_err("foreign ownership refuses");
+
+        assert!(signals.is_empty(), "foreign group received a signal");
+        assert!(error.to_string().contains("no longer descends"), "{error}");
+    }
+
+    #[test]
+    fn captured_generation_remains_owned_after_the_root_exits() {
+        let groups = BTreeSet::from([12]);
+        let detached = vec![process_with_start(12, 1, 12, "owned-start")];
+        let members = detached.iter().map(ProcessIdentity::from).collect();
+        let mut signals = Vec::new();
+
+        signal_owned_groups(
+            10,
+            &groups,
+            &members,
+            || Ok(detached.clone()),
+            |group, signal| {
+                signals.push((group, signal));
+                Ok(())
+            },
+            libc::SIGTERM,
+        )
+        .expect("captured detached generation remains owned");
+
+        assert_eq!(signals, [(12, libc::SIGTERM)]);
+    }
+
+    #[test]
+    fn permission_refusal_rechecks_ownership_without_retrying_a_recycled_group() {
+        let groups = BTreeSet::from([12]);
+        let owned = vec![
+            process(10, 1, 10),
+            process_with_start(12, 10, 12, "owned-start"),
+        ];
+        let members = owned.iter().map(ProcessIdentity::from).collect();
+        let foreign = vec![process_with_start(12, 99, 12, "foreign-start")];
+        let mut snapshots = vec![foreign, owned].into_iter().rev();
+        let mut signals = 0;
+
+        let error = signal_owned_groups(
+            10,
+            &groups,
+            &members,
+            || Ok(snapshots.next().expect("two ownership snapshots")),
+            |_, _| {
+                signals += 1;
+                Err(io::Error::from_raw_os_error(libc::EPERM))
+            },
+            libc::SIGTERM,
+        )
+        .expect_err("recycled group is a typed ownership drift");
+
+        assert_eq!(signals, 1, "permission refusal must not be retried");
+        assert!(error.to_string().contains("no longer descends"), "{error}");
+    }
+
+    #[test]
+    fn permission_refusal_is_benign_when_the_owned_group_is_then_absent() {
+        let groups = BTreeSet::from([12]);
+        let owned = vec![
+            process(10, 1, 10),
+            process_with_start(12, 10, 12, "owned-start"),
+        ];
+        let members = owned.iter().map(ProcessIdentity::from).collect();
+        let mut snapshots = vec![Vec::new(), owned].into_iter().rev();
+        let mut signals = 0;
+
+        signal_owned_groups(
+            10,
+            &groups,
+            &members,
+            || Ok(snapshots.next().expect("two ownership snapshots")),
+            |_, _| {
+                signals += 1;
+                Err(io::Error::from_raw_os_error(libc::EPERM))
+            },
+            libc::SIGTERM,
+        )
+        .expect("an exited owned group makes the stale permission refusal benign");
+
+        assert_eq!(signals, 1, "permission refusal must not be retried");
+    }
+
+    fn process(pid: u32, parent: u32, group: u32) -> Process {
+        process_with_start(pid, parent, group, &format!("fixture-start-{pid}"))
+    }
+
+    fn process_with_start(pid: u32, parent: u32, group: u32, started: &str) -> Process {
         Process {
             pid,
             parent,
             group,
             state: 'S',
+            started: started.to_owned(),
         }
     }
 }
