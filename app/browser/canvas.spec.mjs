@@ -830,7 +830,6 @@ try {
     let lightPage;
     let lightMonitor;
     let hiddenStatusReport;
-    let configuredPolicy;
     let dark;
     let darkMonitor;
     if (run.owns("readiness")) {
@@ -895,6 +894,62 @@ try {
         lightMonitor.assertClean();
         await light.close();
       });
+    } else if (run.owns("restart")) {
+      light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
+      await installBrowserSpeech(light);
+      await installSocketControl(light);
+      lightPage = await light.newPage();
+      lightMonitor = monitorPage(lightPage);
+      lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
+      await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+      await assertCanvas(lightPage, "light-restart");
+      hiddenStatusReport = await assertWaitReporting(lightPage, resident);
+      const team = await seatAgentTeam(lightPage, fixture, worktrees);
+      Object.assign(seeded, {
+        lane: team.lane,
+        quoteLane: team.quoteLane,
+        agentName: team.agentName,
+        quoteProse: team.quoteProse,
+        primaryHeadings: team.primaryHeadings,
+      });
+      await team.console.getByRole("tab", { name: /^Compose/ }).first().click();
+      const primary = team.console.locator(
+        `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
+      );
+      await primary.locator('.team-lifetime input[type="range"]').fill("2");
+      await primary.getByRole("button", { name: "Drain", exact: true }).waitFor();
+      const configured = await reply(fixture, ["lane"]);
+      const configuredPolicy = {
+        lineage: team.host.lineage_id,
+        policy: configured.body.subscriptions.find(
+          (subscription) => subscription.lineage_id === team.host.lineage_id,
+        )?.policy,
+      };
+      assert.equal(configuredPolicy.policy, "drain", "restart setup records a task policy");
+      await reply(fixture, ["steer", seeded.lane, "browser direction survives streaming"]);
+      await run.scenario("resident-restart", async () => {
+        const firstEpoch = resident.discovery.epoch;
+        const firstCapability = resident.discovery.capability;
+        lightMonitor.expectNetworkInterruption(true);
+        await chooseCanvasView(lightPage, "Chronology");
+        await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
+        await stopResident(fixture, resident);
+        await assertResidentLossObserved(lightPage, resident);
+        const restart = { epoch: firstEpoch, capability: firstCapability, policy: configuredPolicy };
+        resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
+        lightMonitor.expectNetworkInterruption(false);
+        await assertCanvas(lightPage, "light-restarted");
+        await chooseCanvasView(lightPage, "Chronology");
+        assert.equal(await lightPage.getByText(/Note appended to/).count(), 0,
+          "new generation clears prior command reply state");
+        await assertPackedHistory(lightPage, fixture, await journalExtent(fixture));
+        await assertAuthoritySurface(lightPage, seeded);
+        await assertNoCredentialOrLandingGap(
+          lightPage, [firstCapability, resident.discovery.capability],
+        );
+        lightMonitor.assertClean();
+        await light.close();
+      });
     } else {
       await run.scenario("variant-surfaces", async () => {
         light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
@@ -946,7 +1001,7 @@ try {
         );
       });
       await run.scenario("team-lifecycle", async () => {
-        configuredPolicy = await assertPerTeamWatchbands(
+        await assertPerTeamWatchbands(
           lightPage,
           fixture,
           worktrees,
@@ -956,29 +1011,6 @@ try {
         lightMonitor.assertClean();
         darkMonitor.assertClean();
         await dark.close();
-      });
-      await run.scenario("resident-restart", async () => {
-        const firstEpoch = resident.discovery.epoch;
-        const firstCapability = resident.discovery.capability;
-        lightMonitor.expectNetworkInterruption(true);
-        await chooseCanvasView(lightPage, "Chronology");
-        await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
-        await stopResident(fixture, resident);
-        await assertResidentLossObserved(lightPage, resident);
-        const restart = { epoch: firstEpoch, capability: firstCapability, policy: configuredPolicy };
-        resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
-        lightMonitor.expectNetworkInterruption(false);
-        await assertCanvas(lightPage, "light-restarted");
-        await chooseCanvasView(lightPage, "Chronology");
-        assert.equal(await lightPage.getByText(/Note appended to/).count(), 0,
-          "new generation clears prior command reply state");
-        await assertPackedHistory(lightPage, fixture, await journalExtent(fixture));
-        await assertAuthoritySurface(lightPage, seeded);
-        await assertNoCredentialOrLandingGap(
-          lightPage, [firstCapability, resident.discovery.capability],
-        );
-        lightMonitor.assertClean();
-        await light.close();
       });
     }
   }

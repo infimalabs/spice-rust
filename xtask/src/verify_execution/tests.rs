@@ -392,6 +392,7 @@ impl Runner for TimedRunner {
         &self,
         cancellation: &CancellationToken,
         _cargo_jobs: usize,
+        _canvas_workers: usize,
     ) -> Result<BrowserRun, RunError> {
         Ok(BrowserRun {
             process: self.command(BROWSER_LABEL, cancellation),
@@ -403,8 +404,13 @@ impl Runner for TimedRunner {
         &self,
         cancellation: &CancellationToken,
         _cargo_jobs: usize,
+        canvas_workers: usize,
         progress: ActionProgress,
     ) -> Result<BrowserRun, RunError> {
+        self.cargo_jobs
+            .lock()
+            .expect("timed browser workers lock")
+            .push((BROWSER_LABEL, canvas_workers));
         Ok(BrowserRun {
             process: self.command_with_progress(BROWSER_LABEL, cancellation, progress),
             completed: true,
@@ -559,46 +565,6 @@ fn readiness_never_crosses_an_unfinished_declared_prerequisite() {
 }
 
 #[test]
-fn peer_cargo_pressure_continuously_scales_outer_and_workspace_worker_budgets() {
-    let no_pressure = Budget::from_observation(FIXTURE_CPU_COUNT, Some(0));
-    let one_peer = Budget::from_observation(FIXTURE_CPU_COUNT, Some(1));
-    let two_peers = Budget::from_observation(FIXTURE_CPU_COUNT, Some(2));
-    let pressure = Budget::from_observation(FIXTURE_CPU_COUNT, Some(8));
-    let one_peer_twelve_cpus = Budget::from_observation(12, Some(1));
-    let three_peers = Budget::from_observation(12, Some(3));
-    let two_cpus = Budget::from_observation(2, Some(0));
-    let one_free_cpu = Budget::from_observation(2, Some(1));
-    let saturated_cpu = Budget::from_observation(1, Some(4));
-    let unknown = Budget::from_observation(FIXTURE_CPU_COUNT, None);
-    assert_eq!(no_pressure.workers, 3);
-    assert_eq!(one_peer.workers, 2);
-    assert_eq!(pressure.workers, 1);
-    assert_eq!(two_cpus.workers, 2);
-    assert_eq!(one_free_cpu.workers, 1);
-    assert_eq!(saturated_cpu.workers, 1);
-    assert_eq!(unknown.workers, 1);
-    assert_eq!(unknown.cargo_jobs, 1);
-    assert_eq!(no_pressure.cargo_jobs, 8);
-    assert_eq!(no_pressure.workspace_workers, 6);
-    assert_eq!(one_peer.workspace_workers, 5);
-    assert_eq!(two_peers.workspace_workers, 5);
-    assert_eq!(pressure.workspace_workers, 1);
-    assert_eq!(one_peer_twelve_cpus.cargo_jobs, 4);
-    assert_eq!(one_peer_twelve_cpus.workspace_workers, 4);
-    assert_eq!(three_peers.cargo_jobs, 3);
-    assert_eq!(three_peers.workspace_workers, 3);
-    assert_eq!(two_cpus.workspace_workers, 1);
-    assert_eq!(one_free_cpu.workspace_workers, 1);
-    assert_eq!(saturated_cpu.workspace_workers, 1);
-    assert_eq!(unknown.workspace_workers, 1);
-    assert_eq!(
-        no_pressure.cargo_jobs * super::MAX_CONCURRENT_CARGO_ACTIONS,
-        FIXTURE_CPU_COUNT
-    );
-    assert_eq!(pressure.cargo_jobs, 1);
-}
-
-#[test]
 fn cargo_probe_finds_five_external_roots_for_the_six_agent_target() {
     let listing = concat!(
         "10 1 cargo\n",
@@ -632,6 +598,12 @@ fn six_agent_pressure_retains_two_cpu_fairness_through_rebalance_and_cleanup() {
     assert_eq!(budget.cargo_jobs, CPUS_PER_AGENT_TARGET);
     assert_eq!(budget.compiler_cargo_jobs, CPUS_PER_AGENT_TARGET);
     assert_eq!(budget.workspace_workers, CPUS_PER_AGENT_TARGET);
+    assert_eq!(budget.canvas_workers, 5);
+    assert_eq!(
+        SIX_AGENT_PEER_COUNT + budget.workspace_workers + budget.canvas_workers,
+        SIX_AGENT_CPU_COUNT,
+        "the fifth Canvas lane uses the last measured fleet slot"
+    );
 
     let mut delays = VERIFY_ACTIONS
         .iter()
@@ -667,6 +639,7 @@ fn six_agent_pressure_retains_two_cpu_fairness_through_rebalance_and_cleanup() {
         runner.jobs_for(WORKSPACE_TEST_LABEL),
         [CPUS_PER_AGENT_TARGET]
     );
+    assert_eq!(runner.jobs_for(BROWSER_LABEL), [5]);
     for label in VERIFY_ACTIONS.iter().filter_map(|action| match action {
         super::Action::Command(step) if step.uses_verifier_compiler_contract() => Some(step.label),
         _ => None,
@@ -703,6 +676,7 @@ fn single_worker_mode_executes_every_action_once_without_overlap() {
             .contains(concat!(
                 "scheduler workers=1 cargo_jobs=1 active_peer_cargo_jobs=8 ",
                 "workspace_workers=1 action_count=13 ",
+                "canvas_workers=4 ",
                 "deadline_scope=test-phase inactivity_ms=300000 absolute_ms=357000 ",
                 "supervisor_inactivity_ms=90000 supervisor_absolute_ms=360000"
             ))
@@ -769,7 +743,7 @@ fn transient_peer_pressure_is_rebalanced_after_workspace_test_setup() {
     let runner = TimedRunner::uniform(Duration::from_millis(2))
         .with_prebuild_delay(Duration::from_millis(2));
     let mut output = Vec::new();
-    let initial = Budget::from_observation(12, Some(3));
+    let initial = Budget::from_observation(12, Some(7));
     let recovered = Budget::from_observation(12, Some(0));
 
     verify_with_deadline_and_rebalance(
@@ -785,16 +759,15 @@ fn transient_peer_pressure_is_rebalanced_after_workspace_test_setup() {
     .expect("the post-setup observation restores capacity after transient peers exit");
 
     let output = String::from_utf8(output).expect("scheduler output is UTF-8");
-    assert!(
-        output.contains(
-            "scheduler workers=1 cargo_jobs=3 active_peer_cargo_jobs=3 workspace_workers=3"
-        )
-    );
+    assert!(output.contains(concat!(
+        "scheduler workers=1 cargo_jobs=1 active_peer_cargo_jobs=7 ",
+        "workspace_workers=1 action_count=13 canvas_workers=4"
+    )));
     assert!(output.contains(concat!(
         "scheduler-rebalanced trigger=workspace-test-setup workers=3 cargo_jobs=6 ",
         "active_peer_cargo_jobs=0 workspace_workers=6"
     )));
-    assert!(output.contains("workspace_workers=6 compiler_cargo_jobs=3"));
+    assert!(output.contains("workspace_workers=6 compiler_cargo_jobs=1 canvas_workers=5"));
     assert_line_order(
         &output,
         "stage=setup-terminal",
@@ -814,6 +787,7 @@ fn transient_peer_pressure_is_rebalanced_after_workspace_test_setup() {
         );
     }
     assert_eq!(runner.jobs_for(VERIFY_ACTIONS[8].label()), [6]);
+    assert_eq!(runner.jobs_for(BROWSER_LABEL), [5]);
     assert_exactly_once(&runner.calls());
 }
 
@@ -847,6 +821,7 @@ fn pressured_rebalance_overlaps_the_two_long_test_phase_branches() {
         "scheduler-rebalanced trigger=workspace-test-setup workers=2 cargo_jobs=4 ",
         "active_peer_cargo_jobs=2 workspace_workers=4"
     )));
+    assert_eq!(runner.jobs_for(BROWSER_LABEL), [5]);
     assert!(runner.peak.load(Ordering::Acquire) >= 2);
     assert_exactly_once(&runner.calls());
 }
@@ -913,6 +888,7 @@ fn unreadable_post_setup_pressure_uses_the_single_worker_degraded_mode() {
         "scheduler-rebalanced trigger=workspace-test-setup workers=1 cargo_jobs=1 ",
         "active_peer_cargo_jobs=unknown workspace_workers=1"
     )));
+    assert_eq!(runner.jobs_for(BROWSER_LABEL), [4]);
     assert_eq!(runner.peak.load(Ordering::Acquire), 1);
     assert_exactly_once(&runner.calls());
 }
@@ -1461,6 +1437,7 @@ fn assert_line_order(output: &str, first: &str, second: &str) {
     );
 }
 
+mod canvas_capacity;
 mod process_fixtures;
 mod progress_lease;
 

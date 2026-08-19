@@ -48,7 +48,7 @@ impl<Rebalance> SetupRun<Rebalance> {
     }
 
     pub(super) const fn test_branches_ready(&self) -> bool {
-        self.workspace_prebuilt
+        self.workspace_prebuilt && self.rebalance.is_none()
     }
     pub(super) fn into_failures(
         self,
@@ -238,13 +238,14 @@ fn write_rebalanced_budget(output: &mut impl Write, budget: Budget) -> io::Resul
         output,
         concat!(
             "[verify] scheduler-rebalanced trigger=workspace-test-setup workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={} compiler_cargo_jobs={}"
+            "active_peer_cargo_jobs={} workspace_workers={} compiler_cargo_jobs={} canvas_workers={}"
         ),
         budget.workers,
         budget.cargo_jobs,
         active,
         budget.workspace_workers,
         budget.compiler_cargo_jobs,
+        budget.canvas_workers,
     )?;
     output.flush()
 }

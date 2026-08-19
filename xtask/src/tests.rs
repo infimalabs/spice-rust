@@ -168,6 +168,7 @@ impl Runner for FakeRunner {
         &self,
         _cancellation: &CancellationToken,
         _cargo_jobs: usize,
+        _canvas_workers: usize,
     ) -> Result<BrowserRun, RunError> {
         let mut state = self.state();
         state.calls.push(BROWSER_LABEL);

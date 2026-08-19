@@ -397,15 +397,17 @@ trait Runner: Sync {
         &self,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
+        canvas_workers: usize,
     ) -> Result<BrowserRun, RunError>;
     fn browser_with_progress(
         &self,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
+        canvas_workers: usize,
         progress: ActionProgress,
     ) -> Result<BrowserRun, RunError> {
         let _ = progress;
-        self.browser(cancellation, cargo_jobs)
+        self.browser(cancellation, cargo_jobs, canvas_workers)
     }
     fn workspace_test_prebuild(
         &self,
@@ -1081,17 +1083,19 @@ impl Runner for SystemRunner {
         &self,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
+        canvas_workers: usize,
     ) -> Result<BrowserRun, RunError> {
-        verify_browser::run(cancellation, cargo_jobs)
+        verify_browser::run(cancellation, cargo_jobs, canvas_workers)
     }
 
     fn browser_with_progress(
         &self,
         cancellation: &CancellationToken,
         cargo_jobs: usize,
+        canvas_workers: usize,
         progress: ActionProgress,
     ) -> Result<BrowserRun, RunError> {
-        verify_browser::run_with_progress(cancellation, cargo_jobs, progress)
+        verify_browser::run_with_progress(cancellation, cargo_jobs, canvas_workers, progress)
     }
 
     fn workspace_tests(

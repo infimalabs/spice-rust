@@ -51,9 +51,12 @@ pub(super) fn execute_action<R: Runner>(
                 code,
             },
         ),
-        Action::Browser => {
-            execute_browser(runner.browser_with_progress(cancellation, budget.cargo_jobs, progress))
-        }
+        Action::Browser => execute_browser(runner.browser_with_progress(
+            cancellation,
+            budget.cargo_jobs,
+            budget.canvas_workers,
+            progress,
+        )),
         Action::WorkspaceTests => execute_workspace_tests(
             runner.workspace_tests_with_progress(
                 cancellation,
