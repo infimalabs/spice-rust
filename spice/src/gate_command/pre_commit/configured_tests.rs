@@ -412,6 +412,81 @@ fn independent_child_failures_are_aggregated_in_authored_order() {
 }
 
 #[test]
+fn truncated_capture_on_a_successful_step_is_recorded_not_fatal() {
+    let scratch = Scratch::new("overflow-admission");
+    let commands = parsed_commands(&[row(
+        "overflow",
+        &["/bin/sh", "-c", "yes overflow | head -c 1024", "fixture"],
+        &[],
+    )]);
+    let source = source();
+    let mut bounds = test_bounds(Duration::from_secs(2));
+    bounds.output_limit = 32;
+    let report = execute_steps(
+        &commands,
+        &source,
+        &["src/lib.rs".to_owned()],
+        &scratch.root,
+        &base_environment(),
+        bounds,
+        Cancellation::Never,
+        ExecutionMode::Ordinary,
+        &mut || Ok(()),
+    )
+    .expect("truncated successful step remains report evidence");
+
+    assert!(
+        report.admits(),
+        "clean exit must not fail on capture volume"
+    );
+    assert_eq!(report.steps().len(), 1);
+    assert_eq!(
+        report.steps()[0].findings()[0].kind(),
+        StepFindingKind::OutputOverflow,
+        "the truncation stays recorded in the step report",
+    );
+}
+
+#[test]
+fn truncation_beside_a_failing_exit_still_refuses() {
+    let scratch = Scratch::new("overflow-with-exit");
+    let commands = parsed_commands(&[row(
+        "overflow-exit",
+        &[
+            "/bin/sh",
+            "-c",
+            "yes overflow | head -c 1024; exit 7",
+            "fixture",
+        ],
+        &[],
+    )]);
+    let source = source();
+    let mut bounds = test_bounds(Duration::from_secs(2));
+    bounds.output_limit = 32;
+    let report = execute_steps(
+        &commands,
+        &source,
+        &["src/lib.rs".to_owned()],
+        &scratch.root,
+        &base_environment(),
+        bounds,
+        Cancellation::Never,
+        ExecutionMode::Ordinary,
+        &mut || Ok(()),
+    )
+    .expect("truncated failing step remains report evidence");
+
+    assert!(!report.admits());
+    let kinds = report.steps()[0]
+        .findings()
+        .iter()
+        .map(StepFinding::kind)
+        .collect::<Vec<_>>();
+    assert!(kinds.contains(&StepFindingKind::OutputOverflow));
+    assert!(kinds.contains(&StepFindingKind::Exit));
+}
+
+#[test]
 fn one_shared_deadline_terminates_and_reaps_a_late_step_process_tree() {
     let scratch = Scratch::new("shared-deadline");
     let pid = scratch.root.join("descendant.pid");
