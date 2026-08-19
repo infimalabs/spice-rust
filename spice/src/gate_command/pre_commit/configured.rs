@@ -56,8 +56,17 @@ enum ExecutionMode {
 }
 
 impl ConfiguredReport {
+    /// Truncated capture on an otherwise clean step is recorded evidence, not
+    /// failure: the per-stream ceiling bounds what the report retains, never
+    /// the verdict of a command that exited successfully. Overflow findings
+    /// only ever stand alone on a clean exit with drained outputs; every
+    /// other finding kind, and overflow beside one, still refuses.
     pub(super) fn admits(&self) -> bool {
-        self.steps.iter().all(|step| step.findings.is_empty())
+        self.steps.iter().all(|step| {
+            step.findings
+                .iter()
+                .all(|finding| matches!(finding.kind, StepFindingKind::OutputOverflow))
+        })
     }
 
     pub(super) fn source(&self) -> &Digest {
