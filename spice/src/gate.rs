@@ -53,7 +53,8 @@ pub use full_verifier_evidence::{
     FullVerifierEvidenceAdmission, FullVerifierEvidenceMiss, FullVerifierEvidenceStage,
     SemanticFullVerifierAdmission, admit_full_verifier_evidence,
     admit_merge_parent_full_verifier_evidence, admit_semantic_full_verifier_evidence,
-    inspect_full_verifier_evidence,
+    inspect_full_verifier_completion_evidence, inspect_full_verifier_evidence,
+    requires_full_verifier_completion_evidence,
 };
 
 /// One staged battery capture retained across the full verifier's actions.

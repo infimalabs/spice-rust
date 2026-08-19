@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn only_the_implementation_handoff_requires_completion_verifier_evidence() {
+    let phase = |name: &str| name.parse::<wire::Phase>().expect("fixture phase");
+    for transition in [
+        board::TransitionKind::Advance {
+            from: phase("todo"),
+            to: phase("review"),
+        },
+        board::TransitionKind::Advance {
+            from: phase("verify"),
+            to: phase("review"),
+        },
+        board::TransitionKind::Complete {
+            phase: phase("todo"),
+        },
+        board::TransitionKind::Complete {
+            phase: phase("verify"),
+        },
+    ] {
+        assert!(completion_requires_verifier(&transition), "{transition:?}");
+    }
+    for transition in [
+        board::TransitionKind::Advance {
+            from: phase("plan"),
+            to: phase("todo"),
+        },
+        board::TransitionKind::Advance {
+            from: phase("todo"),
+            to: phase("verify"),
+        },
+        board::TransitionKind::Complete {
+            phase: phase("plan"),
+        },
+        board::TransitionKind::Complete {
+            phase: phase("design"),
+        },
+    ] {
+        assert!(!completion_requires_verifier(&transition), "{transition:?}");
+    }
+}
+
+#[test]
 fn lane_claim_free_done_and_review_finding_survive_restart() {
     let (root, bus, epoch, seats) = fixture("workflow", 2);
     let lane_one = Actor::Lane(seats[0].lane);

@@ -122,6 +122,48 @@ pub(crate) fn resolution_evidence(repository: &Repository) -> Outcome<()> {
     pre_commit::run_resolution(repository)
 }
 
+/// Re-admit one complete verifier bundle for the exact task-publication tree.
+pub(crate) fn completion_evidence(
+    repository: &Repository,
+    candidate: &str,
+) -> Result<Option<wire::body::FullVerifierReceipt>, spice::task_git::CompletionEvidenceError> {
+    match spice::gate::requires_full_verifier_completion_evidence(repository, candidate) {
+        Ok(false) => return Ok(None),
+        Ok(true) => {}
+        Err(error) => {
+            return Err(spice::task_git::CompletionEvidenceError::fault(
+                error.reason(),
+                error.detail(),
+            ));
+        }
+    }
+    match spice::gate::inspect_full_verifier_completion_evidence(repository, candidate) {
+        Ok(spice::gate::FullVerifierEvidenceAdmission::Admitted(admitted)) => {
+            Ok(Some(wire::body::FullVerifierReceipt {
+                tree: admitted.source().clone(),
+                evidence: admitted.digest().clone(),
+                battery: admitted.battery().digest(),
+            }))
+        }
+        Ok(spice::gate::FullVerifierEvidenceAdmission::Unavailable(miss)) => {
+            Err(spice::task_git::CompletionEvidenceError::refusal(
+                "gate::full-verifier-completion-unavailable",
+                format!("stage={}: {}", miss.stage().as_str(), miss.detail(),),
+                "run `cargo xtask verify` on this exact current tree, then retry task completion",
+            ))
+        }
+        Err(error) if error.is_fault() => Err(spice::task_git::CompletionEvidenceError::fault(
+            error.reason(),
+            error.detail(),
+        )),
+        Err(error) => Err(spice::task_git::CompletionEvidenceError::refusal(
+            error.reason(),
+            error.detail(),
+            "run `cargo xtask verify` on this exact current tree, then retry task completion",
+        )),
+    }
+}
+
 /// Run the current source repository's strict ordinary change selection.
 ///
 /// This leaf is the policy-free destination for source-development delegates:

@@ -339,8 +339,47 @@ pub(super) fn publish_task_boundary(
     command: &wire::AdmittedCommand,
     entry: &Entry,
 ) -> Result<Option<GitBoundary>, Outcome<CommandAnswer>> {
+    publish_task_boundary_inner(repository, snapshot, command, entry, false)
+        .map(|published| published.git)
+}
+
+pub(super) struct PublishedTaskBoundary {
+    pub(super) git: Option<GitBoundary>,
+    pub(super) verifier: Option<body::FullVerifierReceipt>,
+}
+
+pub(super) fn publish_task_completion_boundary(
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+    transition: &board::Transition,
+) -> Result<PublishedTaskBoundary, Outcome<CommandAnswer>> {
+    let require_verifier = completion_requires_verifier(transition.kind());
+    publish_task_boundary_inner(repository, snapshot, command, entry, require_verifier)
+}
+
+pub(super) fn completion_requires_verifier(transition: &board::TransitionKind) -> bool {
+    match transition {
+        board::TransitionKind::Advance { from, to } => {
+            matches!(from.as_str(), "todo" | "verify") && to.as_str() == "review"
+        }
+        board::TransitionKind::Complete { phase } => matches!(phase.as_str(), "todo" | "verify"),
+    }
+}
+
+fn publish_task_boundary_inner(
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+    require_verifier: bool,
+) -> Result<PublishedTaskBoundary, Outcome<CommandAnswer>> {
     let Some(resident) = repository else {
-        return Ok(None);
+        return Ok(PublishedTaskBoundary {
+            git: None,
+            verifier: None,
+        });
     };
     let lane = task_repository(snapshot, command, resident)?;
     let actor = command.actor().to_string();
@@ -352,56 +391,70 @@ pub(super) fn publish_task_boundary(
             "renew or win the exact active task phase before retrying its Git boundary",
         )
     })?;
-    spice::task_git::publish_claimed(
-        &lane,
-        spice::task_git::Metadata {
-            label: entry.handle().as_str(),
-            title: &entry.statement().title,
-            project: &entry.statement().project,
-            phase: entry.workflow().phase.as_str(),
-            actor: &actor,
-        },
-        &active,
-        || {
-            match crate::gate_command::resolution_evidence(&lane) {
-                Outcome::Reply(_) => {}
-                Outcome::Refusal(refusal) => {
-                    let reason = refusal.reason().to_owned();
-                    let detail = refusal.complete_explanation();
-                    return Err(spice::task_git::ResolutionEvidenceError::refusal(
-                        reason,
-                        detail,
-                        "repair the named policy or test evidence and retry task completion",
-                    ));
-                }
-                Outcome::Fault(fault) => {
-                    return Err(spice::task_git::ResolutionEvidenceError::fault(
-                        fault.reason,
-                        fault.detail,
-                    ));
-                }
-            }
-            let now = current_instant().map_err(|outcome| {
-                spice::task_git::ResolutionEvidenceError::fault(
-                    "git::resolution-clock-unavailable",
-                    format!("{outcome:?}"),
-                )
-            })?;
-            if now >= active.expiry() {
+    let metadata = spice::task_git::Metadata {
+        label: entry.handle().as_str(),
+        title: &entry.statement().title,
+        project: &entry.statement().project,
+        phase: entry.workflow().phase.as_str(),
+        actor: &actor,
+    };
+    let resolution = || {
+        match crate::gate_command::resolution_evidence(&lane) {
+            Outcome::Reply(_) => {}
+            Outcome::Refusal(refusal) => {
+                let reason = refusal.reason().to_owned();
+                let detail = refusal.complete_explanation();
                 return Err(spice::task_git::ResolutionEvidenceError::refusal(
-                    "git::resolution-claim-expired",
-                    format!(
-                        "active claim expired at {} during evidence",
-                        active.expiry()
-                    ),
-                    "renew or win the task again before retrying task completion",
+                    reason,
+                    detail,
+                    "repair the named policy or test evidence and retry task completion",
                 ));
             }
-            Ok(())
-        },
-    )
-    .map(Some)
-    .map_err(task_git_outcome)
+            Outcome::Fault(fault) => {
+                return Err(spice::task_git::ResolutionEvidenceError::fault(
+                    fault.reason,
+                    fault.detail,
+                ));
+            }
+        }
+        let now = current_instant().map_err(|outcome| {
+            spice::task_git::ResolutionEvidenceError::fault(
+                "git::resolution-clock-unavailable",
+                format!("{outcome:?}"),
+            )
+        })?;
+        if now >= active.expiry() {
+            return Err(spice::task_git::ResolutionEvidenceError::refusal(
+                "git::resolution-claim-expired",
+                format!(
+                    "active claim expired at {} during evidence",
+                    active.expiry()
+                ),
+                "renew or win the task again before retrying task completion",
+            ));
+        }
+        Ok(())
+    };
+    if require_verifier {
+        return spice::task_git::publish_claimed_with_completion_evidence(
+            &lane,
+            metadata,
+            &active,
+            resolution,
+            |candidate| crate::gate_command::completion_evidence(&lane, candidate),
+        )
+        .map(|(git, verifier)| PublishedTaskBoundary {
+            git: Some(git),
+            verifier,
+        })
+        .map_err(task_git_outcome);
+    }
+    spice::task_git::publish_claimed(&lane, metadata, &active, resolution)
+        .map(|git| PublishedTaskBoundary {
+            git: Some(git),
+            verifier: None,
+        })
+        .map_err(task_git_outcome)
 }
 
 pub(super) fn task_git_outcome(error: spice::task_git::Error) -> Outcome<CommandAnswer> {

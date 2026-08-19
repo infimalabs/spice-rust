@@ -14,7 +14,8 @@ use spice::gate::{
     FullVerifierEvidence, FullVerifierEvidenceAdmission, FullVerifierEvidenceStage,
     PreparedBattery, SemanticFullVerifierAdmission, admit_full_verifier_evidence,
     admit_merge_parent_full_verifier_evidence, admit_semantic_full_verifier_evidence,
-    inspect_full_verifier_evidence, prepare_strict,
+    inspect_full_verifier_completion_evidence, inspect_full_verifier_evidence, prepare_strict,
+    requires_full_verifier_completion_evidence,
 };
 use spice::repository::Repository;
 use wire::{Digest, Domain};
@@ -23,6 +24,56 @@ const ARCHIVE_BUNDLE_NAME_BYTES: usize = 64 + ".json".len();
 const ARCHIVE_CONTAINER_MAGIC: &[u8; 8] = b"SPVARC\0\0";
 const ARCHIVE_CONTAINER_VERSION: u32 = 1;
 const ARCHIVE_CONTAINER_HEADER_BYTES: usize = ARCHIVE_CONTAINER_MAGIC.len() + 4 + 8 + 8 + 32;
+
+#[test]
+fn completion_evidence_tier_is_source_contract_bound_and_cannot_be_deleted_away() {
+    let fixture = Fixture::new();
+    git(&fixture.repository, &["init", "-q"]);
+    git(
+        &fixture.repository,
+        &["config", "user.email", "semantic@example.invalid"],
+    );
+    git(
+        &fixture.repository,
+        &["config", "user.name", "Semantic Fixture"],
+    );
+    fs::write(fixture.repository.join("README.md"), "generic fixture\n")
+        .expect("write generic fixture source");
+    git(&fixture.repository, &["add", "README.md"]);
+    git(&fixture.repository, &["commit", "-qm", "generic fixture"]);
+    let repository = Repository::discover(&fixture.repository).expect("discover generic fixture");
+    assert!(
+        !requires_full_verifier_completion_evidence(&repository, "HEAD")
+            .expect("classify generic fixture"),
+    );
+
+    fs::write(
+        fixture.repository.join(gate::BASELINE_PATH),
+        "version = 1\n",
+    )
+    .expect("write strict source marker");
+    git(&fixture.repository, &["add", gate::BASELINE_PATH]);
+    git(
+        &fixture.repository,
+        &["commit", "-qm", "adopt strict source contract"],
+    );
+    assert!(
+        requires_full_verifier_completion_evidence(&repository, "HEAD")
+            .expect("classify strict fixture"),
+    );
+
+    fs::remove_file(fixture.repository.join(gate::BASELINE_PATH))
+        .expect("remove strict source marker");
+    git(&fixture.repository, &["add", gate::BASELINE_PATH]);
+    git(
+        &fixture.repository,
+        &["commit", "-qm", "attempt to remove strict contract"],
+    );
+    assert!(
+        requires_full_verifier_completion_evidence(&repository, "HEAD")
+            .expect("classify strict history after deletion"),
+    );
+}
 
 #[test]
 fn full_verifier_retries_stale_state_and_crosses_the_complete_evidence_lifecycle() {
@@ -274,7 +325,31 @@ fn assert_retained_evidence_is_source_bound(
             .expect("admit right evidence after composition")
             .is_some(),
     );
+    git(left, &["commit", "-qm", "seal admitted left source"]);
+    env::set_current_dir(right).expect("hold a foreign process working directory");
+    assert!(
+        requires_full_verifier_completion_evidence(left_repository, "HEAD")
+            .expect("classify strict completion fixture"),
+    );
+    let admitted = match inspect_full_verifier_completion_evidence(left_repository, "HEAD")
+        .expect("admit committed evidence from another working directory")
+    {
+        FullVerifierEvidenceAdmission::Admitted(admitted) => admitted,
+        FullVerifierEvidenceAdmission::Unavailable(miss) => panic!(
+            "committed exact evidence missed at {}: {}",
+            miss.stage().as_str(),
+            miss.detail(),
+        ),
+    };
+    assert_eq!(admitted.source(), admitted.battery().tree());
+    assert_absent_completion_receipt_refuses(left_repository, admitted.source());
+    assert_stale_and_mismatched_completion_receipts_refuse(
+        left,
+        left_repository,
+        admitted.source(),
+    );
 
+    env::set_current_dir(right).expect("return to right worktree");
     left_evidence
         .publish(right_repository)
         .expect("copy foreign-source evidence into right worktree");
@@ -284,6 +359,66 @@ fn assert_retained_evidence_is_source_bound(
         panic!("state composition must not weaken exact staged-source admission");
     };
     assert_eq!(miss.stage(), FullVerifierEvidenceStage::Source);
+}
+
+fn assert_absent_completion_receipt_refuses(repository: &Repository, source: &Digest) {
+    let archive = repository
+        .admit_state()
+        .expect("admit completion fixture state")
+        .full_verifier_evidence_archive()
+        .join(format!("{source}.json"));
+    let document = fs::read(&archive).expect("read completion receipt fixture");
+    fs::remove_file(&archive).expect("remove completion receipt fixture");
+    let admission = inspect_full_verifier_completion_evidence(repository, "HEAD")
+        .expect("inspect absent completion receipt");
+    let FullVerifierEvidenceAdmission::Unavailable(miss) = admission else {
+        panic!("an absent archived receipt cannot become completion evidence");
+    };
+    assert_eq!(miss.stage(), FullVerifierEvidenceStage::Document);
+    fs::write(&archive, document).expect("restore completion receipt fixture");
+}
+
+fn assert_stale_and_mismatched_completion_receipts_refuse(
+    root: &Path,
+    repository: &Repository,
+    prior_source: &Digest,
+) {
+    let archive_root = repository
+        .admit_state()
+        .expect("admit stale completion fixture state")
+        .full_verifier_evidence_archive()
+        .to_path_buf();
+    let prior = fs::read(archive_root.join(format!("{prior_source}.json")))
+        .expect("read prior completion receipt");
+    fs::write(
+        root.join("LEFT.md"),
+        "left source moved after verification\n",
+    )
+    .expect("move committed completion source");
+    git(root, &["add", "LEFT.md"]);
+    git(root, &["commit", "-qm", "move completion source"]);
+
+    let stale = inspect_full_verifier_completion_evidence(repository, "HEAD")
+        .expect("inspect stale completion receipt");
+    let FullVerifierEvidenceAdmission::Unavailable(stale) = stale else {
+        panic!("a receipt for the prior tree cannot admit a moved completion tree");
+    };
+    assert_eq!(stale.stage(), FullVerifierEvidenceStage::Document);
+
+    env::set_current_dir(root).expect("capture moved completion source");
+    let moved = prepare_strict(Selector::revision("HEAD".to_owned()))
+        .expect("prepare moved completion source")
+        .source()
+        .clone();
+    let mismatched = archive_root.join(format!("{moved}.json"));
+    fs::write(&mismatched, prior).expect("misname prior receipt for moved source");
+    let admission = inspect_full_verifier_completion_evidence(repository, "HEAD")
+        .expect("inspect mismatched completion receipt");
+    let FullVerifierEvidenceAdmission::Unavailable(miss) = admission else {
+        panic!("a misnamed prior receipt cannot admit a moved completion tree");
+    };
+    assert_eq!(miss.stage(), FullVerifierEvidenceStage::Source);
+    fs::remove_file(mismatched).expect("remove mismatched completion receipt");
 }
 
 #[test]
