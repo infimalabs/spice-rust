@@ -54,7 +54,7 @@ pub(super) fn execute_action<R: Runner>(
         Action::Browser => {
             execute_browser(runner.browser_with_progress(cancellation, budget.cargo_jobs, progress))
         }
-        Action::WorkspaceTests => execute_process(
+        Action::WorkspaceTests => execute_workspace_tests(
             runner.workspace_tests_with_progress(
                 cancellation,
                 budget.cargo_jobs,
@@ -62,14 +62,6 @@ pub(super) fn execute_action<R: Runner>(
                 progress,
             ),
             crate::WORKSPACE_TEST_LABEL,
-            |source| VerifyError::Launch {
-                label: crate::WORKSPACE_TEST_LABEL,
-                source,
-            },
-            |code| VerifyError::Exit {
-                label: crate::WORKSPACE_TEST_LABEL,
-                code,
-            },
         ),
         Action::Battery => execute_battery(runner.battery(cancellation), BATTERY_LABEL),
         Action::Landing => match runner.landing() {
@@ -142,6 +134,75 @@ pub(super) fn execute_process(
             failure_with_output(exit_error(code), Disposition::from_status(code), output)
         }
     }
+}
+
+pub(super) fn execute_workspace_tests(
+    run: Result<CommandRun, RunError>,
+    label: &'static str,
+) -> ActionCompletion {
+    let mut output = match run {
+        Ok(CommandRun::Exited(output)) => output,
+        other => {
+            return execute_process(
+                other,
+                label,
+                |source| VerifyError::Launch { label, source },
+                |code| VerifyError::Exit { label, code },
+            );
+        }
+    };
+    if !output.status.success {
+        return execute_process(
+            Ok(CommandRun::Exited(output)),
+            label,
+            |source| VerifyError::Launch { label, source },
+            |code| VerifyError::Exit { label, code },
+        );
+    }
+
+    let Some(usage) = output.usage else {
+        return failure_with_output(
+            VerifyError::Cleanup {
+                label: label.to_owned(),
+                detail: "completed process has no kernel-accounted resource usage".to_owned(),
+            },
+            Disposition::CleanupError,
+            output,
+        );
+    };
+    let measured = usage.cpu_time();
+    let disposition = if measured <= crate::WORKSPACE_TEST_COMPUTE_BUDGET {
+        "admitted"
+    } else {
+        "refused"
+    };
+    writeln!(
+        output.stdout,
+        concat!(
+            "[rust-test] compute disposition={} user_cpu_ms={} system_cpu_ms={} ",
+            "total_cpu_ms={} budget_cpu_ms={}"
+        ),
+        disposition,
+        usage.user_cpu().as_millis(),
+        usage.system_cpu().as_millis(),
+        measured.as_millis(),
+        crate::WORKSPACE_TEST_COMPUTE_BUDGET.as_millis(),
+    )
+    .expect("writing to a byte vector cannot fail");
+    if measured > crate::WORKSPACE_TEST_COMPUTE_BUDGET {
+        return failure_with_output(
+            VerifyError::TestComputeBudget {
+                measured,
+                budget: crate::WORKSPACE_TEST_COMPUTE_BUDGET,
+            },
+            Disposition::Refused,
+            output,
+        );
+    }
+    success(
+        process_bytes(&output),
+        Disposition::from_status(output.status.code),
+    )
 }
 
 pub(super) fn panic_detail(payload: Box<dyn std::any::Any + Send>) -> String {

@@ -73,10 +73,55 @@ impl Completion {
 #[derive(Debug)]
 pub struct WaitOutcome {
     completion: Completion,
+    usage: ProcessUsage,
     observation_failure: Option<ObservationFailure>,
     stdout: Option<CapturedOutput>,
     stderr: Option<CapturedOutput>,
     outputs_drained: bool,
+}
+
+/// Kernel-accounted CPU consumed by one reaped process and its waited children.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProcessUsage {
+    user_cpu: Duration,
+    system_cpu: Duration,
+}
+
+impl ProcessUsage {
+    /// Construct one normalized user/system CPU accounting record.
+    #[must_use]
+    pub const fn new(user_cpu: Duration, system_cpu: Duration) -> Self {
+        Self {
+            user_cpu,
+            system_cpu,
+        }
+    }
+
+    /// CPU time spent executing application code.
+    #[must_use]
+    pub const fn user_cpu(self) -> Duration {
+        self.user_cpu
+    }
+
+    /// CPU time spent executing kernel code on the process tree's behalf.
+    #[must_use]
+    pub const fn system_cpu(self) -> Duration {
+        self.system_cpu
+    }
+
+    /// Total user and system CPU charged to the process tree.
+    #[must_use]
+    pub fn cpu_time(self) -> Duration {
+        self.user_cpu.saturating_add(self.system_cpu)
+    }
+
+    #[cfg(unix)]
+    fn from_rusage(usage: libc::rusage) -> Self {
+        Self::new(
+            duration_from_timeval(usage.ru_utime),
+            duration_from_timeval(usage.ru_stime),
+        )
+    }
 }
 
 /// One bounded passive observation of a running child.
@@ -91,6 +136,12 @@ pub enum WaitStep {
 impl WaitOutcome {
     pub fn completion(&self) -> &Completion {
         &self.completion
+    }
+
+    /// Kernel-accounted resource usage captured atomically with child reaping.
+    #[must_use]
+    pub const fn usage(&self) -> ProcessUsage {
+        self.usage
     }
 
     pub fn stdout(&self) -> Option<&CapturedOutput> {
@@ -241,6 +292,7 @@ struct ProcessState {
 struct ProcessCompletion {
     notice: Option<Result<(), IoFailure>>,
     status: Option<ExitStatus>,
+    usage: Option<ProcessUsage>,
     taken: bool,
     observation_failure: Option<ObservationFailure>,
     cleanup_failure: Option<IoFailure>,
@@ -565,8 +617,10 @@ impl Running {
             .map(CaptureHandle::finish)
             .transpose()
             .map_err(|source| self.io_error("finishing stderr capture", source))?;
+        let usage = self.process_usage()?;
         let outcome = WaitOutcome {
             completion,
+            usage,
             observation_failure,
             stdout,
             stderr,
@@ -668,6 +722,25 @@ impl Running {
                 self.io_error(
                     "reading observation completion",
                     io::Error::other("child completion lock is poisoned"),
+                )
+            })
+    }
+
+    fn process_usage(&self) -> Result<ProcessUsage, WaitError> {
+        self.process
+            .completion
+            .lock()
+            .map_err(|_| {
+                self.io_error(
+                    "reading child resource usage",
+                    io::Error::other("child completion lock is poisoned"),
+                )
+            })?
+            .usage
+            .ok_or_else(|| {
+                self.io_error(
+                    "reading child resource usage",
+                    io::Error::other("reaped child has no resource usage"),
                 )
             })
     }
@@ -1009,11 +1082,17 @@ fn reap_process(pid: u32, process: &ProcessState) -> io::Result<ExitStatus> {
     let pid =
         i32::try_from(pid).map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
     let mut raw = 0;
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     loop {
-        let result = unsafe { libc::waitpid(pid, &mut raw, 0) };
+        // SAFETY: `pid` names our notified child, and both output pointers are
+        // valid until `wait4` returns. This is the single reaping boundary.
+        let result = unsafe { libc::wait4(pid, &mut raw, 0, usage.as_mut_ptr()) };
         if result == pid {
             let status = ExitStatus::from_raw(raw);
+            // SAFETY: a successful `wait4` initialized the complete rusage.
+            let usage = ProcessUsage::from_rusage(unsafe { usage.assume_init() });
             completion.status = Some(status);
+            completion.usage = Some(usage);
             process.exited.notify_all();
             return Ok(status);
         }
@@ -1022,6 +1101,13 @@ fn reap_process(pid: u32, process: &ProcessState) -> io::Result<ExitStatus> {
             return Err(error);
         }
     }
+}
+
+#[cfg(unix)]
+fn duration_from_timeval(time: libc::timeval) -> Duration {
+    let seconds = u64::try_from(time.tv_sec).unwrap_or_default();
+    let microseconds = u32::try_from(time.tv_usec).unwrap_or_default().min(999_999);
+    Duration::new(seconds, microseconds * 1_000)
 }
 
 #[cfg(unix)]

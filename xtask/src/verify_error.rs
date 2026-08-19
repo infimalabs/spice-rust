@@ -94,6 +94,10 @@ pub enum VerifyError {
     TimedOut {
         label: String,
     },
+    TestComputeBudget {
+        measured: std::time::Duration,
+        budget: std::time::Duration,
+    },
     WorkerPanic {
         label: &'static str,
         detail: String,
@@ -170,6 +174,12 @@ impl fmt::Display for VerifyError {
             }
             Self::Cancelled { label } => write!(formatter, "[verify] cancelled: {label}"),
             Self::TimedOut { label } => write!(formatter, "[verify] timed out: {label}"),
+            Self::TestComputeBudget { measured, budget } => write!(
+                formatter,
+                "[verify] workspace test compute ratchet refused: measured {} ms exceeds frozen {} ms budget",
+                measured.as_millis(),
+                budget.as_millis(),
+            ),
             Self::WorkerPanic { label, detail } => {
                 write!(formatter, "[verify] action panicked: {label} ({detail})")
             }
@@ -209,6 +219,7 @@ impl std::error::Error for VerifyError {
             | Self::Cleanup { .. }
             | Self::Cancelled { .. }
             | Self::TimedOut { .. }
+            | Self::TestComputeBudget { .. }
             | Self::WorkerPanic { .. }
             | Self::Supervised { .. }
             | Self::Interrupted => None,

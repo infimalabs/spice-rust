@@ -182,6 +182,12 @@ const FULL_VERIFIER_WORKSPACE_TEST_CONCURRENCY_CAP: usize =
     gate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP;
 const WORKSPACE_TEST_LABEL: &str =
     "deterministic sharded cargo test --locked --workspace --all-targets";
+/// Frozen from the canonical prebuilt 49-shard measurement recorded by
+/// TESTS-1kNMfCLc: 441.78 user seconds plus 186.31 system seconds.
+/// Test additions must keep the same total CPU budget by removing or reducing
+/// compute elsewhere; wall-clock supervision remains independently unchanged.
+const WORKSPACE_TEST_COMPUTE_BUDGET: std::time::Duration =
+    std::time::Duration::from_millis(628_090);
 const WORKSPACE_TEST_PREBUILD_LABEL: &str =
     "native test and Canvas launcher prebuild (workspace-test setup)";
 
@@ -306,6 +312,7 @@ struct ProcessOutput {
     status: Status,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    usage: Option<sill::ProcessUsage>,
 }
 
 impl ProcessOutput {
@@ -315,6 +322,7 @@ impl ProcessOutput {
             status,
             stdout: Vec::new(),
             stderr: Vec::new(),
+            usage: Some(sill::ProcessUsage::default()),
         }
     }
 }
@@ -719,6 +727,7 @@ impl SystemRunner {
             },
             stdout: run.stdout().to_vec(),
             stderr: run.stderr().to_vec(),
+            usage: None,
         };
         let mut state = self.state()?;
         if let Some(evidence) = run.into_evidence() {

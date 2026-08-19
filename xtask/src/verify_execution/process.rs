@@ -634,6 +634,7 @@ fn command_run_from_outcome(
         },
         stdout,
         stderr,
+        usage: Some(outcome.usage()),
     };
     Ok(match outcome.completion() {
         Completion::Exited(_) => CommandRun::Exited(output),
