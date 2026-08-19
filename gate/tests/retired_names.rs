@@ -185,11 +185,13 @@ fn scan_tree(root: &Path) -> Vec<String> {
 /// Without this fixture, emptying the walker or dropping every visit leaves the
 /// suite green while the gate guards nothing.
 #[test]
-fn an_introduced_retired_name_is_refused() {
-    let violations = scan_source("fixture.rs", "pub struct Team;");
+fn a_genuine_retirement_is_refused_while_an_upper_bound_is_admitted() {
+    let source = "pub struct Team;\npub const HARD_CEILING: usize = 3;\n";
+    let violations = scan_source("fixture.rs", source);
 
     assert_eq!(violations.len(), 1, "{violations:?}");
     assert!(violations[0].contains("lineage"), "{violations:?}");
+    assert!(retired_matches("hard_ceiling").is_empty());
 }
 
 #[test]
