@@ -61,6 +61,9 @@ that `cargo xtask app` publishes under ignored `dist/stage-app`; it refuses an
 incomplete generation. `127.0.0.1:8767` is the no-fallback default. `--host` and
 `--port` override it, while `--port 0` takes a free port.
 
+The accepted browser-substrate decision and its conditional migration sequence
+are recorded in [app/SUBSTRATE.md](app/SUBSTRATE.md).
+
 A non-loopback listener requires explicit consent and a URL-safe bearer token:
 
 ```sh
