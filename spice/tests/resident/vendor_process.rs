@@ -67,6 +67,22 @@ struct CapturedLaunch {
 fn composed_vendor_launches_cross_the_resident_and_sill_boundary_without_drift() {
     let fixture = Fixture::linked("vendor-process-composition");
     let rig = configure(&fixture);
+    let claude_repository = spice::repository::Repository::discover(&fixture.root)
+        .expect("Claude worktree repository discovers");
+    let codex_repository = spice::repository::Repository::discover(&rig.codex_worktree)
+        .expect("Codex worktree repository discovers");
+    let skill = spice::install::installed_skill(&claude_repository);
+    assert_eq!(skill, spice::install::installed_skill(&codex_repository));
+    assert_eq!(
+        fs::read(&skill).expect("Git-common skill reads"),
+        include_bytes!("../../agent/SKILL.md")
+    );
+    for worktree in [&fixture.root, &rig.codex_worktree] {
+        assert!(
+            !worktree.join(".agents/skills/spice/SKILL.md").exists(),
+            "launch fixture depended on a per-worktree skill"
+        );
+    }
     let mut resident = RunningResident::spawn(&fixture);
     resident.assert_ready(&fixture);
 

@@ -1,6 +1,8 @@
 //! Occupant process launch and its configuration refusals.
 
 use std::ffi::OsString;
+use std::fs;
+use std::path::PathBuf;
 
 use sill::{
     Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitPolicy,
@@ -135,6 +137,7 @@ fn launch_plan(
     lane: CanonicalUuid,
     resume: vendor::Resume,
 ) -> CommandResult<spice::agent_launch::Plan> {
+    let skill = required_skill(repository)?;
     let wrapper = resolved
         .root()
         .wrappers()
@@ -169,7 +172,7 @@ fn launch_plan(
             ),
         )));
     };
-    let prompt = vendor.neutral_launch_prompt(&spice::install::installed_skill(repository));
+    let prompt = vendor.neutral_launch_prompt(&skill);
     spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
@@ -201,6 +204,30 @@ fn launch_plan(
         }
         other => store_fault("lane::launch-invalid", &other.to_string()),
     })
+}
+
+/// Require the initialized Git-common skill before composing any vendor argv.
+fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
+    let skill = spice::install::installed_skill(repository);
+    let metadata = fs::symlink_metadata(&skill).map_err(|error| {
+        store_fault(
+            "lane::skill-unavailable",
+            &format!(
+                "initialized skill {} is unavailable: {error}",
+                skill.display()
+            ),
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(store_fault(
+            "lane::skill-unavailable",
+            &format!(
+                "initialized skill {} is not a regular file",
+                skill.display()
+            ),
+        ));
+    }
+    Ok(skill)
 }
 
 /// Carry only the ambient variables a supervised occupant is admitted to see.
@@ -330,7 +357,12 @@ pub(super) fn configuration_refusal(error: &spice::config::LoadError) -> Outcome
     Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
         "lane::configuration-refused".to_owned(),
         Some("effective-configuration".to_owned()),
-        Some("tracked and local inputs admitted by the configuration registry".to_owned()),
+        Some(
+            "tracked, worktree, and local inputs admitted by the configuration registry".to_owned(),
+        ),
         Some(error.diagnostic()),
     )))
 }
+
+#[cfg(test)]
+mod tests;
