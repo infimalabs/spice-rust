@@ -40,6 +40,7 @@ impl Fixture {
         };
         fixture.install_app();
         fixture.install_cargo();
+        fixture.install_skill();
         fixture
     }
 
@@ -61,6 +62,7 @@ impl Fixture {
         };
         fixture.install_app();
         fixture.install_cargo();
+        fixture.install_skill();
         fixture
     }
 
@@ -92,6 +94,16 @@ impl Fixture {
             .expect("fixture Git info directory");
         fs::write(&exclude, "/Cargo.toml\n/Cargo.lock\n/fixture-cargo-home/\n")
             .expect("fixture Cargo exclusions");
+    }
+
+    fn install_skill(&self) {
+        let repository = spice::repository::Repository::discover(&self.root)
+            .expect("fixture repository discovers for skill installation");
+        let skill = spice::install::installed_skill(&repository);
+        fs::create_dir_all(skill.parent().expect("installed skill parent"))
+            .expect("installed skill parent creates");
+        fs::write(&skill, include_bytes!("../../agent/SKILL.md"))
+            .expect("current skill installs in Git-common state");
     }
     pub(super) fn journal(&self) -> PathBuf {
         self.runtime.join("data/spicejournal.sqlite3")
