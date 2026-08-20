@@ -1,8 +1,8 @@
 //! The real canvas runtime retains only admitted, capability-scoped state.
 
 use app::{
-    CanvasRuntime, ChainEnd, LaneStatus, Session, Stale, StreamDirective, StreamTerminal,
-    stale_reads,
+    CanvasRuntime, ChainEnd, FACT_PAGE_LIMIT, LaneStatus, Session, Stale, StreamDirective,
+    StreamTerminal, THREAD_PAGE_LIMIT, stale_reads,
 };
 use wire::{
     CanonicalUuid, CommandKind, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition,
@@ -895,6 +895,68 @@ fn a_stale_thread_reply_cannot_merge_into_the_latest_requested_walk() {
         runtime.thread_walk().expect("current walk").end(),
         ChainEnd::Root
     );
+    assert_eq!(runtime.pending_thread(), None);
+}
+
+#[test]
+fn live_fact_pages_retain_only_the_declared_browser_window() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let delivered = FACT_PAGE_LIMIT + 3;
+
+    for position in 1..=delivered {
+        let frame = admitted_stream(&session, &fact_frame(task_fact(position as u64, None)));
+        assert!(runtime.apply_stream(&frame).is_empty());
+    }
+
+    let pages = runtime.fact_pages();
+    assert_eq!(pages.len(), FACT_PAGE_LIMIT);
+    assert_eq!(pages[0].rows()[0].seq(), seq(4));
+    assert_eq!(
+        pages.last().expect("newest page remains").rows()[0].seq(),
+        seq(delivered as u64)
+    );
+}
+
+#[test]
+fn causal_thread_fetch_stops_at_the_declared_page_window() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let start = (THREAD_PAGE_LIMIT + 2) as u64;
+    let live = admitted_stream(&session, &fact_frame(task_fact(start, Some(start - 1))));
+    assert!(runtime.apply_stream(&live).is_empty());
+
+    for page in 0..THREAD_PAGE_LIMIT {
+        let position = start - page as u64;
+        let continuation = position - 1;
+        let thread = admitted_stream(
+            &session,
+            &packed_frame(
+                "thread",
+                &[task_fact(position, Some(continuation))],
+                Some((1, continuation)),
+                start,
+            ),
+        );
+        let directives = runtime.apply_stream(&thread);
+        if page + 1 == THREAD_PAGE_LIMIT {
+            assert!(directives.is_empty());
+        } else {
+            assert_eq!(
+                directives,
+                vec![StreamDirective::Thread {
+                    cursor: wire::StreamCursor {
+                        epoch: uuid(EPOCH),
+                        seq: seq(continuation),
+                    },
+                }]
+            );
+        }
+    }
+
+    assert_eq!(runtime.thread_pages().len(), THREAD_PAGE_LIMIT);
     assert_eq!(runtime.pending_thread(), None);
 }
 

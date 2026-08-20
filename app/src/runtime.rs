@@ -25,6 +25,12 @@ pub use stream::{FactRow, StreamDirective, StreamTerminal};
 
 const EVENT_LIMIT: usize = 32;
 
+/// Maximum number of fact pages one long-lived Canvas tab retains.
+pub const FACT_PAGE_LIMIT: usize = 16;
+
+/// Maximum number of causal-thread pages one explicit walk may fetch and retain.
+pub const THREAD_PAGE_LIMIT: usize = 16;
+
 /// Whether a topology mutation response leaves Canvas owing an authoritative read.
 ///
 /// Successful topology replies already carry the new table. A refusal or

@@ -128,7 +128,8 @@ impl CanvasRuntime {
                     overflow: None,
                     horizon: fact.seq(),
                 };
-                self.fact_pages.push(self.page(admitted, packed));
+                let page = self.page(admitted, packed);
+                push_bounded_page(&mut self.fact_pages, page, FACT_PAGE_LIMIT);
                 self.resume = Some(StreamCursor {
                     epoch,
                     seq: fact.seq(),
@@ -201,7 +202,8 @@ impl CanvasRuntime {
         }
         let page = project_page(packed);
         self.observe_fact_rows(admitted, &packed.rows, false);
-        self.fact_pages.push(self.page(admitted, page));
+        let page = self.page(admitted, page);
+        push_bounded_page(&mut self.fact_pages, page, FACT_PAGE_LIMIT);
         self.resume = Some(StreamCursor {
             epoch,
             seq: page_cursor,
@@ -231,10 +233,14 @@ impl CanvasRuntime {
             self.thread_start = Some(first);
         }
         self.observe_fact_rows(admitted, &packed.rows, true);
-        self.thread_pages
-            .push(self.page(admitted, project_page(packed)));
+        let page = self.page(admitted, project_page(packed));
+        push_bounded_page(&mut self.thread_pages, page, THREAD_PAGE_LIMIT);
         match packed.overflow {
             None => {
+                self.thread_next = None;
+                Vec::new()
+            }
+            Some(_) if self.thread_pages.len() == THREAD_PAGE_LIMIT => {
                 self.thread_next = None;
                 Vec::new()
             }
@@ -403,4 +409,11 @@ fn continuation<T>(
             },
         }]
     })
+}
+
+fn push_bounded_page<T>(pages: &mut Vec<BrowserState<T>>, page: BrowserState<T>, limit: usize) {
+    pages.push(page);
+    if pages.len() > limit {
+        pages.remove(0);
+    }
 }
