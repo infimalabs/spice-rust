@@ -30,6 +30,7 @@ use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
     SpeechRequest,
 };
+use crate::thread_refresh::ThreadRefresh;
 use crate::{
     Axis, CanvasRuntime, ChainEnd, Pane, Principal, Session, SteerPane, StreamDirective,
     stale_reads,
@@ -61,6 +62,9 @@ const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
 /// The probe is what makes the next interval meaningful: after it, silence is a
 /// resident that did not answer rather than a resident with nothing to say.
 const LIVENESS_PROBE_MILLIS: u32 = 15_000;
+
+/// Maximum time a burst of live facts waits for one newest-thread request.
+const THREAD_REFRESH_COALESCE_MILLIS: u32 = 75;
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;

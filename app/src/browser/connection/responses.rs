@@ -9,21 +9,26 @@ fn handle_stream_frame(
     surface: &UseStateHandle<SurfaceData>,
     data: &Rc<RefCell<SurfaceData>>,
     bytes: &[u8],
-) -> Result<(Vec<StreamDirective>, bool), String> {
+) -> Result<(Vec<StreamDirective>, bool, Option<wire::StreamCursor>), String> {
     let admitted = session
         .admit_stream(bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
     if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
-        return Ok((Vec::new(), false));
+        return Ok((Vec::new(), false, None));
     }
     let refresh = stale_reads(&admitted).any();
-    let directives = data
-        .borrow_mut()
-        .as_mut()
-        .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
-        .apply_stream(&admitted);
+    let live_fact = matches!(admitted.get(), wire::StreamFrame::Fact { .. });
+    let (directives, refresh_thread) = {
+        let mut data = data.borrow_mut();
+        let runtime = data
+            .as_mut()
+            .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?;
+        let directives = runtime.apply_stream(&admitted);
+        let refresh_thread = live_fact.then(|| runtime.pending_thread()).flatten();
+        (directives, refresh_thread)
+    };
     surface.set(data.borrow().clone());
-    Ok((directives, refresh))
+    Ok((directives, refresh, refresh_thread))
 }
 
 pub(super) fn handle_incoming(
@@ -32,7 +37,7 @@ pub(super) fn handle_incoming(
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
-) -> Result<(Vec<StreamDirective>, bool), String> {
+) -> Result<(Vec<StreamDirective>, bool, Option<wire::StreamCursor>), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
         return handle_stream_frame(session, &handles.surface, data, bytes);
@@ -47,7 +52,7 @@ pub(super) fn handle_incoming(
         .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
     let refresh = apply_command_response(session, handles, runtime, identity.id, kind, bytes)?;
     handles.surface.set(data.clone());
-    Ok((Vec::new(), refresh))
+    Ok((Vec::new(), refresh, None))
 }
 
 fn apply_command_response(
