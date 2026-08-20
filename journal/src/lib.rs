@@ -21,8 +21,9 @@ mod restore;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
-    Applied, BuildError, CommitError, CommitFault, FactCause, GuardError, GuardRefusal,
-    JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact, ReadError, TaskHeads,
+    Applied, BuildError, CommitError, CommitFault, FactCause, FactPageStart, GuardError,
+    GuardRefusal, JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact, ReadError,
+    TaskHeads,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};
@@ -44,10 +45,11 @@ pub mod crossing {
     pub use wire::body;
     pub use wire::intent;
     pub use wire::{
-        Actor, CanonicalUuid, ClaimHead, Command, CommandKind, Digest, Fact, FactKind, FindingHead,
-        Instant, LaneResidency, LaneSession, LeaseHead, Origin, Phase, Producer, ResidencyHead,
-        ResidentState, Seq, TapeLocus, TaskHandle, TaskHead, TaskStamp, TranscriptSourceHead,
-        TranscriptStreamKey, TrustHead, WireVersion, Witness, WitnessHead, WorkflowHead,
+        Actor, AnyFact, CanonicalUuid, ClaimHead, Command, CommandKind, Digest, Envelope, Fact,
+        FactKind, FindingHead, Instant, LaneResidency, LaneSession, LeaseHead, Origin, Packed,
+        Phase, Producer, ResidencyHead, ResidentState, Seq, TapeLocus, TaskHandle, TaskHead,
+        TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead, WireVersion, Witness,
+        WitnessHead, WorkflowHead,
     };
 }
 

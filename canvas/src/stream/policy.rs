@@ -2,13 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use bus::CanvasSnapshot;
+use bus::CanvasHeads;
 use wire::{
     Actor, Fault, FaultClass, Overflow, Packed, Refusal, Seq, StreamFact, StreamFrame, TrustView,
     ViewSubject, WireVersion,
 };
-
-use crate::thread::ThreadError;
 
 /// Typed refusal or fault returned before a stream frame changes client state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,8 +83,8 @@ pub(super) fn admit_subject(actor: &Actor, subject: ViewSubject) -> Result<(), F
     Ok(())
 }
 
-pub(super) fn required_horizon(snapshot: &CanvasSnapshot) -> Result<Seq, Failure> {
-    snapshot.cursor().ok_or_else(|| {
+pub(super) fn required_horizon(heads: &CanvasHeads) -> Result<Seq, Failure> {
+    heads.cursor().ok_or_else(|| {
         Failure::Fault(protocol_fault(
             "stream::cursor-missing",
             "resident authority has no durable stream cursor",
@@ -94,8 +92,8 @@ pub(super) fn required_horizon(snapshot: &CanvasSnapshot) -> Result<Seq, Failure
     })
 }
 
-pub(super) fn trust_rows(snapshot: &CanvasSnapshot) -> Vec<TrustView> {
-    let mut rows = snapshot
+pub(super) fn trust_rows(heads: &CanvasHeads) -> Vec<TrustView> {
+    let mut rows = heads
         .trust()
         .iter()
         .map(|head| TrustView {
@@ -173,7 +171,7 @@ pub(super) fn protocol_fault(reason: &str, detail: &str) -> Fault {
     }
 }
 
-pub(super) fn thread_fault(error: ThreadError) -> Failure {
+pub(super) fn thread_fault(error: impl std::fmt::Display) -> Failure {
     Failure::Fault(Fault {
         class: FaultClass::Store,
         reason: "stream::thread-invalid".to_owned(),

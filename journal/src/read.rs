@@ -84,7 +84,7 @@ pub(crate) fn read_snapshot(connection: &Connection) -> Result<FactSnapshot, Sna
     FactSnapshot::from_facts(facts)
 }
 
-fn decode_fact(
+pub(crate) fn decode_fact(
     indexed_seq: i64,
     indexed_kind: &str,
     bytes: &[u8],
