@@ -11,49 +11,56 @@ use wire::{
 };
 
 use super::{
-    commit, seq, typed_outcome, typed_protocol_fault, typed_store_fault, write, write_at_origin,
+    commit, read_materializations::CurrentReads, seq, typed_outcome, typed_protocol_fault,
+    typed_store_fault, write, write_at_origin,
 };
 
 type SurfaceResult<T> = Result<T, Outcome<CommandAnswer>>;
 
-pub(super) fn read(bus: &Bus, policy: &consent::Policy) -> Outcome<CommandAnswer> {
-    let (snapshot, queue) = match consent_snapshot(bus, policy) {
-        Ok(state) => state,
-        Err(outcome) => return outcome,
+pub(super) fn read(reads: &CurrentReads, policy: &consent::Policy) -> Outcome<CommandAnswer> {
+    let generation = match reads.current() {
+        Ok(generation) => generation,
+        Err(error) => {
+            return typed_store_fault("consent::materialization-unavailable", &error);
+        }
     };
-    let answer = match queue.answer(policy) {
+    let answer = match generation.consent().answer(policy) {
         Ok(answer) => answer,
         Err(error) => return typed_protocol_fault("consent::queue-invalid", &error.to_string()),
     };
     Outcome::Reply(Reply {
-        position: snapshot_position(&snapshot),
+        position: ReplyPosition::Snapshot(generation.cursor()),
         body: CommandAnswer::ConsentQueue(answer),
     })
 }
 
-pub(super) fn policy(bus: &Bus, policy: &consent::Policy) -> Outcome<CommandAnswer> {
-    let (snapshot, queue) = match consent_snapshot(bus, policy) {
-        Ok(state) => state,
-        Err(outcome) => return outcome,
+pub(super) fn policy(reads: &CurrentReads, policy: &consent::Policy) -> Outcome<CommandAnswer> {
+    let generation = match reads.current() {
+        Ok(generation) => generation,
+        Err(error) => {
+            return typed_store_fault("consent::materialization-unavailable", &error);
+        }
     };
     Outcome::Reply(Reply {
-        position: snapshot_position(&snapshot),
-        body: CommandAnswer::ConsentPolicy(queue.policy_answer(policy)),
+        position: ReplyPosition::Snapshot(generation.cursor()),
+        body: CommandAnswer::ConsentPolicy(generation.consent().policy_answer(policy)),
     })
 }
 
 pub(super) fn decide(
     bus: &Bus,
+    reads: &CurrentReads,
     epoch: CanonicalUuid,
     policy: &consent::Policy,
     command: &wire::AdmittedCommand,
     decide: &ConsentDecide,
 ) -> Outcome<CommandAnswer> {
-    let (queue, exact) = match admit_decision(bus, policy, command, decide) {
+    let generation = match admit_decision(reads, policy, command, decide) {
         Ok(admission) => admission,
         Err(outcome) => return outcome,
     };
-    let pending = queue
+    let pending = generation
+        .consent()
         .pending(decide.request)
         .expect("the wire queue answer and internal queue share pending identities");
     let terminal = ConsentTerminal::from_decision(decide, pending.lane());
@@ -65,7 +72,7 @@ pub(super) fn decide(
         Ok(proposal) => proposal,
         Err(outcome) => return typed_outcome(outcome),
     };
-    proposal.guard(consent_guard(policy.clone(), exact, decide));
+    proposal.guard(consent_guard(generation.cursor()));
     if let Err(error) = terminal.record(&mut proposal, pending.fact()) {
         return typed_store_fault("consent::fact-invalid", &error.to_string());
     }
@@ -143,11 +150,11 @@ where
 }
 
 fn admit_decision(
-    bus: &Bus,
+    reads: &CurrentReads,
     policy: &consent::Policy,
     command: &wire::AdmittedCommand,
     decide: &ConsentDecide,
-) -> SurfaceResult<(consent::Queue, Vec<Witness>)> {
+) -> SurfaceResult<std::sync::Arc<super::read_materializations::Generation>> {
     if !matches!(decide.answer, wire::Answer::Granted | wire::Answer::Denied) {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
@@ -158,8 +165,11 @@ fn admit_decision(
             ),
         )));
     }
-    let (_, queue) = consent_snapshot(bus, policy)?;
-    let answer = queue
+    let generation = reads
+        .current()
+        .map_err(|error| typed_store_fault("consent::materialization-unavailable", &error))?;
+    let answer = generation
+        .consent()
         .answer(policy)
         .map_err(|error| typed_protocol_fault("consent::queue-invalid", &error.to_string()))?;
     let pending = answer
@@ -178,34 +188,14 @@ fn admit_decision(
             ),
         )));
     }
-    Ok((queue, exact))
+    Ok(generation)
 }
 
-fn consent_guard(
-    policy: consent::Policy,
-    expected: Vec<Witness>,
-    decide: &ConsentDecide,
-) -> JournalGuard {
-    let request = decide.request;
-    let ruling = decide.answer;
+fn consent_guard(expected: wire::Seq) -> JournalGuard {
     JournalGuard::new(move |read| {
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let queue = consent::Queue::from_snapshot(&snapshot, &policy)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let answer = queue
-            .answer(&policy)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let current = answer
-            .pending
-            .iter()
-            .find(|pending| pending.request == request)
-            .ok_or_else(|| GuardError::refused("consent::request-moved"))?;
-        let witnesses = consent::decision_witnesses(current, ruling)
-            .map_err(|_| GuardError::refused("consent::request-moved"))?;
-        if !same_witnesses(&witnesses, &expected) {
-            return Err(GuardError::refused("consent::witness-moved"));
+        let observed = read.cursor()?;
+        if observed != Some(expected) {
+            return Err(GuardError::refused("consent::materialization-moved"));
         }
         Ok(())
     })
@@ -461,26 +451,6 @@ impl ConsentTerminal {
             Self::Denied(body) => proposal.fact(body, FactCause::Existing(cause)),
         }
     }
-}
-
-fn consent_snapshot(
-    bus: &Bus,
-    policy: &consent::Policy,
-) -> SurfaceResult<(journal::FactSnapshot, consent::Queue)> {
-    let snapshot = bus
-        .fact_snapshot()
-        .map_err(|error| typed_store_fault("consent::journal-unreadable", &error.to_string()))?;
-    let queue = consent::Queue::from_snapshot(&snapshot, policy)
-        .map_err(|error| typed_protocol_fault("consent::queue-invalid", &error.to_string()))?;
-    Ok((snapshot, queue))
-}
-
-fn snapshot_position(snapshot: &journal::FactSnapshot) -> ReplyPosition {
-    ReplyPosition::Snapshot(
-        snapshot
-            .horizon()
-            .expect("resident startup always precedes a socket snapshot"),
-    )
 }
 
 fn same_witnesses(left: &[Witness], right: &[Witness]) -> bool {

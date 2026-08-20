@@ -192,6 +192,8 @@ pub(super) async fn run_surface(
         &mut message_surface::BacklogReader::default(),
         progress,
     )?;
+    let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
+        .map_err(|error| store_fault("resident::read-materialization-failed", &error))?;
     let command_surface = command_surface::Surface::new(
         bus,
         repository,
@@ -200,6 +202,7 @@ pub(super) async fn run_surface(
         lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
         lane_recovery::Runtime::new(reporter),
         config,
+        &reads,
     );
     let (taste_submitter, taste_completions) = taste_adjudication
         .as_mut()
@@ -341,6 +344,7 @@ pub(super) async fn drive_surface(
         &mut timers,
         &mut lifecycle,
     )?;
+    command_surface.synchronize_reads_before_publish()?;
     let residency = current_residency(bus, epoch)?;
     // Discovery is a serving contract, not just a bound-socket record. This
     // resident runs on a current-thread runtime, so give the spawned server task
@@ -542,6 +546,7 @@ fn accept_commit(
 ) -> CommandResult<()> {
     match committed {
         Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+            command_surface.refresh_reads()?;
             reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => Err(environment_fault(

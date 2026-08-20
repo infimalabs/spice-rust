@@ -196,6 +196,33 @@ mod runtime {
     }
 
     impl BusReader {
+        /// Read only the current durable cursor at one queued barrier.
+        pub fn cursor(&self) -> Result<Option<journal::crossing::Seq>, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Cursor { answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
+        /// Read the complete fact stream at one queued barrier.
+        ///
+        /// This cloneable door exists for resident-owned background
+        /// materializers. Interactive request paths should use bounded reads.
+        pub fn fact_snapshot(&self) -> Result<FactSnapshot, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Snapshot { answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Snapshot)
+        }
+
         /// Capture the Canvas cursor and trust heads at one queued barrier.
         pub fn canvas_heads(&self) -> Result<CanvasHeads, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
@@ -374,14 +401,12 @@ mod runtime {
         /// Read the fact stream through the writer queue, after all earlier
         /// submissions have settled.
         pub fn fact_snapshot(&self) -> Result<FactSnapshot, BusReadError> {
-            let (answer, receiver) = mpsc::sync_channel(1);
-            self.requests
-                .send(Request::Snapshot { answer })
-                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
-            receiver
-                .recv()
-                .map_err(|_| BusReadError::Bus(BusError::Closed))?
-                .map_err(BusReadError::Snapshot)
+            self.reader().fact_snapshot()
+        }
+
+        /// Read only the current durable cursor through the writer queue.
+        pub fn cursor(&self) -> Result<Option<journal::crossing::Seq>, BusReadError> {
+            self.reader().cursor()
         }
 
         /// Read board facts, task heads, and residency together at one barrier.
@@ -552,6 +577,9 @@ mod runtime {
         Snapshot {
             answer: SyncSender<Result<FactSnapshot, SnapshotError>>,
         },
+        Cursor {
+            answer: SyncSender<Result<Option<journal::crossing::Seq>, GuardError>>,
+        },
         Tasks {
             answer: SyncSender<Result<TaskSnapshot, BusReadError>>,
         },
@@ -633,6 +661,9 @@ mod runtime {
                 }
                 Request::Snapshot { answer } => {
                     let _ = answer.send(journal.fact_snapshot());
+                }
+                Request::Cursor { answer } => {
+                    let _ = answer.send(journal.read(|read| read.cursor()));
                 }
                 Request::Tasks { answer } => {
                     let snapshot = journal
