@@ -36,7 +36,15 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
                 && fault.detail.contains("not a regular file")
     ));
     fs::remove_dir(&common).expect("invalid common skill directory removes");
-    fs::write(&common, b"current common skill\n").expect("common skill writes");
+    fs::write(&common, b"stale common skill\n").expect("stale common skill writes");
+    assert!(matches!(
+        required_skill(&repository),
+        Err(Outcome::Fault(ref fault))
+            if fault.reason == "lane::skill-unavailable"
+                && fault.detail.contains("does not match this appliance")
+    ));
+    fs::write(&common, include_bytes!("../../../../agent/SKILL.md"))
+        .expect("current common skill writes");
 
     assert_eq!(
         required_skill(&repository).expect("common regular skill admits"),
@@ -57,6 +65,22 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
             Err(Outcome::Fault(ref fault))
                 if fault.reason == "lane::skill-unavailable"
                     && fault.detail.contains("not a regular file")
+        ));
+        fs::remove_file(&common).expect("redirected common skill removes");
+        fs::remove_dir(common.parent().expect("common skill parent"))
+            .expect("common skill parent removes");
+        fs::write(&accidental, include_bytes!("../../../../agent/SKILL.md"))
+            .expect("redirect target carries current skill");
+        symlink(
+            accidental.parent().expect("accidental skill parent"),
+            common.parent().expect("common skill parent"),
+        )
+        .expect("redirected common skill parent creates");
+        assert!(matches!(
+            required_skill(&repository),
+            Err(Outcome::Fault(ref fault))
+                if fault.reason == "lane::skill-unavailable"
+                    && fault.detail.contains("outside Git-common authority")
         ));
     }
     fs::remove_dir_all(&root).expect("fixture removes");

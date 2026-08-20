@@ -227,6 +227,52 @@ fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
             ),
         ));
     }
+    let common = fs::canonicalize(repository.common_dir()).map_err(|error| {
+        store_fault(
+            "lane::skill-unavailable",
+            &format!(
+                "initialized skill authority {} is unavailable: {error}",
+                repository.common_dir().display()
+            ),
+        )
+    })?;
+    let physical = fs::canonicalize(&skill).map_err(|error| {
+        store_fault(
+            "lane::skill-unavailable",
+            &format!(
+                "initialized skill {} is unavailable: {error}",
+                skill.display()
+            ),
+        )
+    })?;
+    if !physical.starts_with(&common) {
+        return Err(store_fault(
+            "lane::skill-unavailable",
+            &format!(
+                "initialized skill {} resolves outside Git-common authority: {}",
+                skill.display(),
+                physical.display()
+            ),
+        ));
+    }
+    let bytes = fs::read(&skill).map_err(|error| {
+        store_fault(
+            "lane::skill-unavailable",
+            &format!(
+                "initialized skill {} is unavailable: {error}",
+                skill.display()
+            ),
+        )
+    })?;
+    if bytes != include_bytes!("../../../agent/SKILL.md") {
+        return Err(store_fault(
+            "lane::skill-unavailable",
+            &format!(
+                "initialized skill {} does not match this appliance",
+                skill.display()
+            ),
+        ));
+    }
     Ok(skill)
 }
 
