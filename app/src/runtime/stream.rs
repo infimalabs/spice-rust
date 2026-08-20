@@ -133,7 +133,8 @@ impl CanvasRuntime {
                     epoch,
                     seq: fact.seq(),
                 });
-                vec![self.begin_thread(epoch, fact.seq())]
+                self.prepare_thread(fact.seq());
+                Vec::new()
             }
             StreamFrame::Message { message, .. } => {
                 self.observe_message(message);
@@ -319,13 +320,17 @@ impl CanvasRuntime {
     }
 
     fn begin_thread(&mut self, epoch: CanonicalUuid, seq: Seq) -> StreamDirective {
+        self.prepare_thread(seq);
+        StreamDirective::Thread {
+            cursor: StreamCursor { epoch, seq },
+        }
+    }
+
+    fn prepare_thread(&mut self, seq: Seq) {
         self.thread = BrowserState::new(&self.accepted);
         self.thread_pages.clear();
         self.thread_start = None;
         self.thread_next = Some(seq);
-        StreamDirective::Thread {
-            cursor: StreamCursor { epoch, seq },
-        }
     }
 
     pub(super) fn push_event(&mut self, class: &'static str, title: String, detail: String) {

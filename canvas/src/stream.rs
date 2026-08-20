@@ -97,12 +97,17 @@ impl Source {
                 &format!("resume cursor {after_seq:?} is beyond snapshot {horizon}"),
             )));
         }
+        let cursor = if after_seq.is_none() && matches!(&accepted.actor, wire::Actor::Operator) {
+            Some(horizon)
+        } else {
+            after_seq
+        };
 
         let mut subscription = Subscription {
             id: *id,
             epoch: self.epoch,
             subjects,
-            cursor: after_seq,
+            cursor,
             pending: BTreeMap::new(),
             barrier: Some(snapshot),
             rows: self.rows,
@@ -676,7 +681,7 @@ mod tests {
         let source = Source::new(bus.reader(), epoch(), 2);
         let (mut subscription, frames) = source
             .begin(
-                &accepted(Actor::Operator),
+                &accepted(Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"))),
                 &request(0xc4, vec![ViewSubject::Facts], None),
             )
             .expect("subscription begins");
@@ -730,6 +735,26 @@ mod tests {
         }
         assert!(subscription.is_live());
         assert_eq!(subscription.cursor(), Some(seq(6)));
+        drop(source);
+        bus.shutdown().expect("bus shuts down");
+    }
+
+    #[test]
+    fn fresh_operator_fact_subscription_begins_live_without_history() {
+        let bus = fixture(5);
+        let source = Source::new(bus.reader(), epoch(), 2);
+        let (subscription, frames) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(0xc4, vec![ViewSubject::Facts], None),
+            )
+            .expect("operator subscription begins");
+
+        assert!(facts(&frames[0]).rows.is_empty());
+        assert!(facts(&frames[0]).overflow.is_none());
+        assert_eq!(facts(&frames[0]).horizon, seq(6));
+        assert_eq!(subscription.cursor(), Some(seq(6)));
+        assert!(subscription.is_live());
         drop(source);
         bus.shutdown().expect("bus shuts down");
     }
