@@ -45,49 +45,77 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
-fn effort_surface_binds_position_and_refuses_an_ahead_generation() {
-    let (root, paths) = resident_fixture("effort-authority");
+fn consent_and_effort_requests_read_one_current_generation_at_constant_cost() {
+    let (root, paths) = resident_fixture("current-read-materializations");
     let mut authority = journal::Journal::open(&paths.journal).expect("fixture authority opens");
     authority
         .apply(effort_recognition("authority", 1))
         .expect("authority fact commits");
-    let authority_snapshot = authority.fact_snapshot().expect("authority snapshot");
-
-    let mut future = journal::Journal::in_memory().expect("future authority opens");
-    future
-        .apply(effort_recognition("authority", 1))
-        .expect("shared authority fact commits");
-    future
-        .apply(effort_recognition("future", 2))
-        .expect("future fact commits");
-    let future_snapshot = future.fact_snapshot().expect("future snapshot");
-
-    let mut store = fold::Store::open(&paths.folds).expect("fold store opens");
-    store
-        .read_or_rebuild_snapshot(&authority_snapshot, &fold::TaskEffortReducer)
-        .expect("authority generation materializes");
-    drop(store);
-
     let bus = Bus::start(authority).expect("authority bus starts");
-    let exact = effort_surface::read(&bus, &paths, &wire::intent::EffortRead { task: None });
-    let Outcome::Reply(Reply { position, body }) = exact else {
-        panic!("exact effort generation did not reply")
-    };
-    assert_eq!(position, ReplyPosition::Snapshot(seq(1)));
-    assert!(matches!(body, CommandAnswer::Effort(_)));
+    let policy = consent::Policy::new(consent::Answer::Queue, Vec::new())
+        .expect("empty consent policy is valid");
+    let reads = read_materializations::CurrentReads::start(&bus, &paths, &policy)
+        .expect("read materializations start");
 
-    let mut store = fold::Store::open(&paths.folds).expect("fold store reopens");
-    store
-        .read_or_rebuild_snapshot(&future_snapshot, &fold::TaskEffortReducer)
-        .expect("future generation publishes");
-    drop(store);
+    let mut unrelated = JournalWrite::new(
+        Actor::Spice,
+        "recovery:unrelated-history"
+            .parse()
+            .expect("fixture recovery origin"),
+        "2030-04-12T18:45:00.271Z".parse().expect("fixture instant"),
+        Producer::Judge,
+    );
+    for index in 0..512 {
+        unrelated
+            .fact(
+                wire::body::TasteCleared {
+                    taste: format!("unrelated-{index}"),
+                    locus: "request-cost-fixture".to_owned(),
+                },
+                FactCause::Root,
+            )
+            .expect("unrelated fact builds");
+    }
+    assert!(matches!(
+        bus.commit(unrelated).expect("unrelated history commits"),
+        CommitOutcome::Committed(_)
+    ));
+    reads
+        .refresh()
+        .expect("current generation refresh schedules");
+    let deadline = Monotonic::now() + Duration::from_secs(2);
+    loop {
+        if reads
+            .current()
+            .is_ok_and(|generation| generation.cursor() == seq(513))
+        {
+            break;
+        }
+        assert!(
+            Monotonic::now() < deadline,
+            "read materialization did not reach unrelated-history cursor"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 
-    let refused = effort_surface::read(&bus, &paths, &wire::intent::EffortRead { task: None });
-    let Outcome::Fault(fault) = refused else {
-        panic!("resident effort read did not fail closed without an answer")
-    };
-    assert_eq!(fault.reason, "effort::fold-failed");
+    let unavailable_fold = paths.folds.with_extension("unavailable");
+    fs::rename(&paths.folds, &unavailable_fold).expect("fold store moves out of request reach");
+    let barriers = reads.request_barriers();
+    let effort = effort_surface::read(&reads, &wire::intent::EffortRead { task: None });
+    let consent = policy_surface::read(&reads, &policy);
+    assert_eq!(reads.request_barriers() - barriers, 2);
+    for outcome in [effort, consent] {
+        let Outcome::Reply(Reply { position, .. }) = outcome else {
+            panic!("current materialized request did not reply")
+        };
+        assert_eq!(position, ReplyPosition::Snapshot(seq(513)));
+    }
+    assert!(
+        !paths.folds.exists(),
+        "request path reopened the unavailable fold store"
+    );
 
+    drop(reads);
     drop(bus);
     fs::remove_dir_all(root).expect("remove effort authority fixture");
 }

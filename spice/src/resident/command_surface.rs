@@ -10,7 +10,8 @@ use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal};
 
 use super::{
     RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, effort_surface,
-    lane_recovery, lane_surface, lifecycle, policy_surface, steering,
+    lane_recovery, lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads,
+    steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -21,6 +22,7 @@ pub(super) struct Surface<'a> {
     lane: lane_surface::Runtime<'a>,
     recovery: lane_recovery::Runtime,
     pub(super) config: &'a SurfaceConfig,
+    reads: &'a CurrentReads,
 }
 
 impl<'a> Surface<'a> {
@@ -32,6 +34,7 @@ impl<'a> Surface<'a> {
         lane: lane_surface::Runtime<'a>,
         recovery: lane_recovery::Runtime,
         config: &'a SurfaceConfig,
+        reads: &'a CurrentReads,
     ) -> Self {
         Self {
             bus,
@@ -41,7 +44,20 @@ impl<'a> Surface<'a> {
             lane,
             recovery,
             config,
+            reads,
         }
+    }
+
+    pub(super) fn refresh_reads(&self) -> super::CommandResult<()> {
+        self.reads
+            .refresh()
+            .map_err(|error| super::store_fault("resident::read-materializer-unavailable", &error))
+    }
+
+    pub(super) fn synchronize_reads_before_publish(&self) -> super::CommandResult<()> {
+        self.reads
+            .synchronize_before_publish()
+            .map_err(|error| super::store_fault("resident::read-materialization-failed", &error))
     }
 
     pub(super) fn dispatch(
@@ -166,17 +182,24 @@ impl<'a> Surface<'a> {
                 self.bus, self.paths, self.epoch, command, dispose,
             )),
             (CommandKind::EffortRead, Intent::EffortRead(read)) => {
-                Some(effort_surface::read(self.bus, self.paths, read))
+                Some(effort_surface::read(self.reads, read))
             }
             (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
-                Some(policy_surface::read(self.bus, &self.config.consent))
+                Some(policy_surface::read(self.reads, &self.config.consent))
             }
             (CommandKind::ConsentPolicy, Intent::ConsentPolicy(_)) => {
-                Some(policy_surface::policy(self.bus, &self.config.consent))
+                Some(policy_surface::policy(self.reads, &self.config.consent))
             }
-            (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => Some(
-                policy_surface::decide(self.bus, self.epoch, &self.config.consent, command, decide),
-            ),
+            (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => {
+                Some(policy_surface::decide(
+                    self.bus,
+                    self.reads,
+                    self.epoch,
+                    &self.config.consent,
+                    command,
+                    decide,
+                ))
+            }
             (CommandKind::TrustGrant | CommandKind::TrustRevoke, Intent::TrustRef(reference)) => {
                 Some(policy_surface::trust_rule(
                     self.bus,

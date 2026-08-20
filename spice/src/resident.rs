@@ -35,6 +35,7 @@ mod lane_surface;
 mod lifecycle;
 mod message_surface;
 mod policy_surface;
+mod read_materializations;
 mod shutdown;
 mod steering;
 mod taste_surface;

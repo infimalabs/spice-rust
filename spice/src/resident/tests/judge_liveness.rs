@@ -74,6 +74,8 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             failures,
             exits,
         } = capture::channels();
+        let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
+            .expect("fixture read materializations start");
         let command_surface = command_surface::Surface::new(
             bus,
             &setup.repository,
@@ -82,6 +84,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
             lane_recovery::Runtime::new(reporter.clone()),
             config,
+            &reads,
         );
         let (submitter, completions) = setup.adjudication.parts();
         let entered_path = setup.judge.entered.clone();
