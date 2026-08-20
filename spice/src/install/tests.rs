@@ -630,14 +630,147 @@ fn checkout_skill_source_matches_the_embedded_install_asset() {
 
 #[test]
 fn generated_guidance_and_install_errors_name_spice() {
-    for command in ["`spice session briefing`", "`spice task status`"] {
-        assert!(
-            SKILL.contains(command),
-            "missing bootstrap command {command}"
+    const COMMANDS: &[(&str, &[&str], &[&str])] = &[
+        (
+            "spice session briefing",
+            &["session", "briefing"],
+            &["spice", "session", "briefing"],
+        ),
+        (
+            "spice task status",
+            &["task", "status"],
+            &["spice", "task", "status"],
+        ),
+        (
+            "spice session sweep --count N",
+            &["session", "sweep"],
+            &["spice", "session", "sweep", "--count", "1"],
+        ),
+        (
+            "spice session turns --turn-id ID --view full",
+            &["session", "turns"],
+            &[
+                "spice",
+                "session",
+                "turns",
+                "--turn-id",
+                "1",
+                "--view",
+                "full",
+            ],
+        ),
+        (
+            "spice run -- <command>",
+            &["run"],
+            &["spice", "run", "--", "/bin/true"],
+        ),
+        (
+            "spice task add TITLE --project PROJECT",
+            &["task", "add"],
+            &["spice", "task", "add", "title", "--project", "rim.cli"],
+        ),
+        (
+            "spice task next",
+            &["task", "next"],
+            &["spice", "task", "next"],
+        ),
+        (
+            "spice task depends PARENT CHILD...",
+            &["task", "depends"],
+            &["spice", "task", "depends", "PARENT", "CHILD"],
+        ),
+        (
+            "spice task free HANDLE",
+            &["task", "free"],
+            &["spice", "task", "free", "HANDLE"],
+        ),
+        (
+            "spice gate pre-commit",
+            &["gate", "pre-commit"],
+            &["spice", "gate", "pre-commit"],
+        ),
+        (
+            "spice task done --validation TEXT",
+            &["task", "done"],
+            &["spice", "task", "done", "--validation", "checked"],
+        ),
+        (
+            "spice task review HANDLE --finding FINDING --note NOTE",
+            &["task", "review"],
+            &[
+                "spice",
+                "task",
+                "review",
+                "HANDLE",
+                "--finding",
+                "clean",
+                "--note",
+                "checked",
+            ],
+        ),
+        (
+            "spice task capture",
+            &["task", "capture"],
+            &["spice", "task", "capture"],
+        ),
+        (
+            "spice task oops TEXT --origin ORIGIN",
+            &["task", "oops"],
+            &["spice", "task", "oops", "friction", "--origin", "ack:key"],
+        ),
+        (
+            "spice trust grant DIGEST",
+            &["trust", "grant"],
+            &["spice", "trust", "grant", "digest"],
+        ),
+        (
+            "spice trust revoke DIGEST",
+            &["trust", "revoke"],
+            &["spice", "trust", "revoke", "digest"],
+        ),
+    ];
+    let named = SKILL
+        .split('`')
+        .filter(|span| span.starts_with("spice "))
+        .collect::<BTreeSet<_>>();
+    let expected = COMMANDS
+        .iter()
+        .map(|(spelling, _, _)| *spelling)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(named, expected, "every named Spice command is inventoried");
+    for (spelling, path, argv) in COMMANDS {
+        let parsed = crate::cli::command()
+            .try_get_matches_from(*argv)
+            .unwrap_or_else(|error| panic!("skill command {spelling:?} does not parse: {error}"));
+        assert_eq!(
+            crate::cli::selected_contract(&parsed).map(|contract| contract.path),
+            Some(*path),
+            "skill command {spelling:?} selects another contract"
+        );
+        assert_eq!(
+            crate::cli::landing(path),
+            crate::cli::Landing::Landed,
+            "skill command {spelling:?} is registered but not landed"
         );
     }
-    assert!(SKILL.contains("## Operator Decision Boundary"));
-    assert!(SKILL.contains("`spice config trust grant` / `revoke` plan"));
+    assert!(SKILL.len() < 5_000, "bootstrap guidance regrew past 5 KiB");
+    assert!(SKILL.lines().count() <= 90, "bootstrap guidance regrew");
+    assert!(SKILL.contains("initial prompt is a neutral bootstrap signal"));
+    assert!(SKILL.contains("Drain allocator-selected work"));
+    assert!(SKILL.contains("until it reports no work\n  or a real blocker exists"));
+    assert!(SKILL.contains("## Operator decision boundary"));
+    for stale in [
+        "spice config trust",
+        "spice task unclaim",
+        "spice task claim",
+        "spice task doctor",
+        "spice dev pre-commit",
+        "--severity",
+        "--kind",
+        "--after",
+    ] {
+        assert!(!SKILL.contains(stale), "stale guidance survived: {stale}");
+    }
     assert!(!SKILL.contains("spice-rust"));
     assert!(!SKILL.contains("Rust"));
     assert!(!SKILL.contains("`spice agent"));
