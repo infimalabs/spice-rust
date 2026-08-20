@@ -449,7 +449,7 @@ async fn assert_live_stream(
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_shutdown() {
+async fn authenticated_socket_streams_bounded_bus_pages_updates_resume_and_typed_shutdown() {
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");

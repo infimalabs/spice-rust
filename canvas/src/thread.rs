@@ -85,9 +85,12 @@ impl<'a> ThreadReader<'a> {
         position: wire::Seq,
         limit: usize,
     ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, ThreadReadError> {
-        let snapshot = self.bus.fact_snapshot().map_err(ThreadReadError::Bus)?;
-        let index = ThreadIndex::from_snapshot(&snapshot).map_err(ThreadReadError::Thread)?;
-        index.walk(position, limit).map_err(ThreadReadError::Thread)
+        self.bus
+            .canvas_thread(position, limit)
+            .map_err(ThreadReadError::Bus)?
+            .ok_or(ThreadReadError::Thread(ThreadError::UnknownPosition(
+                position,
+            )))
     }
 
     pub fn walk_head<T>(

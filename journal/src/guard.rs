@@ -71,6 +71,15 @@ pub struct JournalRead<'a> {
     cursor: Option<wire::Seq>,
 }
 
+/// Indexed starting boundary for one bounded fact page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FactPageStart {
+    /// Begin strictly after this cursor, or at the first fact when absent.
+    After(Option<wire::Seq>),
+    /// Begin at this exact continuation cursor.
+    At(wire::Seq),
+}
+
 impl<'a> JournalRead<'a> {
     fn scoped(connection: &'a Connection) -> Result<Self, GuardError> {
         let cursor = visible_cursor(connection)?;
@@ -187,6 +196,238 @@ impl JournalRead<'_> {
     /// Last durable fact position visible to this transaction.
     pub fn cursor(&self) -> Result<Option<wire::Seq>, GuardError> {
         Ok(self.cursor)
+    }
+
+    /// Read one bounded primary-key fact range through an immutable horizon.
+    pub fn fact_page(
+        &self,
+        start: FactPageStart,
+        horizon: wire::Seq,
+        limit: usize,
+    ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, GuardError> {
+        if limit == 0 {
+            return Err(GuardError::Invalid(
+                "indexed fact page limit must be positive".to_owned(),
+            ));
+        }
+        let Some(cursor) = self.cursor else {
+            return Err(GuardError::Invalid(
+                "indexed fact page requires a durable cursor".to_owned(),
+            ));
+        };
+        if horizon > cursor {
+            return Err(GuardError::Invalid(format!(
+                "indexed fact page horizon {horizon} is beyond cursor {cursor}"
+            )));
+        }
+        let first = match start {
+            FactPageStart::After(None) => 1,
+            FactPageStart::After(Some(after)) => after.get().saturating_add(1),
+            FactPageStart::At(position) => position.get(),
+        };
+        if first > horizon.get() {
+            return Ok(wire::Packed {
+                rows: Vec::new(),
+                overflow: None,
+                horizon,
+            });
+        }
+        let total = horizon.get() - first + 1;
+        let query_limit = limit.saturating_add(1);
+        let first = i64::try_from(first)
+            .map_err(|_| GuardError::Invalid("indexed fact start exceeds SQLite".to_owned()))?;
+        let horizon_sql = i64::try_from(horizon.get())
+            .map_err(|_| GuardError::Invalid("indexed fact horizon exceeds SQLite".to_owned()))?;
+        let query_limit = i64::try_from(query_limit)
+            .map_err(|_| GuardError::Invalid("indexed fact limit exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT seq, kind, envelope FROM fact_envelopes \
+                 WHERE seq >= ?1 AND seq <= ?2 ORDER BY seq LIMIT ?3",
+            )
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map(params![first, horizon_sql, query_limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let expected = usize::try_from(total)
+            .unwrap_or(usize::MAX)
+            .min(limit.saturating_add(1));
+        let mut facts = Vec::with_capacity(expected);
+        for row in rows {
+            let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            read_metrics::observe_decode(bytes.len());
+            facts.push(
+                crate::read::decode_fact(seq, &kind, &bytes)
+                    .map_err(|error| GuardError::Invalid(error.to_string()))?,
+            );
+        }
+        if facts.len() != expected {
+            return Err(GuardError::Invalid(format!(
+                "indexed fact range expected {expected} row(s), found {}",
+                facts.len()
+            )));
+        }
+        let overflow = if total > u64::try_from(limit).unwrap_or(u64::MAX) {
+            let continuation = facts
+                .pop()
+                .expect("a range beyond the limit returns its continuation")
+                .seq;
+            Some(wire::Overflow {
+                omitted: total - u64::try_from(limit).unwrap_or(u64::MAX),
+                continuation,
+            })
+        } else {
+            None
+        };
+        Ok(wire::Packed {
+            rows: facts,
+            overflow,
+            horizon,
+        })
+    }
+
+    /// Walk one bounded causal page through the durable thread index.
+    pub fn causal_page(
+        &self,
+        position: wire::Seq,
+        limit: usize,
+    ) -> Result<Option<wire::Packed<wire::Envelope<wire::AnyFact>>>, GuardError> {
+        if limit == 0 {
+            return Err(GuardError::Invalid(
+                "indexed causal page limit must be positive".to_owned(),
+            ));
+        }
+        let Some(horizon) = self.cursor else {
+            return Ok(None);
+        };
+        let position_sql = i64::try_from(position.get())
+            .map_err(|_| GuardError::Invalid("causal position exceeds SQLite".to_owned()))?;
+        let query_limit = limit.saturating_add(1);
+        let query_limit_sql = i64::try_from(query_limit)
+            .map_err(|_| GuardError::Invalid("causal page limit exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "WITH RECURSIVE chain(seq, origin, cause, remaining, step) AS (\
+                     SELECT seq, origin, cause, depth, 0 FROM thread_index WHERE seq = ?1 \
+                     UNION ALL \
+                     SELECT indexed.seq, indexed.origin, indexed.cause, indexed.depth, chain.step + 1 \
+                     FROM thread_index AS indexed JOIN chain ON indexed.seq = chain.cause \
+                     WHERE chain.step + 1 < ?2\
+                 ) \
+                 SELECT chain.seq, chain.origin, chain.cause, chain.remaining, \
+                        fact.kind, fact.envelope \
+                 FROM chain JOIN fact_envelopes AS fact ON fact.seq = chain.seq \
+                 ORDER BY chain.step LIMIT ?2",
+            )
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map(params![position_sql, query_limit_sql], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Vec<u8>>(5)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let mut facts = Vec::with_capacity(query_limit);
+        let mut total = None::<u64>;
+        let mut chain_origin = None;
+        for row in rows {
+            let (seq, origin, cause, remaining, kind, bytes) = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            read_metrics::observe_decode(bytes.len());
+            let fact = crate::read::decode_fact(seq, &kind, &bytes)
+                .map_err(|error| GuardError::Invalid(error.to_string()))?;
+            let indexed_cause = cause
+                .map(|cause| {
+                    u64::try_from(cause)
+                        .ok()
+                        .and_then(wire::Seq::new)
+                        .ok_or_else(|| {
+                            GuardError::Invalid(format!(
+                                "thread index cause {cause} is outside the wire range"
+                            ))
+                        })
+                })
+                .transpose()?;
+            if fact.origin.as_str() != origin || fact.cause != indexed_cause {
+                return Err(GuardError::Invalid(format!(
+                    "thread index at {} disagrees with its canonical envelope",
+                    fact.seq
+                )));
+            }
+            if chain_origin
+                .as_ref()
+                .is_some_and(|chain_origin| chain_origin != &fact.origin)
+            {
+                return Err(GuardError::Invalid(format!(
+                    "thread index at {} crosses causal origins",
+                    fact.seq
+                )));
+            }
+            chain_origin.get_or_insert_with(|| fact.origin.clone());
+            let remaining = u64::try_from(remaining).map_err(|_| {
+                GuardError::Invalid(format!(
+                    "thread index depth {remaining} is outside the wire range"
+                ))
+            })?;
+            if let Some(total) = total {
+                let step = u64::try_from(facts.len()).unwrap_or(u64::MAX);
+                let expected_remaining = total.saturating_sub(step.saturating_add(1));
+                if remaining != expected_remaining {
+                    return Err(GuardError::Invalid(format!(
+                        "thread index at {} has depth {remaining}, expected {expected_remaining}",
+                        fact.seq
+                    )));
+                }
+            } else {
+                total = Some(remaining.saturating_add(1));
+            }
+            facts.push(fact);
+        }
+        let Some(total) = total else {
+            return Ok(None);
+        };
+        let expected = usize::try_from(total)
+            .unwrap_or(usize::MAX)
+            .min(query_limit);
+        if facts.len() != expected {
+            return Err(GuardError::Invalid(format!(
+                "indexed causal range expected {expected} row(s), found {}",
+                facts.len()
+            )));
+        }
+        let overflow = if total > u64::try_from(limit).unwrap_or(u64::MAX) {
+            let continuation = facts
+                .pop()
+                .expect("a causal range beyond the limit returns its continuation")
+                .seq;
+            Some(wire::Overflow {
+                omitted: total - u64::try_from(limit).unwrap_or(u64::MAX),
+                continuation,
+            })
+        } else {
+            None
+        };
+        Ok(Some(wire::Packed {
+            rows: facts,
+            overflow,
+            horizon,
+        }))
     }
 
     /// Every current task storage bundle in ascending inception order.

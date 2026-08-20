@@ -876,7 +876,7 @@ pub(super) fn recall(
         }
         Actor::Spice => return authority_refusal(command.actor(), "operator or lane"),
     };
-    let snapshot = match bus.canvas_snapshot() {
+    let snapshot = match bus.task_snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) => {
             return typed_store_fault("recall::journal-unreadable", &error.to_string());

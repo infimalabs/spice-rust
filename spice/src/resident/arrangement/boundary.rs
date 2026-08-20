@@ -23,8 +23,7 @@ use super::*;
 /// absent key, not an empty array. Reading it back through `Vec` would turn
 /// both answers into the same `[]` and hide which one the journal holds.
 fn recorded_sources(bus: &Bus, kind: wire::FactKind) -> Option<serde_json::Value> {
-    let snapshot = bus.canvas_snapshot().expect("boundary journal reads");
-    let facts = snapshot.facts();
+    let facts = bus.fact_snapshot().expect("boundary journal reads");
     let recorded = facts
         .facts()
         .iter()

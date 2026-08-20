@@ -719,7 +719,7 @@ async fn route_stream(
             }
         }
         wire::StreamRequest::Continue { .. } => match subscription.as_mut() {
-            Some(subscription) => subscription.continue_page(&request),
+            Some(subscription) => subscription.continue_page(source, &request),
             None => Err(crate::stream::Failure::Refusal(wire::Refusal::bare(
                 wire::RefusalDiagnostic::new(
                     "stream::subscription-required",

@@ -78,9 +78,9 @@ fn direct_steer_send_refuses_every_invalid_media_shape_before_journal_mutation()
             epoch,
         })
         .expect("crossing admission leaves resident media validation authoritative");
-        let before = bus.canvas_snapshot().expect("journal reads before refusal");
-        let before_cursor = before.cursor();
-        let before_facts = before.facts().facts().len();
+        let before = bus.fact_snapshot().expect("journal reads before refusal");
+        let before_cursor = before.horizon();
+        let before_facts = before.facts().len();
 
         let outcome = steering::send(
             &bus,
@@ -95,9 +95,9 @@ fn direct_steer_send_refuses_every_invalid_media_shape_before_journal_mutation()
             Outcome::Refusal(refusal) if refusal.reason() == "steer::media-invalid"
         ));
 
-        let after = bus.canvas_snapshot().expect("journal reads after refusal");
-        assert_eq!(after.cursor(), before_cursor);
-        assert_eq!(after.facts().facts().len(), before_facts);
+        let after = bus.fact_snapshot().expect("journal reads after refusal");
+        assert_eq!(after.horizon(), before_cursor);
+        assert_eq!(after.facts().len(), before_facts);
     }
 
     bus.verify().expect("refused authority verifies");

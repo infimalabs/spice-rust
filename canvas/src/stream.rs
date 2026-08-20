@@ -2,13 +2,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use bus::{BusReader, CanvasSnapshot, JournalCommit};
+use bus::{BusReader, CanvasHeads, JournalCommit};
 use wire::{
     Accepted, AgentMessage, Fault, FaultClass, Packed, Refusal, Seq, StreamCursor, StreamFact,
     StreamFrame, StreamRequest, ViewSubject, WireVersion,
 };
-
-use crate::thread::{ThreadError, ThreadIndex};
 
 mod message;
 mod policy;
@@ -88,8 +86,8 @@ impl Source {
             )));
         }
         let subjects = admit_subjects(&accepted.actor, subjects)?;
-        let snapshot = self.snapshot()?;
-        let horizon = required_horizon(&snapshot)?;
+        let heads = self.heads()?;
+        let horizon = required_horizon(&heads)?;
         let after_seq = after.map(|cursor| cursor.seq);
         if after_seq.is_some_and(|cursor| cursor > horizon) {
             return Err(Failure::Refusal(refusal(
@@ -109,7 +107,7 @@ impl Source {
             subjects,
             cursor,
             pending: BTreeMap::new(),
-            barrier: Some(snapshot),
+            barrier: Some(heads),
             rows: self.rows,
         };
         let mut frames = Vec::new();
@@ -124,7 +122,7 @@ impl Source {
                     messages: self.messages.snapshot().map_err(message_snapshot_fault)?,
                 }
             } else {
-                subscription.page(subject, None, *id)?
+                subscription.page(self, subject, None, *id)?
             };
             frames.push(frame);
         }
@@ -146,31 +144,45 @@ impl Source {
             )));
         };
         admit_subject(&accepted.actor, ViewSubject::Facts)?;
-        let snapshot = self.snapshot()?;
-        let index = ThreadIndex::from_snapshot(snapshot.facts()).map_err(thread_fault)?;
-        let packed = index
-            .walk(cursor.seq, self.rows)
-            .map_err(|error| match error {
-                ThreadError::UnknownPosition(position) => Failure::Refusal(refusal(
+        let packed = self
+            .bus
+            .canvas_thread(cursor.seq, self.rows)
+            .map_err(thread_fault)?
+            .ok_or_else(|| {
+                Failure::Refusal(refusal(
                     "stream::cursor-unknown",
-                    &format!("causal position {position} is absent at this barrier"),
-                )),
-                other => thread_fault(other),
-            })
-            .map(present_facts)?;
+                    &format!("causal position {} is absent at this barrier", cursor.seq),
+                ))
+            })?;
         Ok(StreamFrame::Thread {
             v: WireVersion::CURRENT,
             id: *id,
             epoch: self.epoch,
-            packed,
+            packed: present_facts(packed),
         })
     }
 
-    fn snapshot(&self) -> Result<CanvasSnapshot, Failure> {
-        self.bus.canvas_snapshot().map_err(|error| {
+    fn facts(
+        &self,
+        start: journal::FactPageStart,
+        horizon: Seq,
+    ) -> Result<Packed<wire::Envelope<wire::AnyFact>>, Failure> {
+        self.bus
+            .canvas_facts(start, horizon, self.rows)
+            .map_err(|error| {
+                Failure::Fault(Fault {
+                    class: FaultClass::Store,
+                    reason: "stream::fact-page-failed".to_owned(),
+                    detail: error.to_string(),
+                })
+            })
+    }
+
+    fn heads(&self) -> Result<CanvasHeads, Failure> {
+        self.bus.canvas_heads().map_err(|error| {
             Failure::Fault(Fault {
                 class: FaultClass::Store,
-                reason: "stream::snapshot-failed".to_owned(),
+                reason: "stream::heads-failed".to_owned(),
                 detail: error.to_string(),
             })
         })
@@ -185,7 +197,7 @@ pub struct Subscription {
     subjects: BTreeSet<ViewSubject>,
     cursor: Option<Seq>,
     pending: BTreeMap<ViewSubject, Seq>,
-    barrier: Option<CanvasSnapshot>,
+    barrier: Option<CanvasHeads>,
     rows: usize,
 }
 
@@ -209,7 +221,11 @@ impl Subscription {
     }
 
     /// Continue the exact subject cursor reported by the preceding page.
-    pub fn continue_page(&mut self, request: &StreamRequest) -> Result<StreamFrame, Failure> {
+    pub fn continue_page(
+        &mut self,
+        source: &Source,
+        request: &StreamRequest,
+    ) -> Result<StreamFrame, Failure> {
         request.admit(self.epoch).map_err(Failure::admission)?;
         let StreamRequest::Continue {
             id,
@@ -239,7 +255,7 @@ impl Subscription {
                 ),
             )));
         }
-        let frame = self.page(*subject, Some(cursor.seq), *id)?;
+        let frame = self.page(source, *subject, Some(cursor.seq), *id)?;
         let horizon = required_horizon(
             self.barrier
                 .as_ref()
@@ -262,29 +278,29 @@ impl Subscription {
         {
             return Ok(Vec::new());
         }
-        let snapshot = source.snapshot()?;
-        let horizon = required_horizon(&snapshot)?;
-        let after = self.cursor.map_or(0, Seq::get);
+        let heads = source.heads()?;
+        let horizon = required_horizon(&heads)?;
         let mut frames = Vec::new();
         if self.subjects.contains(&ViewSubject::Facts) {
-            frames.extend(
-                snapshot
-                    .facts()
-                    .facts()
-                    .iter()
-                    .filter(|fact| fact.seq.get() > after)
-                    .cloned()
-                    .map(StreamFact::from)
-                    .map(|fact| StreamFrame::Fact {
+            let mut start = journal::FactPageStart::After(self.cursor);
+            loop {
+                let packed = source.facts(start, horizon)?;
+                frames.extend(packed.rows.into_iter().map(StreamFact::from).map(|fact| {
+                    StreamFrame::Fact {
                         v: WireVersion::CURRENT,
                         id: self.id,
                         epoch: self.epoch,
                         fact,
-                    }),
-            );
+                    }
+                }));
+                let Some(overflow) = packed.overflow else {
+                    break;
+                };
+                start = journal::FactPageStart::At(overflow.continuation);
+            }
         }
         if self.subjects.contains(&ViewSubject::Trust) {
-            let trust = trust_rows(&snapshot);
+            let trust = trust_rows(&heads);
             let packed = pack_unique(trust, self.rows, horizon, |row| row.position)?;
             self.record_page(ViewSubject::Trust, &packed, |row| row.position);
             frames.push(StreamFrame::Trust {
@@ -296,7 +312,7 @@ impl Subscription {
         }
         self.cursor = Some(horizon);
         if !self.pending.is_empty() {
-            self.barrier = Some(snapshot);
+            self.barrier = Some(heads);
         }
         Ok(frames)
     }
@@ -349,32 +365,25 @@ impl Subscription {
 
     fn page(
         &mut self,
+        source: &Source,
         subject: ViewSubject,
         continuation: Option<Seq>,
         request_id: wire::CanonicalUuid,
     ) -> Result<StreamFrame, Failure> {
-        let snapshot = self.barrier.as_ref().ok_or_else(|| {
+        let heads = self.barrier.as_ref().ok_or_else(|| {
             Failure::Refusal(refusal(
                 "stream::continuation-stale",
                 "the subscription has already crossed into live delivery",
             ))
         })?;
-        let horizon = required_horizon(snapshot)?;
+        let horizon = required_horizon(heads)?;
         let frame = match subject {
             ViewSubject::Facts => {
-                let start = continuation.or(self.cursor);
-                let facts = snapshot
-                    .facts()
-                    .facts()
-                    .iter()
-                    .filter(|fact| start.is_none_or(|cursor| fact.seq >= cursor))
-                    .filter(|fact| {
-                        continuation.is_some() || self.cursor.is_none_or(|cursor| fact.seq > cursor)
-                    })
-                    .cloned()
-                    .map(StreamFact::from)
-                    .collect::<Vec<_>>();
-                let packed = pack_unique(facts, self.rows, horizon, StreamFact::seq)?;
+                let start = continuation.map_or(
+                    journal::FactPageStart::After(self.cursor),
+                    journal::FactPageStart::At,
+                );
+                let packed = present_facts(source.facts(start, horizon)?);
                 self.record_page(subject, &packed, StreamFact::seq);
                 StreamFrame::Facts {
                     v: WireVersion::CURRENT,
@@ -384,7 +393,7 @@ impl Subscription {
                 }
             }
             ViewSubject::Trust => {
-                let rows = trust_rows(snapshot)
+                let rows = trust_rows(heads)
                     .into_iter()
                     .filter(|row| continuation.is_none_or(|cursor| row.position >= cursor))
                     .collect::<Vec<_>>();
@@ -712,7 +721,7 @@ mod tests {
             },
         };
         assert!(matches!(
-            subscription.continue_page(&moved),
+            subscription.continue_page(&source, &moved),
             Err(Failure::Refusal(ref refusal))
                 if refusal.reason() == "stream::continuation-moved"
         ));
@@ -730,7 +739,7 @@ mod tests {
                 },
             };
             subscription
-                .continue_page(&continuation)
+                .continue_page(&source, &continuation)
                 .expect("exact continuation answers");
         }
         assert!(subscription.is_live());
@@ -873,7 +882,7 @@ mod tests {
             },
         };
         let frame = subscription
-            .continue_page(&request)
+            .continue_page(&source, &request)
             .expect("exact trust continuation answers");
         let StreamFrame::Trust { packed, .. } = frame else {
             panic!("expected trust continuation");
@@ -916,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn thread_request_walks_the_same_snapshot_and_names_continuation() {
+    fn thread_request_walks_one_indexed_barrier_and_names_continuation() {
         let bus = fixture(5);
         let source = Source::new(bus.reader(), epoch(), 2);
         let request = StreamRequest::Thread {
