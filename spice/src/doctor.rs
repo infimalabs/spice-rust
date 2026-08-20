@@ -85,6 +85,7 @@ fn report(
             repository: repository.worktree_root().display().to_string(),
             repository_common: repository.common_dir().display().to_string(),
             tracked_configuration: locations.tracked().display().to_string(),
+            worktree_configuration: locations.worktree().display().to_string(),
             local_configuration: locations.local().display().to_string(),
         },
         environment: SpiceVariable::ALL

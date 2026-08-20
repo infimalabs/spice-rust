@@ -683,6 +683,21 @@ fn gate_key_admission_uses_the_resolvers_exact_packaged_registry() {
 
 #[test]
 fn layer_policy_kind_and_flag_metadata_are_complete() {
+    let worktree = descriptors()
+        .iter()
+        .filter(|entry| entry.layers().contains(&ConfigSource::Worktree))
+        .map(|entry| entry.template().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        worktree,
+        [
+            "vendor.claude.model",
+            "vendor.claude.effort",
+            "vendor.codex.model",
+            "vendor.codex.effort",
+        ]
+    );
+
     let local = descriptors()
         .iter()
         .filter(|entry| entry.layers().contains(&ConfigSource::Local))
@@ -737,6 +752,12 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         assert_eq!(
             entry.policy_class() == PolicyClass::MachineLocal,
             entry.layers().contains(&ConfigSource::Local),
+            "{}",
+            entry.template().as_str()
+        );
+        assert_eq!(
+            entry.policy_class() == PolicyClass::WorktreeLocal,
+            entry.layers().contains(&ConfigSource::Worktree),
             "{}",
             entry.template().as_str()
         );

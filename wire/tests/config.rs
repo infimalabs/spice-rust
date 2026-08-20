@@ -111,6 +111,7 @@ fn configuration_sources_are_closed_and_ordered_by_precedence() {
         &[
             ConfigSource::Builtin,
             ConfigSource::Tracked,
+            ConfigSource::Worktree,
             ConfigSource::Local,
             ConfigSource::Flag,
         ]
@@ -118,7 +119,7 @@ fn configuration_sources_are_closed_and_ordered_by_precedence() {
     for (source, spelling) in ConfigSource::ALL
         .iter()
         .copied()
-        .zip(["builtin", "tracked", "local", "flag"])
+        .zip(["builtin", "tracked", "worktree", "local", "flag"])
     {
         assert_eq!(source.as_str(), spelling);
         assert_eq!(source.to_string(), spelling);
@@ -137,6 +138,9 @@ fn every_provenance_variant_names_its_winner_and_typed_builtin() {
     let provenances = [
         Provenance::Builtin {},
         Provenance::Tracked {
+            builtin: Some(builtin.clone()),
+        },
+        Provenance::Worktree {
             builtin: Some(builtin.clone()),
         },
         Provenance::Local { builtin: None },

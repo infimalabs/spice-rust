@@ -209,6 +209,7 @@ impl MutationPlan {
             destination: &'a Path,
             parent: &'a ParentWitness,
             tracked: Option<&'a [u8]>,
+            worktree: Option<&'a [u8]>,
             local: Option<&'a [u8]>,
             candidate: &'a [u8],
         }
@@ -224,6 +225,7 @@ impl MutationPlan {
             destination: &documents.local_path,
             parent: &documents.parent,
             tracked: documents.tracked.as_deref(),
+            worktree: documents.worktree.as_deref(),
             local: documents.local.as_deref(),
             candidate,
         };
@@ -242,8 +244,10 @@ impl MutationPlan {
 
 struct Documents {
     tracked: Option<Vec<u8>>,
+    worktree: Option<Vec<u8>>,
     local: Option<Vec<u8>>,
     tracked_path: PathBuf,
+    worktree_path: PathBuf,
     local_path: PathBuf,
     parent: ParentWitness,
 }
@@ -255,8 +259,10 @@ impl Documents {
         let parent = admit_parent(locations.local())?;
         Ok(Self {
             tracked: read_optional(locations.tracked())?,
+            worktree: read_optional(locations.worktree())?,
             local: read_optional(locations.local())?,
             tracked_path: locations.tracked().to_path_buf(),
+            worktree_path: locations.worktree().to_path_buf(),
             local_path: locations.local().to_path_buf(),
             parent,
         })
@@ -293,10 +299,13 @@ impl Documents {
 
     fn resolve_with(&self, local: Option<&str>) -> Result<Resolved, Outcome<()>> {
         let tracked_text = optional_utf8(self.tracked.as_deref(), &self.tracked_path)?;
+        let worktree_text = optional_utf8(self.worktree.as_deref(), &self.worktree_path)?;
         let tracked_location = self.tracked_path.display().to_string();
+        let worktree_location = self.worktree_path.display().to_string();
         let local_location = self.local_path.display().to_string();
-        config::resolve(Inputs::new(
+        config::resolve(Inputs::with_worktree(
             tracked_text.map(|text| Document::new(&tracked_location, text)),
+            worktree_text.map(|text| Document::new(&worktree_location, text)),
             local.map(|text| Document::new(&local_location, text)),
             &[],
         ))
@@ -498,15 +507,19 @@ impl AdmittedParent {
     fn ensure_unchanged(&self, documents: &Documents) -> Result<(), Outcome<()>> {
         self.verify_named()?;
         let tracked = read_optional(&documents.tracked_path)?;
+        let worktree = read_optional(&documents.worktree_path)?;
         let local = self.read_local()?;
         self.verify_named()?;
-        if tracked == documents.tracked && local == documents.local {
+        if tracked == documents.tracked
+            && worktree == documents.worktree
+            && local == documents.local
+        {
             Ok(())
         } else {
             Err(refusal(
                 "config::source-moved",
                 Some(documents.local_path.display().to_string()),
-                "reload the changed tracked or local configuration and retry",
+                "reload the changed tracked, worktree, or local configuration and retry",
             ))
         }
     }
@@ -1073,6 +1086,7 @@ mod tests {
         let parked = root.join("parked");
         let outside = root.join("outside");
         let tracked_path = root.join("spice-rust.toml");
+        let worktree_path = root.join(".spice-rs/config.toml");
         let local_path = parent.join("config.toml");
         fs::create_dir(&outside).unwrap();
         let tracked = b"[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n".to_vec();
@@ -1080,8 +1094,10 @@ mod tests {
         let witness = admit_parent(&local_path).unwrap();
         let documents = Documents {
             tracked: Some(tracked),
+            worktree: None,
             local: None,
             tracked_path,
+            worktree_path,
             local_path: local_path.clone(),
             parent: witness.clone(),
         };

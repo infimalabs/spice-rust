@@ -282,7 +282,7 @@ fn required_policy_class(expression: &Expr) -> syn::Result<bool> {
     let class = required_identifier(expression, "registry policy class")?;
     match class.as_str() {
         "Policy" => Ok(true),
-        "MachineLocal" => Ok(false),
+        "WorktreeLocal" | "MachineLocal" => Ok(false),
         _ => Err(syn::Error::new_spanned(
             expression,
             format!("unknown registry policy class {class}"),

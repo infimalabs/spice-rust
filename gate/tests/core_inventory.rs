@@ -529,6 +529,11 @@ fn tracked_trust_inventory_passes_when_every_policy_source_is_tracked() {
     assert!(
         !evidence
             .declared()
+            .contains(&config_path(&["vendor", "codex", "model"]))
+    );
+    assert!(
+        !evidence
+            .declared()
             .contains(&config_path(&["say", "command"]))
     );
     assert!(evidence.violations().is_empty());

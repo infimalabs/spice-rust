@@ -42,6 +42,12 @@ impl Scratch {
         fs::write(self.0.join(".git/.spice-rs/config.toml"), text)
             .expect("write local configuration");
     }
+
+    fn worktree(&self, text: &str) {
+        fs::create_dir_all(self.0.join(".spice-rs")).expect("create worktree configuration parent");
+        fs::write(self.0.join(".spice-rs/config.toml"), text)
+            .expect("write worktree configuration");
+    }
 }
 
 impl Drop for Scratch {
@@ -140,6 +146,7 @@ fn healthy_fixture() -> HealthyFixture {
 
     let repository = Scratch::repository("healthy");
     repository.tracked("[lane]\nlease = \"20m\"\n");
+    repository.worktree("[vendor.codex]\nmodel = 'lane-model'\n");
     let journal = repository
         .path()
         .join(".git/.spice-rs/data/spicejournal.sqlite3");
@@ -376,6 +383,13 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
         canonical.join("spice-rust.toml").display().to_string()
     );
     assert_eq!(
+        report.locations.worktree_configuration,
+        canonical
+            .join(".spice-rs/config.toml")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
         report.locations.local_configuration,
         canonical
             .join(".git/.spice-rs/config.toml")
@@ -395,6 +409,11 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
             .any(|row| { row.path == "listen.window" && row.source == ConfigSource::Local })
     );
     assert!(
+        report.provenance.iter().any(|row| {
+            row.path == "vendor.codex.model" && row.source == ConfigSource::Worktree
+        })
+    );
+    assert!(
         report
             .provenance
             .iter()
@@ -407,6 +426,7 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
             .any(|row| row.source == ConfigSource::Builtin)
     );
     assert_eq!(report.configuration.lane().lease().to_string(), "20m");
+    assert_eq!(report.configuration.vendor().codex().model(), "lane-model");
     assert_eq!(
         report.configuration.listen().window_word().to_string(),
         "45s"
