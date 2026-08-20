@@ -1,6 +1,13 @@
 # Tracked repository policy owned by Rust Spice. Every active entry is admitted
 # through Rust Spice's typed configuration registry and compiled Gate.
 
+[wrappers]
+# Agent-authored `spice` commands stay on the repository-local Rust appliance.
+# The runtime resolves this declarative reference beneath the Git-common
+# directory and refuses redirected, escaping, or non-executable installed
+# commands.
+spice = "appliance"
+
 [tasks]
 # Public scheduler stems beyond the packaged `task` and `serve` defaults.
 # Product work routes directly by ownership so the allocator can retain domain
@@ -130,9 +137,9 @@ test_engines = ["cargo-workspace"]
 # again. Doctor reports only the typed Spice variables, so these twenty-six are the
 # difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
 # rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
-# retained only as coexistence sentinels. Its development bridge's self-exec
-# root and staged-path handoff are likewise observed operational context, not
-# variables this runtime owns.
+# retained only as coexistence sentinels. The predecessor's self-exec root and
+# staged-path handoff are likewise observed operational context, not variables
+# this runtime owns.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
@@ -174,6 +181,7 @@ env_names = [
     "SPICE_RS_NATIVE_SHELL",
     "SPICE_RS_PRE_COMMIT_PATHS",
     "SPICE_RS_PRE_COMMIT_SOURCE",
+    "SPICE_RS_WRAPPER_SPICE",
     "SPICE_RUNTIME_PYTHON",
     "SPICE_SELFEXEC_ROOT",
     "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE",

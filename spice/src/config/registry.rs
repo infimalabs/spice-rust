@@ -299,6 +299,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "wrappers.spice" {
+        kind: String,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "tasks.stems" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),

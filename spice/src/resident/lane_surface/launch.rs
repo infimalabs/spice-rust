@@ -135,9 +135,22 @@ fn launch_plan(
     lane: CanonicalUuid,
     resume: vendor::Resume,
 ) -> CommandResult<spice::agent_launch::Plan> {
-    let executable = std::env::current_exe()
-        .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?;
-    let environment = launch_environment(paths, repository, &executable, lane)?;
+    let wrapper = resolved
+        .root()
+        .wrappers()
+        .spice()
+        .map(|reference| spice::agent_wrapper::resolve(reference, repository))
+        .transpose()
+        .map_err(|error| store_fault(error.reason(), &error.to_string()))?;
+    let executable = match &wrapper {
+        Some(route) => route.executable().to_path_buf(),
+        None => std::env::current_exe()
+            .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?,
+    };
+    let wrapper_command = wrapper
+        .as_ref()
+        .map(spice::agent_wrapper::Resolved::command);
+    let environment = launch_environment(paths, repository, &executable, wrapper_command, lane)?;
     let Some(vendor) = spice::extension::vendor(name.as_str()) else {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
@@ -192,16 +205,16 @@ fn launch_plan(
 
 /// Carry only the ambient variables a supervised occupant is admitted to see.
 ///
-/// The executable's directory leads `PATH` so every bare `spice` in the
-/// installed skill resolves to the same appliance that composed the exact hook
-/// and MCP commands. This is a routing boundary, not a convenience: the Python
-/// predecessor also installs a program named `spice`, and inheriting its
-/// earlier ambient entry would send agent-shell inbox and acknowledgment
-/// commands to the wrong runtime.
+/// A configured shell-wrapper directory leads `PATH` so every bare `spice` in
+/// the installed skill reaches the route selected by tracked policy. The Rust
+/// appliance itself is carried separately as an exact typed environment path
+/// for the wrapper, hook, and MCP commands; its directory never enters `PATH`.
+/// Without tracked wrapper policy, the ambient search path is preserved.
 fn launch_environment(
     paths: &RuntimePaths,
     repository: &Repository,
     executable: &Path,
+    wrapper_command: Option<&Path>,
     lane: CanonicalUuid,
 ) -> CommandResult<Environment> {
     let inbox = paths.inbox_for_repository(repository)?;
@@ -250,27 +263,40 @@ fn launch_environment(
             OsString::from(steer::hook::INBOX),
             steer::inbox::path(&inbox, lane).into_os_string(),
         ),
+        (
+            OsString::from(steer::hook::EXECUTABLE),
+            executable.as_os_str().to_owned(),
+        ),
     ]);
-    values.push(("PATH".into(), appliance_path(executable)?));
+    if let Some(path) = shell_path(wrapper_command)? {
+        values.push(("PATH".into(), path));
+    }
     let environment = Environment::new(values)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
     spice::git_shadow::environment(repository, environment)
         .map_err(|error| store_fault("lane::git-shadow-unavailable", &error.to_string()))
 }
 
-/// Search path whose first `spice` is the appliance supervising this lane.
-fn appliance_path(executable: &Path) -> CommandResult<OsString> {
-    let Some(directory) = executable.parent() else {
-        return Err(store_fault(
-            "lane::executable-unresolved",
-            "running executable has no parent directory",
-        ));
-    };
-    let mut entries = vec![directory.to_path_buf()];
+/// Ambient search path, optionally led by one configured wrapper directory.
+fn shell_path(wrapper: Option<&Path>) -> CommandResult<Option<OsString>> {
+    let mut entries = Vec::new();
+    if let Some(command) = wrapper {
+        let Some(directory) = command.parent() else {
+            return Err(store_fault(
+                "lane::wrapper-command-unavailable",
+                "configured wrapper executable has no parent directory",
+            ));
+        };
+        entries.push(directory.to_path_buf());
+    }
     if let Some(ambient) = crate::bootstrap_environment("PATH") {
         entries.extend(std::env::split_paths(&ambient));
     }
+    if entries.is_empty() {
+        return Ok(None);
+    }
     std::env::join_paths(entries)
+        .map(Some)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))
 }
 

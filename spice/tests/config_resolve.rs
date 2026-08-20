@@ -63,7 +63,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 55);
+    assert_eq!(missing.provenance().len(), 56);
     assert!(
         missing
             .provenance()
@@ -614,6 +614,9 @@ const TRACKED_ALL_DESCRIPTOR_DOCUMENT: &str = r#"
 [commands]
 "report.inspect" = ["tool", "report", "inspect"]
 release = ["tool", "release"]
+
+[wrappers]
+spice = "appliance"
 
 [taste.alpha]
 words = ["done"]

@@ -1,10 +1,12 @@
 #!/bin/sh
 # The inner shell stage, executed exactly once by the wrapper.
 #
-# This stage removes the packaged routing environment, restores the user's
-# native shell, and replaces itself with that shell. The exec preserves the
-# immediate child's process identity while every process it starts inherits the
-# native shell rather than either Spice stage.
+# This stage removes the structural shell-routing environment, restores the
+# user's native shell, and replaces itself with that shell. It deliberately
+# preserves the exact wrapper executable capability for ambient wrapper-script
+# calls inside that native shell. The exec preserves the immediate child's
+# process identity while every process it starts inherits the native shell
+# rather than either Spice stage.
 #
 # Sourcing remains an operation inside that native command shell and therefore
 # shares its functions and options without crossing another process boundary.

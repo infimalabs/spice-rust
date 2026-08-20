@@ -4,11 +4,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const LIVE_SHELL_GLUE: [&str; 4] = [
+const LIVE_SHELL_GLUE: [&str; 5] = [
     "dist/proof-image/cargo-wrapper.sh",
     "dist/proof-runner/build.sh",
     "steer/hooks/entry.sh",
     "steer/hooks/static/stage.sh",
+    "steer/hooks/wrappers/spice",
 ];
 const PORTED_SHELL: [&str; 4] = [
     "dist/proof-image/build.sh",
@@ -71,7 +72,7 @@ fn shell_files(root: &Path) -> BTreeSet<String> {
 
 fn git_shell_files(root: &Path) -> BTreeSet<String> {
     let output = Command::new("git")
-        .args(["ls-files", "-z", "--", "*.sh"])
+        .args(["ls-files", "-z", "--", "*.sh", "steer/hooks/wrappers/*"])
         .current_dir(root)
         .output()
         .expect("Git lists tracked shell files");
@@ -101,7 +102,11 @@ fn collect_shell_files(root: &Path, directory: &Path, tracked: &mut BTreeSet<Str
             {
                 collect_shell_files(root, &path, tracked);
             }
-        } else if path.extension() == Some(OsStr::new("sh")) {
+        } else if path.extension() == Some(OsStr::new("sh"))
+            || path
+                .strip_prefix(root)
+                .is_ok_and(|relative| relative.starts_with("steer/hooks/wrappers"))
+        {
             let relative = path
                 .strip_prefix(root)
                 .expect("walked path stays below root")

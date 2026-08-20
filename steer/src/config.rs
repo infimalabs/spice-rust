@@ -4,6 +4,30 @@ use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
 use wire::DurationWord;
 
+/// Repository-owned shell command routes admitted by the current runtime.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Wrappers {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spice: Option<WrapperReference>,
+}
+
+impl Wrappers {
+    /// Optional route for the ambient `spice` command in supervised shells.
+    #[must_use]
+    pub const fn spice(&self) -> Option<WrapperReference> {
+        self.spice
+    }
+}
+
+/// Closed destinations a tracked shell command route may name.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WrapperReference {
+    /// The installed shell route backed by the exact Git-common appliance.
+    Appliance,
+}
+
 /// The defaultable tracked steering policy.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Config {

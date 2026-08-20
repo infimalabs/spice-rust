@@ -1,0 +1,6 @@
+#!/bin/sh
+# Declarative agent-shell route for the ambient `spice` word. The resident
+# validates and supplies the exact Git-common appliance; this script performs
+# no repository discovery and never puts the Rust binary directory on PATH.
+
+exec "${SPICE_RS_WRAPPER_SPICE:?rust spice executable}" "$@"

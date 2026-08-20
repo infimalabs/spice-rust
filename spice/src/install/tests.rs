@@ -48,6 +48,7 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
             Asset::GitReferenceTransaction,
             Asset::HookEntry,
             Asset::HookStatic,
+            Asset::HookWrapperSpice,
             Asset::Skill,
             Asset::Binary,
         ]
@@ -82,6 +83,7 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
             .exists()
     );
     assert!(!repository.common_dir().join(ENTRY_PATH).exists());
+    assert!(!repository.common_dir().join(WRAPPER_SPICE_PATH).exists());
     assert!(!repository.common_dir().join(SKILL_PATH).exists());
 }
 
@@ -99,6 +101,7 @@ fn no_planned_operation_escapes_the_common_directory() {
         Asset::GitReferenceTransaction,
         Asset::HookEntry,
         Asset::HookStatic,
+        Asset::HookWrapperSpice,
         Asset::Skill,
         Asset::Binary,
     ] {
@@ -114,7 +117,7 @@ fn no_planned_operation_escapes_the_common_directory() {
 
     // A plan holding no operations would satisfy the sweep below vacuously.
     assert!(
-        derived.operations().len() >= 7,
+        derived.operations().len() >= 8,
         "the scope sweep needs the whole asset inventory; found {}",
         derived.operations().len()
     );
@@ -681,12 +684,13 @@ fn apply_resumes_a_write_interrupted_before_progress_publication() {
 }
 
 /// Every path an install publishes and a refresh must never withdraw.
-const PUBLISHED_PATHS: [&str; 7] = [
+const PUBLISHED_PATHS: [&str; 8] = [
     GIT_PRE_COMMIT_PATH,
     GIT_COMMIT_MESSAGE_PATH,
     GIT_REFERENCE_TRANSACTION_PATH,
     ENTRY_PATH,
     STATIC_PATH,
+    WRAPPER_SPICE_PATH,
     SKILL_PATH,
     BINARY_PATH,
 ];
