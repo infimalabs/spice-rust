@@ -861,8 +861,14 @@ fn a_stale_thread_reply_cannot_merge_into_the_latest_requested_walk() {
     let first = admitted_stream(&session, &fact_frame(task_fact(41, None)));
     let latest = admitted_stream(&session, &fact_frame(task_fact(42, Some(41))));
 
-    runtime.apply_stream(&first);
-    runtime.apply_stream(&latest);
+    assert!(
+        runtime.apply_stream(&first).is_empty(),
+        "a live fact retains one pending walk without requesting it immediately"
+    );
+    assert!(
+        runtime.apply_stream(&latest).is_empty(),
+        "a later live fact replaces the pending walk without issuing another request"
+    );
     assert_eq!(
         runtime.pending_thread().expect("pending thread").seq,
         seq(42)
