@@ -34,6 +34,7 @@ import {
 } from "./canvas-endpoint-probes.mjs";
 import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
 import { assertLineageDrainFailureTeardown } from "./canvas-lineage-teardown.mjs";
+import { assertLiveThreadCoalescing } from "./live-thread-coalescing.mjs";
 import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
 import { assertBoundaryLoadReading, withLoadReading } from "./canvas-load.mjs";
 import { descendantPids, emitShardEvent, startShardWorker } from "./canvas-shards.mjs";
@@ -888,6 +889,12 @@ try {
         await assertSystemSpeech(lightPage);
       });
       await run.scenario("authority-task-flow", async () => {
+        await assertLiveThreadCoalescing(
+          browser,
+          resident.discovery.endpoint,
+          fixture,
+          seeded.task,
+        );
         await assertTaskNotes(lightPage, seeded.task);
         await assertPackedHistory(lightPage, fixture, await journalExtent(fixture));
         await assertTaskEffortSurface(lightPage, fixture, seeded);

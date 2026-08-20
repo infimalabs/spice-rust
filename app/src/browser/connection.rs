@@ -130,12 +130,30 @@ async fn pump_session(
     drain_submissions(&principal, &mut writer, &mut pending, &handles.submissions).await?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
     let mut probed = false;
+    let (thread_timer_sender, mut thread_timers) = mpsc::unbounded::<()>();
+    let mut thread_refresh = ThreadRefresh::default();
     while active.get() {
         let incoming = reader.next().fuse();
         let action = actions.next().fuse();
-        futures_util::pin_mut!(incoming, action);
+        let thread_timer = thread_timers.next().fuse();
+        futures_util::pin_mut!(incoming, action, thread_timer);
         let mut rearm = false;
-        select! {
+        futures_util::select_biased! {
+            tick = thread_timer => {
+                tick.ok_or_else(|| "canvas thread refresh timer closed".to_owned())?;
+                if let Some(cursor) = thread_refresh.take_due() {
+                    send_stream_request(
+                        &mut writer,
+                        &StreamRequest::Thread {
+                            v: WireVersion::CURRENT,
+                            id: random_uuid()?,
+                            epoch: principal.epoch(),
+                            cursor,
+                        },
+                    )
+                    .await?;
+                }
+            },
             frame = incoming => {
                 // Any frame proves the socket carries traffic, so the answer to
                 // a probe need not be the Pong specifically -- a refusal names
@@ -146,7 +164,7 @@ async fn pump_session(
                     .ok_or_else(|| "resident closed the socket".to_owned())?
                     .map_err(websocket_error)?;
                 let bytes = binary_message(frame)?;
-                let (directives, refresh) =
+                let (directives, refresh, refresh_thread) =
                     handle_incoming(
                         &session,
                         handles,
@@ -154,6 +172,15 @@ async fn pump_session(
                         &mut pending,
                         &bytes,
                     )?;
+                if let Some(cursor) = refresh_thread
+                    && thread_refresh.observe(cursor)
+                {
+                    let timer = thread_timer_sender.clone();
+                    spawn_local(async move {
+                        TimeoutFuture::new(THREAD_REFRESH_COALESCE_MILLIS).await;
+                        let _ = timer.unbounded_send(());
+                    });
+                }
                 relay_directives(&principal, &mut writer, directives).await?;
                 if refresh {
                     send_refresh(
