@@ -187,8 +187,7 @@ fn arrange_command(
 
 /// The arranged standings a fact recorded, read back off the journal.
 fn arranged_fact(bus: &Bus, field: &str) -> serde_json::Value {
-    let snapshot = bus.canvas_snapshot().expect("arranged journal reads");
-    let facts = snapshot.facts();
+    let facts = bus.fact_snapshot().expect("arranged journal reads");
     let arranged = facts
         .facts()
         .iter()

@@ -16,7 +16,11 @@ use wire::{
 use wire::body::TranscriptPosition;
 use wire::head::TranscriptSourceHead;
 
-use crate::{Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
+use crate::guard::{indexed_read_metrics, reset_indexed_read_metrics};
+use crate::{
+    FactPageStart, Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION,
+    ViolationClass,
+};
 
 mod allocation_migration;
 mod boundary;
@@ -33,6 +37,10 @@ mod transcript;
 mod vocabulary_migration;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+
+fn seq(value: u64) -> Seq {
+    Seq::new(value).expect("fixture sequence is nonzero")
+}
 
 #[test]
 fn coherent_authority_verifies_every_required_plane() {
@@ -81,6 +89,71 @@ fn fact_snapshot_reads_the_canonical_authority_stream() {
     assert_eq!(snapshot.horizon(), Some(Seq::new(2).expect("horizon")));
     assert_eq!(snapshot.facts()[0].fact.kind(), FactKind::TaskAdded);
     assert_eq!(snapshot.facts()[1].fact.kind(), FactKind::TaskPhased);
+}
+
+#[test]
+fn indexed_canvas_pages_decode_only_the_bounded_tail_and_causal_window() {
+    let journal = authority_fixture();
+    for position in 3..=200 {
+        insert_fact(
+            &journal,
+            fact(
+                position,
+                Some(position - 1),
+                FactKind::TaskPhased,
+                json!({"task": "1kKRRsDP", "phase": "review"}),
+            ),
+        );
+        let position_sql = i64::try_from(position).expect("fixture position fits SQLite");
+        journal
+            .connection
+            .execute(
+                "INSERT INTO thread_index(seq, origin, cause, root, depth) \
+                 VALUES (?1, 'task:1kKRRsDP', ?2, 1, ?3)",
+                params![position_sql, position_sql - 1, position_sql - 1],
+            )
+            .expect("extend indexed causal fixture");
+    }
+    journal
+        .connection
+        .execute("UPDATE cursor_head SET seq = 200 WHERE singleton = 1", [])
+        .expect("advance indexed fixture cursor");
+
+    reset_indexed_read_metrics();
+    let causal = journal
+        .read(|read| read.causal_page(seq(200), 2))
+        .expect("indexed causal page reads")
+        .expect("indexed causal position exists");
+    assert_eq!(
+        causal.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        [seq(200), seq(199)]
+    );
+    assert_eq!(
+        causal.overflow.expect("causal page names its tail"),
+        wire::Overflow {
+            omitted: 198,
+            continuation: seq(198),
+        }
+    );
+    let causal_metrics = indexed_read_metrics();
+    assert_eq!((causal_metrics.queries, causal_metrics.rows), (1, 3));
+    assert!(causal_metrics.decoded_bytes > 0);
+
+    reset_indexed_read_metrics();
+    let tail = journal
+        .read(|read| read.fact_page(FactPageStart::After(Some(seq(198))), seq(200), 1))
+        .expect("indexed fact tail reads");
+    assert_eq!(tail.rows[0].seq, seq(199));
+    assert_eq!(
+        tail.overflow.expect("fact page names its tail"),
+        wire::Overflow {
+            omitted: 1,
+            continuation: seq(200),
+        }
+    );
+    let tail_metrics = indexed_read_metrics();
+    assert_eq!((tail_metrics.queries, tail_metrics.rows), (1, 2));
+    assert!(tail_metrics.decoded_bytes > 0);
 }
 
 #[test]

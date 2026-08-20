@@ -18,6 +18,8 @@ mod runtime {
 
     const REQUEST_CAPACITY: usize = 64;
     const BROADCAST_CAPACITY: usize = 64;
+    type FactPage =
+        journal::crossing::Packed<journal::crossing::Envelope<journal::crossing::AnyFact>>;
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -108,42 +110,27 @@ mod runtime {
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
-    /// Facts, trust heads, and residency observed inside one immutable authority snapshot.
+    /// Cursor and trust heads observed inside one immutable authority snapshot.
     ///
-    /// Canvas views consume this instead of issuing independent reads whose
-    /// cursors could disagree. The cursor, stream, and heads are all captured
-    /// by the writer thread after every earlier queued transaction settled.
+    /// Fact pages are read separately through bounded primary-key ranges at
+    /// this cursor, so opening Canvas never materializes the complete stream.
     #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct CanvasSnapshot {
+    pub struct CanvasHeads {
         cursor: Option<journal::crossing::Seq>,
-        facts: FactSnapshot,
         trust: Vec<JournalHead<journal::crossing::TrustHead>>,
-        residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
-    impl CanvasSnapshot {
-        /// Last durable position visible to the complete capture.
+    impl CanvasHeads {
+        /// Last durable position visible to this head capture.
         #[must_use]
         pub const fn cursor(&self) -> Option<journal::crossing::Seq> {
             self.cursor
-        }
-
-        /// Complete fact stream at this barrier.
-        #[must_use]
-        pub const fn facts(&self) -> &FactSnapshot {
-            &self.facts
         }
 
         /// Current trust heads at this barrier, ordered by digest.
         #[must_use]
         pub fn trust(&self) -> &[JournalHead<journal::crossing::TrustHead>] {
             &self.trust
-        }
-
-        /// Current resident and lane head at this same barrier.
-        #[must_use]
-        pub const fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
-            self.residency.as_ref()
         }
     }
 
@@ -209,15 +196,57 @@ mod runtime {
     }
 
     impl BusReader {
-        /// Capture facts and trust heads at one queued authority barrier.
-        pub fn canvas_snapshot(&self) -> Result<CanvasSnapshot, BusReadError> {
+        /// Capture the Canvas cursor and trust heads at one queued barrier.
+        pub fn canvas_heads(&self) -> Result<CanvasHeads, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Canvas { answer })
+                .send(Request::CanvasHeads { answer })
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?
+        }
+
+        /// Read one bounded primary-key fact page through a captured horizon.
+        pub fn canvas_facts(
+            &self,
+            start: journal::FactPageStart,
+            horizon: journal::crossing::Seq,
+            limit: usize,
+        ) -> Result<FactPage, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::CanvasFacts {
+                    start,
+                    horizon,
+                    limit,
+                    answer,
+                })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
+        /// Read one bounded causal page directly through the thread index.
+        pub fn canvas_thread(
+            &self,
+            position: journal::crossing::Seq,
+            limit: usize,
+        ) -> Result<Option<FactPage>, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::CanvasThread {
+                    position,
+                    limit,
+                    answer,
+                })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
         }
 
         /// Subscribe to the writer's bounded post-durability cursor broadcast.
@@ -367,8 +396,27 @@ mod runtime {
         }
 
         /// Capture the canvas fact and trust planes at one authority barrier.
-        pub fn canvas_snapshot(&self) -> Result<CanvasSnapshot, BusReadError> {
-            self.reader().canvas_snapshot()
+        pub fn canvas_heads(&self) -> Result<CanvasHeads, BusReadError> {
+            self.reader().canvas_heads()
+        }
+
+        /// Read one bounded primary-key fact page through a captured horizon.
+        pub fn canvas_facts(
+            &self,
+            start: journal::FactPageStart,
+            horizon: journal::crossing::Seq,
+            limit: usize,
+        ) -> Result<FactPage, BusReadError> {
+            self.reader().canvas_facts(start, horizon, limit)
+        }
+
+        /// Read one bounded causal page directly through the thread index.
+        pub fn canvas_thread(
+            &self,
+            position: journal::crossing::Seq,
+            limit: usize,
+        ) -> Result<Option<FactPage>, BusReadError> {
+            self.reader().canvas_thread(position, limit)
         }
 
         /// Read the current resident and lane head through the writer queue.
@@ -507,8 +555,19 @@ mod runtime {
         Tasks {
             answer: SyncSender<Result<TaskSnapshot, BusReadError>>,
         },
-        Canvas {
-            answer: SyncSender<Result<CanvasSnapshot, BusReadError>>,
+        CanvasHeads {
+            answer: SyncSender<Result<CanvasHeads, BusReadError>>,
+        },
+        CanvasFacts {
+            start: journal::FactPageStart,
+            horizon: journal::crossing::Seq,
+            limit: usize,
+            answer: SyncSender<Result<FactPage, GuardError>>,
+        },
+        CanvasThread {
+            position: journal::crossing::Seq,
+            limit: usize,
+            answer: SyncSender<Result<Option<FactPage>, GuardError>>,
         },
         Residency {
             answer: SyncSender<
@@ -591,25 +650,33 @@ mod runtime {
                         });
                     let _ = answer.send(snapshot);
                 }
-                Request::Canvas { answer } => {
+                Request::CanvasHeads { answer } => {
                     let snapshot = journal
                         .read_with(|read| {
                             let cursor = read.cursor().map_err(BusReadError::Head)?;
-                            let facts = read.fact_snapshot().map_err(BusReadError::Snapshot)?;
                             let trust = read.trust_heads().map_err(BusReadError::Head)?;
-                            let residency = read.residency_head().map_err(BusReadError::Head)?;
-                            Ok(CanvasSnapshot {
-                                cursor,
-                                facts,
-                                trust,
-                                residency,
-                            })
+                            Ok(CanvasHeads { cursor, trust })
                         })
                         .map_err(|error| match error {
                             journal::ReadError::Journal(error) => BusReadError::Head(error),
                             journal::ReadError::Answer(error) => error,
                         });
                     let _ = answer.send(snapshot);
+                }
+                Request::CanvasFacts {
+                    start,
+                    horizon,
+                    limit,
+                    answer,
+                } => {
+                    let _ = answer.send(journal.read(|read| read.fact_page(start, horizon, limit)));
+                }
+                Request::CanvasThread {
+                    position,
+                    limit,
+                    answer,
+                } => {
+                    let _ = answer.send(journal.read(|read| read.causal_page(position, limit)));
                 }
                 Request::Residency { answer } => {
                     let _ = answer.send(journal.read(|read| read.residency_head()));
@@ -710,6 +777,6 @@ mod runtime {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
-    BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasSnapshot,
+    BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasHeads,
     CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, TaskSnapshot,
 };

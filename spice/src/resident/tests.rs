@@ -656,9 +656,8 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
 }
 
 fn assert_lineage_configuration_fact(bus: &Bus, lineage: CanonicalUuid) {
-    let snapshot = bus.canvas_snapshot().expect("configured journal reads");
-    let configured = snapshot
-        .facts()
+    let facts = bus.fact_snapshot().expect("configured journal reads");
+    let configured = facts
         .facts()
         .iter()
         .find(|fact| fact.fact.kind() == wire::FactKind::LineageConfigured)

@@ -885,7 +885,7 @@ fn stream_boundary_samples(
             id: Some(second_id),
             fault: Fault {
                 class: FaultClass::Store,
-                reason: "stream::snapshot-failed".to_owned(),
+                reason: "stream::heads-failed".to_owned(),
                 detail: "authority snapshot failed".to_owned(),
             },
         },
