@@ -1,17 +1,18 @@
 //! Installing the structural shell-interception boundary.
 //!
-//! Interception puts the wrapper in front of every agent-owned top-level shell
-//! command. It is installed as two distinct executable stages: the outer stage
+//! Interception puts the structural wrapper in front of every agent-owned
+//! top-level shell command. It uses two executable stages: the outer stage
 //! always enters the Rust wrapper, and the inner stage restores and execs the
-//! user's native shell. The launch environment points the agent at the outer
-//! stage; the inner stage points descendants at the native shell. Exactly-once
-//! routing is therefore structural rather than a marker descendants can forge,
-//! lose, or accidentally inherit.
+//! user's native shell. A third installed script supplies the separately
+//! configured ambient `spice` command. The launch environment points the agent
+//! at the outer stage; the inner stage points descendants at the native shell.
+//! Exactly-once routing is therefore structural rather than a marker
+//! descendants can forge, lose, or accidentally inherit.
 //!
-//! Both stages are published from bytes compiled into this crate, so what is on
-//! disk either matches what this build expects or is named as divergent. That
-//! matters because a stage that silently drifted would intercept in some other
-//! way than the one this code reasons about.
+//! All three scripts are published from bytes compiled into this crate, so what
+//! is on disk either matches what this build expects or is named as divergent.
+//! That matters because a script that silently drifted would route in some
+//! other way than the one this code reasons about.
 
 use std::error::Error;
 use std::fmt;
@@ -30,6 +31,9 @@ pub const LANE: &str = wire::SpiceVariable::Lane.as_str();
 
 /// The variable carrying the user shell restored by the inner stage.
 pub const NATIVE_SHELL: &str = wire::SpiceVariable::NativeShell.as_str();
+
+/// The exact Spice executable used by structural and configured wrappers.
+pub const EXECUTABLE: &str = wire::SpiceVariable::WrapperSpice.as_str();
 
 /// One interception stage and the bytes it must carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +57,7 @@ impl Stage {
 }
 
 /// Every stage installation places, in the order a shell reaches them.
-pub const STAGES: [Stage; 2] = [
+pub const STAGES: [Stage; 3] = [
     Stage {
         path: "entry.sh",
         bytes: include_str!("../hooks/entry.sh"),
@@ -61,6 +65,10 @@ pub const STAGES: [Stage; 2] = [
     Stage {
         path: "static/stage.sh",
         bytes: include_str!("../hooks/static/stage.sh"),
+    },
+    Stage {
+        path: "wrappers/spice",
+        bytes: include_str!("../hooks/wrappers/spice"),
     },
 ];
 
@@ -240,7 +248,7 @@ fn make_executable(_path: &Path) -> Result<(), InstallError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HOOKS, NATIVE_SHELL, STAGES};
+    use super::{EXECUTABLE, HOOKS, NATIVE_SHELL, STAGES};
     use std::collections::BTreeSet;
 
     /// The prefix every name in this vocabulary carries.
@@ -256,7 +264,7 @@ mod tests {
     /// uses.
     #[test]
     fn the_stages_spell_the_vocabulary_this_module_declares() {
-        let declared: BTreeSet<&str> = [HOOKS, NATIVE_SHELL].into_iter().collect();
+        let declared: BTreeSet<&str> = [EXECUTABLE, HOOKS, NATIVE_SHELL].into_iter().collect();
         let mut spelled = BTreeSet::new();
         for stage in STAGES {
             spelled.extend(names(stage.bytes()));

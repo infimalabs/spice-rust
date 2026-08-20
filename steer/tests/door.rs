@@ -224,9 +224,12 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
         .expect("the entry stage is registered")
         .bytes();
 
-    assert!(entry.contains(
-        "exec spice run -- \"${SPICE_RS_HOOKS:?rust spice hooks directory}/static/stage.sh\" \"$@\""
-    ));
+    assert!(
+        entry.contains("exec \"${SPICE_RS_WRAPPER_SPICE:?rust spice executable}\" run -- \\\n")
+    );
+    assert!(
+        entry.contains("\"${SPICE_RS_HOOKS:?rust spice hooks directory}/static/stage.sh\" \"$@\"")
+    );
     assert!(!entry.contains("spice agent run"));
     let removed_proof_name = ["spice", "proof"].join("_").to_ascii_uppercase();
     assert!(
@@ -234,6 +237,43 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
         "entry stage no longer carries proof routing"
     );
     assert!(!entry.contains("if ["));
+}
+
+/// The ambient command stage is a dumb exact-path handoff: it neither searches
+/// for the Rust binary nor performs repository discovery of its own.
+#[cfg(unix)]
+#[test]
+fn the_spice_shell_wrapper_execs_only_the_typed_appliance() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let scratch = Scratch::new("spice-wrapper");
+    let hooks = Hooks::new(scratch.path().join("hooks"));
+    hooks.install().expect("installation");
+    let captured = scratch.path().join("captured");
+    let appliance = scratch.path().join("exact-appliance");
+    fs::write(
+        &appliance,
+        "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$CAPTURED\"\nexit 7\n",
+    )
+    .expect("write exact appliance");
+    fs::set_permissions(&appliance, fs::Permissions::from_mode(0o700))
+        .expect("make exact appliance executable");
+
+    let output = Command::new(hooks.stage(STAGES[2]))
+        .args(["task", "next", "two words"])
+        .env(steer::hook::EXECUTABLE, &appliance)
+        .env("CAPTURED", &captured)
+        .env("PATH", scratch.path())
+        .output()
+        .expect("installed wrapper runs");
+
+    assert_eq!(output.status.code(), Some(7));
+    assert_eq!(
+        fs::read(&captured).expect("exact appliance captured arguments"),
+        b"task\0next\0two words\0"
+    );
+    scratch.remove();
 }
 
 /// The inner stage restores the native shell before the command runs and does

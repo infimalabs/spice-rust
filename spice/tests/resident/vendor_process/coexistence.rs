@@ -325,6 +325,10 @@ fn installed_spice_lifecycle_requires_explicit_predecessor_hook_handoff() {
         &lanes,
         false,
         &installed_binary,
+        Some(&spice::install::installed_spice_wrapper(
+            &spice::repository::Repository::discover(&fixture.root)
+                .expect("coexistence repository discovers for wrapper expectation"),
+        )),
         Some(&resident_path),
     );
 
@@ -361,7 +365,8 @@ fn installed_spice_lifecycle_requires_explicit_predecessor_hook_handoff() {
          predecessor_context=[thread,inbox,socket-marker,same-uuid-inbox] \
          predecessor_hooks=preserved-after-explicit-handoff \
          resident_path=[git:{},sleep:{},spice:predecessor] \
-         agent_path_head={} client_path_entries=0 shutdown=clean",
+         agent_path_head={} rust_binary_path_excluded=true \
+         client_path_entries=0 shutdown=clean",
         fixture.journal().display(),
         created[0],
         created[1],
@@ -371,10 +376,13 @@ fn installed_spice_lifecycle_requires_explicit_predecessor_hook_handoff() {
         predecessor.state.len() + 1,
         resident_tools[0].display(),
         resident_tools[1].display(),
-        installed_binary
-            .parent()
-            .expect("installed appliance has a directory")
-            .display(),
+        spice::install::installed_spice_wrapper(
+            &spice::repository::Repository::discover(&fixture.root)
+                .expect("coexistence repository discovers for evidence"),
+        )
+        .parent()
+        .expect("installed shell wrapper has a directory")
+        .display(),
     );
 }
 
@@ -431,7 +439,8 @@ fn assert_foreign_hook_preflight_refuses(fixture: &Fixture, predecessor: &mut Pr
 fn prepare_coexistence_repository(fixture: &Fixture, rig: &Rig) {
     let mut document =
         fs::read_to_string(fixture.root.join("spice-rust.toml")).expect("fixture config reads");
-    document.push_str("\n[tasks]\nstems = [\"coexistence\"]\n");
+    document
+        .push_str("\n[wrappers]\nspice = \"appliance\"\n\n[tasks]\nstems = [\"coexistence\"]\n");
     fs::write(fixture.root.join("spice-rust.toml"), &document).expect("Claude config extends");
     fs::write(
         fixture.root.join(".gitignore"),
@@ -762,8 +771,8 @@ fn exercise_installed_surface(
 ///
 /// The coexistence fixture deliberately puts the predecessor executable first
 /// in the resident's ambient search path. This shell therefore reaches the
-/// installed appliance only when lane launch inserted its own executable
-/// directory ahead of that trap.
+/// installed appliance only when lane launch inserted the receipt-owned shell
+/// wrapper directory ahead of that trap.
 fn agent_shell_command(
     fixture: &Fixture,
     rig: &Rig,

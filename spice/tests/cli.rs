@@ -566,16 +566,9 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
         executed.display()
     );
     let binary = Path::new(env!("CARGO_BIN_EXE_spice"));
-    let path = [binary
-        .parent()
-        .expect("spice binary has a directory")
-        .to_path_buf()];
     let output = Command::new(hooks.stage(steer::hook::STAGES[0]))
         .args(["-c", &complete])
-        .env(
-            "PATH",
-            std::env::join_paths(path).expect("fixture PATH joins"),
-        )
+        .env(steer::hook::EXECUTABLE, binary)
         .env(steer::hook::HOOKS, hooks.root())
         .env(steer::hook::NATIVE_SHELL, &native)
         .env(steer::hook::INBOX, &inbox)

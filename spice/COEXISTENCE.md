@@ -139,12 +139,19 @@ concurrent reproduction:
    Rust lane, correct service by the wrong runtime appeared as missing context.
 
 The terminal is a **root cause**: inherited executable lookup let a Rust-launched
-agent change routing identity after launch. The closure is
-`spice/src/resident/lane_surface/launch.rs#fn appliance_path`, which prepends the
-directory of the running Rust executable to the occupant's `PATH`. The
+agent change routing identity after launch. The closure is the tracked
+`wrappers.spice = "appliance"` route. `spice::agent_wrapper` resolves that value
+to two separate Git-common paths and refuses a symbolic link or anything other
+than an executable regular file: the installed Rust appliance is an exact
+capability, while the receipt-owned `hooks/wrappers/spice` shell script is the
+ambient command. `lane_surface::launch::shell_path` places only the shell
+wrapper's directory before the occupant's ambient `PATH`; the Rust binary
+directory never enters `PATH`. `SPICE_RS_WRAPPER_SPICE` supplies the same exact
+appliance to that script and authors the exact hook and MCP commands. The
 concurrent proof deliberately places a predecessor `spice` earlier in the
 resident's ambient path; bare agent-shell commands still reach the installed
-Rust appliance, and the predecessor invocation log stays absent.
+wrapper and exact Rust appliance, and the predecessor invocation log stays
+absent.
 
 ## Tracked configuration
 

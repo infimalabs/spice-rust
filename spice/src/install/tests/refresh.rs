@@ -80,13 +80,14 @@ fn a_linked_worktree_refreshes_all_intact_prior_build_assets_without_unapplying(
     );
 }
 
-fn install_historical_assets(repository: &Repository) -> [(Asset, GeneratedImage); 6] {
+fn install_historical_assets(repository: &Repository) -> [(Asset, GeneratedImage); 7] {
     [
         (Asset::GitPreCommit, EXECUTABLE_MODE),
         (Asset::GitCommitMessage, EXECUTABLE_MODE),
         (Asset::GitReferenceTransaction, EXECUTABLE_MODE),
         (Asset::HookEntry, EXECUTABLE_MODE),
         (Asset::HookStatic, EXECUTABLE_MODE),
+        (Asset::HookWrapperSpice, EXECUTABLE_MODE),
         (Asset::Skill, DATA_MODE),
     ]
     .map(|(asset, mode)| {

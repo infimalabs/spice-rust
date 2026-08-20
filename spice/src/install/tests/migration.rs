@@ -16,6 +16,64 @@ struct MigrationFixture {
 }
 
 #[test]
+fn complete_v10_receipt_refreshes_by_adding_the_owned_shell_wrapper() {
+    let fixture = compact_version_7_fixture();
+    let current = preview_migration(&fixture);
+    apply(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &current.digest().unwrap(),
+    )
+    .expect("install current appliance fixture");
+
+    let mut previous = read_record(&fixture.repository)
+        .unwrap()
+        .expect("current appliance receipt exists")
+        .record;
+    previous
+        .remove_test_wrapper_asset(&fixture.repository)
+        .expect("withdraw future wrapper from version-10 fixture");
+    previous.version = PREVIOUS_RECORD_VERSION;
+    previous.plan.version = PREVIOUS_RECORD_VERSION;
+    previous.plan_digest = previous.plan.digest().expect("digest version-10 plan");
+    let previous_digest = previous.plan_digest.clone();
+    previous
+        .plan
+        .publish_staged_rollback(&fixture.repository)
+        .expect("publish version-10 rollback manifest body");
+    fs::write(
+        record_path(&fixture.repository).expect("fixture receipt path resolves"),
+        wire::encode(&previous).expect("encode canonical version-10 receipt"),
+    )
+    .expect("publish version-10 receipt");
+
+    let refresh = plan(&fixture.repository, Some(&fixture.binary))
+        .expect("derive version-11 wrapper refresh");
+    assert_eq!(refresh.version(), PLAN_VERSION);
+    assert!(
+        refresh
+            .operations()
+            .iter()
+            .any(|operation| operation.asset() == Asset::HookWrapperSpice)
+    );
+    let refusal = apply(&fixture.repository, Some(&fixture.binary), &previous_digest)
+        .expect_err("the version-10 digest cannot authorize the wrapper refresh");
+    assert!(matches!(refusal, InstallError::DigestMismatch { .. }));
+
+    let receipt = apply(
+        &fixture.repository,
+        Some(&fixture.binary),
+        &refresh.digest().unwrap(),
+    )
+    .expect("apply exact wrapper refresh");
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    assert_eq!(
+        fs::read(installed_spice_wrapper(&fixture.repository)).expect("installed wrapper reads"),
+        steer::hook::STAGES[2].bytes().as_bytes(),
+    );
+}
+
+#[test]
 fn version_7_upgrade_retires_legacy_runtime_after_publication_and_rolls_back_exactly() {
     let fixture = version_7_fixture();
     let migration = preview_migration(&fixture);
@@ -170,7 +228,7 @@ fn pre_witness_v8_refresh_requires_an_exact_forward_repair_plan() {
 }
 
 #[test]
-fn complete_v8_appliance_turns_over_only_through_an_exact_v10_refresh() {
+fn complete_v8_appliance_turns_over_only_through_an_exact_v11_refresh() {
     let scratch = Scratch::new("complete-v8-forward-refresh");
     let repository = scratch.repository();
     let binary = scratch.binary(b"versioned appliance");
@@ -182,6 +240,9 @@ fn complete_v8_appliance_turns_over_only_through_an_exact_v10_refresh() {
         .unwrap()
         .expect("installed receipt exists")
         .record;
+    historical
+        .remove_test_wrapper_asset(&repository)
+        .expect("withdraw future wrapper from version-8 fixture");
     historical.version = FORWARD_MIGRATABLE_RECORD_VERSION;
     historical.plan.version = FORWARD_MIGRATABLE_RECORD_VERSION;
     historical.plan_digest = historical.plan.digest().expect("digest version-8 plan");
@@ -197,9 +258,9 @@ fn complete_v8_appliance_turns_over_only_through_an_exact_v10_refresh() {
     assert_eq!(audit.state(), ApplianceState::StaleReceipt);
     assert_eq!(audit.receipt(), Some(&historical_digest));
     assert!(audit.detail().contains("version 8"), "{audit:?}");
-    assert!(audit.detail().contains("version-10"), "{audit:?}");
+    assert!(audit.detail().contains("version-11"), "{audit:?}");
 
-    let refresh = plan(&repository, Some(&binary)).expect("derive version-10 forward refresh");
+    let refresh = plan(&repository, Some(&binary)).expect("derive version-11 forward refresh");
     assert_eq!(refresh.version(), PLAN_VERSION);
     assert_ne!(refresh.digest().unwrap(), historical_digest);
     let refusal = apply(&repository, Some(&binary), &historical_digest)
@@ -208,7 +269,7 @@ fn complete_v8_appliance_turns_over_only_through_an_exact_v10_refresh() {
     assert_eq!(images(&repository, &historical.plan), before);
 
     let receipt = apply(&repository, Some(&binary), &refresh.digest().unwrap())
-        .expect("apply exact version-10 forward refresh");
+        .expect("apply exact version-11 forward refresh");
     assert_eq!(receipt.status(), InstallStatus::Complete);
     assert!(
         audit_appliance(&repository, &binary)
@@ -231,7 +292,7 @@ fn assert_private_receipt_manifest(repository: &Repository, maximum: usize) {
 }
 
 #[test]
-fn complete_v9_inline_receipt_turns_over_to_one_bounded_v10_blob() {
+fn complete_v9_inline_receipt_turns_over_to_one_bounded_v11_blob() {
     const MAX_PRIVATE_RECEIPT: usize = 64 * 1024;
     const MAX_CHECKPOINT_SERIALIZATION: usize = 2 * 1024 * 1024;
 
@@ -261,7 +322,7 @@ fn complete_v9_inline_receipt_turns_over_to_one_bounded_v10_blob() {
         MAX_CHECKPOINT_SERIALIZATION,
     );
 
-    assert_v10_no_change(&fixture, &preview, &blobs, &current);
+    assert_v11_no_change(&fixture, &preview, &blobs, &current);
 
     rollback::reset_deep_decode_count();
     reverse_and_assert_version_7(&fixture);
@@ -286,6 +347,9 @@ fn publish_inline_v9(
         .unwrap()
         .expect("current receipt exists")
         .record;
+    inline
+        .remove_test_wrapper_asset(&fixture.repository)
+        .expect("withdraw future wrapper from version-9 fixture");
     inline.plan.rollback_archive = inline
         .plan
         .rollback_archive
@@ -350,7 +414,7 @@ fn assert_v9_digest_refusal(
     inline_digest: &Digest,
 ) {
     let refusal = apply(&fixture.repository, Some(&fixture.binary), inline_digest)
-        .expect_err("version-9 digest cannot authorize the version-10 receipt");
+        .expect_err("version-9 digest cannot authorize the version-11 receipt");
     assert!(matches!(refusal, InstallError::DigestMismatch { .. }));
     assert!(!blobs.exists());
     assert_eq!(installed_state(&fixture.repository, migration), *before);
@@ -444,7 +508,7 @@ fn resume_v9_conversion(
         Some(&fixture.binary),
         &preview.digest().unwrap(),
     )
-    .expect("resume exact version-10 forward conversion");
+    .expect("resume exact version-11 forward conversion");
     assert_eq!(
         rollback::deep_decode_count(),
         1,
@@ -475,7 +539,7 @@ fn resume_v9_conversion(
     current
 }
 
-fn assert_v10_no_change(
+fn assert_v11_no_change(
     fixture: &MigrationFixture,
     preview: &InstallPlan,
     blobs: &Path,
@@ -635,6 +699,9 @@ fn publish_pre_witness_v8(fixture: &MigrationFixture, migration: &InstallPlan) -
         .unwrap()
         .expect("migrated receipt exists")
         .record;
+    record
+        .remove_test_wrapper_asset(&fixture.repository)
+        .expect("withdraw future wrapper from version-8 repair fixture");
     record.plan.rollback_archive = record
         .plan
         .rollback_archive
@@ -1000,6 +1067,9 @@ fn publish_version_7_receipt(repository: &Repository) -> (InstallRecord, Vec<u8>
         .unwrap()
         .expect("fixture receipt exists")
         .record;
+    prior
+        .remove_test_wrapper_asset(repository)
+        .expect("withdraw future wrapper from version-7 fixture");
     prior.version = MIGRATABLE_RECORD_VERSION;
     prior.plan.version = MIGRATABLE_RECORD_VERSION;
     prior.plan.retirements.clear();
@@ -1035,10 +1105,19 @@ fn preview_migration(fixture: &MigrationFixture) -> InstallPlan {
     assert_eq!(rollback.record.bytes(), fixture.prior_record);
     assert_eq!(
         rollback.operations,
-        fixture
-            .prior_assets
+        migration
+            .operations()
             .iter()
-            .map(|observed| observed.as_ref().map(|observed| observed.image.clone()))
+            .map(|operation| {
+                fixture
+                    .prior
+                    .plan
+                    .operations
+                    .iter()
+                    .position(|prior| prior.asset == operation.asset())
+                    .and_then(|index| fixture.prior_assets[index].as_ref())
+                    .map(|observed| observed.image.clone())
+            })
             .collect::<Vec<_>>(),
     );
     assert_eq!(

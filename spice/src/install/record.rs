@@ -99,6 +99,56 @@ impl InstallRecord {
         })
     }
 
+    /// Remove the wrapper introduced after historical receipt versions.
+    #[cfg(debug_assertions)]
+    pub(super) fn remove_test_wrapper_asset(
+        &mut self,
+        repository: &Repository,
+    ) -> Result<(), InstallError> {
+        let index = self
+            .plan
+            .operations
+            .iter()
+            .position(|operation| operation.asset == super::Asset::HookWrapperSpice)
+            .ok_or_else(|| {
+                InstallError::InvalidRecord("test receipt has no wrapper asset".to_owned())
+            })?;
+        if let Some(archive) = &self.plan.rollback_archive {
+            let inline = archive.is_inline();
+            let mut rollback = archive.decode(repository)?;
+            rollback.operations.remove(index);
+            let rebuilt = super::RollbackArchive::new(&rollback)?;
+            self.plan.rollback_archive = Some(if inline {
+                rebuilt.to_inline(repository)?
+            } else {
+                rebuilt
+            });
+        }
+        self.plan.operations.remove(index);
+        self.reversals.remove(index);
+        self.destinations.remove(index);
+        self.installed.remove(index);
+        self.installed_parents.remove(index);
+        self.restored.remove(index);
+        self.completed = self.plan.operation_count();
+        self.plan_digest = self.plan.digest()?;
+
+        let wrapper = super::installed_spice_wrapper(repository);
+        fs::remove_file(&wrapper).map_err(|source| {
+            InstallError::io("remove future wrapper test asset", wrapper.clone(), source)
+        })?;
+        let parent = wrapper
+            .parent()
+            .expect("the installed wrapper contract always has a parent");
+        fs::remove_dir(parent).map_err(|source| {
+            InstallError::io(
+                "remove future wrapper test directory",
+                parent.to_path_buf(),
+                source,
+            )
+        })
+    }
+
     pub(super) fn validate(&self) -> Result<(), InstallError> {
         self.validate_with_content(self.status == InstallStatus::Uninstalled)
     }
@@ -107,12 +157,16 @@ impl InstallRecord {
     ///
     /// A complete appliance carrying a binary may be the intact output of a
     /// previous build. Its fixed digests are admitted as history only until
-    /// progress verification proves every destination still matches. A
-    /// binary-less complete record has no installed build identity to anchor
-    /// that exception, while interrupted directions remain owned by the build
-    /// that started them.
+    /// progress verification proves every destination still matches. The
+    /// immediately previous schema is also admitted long enough to add its new
+    /// fixed asset, including for a binary-less install. Other binary-less
+    /// records have no installed build identity to anchor that exception,
+    /// while interrupted directions remain owned by the build that started
+    /// them.
     fn validate_loaded(&self) -> Result<(), InstallError> {
         let historical = self.status == InstallStatus::Uninstalled
+            || (self.status == InstallStatus::Complete
+                && self.version == super::PREVIOUS_RECORD_VERSION)
             || (self.status == InstallStatus::Complete
                 && super::binary_operation(&self.plan).is_some());
         self.validate_with_content(historical)
@@ -169,10 +223,15 @@ impl InstallRecord {
             && self.plan.version == super::INLINE_ROLLBACK_RECORD_VERSION
             && self.status == InstallStatus::Complete
             && super::binary_operation(&self.plan).is_some();
+        let previous_migratable = historical
+            && self.version == super::PREVIOUS_RECORD_VERSION
+            && self.plan.version == super::PREVIOUS_RECORD_VERSION
+            && self.status == InstallStatus::Complete;
         if self.version != RECORD_VERSION
             && !rollback_migratable
             && !forward_migratable
             && !inline_migratable
+            && !previous_migratable
         {
             return Err(InstallError::InvalidRecord(format!(
                 "install record version {} is not {RECORD_VERSION}",
@@ -610,6 +669,7 @@ pub(super) fn publish_test_version_7_receipt(repository: &Repository) -> Result<
             "test fixture receipt is not complete".to_owned(),
         ));
     }
+    record.remove_test_wrapper_asset(repository)?;
     record.version = super::MIGRATABLE_RECORD_VERSION;
     record.plan.version = super::MIGRATABLE_RECORD_VERSION;
     record.plan.retirements.clear();

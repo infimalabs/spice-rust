@@ -275,7 +275,7 @@ impl RollbackArchive {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     pub(super) fn to_inline(&self, repository: &Repository) -> Result<Self, InstallError> {
         match self {
             Self::Inline(inline) => Ok(Self::Inline(inline.clone())),

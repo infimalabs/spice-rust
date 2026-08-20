@@ -1,40 +1,8 @@
 # Tracked repository policy owned by Python Spice. Rust Spice reads
-# `spice-rust.toml`; this file retains the predecessor's scheduler, judge,
-# policy, and its pre-commit bridge without becoming a Rust input. That bridge
-# is active only while an operator selects the predecessor's hook path.
-
-[commands]
-# Python Spice owns the ambient `spice` command. This one nested repository
-# command crosses directly into the current Git-common Rust appliance, so
-# callers do not need to discover `.spice-install` themselves. Python's mount
-# contract executes literal argv without path interpolation; Bash resolves the
-# one dynamic repository path and then replaces itself with Rust Spice.
-"dev.cargo" = [
-    "/bin/bash",
-    "-ceu",
-    '''
-refuse() {
-    printf 'spice: coexistence::%s: %s\n' "$1" "$2" >&2
-    exit 2
-}
-
-if ! common_git_dir=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir); then
-    refuse repository-unresolved \
-        "cannot resolve the current repository common Git directory"
-fi
-[[ $common_git_dir = /* ]] || refuse repository-unresolved \
-    "Git returned a non-absolute common directory: $common_git_dir"
-
-rust_spice=$common_git_dir/.spice-install/bin/spice
-[[ ! -L $rust_spice ]] || refuse rust-command-redirected \
-    "installed Rust command is a symbolic link: $rust_spice"
-[[ -f $rust_spice && -x $rust_spice ]] || refuse rust-command-unavailable \
-    "installed Rust command is not one executable file: $rust_spice"
-
-exec "$rust_spice" dev cargo "$@"
-''',
-    "spice dev cargo",
-]
+# `spice-rust.toml`; this file retains only the predecessor's scheduler,
+# judge, policy, and taste declarations while an operator still addresses its
+# task plane directly.
+# Agent command routing belongs to Rust's tracked `[wrappers]` vocabulary.
 
 [tasks]
 # Public scheduler stems beyond the packaged `task` and `serve` defaults.

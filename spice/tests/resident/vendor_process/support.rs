@@ -247,6 +247,7 @@ pub(super) fn assert_launches(
         resumed,
         Path::new(env!("CARGO_BIN_EXE_spice")),
         None,
+        None,
     );
 }
 
@@ -256,8 +257,14 @@ pub(super) fn assert_launches_with_executable(
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
     resumed: bool,
     executable: &Path,
+    wrapper_command: Option<&Path>,
     expected_path: Option<&Path>,
 ) {
+    let routing = ExpectedRouting {
+        executable,
+        wrapper_command,
+        search_path: expected_path,
+    };
     let head = durable_head(fixture);
     for (dialect, lane) in lanes {
         let row = head
@@ -285,12 +292,18 @@ pub(super) fn assert_launches_with_executable(
             *dialect,
             *lane,
             &row.worktree,
-            executable,
-            expected_path,
+            routing,
         );
         assert_eq!(
             capture.argv,
-            expected_argv(rig, *dialect, *lane, &row.worktree, resumed, executable)
+            expected_argv(
+                rig,
+                *dialect,
+                *lane,
+                &row.worktree,
+                resumed,
+                routing.executable,
+            )
         );
     }
 }
@@ -400,18 +413,23 @@ fn nul_fields(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
+#[derive(Clone, Copy)]
+struct ExpectedRouting<'a> {
+    executable: &'a Path,
+    wrapper_command: Option<&'a Path>,
+    search_path: Option<&'a Path>,
+}
+
 fn assert_environment(
     fixture: &Fixture,
     captured: &BTreeMap<String, String>,
     dialect: Dialect,
     lane: wire::CanonicalUuid,
     worktree: &str,
-    executable: &Path,
-    expected_path: Option<&Path>,
+    routing: ExpectedRouting<'_>,
 ) {
     let observed = normalized_environment(captured);
-    let expected =
-        expected_environment(fixture, dialect, lane, worktree, executable, expected_path);
+    let expected = expected_environment(fixture, dialect, lane, worktree, routing);
     assert_eq!(observed, expected, "ambient child environment leaked");
 }
 
@@ -462,8 +480,7 @@ fn expected_environment(
     dialect: Dialect,
     lane: wire::CanonicalUuid,
     worktree: &str,
-    executable: &Path,
-    expected_path: Option<&Path>,
+    routing: ExpectedRouting<'_>,
 ) -> BTreeMap<String, String> {
     let native_shell = std::env::var("SHELL").expect("supervised test has a native shell");
     let mut expected = ["HOME", "TMPDIR", "USER"]
@@ -493,6 +510,10 @@ fn expected_environment(
     );
     expected.insert(steer::hook::NATIVE_SHELL.to_owned(), native_shell);
     expected.insert(
+        steer::hook::EXECUTABLE.to_owned(),
+        routing.executable.display().to_string(),
+    );
+    expected.insert(
         steer::hook::INBOX.to_owned(),
         steer::inbox::path(state.inbox(), lane)
             .display()
@@ -517,7 +538,7 @@ fn expected_environment(
     );
     expected.insert(
         "PATH".to_owned(),
-        expected_search_path(executable, expected_path),
+        expected_search_path(routing.wrapper_command, routing.search_path),
     );
     expected.insert(
         spice::agent_launch::SPICE_RS_LANE.to_owned(),
@@ -536,13 +557,16 @@ fn expected_environment(
     clippy::disallowed_methods,
     reason = "the integration fixture observes the caller's PATH at the resident binary rim"
 )]
-fn expected_search_path(executable: &Path, expected_path: Option<&Path>) -> String {
-    let mut search = vec![
-        executable
-            .parent()
-            .expect("fixture executable has a parent")
-            .to_path_buf(),
-    ];
+fn expected_search_path(wrapper_command: Option<&Path>, expected_path: Option<&Path>) -> String {
+    let mut search = wrapper_command
+        .map(|command| {
+            command
+                .parent()
+                .expect("fixture wrapper command has a parent")
+                .to_path_buf()
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
     if let Some(path) = expected_path
         .map(Path::as_os_str)
         .map(OsString::from)

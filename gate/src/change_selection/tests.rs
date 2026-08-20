@@ -409,6 +409,25 @@ fn current_source_override_retains_the_richer_workspace_selector() {
 }
 
 #[test]
+fn current_source_extensionless_wrappers_select_the_shell_policy_class() {
+    let report =
+        select_current_source_change_gates(source(), &strings(&["steer/hooks/wrappers/spice"]))
+            .expect("the tracked wrapper directory is an extensionless shell class");
+
+    contains(
+        &report,
+        &[
+            GateId::LocalPaths,
+            GateId::FileShape,
+            GateId::EnvPolicy,
+            GateId::EnvNameLedger,
+            GateId::Complexity,
+            GateId::MagicNumbers,
+        ],
+    );
+}
+
+#[test]
 fn current_source_classification_gaps_refuse_with_exact_paths() {
     for (path, condition) in [
         (

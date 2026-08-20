@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{
     InstallError, InstallStatus, apply, installed_binary, installed_git_hooks, installed_skill,
-    plan, unapply,
+    installed_spice_wrapper, plan, unapply,
 };
 use spice::repository::Repository;
 
@@ -37,6 +37,15 @@ fn installed_spice_is_the_one_repository_local_executable() {
         fs::metadata(source).unwrap().len()
     );
     assert!(installed_skill(&repository).is_file());
+    let wrapper = installed_spice_wrapper(&repository);
+    assert_eq!(
+        fs::read(&wrapper).unwrap(),
+        steer::hook::STAGES[2].bytes().as_bytes()
+    );
+    assert_eq!(
+        fs::metadata(&wrapper).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
     let receipt = fs::metadata(scratch.join(".git/.spice-rs/install.json")).unwrap();
     assert!(receipt.len() < MAX_COMPACT_RECORD_BYTES);
     assert_eq!(receipt.permissions().mode() & 0o777, 0o600);
@@ -93,6 +102,7 @@ fn linked_worktrees_share_one_common_install_and_receipt() {
     );
     assert!(installed_binary(&linked_repository).is_file());
     assert!(installed_skill(&linked_repository).is_file());
+    assert!(installed_spice_wrapper(&linked_repository).is_file());
     assert!(installed_git_hooks(&linked_repository).is_dir());
     assert!(common.join(".spice-rs/install.json").is_file());
     let record: serde_json::Value =

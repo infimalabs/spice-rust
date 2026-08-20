@@ -45,6 +45,7 @@ pub use task_migration::{
 #[serde(default, deny_unknown_fields)]
 pub struct Root {
     commands: CommandMounts,
+    wrappers: steer::Wrappers,
     tasks: TaskMetadata,
     judge: JudgeConfig,
     policy: WorkspacePolicy,
@@ -67,6 +68,12 @@ impl Root {
     #[must_use]
     pub const fn commands(&self) -> &CommandMounts {
         &self.commands
+    }
+
+    /// Repository-owned routes installed into supervised agent shells.
+    #[must_use]
+    pub const fn wrappers(&self) -> &steer::Wrappers {
+        &self.wrappers
     }
 
     /// Shared task scheduler declarations.

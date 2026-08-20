@@ -116,6 +116,7 @@ fn class_gates(path: &str, extension: &str) -> Result<Vec<GateId>, ChangeSelecti
         "cs" => Ok(CSHARP.to_vec()),
         "sh" | "bash" | "zsh" => Ok(SHELL.to_vec()),
         "toml" | "json" | "yaml" | "yml" | "lock" => configuration_gates(path),
+        "" if known_extensionless_shell(path) => Ok(SHELL.to_vec()),
         "" if known_extensionless(path) => Ok(vec![GateId::RepoShape]),
         _ if frontend_path(path) => Ok(vec![GateId::CanvasWebTypecheck]),
         _ => Err(ChangeSelectionError::new(format!(
@@ -289,4 +290,8 @@ fn known_extensionless(path: &str) -> bool {
     matches!(path, ".gitignore" | ".gitattributes" | "LICENSE")
         || path.starts_with(".githooks/")
         || path.starts_with("spice/src/install/git-hooks/")
+}
+
+fn known_extensionless_shell(path: &str) -> bool {
+    path.starts_with("steer/hooks/wrappers/")
 }

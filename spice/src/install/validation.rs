@@ -20,6 +20,7 @@ fn validate_plan_version(
             MIGRATABLE_RECORD_VERSION
                 | FORWARD_MIGRATABLE_RECORD_VERSION
                 | INLINE_ROLLBACK_RECORD_VERSION
+                | PREVIOUS_RECORD_VERSION
         );
     if plan.version != PLAN_VERSION && !historical {
         return Err(InstallError::InvalidRecord(format!(
@@ -34,14 +35,35 @@ fn validate_operation_inventory(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<(), InstallError> {
-    let expected = [
+    let current = [
+        Asset::GitPreCommit,
+        Asset::GitCommitMessage,
+        Asset::GitReferenceTransaction,
+        Asset::HookEntry,
+        Asset::HookStatic,
+        Asset::HookWrapperSpice,
+        Asset::Skill,
+    ];
+    let previous = [
         Asset::GitPreCommit,
         Asset::GitCommitMessage,
         Asset::GitReferenceTransaction,
         Asset::HookEntry,
         Asset::HookStatic,
         Asset::Skill,
+        Asset::Binary,
     ];
+    let expected = if plan.version != PLAN_VERSION {
+        let length = previous.len()
+            - usize::from(
+                plan.operations
+                    .last()
+                    .is_some_and(|operation| operation.asset != Asset::Binary),
+            );
+        &previous[..length]
+    } else {
+        &current[..]
+    };
     if plan.operations.len() != expected.len() && plan.operations.len() != expected.len() + 1 {
         return Err(InstallError::InvalidRecord(
             "install plan has an incomplete or extra operation inventory".to_owned(),
@@ -51,7 +73,7 @@ fn validate_operation_inventory(
         .operations
         .iter()
         .zip(expected)
-        .any(|(operation, asset)| operation.asset != asset)
+        .any(|(operation, asset)| operation.asset != *asset)
     {
         return Err(InstallError::InvalidRecord(
             "install plan operation order is not canonical".to_owned(),
@@ -123,12 +145,13 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
     }
     if let Some(archive) = &plan.rollback_archive {
         archive.validate_structure()?;
-        if plan.version == PLAN_VERSION && archive.is_inline() {
+        let manifest_version = matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION);
+        if manifest_version && archive.is_inline() {
             return Err(InstallError::InvalidRecord(
                 "current install plan embeds rollback payload bytes".to_owned(),
             ));
         }
-        if plan.version != PLAN_VERSION && !archive.is_inline() {
+        if !manifest_version && !archive.is_inline() {
             return Err(InstallError::InvalidRecord(
                 "historical install plan carries a current rollback manifest".to_owned(),
             ));
@@ -311,6 +334,7 @@ fn asset_name(asset: Asset) -> &'static str {
         Asset::GitReferenceTransaction => "Git reference-transaction hook",
         Asset::HookEntry => "entry hook",
         Asset::HookStatic => "static hook",
+        Asset::HookWrapperSpice => "Spice shell wrapper",
         Asset::Skill => "generated skill",
         Asset::Binary => "Spice executable",
     }
@@ -372,6 +396,7 @@ pub(super) fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
         ),
         Asset::HookEntry => (Location::CommonGit, ENTRY_PATH, EXECUTABLE_MODE),
         Asset::HookStatic => (Location::CommonGit, STATIC_PATH, EXECUTABLE_MODE),
+        Asset::HookWrapperSpice => (Location::CommonGit, WRAPPER_SPICE_PATH, EXECUTABLE_MODE),
         Asset::Skill => (Location::CommonGit, SKILL_PATH, DATA_MODE),
         Asset::Binary => (Location::CommonGit, BINARY_PATH, EXECUTABLE_MODE),
     }

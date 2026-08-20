@@ -142,3 +142,16 @@ user's native shell, and replaces itself with that shell. This preserves the
 wrapper's child process identity across `exec` while ensuring executed scripts
 and descendant shells start natively; a Rust child cannot mutate its own
 process environment and then replace itself on the caller's behalf.
+
+## `steer/hooks/wrappers/spice`
+
+Caller: Agent command lookup through the installed wrapper directory prepended
+to supervised launch `PATH` when `[wrappers] spice = "appliance"` is configured.
+
+Disposition: Irreducible glue.
+
+Reason: The shell must resolve the ambient `spice` word before the Rust
+appliance can run. The resident validates and exports the exact Git-common
+appliance path; this extensionless wrapper performs no discovery or policy and
+replaces itself with that typed executable while preserving the caller's exact
+arguments and process status.
