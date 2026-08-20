@@ -382,13 +382,8 @@ async fn assert_initial_stream(
         panic!("expected initial facts: {facts:?}");
     };
     let horizon = packed.horizon;
-    assert_eq!(packed.rows.len(), 3);
-    assert!(
-        packed
-            .rows
-            .iter()
-            .any(|fact| fact.kind() == wire::FactKind::LaneSeated)
-    );
+    assert!(packed.rows.is_empty());
+    assert!(packed.overflow.is_none());
     assert!(matches!(
         trust,
         wire::StreamFrame::Trust { ref packed, .. }
