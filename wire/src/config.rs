@@ -117,7 +117,9 @@ pub enum ConfigSource {
     Builtin,
     /// Intent read from tracked `spice-rust.toml`.
     Tracked,
-    /// Admitted repository-local override.
+    /// Admitted override scoped to one Git worktree.
+    Worktree,
+    /// Admitted machine-local override shared through Git common state.
     Local,
     /// Explicit command-line intent.
     Flag,
@@ -125,7 +127,13 @@ pub enum ConfigSource {
 
 impl ConfigSource {
     /// Every source from lowest to highest precedence.
-    pub const ALL: &[Self] = &[Self::Builtin, Self::Tracked, Self::Local, Self::Flag];
+    pub const ALL: &[Self] = &[
+        Self::Builtin,
+        Self::Tracked,
+        Self::Worktree,
+        Self::Local,
+        Self::Flag,
+    ];
 
     /// Stable source spelling.
     #[must_use]
@@ -133,6 +141,7 @@ impl ConfigSource {
         match self {
             Self::Builtin => "builtin",
             Self::Tracked => "tracked",
+            Self::Worktree => "worktree",
             Self::Local => "local",
             Self::Flag => "flag",
         }
@@ -166,7 +175,17 @@ pub enum Provenance<T> {
         )]
         builtin: Option<T>,
     },
-    /// A repository-local override won.
+    /// A worktree-scoped override won.
+    Worktree {
+        /// Compiled value hidden by the worktree value, when one exists.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        builtin: Option<T>,
+    },
+    /// A machine-local override won.
     Local {
         /// Compiled value hidden by the local value, when one exists.
         #[serde(
@@ -195,6 +214,7 @@ impl<T> Provenance<T> {
         match self {
             Self::Builtin {} => ConfigSource::Builtin,
             Self::Tracked { .. } => ConfigSource::Tracked,
+            Self::Worktree { .. } => ConfigSource::Worktree,
             Self::Local { .. } => ConfigSource::Local,
             Self::Flag { .. } => ConfigSource::Flag,
         }
@@ -205,9 +225,10 @@ impl<T> Provenance<T> {
     pub const fn builtin(&self) -> Option<&T> {
         match self {
             Self::Builtin {} => None,
-            Self::Tracked { builtin } | Self::Local { builtin } | Self::Flag { builtin } => {
-                builtin.as_ref()
-            }
+            Self::Tracked { builtin }
+            | Self::Worktree { builtin }
+            | Self::Local { builtin }
+            | Self::Flag { builtin } => builtin.as_ref(),
         }
     }
 

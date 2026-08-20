@@ -1,4 +1,4 @@
-//! Read the two exact repository configuration documents and resolve them.
+//! Read the three exact repository configuration documents and resolve them.
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -26,12 +26,14 @@ use super::{Document, FlagOverride, Inputs, ResolveError, Resolved, resolve};
 use crate::repository::{Repository, ResolveError as RepositoryError};
 
 const TRACKED_FILE: &str = "spice-rust.toml";
+const WORKTREE_FILE: &str = ".spice-rs/config.toml";
 const LOCAL_FILE: &str = ".spice-rs/config.toml";
 
 /// Exact repository configuration locations.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Locations {
     tracked: PathBuf,
+    worktree: PathBuf,
     local: PathBuf,
 }
 
@@ -46,17 +48,19 @@ pub struct Loaded {
     resolved: Resolved,
     locations: Locations,
     tracked: Option<String>,
+    worktree: Option<String>,
     local: Option<String>,
     generation: CaptureGeneration,
 }
 
-/// Filesystem generation of the two documents in one configuration capture.
+/// Filesystem generation of the three documents in one configuration capture.
 ///
 /// The fields stay opaque so callers can compare captures without treating a
 /// pathname, timestamp, or content digest as sufficient authority by itself.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CaptureGeneration {
     tracked: DocumentGeneration,
+    worktree: DocumentGeneration,
     local: DocumentGeneration,
 }
 
@@ -150,6 +154,12 @@ impl Loaded {
         self.tracked.as_deref()
     }
 
+    /// Exact worktree-scoped document text, absent when the path did not exist.
+    #[must_use]
+    pub fn worktree(&self) -> Option<&str> {
+        self.worktree.as_deref()
+    }
+
     /// Exact machine-local document text, absent when the path did not exist.
     #[must_use]
     pub fn local(&self) -> Option<&str> {
@@ -176,6 +186,12 @@ impl Locations {
         &self.tracked
     }
 
+    /// Untracked override document scoped to this worktree.
+    #[must_use]
+    pub fn worktree(&self) -> &Path {
+        &self.worktree
+    }
+
     /// Machine-local Git-common document.
     #[must_use]
     pub fn local(&self) -> &Path {
@@ -183,11 +199,12 @@ impl Locations {
     }
 }
 
-/// Derive the two configuration paths from the canonical repository layout.
+/// Derive the three configuration paths from the canonical repository layout.
 #[must_use]
 pub fn locations(repository: &Repository) -> Locations {
     Locations {
         tracked: repository.worktree_root().join(TRACKED_FILE),
+        worktree: repository.worktree_root().join(WORKTREE_FILE),
         local: repository.common_dir().join(LOCAL_FILE),
     }
 }
@@ -297,7 +314,7 @@ impl LoadError {
         self.repository.as_ref()
     }
 
-    /// Acquisition failures in tracked then local order.
+    /// Acquisition failures in tracked, worktree, then local order.
     #[must_use]
     pub fn acquisition(&self) -> &[AcquisitionIssue] {
         &self.acquisition
@@ -387,13 +404,13 @@ impl Error for LoadError {
 
 /// Load effective configuration for the repository containing `start`.
 ///
-/// Acquisition inspects exactly the tracked worktree document and the local
-/// Git-common document. Missing documents are empty intent.
+/// Acquisition inspects exactly the tracked policy, worktree override, and
+/// Git-common machine-local documents. Missing documents are empty intent.
 ///
 /// # Errors
 ///
 /// Returns repository discovery failure, or every acquisition and resolution
-/// diagnostic found after both exact document paths have been inspected.
+/// diagnostic found after all three exact document paths have been inspected.
 pub fn load(start: impl AsRef<Path>, flags: &[FlagOverride]) -> Result<Resolved, LoadError> {
     let repository = Repository::discover(start).map_err(LoadError::repository_failure)?;
     load_repository(&repository, flags)
@@ -403,8 +420,8 @@ pub fn load(start: impl AsRef<Path>, flags: &[FlagOverride]) -> Result<Resolved,
 ///
 /// # Errors
 ///
-/// Returns every acquisition and resolution diagnostic found after both exact
-/// document paths have been inspected.
+/// Returns every acquisition and resolution diagnostic found after all three
+/// exact document paths have been inspected.
 pub fn load_repository(
     repository: &Repository,
     flags: &[FlagOverride],
@@ -416,14 +433,15 @@ pub fn load_repository(
 ///
 /// # Errors
 ///
-/// Returns every acquisition and resolution diagnostic found after both exact
-/// document paths have been inspected.
+/// Returns every acquisition and resolution diagnostic found after all three
+/// exact document paths have been inspected.
 pub fn capture_repository(
     repository: &Repository,
     flags: &[FlagOverride],
 ) -> Result<Loaded, LoadError> {
     let locations = locations(repository);
     let tracked_path = locations.tracked();
+    let worktree_path = locations.worktree();
     let local_path = locations.local();
 
     let mut acquisition = Vec::new();
@@ -433,6 +451,12 @@ pub fn capture_repository(
         Path::new(TRACKED_FILE),
         &mut acquisition,
     );
+    let worktree = acquire(
+        ConfigSource::Worktree,
+        repository.worktree_root(),
+        Path::new(WORKTREE_FILE),
+        &mut acquisition,
+    );
     let local = acquire(
         ConfigSource::Local,
         repository.common_dir(),
@@ -440,28 +464,41 @@ pub fn capture_repository(
         &mut acquisition,
     );
     let tracked_location = tracked_path.display().to_string();
+    let worktree_location = worktree_path.display().to_string();
     let local_location = local_path.display().to_string();
     let tracked_document = tracked
         .as_ref()
         .and_then(|document| document.text.as_deref())
         .map(|text| Document::new(&tracked_location, text));
+    let worktree_document = worktree
+        .as_ref()
+        .and_then(|document| document.text.as_deref())
+        .map(|text| Document::new(&worktree_location, text));
     let local_document = local
         .as_ref()
         .and_then(|document| document.text.as_deref())
         .map(|text| Document::new(&local_location, text));
-    let resolved = resolve(Inputs::new(tracked_document, local_document, flags));
+    let resolved = resolve(Inputs::with_worktree(
+        tracked_document,
+        worktree_document,
+        local_document,
+        flags,
+    ));
 
     match (acquisition.is_empty(), resolved) {
         (true, Ok(resolved)) => {
             let tracked = tracked.expect("a successful tracked acquisition has a generation");
+            let worktree = worktree.expect("a successful worktree acquisition has a generation");
             let local = local.expect("a successful local acquisition has a generation");
             Ok(Loaded {
                 resolved,
                 locations,
                 tracked: tracked.text,
+                worktree: worktree.text,
                 local: local.text,
                 generation: CaptureGeneration {
                     tracked: tracked.generation,
+                    worktree: worktree.generation,
                     local: local.generation,
                 },
             })

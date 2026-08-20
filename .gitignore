@@ -19,3 +19,4 @@
 # input to the build.
 /.playwright-mcp/
 /dist/.stage-app-build-*/
+/.spice-rs/

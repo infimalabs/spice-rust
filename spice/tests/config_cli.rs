@@ -59,6 +59,12 @@ impl Fixture {
         self.root.join(".git/.spice-rs/config.toml")
     }
 
+    fn worktree(&self, text: &str) {
+        fs::create_dir(self.root.join(".spice-rs")).expect("create worktree configuration parent");
+        fs::write(self.root.join(".spice-rs/config.toml"), text)
+            .expect("write worktree configuration");
+    }
+
     fn assert_tracked_unchanged(&self) {
         assert_eq!(
             fs::read(self.root.join("spice-rust.toml")).expect("read tracked config"),
@@ -82,6 +88,7 @@ struct Spoken {
 #[test]
 fn reads_name_the_current_effective_tree_and_provenance() {
     let fixture = Fixture::new("read");
+    fixture.worktree("[vendor.codex]\nmodel = 'lane-model'\neffort = 'xhigh'\n");
     let text = fixture.invoke(&["config"]);
     let json = fixture.invoke(&["--json", "config"]);
     let text = text_body(text);
@@ -114,12 +121,16 @@ fn reads_name_the_current_effective_tree_and_provenance() {
         json["effective"]["policy"]["env_names"],
         serde_json::json!([])
     );
+    assert_eq!(json["effective"]["vendor"]["codex"]["model"], "lane-model");
     assert!(!fixture.local().exists());
 
     let selected = reply_body(fixture.invoke(&["config", "lock.busy", "--json"]));
     assert_eq!(selected["selected"]["path"], "lock.busy");
     assert_eq!(selected["selected"]["value"], 75);
     assert_eq!(selected["selected"]["source"], "builtin");
+    let selected = reply_body(fixture.invoke(&["config", "vendor.codex.model", "--json"]));
+    assert_eq!(selected["selected"]["value"], "lane-model");
+    assert_eq!(selected["selected"]["source"], "worktree");
     fixture.assert_tracked_unchanged();
 }
 

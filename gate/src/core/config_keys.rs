@@ -9,6 +9,7 @@ use super::{ConfigKeyEvidence, CoreEvidence, CoreFinding, CoreInputError, CoreOb
 use crate::input::Contract;
 
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
+const TRACKED_WORKTREE: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Worktree];
 const TRACKED_LOCAL: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Local];
 const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
@@ -85,12 +86,12 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("steer.expiry", TRACKED),
     ConfigKeyDeclaration::new("steer.resend", TRACKED),
     ConfigKeyDeclaration::new("vendor.claude.binary", TRACKED),
-    ConfigKeyDeclaration::new("vendor.claude.model", TRACKED),
-    ConfigKeyDeclaration::new("vendor.claude.effort", TRACKED),
+    ConfigKeyDeclaration::new("vendor.claude.model", TRACKED_WORKTREE),
+    ConfigKeyDeclaration::new("vendor.claude.effort", TRACKED_WORKTREE),
     ConfigKeyDeclaration::new("vendor.claude.auto_compact_window_tokens", TRACKED),
     ConfigKeyDeclaration::new("vendor.codex.binary", TRACKED),
-    ConfigKeyDeclaration::new("vendor.codex.model", TRACKED),
-    ConfigKeyDeclaration::new("vendor.codex.effort", TRACKED),
+    ConfigKeyDeclaration::new("vendor.codex.model", TRACKED_WORKTREE),
+    ConfigKeyDeclaration::new("vendor.codex.effort", TRACKED_WORKTREE),
     ConfigKeyDeclaration::new("vendor.codex.personality", TRACKED),
     ConfigKeyDeclaration::new("vendor.codex.fast_mode", TRACKED),
     ConfigKeyDeclaration::new("listen.window", TRACKED_LOCAL),

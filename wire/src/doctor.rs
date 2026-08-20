@@ -385,6 +385,8 @@ pub struct DoctorLocations {
     pub repository_common: String,
     /// Exact tracked configuration location.
     pub tracked_configuration: String,
+    /// Exact worktree-scoped override location.
+    pub worktree_configuration: String,
     /// Exact machine-local configuration location.
     pub local_configuration: String,
 }
@@ -562,6 +564,7 @@ mod tests {
             r#","locations":{"working":"/repo","repository":"/repo""#,
             r#","repository_common":"/repo/.git""#,
             r#","tracked_configuration":"/repo/spice-rust.toml""#,
+            r#","worktree_configuration":"/repo/.spice-rs/config.toml""#,
             r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
             r#","environment":[{"variable":"SPICE_RS_HOOKS""#, // env-policy: allow
             r#","observation":{"status":"ready"}}]"#,

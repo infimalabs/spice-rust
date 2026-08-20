@@ -31,7 +31,7 @@ struct Document {
 }
 
 impl Surface {
-    /// Acquire, parse, and digest the exact tracked and local policy documents.
+    /// Acquire all configuration and digest only executable tracked and local policy.
     pub(crate) fn load(repository: &Repository) -> Result<Self, LoadError> {
         let loaded = spice::config::capture_repository(repository, &[])?;
         Ok(Self::from_loaded(&loaded))
@@ -58,7 +58,7 @@ impl Surface {
         }
     }
 
-    /// Identity of the exact tracked plus local bytes.
+    /// Identity of the exact executable tracked plus local bytes.
     pub(crate) const fn digest(&self) -> &Digest {
         &self.digest
     }

@@ -25,6 +25,77 @@ fn documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a>
     )
 }
 
+fn worktree_documents<'a>(
+    tracked: Option<&'a str>,
+    worktree: Option<&'a str>,
+    local: Option<&'a str>,
+) -> Inputs<'a> {
+    Inputs::with_worktree(
+        tracked.map(|text| Document::new("spice-rust.toml", text)),
+        worktree.map(|text| Document::new(".spice-rs/config.toml", text)),
+        local.map(|text| Document::new(".git/.spice-rs/config.toml", text)),
+        &[],
+    )
+}
+
+#[test]
+fn worktree_vendor_model_and_effort_override_tracked_without_admitting_authority() {
+    let resolved = resolve(worktree_documents(
+        Some(concat!(
+            "[vendor.claude]\nmodel = 'tracked-claude'\neffort = 'low'\n",
+            "[vendor.codex]\nmodel = 'tracked-codex'\neffort = 'medium'\n",
+        )),
+        Some(concat!(
+            "[vendor.claude]\nmodel = 'lane-claude'\neffort = 'high'\n",
+            "[vendor.codex]\nmodel = 'lane-codex'\neffort = 'xhigh'\n",
+        )),
+        None,
+    ))
+    .expect("worktree launch preferences resolve");
+
+    assert_eq!(resolved.root().vendor().claude().model(), "lane-claude");
+    assert_eq!(
+        resolved.root().vendor().claude().effort(),
+        vendor::Effort::High
+    );
+    assert_eq!(resolved.root().vendor().codex().model(), "lane-codex");
+    assert_eq!(
+        resolved.root().vendor().codex().effort(),
+        vendor::Effort::XHigh
+    );
+    for path in [
+        "vendor.claude.model",
+        "vendor.claude.effort",
+        "vendor.codex.model",
+        "vendor.codex.effort",
+    ] {
+        assert_eq!(path_source(&resolved, path), ConfigSource::Worktree);
+    }
+
+    let error = resolve(worktree_documents(
+        None,
+        Some(concat!(
+            "[commands]\nverify = ['unsafe-tool']\n",
+            "[vendor.codex]\nbinary = '/tmp/codex'\npersonality = 'mutable'\n",
+        )),
+        None,
+    ))
+    .expect_err("worktree intent cannot introduce commands or vendor authority");
+    for path in [
+        "commands.verify",
+        "vendor.codex.binary",
+        "vendor.codex.personality",
+    ] {
+        assert!(error.issues().iter().any(|issue| {
+            issue.kind() == IssueKind::Policy
+                && issue.source() == ConfigSource::Worktree
+                && issue
+                    .path()
+                    .is_some_and(|actual| actual.to_string() == path)
+        }));
+    }
+}
+
 fn path_source(resolved: &Resolved, expected: &str) -> ConfigSource {
     resolved
         .provenance()

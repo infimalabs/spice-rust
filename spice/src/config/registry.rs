@@ -70,6 +70,8 @@ pub enum Builtin {
 pub enum PolicyClass {
     /// Behavior that is owned by tracked policy except for an explicit flag.
     Policy,
+    /// Per-worktree launch preference that never carries executable authority.
+    WorktreeLocal,
     /// Machine-specific operation that admits a local value.
     MachineLocal,
 }
@@ -80,6 +82,7 @@ impl PolicyClass {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Policy => "policy",
+            Self::WorktreeLocal => "worktree-local",
             Self::MachineLocal => "machine-local",
         }
     }
@@ -264,6 +267,7 @@ impl Descriptor {
 }
 
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
+const TRACKED_WORKTREE: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Worktree];
 const TRACKED_LOCAL: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Local];
 const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
@@ -610,15 +614,15 @@ configuration_registry! {
     fixed "vendor.claude.model" {
         kind: String,
         builtin: Some(Builtin::String(vendor::DEFAULT_CLAUDE_MODEL)),
-        layers: TRACKED,
-        class: Policy,
+        layers: TRACKED_WORKTREE,
+        class: WorktreeLocal,
         flag: None,
     }
     fixed "vendor.claude.effort" {
         kind: String,
         builtin: Some(Builtin::String("high")),
-        layers: TRACKED,
-        class: Policy,
+        layers: TRACKED_WORKTREE,
+        class: WorktreeLocal,
         flag: None,
     }
     fixed "vendor.claude.auto_compact_window_tokens" {
@@ -640,15 +644,15 @@ configuration_registry! {
     fixed "vendor.codex.model" {
         kind: String,
         builtin: Some(Builtin::String(vendor::DEFAULT_CODEX_MODEL)),
-        layers: TRACKED,
-        class: Policy,
+        layers: TRACKED_WORKTREE,
+        class: WorktreeLocal,
         flag: None,
     }
     fixed "vendor.codex.effort" {
         kind: String,
         builtin: Some(Builtin::String("high")),
-        layers: TRACKED,
-        class: Policy,
+        layers: TRACKED_WORKTREE,
+        class: WorktreeLocal,
         flag: None,
     }
     fixed "vendor.codex.personality" {

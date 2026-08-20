@@ -47,6 +47,7 @@ impl<'a> Document<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct Inputs<'a> {
     tracked: Option<Document<'a>>,
+    worktree: Option<Document<'a>>,
     local: Option<Document<'a>>,
     flags: &'a [FlagOverride],
 }
@@ -61,6 +62,23 @@ impl<'a> Inputs<'a> {
     ) -> Self {
         Self {
             tracked,
+            worktree: None,
+            local,
+            flags,
+        }
+    }
+
+    /// Supply tracked, worktree-scoped, machine-local, and flag intent.
+    #[must_use]
+    pub const fn with_worktree(
+        tracked: Option<Document<'a>>,
+        worktree: Option<Document<'a>>,
+        local: Option<Document<'a>>,
+        flags: &'a [FlagOverride],
+    ) -> Self {
+        Self {
+            tracked,
+            worktree,
             local,
             flags,
         }
@@ -389,6 +407,11 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Resolved, ResolveError> {
     {
         layers.push(layer);
     }
+    if let Some(document) = inputs.worktree
+        && let Some(layer) = parse_layer(ConfigSource::Worktree, document, &mut issues)
+    {
+        layers.push(layer);
+    }
     if let Some(document) = inputs.local
         && let Some(layer) = parse_layer(ConfigSource::Local, document, &mut issues)
     {
@@ -477,7 +500,12 @@ fn sanitize(
     let borrowed = path.borrowed();
     if let Some(entry) = descriptor(&borrowed) {
         if !entry.layers().contains(&source) {
-            let message = if entry.layers().contains(&ConfigSource::Tracked) {
+            let message = if entry.layers().contains(&ConfigSource::Worktree) {
+                format!(
+                    "{} is a worktree launch preference; set it in worktree .spice-rs/config.toml",
+                    entry.template().as_str()
+                )
+            } else if entry.layers().contains(&ConfigSource::Tracked) {
                 format!(
                     "{} is tracked policy; set it in tracked spice-rust.toml",
                     entry.template().as_str()
