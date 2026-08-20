@@ -5,10 +5,10 @@
 
 use super::*;
 
-/// Long enough to observe an accidental timer loop without slowing the focused
-/// resident battery. The socket and journal are both event-driven, so a quiet
-/// interval spends this bound only in the assertion that nothing arrived.
-const QUIET_INTERVAL: Duration = Duration::from_millis(250);
+/// Longer than the roughly one-event-per-second signature that prompted this
+/// trace. The socket and journal are both event-driven, so a quiet interval
+/// spends this bound only in the assertion that nothing arrived.
+const QUIET_INTERVAL: Duration = Duration::from_millis(1_250);
 
 fn send_process_stream(
     socket: &mut WebSocket<TcpStream>,
