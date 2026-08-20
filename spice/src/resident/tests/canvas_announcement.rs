@@ -803,7 +803,7 @@ fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
 const CODEX_USAGE: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":7,"cache_write_input_tokens":3,"output_tokens":5,"reasoning_output_tokens":2}}
 "#;
 
-/// A live capture record accounts the tape its lane has been writing.
+/// A live capture record accounts the tape its lane has been writing once.
 ///
 /// The record carries decoded events, but the spend lives in the tape behind
 /// it, and the head only moves when something reads that tape. Asserting on the
@@ -812,7 +812,7 @@ const CODEX_USAGE: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":
 /// leaves the head absent, and the tape's bytes are then accounted only if some
 /// later start happens to sweep them.
 #[test]
-fn a_live_capture_record_accounts_the_tape_behind_its_lane() {
+fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
     let (root, paths) = resident_fixture("capture-ingestion");
     let bus = Bus::start(journal::Journal::in_memory().expect("ingestion authority opens"))
         .expect("ingestion bus starts");
@@ -878,6 +878,7 @@ fn a_live_capture_record_accounts_the_tape_behind_its_lane() {
     )
     .expect("the live capture record is accepted");
 
+    let accounted = bus.fact_snapshot().expect("accounted facts read");
     assert_eq!(
         ingested_head(&bus, lane).map(|head| head.next),
         Some(wire::body::TranscriptPosition {
@@ -886,6 +887,13 @@ fn a_live_capture_record_accounts_the_tape_behind_its_lane() {
         }),
         "accepting a live capture record left its tape unaccounted: {}",
         String::from_utf8_lossy(&diagnostics),
+    );
+    ingest_transcripts(&bus, &paths, Some(lane), &mut diagnostics)
+        .expect("a quiet follow-on sweep settles");
+    assert_eq!(
+        bus.fact_snapshot().expect("settled facts read"),
+        accounted,
+        "the ingestion fact fed a second accounting pass without new tape bytes"
     );
     fs::remove_dir_all(&root).expect("ingestion fixture cleanup");
 }

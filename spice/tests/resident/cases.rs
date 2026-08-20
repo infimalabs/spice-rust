@@ -5,6 +5,11 @@
 
 use super::*;
 
+/// Long enough to observe an accidental timer loop without slowing the focused
+/// resident battery. The socket and journal are both event-driven, so a quiet
+/// interval spends this bound only in the assertion that nothing arrived.
+const QUIET_INTERVAL: Duration = Duration::from_millis(250);
+
 fn send_process_stream(
     socket: &mut WebSocket<TcpStream>,
     request: &wire::StreamRequest,
@@ -30,6 +35,32 @@ fn read_process_stream(
         .to_vec();
     let frame = wire::decode(&bytes).unwrap_or_else(|error| panic!("{label} decodes: {error}"));
     (frame, bytes)
+}
+
+fn resident_facts(fixture: &Fixture) -> journal::FactSnapshot {
+    journal::Journal::open(fixture.journal())
+        .expect("resident journal opens for quietness evidence")
+        .fact_snapshot()
+        .expect("resident facts read for quietness evidence")
+}
+
+fn assert_process_stream_silent(socket: &mut WebSocket<TcpStream>) {
+    socket
+        .get_mut()
+        .set_read_timeout(Some(QUIET_INTERVAL))
+        .expect("quiet socket timeout sets");
+    let result = socket.read();
+    assert!(
+        matches!(
+            result,
+            Err(tungstenite::Error::Io(ref error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                )
+        ),
+        "a quiet Canvas connection produced an unsolicited frame: {result:?}"
+    );
 }
 
 fn open_process_stream(
@@ -323,6 +354,59 @@ fn resident_process_streams_snapshot_bus_update_thread_resume_stale_and_shutdown
         &capability_text,
         lane,
     );
+}
+
+/// An idle resident is inert whether or not Canvas has an admitted subscriber.
+///
+/// The first interval has no socket at all. The second crosses the real
+/// authenticated WebSocket and subscribes to the durable fact stream. A Ping is
+/// then the one external event: it produces exactly one Pong, no durable fact,
+/// and no refresh or follow-on frame over the measured interval. This pins the
+/// liveness request to the transport boundary instead of letting it feed the
+/// journal broadcast back into itself.
+#[test]
+fn resident_and_connected_canvas_stay_quiet_and_one_probe_does_not_amplify() {
+    let fixture = Fixture::new("canvas-quietness");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    let disconnected = resident_facts(&fixture);
+    std::thread::sleep(QUIET_INTERVAL);
+    assert_eq!(
+        resident_facts(&fixture),
+        disconnected,
+        "a disconnected idle resident appended durable facts"
+    );
+
+    let discovery = fixture.discovery();
+    let (mut socket, _subscription, _, _) = open_process_stream(&discovery);
+    let connected = resident_facts(&fixture);
+    let probe = uuid("018f82d4-6f59-7d06-92e3-bce9131163f0");
+    send_process_stream(
+        &mut socket,
+        &wire::StreamRequest::Ping {
+            v: wire::WireVersion::CURRENT,
+            id: probe,
+            epoch: discovery.epoch,
+        },
+        "quietness probe",
+    );
+    assert!(matches!(
+        read_process_stream(&mut socket, "quietness Pong").0,
+        wire::StreamFrame::Pong { id, epoch, .. }
+            if id == probe && epoch == discovery.epoch
+    ));
+    assert_process_stream_silent(&mut socket);
+    assert_eq!(
+        resident_facts(&fixture),
+        connected,
+        "a connected Canvas probe appended durable facts"
+    );
+
+    drop(socket);
+    let down = invoke(&fixture, "down");
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
 }
 
 #[test]
