@@ -119,6 +119,20 @@ pub(crate) fn execute(
     execute_mapped(discovery_path, contract, connection, mapped)
 }
 
+/// Submit one contract-bound command through the operator connection even
+/// while a lane identity is ambient, for roots that never seat lanes: the
+/// ambient identity names a seat in the repository that launched the agent,
+/// and honoring it against another root would select a lane discovery path
+/// that root cannot publish.
+pub(crate) fn execute_operator(
+    discovery_path: &Path,
+    contract: &Contract,
+    selected: SelectedCommand<'_>,
+) -> Outcome<CommandAnswer> {
+    let mapped = MappedCommand::selected(contract, selected);
+    execute_mapped(discovery_path, contract, Connection::Operator, mapped)
+}
+
 fn execute_mapped(
     operator_discovery: &Path,
     contract: &Contract,

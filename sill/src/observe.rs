@@ -28,6 +28,10 @@ pub enum RecordBoundary {
     Complete,
     /// End of stream closed a final record without a newline.
     Terminal,
+    /// The record reached the frame limit. The delivered bytes are the bounded
+    /// head without a newline; the remainder through the closing newline is
+    /// discarded, and the following record frames normally.
+    Truncated,
 }
 
 /// One byte-exact selected-stream record.
@@ -94,12 +98,6 @@ pub enum ObservationFailure {
         stream: OutputStream,
         detail: String,
     },
-    /// One newline-delimited record exceeded its admitted memory bound.
-    FramingOverflow {
-        stream: OutputStream,
-        limit: usize,
-        observed: usize,
-    },
     /// The bounded handoff queue filled before the sink accepted prior records.
     SinkBackpressure {
         stream: OutputStream,
@@ -121,7 +119,6 @@ impl ObservationFailure {
     pub const fn stream(&self) -> OutputStream {
         match self {
             Self::Reader { stream, .. }
-            | Self::FramingOverflow { stream, .. }
             | Self::SinkBackpressure { stream, .. }
             | Self::SinkRefused { stream, .. }
             | Self::ObserverLost { stream } => *stream,
@@ -135,14 +132,6 @@ impl fmt::Display for ObservationFailure {
             Self::Reader { stream, detail } => {
                 write!(formatter, "reading selected {stream} failed: {detail}")
             }
-            Self::FramingOverflow {
-                stream,
-                limit,
-                observed,
-            } => write!(
-                formatter,
-                "selected {stream} record exceeded its {limit}-byte frame limit at {observed} bytes"
-            ),
             Self::SinkBackpressure {
                 stream,
                 capacity,

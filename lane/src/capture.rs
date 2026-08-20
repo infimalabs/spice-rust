@@ -137,6 +137,13 @@ impl RecordObserver for LaneObserver {
             .tape
             .tee(bytes)
             .map_err(|error| ObserveError::new(format!("tape refused record: {error}")))?;
+        if observed.boundary() == RecordBoundary::Truncated {
+            // A truncated head carries no newline of its own; delimiting it on
+            // the tape keeps every later record newline-addressable.
+            self.tape
+                .tee(b"\n")
+                .map_err(|error| ObserveError::new(format!("tape refused delimiter: {error}")))?;
+        }
         let decoded = self
             .record
             .decode(self.record.stream(), bytes, locus)
@@ -360,6 +367,93 @@ mod tests {
         );
         drop(records);
         fs::remove_dir_all(root).expect("capture kill cleanup");
+    }
+
+    /// An oversized record must not end capture; it survives as bounded residue.
+    ///
+    /// This is the outage class that motivated `RecordBoundary::Truncated`: one
+    /// giant emitted line used to raise a framing failure that ended capture
+    /// for the rest of the occupancy. The fixture emits a record past the
+    /// frame limit between two ordinary records and proves the bounded head is
+    /// taped with its own delimiter, decodes as truncated residue, and the
+    /// record after it still decodes as events.
+    #[test]
+    fn an_oversized_record_survives_as_truncated_residue_and_capture_continues() {
+        let lane = uuid(7);
+        let occupant = uuid(8);
+        let root = std::env::temp_dir().join(format!(
+            "lane-capture-{lane}-{}-truncated",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("capture truncation root");
+        let tape = Tape::open(root.join("tape")).expect("capture truncation tape opens");
+        let record =
+            vendor::codex::record("/bin/sh", &launch()).expect("fixture vendor record contract");
+        let reports = Arc::new(Reports::default());
+        let reporter: Arc<dyn CaptureReporter> = reports.clone();
+        let observation = observation(lane, occupant, record, tape.clone(), 1024, 4, reporter)
+            .expect("capture observation");
+        let complete = concat!(
+            r#"{"type":"item.completed","item":{"id":"item-1","#,
+            r#""type":"agent_message","text":"before"}}"#,
+            "\n",
+        )
+        .as_bytes();
+        let mut oversized = concat!(
+            r#"{"type":"item.completed","item":{"id":"item-2","#,
+            r#""type":"agent_message","text":""#,
+        )
+        .as_bytes()
+        .to_vec();
+        oversized.resize(oversized.len() + 1200, b'x');
+        oversized.extend_from_slice(b"\"}}\n");
+        let after = concat!(
+            r#"{"type":"item.completed","item":{"id":"item-3","#,
+            r#""type":"agent_message","text":"after"}}"#,
+            "\n",
+        )
+        .as_bytes();
+        let mut command = Vec::new();
+        command.extend_from_slice(b"printf '");
+        command.extend_from_slice(complete);
+        command.extend_from_slice(&oversized);
+        command.extend_from_slice(after);
+        command.extend_from_slice(b"'");
+        let spec = fixture_spec(String::from_utf8(command).expect("ASCII fixture"));
+        let outcome = spawn_observed(spec, observation)
+            .expect("capture child launches")
+            .wait()
+            .expect("capture child reaps");
+        assert!(outcome.completion().status().success());
+        assert!(
+            outcome.outputs_drained(),
+            "the drain was abandoned with records still outstanding"
+        );
+        assert!(outcome.observation_failure().is_none());
+        let records = reports.records.lock().expect("record reports lock");
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].boundary, RecordBoundary::Complete);
+        assert_eq!(records[1].boundary, RecordBoundary::Truncated);
+        assert_eq!(records[2].boundary, RecordBoundary::Complete);
+        assert_eq!(
+            tape.read(records[1].locus).expect("head locus"),
+            &oversized[..1024]
+        );
+        assert!(matches!(
+            &records[1].decoded,
+            Decoded::Residue(residue) if residue.kind == ResidueKind::Truncated
+        ));
+        assert!(matches!(records[2].decoded, Decoded::Events { .. }));
+        let extents = tape.extents().expect("capture truncation extents");
+        assert_eq!(extents.len(), 1);
+        let whole = tape
+            .read(tape::Locus::new(extents[0].member, 0, extents[0].length))
+            .expect("whole extent");
+        let expected = [complete, &oversized[..1024], b"\n", after].concat();
+        assert_eq!(whole, expected);
+        assert!(reports.failures.lock().expect("failures lock").is_empty());
+        drop(records);
+        fs::remove_dir_all(root).expect("capture truncation cleanup");
     }
 
     /// Block until the observer has reported `count` records.

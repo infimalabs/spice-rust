@@ -627,11 +627,7 @@ fn checkout_skill_source_matches_the_embedded_install_asset() {
 
 #[test]
 fn generated_guidance_and_install_errors_name_spice() {
-    for command in [
-        "`spice agent activation`",
-        "`spice session briefing`",
-        "`spice task status`",
-    ] {
+    for command in ["`spice session briefing`", "`spice task status`"] {
         assert!(
             SKILL.contains(command),
             "missing bootstrap command {command}"
@@ -641,6 +637,7 @@ fn generated_guidance_and_install_errors_name_spice() {
     assert!(SKILL.contains("`spice config trust grant` / `revoke` plan"));
     assert!(!SKILL.contains("spice-rust"));
     assert!(!SKILL.contains("Rust"));
+    assert!(!SKILL.contains("`spice agent"));
 
     for error in [
         InstallError::BinaryEmpty(PathBuf::from("fixture")),

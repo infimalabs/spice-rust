@@ -276,6 +276,7 @@ struct SelectedFramer {
     capacity: usize,
     sink_deadline: Duration,
     record: Vec<u8>,
+    discarding: bool,
     sender: mpsc::SyncSender<Frame>,
     observer: Arc<dyn RecordObserver>,
     failure: Arc<FailureContext>,
@@ -312,6 +313,7 @@ impl SelectedFramer {
             capacity,
             sink_deadline,
             record: Vec::with_capacity(limit.min(8 * 1024)),
+            discarding: false,
             sender,
             observer,
             failure,
@@ -319,41 +321,43 @@ impl SelectedFramer {
     }
 
     fn push(&mut self, bytes: &[u8]) -> bool {
-        let mut start = 0;
-        for (index, byte) in bytes.iter().enumerate() {
-            if *byte != b'\n' {
-                continue;
+        let mut rest = bytes;
+        loop {
+            if self.discarding {
+                let Some(index) = rest.iter().position(|byte| *byte == b'\n') else {
+                    return true;
+                };
+                self.discarding = false;
+                rest = &rest[index + 1..];
             }
-            let end = index + 1;
-            if !self.extend_or_preserve_overflow(&bytes[start..end], &bytes[end..]) {
+            let Some(index) = rest.iter().position(|byte| *byte == b'\n') else {
+                return self.extend_or_truncate(rest, false);
+            };
+            if !self.extend_or_truncate(&rest[..=index], true) {
                 return false;
             }
-            if !self.send(RecordBoundary::Complete) {
-                return false;
-            }
-            start = end;
+            rest = &rest[index + 1..];
         }
-        self.extend_or_preserve_overflow(&bytes[start..], &[])
     }
 
-    fn extend_or_preserve_overflow(&mut self, bytes: &[u8], remainder: &[u8]) -> bool {
-        let observed = self.record.len().saturating_add(bytes.len());
-        if observed > self.limit {
-            self.record.extend_from_slice(bytes);
-            self.record.extend_from_slice(remainder);
-            let frame = Frame {
-                bytes: std::mem::take(&mut self.record),
-                boundary: RecordBoundary::Terminal,
-            };
-            let _preserved = self.sender.try_send(frame);
-            self.fail(ObservationFailure::FramingOverflow {
-                stream: self.stream,
-                limit: self.limit,
-                observed: observed.saturating_add(remainder.len()),
-            });
-            return false;
+    /// Admits one segment into the pending record, truncating at the limit.
+    ///
+    /// An oversized record is delivered as its bounded head under
+    /// [`RecordBoundary::Truncated`]; the remainder through the closing newline
+    /// is discarded and the next record frames normally. The limit is a
+    /// per-record admission bound, not a failure of the stream, so capture
+    /// survives and nothing beyond the limit is ever buffered.
+    fn extend_or_truncate(&mut self, segment: &[u8], delimited: bool) -> bool {
+        let available = self.limit.saturating_sub(self.record.len());
+        if segment.len() > available {
+            self.record.extend_from_slice(&segment[..available]);
+            self.discarding = !delimited;
+            return self.send(RecordBoundary::Truncated);
         }
-        self.record.extend_from_slice(bytes);
+        self.record.extend_from_slice(segment);
+        if delimited {
+            return self.send(RecordBoundary::Complete);
+        }
         true
     }
 

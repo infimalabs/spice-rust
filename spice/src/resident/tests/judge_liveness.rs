@@ -386,7 +386,10 @@ async fn execute_command(
     command: crate::command_client::SelectedCommand<'static>,
 ) -> Outcome<wire::intent::CommandAnswer> {
     tokio::task::spawn_blocking(move || {
-        crate::command_client::execute(
+        // The fixture root seats no lanes, so the client must ride the
+        // operator connection even when the test process inherits a lane
+        // identity from an agent shell.
+        crate::command_client::execute_operator(
             &discovery,
             crate::cli::contract(contract).expect("fixture command contract"),
             command,

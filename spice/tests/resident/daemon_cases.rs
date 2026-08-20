@@ -154,6 +154,10 @@ impl LauncherGuard {
             .arg("--json")
             .args(arguments)
             .current_dir(&fixture.root)
+            // The launcher acts for the operator at the fixture root; a lane
+            // identity inherited from an agent shell would flip discovery
+            // into lane context.
+            .env_remove(steer::hook::LANE)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

@@ -109,7 +109,8 @@ impl Fixture {
             .args(arguments)
             .current_dir(&self.scratch)
             .env("PATH", &self.ambient_bin)
-            .env_remove(steer::hook::INBOX);
+            .env_remove(steer::hook::INBOX)
+            .env_remove(steer::hook::LANE);
         for (name, value) in environment {
             command.env(name, value);
         }
@@ -122,6 +123,7 @@ impl Fixture {
             .current_dir(root)
             .env("PATH", &self.ambient_bin)
             .env_remove(steer::hook::INBOX)
+            .env_remove(steer::hook::LANE)
             .output()
             .expect("native demo follow-up launches")
     }
@@ -505,6 +507,7 @@ fn printed_launch_command_opens_two_simulated_lanes_that_accept_direction() {
         .current_dir(&fixture.scratch)
         .env("PATH", &fixture.ambient_bin)
         .env_remove(steer::hook::INBOX)
+        .env_remove(steer::hook::LANE)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

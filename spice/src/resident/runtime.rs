@@ -596,6 +596,27 @@ pub(crate) fn down(contract: &crate::cli::Contract) -> Outcome<()> {
 }
 
 pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
+    down_from_with(current, contract, crate::command_client::execute)
+}
+
+/// Stop the resident serving `current` through the operator connection even
+/// while a lane identity is ambient, for callers whose root never seats
+/// lanes: the demo drives a scratch root that publishes only an operator
+/// canvas, so honoring the ambient seat would dial a discovery path the
+/// scratch root cannot publish and strand the resident it launched.
+pub(crate) fn down_from_operator(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
+    down_from_with(current, contract, crate::command_client::execute_operator)
+}
+
+fn down_from_with(
+    current: &Path,
+    contract: &crate::cli::Contract,
+    execute: fn(
+        &Path,
+        &crate::cli::Contract,
+        crate::command_client::SelectedCommand<'_>,
+    ) -> Outcome<CommandAnswer>,
+) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -604,7 +625,7 @@ pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outc
         Ok(paths) => paths,
         Err(outcome) => return outcome,
     };
-    let outcome = crate::command_client::execute(
+    let outcome = execute(
         &paths.canvas,
         contract,
         crate::command_client::SelectedCommand::Down,

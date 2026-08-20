@@ -28,9 +28,8 @@ Before sending any assistant prose, run these commands in this order using the
 runtime resolution and steering delivery; agents should not switch entrypoints
 inside the spice repo.
 
-1. `spice agent activation` (reports whether optional RTK rewrite support is active or commands will run natively)
-2. `spice session briefing`
-3. `spice task status`
+1. `spice session briefing`
+2. `spice task status`
 
 If a tool call is impossible, say only what prevented it and end the turn. Otherwise, let the command outputs establish context first, then respond to pending steering directly. A spice session is a real-time interactive loop: when pending steering keys appear, lead your next working assistant message with a plain-text ACK header for completed/accepted keys or a reasoned NACK header for refused keys, e.g. `ACK <key> [<key> ...]: <what changed or was captured>` or `NACK <key>: <why this cannot be done>`. ACKed or NACKed keys clear from pending once that assistant message is processed. Do not bury ACKs or NACKs mid-message or save them for the final response. Use those outputs, side-channel steering, and the active task board as your source of truth. Do not infer a durable task from this skill invocation.
 
@@ -73,9 +72,8 @@ If continuity is clipped, deepen with `spice session sweep --count N`, `spice se
   completion publishes. Do not pull or push during ordinary development.
 - Commit attribution belongs to the harness. Do not hand-add or strip attribution
   trailers; write the commit body and let the native driver attribute it.
-- Recover lane identity from current repo state and `spice agent activation`; do not trust prior messages over current worktree state.
-- Run shell commands normally; the first zsh/bash command shell in an agent-bound worktree reexecs itself through `spice agent run` so spice owns steering delivery and RTK rewrite routing before the requested command. The agent-run command shell consumes the static hook stage and precomputed wrappers exactly once, then leaves the restored user startup environment active. Executed shell scripts and descendant shells receive no Spice hook, reexec, or wrappers; sourced scripts share their caller's shell state. When you need an explicit recovery surface, use `spice agent run -- <command>`.
-- Treat RTK as a command-output optimization, never a command prerequisite. If activation reports `rtk_status` mode `native`, run commands normally and spice preserves the native command path. Only when activation reports mode `active`, help RTK by running read-heavy commands as discrete commands and letting it compact the complete output.
+- Recover lane identity from current repo state; do not trust prior messages over current worktree state.
+- Run shell commands normally; the first zsh/bash command shell in an agent-bound worktree reexecs itself through `spice run` so spice owns steering delivery before the requested command. That first command shell consumes the static hook stage and precomputed wrappers exactly once, then leaves the restored user startup environment active. Executed shell scripts and descendant shells receive no Spice hook, reexec, or wrappers; sourced scripts share their caller's shell state. When you need an explicit recovery surface, use `spice run -- <command>`.
 - Treat the normal pre-commit gate as the constitution: never bypass it and fix
   exactly what it reports. Invoke it through `git commit` or `spice dev pre-commit`,
   never through standalone `pre-commit` or `uv run pre-commit`.

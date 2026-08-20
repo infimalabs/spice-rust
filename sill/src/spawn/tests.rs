@@ -533,7 +533,7 @@ impl RecordObserver for RefusingObserver {
 }
 
 #[test]
-fn sink_refusal_and_framing_overflow_are_named_and_reaped() {
+fn sink_refusal_is_named_and_reaped() {
     let (failures, refused) = mpsc::channel();
     let refusing = Observation::new(
         OutputStream::Stdout,
@@ -563,49 +563,104 @@ fn sink_refusal_and_framing_overflow_are_named_and_reaped() {
         refusal.observation_failure(),
         Some(ObservationFailure::SinkRefused { .. })
     ));
+}
 
+#[test]
+fn oversized_record_truncates_and_observation_survives() {
     let (records, received) = mpsc::channel();
-    let (failures, overflowed) = mpsc::channel();
-    let overflow = Observation::new(
+    let (failures, failed) = mpsc::channel();
+    let truncating = Observation::new(
         OutputStream::Stdout,
+        16,
         4,
-        1,
         Arc::new(ForwardObserver { records, failures }),
     )
-    .expect("overflow observation");
-    let overflow = spawn_observed(
+    .expect("truncating observation");
+    let running = spawn_observed(
         test_spec(
             "/bin/sh",
-            ["-c", "printf '12345'; exec /usr/bin/tail -f /dev/null"],
+            [
+                "-c",
+                concat!(
+                    "printf 'ok\\n'; ",
+                    "/usr/bin/head -c 20000 /dev/zero | /usr/bin/tr '\\0' x; ",
+                    "printf '\\nafter\\n'",
+                ),
+            ],
             Environment::empty(),
             Cancellation::Never,
             Duration::from_secs(10),
             StreamPolicy::Capture { limit: 64 },
         ),
-        overflow,
+        truncating,
     )
-    .expect("overflow child launches");
-    assert!(matches!(
-        overflowed
-            .recv_timeout(Duration::from_secs(2))
-            .expect("overflow reports"),
-        ObservationFailure::FramingOverflow {
-            limit: 4,
-            observed: 5,
-            ..
-        }
-    ));
+    .expect("truncating child launches");
+    let next = Duration::from_secs(2);
+    assert_eq!(
+        received.recv_timeout(next).expect("leading record reports"),
+        (b"ok\n".to_vec(), RecordBoundary::Complete)
+    );
+    assert_eq!(
+        received.recv_timeout(next).expect("bounded head reports"),
+        (vec![b'x'; 16], RecordBoundary::Truncated)
+    );
+    assert_eq!(
+        received
+            .recv_timeout(next)
+            .expect("framing resumes after the discard"),
+        (b"after\n".to_vec(), RecordBoundary::Complete)
+    );
+    let outcome = running.wait().expect("truncating child reaps");
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    assert!(outcome.outputs_drained());
+    assert!(outcome.observation_failure().is_none());
+    assert!(failed.try_recv().is_err(), "truncation is not a failure");
+    assert!(
+        received.try_recv().is_err(),
+        "discarded bytes never surface"
+    );
+}
+
+#[test]
+fn eof_while_discarding_ends_without_a_terminal_record() {
+    let (records, received) = mpsc::channel();
+    let (failures, failed) = mpsc::channel();
+    let observation = Observation::new(
+        OutputStream::Stdout,
+        4,
+        1,
+        Arc::new(ForwardObserver { records, failures }),
+    )
+    .expect("eof observation");
+    let running = spawn_observed(
+        test_spec(
+            "/bin/sh",
+            ["-c", "printf '123456789'"],
+            Environment::empty(),
+            Cancellation::Never,
+            Duration::from_secs(10),
+            StreamPolicy::Capture { limit: 64 },
+        ),
+        observation,
+    )
+    .expect("eof child launches");
     assert_eq!(
         received
             .recv_timeout(Duration::from_secs(2))
-            .expect("overflow bytes remain observable"),
-        (b"12345".to_vec(), RecordBoundary::Terminal)
+            .expect("bounded head reports"),
+        (b"1234".to_vec(), RecordBoundary::Truncated)
     );
-    let overflow = overflow.wait().expect("overflow child reaps");
-    assert!(matches!(
-        overflow.observation_failure(),
-        Some(ObservationFailure::FramingOverflow { .. })
-    ));
+    let outcome = running.wait().expect("eof child reaps");
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    assert!(outcome.observation_failure().is_none());
+    assert!(
+        failed.try_recv().is_err(),
+        "a discarded tail is not a failure"
+    );
+    assert!(
+        received.try_recv().is_err(),
+        "no terminal record follows the head"
+    );
 }
 
 struct FailingReader(UnixStream);

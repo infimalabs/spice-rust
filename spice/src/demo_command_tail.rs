@@ -312,7 +312,11 @@ fn wait_for_resident(environment: &Environment, receiver: &Receiver<Event>) -> D
 
 fn stop_resident(environment: &Environment, receiver: &Receiver<Event>) -> DemoResult<()> {
     let contract = crate::cli::contract(&["down"]).expect("down contract is registered");
-    match crate::resident::down_from(&environment.root, contract) {
+    // The demo root seats no lanes, so the stop must ride the operator
+    // connection: an ambient lane identity names a seat in the repository
+    // that launched the agent, and honoring it here would dial a discovery
+    // path the demo root cannot publish and strand the demo resident.
+    match crate::resident::down_from_operator(&environment.root, contract) {
         Outcome::Reply(_) => {}
         outcome => return Err(rebody(outcome).into()),
     }

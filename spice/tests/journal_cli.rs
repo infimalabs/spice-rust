@@ -49,6 +49,10 @@ impl Fixture {
 
     fn invoke_form(&self, arguments: &[&str], json: bool) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        // The suite exercises operator-context commands; a lane identity
+        // inherited from an agent shell would flip discovery into lane
+        // context and miss the fixture resident.
+        command.env_remove(spice::agent_launch::SPICE_RS_LANE);
         if json {
             command.arg("--json");
         }
@@ -96,6 +100,9 @@ struct RunningResident {
 impl RunningResident {
     fn spawn(fixture: &Fixture) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_spice"))
+            // The fixture resident serves this root in operator context, never
+            // as a seat of the launching agent shell.
+            .env_remove(spice::agent_launch::SPICE_RS_LANE)
             // A fixture resident asks the kernel for a free port: the fixed default
             // belongs to the operator's one resident, and concurrent fixtures on a
             // shared machine cannot all have it.

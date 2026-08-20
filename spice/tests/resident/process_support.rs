@@ -403,6 +403,11 @@ pub(super) fn invoke_args(fixture: &Fixture, arguments: &[&str], json: bool) -> 
     if json {
         process.arg("--json");
     }
+    // The suite exercises operator-context commands; a lane identity
+    // inherited from an agent shell would flip discovery into lane context
+    // and miss the fixture resident. Lane-context helpers set the variable
+    // explicitly on their own processes.
+    process.env_remove(steer::hook::LANE);
     process
         .args(arguments)
         .current_dir(&fixture.root)

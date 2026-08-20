@@ -259,7 +259,7 @@ fn native_canvas_stream_renders_seeded_lane_task_and_canned_turns() {
         assert_eq!(endpoint, discovery.endpoint);
         assert_browser_seed(&discovery);
         assert!(matches!(
-            crate::resident::down_from(
+            crate::resident::down_from_operator(
                 &root_for_down,
                 crate::cli::contract(&["down"]).expect("down contract"),
             ),
@@ -430,7 +430,7 @@ fn clean_automatic_service_removes_only_its_demo_root() {
     let root_for_down = fs::canonicalize(&root).unwrap();
     let outcome = canvas_environment_with(environment, true, false, true, false, |_endpoint| {
         assert!(matches!(
-            crate::resident::down_from(
+            crate::resident::down_from_operator(
                 &root_for_down,
                 crate::cli::contract(&["down"]).expect("down contract"),
             ),

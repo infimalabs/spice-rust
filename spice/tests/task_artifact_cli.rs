@@ -45,6 +45,10 @@ impl Fixture {
             .arg("--json")
             .args(arguments)
             .current_dir(&self.root)
+            // The suite exercises operator-context commands; a lane identity
+            // inherited from an agent shell would flip discovery into lane
+            // context and miss the fixture resident.
+            .env_remove(spice::agent_launch::SPICE_RS_LANE)
             .output()
             .expect("launch spice")
     }
@@ -81,6 +85,9 @@ impl Resident {
             // shared machine cannot all have it.
             .args(["--json", "up", "--foreground", "--port", "0"])
             .current_dir(&fixture.root)
+            // The fixture resident serves this root in operator context, never
+            // as a seat of the launching agent shell.
+            .env_remove(spice::agent_launch::SPICE_RS_LANE)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
