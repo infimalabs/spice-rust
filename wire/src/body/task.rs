@@ -106,18 +106,6 @@ pub struct GitBoundary {
     pub local_commits: u32,
 }
 
-/// Legacy complete-verifier citation retained for pre-retirement facts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FullVerifierReceipt {
-    /// Exact selected source tree named by every admitted verifier arm.
-    pub tree: Digest,
-    /// Identity of the canonical full-verifier evidence bundle.
-    pub evidence: Digest,
-    /// Identity of the complete admitted gate battery inside that bundle.
-    pub battery: Digest,
-}
-
 /// Accounted transcript proven at one task lifecycle boundary.
 ///
 /// A phase interval is bounded by two of these, and the usage spent inside it
@@ -205,17 +193,6 @@ pub struct TaskDone {
         deserialize_with = "crate::optional::present"
     )]
     pub git: Option<GitBoundary>,
-    /// Legacy verifier evidence from pre-retirement completion producers.
-    ///
-    /// Current producers leave this absent; retaining the field preserves exact
-    /// decoding of durable facts written before repository-wide verification was
-    /// removed from task completion.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub verifier: Option<FullVerifierReceipt>,
     /// Accounted transcript the completed phase closes at.
     #[serde(
         default = "SourceBoundary::unrecorded",
