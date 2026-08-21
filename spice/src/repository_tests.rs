@@ -26,6 +26,7 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
         .expect("admit absent current state");
     assert_eq!(state.runtime(), common.join(".spice-rs"));
     assert_eq!(state.worktree_runtime(), common.join(".spice-rs"));
+    assert_eq!(state.worktree_locks(), common.join(".spice-rs/locks"));
     assert_eq!(state.data(), common.join(".spice-rs/data"));
     assert_eq!(
         state.journal(),
@@ -100,6 +101,12 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
             .join(".spice-rs")
     );
     assert_eq!(
+        state.worktree_locks(),
+        fs::canonicalize(&git)
+            .expect("canonical linked worktree lock parent")
+            .join(".spice-rs/locks")
+    );
+    assert_eq!(
         state.inbox(),
         fs::canonicalize(&git)
             .expect("canonical Rust inbox parent")
@@ -145,6 +152,11 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
         state.inbox(),
         absolute_state.inbox(),
         "linked worktrees sharing journal authority need distinct inboxes"
+    );
+    assert_ne!(
+        state.worktree_locks(),
+        absolute_state.worktree_locks(),
+        "linked worktrees sharing journal authority need distinct activity locks"
     );
     assert_eq!(
         state.journal(),

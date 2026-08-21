@@ -247,14 +247,6 @@ pub(super) fn executable(path: &Path, text: &str) {
         .expect("make gate fixture executable");
 }
 
-pub(super) fn process_exists(pid: u32) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
-    // SAFETY: signal zero changes no process state and probes this exact pid.
-    unsafe { libc::kill(pid, 0) == 0 }
-}
-
 pub(super) struct Scratch(PathBuf);
 
 impl Scratch {

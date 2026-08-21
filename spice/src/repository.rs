@@ -101,6 +101,7 @@ pub struct Repository {
 pub struct StatePaths {
     runtime: PathBuf,
     worktree_runtime: PathBuf,
+    worktree_locks: PathBuf,
     data: PathBuf,
     journal: PathBuf,
     folds: PathBuf,
@@ -127,6 +128,7 @@ impl StatePaths {
     fn new(runtime: PathBuf, worktree_runtime: PathBuf) -> Self {
         let data = runtime.join("data");
         let artifact_data = runtime.join("artifacts");
+        let worktree_locks = worktree_runtime.join("locks");
         Self {
             journal: data.join("spicejournal.sqlite3"),
             folds: data.join("spicefolds.sqlite3"),
@@ -149,6 +151,7 @@ impl StatePaths {
             artifact_data,
             runtime,
             worktree_runtime,
+            worktree_locks,
             data,
         }
     }
@@ -163,6 +166,12 @@ impl StatePaths {
     #[must_use]
     pub fn worktree_runtime(&self) -> &Path {
         &self.worktree_runtime
+    }
+
+    /// Parent of locks that serialize only one linked worktree's activity.
+    #[must_use]
+    pub fn worktree_locks(&self) -> &Path {
+        &self.worktree_locks
     }
 
     /// Repository-common content-addressed install rollback bodies.
@@ -312,7 +321,7 @@ impl StatePaths {
             self.artifacts(),
             self.install_rollback_blobs(),
         ];
-        for path in [self.worktree_runtime(), self.inbox()] {
+        for path in [self.worktree_runtime(), self.worktree_locks(), self.inbox()] {
             if !paths.contains(&path) {
                 paths.push(path);
             }

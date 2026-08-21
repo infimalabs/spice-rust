@@ -647,11 +647,10 @@ fn publish_budget(
     writeln!(
         progress,
         concat!(
-            "[change-gate-budget] cpus={} peer_cargo_roots={} policy_jobs={} ",
+            "[change-gate-budget] cpus={} policy_jobs={} ",
             "test_concurrency={} shard_jobs={} test_threads={} scheduling={}"
         ),
         budget.cpus(),
-        budget.peer_cargo_roots(),
         budget.policy_jobs(),
         budget.test_concurrency(),
         budget.shard_jobs(),
