@@ -36,6 +36,7 @@ const CONFIGURED_BOUNDARY_TEST: &str = concat!(
 );
 
 mod cross_package_ownership;
+mod dual_target_ownership;
 mod environment;
 mod metadata;
 mod ownership_refusal;
