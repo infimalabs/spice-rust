@@ -998,6 +998,21 @@ impl<'trace> BatteryCapture<'trace> {
         super::run_focused_arm(&inputs, &mut self.executor, gate_id)
     }
 
+    /// Run one canonical arm with its caller-captured operational compiler environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same selected-arm and execution failures as [`Self::execute_arm_report`],
+    /// plus replacement of already-bound verifier evidence or a completed toolchain family.
+    pub fn execute_arm_report_with_environment(
+        &mut self,
+        gate_id: crate::GateId,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<super::FocusedArmReport, BatteryError> {
+        self.executor.set_compiler_environment(environment)?;
+        self.execute_arm_report(gate_id)
+    }
+
     /// Project the two structural arms captured for this complete battery.
     ///
     /// Their metrics were acquired when the immutable selected source was

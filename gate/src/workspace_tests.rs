@@ -80,7 +80,10 @@ impl WorkspacePackageReach {
                 check.name.clone(),
             ];
             for target in &check.targets {
-                arguments.extend([target.flag.to_owned(), target.name.clone()]);
+                arguments.push(target.flag.to_owned());
+                if let Some(name) = &target.name {
+                    arguments.push(name.clone());
+                }
             }
             if let Some(features) = qualified_required_features(
                 check
@@ -127,7 +130,7 @@ struct CargoCheckSelection {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct CargoTargetSelection {
     flag: &'static str,
-    name: String,
+    name: Option<String>,
     required_features: Vec<String>,
 }
 
@@ -301,6 +304,43 @@ pub struct WorkspaceTestRoots<'a> {
     selected: &'a Path,
     writable: &'a Path,
     reusable: Option<&'a crate::RustAnalysisWorkspace>,
+}
+
+/// Fixed process budget for one selected workspace-test slice.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkspaceTestBudget {
+    concurrency: usize,
+    cargo_jobs: usize,
+    test_threads: usize,
+}
+
+impl WorkspaceTestBudget {
+    /// Bind outer Cargo lanes, per-Cargo compiler jobs, and test-harness threads.
+    ///
+    /// # Errors
+    ///
+    /// Refuses zero values or outer concurrency above the standalone coordinator cap.
+    pub fn new(
+        concurrency: usize,
+        cargo_jobs: usize,
+        test_threads: usize,
+    ) -> Result<Self, WorkspaceTestError> {
+        if !(1..=WORKSPACE_TEST_CONCURRENCY_CAP).contains(&concurrency) {
+            return Err(WorkspaceTestError::new(format!(
+                "workspace test concurrency must be between 1 and {WORKSPACE_TEST_CONCURRENCY_CAP}, got {concurrency}",
+            )));
+        }
+        if cargo_jobs == 0 || test_threads == 0 {
+            return Err(WorkspaceTestError::new(
+                "workspace test Cargo jobs and harness threads must be nonzero",
+            ));
+        }
+        Ok(Self {
+            concurrency,
+            cargo_jobs,
+            test_threads,
+        })
+    }
 }
 
 impl<'a> WorkspaceTestRoots<'a> {
@@ -735,7 +775,31 @@ pub fn run_selected_at(
         source,
         changed_sources,
         environment,
-        concurrency,
+        SelectedRunPolicy::Legacy(concurrency),
+        output,
+        false,
+    )
+}
+
+/// Select and run reached test targets under one explicit fleet-aware budget.
+///
+/// # Errors
+///
+/// Returns the same bounded selection and execution failures as [`run_selected_at`].
+pub fn run_selected_with_budget_at(
+    roots: WorkspaceTestRoots<'_>,
+    source: wire::Digest,
+    changed_sources: &[String],
+    environment: Environment,
+    budget: WorkspaceTestBudget,
+    output: &mut impl Write,
+) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
+    run_selected_at_mode(
+        roots,
+        source,
+        changed_sources,
+        environment,
+        SelectedRunPolicy::Budgeted(budget),
         output,
         false,
     )
@@ -763,10 +827,16 @@ pub fn run_exhaustive_selected_at(
         source,
         changed_sources,
         environment,
-        concurrency,
+        SelectedRunPolicy::Legacy(concurrency),
         output,
         true,
     )
+}
+
+#[derive(Clone, Copy)]
+enum SelectedRunPolicy {
+    Legacy(usize),
+    Budgeted(WorkspaceTestBudget),
 }
 
 fn run_selected_at_mode(
@@ -774,11 +844,14 @@ fn run_selected_at_mode(
     source: wire::Digest,
     changed_sources: &[String],
     environment: Environment,
-    concurrency: usize,
+    selected_policy: SelectedRunPolicy,
     output: &mut impl Write,
     exhaustive: bool,
 ) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    let policy = RunPolicy::production(concurrency)?;
+    let policy = match selected_policy {
+        SelectedRunPolicy::Legacy(concurrency) => RunPolicy::production(concurrency)?,
+        SelectedRunPolicy::Budgeted(budget) => RunPolicy::production_budgeted(budget),
+    };
     let root = roots
         .reusable
         .map_or(roots.selected, crate::RustAnalysisWorkspace::source);
@@ -789,15 +862,74 @@ fn run_selected_at_mode(
         Some(workspace) => reuse_environment(environment, workspace)?,
         None => environment,
     };
-    let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
-    let (report, escalations) = if exhaustive {
-        (
-            exhaustive_selection_report(&inventory, source, changed_sources)?,
-            Vec::new(),
-        )
-    } else {
-        selection_plan(&inventory, root, source, changed_sources)?.into_parts()
+    writeln!(
+        output,
+        "[rust-test] stage=metadata-start changes={} exhaustive={exhaustive}",
+        changed_sources.len(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    let metadata_started = Instant::now();
+    let inventory = match acquire_inventory(root, &environment, OsStr::new("cargo")) {
+        Ok(inventory) => {
+            writeln!(
+                output,
+                "[rust-test] stage=metadata-terminal elapsed_ms={} disposition=success",
+                metadata_started.elapsed().as_millis(),
+            )
+            .map_err(output_error)?;
+            output.flush().map_err(output_error)?;
+            inventory
+        }
+        Err(error) => {
+            writeln!(
+                output,
+                "[rust-test] stage=metadata-terminal elapsed_ms={} disposition=failed detail={:?}",
+                metadata_started.elapsed().as_millis(),
+                error.to_string(),
+            )
+            .map_err(output_error)?;
+            output.flush().map_err(output_error)?;
+            return Err(error);
+        }
     };
+    writeln!(
+        output,
+        "[rust-test] stage=selection-start changes={} exhaustive={exhaustive}",
+        changed_sources.len(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    let selection_started = Instant::now();
+    let selected = if exhaustive {
+        exhaustive_selection_report(&inventory, source, changed_sources)
+            .map(|report| (report, Vec::new()))
+    } else {
+        selection_plan(&inventory, root, source, changed_sources).map(|plan| plan.into_parts())
+    };
+    let selected = match selected {
+        Ok(selected) => selected,
+        Err(error) => {
+            writeln!(
+                output,
+                "[rust-test] stage=selection-terminal elapsed_ms={} disposition=failed detail={:?}",
+                selection_started.elapsed().as_millis(),
+                error.to_string(),
+            )
+            .map_err(output_error)?;
+            output.flush().map_err(output_error)?;
+            return Err(error);
+        }
+    };
+    writeln!(
+        output,
+        "[rust-test] stage=selection-terminal elapsed_ms={} disposition=success tests={}",
+        selection_started.elapsed().as_millis(),
+        selected.0.tests().len(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    let (report, escalations) = selected;
     write_reach_escalations(output, &escalations)?;
     for edge in report.edges() {
         writeln!(

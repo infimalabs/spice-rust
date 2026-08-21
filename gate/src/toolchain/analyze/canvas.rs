@@ -23,14 +23,15 @@ pub(in crate::toolchain) fn canvas_web_typecheck(
     repository: &Path,
     changes: &[String],
     bounds: &Bounds,
-    programs: &BTreeMap<&str, &str>,
+    resources: CompilerResources<'_>,
     deferred_trunk_refusal: Option<Analysis>,
 ) -> Analysis {
     let removal = Cell::new(None);
     let tools = CanvasTools {
-        cargo: programs.get(CARGO).copied(),
-        trunk: programs.get(TRUNK).copied(),
+        cargo: resources.program(CARGO),
+        trunk: resources.program(TRUNK),
         deferred_trunk_refusal,
+        compiler_environment: resources.environment(),
     };
     let analysis = canvas_analysis(
         declaration,
@@ -51,6 +52,7 @@ struct CanvasTools<'a> {
     cargo: Option<&'a str>,
     trunk: Option<&'a str>,
     deferred_trunk_refusal: Option<Analysis>,
+    compiler_environment: &'a [(std::ffi::OsString, std::ffi::OsString)],
 }
 
 fn canvas_analysis(
@@ -77,10 +79,11 @@ fn canvas_analysis(
         Ok(source) => source,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let metadata_environment = match tool_environment("canvas reach", &[cargo]) {
-        Ok(environment) => environment,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-    };
+    let metadata_environment =
+        match tool_environment_with("canvas reach", &[cargo], tools.compiler_environment) {
+            Ok(environment) => environment,
+            Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+        };
 
     let source = source.path();
     let app = source.join("app");
@@ -113,7 +116,7 @@ fn canvas_analysis(
         Ok(outputs) => outputs,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let environment = match canvas_environment(cargo, trunk, &outputs) {
+    let environment = match canvas_environment(cargo, trunk, &outputs, tools.compiler_environment) {
         Ok(environment) => environment,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -164,27 +167,33 @@ fn canvas_environment(
     cargo: &str,
     trunk: &str,
     outputs: &CanvasOutputs,
+    inherited: &[(std::ffi::OsString, std::ffi::OsString)],
 ) -> Result<Environment, String> {
     let path = tool_search_path("canvas", &[cargo, trunk, "/usr/bin/cc", "/bin/sh"])?;
-    Environment::new([
-        ("PATH", path),
-        (HOME_DIRECTORY, COMPILED_HOME_DIRECTORY.into()),
-        (
-            CARGO_TARGET_DIRECTORY,
-            outputs.cargo_target.as_os_str().to_owned(),
-        ),
-        (
-            CARGO_BUILD_DIRECTORY,
-            outputs.cargo_build.as_os_str().to_owned(),
-        ),
-        (RUSTC_WRAPPER, std::ffi::OsString::new()),
-        (RUSTC_WORKSPACE_WRAPPER, std::ffi::OsString::new()),
-        (
-            TRUNK_DISTRIBUTION_DIRECTORY,
-            outputs.trunk_dist.as_os_str().to_owned(),
-        ),
-    ])
-    .map_err(|error| format!("canvas tool environment was refused: {error}"))
+    let mut entries = inherited
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<std::ffi::OsString, std::ffi::OsString>>();
+    entries.insert("PATH".into(), path);
+    entries
+        .entry(HOME_DIRECTORY.into())
+        .or_insert_with(|| COMPILED_HOME_DIRECTORY.into());
+    entries.insert(
+        CARGO_TARGET_DIRECTORY.into(),
+        outputs.cargo_target.as_os_str().to_owned(),
+    );
+    entries.insert(
+        CARGO_BUILD_DIRECTORY.into(),
+        outputs.cargo_build.as_os_str().to_owned(),
+    );
+    entries.insert(RUSTC_WRAPPER.into(), std::ffi::OsString::new());
+    entries.insert(RUSTC_WORKSPACE_WRAPPER.into(), std::ffi::OsString::new());
+    entries.insert(
+        TRUNK_DISTRIBUTION_DIRECTORY.into(),
+        outputs.trunk_dist.as_os_str().to_owned(),
+    );
+    Environment::new(entries)
+        .map_err(|error| format!("canvas tool environment was refused: {error}"))
 }
 
 /// Writable output roots for tools examining one immutable selected tree.
