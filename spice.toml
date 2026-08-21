@@ -4,6 +4,9 @@
 # task plane directly.
 # Agent command routing belongs to Rust's tracked `[wrappers]` vocabulary.
 
+[commands]
+gate = ["cargo", "run", "--locked", "--package", "spice", "--", "gate"]
+
 [tasks]
 # Public scheduler stems beyond the packaged `task` and `serve` defaults.
 # Product work routes directly by ownership so the allocator can retain domain
