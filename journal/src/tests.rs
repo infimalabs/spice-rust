@@ -180,6 +180,108 @@ fn read_only_snapshot_and_thread_follow_the_verified_cause_chain() {
 }
 
 #[test]
+fn reader_verification_keeps_every_plane_on_the_snapshot_before_a_concurrent_commit() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("authority.sqlite3");
+    let mut writer = authority_file_fixture(&path);
+    let journal_mode = writer
+        .connection
+        .query_row("PRAGMA journal_mode = WAL", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .expect("enable concurrent reader and writer fixture");
+    assert_eq!(journal_mode, "wal");
+    let reader = JournalReader::open(&path).expect("open immutable verification reader");
+    let reader_changes = reader.connection.total_changes();
+    let mut committed = false;
+
+    let verified =
+        crate::replay::verify_reader_connection_with_concurrent_commit(&reader.connection, || {
+            let mut write = crate::JournalWrite::new(
+                Actor::Operator,
+                "task:1kKRRsDP".parse().expect("fixture origin"),
+                instant(),
+                wire::Producer::CommandDoor,
+            );
+            write
+                .fact(
+                    wire::body::TaskNoted {
+                        task: "1kKRRsDP".parse().expect("fixture task"),
+                        note: "committed between verification planes".to_owned(),
+                    },
+                    crate::FactCause::Existing(seq(2)),
+                )
+                .expect("concurrent fact builds");
+            let applied = writer.apply(write).expect("concurrent generation commits");
+            assert_eq!(applied.last(), seq(3));
+            committed = true;
+        })
+        .expect("one old immutable generation verifies");
+
+    assert!(
+        committed,
+        "the fixture never crossed the verification planes"
+    );
+    assert_eq!((verified.facts, verified.threads), (2, 2));
+    assert_eq!(reader.connection.total_changes(), reader_changes);
+
+    let current = reader
+        .verify()
+        .expect("the concurrently committed generation verifies");
+    assert_eq!((current.facts, current.threads), (3, 3));
+    assert_eq!(reader.connection.total_changes(), reader_changes);
+}
+
+#[test]
+fn reader_verification_retains_complete_genuine_violation_diagnostics() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("authority.sqlite3");
+    let writer = authority_file_fixture(&path);
+    writer
+        .connection
+        .execute_batch(
+            "UPDATE thread_index SET depth = 9 WHERE seq = 2;
+             DROP TRIGGER cursor_head_monotone;
+             UPDATE cursor_head SET seq = 1, wake = 1 WHERE singleton = 1;",
+        )
+        .expect("plant genuine thread and cursor defects");
+    drop(writer);
+
+    let reader = JournalReader::open(&path).expect("open corrupt authority read-only");
+    let reader_changes = reader.connection.total_changes();
+    let violations = reader
+        .verify()
+        .expect_err("genuine authority defects must refuse")
+        .violations()
+        .to_vec();
+
+    let thread = violations
+        .iter()
+        .find(|violation| violation.class == ViolationClass::Thread)
+        .expect("thread violation survives the reader boundary");
+    assert_eq!(thread.subject, "2");
+    assert_eq!(
+        thread.detail,
+        "thread row disagrees with replayed origin, cause, root, or depth"
+    );
+    assert_eq!(
+        thread.to_string(),
+        "Thread:2:thread row disagrees with replayed origin, cause, root, or depth"
+    );
+
+    let cursor = violations
+        .iter()
+        .find(|violation| violation.class == ViolationClass::Cursor)
+        .expect("cursor violation survives the reader boundary");
+    assert_eq!(cursor.subject, "cursor_head:1");
+    assert_eq!(
+        cursor.detail,
+        "cursor seq Some(1), wake Some(1), and fact maximum Some(2) disagree"
+    );
+    assert_eq!(reader.connection.total_changes(), reader_changes);
+}
+
+#[test]
 fn reindex_rebuilds_only_derived_threads_and_rolls_back_on_bad_history() {
     let mut journal = authority_fixture();
     let head_before = journal
