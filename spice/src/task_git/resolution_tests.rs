@@ -2,7 +2,7 @@
 
 use super::*;
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -173,31 +173,13 @@ fn allocator_owned_authority_resolution_runs_evidence_then_publishes() {
     let (agent, upstream) = fixture.pause(meta);
     fixture.resolve();
     let calls = Cell::new(0);
-    let completion_calls = Cell::new(0);
-    let completion_head = RefCell::new(String::new());
-    let expected_verifier = verifier_receipt("resolved-tree");
-
-    let (published, verifier) = publish_claimed_with_completion_evidence(
-        &fixture.repository(),
-        meta,
-        &claim.active(),
-        || {
-            calls.set(calls.get() + 1);
-            Ok(())
-        },
-        |candidate| {
-            completion_calls.set(completion_calls.get() + 1);
-            *completion_head.borrow_mut() = output(&fixture.agent, &["rev-parse", "HEAD"]);
-            assert_eq!(candidate, completion_head.borrow().as_str());
-            Ok(Some(expected_verifier.clone()))
-        },
-    )
+    let published = publish_claimed(&fixture.repository(), meta, &claim.active(), || {
+        calls.set(calls.get() + 1);
+        Ok(())
+    })
     .expect("admitted resolution publishes");
 
     assert_eq!(calls.get(), 1);
-    assert_eq!(completion_calls.get(), 1);
-    assert_eq!(*completion_head.borrow(), published.integrated);
-    assert_eq!(verifier, Some(expected_verifier));
     assert_eq!(published.local_commits, 1);
     assert_eq!(
         parents(&fixture.agent, &published.integrated),
@@ -208,73 +190,6 @@ fn allocator_owned_authority_resolution_runs_evidence_then_publishes() {
         !git_state_path(&fixture.agent, "MERGE_HEAD")
             .expect("merge path")
             .exists()
-    );
-}
-
-#[test]
-fn completion_evidence_refuses_the_materialized_candidate_before_push() {
-    let claim = ClaimFixture::new(2, ClaimDisposition::Active);
-    let actor = claim.actor.to_string();
-    let meta = claim.metadata(&actor);
-    let fixture = Fixture::new("completion-evidence-refusal");
-    let (_, upstream) = fixture.pause(meta);
-    fixture.resolve();
-
-    let refusal = publish_claimed_with_completion_evidence(
-        &fixture.repository(),
-        meta,
-        &claim.active(),
-        || Ok(()),
-        |_| {
-            Err(CompletionEvidenceError::refusal(
-                "gate::full-verifier-completion-unavailable",
-                "stage=source: retained source differs from current source",
-                "run `cargo xtask verify` on this exact current tree",
-            ))
-        },
-    )
-    .expect_err("stale completion evidence refuses publication");
-
-    assert_eq!(refusal.reason(), "git::completion-evidence-refused");
-    assert!(refusal.detail().contains("stage=source"));
-    assert!(refusal.remedy().contains("cargo xtask verify"));
-    assert_eq!(
-        output(
-            &fixture.root.join("remote.git"),
-            &["rev-parse", "refs/heads/main"]
-        ),
-        upstream,
-        "the exact-tree refusal must happen before remote publication",
-    );
-}
-
-#[test]
-fn a_candidate_outside_the_full_verifier_tier_publishes_without_a_citation() {
-    let claim = ClaimFixture::new(3, ClaimDisposition::Active);
-    let actor = claim.actor.to_string();
-    let meta = claim.metadata(&actor);
-    let fixture = Fixture::new("completion-evidence-not-applicable");
-    fixture.pause(meta);
-    fixture.resolve();
-    let completion_calls = Cell::new(0);
-
-    let (published, verifier) = publish_claimed_with_completion_evidence(
-        &fixture.repository(),
-        meta,
-        &claim.active(),
-        || Ok(()),
-        |_| {
-            completion_calls.set(completion_calls.get() + 1);
-            Ok(None)
-        },
-    )
-    .expect("generic candidate publishes without source-only evidence");
-
-    assert_eq!(completion_calls.get(), 1);
-    assert_eq!(verifier, None);
-    assert_eq!(
-        output(&fixture.agent, &["rev-parse", "refs/remotes/origin/main"]),
-        published.integrated,
     );
 }
 
@@ -555,23 +470,6 @@ fn uuid(last: u8) -> CanonicalUuid {
 
 fn instant(value: &str) -> Instant {
     value.parse().expect("fixture instant")
-}
-
-fn verifier_receipt(label: &str) -> wire::body::FullVerifierReceipt {
-    wire::body::FullVerifierReceipt {
-        tree: wire::Digest::compute(
-            wire::Domain::GateReceipt,
-            format!("tree-{label}").as_bytes(),
-        ),
-        evidence: wire::Digest::compute(
-            wire::Domain::GateReceipt,
-            format!("evidence-{label}").as_bytes(),
-        ),
-        battery: wire::Digest::compute(
-            wire::Domain::GateBatteryReceipt,
-            format!("battery-{label}").as_bytes(),
-        ),
-    }
 }
 
 fn text(path: &Path) -> &str {

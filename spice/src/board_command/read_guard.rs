@@ -339,33 +339,7 @@ pub(super) fn publish_task_boundary(
     command: &wire::AdmittedCommand,
     entry: &Entry,
 ) -> Result<Option<GitBoundary>, Outcome<CommandAnswer>> {
-    publish_task_boundary_inner(repository, snapshot, command, entry, false)
-        .map(|published| published.git)
-}
-
-pub(super) struct PublishedTaskBoundary {
-    pub(super) git: Option<GitBoundary>,
-    pub(super) verifier: Option<body::FullVerifierReceipt>,
-}
-
-pub(super) fn publish_task_completion_boundary(
-    repository: Option<&Repository>,
-    snapshot: &ValidatedSnapshot,
-    command: &wire::AdmittedCommand,
-    entry: &Entry,
-    transition: &board::Transition,
-) -> Result<PublishedTaskBoundary, Outcome<CommandAnswer>> {
-    let require_verifier = completion_requires_verifier(transition.kind());
-    publish_task_boundary_inner(repository, snapshot, command, entry, require_verifier)
-}
-
-pub(super) fn completion_requires_verifier(transition: &board::TransitionKind) -> bool {
-    match transition {
-        board::TransitionKind::Advance { from, to } => {
-            matches!(from.as_str(), "todo" | "verify") && to.as_str() == "review"
-        }
-        board::TransitionKind::Complete { phase } => matches!(phase.as_str(), "todo" | "verify"),
-    }
+    publish_task_boundary_inner(repository, snapshot, command, entry)
 }
 
 fn publish_task_boundary_inner(
@@ -373,13 +347,9 @@ fn publish_task_boundary_inner(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     entry: &Entry,
-    require_verifier: bool,
-) -> Result<PublishedTaskBoundary, Outcome<CommandAnswer>> {
+) -> Result<Option<GitBoundary>, Outcome<CommandAnswer>> {
     let Some(resident) = repository else {
-        return Ok(PublishedTaskBoundary {
-            git: None,
-            verifier: None,
-        });
+        return Ok(None);
     };
     let lane = task_repository(snapshot, command, resident)?;
     let actor = command.actor().to_string();
@@ -435,25 +405,8 @@ fn publish_task_boundary_inner(
         }
         Ok(())
     };
-    if require_verifier {
-        return spice::task_git::publish_claimed_with_completion_evidence(
-            &lane,
-            metadata,
-            &active,
-            resolution,
-            |candidate| crate::gate_command::completion_evidence(&lane, candidate),
-        )
-        .map(|(git, verifier)| PublishedTaskBoundary {
-            git: Some(git),
-            verifier,
-        })
-        .map_err(task_git_outcome);
-    }
     spice::task_git::publish_claimed(&lane, metadata, &active, resolution)
-        .map(|git| PublishedTaskBoundary {
-            git: Some(git),
-            verifier: None,
-        })
+        .map(Some)
         .map_err(task_git_outcome)
 }
 

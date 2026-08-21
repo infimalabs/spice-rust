@@ -89,8 +89,9 @@ Caller: Developer documentation.
 
 Disposition: Ported to Rust and deleted.
 
-Reason: The script was only an alternate spelling of the already canonical
-`cargo xtask verify`; callers now use that command directly.
+Reason: The script was an alternate repository-wide verification spelling.
+That surface is retired; callers now use staged selection, named package
+checks, or explicit study arms.
 
 ## `dist/proof-image/cargo-wrapper.sh`
 

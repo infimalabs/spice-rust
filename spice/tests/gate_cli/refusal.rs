@@ -108,7 +108,7 @@ fn assert_oversized_json_refusal(
     else {
         panic!("pre-commit gate report must use evidence refusal: {refusal:?}")
     };
-    assert!(summary.contains("explicit full verifier"));
+    assert!(summary.contains("selected packaged or configured finding"));
     let (_, change_report) = assert_concise_pre_commit_refusal(&refusal);
     let fold = change_report.refusal_fold();
     assert!(evidence.starts_with(fold.as_str()));
@@ -225,7 +225,7 @@ fn assert_concise_pre_commit_refusal(refusal: &Refusal) -> (usize, ChangeGateRep
     else {
         panic!("pre-commit gate report must use evidence refusal: {refusal:?}")
     };
-    assert!(summary.contains("explicit full verifier"));
+    assert!(summary.contains("selected packaged or configured finding"));
     let (report_path, report_bytes, pre_commit_report) = read_report_artifact(evidence);
     let encoded_report_path = serde_json::to_string(
         report_path

@@ -184,9 +184,9 @@ that behavior at the packaged and current-source boundaries.
 
 This is the desired interpretation of fail-closed selection. Unknown impact
 does not become omission, success, or ambient complete work: the ordinary gate
-stops before policy and workspace tests. The separately named full verifier
-retains complete repository execution; it is an explicit operator/development
-surface rather than a selector-produced fallback.
+stops before policy and workspace tests. It does not fall back to complete
+repository execution; package checks and explicit study arms remain separately
+named, bounded surfaces.
 
 ## Evidence for study-to-ratchet promotion
 
@@ -239,11 +239,11 @@ Therefore the proven promotion sequence is:
 | --- | --- | --- |
 | Single immutable staged source | `spice/src/change_gate.rs:223-342` | Prepare the staging arm once; feed its exact changes and digest into test and policy selection; refuse source movement. |
 | Pure fail-closed policy selection | `gate/src/change_selection.rs` | Keep selection repository-free; unknown/authority paths return exact typed refusals. |
-| Local ordinary versus explicit complete reach | `spice/src/change_gate.rs` | Select local workspace tests from exact changes; reserve complete reach for the separately invoked full verifier. |
+| Local ordinary reach without escalation | `spice/src/change_gate.rs` | Select local workspace tests from exact changes; refuse unknown reach instead of escalating to a repository-wide verifier. |
 | Merge-aware baseline authority | `gate/src/metrics/baseline.rs` | Keep capture of parents, merge base, and clean-merge authorship; it is stronger than the Python single-ref convention. |
 | Typed ratchet policy | `gate/src/ratchet.rs`, `baseline.toml` | Keep shrink-only global floors and typed evidence. The only current standing floor is `rust.mutation-survivors = 0`; do not replace this authority with ad hoc Python JSON. |
 | Typed state and claims | `gate/src/state` | Keep explicit bounds, latches, claims, and accept/reject publication semantics. |
-| Durable full-study repair | canonical battery reporting | Preserve repository-wide repair generation on full runs; local gate selection must not erase that confidence surface. |
+| Durable study repair | explicit study reporting | Preserve separately invoked study evidence; local gate selection must not manufacture or erase that confidence surface. |
 
 ### Current Rust qualification status
 

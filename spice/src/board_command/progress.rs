@@ -281,13 +281,7 @@ pub(super) fn task_done(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let published = match publish_task_completion_boundary(
-        repository,
-        &snapshot,
-        command,
-        entry,
-        &transition,
-    ) {
+    let published = match publish_task_boundary(repository, &snapshot, command, entry) {
         Ok(published) => published,
         Err(outcome) => return outcome,
     };
@@ -472,7 +466,7 @@ fn append_done(
     done: &TaskDone,
     entry: &Entry,
     transition: &board::Transition,
-    published: PublishedTaskBoundary,
+    published: Option<body::GitBoundary>,
     source: body::SourceBoundary,
     next: Option<Box<str>>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
@@ -481,8 +475,8 @@ fn append_done(
             body::TaskDone {
                 task: entry.born().clone(),
                 validation: done.validation.clone(),
-                git: published.git,
-                verifier: published.verifier,
+                git: published,
+                verifier: None,
                 source,
             },
             FactCause::Root,

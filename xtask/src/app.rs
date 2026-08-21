@@ -13,9 +13,6 @@ use wire::{Digest, Domain};
 
 mod source;
 
-/// The target the browser app is compiled for.
-pub(crate) const WASM_TARGET: &str = "wasm32-unknown-unknown";
-
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 const APP_SOURCE_IDENTITY_ENV: &str = "SPICE_APP_SOURCE_IDENTITY"; // env-policy: allow
 const GENERATED_MODULE_REFERENCES: usize = 2;
@@ -45,31 +42,20 @@ pub fn app(environment: &ReleaseEnvironment, output: &mut impl Write) -> Result<
     app_from(&root, &root, environment, output)
 }
 
-/// Compile the browser app from the current selected root and publish it into
-/// a separate live worktree.
+/// Refuse the retired cross-worktree verifier app publication path.
 ///
-/// This is the verifier-only half of [`gate::VERIFIER_APP_PUBLISH_FLAG`]. The
-/// source root remains the command's current directory, so ignored or
-/// otherwise unselected files in the publication worktree cannot become
-/// compiler inputs.
+/// The function remains as a compatibility boundary for the former hidden
+/// command spelling; it performs no source capture, compilation, or write.
 ///
 /// # Errors
 ///
-/// Returns the same source, compiler, and publication failures as [`app`], or
-/// a relative publication root.
+/// Always returns [`AppBuildError::VerifierPublicationRetired`].
 pub fn app_to(
-    environment: &ReleaseEnvironment,
-    publish_root: &Path,
-    output: &mut impl Write,
+    _environment: &ReleaseEnvironment,
+    _publish_root: &Path,
+    _output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
-    if !publish_root.is_absolute() {
-        return Err(AppBuildError::SourceIdentity(format!(
-            "verifier app publication root {} is not absolute",
-            publish_root.display()
-        )));
-    }
-    let root = workspace_root()?;
-    app_from(&root, publish_root, environment, output)
+    Err(AppBuildError::VerifierPublicationRetired)
 }
 
 fn app_from(
@@ -521,6 +507,7 @@ fn workspace_root() -> Result<PathBuf, AppBuildError> {
 
 #[derive(Debug)]
 pub enum AppBuildError {
+    VerifierPublicationRetired,
     Output(io::Error),
     Launch(io::Error),
     Exit(Option<i32>),
@@ -535,6 +522,9 @@ pub enum AppBuildError {
 impl fmt::Display for AppBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::VerifierPublicationRetired => formatter.write_str(
+                "verifier app publication is retired; use `cargo xtask app` in the target worktree",
+            ),
             Self::Output(error) => write!(formatter, "app build output failed: {error}"),
             Self::Launch(error) => write!(formatter, "trunk did not launch: {error}"),
             Self::Exit(Some(code)) => write!(formatter, "trunk failed with exit {code}"),

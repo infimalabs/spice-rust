@@ -1,4 +1,4 @@
-//! Bounded lifecycle records for serial and dependency-scheduled actions.
+//! Bounded lifecycle records for serial package-scoped actions.
 
 use std::fmt;
 use std::io::{self, Write};
@@ -24,17 +24,12 @@ pub(super) struct Stage<'a> {
 /// How an observed action ended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Disposition {
-    Success,
     Exit(Option<i32>),
     LaunchError,
-    Error,
     RenderError,
-    Refused,
-    Incomplete,
     Cancelled,
     TimedOut,
     CleanupError,
-    Panic,
 }
 
 impl Disposition {
@@ -46,18 +41,13 @@ impl Disposition {
 impl fmt::Display for Disposition {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Success => formatter.write_str("success"),
             Self::Exit(Some(code)) => write!(formatter, "exit code={code}"),
             Self::Exit(None) => formatter.write_str("signal"),
             Self::LaunchError => formatter.write_str("launch-error"),
-            Self::Error => formatter.write_str("error"),
             Self::RenderError => formatter.write_str("render-error"),
-            Self::Refused => formatter.write_str("refused"),
-            Self::Incomplete => formatter.write_str("incomplete"),
             Self::Cancelled => formatter.write_str("cancelled"),
             Self::TimedOut => formatter.write_str("timed-out"),
             Self::CleanupError => formatter.write_str("cleanup-error"),
-            Self::Panic => formatter.write_str("panic"),
         }
     }
 }
@@ -199,31 +189,6 @@ pub(super) fn write_progress(
         elapsed.as_millis(),
         policy_band(elapsed),
         crossed_threshold(elapsed),
-        stage.family,
-        stage.identity,
-    )?;
-    output.flush()
-}
-
-/// Report a bounded-cadence child-output cursor which has advanced since the
-/// previous report. Unlike the elapsed-only diagnostic above, this record may
-/// renew the outer verifier's inactivity lease.
-pub(super) fn write_advancement(
-    output: &mut impl Write,
-    stage: Stage<'_>,
-    elapsed: Duration,
-    cursor: u64,
-) -> io::Result<()> {
-    writeln!(
-        output,
-        concat!(
-            "[verify] stage=advance ordinal={}/{} elapsed_ms={} cursor={} ",
-            "family={} identity={:?}"
-        ),
-        stage.ordinal,
-        stage.total,
-        elapsed.as_millis(),
-        cursor,
         stage.family,
         stage.identity,
     )?;

@@ -31,11 +31,9 @@ use coordinator::{
 };
 #[cfg(test)]
 use coordinator::{LastTest, isolate_shard_outputs, shard_test_threads, target_arguments};
-use selection::{
-    CargoReachEscalation, exhaustive_selection_report, package_inventory, selection_plan,
-};
+use selection::{CargoReachEscalation, package_inventory, selection_plan};
 #[cfg(test)]
-use selection::{CargoReachEscalationReason, selection_report};
+use selection::{CargoReachEscalationReason, exhaustive_selection_report, selection_report};
 
 /// Exact workspace packages reached through canonical retained Cargo metadata.
 pub(crate) struct WorkspacePackageReach {
@@ -149,16 +147,11 @@ fn qualified_required_features<'a>(
 /// This predicate runs before metadata or tool discovery, so an undeclared or
 /// irrelevant engine cannot make Cargo a dependency of a generic repository.
 #[must_use]
-pub fn cargo_workspace_tests_applicable(
-    root: &Path,
-    changed_sources: &[String],
-    exhaustive: bool,
-) -> bool {
+pub fn cargo_workspace_tests_applicable(root: &Path, changed_sources: &[String]) -> bool {
     root.join("Cargo.toml").is_file()
-        && (exhaustive
-            || changed_sources
-                .iter()
-                .any(|path| selection::test_relevant_source(path)))
+        && changed_sources
+            .iter()
+            .any(|path| selection::test_relevant_source(path))
 }
 
 /// Keep each post-prebuild Cargo invocation small enough for the full verifier's
@@ -777,7 +770,6 @@ pub fn run_selected_at(
         environment,
         SelectedRunPolicy::Legacy(concurrency),
         output,
-        false,
     )
 }
 
@@ -801,35 +793,6 @@ pub fn run_selected_with_budget_at(
         environment,
         SelectedRunPolicy::Budgeted(budget),
         output,
-        false,
-    )
-}
-
-/// Run every workspace target for an explicitly exhaustive change selection.
-///
-/// Every changed path retains an edge to every target, including paths with no
-/// recognized build suffix. This is the test-side half of fail-closed
-/// change-gate escalation.
-///
-/// # Errors
-///
-/// Returns the same failures as [`run_selected_at`].
-pub fn run_exhaustive_selected_at(
-    roots: WorkspaceTestRoots<'_>,
-    source: wire::Digest,
-    changed_sources: &[String],
-    environment: Environment,
-    concurrency: usize,
-    output: &mut impl Write,
-) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    run_selected_at_mode(
-        roots,
-        source,
-        changed_sources,
-        environment,
-        SelectedRunPolicy::Legacy(concurrency),
-        output,
-        true,
     )
 }
 
@@ -846,7 +809,6 @@ fn run_selected_at_mode(
     environment: Environment,
     selected_policy: SelectedRunPolicy,
     output: &mut impl Write,
-    exhaustive: bool,
 ) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
     let policy = match selected_policy {
         SelectedRunPolicy::Legacy(concurrency) => RunPolicy::production(concurrency)?,
@@ -864,7 +826,7 @@ fn run_selected_at_mode(
     };
     writeln!(
         output,
-        "[rust-test] stage=metadata-start changes={} exhaustive={exhaustive}",
+        "[rust-test] stage=metadata-start changes={}",
         changed_sources.len(),
     )
     .map_err(output_error)?;
@@ -895,18 +857,14 @@ fn run_selected_at_mode(
     };
     writeln!(
         output,
-        "[rust-test] stage=selection-start changes={} exhaustive={exhaustive}",
+        "[rust-test] stage=selection-start changes={}",
         changed_sources.len(),
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
     let selection_started = Instant::now();
-    let selected = if exhaustive {
-        exhaustive_selection_report(&inventory, source, changed_sources)
-            .map(|report| (report, Vec::new()))
-    } else {
-        selection_plan(&inventory, root, source, changed_sources).map(|plan| plan.into_parts())
-    };
+    let selected =
+        selection_plan(&inventory, root, source, changed_sources).map(|plan| plan.into_parts());
     let selected = match selected {
         Ok(selected) => selected,
         Err(error) => {

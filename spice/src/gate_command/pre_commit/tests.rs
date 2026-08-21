@@ -389,6 +389,26 @@ fn configured_only_resolution_report_is_source_bound_and_nonempty() {
 }
 
 #[test]
+fn resolution_report_rejects_the_retired_exhaustive_coverage_arm() {
+    let source = Digest::compute(wire::Domain::GateTree, b"resolution source");
+    let document = serde_json::json!({
+        "version": RESOLUTION_REPORT_VERSION,
+        "source": source,
+        "packaged": {
+            "coverage": "exhaustive",
+            "policy": [],
+            "tests": [],
+        },
+    });
+
+    let error = ResolutionReport::decode(
+        &serde_json::to_vec(&document).expect("encode retired exhaustive resolution"),
+    )
+    .expect_err("retired exhaustive resolution arm refuses");
+    assert!(error.contains("unknown variant"), "{error}");
+}
+
+#[test]
 fn composite_report_refuses_an_empty_battery_or_mismatched_source() {
     let source = Digest::compute(wire::Domain::GateTree, b"empty battery");
     let empty = serde_json::json!({
@@ -421,6 +441,24 @@ fn composite_report_refuses_an_empty_battery_or_mismatched_source() {
             .expect_err("mismatched configured source must refuse")
             .contains("different staged source")
     );
+}
+
+#[test]
+fn pre_commit_report_rejects_the_retired_full_verifier_cache_arm() {
+    let source = Digest::compute(wire::Domain::GateTree, b"pre-commit source");
+    let legacy = serde_json::json!({
+        "version": PRE_COMMIT_REPORT_VERSION,
+        "source": source,
+        "full_verifier": {
+            "evidence": Digest::compute(wire::Domain::GateReceipt, b"legacy evidence"),
+            "battery": Digest::compute(wire::Domain::GateBatteryReceipt, b"legacy battery"),
+            "selection": {},
+        },
+    });
+
+    let error = Report::decode(&serde_json::to_vec(&legacy).expect("encode legacy report"))
+        .expect_err("retired full-verifier cache arm refuses");
+    assert!(error.contains("unknown field"), "{error}");
 }
 
 #[cfg(unix)]

@@ -33,9 +33,8 @@ const RESOLUTION_SELECTION_WORKER_ARGUMENT: &str = "__gate-resolution-selection-
 const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
-// The measured exhaustive self-authority path needs more than 150 seconds on
-// this host. Preserve every five-second cleanup phase and one second of outer
-// envelope slack while admitting that fail-closed path.
+// Preserve every five-second cleanup phase and one second of outer envelope
+// slack around the bounded selected and configured work.
 const WORK_RUNTIME: Duration = Duration::from_secs(164);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
@@ -92,8 +91,8 @@ impl WorkerPhase {
     }
 }
 
-const PRE_COMMIT_REPORT_VERSION: u64 = 2;
-const RESOLUTION_REPORT_VERSION: u64 = 2;
+const PRE_COMMIT_REPORT_VERSION: u64 = 3;
+const RESOLUTION_REPORT_VERSION: u64 = 3;
 
 /// One complete packaged-plus-configured pre-commit battery result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -104,8 +103,6 @@ pub(crate) struct Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     packaged: Option<spice::change_gate::ChangeGateReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    full_verifier: Option<FullVerifierReport>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     configured: Option<configured::ConfiguredReport>,
 }
 
@@ -113,14 +110,12 @@ impl Report {
     fn new(
         source: Digest,
         packaged: Option<spice::change_gate::ChangeGateReport>,
-        full_verifier: Option<FullVerifierReport>,
         configured: Option<configured::ConfiguredReport>,
     ) -> Result<Self, String> {
         let report = Self {
             version: PRE_COMMIT_REPORT_VERSION,
             source,
             packaged,
-            full_verifier,
             configured,
         };
         report.validate()?;
@@ -152,11 +147,8 @@ impl Report {
                 self.version,
             ));
         }
-        if self.packaged.is_none() && self.full_verifier.is_none() && self.configured.is_none() {
+        if self.packaged.is_none() && self.configured.is_none() {
             return Err("pre-commit report carries an empty effective battery".to_owned());
-        }
-        if self.packaged.is_some() && self.full_verifier.is_some() {
-            return Err("pre-commit report carries duplicate packaged gate evidence".to_owned());
         }
         if self
             .packaged
@@ -164,15 +156,6 @@ impl Report {
             .is_some_and(|report| report.selection().source() != &self.source)
         {
             return Err("packaged pre-commit report names a different staged source".to_owned());
-        }
-        if self
-            .full_verifier
-            .as_ref()
-            .is_some_and(|report| report.selection.source() != &self.source)
-        {
-            return Err(
-                "full-verifier pre-commit report names a different staged source".to_owned(),
-            );
         }
         if self
             .configured
@@ -195,54 +178,16 @@ impl Report {
     }
 }
 
-/// Compact hook evidence for one independently re-admitted full-verifier bundle.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct FullVerifierReport {
-    evidence: Digest,
-    battery: Digest,
-    selection: gate::ChangeSelectionReport,
-}
-
-impl FullVerifierReport {
-    fn new(
-        admitted: &spice::gate::AdmittedFullVerifierEvidence,
-        changes: &[String],
-    ) -> Result<Self, String> {
-        let selection = gate::select_current_source_change_gates_with_full_verifier(
-            admitted.source().clone(),
-            changes,
-        )
-        .map_err(|error| error.to_string())?;
-        Ok(Self {
-            evidence: admitted.digest().clone(),
-            battery: admitted.battery().digest(),
-            selection,
-        })
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case", tag = "coverage")]
 enum ResolutionPackagedReport {
     Selected { report: Vec<u8> },
-    Exhaustive { policy: Vec<u8>, tests: Vec<u8> },
 }
 
 impl ResolutionPackagedReport {
     fn selected(report: &spice::change_gate::ChangeGateReport) -> Result<Self, String> {
         Ok(Self::Selected {
             report: report.encode().map_err(|error| error.to_string())?,
-        })
-    }
-
-    fn exhaustive(report: &spice::change_gate::ExhaustiveChangeGateReport) -> Result<Self, String> {
-        Ok(Self::Exhaustive {
-            policy: report
-                .policy()
-                .encode()
-                .map_err(|error| error.to_string())?,
-            tests: report.tests().encode().map_err(|error| error.to_string())?,
         })
     }
 
@@ -258,18 +203,6 @@ impl ResolutionPackagedReport {
                 }
                 Ok(report.admits())
             }
-            Self::Exhaustive { policy, tests } => {
-                let policy =
-                    gate::BatteryReport::decode(policy).map_err(|error| error.to_string())?;
-                let tests =
-                    gate::TestSelectionReport::decode(tests).map_err(|error| error.to_string())?;
-                if policy.context().source() != source || tests.source() != source {
-                    return Err(
-                        "resolution packaged evidence names a different staged source".to_owned(),
-                    );
-                }
-                Ok(policy.admits() && tests.admits())
-            }
         }
     }
 
@@ -280,10 +213,6 @@ impl ResolutionPackagedReport {
                     |error| format!("invalid selected resolution evidence: {error}"),
                     |report| report.refusal_fold(),
                 ),
-            Self::Exhaustive { policy, .. } => gate::BatteryReport::decode(policy).map_or_else(
-                |error| format!("invalid exhaustive policy evidence: {error}"),
-                |report| report.refusal_fold().to_string(),
-            ),
         }
     }
 }
@@ -519,7 +448,7 @@ pub(super) fn run() -> Outcome<Report> {
     run_with(|files| supervise(files, &generation))
 }
 
-/// Run the exhaustive evidence worker for one allocator-owned merge resolution.
+/// Run selected evidence for one allocator-owned merge resolution.
 #[expect(
     clippy::disallowed_methods,
     reason = "the resolution binary rim rejects configured-command recursion before supervision"
@@ -706,22 +635,10 @@ fn resolution_selection_worker() -> Outcome<()> {
         env::remove_var(configured::PATHS_VARIABLE);
     }
     let mut progress = Vec::new();
-    let result = match spice::change_gate::run_resolution(&mut progress) {
-        Ok(report) => Ok(ResolutionSelectionEvidence::Selected(report)),
-        Err(error) if error.reason() == "gate::change-selection-refused" => {
-            let _ = writeln!(
-                progress,
-                "[change-gate-resolution] disposition=fresh-exhaustive detail={:?}",
-                error.detail(),
-            );
-            spice::change_gate::run_exhaustive(&mut progress)
-                .map(ResolutionSelectionEvidence::Exhaustive)
-        }
-        Err(error) => Err(error),
-    };
+    let result = spice::change_gate::run_resolution(&mut progress);
     match result {
         Ok(report)
-            if report.source().to_string() == expected_source
+            if report.selection().source().to_string() == expected_source
                 && report.tests().changed_sources() == expected_paths
                 && report.admits() =>
         {
@@ -731,14 +648,14 @@ fn resolution_selection_worker() -> Outcome<()> {
             })
         }
         Ok(report)
-            if report.source().to_string() != expected_source
+            if report.selection().source().to_string() != expected_source
                 || report.tests().changed_sources() != expected_paths =>
         {
             Outcome::Refusal(Refusal::evidence(
                 "gate::resolution-configured-source-moved",
                 format!(
                     "expected_source={expected_source}; observed_source={}; expected_paths={expected_paths:?}; observed_paths={:?}",
-                    report.source(),
+                    report.selection().source(),
                     report.tests().changed_sources(),
                 ),
                 "retry task completion after the staged source and path set stop moving",
@@ -749,7 +666,7 @@ fn resolution_selection_worker() -> Outcome<()> {
             Outcome::Refusal(Refusal::evidence(
                 "gate::resolution-configured-regressed",
                 String::from_utf8_lossy(&progress).into_owned(),
-                "repair the exhaustive source finding, then retry task completion",
+                "repair the selected source finding, then retry task completion",
             ))
         }
         Err(error) if error.is_fault() => Outcome::Fault(Fault {
@@ -760,43 +677,8 @@ fn resolution_selection_worker() -> Outcome<()> {
         Err(error) => Outcome::Refusal(Refusal::evidence(
             error.reason(),
             error.detail(),
-            "repair the exhaustive source finding, then retry task completion",
+            "repair the selected source finding, then retry task completion",
         )),
-    }
-}
-
-enum ResolutionSelectionEvidence {
-    Selected(spice::change_gate::ChangeGateReport),
-    Exhaustive(spice::change_gate::ExhaustiveChangeGateReport),
-}
-
-impl ResolutionSelectionEvidence {
-    fn source(&self) -> &Digest {
-        match self {
-            Self::Selected(report) => report.selection().source(),
-            Self::Exhaustive(report) => report.source(),
-        }
-    }
-
-    fn tests(&self) -> &gate::TestSelectionReport {
-        match self {
-            Self::Selected(report) => report.tests(),
-            Self::Exhaustive(report) => report.tests(),
-        }
-    }
-
-    fn admits(&self) -> bool {
-        match self {
-            Self::Selected(report) => report.admits(),
-            Self::Exhaustive(report) => report.admits(),
-        }
-    }
-
-    fn refusal_fold(&self) -> String {
-        match self {
-            Self::Selected(report) => report.refusal_fold(),
-            Self::Exhaustive(report) => report.refusal_fold(),
-        }
     }
 }
 

@@ -49,43 +49,13 @@ pub(super) fn run_selected_tests(
 ) -> Result<TestSelectionReport, ChangeGateError> {
     let cargo_selected = match execution {
         TestExecution::CurrentSourceCargo => {
-            gate::cargo_workspace_tests_applicable(run.selected_root, run.changes, false)
+            gate::cargo_workspace_tests_applicable(run.selected_root, run.changes)
         }
         TestExecution::Packaged(engines) => {
             engines.contains(&crate::config::TestEngine::CargoWorkspace)
-                && gate::cargo_workspace_tests_applicable(run.selected_root, run.changes, false)
+                && gate::cargo_workspace_tests_applicable(run.selected_root, run.changes)
         }
     };
-    if !cargo_selected {
-        return TestSelectionReport::complete_without_engines(run.source, run.changes.to_vec())
-            .map_err(|error| ChangeGateError::protocol("test-selection-invalid", error));
-    }
-
-    let environment = run.budget.bind_test_environment(run.environment)?;
-    let budget = WorkspaceTestBudget::new(
-        run.budget.test_concurrency(),
-        run.budget.shard_jobs(),
-        run.budget.test_threads(),
-    )
-    .map_err(|error| ChangeGateError::refusal("change-gate-tests-refused", error))?;
-    gate::run_selected_workspace_tests_with_budget_at(
-        run.roots,
-        run.source,
-        run.changes,
-        environment,
-        budget,
-        progress,
-    )
-    .map_err(|error| ChangeGateError::refusal("change-gate-tests-refused", error))
-}
-
-pub(super) fn run_resolution_tests(
-    run: TestRun<'_>,
-    engines: Vec<crate::config::TestEngine>,
-    progress: &mut impl Write,
-) -> Result<TestSelectionReport, ChangeGateError> {
-    let cargo_selected = engines.contains(&crate::config::TestEngine::CargoWorkspace)
-        && gate::cargo_workspace_tests_applicable(run.selected_root, run.changes, true);
     if !cargo_selected {
         return TestSelectionReport::complete_without_engines(run.source, run.changes.to_vec())
             .map_err(|error| ChangeGateError::protocol("test-selection-invalid", error));
