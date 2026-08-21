@@ -226,7 +226,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["gate"],
         "gate [--at REV]",
         Local,
-        None,
+        Inspect,
         [],
         [Daemonless, Toolful],
         GATE_POLICY_TOOLS,

@@ -64,6 +64,44 @@ fn selection_requires_each_strict_tracked_input_before_selected_work() {
     }
 }
 
+#[test]
+fn full_gate_without_verify_claim_refuses_before_gate_tools_launch() {
+    let fixture = Fixture::new();
+    let programs = fixture.root.join("programs");
+    fs::create_dir(&programs).expect("create fixture program directory");
+    let cargo_marker = fixture.root.join("cargo-invoked");
+    executable(
+        &programs.join("cargo"),
+        &format!(
+            "#!/bin/sh\nprintf invoked > '{}'\nexit 91\n",
+            cargo_marker.display(),
+        ),
+    );
+    let path = std::env::join_paths([programs, PathBuf::from("/usr/bin"), PathBuf::from("/bin")])
+        .expect("compose fixture path");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(["--json", "gate"])
+        .current_dir(&fixture.repository)
+        .env("PATH", path)
+        .env_remove(wire::SpiceVariable::Lane.as_str())
+        .output()
+        .expect("run full gate without task authority");
+
+    assert_eq!(output.status.code(), Some(2), "{}", streams(&output));
+    assert!(output.stdout.is_empty(), "{}", streams(&output));
+    let outcome: wire::Outcome<serde_json::Value> =
+        wire::decode(&output.stderr).expect("claim refusal is typed");
+    let wire::Outcome::Refusal(refusal) = outcome else {
+        panic!("full gate did not return a claim refusal: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "gate::verify-claim-refused");
+    assert!(
+        !cargo_marker.exists(),
+        "claim refusal launched a full-gate tool"
+    );
+}
+
 struct Fixture {
     root: PathBuf,
     repository: PathBuf,

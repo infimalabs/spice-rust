@@ -20,6 +20,7 @@ use spice::repository::Repository;
 mod commit_message;
 mod pre_commit;
 mod reference_transaction;
+mod verify_claim;
 
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
@@ -28,9 +29,11 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
         .map_or_else(Selector::staged, |revision| {
             Selector::revision(revision.clone())
         });
-    match spice::gate::run(selector) {
-        Ok(report) => direct(report),
-        Err(error) => battery_failure(error),
+    let admission = verify_claim::admit_current_worktree();
+    match verify_claim::launch_after_admission(admission, || spice::gate::run(selector)) {
+        Ok(Ok(report)) => direct(report),
+        Ok(Err(error)) => battery_failure(error),
+        Err(failure) => failure.outcome(),
     }
 }
 
