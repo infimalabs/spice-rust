@@ -188,6 +188,27 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
 }
 
 #[test]
+fn rust_codex_default_matches_python_spice_and_explicit_selection_still_wins() {
+    assert_eq!(vendor::DEFAULT_CODEX_MODEL, "gpt-5.5");
+    assert_eq!(
+        decode("")
+            .expect("empty policy uses compiled defaults")
+            .vendor()
+            .codex()
+            .model(),
+        "gpt-5.5"
+    );
+    assert_eq!(
+        decode("[vendor.codex]\nmodel = \"operator-selected\"\n")
+            .expect("explicit Codex model is valid")
+            .vendor()
+            .codex()
+            .model(),
+        "operator-selected"
+    );
+}
+
+#[test]
 fn malformed_policy_values_are_refused_under_their_domain_paths() {
     for (document, path) in [
         (
