@@ -823,6 +823,22 @@ fn replaying_the_same_facts_produces_the_same_standing() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn a_committed_suffix_advances_to_the_same_ledger_as_restart_replay() {
+    let snapshot = snapshot_of(&[
+        fact_bytes(1, ROOT, "first publication"),
+        fact_bytes(2, SECOND, "second publication"),
+    ]);
+    let restarted = Ledger::from_snapshot(&snapshot).expect("restart replay");
+    let mut incremental = Ledger::from_facts(&snapshot.facts()[..1]).expect("prefix replay");
+    incremental
+        .advance(&snapshot.facts()[1..])
+        .expect("one committed suffix advances");
+
+    assert_eq!(incremental, restarted);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn replayed_authority_heads_reproduce_the_canonical_ledger() {
     let snapshot = snapshot_of(&[
         fact_bytes(1, ROOT, "first publication"),

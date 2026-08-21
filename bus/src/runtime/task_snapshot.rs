@@ -84,6 +84,38 @@ impl TaskFacts {
         chunks.into_iter().flat_map(<[_]>::iter)
     }
 
+    /// Facts strictly newer than one already admitted cursor.
+    ///
+    /// The walk begins at the newest immutable chunk and stops as soon as a
+    /// chunk ends at or before `cursor`. A consumer that keeps up with commits
+    /// therefore touches only the committed delta, independent of retained
+    /// history.
+    #[must_use]
+    pub fn after(
+        &self,
+        cursor: Option<journal::crossing::Seq>,
+    ) -> impl DoubleEndedIterator<Item = &journal::crossing::Envelope<journal::crossing::AnyFact>>
+    {
+        let mut chunks = Vec::new();
+        let mut tail = self.tail.as_deref();
+        while let Some(chunk) = tail {
+            let newer = chunk
+                .rows
+                .last()
+                .is_some_and(|row| cursor.is_none_or(|cursor| row.seq > cursor));
+            if !newer {
+                break;
+            }
+            chunks.push(chunk.rows.as_ref());
+            tail = chunk.prior.as_deref();
+        }
+        chunks.reverse();
+        chunks
+            .into_iter()
+            .flat_map(<[_]>::iter)
+            .filter(move |row| cursor.is_none_or(|cursor| row.seq > cursor))
+    }
+
     /// Number of decoded facts shared by this snapshot.
     #[must_use]
     pub const fn len(&self) -> usize {

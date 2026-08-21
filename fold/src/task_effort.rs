@@ -39,6 +39,93 @@ const SOURCES: &[Source] = &[
 #[derive(Debug, Default)]
 pub struct TaskEffortReducer;
 
+/// Purpose-built retained inputs for incremental task-effort generations.
+///
+/// This keeps only the fact kinds the reducer actually observes. Advancing it from a
+/// commit delta never copies or replays facts that task effort cannot observe;
+/// a restart reconstructs the same state from durable authority.
+#[derive(Debug, Default)]
+pub struct TaskEffortInputs {
+    facts: Vec<wire::Envelope<wire::AnyFact>>,
+}
+
+impl TaskEffortInputs {
+    /// Retain the task-effort subset of one authoritative snapshot.
+    #[must_use]
+    pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
+        let mut inputs = Self::default();
+        let _ = inputs.advance(snapshot.facts());
+        inputs
+    }
+
+    /// Retain task-effort facts from one ordered authority stream.
+    #[must_use]
+    pub fn from_facts<'a>(
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    ) -> Self {
+        let mut inputs = Self::default();
+        let _ = inputs.advance(facts);
+        inputs
+    }
+
+    /// Apply one ordered committed suffix, ignoring undeclared fact planes.
+    ///
+    /// Returns the number of newly retained reducer inputs.
+    pub fn advance<'a>(
+        &mut self,
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    ) -> usize {
+        let retained = self.facts.len();
+        self.facts.extend(
+            facts
+                .into_iter()
+                .filter(|envelope| effort_fact(envelope.fact.kind()))
+                .cloned(),
+        );
+        self.facts.len() - retained
+    }
+
+    /// Apply one suffix and render it atomically at its new durable barrier.
+    ///
+    /// A numeric refusal rolls the retained inputs back to their prior length,
+    /// so retrying the same committed suffix cannot duplicate evidence.
+    pub fn advance_and_answer<'a>(
+        &mut self,
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+        cursor: Option<Seq>,
+        at: Option<Instant>,
+    ) -> Result<Option<EffortAnswer>, String> {
+        let retained = self.facts.len();
+        if self.advance(facts) == 0 {
+            return Ok(None);
+        }
+        match self.answer(cursor, at) {
+            Ok(answer) => Ok(Some(answer)),
+            Err(error) => {
+                self.facts.truncate(retained);
+                Err(error)
+            }
+        }
+    }
+
+    /// Materialize the exact answer at the supplied durable barrier.
+    pub fn answer(&self, cursor: Option<Seq>, at: Option<Instant>) -> Result<EffortAnswer, String> {
+        derive_inputs(&self.facts, cursor, at)
+    }
+
+    /// Number of retained reducer inputs, excluding unrelated fact planes.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.facts.len()
+    }
+
+    /// Whether no task-effort input has been retained.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.facts.is_empty()
+    }
+}
+
 impl Reducer for TaskEffortReducer {
     fn fold(&self) -> FoldId {
         FoldId::TaskEffort
@@ -57,6 +144,28 @@ impl Reducer for TaskEffortReducer {
         let payload = serde_json::to_value(answer).map_err(|error| error.to_string())?;
         Ok(Reduction::complete(facts, payload))
     }
+}
+
+fn effort_fact(kind: FactKind) -> bool {
+    matches!(
+        kind,
+        FactKind::TaskAdded
+            | FactKind::TaskPhased
+            | FactKind::TaskDone
+            | FactKind::TaskReviewed
+            | FactKind::TaskDeleted
+            | FactKind::ClaimWon
+            | FactKind::ClaimRenewed
+            | FactKind::ClaimCarried
+            | FactKind::ClaimFreed
+            | FactKind::ClaimLapsed
+            | FactKind::LaneSeated
+            | FactKind::LaneArranged
+            | FactKind::LaneSessionDeclared
+            | FactKind::LineageConfigured
+            | FactKind::LineageArranged
+            | FactKind::JournalIngested
+    )
 }
 
 /// Decode one materialization as the task-effort answer its fold owns.
@@ -98,15 +207,26 @@ pub fn select_task_effort(
 }
 
 fn derive(facts: &journal::FactSnapshot) -> Result<EffortAnswer, String> {
+    TaskEffortInputs::from_snapshot(facts).answer(
+        facts.horizon(),
+        facts.facts().last().map(|envelope| envelope.at),
+    )
+}
+
+fn derive_inputs(
+    facts: &[wire::Envelope<wire::AnyFact>],
+    cursor: Option<Seq>,
+    at: Option<Instant>,
+) -> Result<EffortAnswer, String> {
     let evidence = Evidence::collect(facts);
     let mut tasks = BTreeMap::<TaskStamp, TaskState>::new();
     let mut phases = Vec::new();
 
-    for envelope in facts.facts() {
+    for envelope in facts {
         apply_lifecycle(envelope, &mut tasks, &mut phases, &evidence);
     }
 
-    close_remaining(facts, &mut tasks, &mut phases, &evidence);
+    close_remaining(cursor, at, &mut tasks, &mut phases, &evidence);
     phases.sort_by(phase_order);
     let aggregates = aggregate(&phases)?;
     Ok(EffortAnswer { phases, aggregates })
@@ -333,18 +453,14 @@ fn record_claim_carried(
 }
 
 fn close_remaining(
-    facts: &journal::FactSnapshot,
+    cursor: Option<Seq>,
+    at: Option<Instant>,
     tasks: &mut BTreeMap<TaskStamp, TaskState>,
     phases: &mut Vec<EffortPhaseAnswer>,
     evidence: &Evidence,
 ) {
-    let terminal_seq = facts
-        .horizon()
-        .unwrap_or_else(|| Seq::new(1).expect("one is nonzero"));
-    let terminal_at = facts
-        .facts()
-        .last()
-        .map_or_else(epoch, |envelope| envelope.at);
+    let terminal_seq = cursor.unwrap_or_else(|| Seq::new(1).expect("one is nonzero"));
+    let terminal_at = at.unwrap_or_else(epoch);
     for state in tasks.values_mut() {
         if let Some(open) = state.open.take() {
             phases.push(finish(

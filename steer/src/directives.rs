@@ -477,6 +477,136 @@ impl Ledger {
         replay(facts).map(|(ledger, _, _)| ledger)
     }
 
+    /// Advance standing from one ordered suffix of authoritative facts.
+    ///
+    /// Non-steering facts are ignored. This is the incremental counterpart to
+    /// [`Self::from_facts`]: a resident can retain one ledger and apply only
+    /// facts newer than its admitted cursor.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn advance<'a>(
+        &mut self,
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    ) -> Result<(), ReplayError> {
+        for envelope in facts {
+            self.apply_envelope(envelope)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_envelope(
+        &mut self,
+        envelope: &wire::Envelope<wire::AnyFact>,
+    ) -> Result<Option<AppliedSteering>, ReplayError> {
+        let fact = &envelope.fact;
+        let (result, affected, created, missed) = if let Some(body) = fact.read::<SteerSent>() {
+            (
+                self.absorb_recorded(Steering::Sent(&body), Some(envelope.at)),
+                Some(body.directive),
+                true,
+                None,
+            )
+        } else if let Some(body) = fact.read::<TasteReminded>() {
+            (
+                self.absorb_recorded(Steering::Reminded(&body), Some(envelope.at)),
+                Some(body.directive),
+                true,
+                None,
+            )
+        } else if let Some(body) = fact.read::<TasteJudged>() {
+            let affected = match &body.decision {
+                TasteDecision::Confirmed { directive, .. } => Some(*directive),
+                TasteDecision::Cleared => None,
+            };
+            (
+                self.absorb_recorded(Steering::Judged(&body), Some(envelope.at)),
+                affected,
+                affected.is_some(),
+                None,
+            )
+        } else if let Some(body) = fact.read::<SteerEscalated>() {
+            (
+                self.absorb_recorded(Steering::Escalated(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+                None,
+            )
+        } else if let Some(body) = fact.read::<SteerRecovered>() {
+            (
+                self.absorb_recorded(Steering::Recovered(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+                None,
+            )
+        } else if let Some(body) = fact.read::<SteerAcked>() {
+            (
+                self.absorb_recorded(Steering::Acked(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+                None,
+            )
+        } else if let Some(body) = fact.read::<SteerDeclined>() {
+            (
+                self.absorb_recorded(Steering::Declined(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+                None,
+            )
+        } else if let Some(body) = fact.read::<SteerMissed>() {
+            (
+                self.absorb_recorded(Steering::Missed(&body), Some(envelope.at)),
+                None,
+                false,
+                Some(body),
+            )
+        } else if let Some(body) = fact.read::<SteerLapsed>() {
+            let affected = body
+                .key
+                .parse::<Key>()
+                .ok()
+                .and_then(|key| self.directives.get(&key))
+                .map(|directive| directive.directive);
+            (
+                self.absorb_recorded(Steering::Lapsed(&body), Some(envelope.at)),
+                affected,
+                false,
+                None,
+            )
+        } else if let Some(body) = fact.read::<SteerDeadLettered>() {
+            (
+                self.absorb_recorded(Steering::DeadLettered(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+                None,
+            )
+        } else if let Some(body) = fact.read::<SteerCanceled>() {
+            let affected = body
+                .key
+                .parse::<Key>()
+                .ok()
+                .and_then(|key| self.directives.get(&key))
+                .map(|directive| directive.directive);
+            (
+                self.absorb_recorded(Steering::Canceled(&body), Some(envelope.at)),
+                affected,
+                false,
+                None,
+            )
+        } else {
+            return Ok(None);
+        };
+        result.map_err(|error| ReplayError {
+            seq: envelope.seq,
+            kind: fact.kind(),
+            detail: error.to_string(),
+        })?;
+        Ok(Some(AppliedSteering {
+            affected,
+            created,
+            missed,
+        }))
+    }
+
     /// Rebuild the singular bounded steering authority from immutable facts.
     ///
     /// # Errors
@@ -923,6 +1053,13 @@ impl Ledger {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+struct AppliedSteering {
+    affected: Option<CanonicalUuid>,
+    created: bool,
+    missed: Option<SteerMissed>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn replay<'a>(
     facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
 ) -> Result<AuthorityReplay, ReplayError> {
@@ -930,100 +1067,14 @@ fn replay<'a>(
     let mut positions = BTreeMap::new();
     let mut misses = Vec::new();
     for envelope in facts {
-        let fact = &envelope.fact;
-        let (result, affected, created) = if let Some(body) = fact.read::<SteerSent>() {
-            (
-                ledger.absorb_recorded(Steering::Sent(&body), Some(envelope.at)),
-                Some(body.directive),
-                true,
-            )
-        } else if let Some(body) = fact.read::<TasteReminded>() {
-            (
-                ledger.absorb_recorded(Steering::Reminded(&body), Some(envelope.at)),
-                Some(body.directive),
-                true,
-            )
-        } else if let Some(body) = fact.read::<TasteJudged>() {
-            let affected = match &body.decision {
-                TasteDecision::Confirmed { directive, .. } => Some(*directive),
-                TasteDecision::Cleared => None,
-            };
-            (
-                ledger.absorb_recorded(Steering::Judged(&body), Some(envelope.at)),
-                affected,
-                affected.is_some(),
-            )
-        } else if let Some(body) = fact.read::<SteerEscalated>() {
-            (
-                ledger.absorb_recorded(Steering::Escalated(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-            )
-        } else if let Some(body) = fact.read::<SteerRecovered>() {
-            (
-                ledger.absorb_recorded(Steering::Recovered(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-            )
-        } else if let Some(body) = fact.read::<SteerAcked>() {
-            (
-                ledger.absorb_recorded(Steering::Acked(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-            )
-        } else if let Some(body) = fact.read::<SteerDeclined>() {
-            (
-                ledger.absorb_recorded(Steering::Declined(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-            )
-        } else if let Some(body) = fact.read::<SteerMissed>() {
-            misses.push(journal::JournalHead::new(envelope.seq, body.clone()));
-            (
-                ledger.absorb_recorded(Steering::Missed(&body), Some(envelope.at)),
-                None,
-                false,
-            )
-        } else if let Some(body) = fact.read::<SteerLapsed>() {
-            let affected = body
-                .key
-                .parse::<Key>()
-                .ok()
-                .and_then(|key| ledger.directives.get(&key))
-                .map(|directive| directive.directive);
-            (
-                ledger.absorb_recorded(Steering::Lapsed(&body), Some(envelope.at)),
-                affected,
-                false,
-            )
-        } else if let Some(body) = fact.read::<SteerDeadLettered>() {
-            (
-                ledger.absorb_recorded(Steering::DeadLettered(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-            )
-        } else if let Some(body) = fact.read::<SteerCanceled>() {
-            let affected = body
-                .key
-                .parse::<Key>()
-                .ok()
-                .and_then(|key| ledger.directives.get(&key))
-                .map(|directive| directive.directive);
-            (
-                ledger.absorb_recorded(Steering::Canceled(&body), Some(envelope.at)),
-                affected,
-                false,
-            )
-        } else {
+        let Some(applied) = ledger.apply_envelope(envelope)? else {
             continue;
         };
-        result.map_err(|error| ReplayError {
-            seq: envelope.seq,
-            kind: fact.kind(),
-            detail: error.to_string(),
-        })?;
-        if let Some(directive) = affected {
-            if created {
+        if let Some(missed) = applied.missed {
+            misses.push(journal::JournalHead::new(envelope.seq, missed));
+        }
+        if let Some(directive) = applied.affected {
+            if applied.created {
                 positions.insert(
                     directive,
                     AuthorityPosition {

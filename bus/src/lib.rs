@@ -228,6 +228,17 @@ mod runtime {
                 .map_err(BusReadError::Snapshot)
         }
 
+        /// Read the writer-owned incremental task snapshot at one queued barrier.
+        pub fn task_snapshot(&self) -> Result<TaskSnapshot, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Tasks { answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+        }
+
         /// Capture the Canvas cursor and trust heads at one queued barrier.
         pub fn canvas_heads(&self) -> Result<CanvasHeads, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
@@ -416,13 +427,7 @@ mod runtime {
 
         /// Read board facts, task heads, and residency together at one barrier.
         pub fn task_snapshot(&self) -> Result<TaskSnapshot, BusReadError> {
-            let (answer, receiver) = mpsc::sync_channel(1);
-            self.requests
-                .send(Request::Tasks { answer })
-                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
-            receiver
-                .recv()
-                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+            self.reader().task_snapshot()
         }
 
         /// Capture the canvas fact and trust planes at one authority barrier.

@@ -11,6 +11,46 @@ const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116308";
 const REVIEW_CLOSE_OFFSET: u64 = 200;
 
 #[test]
+fn incremental_inputs_reproduce_restart_replay_without_retaining_unrelated_facts() {
+    let mut facts = Facts::new();
+    facts.task();
+    facts.lane();
+    facts.session(occupant_a(), "sonnet", "high");
+    facts.claim(occupant_a(), proven(None));
+    let admitted = facts.rows.len();
+    facts.push(body::TasteCleared {
+        taste: "unrelated".to_owned(),
+        locus: "task-effort-incremental-fixture".to_owned(),
+    });
+    facts.batch(
+        source(),
+        ORIGIN,
+        pos(1, 100),
+        vec![sample(1, 10, 10, 11)],
+        0,
+    );
+    facts.done(proven(Some(pos(1, 100))));
+    let snapshot = facts.snapshot();
+
+    let restarted = derive(&snapshot).expect("restart replay derives");
+    let mut incremental = TaskEffortInputs::from_facts(snapshot.facts()[..admitted].iter());
+    let advanced = incremental
+        .advance_and_answer(
+            snapshot.facts()[admitted..].iter(),
+            snapshot.horizon(),
+            snapshot.facts().last().map(|fact| fact.at),
+        )
+        .expect("committed suffix advances")
+        .expect("the suffix carries task-effort inputs");
+    assert_eq!(advanced, restarted);
+    assert_eq!(
+        incremental.len(),
+        snapshot.facts().len() - 1,
+        "the unrelated taste fact is not retained in reducer inputs"
+    );
+}
+
+#[test]
 fn ordinary_completion_review_and_renewal_share_one_half_open_fold() {
     let mut facts = Facts::new();
     facts.task();

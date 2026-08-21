@@ -88,6 +88,18 @@ impl PendingRequest {
 }
 
 impl Queue {
+    /// Whether one fact kind can alter consent standing.
+    #[must_use]
+    pub const fn observes(kind: FactKind) -> bool {
+        matches!(
+            kind,
+            FactKind::ConsentAsked
+                | FactKind::ConsentQueued
+                | FactKind::ConsentGranted
+                | FactKind::ConsentDenied
+        )
+    }
+
     /// Rebuild consent state from one complete journal snapshot.
     ///
     /// # Errors
@@ -113,15 +125,28 @@ impl Queue {
                 })
                 .collect(),
         };
-        for envelope in snapshot.facts() {
+        queue.advance(snapshot.facts())?;
+        Ok(queue)
+    }
+
+    /// Advance this queue from a contiguous suffix of already validated facts.
+    ///
+    /// Non-consent facts are ignored without decoding. Callers can therefore
+    /// apply one committed delta while retaining all prior request and budget
+    /// state.
+    pub fn advance<'a>(
+        &mut self,
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    ) -> Result<(), QueueError> {
+        for envelope in facts {
             match envelope.fact.kind() {
                 FactKind::ConsentAsked => {
                     let asked = decode::<ConsentAsked>(envelope)?;
-                    queue.ask(asked, envelope.seq, envelope.origin.clone())?;
+                    self.ask(asked, envelope.seq, envelope.origin.clone())?;
                 }
                 FactKind::ConsentQueued => {
                     let queued = decode::<ConsentQueued>(envelope)?;
-                    queue.pend(
+                    self.pend(
                         queued,
                         envelope.seq,
                         envelope.origin.clone(),
@@ -130,16 +155,16 @@ impl Queue {
                 }
                 FactKind::ConsentGranted => {
                     let granted = decode::<ConsentGranted>(envelope)?;
-                    queue.grant(granted, envelope.seq, envelope.cause, &envelope.origin)?;
+                    self.grant(granted, envelope.seq, envelope.cause, &envelope.origin)?;
                 }
                 FactKind::ConsentDenied => {
                     let denied = decode::<ConsentDenied>(envelope)?;
-                    queue.deny(denied, envelope.seq, envelope.cause, &envelope.origin)?;
+                    self.deny(denied, envelope.seq, envelope.cause, &envelope.origin)?;
                 }
                 _ => {}
             }
         }
-        Ok(queue)
+        Ok(())
     }
 
     /// Find one request that is still pending.
@@ -588,6 +613,60 @@ mod tests {
                 .to_string()
                 .contains("terminal cause is not its current request disposition")
         );
+    }
+
+    #[test]
+    fn a_committed_suffix_advances_to_the_same_queue_as_restart_replay() {
+        let policy = Policy::new(Answer::Queue, Vec::new()).expect("queue posture is valid");
+        let request = uuid(1);
+        let lane = uuid(2);
+        let asked = envelope(
+            1,
+            None,
+            "request:one",
+            Fact::new(ConsentAsked {
+                request,
+                lane,
+                operation: "deploy:one".to_owned(),
+            }),
+        );
+        let queued = envelope(
+            2,
+            Some(1),
+            "request:one",
+            Fact::new(ConsentQueued {
+                request,
+                lane,
+                rule: "posture".to_owned(),
+                cause: ConsentQueueCause::Policy {},
+            }),
+        );
+        let granted = envelope(
+            3,
+            Some(2),
+            "request:one",
+            Fact::new(ConsentGranted {
+                request,
+                lane,
+                rule: "operator".to_owned(),
+                budget: None,
+            }),
+        );
+        let restarted = Queue::from_snapshot(
+            &FactSnapshot::from_facts(vec![asked.clone(), queued.clone(), granted.clone()])
+                .expect("restart fixture is contiguous"),
+            &policy,
+        )
+        .expect("restart queue replays");
+        let mut incremental = Queue::from_snapshot(
+            &FactSnapshot::from_facts(vec![asked, queued]).expect("prefix is contiguous"),
+            &policy,
+        )
+        .expect("prefix queue replays");
+        incremental
+            .advance([&granted])
+            .expect("one committed suffix advances");
+        assert_eq!(incremental, restarted);
     }
 
     fn envelope<B: wire::Body + serde::Serialize>(

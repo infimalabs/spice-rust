@@ -20,6 +20,9 @@ use super::lane_surface;
 use super::shutdown::{current_residency, guard_residency};
 use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_fault, write};
 
+mod materialization;
+use materialization::Projection;
+
 const NORMAL_READY: usize = 2;
 const STARVATION_SECONDS: i64 = 180;
 const SETTLE_SECONDS: i64 = 3;
@@ -81,7 +84,7 @@ enum Attempted {
 pub(super) struct Runtime {
     retry: BTreeMap<CanonicalUuid, Instant>,
     holds: Holds,
-    hold_cursor: Option<Seq>,
+    projection: Projection,
 }
 
 /// The one future event the timer runtime must arm after reconciliation.
@@ -103,7 +106,7 @@ impl Runtime {
         Self {
             retry: BTreeMap::new(),
             holds: Holds::new(config.deaths()),
-            hold_cursor: None,
+            projection: Projection::new(),
         }
     }
 
@@ -129,14 +132,9 @@ impl Runtime {
         let snapshot = bus
             .task_snapshot()
             .map_err(|error| store_fault("lifecycle::snapshot-unreadable", &error.to_string()))?;
-        self.synchronize_holds(&snapshot)?;
-        snapshot.cursor().ok_or_else(|| {
-            store_fault(
-                "lifecycle::snapshot-empty",
-                "a running resident has no durable lifecycle snapshot cursor",
-            )
-        })?;
-        let targets = project_targets(&snapshot, &config.projects, now, &self.holds)?;
+        self.synchronize_holds(&snapshot, self.projection.cursor())?;
+        self.projection.advance(&snapshot, &config.projects)?;
+        let targets = project_targets(&snapshot, &self.projection, now, &self.holds)?;
         let task = match resolve(&targets, &self.retry, now) {
             Resolution::Idle => None,
             Resolution::Wait {
@@ -336,12 +334,12 @@ impl Runtime {
         }
     }
 
-    fn synchronize_holds(&mut self, snapshot: &bus::TaskSnapshot) -> CommandResult<()> {
-        for envelope in snapshot
-            .facts()
-            .iter()
-            .filter(|envelope| self.hold_cursor.is_none_or(|cursor| envelope.seq > cursor))
-        {
+    fn synchronize_holds(
+        &mut self,
+        snapshot: &bus::TaskSnapshot,
+        cursor: Option<Seq>,
+    ) -> CommandResult<()> {
+        for envelope in snapshot.facts().after(cursor) {
             match envelope.fact.kind() {
                 wire::FactKind::LaneHeld => {
                     let held = fact_body::<wire::body::LaneHeld>(envelope)?;
@@ -354,7 +352,6 @@ impl Runtime {
                 _ => {}
             }
         }
-        self.hold_cursor = snapshot.cursor();
         Ok(())
     }
 
@@ -485,7 +482,7 @@ fn pending_start_failure_is_terminal(failure: &Outcome<()>) -> bool {
 
 fn project_targets(
     snapshot: &bus::TaskSnapshot,
-    projects: &board::ProjectPolicy,
+    projection: &Projection,
     now: Instant,
     holds: &Holds,
 ) -> CommandResult<Vec<Target>> {
@@ -500,38 +497,12 @@ fn project_targets(
     }) {
         return Ok(Vec::new());
     }
-    let entries = snapshot
-        .tasks()
-        .iter()
-        .map(|heads| {
-            Entry::new(
-                heads.statement().body().clone(),
-                heads.workflow().body().clone(),
-                heads.claim().map(|head| head.body().clone()),
-                heads.lease().map(|head| head.body().clone()),
-                projects,
-            )
-            .map_err(|error| {
-                store_fault(
-                    "lifecycle::task-head-invalid",
-                    &format!(
-                        "task {} current heads are invalid: {error}",
-                        heads.statement().body().born
-                    ),
-                )
-            })
-        })
-        .collect::<CommandResult<Vec<_>>>()?;
-    let mut projected_residency = residency.body().clone();
-    board::project_subscription_history(
-        &mut projected_residency,
-        &entries,
-        snapshot.facts().iter(),
-    )
-    .map_err(|error| store_fault("lifecycle::subscription-history-invalid", &error))?;
-    let ledger = steer::Ledger::from_facts(snapshot.facts().iter())
-        .map_err(|error| store_fault("lifecycle::steering-invalid", &error.to_string()))?;
-    let ready_at = ready_instants(snapshot, &entries)?;
+    let entries = projection.entries();
+    let projected_residency = projection
+        .project_residency(residency.body())
+        .map_err(|error| store_fault("lifecycle::subscription-history-invalid", &error))?;
+    let ledger = projection.ledger();
+    let ready_at = projection.ready_at();
     let mut rows = projected_residency.lanes.iter().collect::<Vec<_>>();
     rows.sort_by_key(|row| row.lane);
     let mut targets = Vec::new();
@@ -583,7 +554,7 @@ fn project_targets(
         }
         let available = match subscription {
             Some(subscription) => {
-                available_deadline(&entries, &ready_at, &Actor::Lane(row.lane), subscription)?
+                available_deadline(entries, ready_at, &Actor::Lane(row.lane), subscription)?
             }
             None => Available::None,
         };
@@ -619,60 +590,6 @@ fn fact_body<T: serde::de::DeserializeOwned>(
     let bytes = wire::encode(envelope.fact.body())
         .map_err(|error| store_fault("lifecycle::fact-invalid", &error.to_string()))?;
     wire::decode(&bytes).map_err(|error| store_fault("lifecycle::fact-invalid", &error.to_string()))
-}
-
-fn ready_instants(
-    snapshot: &bus::TaskSnapshot,
-    entries: &[Entry],
-) -> CommandResult<BTreeMap<TaskStamp, Instant>> {
-    let heads = snapshot
-        .tasks()
-        .iter()
-        .map(|heads| (heads.statement().body().born.clone(), heads))
-        .collect::<BTreeMap<_, _>>();
-    let facts = snapshot
-        .facts()
-        .iter()
-        .map(|fact| (fact.seq, fact.at))
-        .collect::<BTreeMap<_, _>>();
-    entries
-        .iter()
-        .map(|entry| {
-            let task = entry.born();
-            let task_heads = heads.get(task).ok_or_else(|| {
-                store_fault(
-                    "lifecycle::task-head-missing",
-                    &format!("validated task {task} has no storage heads"),
-                )
-            })?;
-            let mut transition = task_heads.workflow().position();
-            if entry
-                .claim()
-                .is_some_and(|claim| claim.disposition != ClaimDisposition::Active)
-                && let Some(claim) = task_heads.claim()
-            {
-                transition = transition.max(claim.position());
-            }
-            for dependency in &entry.statement().dependencies {
-                let dependency = heads.get(dependency).ok_or_else(|| {
-                    store_fault(
-                        "lifecycle::dependency-head-missing",
-                        &format!("task {task} dependency {dependency} has no storage heads"),
-                    )
-                })?;
-                transition = transition.max(dependency.workflow().position());
-            }
-            let at = facts.get(&transition).copied().ok_or_else(|| {
-                store_fault(
-                    "lifecycle::ready-fact-missing",
-                    &format!(
-                        "task {task} READY transition head {transition} has no fact at the snapshot barrier"
-                    ),
-                )
-            })?;
-            Ok((task.clone(), at))
-        })
-        .collect()
 }
 
 fn available_deadline(
