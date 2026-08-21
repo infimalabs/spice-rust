@@ -57,7 +57,7 @@ fn exact_and_exhaustive_check_reach_qualify_only_required_package_features() {
         exact.cargo_check_arguments(),
         vec![
             vec![
-                "check",
+                "test",
                 "--locked",
                 "--package",
                 "fixture-a",
@@ -65,6 +65,7 @@ fn exact_and_exhaustive_check_reach_qualify_only_required_package_features() {
                 "guarded",
                 "--features",
                 "fixture-a/guarded",
+                "--no-run",
             ]
             .into_iter()
             .map(str::to_owned)
@@ -87,21 +88,54 @@ fn exact_and_exhaustive_check_reach_qualify_only_required_package_features() {
     };
     assert_eq!(
         exhaustive.cargo_check_arguments(),
-        vec![
-            vec![
-                "check",
+        [
+            [
+                "test",
                 "--locked",
-                "--all-targets",
                 "--package",
                 "fixture-a",
+                "--lib",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            [
+                "test",
+                "--locked",
+                "--package",
+                "fixture-a",
+                "--test",
+                "guarded",
+                "--features",
+                "fixture-a/guarded",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            [
+                "test",
+                "--locked",
+                "--package",
+                "fixture-a",
+                "--test",
+                "unrelated",
+                "--features",
+                "fixture-a/unrelated",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            [
+                "test",
+                "--locked",
                 "--package",
                 "fixture-b",
-                "--features",
-                "fixture-a/guarded,fixture-a/unrelated",
+                "--bin",
+                "fixture-b",
+                "--no-run",
             ]
-            .into_iter()
             .map(str::to_owned)
-            .collect::<Vec<_>>()
+            .to_vec(),
         ]
     );
 }

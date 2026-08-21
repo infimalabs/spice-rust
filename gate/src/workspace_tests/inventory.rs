@@ -6,59 +6,66 @@ pub(crate) struct WorkspacePackageReach {
     pub(super) roots: Vec<PathBuf>,
 }
 
+/// One package-and-target-addressed native Rust compilation unit.
+pub(crate) struct RustCheckUnit {
+    identity: String,
+    arguments: Vec<String>,
+}
+
+impl RustCheckUnit {
+    /// Stable package-qualified target identity selected from Cargo metadata.
+    pub(crate) fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// Direct Cargo arguments that execute this unit without repository selection.
+    pub(crate) fn arguments(&self) -> &[String] {
+        &self.arguments
+    }
+}
+
 impl WorkspacePackageReach {
-    pub(crate) fn cargo_check_arguments(&self) -> Vec<Vec<String>> {
-        let mut invocations = Vec::new();
-        let all_targets = self
-            .checks
-            .iter()
-            .filter(|check| check.all_targets)
-            .collect::<Vec<_>>();
-        if !all_targets.is_empty() {
-            let mut arguments = vec![
-                "check".to_owned(),
-                "--locked".to_owned(),
-                "--all-targets".to_owned(),
-            ];
-            for check in &all_targets {
-                arguments.extend(["--package".to_owned(), check.name.clone()]);
-            }
-            if let Some(features) =
-                qualified_required_features(all_targets.iter().flat_map(|check| {
-                    check
-                        .required_features
-                        .iter()
-                        .map(|feature| (check.name.as_str(), feature.as_str()))
-                }))
-            {
-                arguments.extend(["--features".to_owned(), features]);
-            }
-            invocations.push(arguments);
-        }
-        for check in self.checks.iter().filter(|check| !check.all_targets) {
-            let mut arguments = vec![
-                "check".to_owned(),
-                "--locked".to_owned(),
-                "--package".to_owned(),
-                check.name.clone(),
-            ];
+    pub(crate) fn cargo_check_units(&self) -> Vec<RustCheckUnit> {
+        let mut units = Vec::new();
+        for check in &self.checks {
             for target in &check.targets {
+                let subcommand = if target.test_harness { "test" } else { "check" };
+                let mut arguments = vec![
+                    subcommand.to_owned(),
+                    "--locked".to_owned(),
+                    "--package".to_owned(),
+                    check.name.clone(),
+                ];
                 arguments.push(target.flag.to_owned());
                 if let Some(name) = &target.name {
                     arguments.push(name.clone());
                 }
+                if let Some(features) = qualified_required_features(
+                    target
+                        .required_features
+                        .iter()
+                        .map(|feature| (check.name.as_str(), feature.as_str())),
+                ) {
+                    arguments.extend(["--features".to_owned(), features]);
+                }
+                if target.test_harness {
+                    arguments.push("--no-run".to_owned());
+                }
+                units.push(RustCheckUnit {
+                    identity: format!("{}::{}", check.name, target.identity),
+                    arguments,
+                });
             }
-            if let Some(features) = qualified_required_features(
-                check
-                    .required_features
-                    .iter()
-                    .map(|feature| (check.name.as_str(), feature.as_str())),
-            ) {
-                arguments.extend(["--features".to_owned(), features]);
-            }
-            invocations.push(arguments);
         }
-        invocations
+        units
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cargo_check_arguments(&self) -> Vec<Vec<String>> {
+        self.cargo_check_units()
+            .into_iter()
+            .map(|unit| unit.arguments)
+            .collect()
     }
 
     pub(crate) fn reaches_root(&self, root: &Path) -> bool {
@@ -85,16 +92,16 @@ pub(crate) fn workspace_package_reach_at(
 pub(super) struct CargoCheckSelection {
     pub(super) name: String,
     pub(super) root: PathBuf,
-    pub(super) all_targets: bool,
     pub(super) targets: Vec<CargoTargetSelection>,
-    pub(super) required_features: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct CargoTargetSelection {
+    pub(super) identity: String,
     pub(super) flag: &'static str,
     pub(super) name: Option<String>,
     pub(super) required_features: Vec<String>,
+    pub(super) test_harness: bool,
 }
 
 pub(super) fn qualified_required_features<'a>(
@@ -271,9 +278,19 @@ impl Inventory {
                 "selected test inventory drifted: expected {selected:?}, observed {observed:?}"
             )));
         }
+        let selected_packages = packages
+            .iter()
+            .map(|package| package.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let binary_outputs = self
+            .binary_outputs
+            .iter()
+            .filter(|binary| selected_packages.contains(binary.package_id.as_str()))
+            .cloned()
+            .collect();
         Ok(Self {
             packages,
-            binary_outputs: self.binary_outputs.clone(),
+            binary_outputs,
             target_directory: self.target_directory.clone(),
             build_directory: self.build_directory.clone(),
         })

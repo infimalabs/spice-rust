@@ -85,15 +85,25 @@ fn rust_typecheck_with_workspace(
                 &environment,
                 OsStr::new(cargo),
             );
-            match reach.map(|reach| reach.cargo_check_arguments()) {
-                Ok(invocations) if !invocations.is_empty() => {
+            match reach.map(|reach| reach.cargo_check_units()) {
+                Ok(units) if !units.is_empty() => {
                     let mut elapsed = Duration::ZERO;
                     let mut observed = false;
                     let mut refusal = None;
-                    for owned in invocations {
-                        let arguments = owned.iter().map(String::as_str).collect::<Vec<_>>();
+                    let unit_count = units.len();
+                    let unit_identities = units
+                        .iter()
+                        .map(|unit| unit.identity())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    for unit in units {
+                        let arguments = unit
+                            .arguments()
+                            .iter()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>();
                         let invocation = CompileInvocation {
-                            name: "cargo native check",
+                            name: "package-and-target-addressed cargo native unit",
                             program: cargo,
                             arguments: &arguments,
                             cwd: &workspace.source,
@@ -125,8 +135,8 @@ fn rust_typecheck_with_workspace(
                         Analysis::terminal(
                             ArmOutcome::Passed,
                             format!(
-                                "{} completed its declared native analysis",
-                                declaration.id.as_str()
+                                "{} completed {unit_count} package-and-target-addressed native unit(s): [{unit_identities}]",
+                                declaration.id.as_str(),
                             ),
                         )
                     });
@@ -601,9 +611,9 @@ version = \"0.0.0\"
     /// expression turns that law red, and judging only qualified paths still
     /// misses a bare call exactly like this one.
     ///
-    /// And it sits in a `#[cfg(test)]` body because that is what `--all-targets`
-    /// buys. A plain `cargo check` builds no test target, so the canvas arm
-    /// beside this one would compile this same crate and report nothing.
+    /// And it sits in a `#[cfg(test)]` body because the exact test-enabled unit
+    /// uses `cargo test --no-run`. A plain `cargo check` builds no test body, so
+    /// the canvas arm beside this one would compile this crate and report nothing.
     const PLANTED_REFERENCE: &str = "\
 pub fn caller() -> u32 {
     7
@@ -940,8 +950,8 @@ mod tests {
 
     /// The declared analysis and the compiled one are the same argument vector.
     ///
-    /// `--all-targets` is the only reason this arm reaches a body the canvas arm
-    /// does not, so a deletion here has to fail somewhere that names it.
+    /// Exact `cargo test --no-run` units are how this arm reaches test bodies
+    /// the canvas arm does not, so a deletion here has to fail somewhere that names it.
     #[test]
     fn native_argument_vector_is_exactly_the_declared_analysis() {
         let declared = declaration(GateId::RustTypecheck)
@@ -950,7 +960,7 @@ mod tests {
 
         assert_eq!(
             [format!(
-                "{CARGO} check --locked --package <each reached package> <--all-targets or exact reached target flags> <--features exact package-qualified required features>"
+                "{CARGO} <test for a test-enabled target or check> --locked --package <one reached package> <one exact reached target flag> <--features exact package-qualified required features> <--no-run for a test-enabled target>"
             )],
             declared
         );

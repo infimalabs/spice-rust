@@ -31,15 +31,16 @@ mod source_reach;
 
 use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
+    target_arguments,
 };
 #[cfg(test)]
-use coordinator::{LastTest, isolate_shard_outputs, shard_test_threads, target_arguments};
+use coordinator::{LastTest, isolate_shard_outputs, shard_test_threads};
 pub(crate) use inventory::workspace_package_reach_at;
 use inventory::*;
 use prebuild::*;
-use selection::{CargoReachEscalation, package_inventory, selection_plan};
 #[cfg(test)]
-use selection::{CargoReachEscalationReason, exhaustive_selection_report, selection_report};
+use selection::{exhaustive_selection_report, selection_report};
+use selection::{package_inventory, selection_plan};
 use source_reach::declared_path_sources;
 
 /// Whether the compiled Cargo workspace engine applies to this selected tree.
@@ -428,10 +429,10 @@ fn policy_from_environment(
 /// package; workspace/toolchain and gate-policy authorities reach the complete
 /// workspace because their effect cannot be narrowed further.
 ///
-/// An unclaimed source under one current metadata package stays conservative
-/// within that package. Sources outside every package and incomplete claimed
-/// test reach escalate to every workspace target. A complete report is emitted
-/// only after every selected target succeeds through this coordinator.
+/// Every Rust source must resolve to a declared Cargo target. An unclaimed
+/// source or a source with no proven test-enabled reach refuses before any
+/// compiler or test process starts. A complete report is emitted only after
+/// every selected target succeeds through this coordinator.
 ///
 /// # Errors
 ///
@@ -504,8 +505,7 @@ fn run_selected_at_mode(
         .map_or(roots.selected, crate::RustAnalysisWorkspace::source);
     let environment = selected_run_environment(roots, environment)?;
     let inventory = acquire_selected_inventory(root, &environment, changed_sources, output)?;
-    let (report, escalations) = selected_report(&inventory, root, source, changed_sources, output)?;
-    write_reach_escalations(output, &escalations)?;
+    let report = selected_report(&inventory, root, source, changed_sources, output)?;
     writeln!(
         output,
         "[rust-test-selection] detail=canonical-report sources={} tests={} edges={}",
@@ -557,7 +557,7 @@ fn acquire_selected_inventory(
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
     let metadata_started = Instant::now();
-    let inventory = match acquire_inventory(root, &environment, OsStr::new("cargo")) {
+    let inventory = match acquire_inventory(root, environment, OsStr::new("cargo")) {
         Ok(inventory) => {
             writeln!(
                 output,
@@ -589,7 +589,7 @@ fn selected_report(
     source: wire::Digest,
     changed_sources: &[String],
     output: &mut impl Write,
-) -> Result<(crate::TestSelectionReport, Vec<CargoReachEscalation>), WorkspaceTestError> {
+) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
     writeln!(
         output,
         "[rust-test] stage=selection-start changes={}",
@@ -598,8 +598,8 @@ fn selected_report(
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
     let selection_started = Instant::now();
-    let selected =
-        selection_plan(&inventory, root, source, changed_sources).map(|plan| plan.into_parts());
+    let selected = selection_plan(inventory, root, source, changed_sources)
+        .map(selection::SelectionPlan::into_report);
     let selected = match selected {
         Ok(selected) => selected,
         Err(error) => {
@@ -618,7 +618,7 @@ fn selected_report(
         output,
         "[rust-test] stage=selection-terminal elapsed_ms={} disposition=success tests={}",
         selection_started.elapsed().as_millis(),
-        selected.0.tests().len(),
+        selected.tests().len(),
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
@@ -643,6 +643,7 @@ fn execute_selected_tests(
         roots.reusable.is_some(),
     )?;
     let selected = inventory.selected(tests)?;
+    write_selected_test_units(&selected, output)?;
     let shards = partition_with_target_limit(&selected, SELECTED_TARGETS_PER_SHARD);
     validate_partition_with_target_limit(&selected, &shards, SELECTED_TARGETS_PER_SHARD)?;
     let prebuilt = if shards.len() > 1 {
@@ -690,30 +691,51 @@ fn execute_selected_tests(
     Ok(())
 }
 
-fn write_reach_escalations(
+fn write_selected_test_units(
+    inventory: &Inventory,
     output: &mut impl Write,
-    escalations: &[CargoReachEscalation],
 ) -> Result<(), WorkspaceTestError> {
-    for escalation in escalations {
-        match escalation.reason().package() {
-            Some(package) => writeln!(
-                output,
-                "[rust-test-reach-escalation] source={:?} reason={} package={package:?}",
-                escalation.source(),
-                escalation.reason().kind(),
-            ),
-            None => writeln!(
-                output,
-                "[rust-test-reach-escalation] source={:?} reason={}",
-                escalation.source(),
-                escalation.reason().kind(),
-            ),
+    for package in &inventory.packages {
+        for target in &package.targets {
+            let mut argv = vec![
+                "cargo".to_owned(),
+                "test".to_owned(),
+                "--locked".to_owned(),
+                "--package".to_owned(),
+                package.id.clone(),
+            ];
+            argv.extend(
+                target_arguments(target)?
+                    .into_iter()
+                    .map(|argument| {
+                        argument.into_string().map_err(|argument| {
+                            WorkspaceTestError::new(format!(
+                                "selected test target {:?} rendered non-UTF-8 argument {argument:?}",
+                                target.display(),
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            if let Some(features) = qualified_required_features(
+                target
+                    .required_features
+                    .iter()
+                    .map(|feature| (package.name.as_str(), feature.as_str())),
+            ) {
+                argv.extend(["--features".to_owned(), features]);
+            }
+            let identity = format!("{}::{}", package.name, target.display());
+            let argv = serde_json::to_string(&argv).map_err(|error| {
+                WorkspaceTestError::new(format!(
+                    "selected test unit {identity:?} command could not be encoded: {error}"
+                ))
+            })?;
+            writeln!(output, "[rust-test-unit] identity={identity:?} argv={argv}",)
+                .map_err(output_error)?;
         }
-        .map_err(output_error)?;
     }
-    if !escalations.is_empty() {
-        output.flush().map_err(output_error)?;
-    }
+    output.flush().map_err(output_error)?;
     Ok(())
 }
 

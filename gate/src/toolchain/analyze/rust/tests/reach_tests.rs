@@ -17,8 +17,8 @@ fn native_process_receives_only_explicit_reached_packages() {
     assert_eq!(
         fs::read_to_string(log).expect("read native Cargo arguments"),
         concat!(
-            "check --locked --all-targets --package planted\n",
-            "check --locked --package consumer --lib\n",
+            "test --locked --package consumer --lib --no-run\n",
+            "test --locked --package planted --lib --no-run\n",
         )
     );
 }
@@ -46,7 +46,7 @@ fn native_process_receives_only_the_reached_direct_target() {
     assert_eq!(analysis.outcome, ArmOutcome::Passed);
     assert_eq!(
         fs::read_to_string(log).expect("read targeted Cargo arguments"),
-        "check --locked --package planted --test selected\n"
+        "test --locked --package planted --test selected --no-run\n"
     );
 }
 
@@ -94,8 +94,8 @@ fn native_process_enables_only_the_reached_targets_required_feature() {
     assert_eq!(
         fs::read_to_string(log).expect("read guarded Cargo arguments"),
         concat!(
-            "check --locked --package planted --test guarded ",
-            "--features planted/guarded\n",
+            "test --locked --package planted --test guarded ",
+            "--features planted/guarded --no-run\n",
         ),
     );
 

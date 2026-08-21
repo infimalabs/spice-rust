@@ -38,9 +38,9 @@ const CONFIGURED_BOUNDARY_TEST: &str = concat!(
 mod cross_package_ownership;
 mod environment;
 mod metadata;
+mod ownership_refusal;
 mod partition;
 mod prebuilt;
-mod reach_escalation;
 mod required_features;
 mod selection;
 

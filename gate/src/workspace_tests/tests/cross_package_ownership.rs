@@ -22,12 +22,11 @@ fn path_include_and_conventional_sources_retain_every_cross_package_owner() {
     )
     .expect("shared sources select every owning target and dependent");
 
-    assert!(shared.escalations().is_empty());
     assert_eq!(
         shared.report().tests(),
-        ["nested::lib:nested", "outer::test:bridge"]
+        ["app::lib:app", "nested::lib:nested", "outer::test:bridge"]
     );
-    assert_eq!(shared.report().edges().len(), 4);
+    assert_eq!(shared.report().edges().len(), 6);
     for source in &shared_changes {
         assert_eq!(
             shared
@@ -36,8 +35,8 @@ fn path_include_and_conventional_sources_retain_every_cross_package_owner() {
                 .iter()
                 .filter(|edge| edge.source() == source)
                 .count(),
-            2,
-            "each cross-package source reaches both direct owners"
+            3,
+            "each source reaches both direct owners and the proven dependent"
         );
     }
 
@@ -49,8 +48,10 @@ fn path_include_and_conventional_sources_retain_every_cross_package_owner() {
     )
     .expect("ordinary nested source keeps its exact package reach");
 
-    assert!(ordinary.escalations().is_empty());
-    assert_eq!(ordinary.report().tests(), ["nested::lib:nested"]);
+    assert_eq!(
+        ordinary.report().tests(),
+        ["app::lib:app", "nested::lib:nested"]
+    );
     assert!(
         ordinary
             .report()
@@ -74,21 +75,37 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
     .expect("native reach resolves every cross-package owner");
 
     assert_eq!(
+        reach
+            .cargo_check_units()
+            .iter()
+            .map(|unit| unit.identity())
+            .collect::<Vec<_>>(),
+        ["app::lib:app", "nested::lib:nested", "outer::test:bridge"],
+    );
+    assert_eq!(
         reach.cargo_check_arguments(),
         [
-            ["check", "--locked", "--all-targets", "--package", "nested",]
-                .map(str::to_owned)
-                .to_vec(),
-            ["check", "--locked", "--package", "app", "--lib"]
+            ["test", "--locked", "--package", "app", "--lib", "--no-run"]
                 .map(str::to_owned)
                 .to_vec(),
             [
-                "check",
+                "test",
+                "--locked",
+                "--package",
+                "nested",
+                "--lib",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            [
+                "test",
                 "--locked",
                 "--package",
                 "outer",
                 "--test",
                 "bridge",
+                "--no-run",
             ]
             .map(str::to_owned)
             .to_vec(),
@@ -110,12 +127,19 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
     assert_eq!(
         ordinary.cargo_check_arguments(),
         [
-            ["check", "--locked", "--all-targets", "--package", "nested",]
+            ["test", "--locked", "--package", "app", "--lib", "--no-run"]
                 .map(str::to_owned)
                 .to_vec(),
-            ["check", "--locked", "--package", "app", "--lib"]
-                .map(str::to_owned)
-                .to_vec(),
+            [
+                "test",
+                "--locked",
+                "--package",
+                "nested",
+                "--lib",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
         ]
     );
     assert!(!ordinary.reaches_root(&fixture.root.join("outer")));
@@ -137,8 +161,32 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
         )
     });
 
-    assert_eq!(report.tests(), ["nested::lib:nested", "outer::test:bridge"]);
-    assert!(!String::from_utf8_lossy(&output).contains("reach-escalation"));
+    assert_eq!(
+        report.tests(),
+        ["app::lib:app", "nested::lib:nested", "outer::test:bridge"]
+    );
+    let output = String::from_utf8(output).expect("selected test progress is UTF-8");
+    assert_eq!(
+        output
+            .lines()
+            .filter(|line| line.starts_with("[rust-test-unit]"))
+            .collect::<Vec<_>>(),
+        [
+            concat!(
+                "[rust-test-unit] identity=\"app::lib:app\" ",
+                "argv=[\"cargo\",\"test\",\"--locked\",\"--package\",\"app-id\",\"--lib\"]",
+            ),
+            concat!(
+                "[rust-test-unit] identity=\"nested::lib:nested\" ",
+                "argv=[\"cargo\",\"test\",\"--locked\",\"--package\",\"nested-id\",\"--lib\"]",
+            ),
+            concat!(
+                "[rust-test-unit] identity=\"outer::test:bridge\" ",
+                "argv=[\"cargo\",\"test\",\"--locked\",\"--package\",\"outer-id\",\"--test\",\"bridge\"]",
+            ),
+        ],
+        "each reported selected-test identity publishes one direct command",
+    );
     assert_eq!(
         fs::read_to_string(fixture.root.join("commands.log"))
             .expect("read selected multi-owner commands")
@@ -146,14 +194,14 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
             .collect::<Vec<_>>(),
         [
             "metadata --locked --format-version 1 --no-deps",
-            concat!(
-                "test --locked --package nested-id --package outer-id --all-targets ",
-                "--no-run --message-format=json-render-diagnostics",
-            ),
+            "test --locked --package app-id --lib --no-run --message-format=json-render-diagnostics",
+            "test --locked --package nested-id --lib --no-run --message-format=json-render-diagnostics",
+            "test --locked --package outer-id --test bridge --no-run --message-format=json-render-diagnostics",
             "artifact bridge --test-threads=3",
             "artifact nested --test-threads=3",
+            "artifact app --test-threads=3",
         ],
-        "selected tests prebuild once and launch their exact compiled artifacts"
+        "selected tests compile and launch only their exact target identities"
     );
 }
 
@@ -327,6 +375,15 @@ fn write_metadata(root: &Path) {
 fn write_fake_cargo(programs: &Path) {
     executable(
         programs,
+        "app-test",
+        concat!(
+            "#!/bin/sh\n",
+            "printf 'artifact app %s\\n' \"$*\" >> \"$FIXTURE_ROOT/commands.log\"\n",
+            "printf 'test cross_package::app ... ok\\n'\n",
+        ),
+    );
+    executable(
+        programs,
         "nested-test",
         concat!(
             "#!/bin/sh\n",
@@ -355,20 +412,35 @@ fn write_fake_cargo(programs: &Path) {
             "fi\n",
             "for argument in \"$@\"; do\n",
             "  if [ \"$argument\" = --no-run ]; then\n",
+            "    case \" $* \" in\n",
+            "      *\" --package app-id \"*)\n",
             concat!(
-                "    printf '{\"reason\":\"compiler-artifact\",",
+                "        printf '{\"reason\":\"compiler-artifact\",",
+                "\"package_id\":\"app-id\",",
+                "\"target\":{\"name\":\"app\",\"kind\":[\"lib\"]},",
+                "\"profile\":{\"test\":true},",
+                "\"executable\":\"%s/programs/app-test\"}\\n' \"$FIXTURE_ROOT\"\n",
+            ),
+            "        ;;\n",
+            "      *\" --package nested-id \"*)\n",
+            concat!(
+                "        printf '{\"reason\":\"compiler-artifact\",",
                 "\"package_id\":\"nested-id\",",
                 "\"target\":{\"name\":\"nested\",\"kind\":[\"lib\"]},",
                 "\"profile\":{\"test\":true},",
                 "\"executable\":\"%s/programs/nested-test\"}\\n' \"$FIXTURE_ROOT\"\n",
             ),
+            "        ;;\n",
+            "      *\" --package outer-id \"*)\n",
             concat!(
-                "    printf '{\"reason\":\"compiler-artifact\",",
+                "        printf '{\"reason\":\"compiler-artifact\",",
                 "\"package_id\":\"outer-id\",",
                 "\"target\":{\"name\":\"bridge\",\"kind\":[\"test\"]},",
                 "\"profile\":{\"test\":true},",
                 "\"executable\":\"%s/programs/bridge-test\"}\\n' \"$FIXTURE_ROOT\"\n",
             ),
+            "        ;;\n",
+            "    esac\n",
             "    exit 0\n",
             "  fi\n",
             "done\n",
