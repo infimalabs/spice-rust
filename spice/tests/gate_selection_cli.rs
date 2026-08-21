@@ -57,10 +57,7 @@ fn selection_requires_each_strict_tracked_input_before_selected_work() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("gate::contract-refused"), "{stderr}");
         assert!(stderr.contains(tracked_input), "{stderr}");
-        assert!(
-            stderr.contains("full-verifier admission missed at stage=document"),
-            "{stderr}",
-        );
+        assert!(!stderr.contains("full-verifier"), "{stderr}");
         assert!(
             !cargo_marker.exists(),
             "missing input reached selected work"

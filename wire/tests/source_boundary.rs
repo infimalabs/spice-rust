@@ -258,7 +258,7 @@ fn every_carrier_stored_before_boundaries_still_reads_through_the_registry() {
 }
 
 #[test]
-fn task_completion_retains_one_structured_exact_tree_verifier_citation() {
+fn legacy_task_completion_retains_one_structured_exact_tree_verifier_citation() {
     let mut done = task_done();
     let verifier = body::FullVerifierReceipt {
         tree: wire::Digest::compute(wire::Domain::GateReceipt, b"closing-tree"),

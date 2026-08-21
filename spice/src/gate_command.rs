@@ -119,51 +119,9 @@ pub(crate) fn pre_commit() -> Outcome<pre_commit::Report> {
     pre_commit::run()
 }
 
-/// Run exhaustive evidence for an allocator-authenticated merge resolution.
+/// Run selected evidence for an allocator-authenticated merge resolution.
 pub(crate) fn resolution_evidence(repository: &Repository) -> Outcome<()> {
     pre_commit::run_resolution(repository)
-}
-
-/// Re-admit one complete verifier bundle for the exact task-publication tree.
-pub(crate) fn completion_evidence(
-    repository: &Repository,
-    candidate: &str,
-) -> Result<Option<wire::body::FullVerifierReceipt>, spice::task_git::CompletionEvidenceError> {
-    match spice::gate::requires_full_verifier_completion_evidence(repository, candidate) {
-        Ok(false) => return Ok(None),
-        Ok(true) => {}
-        Err(error) => {
-            return Err(spice::task_git::CompletionEvidenceError::fault(
-                error.reason(),
-                error.detail(),
-            ));
-        }
-    }
-    match spice::gate::inspect_full_verifier_completion_evidence(repository, candidate) {
-        Ok(spice::gate::FullVerifierEvidenceAdmission::Admitted(admitted)) => {
-            Ok(Some(wire::body::FullVerifierReceipt {
-                tree: admitted.source().clone(),
-                evidence: admitted.digest().clone(),
-                battery: admitted.battery().digest(),
-            }))
-        }
-        Ok(spice::gate::FullVerifierEvidenceAdmission::Unavailable(miss)) => {
-            Err(spice::task_git::CompletionEvidenceError::refusal(
-                "gate::full-verifier-completion-unavailable",
-                format!("stage={}: {}", miss.stage().as_str(), miss.detail(),),
-                "run `cargo xtask verify` on this exact current tree, then retry task completion",
-            ))
-        }
-        Err(error) if error.is_fault() => Err(spice::task_git::CompletionEvidenceError::fault(
-            error.reason(),
-            error.detail(),
-        )),
-        Err(error) => Err(spice::task_git::CompletionEvidenceError::refusal(
-            error.reason(),
-            error.detail(),
-            "run `cargo xtask verify` on this exact current tree, then retry task completion",
-        )),
-    }
 }
 
 /// Run the current source repository's strict ordinary change selection.
@@ -174,92 +132,31 @@ pub(crate) fn completion_evidence(
 #[derive(serde::Serialize)]
 #[serde(rename_all = "kebab-case", tag = "evidence")]
 pub(crate) enum CurrentSourceSelectionReport {
-    FullVerifier {
-        source: Digest,
-        bundle: Digest,
-        battery: Digest,
-        selection: gate::ChangeSelectionReport,
-    },
     Focused {
         report: spice::change_gate::ChangeGateReport,
     },
 }
 
 pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
-    let configured_source = match configured_selection_source() {
-        Ok(source) => source,
-        Err(fault) => return Outcome::Fault(fault),
-    };
-    let mut progress = SelectionProgress::new(configured_source.is_some());
-    let repository = match Repository::discover(Path::new(".")) {
-        Ok(repository) => repository,
-        Err(error) => {
-            return Outcome::Fault(Fault {
-                class: FaultClass::Environment,
-                reason: "gate::selection-repository-unresolved".to_owned(),
-                detail: error.to_string(),
-            });
-        }
-    };
-    let admission = configured_source.as_ref().map_or_else(
-        || spice::gate::inspect_full_verifier_evidence(&repository, Selector::staged()),
-        |source| {
-            spice::gate::inspect_full_verifier_evidence_for_source(
-                &repository,
-                Selector::staged(),
-                source,
-            )
-        },
-    );
-    let miss = match admission {
-        Ok(spice::gate::FullVerifierEvidenceAdmission::Admitted(admitted)) => {
-            let selection = match gate::select_current_source_change_gates_with_full_verifier(
-                admitted.source().clone(),
-                admitted.changes(),
-            ) {
-                Ok(selection) => selection,
-                Err(error) => {
-                    return Outcome::Refusal(Refusal::evidence(
-                        "gate::change-selection-refused",
-                        error.to_string(),
-                        "repair the named selection input, then rerun the source gate",
-                    ));
-                }
-            };
-            return direct(CurrentSourceSelectionReport::FullVerifier {
-                source: admitted.source().clone(),
-                bundle: admitted.digest().clone(),
-                battery: admitted.battery().digest(),
-                selection,
-            });
-        }
-        Ok(spice::gate::FullVerifierEvidenceAdmission::Unavailable(miss)) => miss,
-        Err(error) => {
-            return Outcome::Fault(Fault {
-                class: FaultClass::Environment,
-                reason: error.reason().to_owned(),
-                detail: error.detail().to_owned(),
-            });
-        }
-    };
+    let mut progress = SelectionProgress::new(configured_selection_progress());
     match spice::change_gate::run_current_source(&mut progress) {
         Ok(report) if report.admits() => direct(CurrentSourceSelectionReport::Focused { report }),
         Ok(report) => {
             progress.extend_from_slice(report.refusal_fold().as_bytes());
             Outcome::Refusal(Refusal::evidence(
                 "gate::selection-regressed",
-                selection_detail_with_miss(progress.buffered(), "selected gate regressed", &miss),
+                selection_detail(progress.buffered(), "selected gate regressed"),
                 "repair the selected change before committing it",
             ))
         }
         Err(error) if error.is_fault() => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: error.reason().to_owned(),
-            detail: selection_detail_with_miss(progress.buffered(), error.detail(), &miss),
+            detail: selection_detail(progress.buffered(), error.detail()),
         }),
         Err(error) => Outcome::Refusal(Refusal::evidence(
             error.reason(),
-            selection_detail_with_miss(progress.buffered(), error.detail(), &miss),
+            selection_detail(progress.buffered(), error.detail()),
             "repair the named selection input, then rerun the source gate",
         )),
     }
@@ -303,36 +200,10 @@ impl io::Write for SelectionProgress {
 
 #[expect(
     clippy::disallowed_methods,
-    reason = "the configured source-gate leaf reads the staged-source authority injected by its supervising worker"
+    reason = "the configured source-gate leaf detects authority injected by its supervising worker"
 )]
-fn configured_selection_source() -> Result<Option<Digest>, Fault> {
-    let variable = wire::SpiceVariable::PreCommitSource.as_str();
-    let Some(source) = env::var_os(variable) else {
-        return Ok(None);
-    };
-    let source = source.into_string().map_err(|source| Fault {
-        class: FaultClass::Environment,
-        reason: "gate::selection-source-authority-invalid".to_owned(),
-        detail: format!("{variable} is not UTF-8: {source:?}"),
-    })?;
-    source.parse::<Digest>().map(Some).map_err(|error| Fault {
-        class: FaultClass::Environment,
-        reason: "gate::selection-source-authority-invalid".to_owned(),
-        detail: format!("{variable}: {error}"),
-    })
-}
-
-fn selection_detail_with_miss(
-    progress: &[u8],
-    detail: &str,
-    miss: &spice::gate::FullVerifierEvidenceMiss,
-) -> String {
-    let detail = selection_detail(progress, detail);
-    format!(
-        "full-verifier admission missed at stage={}: {}; {detail}",
-        miss.stage().as_str(),
-        miss.detail(),
-    )
+fn configured_selection_progress() -> bool {
+    env::var_os(wire::SpiceVariable::PreCommitSource.as_str()).is_some()
 }
 
 fn selection_detail(progress: &[u8], detail: &str) -> String {

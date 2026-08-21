@@ -86,7 +86,7 @@ fn test_bounds(runtime: Duration) -> ExecutionBounds {
 }
 
 #[test]
-fn only_unscoped_resolution_source_gate_argv_selects_the_private_exhaustive_leaf() {
+fn only_unscoped_resolution_source_gate_argv_selects_the_private_selected_leaf() {
     let current = parsed_commands(&[row(
         "Spice source gate",
         &[
@@ -135,7 +135,7 @@ fn only_unscoped_resolution_source_gate_argv_selects_the_private_exhaustive_leaf
 }
 
 #[test]
-fn full_verifier_proves_only_the_exact_unscoped_source_gate_contract() {
+fn live_progress_selects_only_the_exact_unscoped_source_gate_contract() {
     let commands = parsed_commands(&[
         row(
             "label is not authority",
@@ -191,24 +191,10 @@ fn full_verifier_proves_only_the_exact_unscoped_source_gate_contract() {
         row("unrelated configured command", &["/bin/true"], &[]),
     ]);
 
-    assert!(full_verifier_proves(&commands[0]));
-    assert!(!full_verifier_proves(&commands[1]));
-    assert!(!full_verifier_proves(&commands[2]));
-    assert!(!full_verifier_proves(&commands[3]));
-
-    let mut remaining = commands;
-    assert_eq!(omit_full_verifier_proven(&mut remaining), 1);
-    assert_eq!(
-        remaining
-            .iter()
-            .map(PreCommitStep::label)
-            .collect::<Vec<_>>(),
-        [
-            "different selector",
-            "scoped source gate",
-            "unrelated configured command",
-        ],
-    );
+    assert!(is_source_gate_contract(&commands[0]));
+    assert!(!is_source_gate_contract(&commands[1]));
+    assert!(!is_source_gate_contract(&commands[2]));
+    assert!(!is_source_gate_contract(&commands[3]));
 }
 
 #[test]

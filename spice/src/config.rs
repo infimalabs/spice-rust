@@ -167,15 +167,6 @@ impl Root {
     }
 }
 
-/// Whether repository-local verification should omit install apply guidance.
-///
-/// This query stays beside the typed root so the false-default inventory can
-/// prove that the tracked opt-in has a production consumer.
-#[must_use]
-pub const fn suppress_install_apply_guidance(root: &crate::config::Root) -> bool {
-    root.policy().suppress_install_apply_guidance()
-}
-
 /// Optional resident maxim-adjudication policy.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -318,7 +309,6 @@ impl<'de> Deserialize<'de> for TaskMetadata {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspacePolicy {
     env_names: Vec<String>,
-    suppress_install_apply_guidance: bool,
     pre_commit_builtins: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pre_commit: Vec<PreCommitStep>,
@@ -344,7 +334,6 @@ pub struct WorkspacePolicy {
 struct WorkspacePolicyInput {
     #[serde(deserialize_with = "unique_names")]
     env_names: Vec<String>,
-    suppress_install_apply_guidance: bool,
     pre_commit_builtins: bool,
     pre_commit: Vec<PreCommitStep>,
     #[serde(deserialize_with = "unique_test_engines")]
@@ -367,7 +356,6 @@ impl Default for WorkspacePolicyInput {
     fn default() -> Self {
         Self {
             env_names: Vec::new(),
-            suppress_install_apply_guidance: false,
             pre_commit_builtins: true,
             pre_commit: Vec::new(),
             test_engines: Vec::new(),
@@ -390,7 +378,6 @@ impl From<WorkspacePolicyInput> for WorkspacePolicy {
     fn from(input: WorkspacePolicyInput) -> Self {
         Self {
             env_names: input.env_names,
-            suppress_install_apply_guidance: input.suppress_install_apply_guidance,
             pre_commit_builtins: input.pre_commit_builtins,
             pre_commit: input.pre_commit,
             test_engines: input.test_engines,
@@ -430,13 +417,6 @@ impl WorkspacePolicy {
     #[must_use]
     pub fn env_names(&self) -> &[String] {
         &self.env_names
-    }
-
-    /// Whether this source repository delegates appliance refreshes to its
-    /// automatic publisher instead of asking development agents to apply them.
-    #[must_use]
-    pub const fn suppress_install_apply_guidance(&self) -> bool {
-        self.suppress_install_apply_guidance
     }
 
     /// Whether the installed Spice pre-commit dispatcher runs its packaged battery.

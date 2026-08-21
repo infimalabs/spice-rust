@@ -68,8 +68,9 @@ inventory.
 
 The native default is deliberately broader than the exceptions. The
 interactive app uses `cargo xtask app`; `npm run test:canvas` exercises it in a
-real browser; `cargo xtask verify` runs local validation; and ordinary
-workspace tests use host tooling. None loads, builds, or runs the proof image.
+real browser; package-scoped verification and staged selection run local
+validation; and ordinary workspace tests use host tooling. None loads, builds,
+or runs the proof image.
 On Darwin, `dist/proof-runner/build.sh` also seals and exercises the target
 proof runner natively.
 

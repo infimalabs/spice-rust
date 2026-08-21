@@ -129,12 +129,11 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing, empty);
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().policy().pre_commit_builtins());
-    assert!(!missing.root().policy().suppress_install_apply_guidance());
     assert!(missing.root().policy().pre_commit().is_empty());
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 56);
+    assert_eq!(missing.provenance().len(), 55);
     assert!(
         missing
             .provenance()
@@ -704,7 +703,6 @@ enabled = true
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
-suppress_install_apply_guidance = true
 pre_commit_builtins = true
 pre_commit = [
     { label = "Rust gate", run = ["gate/pre-commit"], scopes = { paths = ["src/**"] } },

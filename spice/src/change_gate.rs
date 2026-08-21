@@ -23,7 +23,7 @@ mod test_execution;
 
 use cargo_budget::CargoBudget;
 use progress::{SharedProgress, publish_test_selection};
-use test_execution::{TestExecution, TestRun, run_resolution_tests, run_selected_tests};
+use test_execution::{TestExecution, TestRun, run_selected_tests};
 
 /// Current combined ordinary-change-gate report schema.
 pub const CHANGE_GATE_REPORT_VERSION: u64 = 4;
@@ -211,45 +211,6 @@ pub struct ChangeGateReport {
     policy: ChangePolicyReport,
 }
 
-/// Exhaustive policy and test evidence for an allocator-owned resolution.
-pub struct ExhaustiveChangeGateReport {
-    source: wire::Digest,
-    tests: TestSelectionReport,
-    policy: gate::BatteryReport,
-}
-
-impl ExhaustiveChangeGateReport {
-    /// Exact immutable staged source shared by policy and tests.
-    #[must_use]
-    pub const fn source(&self) -> &wire::Digest {
-        &self.source
-    }
-
-    /// Complete packaged policy evidence.
-    #[must_use]
-    pub const fn policy(&self) -> &gate::BatteryReport {
-        &self.policy
-    }
-
-    /// Conservatively selected test-engine evidence for every changed source.
-    #[must_use]
-    pub const fn tests(&self) -> &TestSelectionReport {
-        &self.tests
-    }
-
-    /// Whether every exhaustive policy arm and configured test engine admitted.
-    #[must_use]
-    pub fn admits(&self) -> bool {
-        self.policy.admits() && self.tests.admits()
-    }
-
-    /// Bounded policy refusal evidence.
-    #[must_use]
-    pub fn refusal_fold(&self) -> String {
-        self.policy.refusal_fold().to_string()
-    }
-}
-
 impl ChangeGateReport {
     fn new(
         selection: ChangeSelectionReport,
@@ -429,67 +390,6 @@ pub fn run_resolution(
 ) -> Result<ChangeGateReport, ChangeGateError> {
     run_with_selection(progress, SelectionSurface::Resolution)
 }
-
-/// Run every packaged policy arm and every conservatively reached test target.
-///
-/// This is deliberately not an ordinary selector. Its sole caller is the
-/// allocator-authenticated merge-resolution worker, which escalates paths that
-/// ordinary change selection must continue to refuse.
-pub fn run_exhaustive(
-    progress: &mut (impl Write + Send),
-) -> Result<ExhaustiveChangeGateReport, ChangeGateError> {
-    let budget = CargoBudget::detect(gate::WORKSPACE_TEST_CONCURRENCY_CAP);
-    publish_budget(progress, budget, "serial-policy-tests")?;
-    let mut prepared = crate::gate::prepare(Selector::staged()).map_err(ChangeGateError::gate)?;
-    prepared
-        .bind_cargo_jobs(budget.policy_jobs())
-        .map_err(ChangeGateError::gate)?;
-    let source = prepared.source().clone();
-    let selected_root = prepared.root().to_path_buf();
-    let changes = prepared.changes().to_vec();
-    let policy = packaged_policy(&selected_root, prepared.paths())?;
-    let repository = Repository::discover(Path::new(".")).map_err(|error| {
-        ChangeGateError::environment("change-gate-repository-unresolved", error)
-    })?;
-    let environment = ambient_environment().map_err(|error| {
-        ChangeGateError::environment("change-gate-environment-unavailable", error)
-    })?;
-    let writable_root = repository.worktree_root().to_path_buf();
-    let policy_report = prepared.execute(&[]).map_err(ChangeGateError::gate)?;
-    let mut shared_progress = SharedProgress::new(progress);
-    let tests = run_resolution_tests(
-        TestRun::new(
-            &selected_root,
-            &writable_root,
-            source.clone(),
-            &changes,
-            budget,
-            environment,
-        ),
-        policy.test_engines,
-        &mut shared_progress,
-    )?;
-    if policy_report.context().source() != &source || tests.source() != &source {
-        prepared.reject_state().map_err(ChangeGateError::gate)?;
-        return Err(ChangeGateError::refusal(
-            "change-gate-source-moved",
-            "exhaustive policy and tests did not retain one staged source",
-        ));
-    }
-    publish_test_selection(&mut shared_progress, &tests)?;
-    let report = ExhaustiveChangeGateReport {
-        source,
-        tests,
-        policy: policy_report,
-    };
-    if report.admits() {
-        prepared.accept_state().map_err(ChangeGateError::gate)?;
-    } else {
-        prepared.reject_state().map_err(ChangeGateError::gate)?;
-    }
-    Ok(report)
-}
-
 #[derive(Clone, Copy)]
 enum SelectionSurface {
     Packaged,

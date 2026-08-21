@@ -484,34 +484,8 @@ impl Dispatch {
         self.policy.commands.len()
     }
 
-    pub(super) fn omit_full_verifier_proven_configured(&mut self) -> usize {
-        omit_full_verifier_proven(&mut self.policy.commands)
-    }
-
     pub(super) fn source(&self) -> &Digest {
         &self.authority.source
-    }
-
-    pub(super) fn changes(&self) -> &[String] {
-        &self.authority.selected_paths
-    }
-
-    pub(super) fn into_authority(self) -> DispatchAuthority {
-        self.authority
-    }
-
-    pub(super) fn verify_authority(
-        &self,
-        expected: &DispatchAuthority,
-        trigger: &str,
-    ) -> Result<(), ConfiguredFailure> {
-        let Some(movement) = expected.movement(&self.authority) else {
-            return Ok(());
-        };
-        Err(ConfiguredFailure::refusal(
-            "gate::pre-commit-staged-source-moved",
-            format!("trigger={}; {movement}", json(trigger)),
-        ))
     }
 
     pub(super) fn verify(&mut self) -> Result<(), ConfiguredFailure> {
@@ -646,21 +620,6 @@ impl Dispatch {
     }
 }
 
-fn omit_full_verifier_proven(commands: &mut Vec<PreCommitStep>) -> usize {
-    let before = commands.len();
-    commands.retain(|command| !full_verifier_proves(command));
-    before - commands.len()
-}
-
-fn full_verifier_proves(command: &PreCommitStep) -> bool {
-    command.scopes().paths().is_empty()
-        && command
-            .run()
-            .iter()
-            .map(String::as_str)
-            .eq(SOURCE_GATE_ARGV)
-}
-
 pub(super) const fn cleanup_reserve() -> Duration {
     OUTPUT_DRAIN
         .saturating_add(REAP_DEADLINE)
@@ -684,7 +643,7 @@ fn execute_steps_with_progress(
     verify: &mut impl FnMut() -> Result<(), ConfiguredFailure>,
 ) -> Result<ConfiguredReport, ConfiguredFailure> {
     let progress = progress
-        .filter(|_| commands.iter().any(full_verifier_proves))
+        .filter(|_| commands.iter().any(is_source_gate_contract))
         .map(SourceGateProgressObserver::capture)
         .transpose()?;
     let started = Instant::now();
@@ -727,7 +686,7 @@ fn execute_steps_with_progress(
             bounds,
             cancellation.clone(),
         )?;
-        let findings = match spawn_step(spec, full_verifier_proves(command), progress.as_ref()) {
+        let findings = match spawn_step(spec, is_source_gate_contract(command), progress.as_ref()) {
             Ok(running) => match running.wait() {
                 Ok(waited) => classify_wait(&waited),
                 Err(error) => vec![finding(StepFindingKind::Cleanup, error.to_string())],
@@ -827,6 +786,15 @@ fn spawn_step(
     )
     .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
     sill::spawn_observed(spec, observation)
+}
+
+fn is_source_gate_contract(command: &PreCommitStep) -> bool {
+    command.scopes().paths().is_empty()
+        && command
+            .run()
+            .iter()
+            .map(String::as_str)
+            .eq(SOURCE_GATE_ARGV)
 }
 
 fn effective_argv(command: &PreCommitStep, mode: ExecutionMode) -> Vec<String> {

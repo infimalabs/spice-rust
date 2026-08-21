@@ -1,9 +1,8 @@
 # Rust development loop
 
 This is the repository-native loop for an agent changing the Rust port. It is
-an optimization of feedback order, not a smaller completion contract. Package
-checks are evidence while work is moving; `cargo xtask verify` is the only
-completion verifier.
+an optimization of feedback order. Package checks and staged target selection
+are the completion evidence; repository-wide verification is retired.
 
 The inventory below is a dated map, not metadata authority. Re-run Cargo
 metadata when manifests change.
@@ -51,12 +50,13 @@ name. Use Cargo metadata and `--list` for the current inventory.
 | Package integration targets | Public seams, CLI behavior, Git/SQLite/process fixtures, policy contracts. | `cargo test --locked -p PACKAGE --all-targets`; normally use the scoped verifier below. |
 | Doctests | Public API examples and compile-time documentation contracts. | `cargo test --locked -p PACKAGE --doc`. |
 | Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
-| Canvas browser guard | App build/resident/socket/browser behavior, shard inventory, timing, and descendant cleanup. | Full verifier; use `npm run test:canvas` only when working directly on its harness. |
-| Change-local gate, battery, and landing | Staged path-to-test and path-to-policy evidence, the complete policy battery, and final contract admission. | `cargo run --quiet --locked --package spice --bin spice -- gate selection` for the staged common path; full verifier for completion. |
+| Canvas browser guard | App build/resident/socket/browser behavior, shard inventory, timing, and descendant cleanup. | Run `npm run test:canvas` when the changed slice reaches its harness. |
+| Change-local gate, battery, and landing | Staged path-to-test and path-to-policy evidence plus final selected contract admission. | `cargo run --quiet --locked --package spice --bin spice -- gate selection`. |
 
 Metadata selection is conservative target-root reachability, not line coverage.
 Equal names, overlap, or an advisory subsumption finding never authorizes test
-deletion; removal needs a reviewed purpose and clean canonical verifier.
+deletion; removal needs a reviewed purpose and clean evidence from the affected
+targets.
 
 ## Feedback and completion tiers
 
@@ -65,9 +65,9 @@ stable checkpoint. The four surfaces have distinct jobs:
 
 | Surface | Run it when | Command and boundary |
 | --- | --- | --- |
-| Targeted staged gate | The index is ready for a commit, or you need exact change-to-check evidence. | `cargo run --quiet --locked --package spice --bin spice -- gate selection`. Known paths select affected Cargo targets and focused canonical policy arms. Selector/toolchain authority, unclassified, and out-of-workspace Rust/manifest paths refuse before execution. It is not completion evidence. |
-| Package validation | Work is moving within one crate and needs broader compile/test feedback than an exact test. Add downstream packages when a public seam changes. | `cargo xtask verify --package PACKAGE`. Runs package Clippy, all targets, and doctests, while printing every full-only omission. |
-| Full verifier | Immediately before changed-work handoff or task completion in this strict source repository, after package/seam checks are clean. | `cargo xtask verify`. Runs the 13-action repository completion graph; no targeted or package result substitutes for it. A current-source task completion may instead re-admit and cite an existing full-verifier receipt only when every authority names the exact current tree; an absent, stale, or mismatched receipt refuses and requires a fresh canonical run. Generic installed repositories do not carry this source-only receipt tier. |
+| Targeted staged gate | The index is ready for a commit, or you need exact change-to-check evidence. | `cargo run --quiet --locked --package spice --bin spice -- gate selection`. Known paths select affected Cargo targets and focused canonical policy arms. Selector/toolchain authority, unclassified, and out-of-workspace Rust/manifest paths refuse before execution. |
+| Package validation | Work is moving within one crate and needs broader compile/test feedback than an exact test. Add downstream packages when a public seam changes. | `cargo xtask verify --package PACKAGE`. Runs package Clippy, all targets, and doctests, while printing every repository-wide action it intentionally omits. |
+| Repository-wide verifier | Never during routine development, handoff, review, or completion. | Bare `cargo xtask verify` refuses before starting work. Use the staged selector, named package checks, and exact downstream targets instead. |
 | Study | You are explicitly investigating suite architecture, mutation reach, or redundant coverage. These can be expensive and are not ordinary edit feedback. | `cargo xtask gate suite-seam`, `cargo xtask gate mutation-coverage`, or `cargo xtask gate test-subsumption`. Keep their exhaustive inventories out of the commit common path. |
 
 Use that boundary in this order:
@@ -83,15 +83,9 @@ Use that boundary in this order:
    same public leaf through tracked policy). Inspect its typed local selection,
    or repair the exact path named by a deterministic authority/classification
    refusal.
-5. Immediately before commit or handoff, run `cargo xtask verify`; then confirm
-   no owned process remains, inspect the diff, and use the installed hooks.
-   Commit and land the task.
-
-The strict verifier remains 13 actions, a 180-second test-phase cutoff, and a
-300-second hard envelope. It prebuilds workspace tests, then re-observes Cargo
-pressure. Two or more remaining peers use one outer worker and one workspace
-lane with a CPU-divided Cargo grant; an unreadable probe fails workers, jobs,
-and lanes closed to one.
+5. Confirm no owned process remains, inspect the diff, and use the installed
+   hooks. File unexpected failures outside the selected slice as separate work;
+   do not widen the current run. Commit and land the task.
 
 ## Measured cost and concurrency
 
@@ -104,10 +98,9 @@ verifier or a study. These are observations, not latency promises.
 The cold isolated fleet matrix in
 [`gate/THROUGHPUT_AUDIT.md`](gate/THROUGHPUT_AUDIT.md) found saturation at four
 agent-equivalent runs; 4, 8, and 10 runs peaked at 51, 63, and 99 concurrent
-`rustc` processes and none received a GO. Prefer scoped checks while peers
-compile and defer competing full verifiers. Do not raise `CARGO_BUILD_JOBS`:
-the verifier owns its grant, re-observes pressure after prebuild, and fails
-closed when capacity cannot be read.
+`rustc` processes and none received a GO. Keep checks scoped while peers compile.
+The package verifier serializes its three Cargo children and grants each one
+build job; do not widen the slice to compete for the same machine.
 
 ## Disk budget and safe cleanup
 

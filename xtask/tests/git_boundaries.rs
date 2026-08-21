@@ -22,9 +22,8 @@
 //! about subcommands. A new network call site reds the network pair alone. The
 //! boundary test alone reds for a new public git entry point, for a launch-time
 //! entry point the resident stops calling, and for a git reference appearing in
-//! the activation surface. The fourth test polices neither
-//! surface: it asserts that the other three are reached by the canonical
-//! verifier.
+//! the activation surface. The fourth test polices neither surface: it asserts
+//! that this battery remains a named workspace target for scoped execution.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -169,10 +168,6 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
             ("prepare_free", Boundary::ReadOnly),
             ("publish", Boundary::PhaseCompletion),
             ("publish_claimed", Boundary::PhaseCompletion),
-            (
-                "publish_claimed_with_completion_evidence",
-                Boundary::PhaseCompletion,
-            ),
             ("stranded_commits", Boundary::ReadOnly),
         ],
     ),
@@ -191,11 +186,6 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
 /// calling it unqualified therefore reds this test, which is the intended
 /// trade: the seam is small and the qualified form is what makes it greppable.
 const LAUNCH_SURFACE: &str = "spice/src/resident/lane_surface/launch.rs";
-
-/// The verifier action that runs this file, and the source that declares it.
-const WORKSPACE_TEST_ACTION: &str = "Action::WorkspaceTests";
-const VERIFIER_SOURCE: &str = "xtask/src/lib.rs";
-const VERIFIER_ACTION_LIST: &str = "const VERIFY_ACTIONS";
 
 /// GIT-01: no source names a network subcommand outside the allowlist.
 #[test]
@@ -350,18 +340,16 @@ fn the_git_writing_boundaries_are_claim_completion_and_launch() {
     );
 }
 
-/// This battery is reached by the canonical verifier, not just by a local run.
+/// This battery remains a named workspace target for scoped execution.
 ///
 /// The three assertions close the question together with the fact that this
 /// body is executing at all: the file is present in the selected workspace
 /// source set, `xtask` is a workspace member so cargo builds its integration
 /// tests,
-/// and the verifier's own action list names the sweep that builds them. The
-/// action list is read as source text because it is private to the crate; the
-/// slice is bounded so a label appearing only in `xtask`'s own test copy of the
-/// list does not satisfy it.
+/// `cargo test --locked -p xtask --test git_boundaries` therefore reaches it
+/// without depending on a repository-wide verifier.
 #[test]
-fn this_battery_runs_inside_the_canonical_verifier() {
+fn this_battery_remains_a_scoped_workspace_target() {
     let root = workspace_root();
     let sources = workspace_rust_sources();
     assert!(
@@ -373,20 +361,6 @@ fn this_battery_runs_inside_the_canonical_verifier() {
     assert!(
         manifest.contains("\n    \"xtask\",\n"),
         "xtask is not a workspace member, so --workspace never builds this file"
-    );
-
-    let verifier = sources
-        .get(VERIFIER_SOURCE)
-        .unwrap_or_else(|| panic!("{VERIFIER_SOURCE} is tracked"));
-    let start = verifier
-        .find(VERIFIER_ACTION_LIST)
-        .unwrap_or_else(|| panic!("{VERIFIER_SOURCE} declares {VERIFIER_ACTION_LIST}"));
-    let list = &verifier[start..];
-    let list = &list[..list.find("\n];").expect("the action list is terminated")];
-    assert!(
-        list.contains(WORKSPACE_TEST_ACTION),
-        "the canonical verifier no longer owns {WORKSPACE_TEST_ACTION}, so \
-         nothing in this file runs during verify"
     );
 }
 
@@ -456,12 +430,10 @@ fn public_entry_points(sources: &BTreeMap<String, String>) -> BTreeSet<(String, 
 
 /// Every Rust source in the selected workspace tree.
 ///
-/// The canonical verifier executes this battery from an immutable selected
-/// tree that deliberately carries no `.git` directory, so Git cannot be the
-/// runtime inventory authority. Walking the compiled workspace gives direct
-/// and verifier execution one path. In a development worktree the walk also
-/// sees untracked Rust scratch files and therefore fails closed: an extra
-/// network literal can red the invariant, but it cannot hide from it.
+/// Walking the compiled workspace gives direct and scoped execution one path.
+/// In a development worktree the walk also sees untracked Rust scratch files
+/// and therefore fails closed: an extra network literal can red the invariant,
+/// but it cannot hide from it.
 fn workspace_rust_sources() -> BTreeMap<String, String> {
     let root = workspace_root();
     let mut sources = BTreeMap::new();

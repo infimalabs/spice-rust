@@ -66,9 +66,6 @@ project_max_depth = 3
 enabled = true
 
 [policy]
-# Source verification omits appliance apply guidance from task completion.
-suppress_install_apply_guidance = true
-
 # The installed Rust hook must execute this source tree's current gate rather
 # than its packaged build. The configured-command trust boundary keeps this
 # exact argv inert until an operator grants the digest of these tracked bytes.

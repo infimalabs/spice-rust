@@ -818,7 +818,6 @@ fn cargo_applicability_requires_both_a_workspace_and_relevant_scope() {
     assert!(!cargo_workspace_tests_applicable(
         &root,
         &["src/lib.rs".to_owned()],
-        false,
     ));
 
     fs::write(root.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\n")
@@ -826,17 +825,14 @@ fn cargo_applicability_requires_both_a_workspace_and_relevant_scope() {
     assert!(!cargo_workspace_tests_applicable(
         &root,
         &["README.md".to_owned()],
-        false,
     ));
     assert!(cargo_workspace_tests_applicable(
         &root,
         &["README.md".to_owned(), "src/lib.rs".to_owned()],
-        false,
     ));
-    assert!(cargo_workspace_tests_applicable(
+    assert!(!cargo_workspace_tests_applicable(
         &root,
         &["assets/opaque.bin".to_owned()],
-        true,
     ));
 
     fs::remove_dir_all(root).expect("remove applicability fixture");

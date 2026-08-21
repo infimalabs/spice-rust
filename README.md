@@ -83,44 +83,33 @@ runs the ordinary staged selector: recognized paths execute only their affected
 Cargo targets and local policy arms. A selector/toolchain authority path, an
 unclassified path, or a Rust/manifest path outside the workspace refuses with
 that path before policy or tests run. There is no exhaustive fallback in the
-ordinary hook. `cargo xtask verify` alone owns the complete 13-action graph and
-all 27 policy arms.
+ordinary hook or allocator-owned merge resolution. Bare `cargo xtask verify`
+is retired and refuses before starting work; use staged selection or
+`cargo xtask verify --package PACKAGE` for bounded feedback.
 
-Every verifier child runs in a bounded process group. The scheduler re-observes
-peer Cargo pressure after its serialized test prebuild, caps local workers and
-Cargo jobs, and fails closed to one of each when pressure cannot be read. The
-test phase is bounded at 180 seconds and the supervising command at 300 seconds;
-failure or interruption cancels and reaps siblings before returning. See
-[DEVELOPMENT.md](DEVELOPMENT.md) and
-[gate/THROUGHPUT_AUDIT.md](gate/THROUGHPUT_AUDIT.md) for execution and measured
-fleet details.
-
-An admitted verifier bundle remains exact to its producing worktree and is also
-archived by selected-source identity in repository-common state. Only an open
-two-parent resolution compares both parent archives: matching per-arm source,
-tool, compiler, policy, and state authorities are reused, while resolution-only
-or protected-authority changes execute their selected checks normally. Ordinary
-single-parent commits never consult this archive and retain exact-source
-admission.
+Legacy verifier bundles already stored by earlier releases remain exact to
+their producing worktree and selected-source identity. Only an open two-parent
+resolution may read both parent archives for forward compatibility: matching
+per-arm authorities can be reused, while resolution-only or protected-authority
+changes execute their selected checks normally. Current single-parent commits
+and task completion never read or produce these archives.
 
 The native `commit-msg` hook enforces message hygiene and exact v1
 `Spice-Origin` grammar. The `reference-transaction` hook refuses a
 current-branch update that would abandon commits already merged upstream.
 
-## Workspace verification
+## Scoped verification
 
-Run the same verification outside a commit, and before handing work to
-another agent, with:
+Run package-local Clippy, tests, and doctests while work is moving with:
 
 ```sh
-cargo xtask verify
+cargo xtask verify --package gate
 ```
 
-The command discovers the repository from the current directory and runs the
-one canonical verifier; there is no wrapper or second completion suite. It
-prebuilds workspace tests once, packs targets deterministically into bounded
-shards, and launches no more lanes than the scheduler grants. Each shard owns a
-separate publication path and bounded process group.
+Bare `cargo xtask verify` deliberately refuses before launching any compiler or
+test process. Repository-wide verification is not a task-completion contract.
+When a changed public seam crosses packages, name each affected package or run
+the exact downstream target that exercises it.
 
 `cargo run --quiet --locked --package spice --bin spice -- gate selection` is
 the source-development delegate for the ordinary staged-change gate. It builds
@@ -132,9 +121,9 @@ selector/toolchain authority path, an unclassified path, or an out-of-workspace
 Rust/manifest path returns a deterministic path-specific refusal before any
 selected policy or test execution.
 
-This selection is not a completion verifier; `cargo xtask verify` remains that
-surface. The native `spice gate pre-commit` command resolves tracked pre-commit
-policy once in one isolated worker. It runs
+This selected evidence is the commit boundary; it never escalates to an
+exhaustive repository run. The native `spice gate pre-commit` command resolves
+tracked pre-commit policy once in one isolated worker. It runs
 the packaged selected-change gate exactly once by default, followed by admitted
 configured commands in authored order; `pre_commit_builtins = false` runs only
 configured commands and refuses an empty effective battery. Packaged and
@@ -146,17 +135,12 @@ rustc, Trunk, parsers, and descendants. Every tracked hook dispatches directly
 to installed Spice; the authored source-development command above reaches
 `gate selection` and never redispatches the pre-commit dispatcher.
 
-For fast feedback while changing one Cargo package, scope Clippy, all-target
-tests, and doctests to that package:
-
-```sh
-cargo xtask verify --package gate
-```
-
-The scoped command identifies every full-verifier action and compiled gate arm
-it skips. It is feedback only; run the zero-argument command before completing
-or handing off work. Formatting remains a workspace check; run
-`cargo fmt --all -- --check` at the package checkpoint.
+The scoped package command identifies every repository-wide action and compiled
+gate arm it intentionally skips. Its three Cargo children run serially with a
+single build job so the feedback loop does not amplify peer compilation pressure.
+Formatting remains a workspace check; run
+`cargo fmt --all -- --check` at the package checkpoint. File unexpected failures
+outside the changed slice as separate work instead of widening the current run.
 
 [DEVELOPMENT.md](DEVELOPMENT.md) maps the crate ownership seams, generated
 surfaces, complete test portfolio, validation tiers, measured concurrency

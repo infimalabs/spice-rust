@@ -106,7 +106,7 @@ pub struct GitBoundary {
     pub local_commits: u32,
 }
 
-/// One complete verifier bundle re-admitted against a task's exact closing tree.
+/// Legacy complete-verifier citation retained for pre-retirement facts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FullVerifierReceipt {
@@ -205,7 +205,11 @@ pub struct TaskDone {
         deserialize_with = "crate::optional::present"
     )]
     pub git: Option<GitBoundary>,
-    /// Complete verifier evidence re-admitted before this tree was published.
+    /// Legacy verifier evidence from pre-retirement completion producers.
+    ///
+    /// Current producers leave this absent; retaining the field preserves exact
+    /// decoding of durable facts written before repository-wide verification was
+    /// removed from task completion.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

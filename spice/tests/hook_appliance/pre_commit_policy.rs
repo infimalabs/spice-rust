@@ -28,7 +28,6 @@ fn source_policy_suppresses_install_guidance_without_disabling_its_commit_gate()
     );
 
     assert!(!rust.root().policy().pre_commit_builtins());
-    assert!(rust.root().policy().suppress_install_apply_guidance());
     let [command] = rust.root().policy().pre_commit() else {
         panic!("the Rust-owned document retains its one current-source command");
     };
@@ -57,7 +56,6 @@ fn generic_rust_policy_without_the_source_override_keeps_packaged_builtins() {
         .expect("an absent tracked document resolves to packaged defaults");
 
     assert!(generic.root().policy().pre_commit_builtins());
-    assert!(!generic.root().policy().suppress_install_apply_guidance());
     assert!(generic.root().policy().pre_commit().is_empty());
 }
 

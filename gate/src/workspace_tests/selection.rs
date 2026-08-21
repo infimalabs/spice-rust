@@ -533,6 +533,7 @@ fn select_targets<'a>(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn exhaustive_selection_report(
     inventory: &Inventory,
     source: wire::Digest,

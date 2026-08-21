@@ -8,14 +8,15 @@ focus on speed and throughput, identify overzealous checks, and harden and
 polish after cutover. The later load warning `1kKRGGHk` specifically called out
 repetitive work in high-volume hooks.
 
-## Current disposition (2026-08-11)
+## Current disposition (2026-08-21)
 
 The measurements remain useful; the cutover recommendations are superseded and
 authorize no present removal. The ordinary hook selects deterministic local
 evidence for recognized paths. Selector/toolchain authority, unclassified, and
 out-of-workspace Rust/manifest paths refuse with the exact path before policy or
-test execution. Only `cargo xtask verify` executes all 27 canonical arms, once,
-with a compact source-bound summary. `README.md`, `DEVELOPMENT.md`, and
+test execution. Repository-wide verification is now retired: bare `cargo xtask
+verify` refuses before work, package checks serialize Cargo at one build job,
+and staged selection does not escalate. `README.md`, `DEVELOPMENT.md`, and
 `SHAPE_CONFORMANCE.md` own those current paths.
 
 Installation is reversible coexistence preparation. Only an exact,

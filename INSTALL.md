@@ -12,17 +12,16 @@ destructive decision.
 ## Development task boundary
 
 Ordinary work in the Spice source repository ends when the validated commit is
-landed. Its tracked policy sets
-`policy.suppress_install_apply_guidance = true`, so `cargo xtask verify` does
-not compare that worktree build with the shared installed appliance and does
-not print a repair preview. Normal task completion contains no install step or
-per-digest authorization request. The supervising loop calls `cargo xtask
-install` after landing and is the sole automatic publisher.
+landed. Staged selection and package-scoped checks do not compare that worktree
+build with the shared installed appliance or print a repair preview. Normal task
+completion contains no install step or per-digest authorization request. The
+supervising loop calls `cargo xtask install` after landing and is the sole
+automatic publisher.
 
-That option changes only repository-local verification guidance. It does not
-add a digestless apply path, authorize authored input, or weaken `spice install
---apply=DIGEST`. Every installed client and every manual initial, repair,
-migration, or relocation workflow below retains exact-plan authorization.
+This completion boundary changes only repository-local development guidance.
+It does not add a digestless apply path, authorize authored input, or weaken
+`spice install --apply=DIGEST`. Every installed client and every manual initial,
+repair, migration, or relocation workflow below retains exact-plan authorization.
 When the operator explicitly requests one of those manual workflows, that
 request—not ordinary task completion—places it in scope.
 
@@ -252,9 +251,10 @@ cargo xtask install --port PORT
 It retains the endpoint unless `--host` or `--port` overrides it; `--release`
 selects release build. Manual apply accepts only its exact preview digest.
 Refresh retains the first install's reversal images and replaces files in place,
-so every linked worktree sees one Git-common upgrade. The full verifier checks
-the receipt, every asset, and exact current binary before source verification;
-freshness failures name the repair preview. Nothing outside Rust Spice stops.
+so every linked worktree sees one Git-common upgrade. The installed pre-commit
+worker checks its receipt, assets, and exact current binary before selected
+source verification; freshness failures name the repair preview. Nothing
+outside Rust Spice stops.
 
 ## The independence proof
 

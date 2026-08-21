@@ -12,7 +12,7 @@ use sill::Deadlines;
 const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <help|verify [--package PACKAGE]|",
+    "usage: cargo xtask <help|verify --package PACKAGE|",
     "gate [--report] ARM|app|",
     "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
