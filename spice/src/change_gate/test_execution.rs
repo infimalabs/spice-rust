@@ -9,7 +9,9 @@ use sill::Environment;
 use super::{CargoBudget, ChangeGateError};
 
 pub(super) enum TestExecution {
-    Packaged(Vec<crate::config::TestEngine>),
+    Packaged {
+        engines: Vec<crate::config::TestEngine>,
+    },
     CurrentSourceCargo,
 }
 
@@ -51,7 +53,7 @@ pub(super) fn run_selected_tests(
         TestExecution::CurrentSourceCargo => {
             gate::cargo_workspace_tests_applicable(run.selected_root, run.changes)
         }
-        TestExecution::Packaged(engines) => {
+        TestExecution::Packaged { engines } => {
             engines.contains(&crate::config::TestEngine::CargoWorkspace)
                 && gate::cargo_workspace_tests_applicable(run.selected_root, run.changes)
         }
@@ -107,7 +109,9 @@ mod tests {
                 budget(),
                 environment,
             ),
-            TestExecution::Packaged(Vec::new()),
+            TestExecution::Packaged {
+                engines: Vec::new(),
+            },
             &mut progress,
         )
         .expect("zero-engine repository needs no Cargo executable");
@@ -142,7 +146,9 @@ mod tests {
                 budget(),
                 environment,
             ),
-            TestExecution::Packaged(vec![crate::config::TestEngine::CargoWorkspace]),
+            TestExecution::Packaged {
+                engines: vec![crate::config::TestEngine::CargoWorkspace],
+            },
             &mut progress,
         )
         .expect("irrelevant Cargo scope needs no Cargo executable");
@@ -172,7 +178,9 @@ mod tests {
                 budget(),
                 environment,
             ),
-            TestExecution::Packaged(vec![crate::config::TestEngine::CargoWorkspace]),
+            TestExecution::Packaged {
+                engines: vec![crate::config::TestEngine::CargoWorkspace],
+            },
             &mut Vec::new(),
         )
         .expect_err("applicable declared Cargo engine needs its compiled executable");

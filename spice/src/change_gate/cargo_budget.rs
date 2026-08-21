@@ -43,7 +43,9 @@ impl CargoBudget {
             .max(1);
         let test_concurrency = lane_jobs.min(test_concurrency_cap.max(1));
         let shard_jobs = (lane_jobs / test_concurrency).max(1);
-        let test_threads = shard_jobs.clamp(1, MAX_TEST_HARNESS_THREADS);
+        let test_threads = lane_jobs
+            .div_ceil(test_concurrency)
+            .clamp(1, MAX_TEST_HARNESS_THREADS);
         Self {
             cpus,
             peer_cargo_roots,
@@ -174,6 +176,12 @@ mod tests {
         assert_eq!(idle.test_concurrency(), 4);
         assert_eq!(idle.shard_jobs(), 3);
         assert_eq!(idle.test_threads(), 3);
+
+        let balanced = CargoBudget::from_observation(12, Some(1), 4);
+        assert_eq!(balanced.policy_jobs(), 6);
+        assert_eq!(balanced.test_concurrency(), 4);
+        assert_eq!(balanced.shard_jobs(), 1);
+        assert_eq!(balanced.test_threads(), 2);
 
         let pressured = CargoBudget::from_observation(12, Some(5), 4);
         assert_eq!(pressured.policy_jobs(), 2);

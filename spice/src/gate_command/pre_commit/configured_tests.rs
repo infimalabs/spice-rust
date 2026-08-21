@@ -198,7 +198,7 @@ fn live_progress_selects_only_the_exact_unscoped_source_gate_contract() {
 }
 
 #[test]
-fn selected_source_gate_progress_reaches_the_worker_before_child_exit() {
+fn exclusive_lane_selected_source_gate_progress_reaches_the_worker_before_child_exit() {
     let scratch = Scratch::new("live-source-progress");
     let progress_path = scratch.root.join("progress.log");
     let progress = File::create(&progress_path).expect("create progress sink");

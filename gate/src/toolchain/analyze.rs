@@ -44,10 +44,6 @@ mod build_root;
 mod canvas;
 mod formatter;
 
-pub(in crate::toolchain) use build_root::{
-    CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, canvas_source_root,
-};
-pub(in crate::toolchain) use canvas::canvas_output_roots;
 pub(super) use canvas::canvas_web_typecheck;
 #[cfg(test)]
 use formatter::differing_files;
@@ -62,9 +58,6 @@ mod rust;
 pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
 pub(super) use python::python_typecheck;
-pub(in crate::toolchain) use rust::{
-    RUST_BUILD_DIRECTORY, make_cache_writable, synchronize_source,
-};
 pub(super) use rust::{rust_analysis_workspace, rust_typecheck};
 
 /// What one compiled analysis observed about one arm.

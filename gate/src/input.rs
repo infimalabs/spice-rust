@@ -435,11 +435,6 @@ impl Contract {
             .expect("a strict tracked contract carries baseline.toml")
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn baseline_digest(&self) -> Option<Digest> {
-        self.baseline.as_ref().map(Baseline::digest)
-    }
-
     /// Parser-backed floors for the ordinary run.
     #[must_use]
     pub const fn ratchet(&self) -> &Ratchet {

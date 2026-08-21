@@ -60,9 +60,6 @@
 //!   because their parents are below the common exclusive `.spice-rs` root.
 //!   `artifacts/tasks/<INCEPTION-STAMP>/` uses the board's sole task identity;
 //!   the rendered handle never becomes a second filesystem authority.
-//! * **Full-verifier parent evidence** is archived by selected-source digest in
-//!   the common runtime. Its latest exact admission remains worktree-local;
-//!   only an open two-parent merge may compare the common parent records.
 //! * **Installed hooks, skills, and binaries** stay in the already-disjoint
 //!   `.spice-install` appliance. The install receipt remains runtime state at
 //!   the [`StatePaths::install_record`] path below `.spice-rs`.
@@ -123,8 +120,6 @@ pub struct StatePaths {
     lane_canvas: PathBuf,
     inbox: PathBuf,
     learnings: PathBuf,
-    full_verifier_evidence: PathBuf,
-    full_verifier_evidence_archive: PathBuf,
     install_rollback_blobs: PathBuf,
 }
 
@@ -149,8 +144,6 @@ impl StatePaths {
             local_configuration: runtime.join("config.toml"),
             lane_canvas: runtime.join("canvas-lanes"),
             inbox: worktree_runtime.join("inbox"),
-            full_verifier_evidence: worktree_runtime.join("full-verifier-evidence.json"),
-            full_verifier_evidence_archive: runtime.join("full-verifier-evidence"),
             install_rollback_blobs: runtime.join("install-rollback"),
             learnings: runtime.join("learnings"),
             artifact_data,
@@ -170,18 +163,6 @@ impl StatePaths {
     #[must_use]
     pub fn worktree_runtime(&self) -> &Path {
         &self.worktree_runtime
-    }
-
-    /// Worktree-local reusable evidence from the last admitted full verifier.
-    #[must_use]
-    pub fn full_verifier_evidence(&self) -> &Path {
-        &self.full_verifier_evidence
-    }
-
-    /// Repository-common exact bundles indexed by their admitted source.
-    #[must_use]
-    pub fn full_verifier_evidence_archive(&self) -> &Path {
-        &self.full_verifier_evidence_archive
     }
 
     /// Repository-common content-addressed install rollback bodies.
@@ -329,7 +310,6 @@ impl StatePaths {
             self.tape(),
             &self.artifact_data,
             self.artifacts(),
-            self.full_verifier_evidence_archive(),
             self.install_rollback_blobs(),
         ];
         for path in [self.worktree_runtime(), self.inbox()] {
@@ -373,7 +353,7 @@ impl StatePaths {
     }
 
     /// Files whose shape this runtime admits before it does any work.
-    fn admitted_files(&self) -> [&Path; 8] {
+    fn admitted_files(&self) -> [&Path; 7] {
         [
             self.journal(),
             self.folds(),
@@ -382,7 +362,6 @@ impl StatePaths {
             self.resident(),
             self.resident_log(),
             self.canvas(),
-            self.full_verifier_evidence(),
         ]
     }
 
@@ -393,7 +372,7 @@ impl StatePaths {
     /// an operator repairing a bad `config.toml` needs the runtime to reach the
     /// refusal that names it rather than stop at a shape check.
     #[must_use]
-    pub fn owned_files(&self) -> [&Path; 10] {
+    pub fn owned_files(&self) -> [&Path; 9] {
         let [
             journal,
             folds,
@@ -402,7 +381,6 @@ impl StatePaths {
             resident,
             resident_log,
             canvas,
-            full_verifier_evidence,
         ] = self.admitted_files();
         [
             journal,
@@ -412,7 +390,6 @@ impl StatePaths {
             resident,
             resident_log,
             canvas,
-            full_verifier_evidence,
             self.install_record(),
             self.local_configuration(),
         ]

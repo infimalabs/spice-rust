@@ -24,123 +24,23 @@ use syn::{Expr, Item, Lit, LitStr, Meta};
 use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 
 mod coordinator;
+mod inventory;
+mod prebuild;
 mod selection;
+mod source_reach;
 
 use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
 };
 #[cfg(test)]
 use coordinator::{LastTest, isolate_shard_outputs, shard_test_threads, target_arguments};
+pub(crate) use inventory::workspace_package_reach_at;
+use inventory::*;
+use prebuild::*;
 use selection::{CargoReachEscalation, package_inventory, selection_plan};
 #[cfg(test)]
 use selection::{CargoReachEscalationReason, exhaustive_selection_report, selection_report};
-
-/// Exact workspace packages reached through canonical retained Cargo metadata.
-pub(crate) struct WorkspacePackageReach {
-    checks: Vec<CargoCheckSelection>,
-    roots: Vec<PathBuf>,
-}
-
-impl WorkspacePackageReach {
-    pub(crate) fn cargo_check_arguments(&self) -> Vec<Vec<String>> {
-        let mut invocations = Vec::new();
-        let all_targets = self
-            .checks
-            .iter()
-            .filter(|check| check.all_targets)
-            .collect::<Vec<_>>();
-        if !all_targets.is_empty() {
-            let mut arguments = vec![
-                "check".to_owned(),
-                "--locked".to_owned(),
-                "--all-targets".to_owned(),
-            ];
-            for check in &all_targets {
-                arguments.extend(["--package".to_owned(), check.name.clone()]);
-            }
-            if let Some(features) =
-                qualified_required_features(all_targets.iter().flat_map(|check| {
-                    check
-                        .required_features
-                        .iter()
-                        .map(|feature| (check.name.as_str(), feature.as_str()))
-                }))
-            {
-                arguments.extend(["--features".to_owned(), features]);
-            }
-            invocations.push(arguments);
-        }
-        for check in self.checks.iter().filter(|check| !check.all_targets) {
-            let mut arguments = vec![
-                "check".to_owned(),
-                "--locked".to_owned(),
-                "--package".to_owned(),
-                check.name.clone(),
-            ];
-            for target in &check.targets {
-                arguments.push(target.flag.to_owned());
-                if let Some(name) = &target.name {
-                    arguments.push(name.clone());
-                }
-            }
-            if let Some(features) = qualified_required_features(
-                check
-                    .required_features
-                    .iter()
-                    .map(|feature| (check.name.as_str(), feature.as_str())),
-            ) {
-                arguments.extend(["--features".to_owned(), features]);
-            }
-            invocations.push(arguments);
-        }
-        invocations
-    }
-
-    pub(crate) fn reaches_root(&self, root: &Path) -> bool {
-        let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-        self.roots.contains(&root)
-    }
-}
-
-pub(crate) fn workspace_package_reach_at(
-    root: &Path,
-    changed_sources: &[String],
-    environment: &Environment,
-    cargo: &OsStr,
-) -> Result<WorkspacePackageReach, WorkspaceTestError> {
-    let inventory = acquire_inventory(root, environment, cargo)?;
-    let checks = selection::cargo_check_selections(&inventory, root, changed_sources)?;
-    Ok(WorkspacePackageReach {
-        roots: checks.iter().map(|check| check.root.clone()).collect(),
-        checks,
-    })
-}
-
-#[derive(Clone, Debug)]
-struct CargoCheckSelection {
-    name: String,
-    root: PathBuf,
-    all_targets: bool,
-    targets: Vec<CargoTargetSelection>,
-    required_features: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct CargoTargetSelection {
-    flag: &'static str,
-    name: Option<String>,
-    required_features: Vec<String>,
-}
-
-fn qualified_required_features<'a>(
-    features: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> Option<String> {
-    let features = features
-        .into_iter()
-        .map(|(package, feature)| format!("{package}/{feature}"))
-        .collect::<BTreeSet<_>>();
-    (!features.is_empty()).then(|| features.into_iter().collect::<Vec<_>>().join(","))
-}
+use source_reach::declared_path_sources;
 
 /// Whether the compiled Cargo workspace engine applies to this selected tree.
 ///
@@ -159,6 +59,11 @@ pub fn cargo_workspace_tests_applicable(root: &Path, changed_sources: &[String])
 /// Targets are source-weight balanced across the minimum shard count so one
 /// cluster of larger integration targets cannot pin the coordinator tail.
 const TARGETS_PER_SHARD: usize = 8;
+/// A selected run has already compiled every reached target in one shared
+/// prebuild, so its remaining Cargo frontends are launch coordinators rather
+/// than compiler work. Keep each package in fewer, broader groups to avoid
+/// spending the enclosing gate deadline on shared build-directory lock waves.
+const SELECTED_TARGETS_PER_SHARD: usize = 24;
 /// Retain finer work units inside the full verifier so a constrained two-lane
 /// schedule can rebalance long test targets without paying one Cargo launch
 /// for every target.
@@ -179,6 +84,7 @@ const CAPTURE_LIMIT: usize = 4 * 1024 * 1024;
 const FAILURE_EXCERPT_LIMIT: usize = 16 * 1024;
 const RECORD_FRAME_LIMIT: usize = 256 * 1024;
 const RECORD_QUEUE_CAPACITY: usize = 4_096;
+const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
 /// Test shards own ephemeral temporary roots, but an ambient compiler-wrapper
@@ -333,6 +239,10 @@ impl WorkspaceTestBudget {
             cargo_jobs,
             test_threads,
         })
+    }
+
+    const fn prebuild_jobs(self) -> usize {
+        self.concurrency.saturating_mul(self.cargo_jobs)
     }
 }
 
@@ -510,235 +420,6 @@ fn policy_from_environment(
     Ok((environment, policy))
 }
 
-fn prebuild_all_tests(
-    root: &Path,
-    environment: &Environment,
-    cargo: &OsStr,
-    inventory: &Inventory,
-    output: &mut impl Write,
-) -> Result<(), WorkspaceTestError> {
-    let features = qualified_required_features(inventory.packages.iter().flat_map(|package| {
-        package.targets.iter().flat_map(|target| {
-            target
-                .required_features
-                .iter()
-                .map(|feature| (package.name.as_str(), feature.as_str()))
-        })
-    }));
-    let mut arguments = ["test", "--locked", "--workspace", "--all-targets"]
-        .into_iter()
-        .map(OsString::from)
-        .collect::<Vec<_>>();
-    let mut command = "cargo test --locked --workspace --all-targets".to_owned();
-    if let Some(features) = features {
-        arguments.extend([OsString::from("--features"), OsString::from(&features)]);
-        command.push_str(" --features ");
-        command.push_str(&features);
-    }
-    arguments.push(OsString::from("--no-run"));
-    command.push_str(" --no-run");
-    run_prebuild_command(
-        root,
-        environment,
-        cargo,
-        output,
-        &command,
-        arguments,
-        "workspace-test prebuild",
-    )?;
-    repair_missing_binary_outputs(root, environment, cargo, inventory, output)
-}
-
-fn repair_missing_binary_outputs(
-    root: &Path,
-    environment: &Environment,
-    cargo: &OsStr,
-    inventory: &Inventory,
-    output: &mut impl Write,
-) -> Result<(), WorkspaceTestError> {
-    for missing in missing_binary_outputs(inventory, environment)? {
-        let command = format!(
-            "cargo build --locked --package {:?} --bin {:?}",
-            missing.binary.package_id, missing.binary.target_name,
-        );
-        let owner = format!(
-            "CARGO_BIN_EXE repair for package {:?} binary target {:?} at {}",
-            missing.binary.package_name,
-            missing.binary.target_name,
-            missing.path.display(),
-        );
-        run_prebuild_command(
-            root,
-            environment,
-            cargo,
-            output,
-            &command,
-            [
-                OsStr::new("build"),
-                OsStr::new("--locked"),
-                OsStr::new("--package"),
-                OsStr::new(&missing.binary.package_id),
-                OsStr::new("--bin"),
-                OsStr::new(&missing.binary.target_name),
-            ],
-            &owner,
-        )?;
-    }
-    validate_prebuilt_binary_outputs(inventory, environment)
-}
-
-fn validate_prebuilt_binary_outputs(
-    inventory: &Inventory,
-    environment: &Environment,
-) -> Result<(), WorkspaceTestError> {
-    let missing = missing_binary_outputs(inventory, environment)?;
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let detail = missing
-        .iter()
-        .map(|missing| {
-            format!(
-                "{} (package {:?}, binary target {:?})",
-                missing.path.display(),
-                missing.binary.package_name,
-                missing.binary.target_name,
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(WorkspaceTestError::new(format!(
-        "prebuilt CARGO_BIN_EXE output is missing or not executable: {detail}"
-    )))
-}
-
-fn missing_binary_outputs<'a>(
-    inventory: &'a Inventory,
-    environment: &Environment,
-) -> Result<Vec<MissingBinaryOutput<'a>>, WorkspaceTestError> {
-    let target_directory = environment
-        .entries()
-        .iter()
-        .find_map(|(name, value)| {
-            (name == OsStr::new(CARGO_TARGET_DIR)).then(|| PathBuf::from(value))
-        })
-        .ok_or_else(|| {
-            WorkspaceTestError::new("prebuilt CARGO_BIN_EXE validation requires CARGO_TARGET_DIR")
-        })?;
-    Ok(inventory
-        .binary_outputs
-        .iter()
-        .filter_map(|binary| {
-            let path = target_directory.join("debug").join(format!(
-                "{}{}",
-                binary.target_name,
-                std::env::consts::EXE_SUFFIX,
-            ));
-            (!executable_file(&path)).then_some(MissingBinaryOutput { binary, path })
-        })
-        .collect())
-}
-
-fn executable_file(path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(target_family = "unix")]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(target_family = "unix"))]
-    {
-        true
-    }
-}
-
-fn prebuild_canvas_launcher(
-    root: &Path,
-    environment: &Environment,
-    cargo: &OsStr,
-    output: &mut impl Write,
-) -> Result<(), WorkspaceTestError> {
-    run_prebuild_command(
-        root,
-        environment,
-        cargo,
-        output,
-        "cargo build --locked -p xtask --bin xtask",
-        ["build", "--locked", "-p", "xtask", "--bin", "xtask"],
-        "Canvas launcher prebuild",
-    )
-}
-
-fn run_prebuild_command<I, S>(
-    root: &Path,
-    environment: &Environment,
-    cargo: &OsStr,
-    output: &mut impl Write,
-    command: &str,
-    arguments: I,
-    owner: &str,
-) -> Result<(), WorkspaceTestError>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<OsString>,
-{
-    writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
-    output.flush().map_err(output_error)?;
-    let started = Instant::now();
-    let spec = process_spec(
-        cargo,
-        arguments,
-        root,
-        environment.clone(),
-        SHARD_DEADLINE,
-        Cancellation::Never,
-        owner,
-    )?;
-    let outcome = sill::spawn(spec)
-        .map_err(|error| WorkspaceTestError::new(format!("prebuild launch failed: {error}")))?
-        .wait()
-        .map_err(|error| WorkspaceTestError::new(format!("prebuild wait failed: {error}")))?;
-    let capture_failed = !outcome.outputs_drained()
-        || outcome
-            .stdout()
-            .is_some_and(|captured| captured.truncated())
-        || outcome
-            .stderr()
-            .is_some_and(|captured| captured.truncated());
-    let disposition = match outcome.completion() {
-        Completion::Exited(status) if status.success() && !capture_failed => "success".to_owned(),
-        Completion::Exited(status) if capture_failed => {
-            format!(
-                "capture-failed after {}",
-                completion_name(outcome.completion())
-            )
-        }
-        completion => completion_name(completion),
-    };
-    writeln!(
-        output,
-        "[rust-test] stage=prebuild-terminal elapsed_ms={} disposition={}",
-        started.elapsed().as_millis(),
-        disposition,
-    )
-    .map_err(output_error)?;
-    output.flush().map_err(output_error)?;
-    match outcome.completion() {
-        Completion::Exited(status) if status.success() && !capture_failed => Ok(()),
-        completion => Err(WorkspaceTestError::new(format!(
-            "{owner} ended as {}: stdout-tail={:?}; stderr-tail={:?}",
-            completion_name(completion),
-            captured_excerpt(outcome.stdout()),
-            captured_excerpt(outcome.stderr()),
-        ))),
-    }
-}
-
 /// Select and run only test targets reached by staged build sources according
 /// to canonical Cargo metadata. A reached library target expands to every
 /// test-enabled target in that package because those targets may link the
@@ -747,9 +428,10 @@ where
 /// package; workspace/toolchain and gate-policy authorities reach the complete
 /// workspace because their effect cannot be narrowed further.
 ///
-/// Unknown or incomplete package reach escalates to every workspace test
-/// target rather than launching an unproven narrowed set. A complete report is
-/// emitted only after every selected target succeeds through this coordinator.
+/// An unclaimed source under one current metadata package stays conservative
+/// within that package. Sources outside every package and incomplete claimed
+/// test reach escalate to every workspace target. A complete report is emitted
+/// only after every selected target succeeds through this coordinator.
 ///
 /// # Errors
 ///
@@ -810,20 +492,63 @@ fn run_selected_at_mode(
     selected_policy: SelectedRunPolicy,
     output: &mut impl Write,
 ) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    let policy = match selected_policy {
-        SelectedRunPolicy::Legacy(concurrency) => RunPolicy::production(concurrency)?,
-        SelectedRunPolicy::Budgeted(budget) => RunPolicy::production_budgeted(budget),
+    let (mut policy, prebuild_jobs) = match selected_policy {
+        SelectedRunPolicy::Legacy(concurrency) => (RunPolicy::production(concurrency)?, None),
+        SelectedRunPolicy::Budgeted(budget) => (
+            RunPolicy::production_budgeted(budget),
+            Some(budget.prebuild_jobs()),
+        ),
     };
     let root = roots
         .reusable
         .map_or(roots.selected, crate::RustAnalysisWorkspace::source);
+    let environment = selected_run_environment(roots, environment)?;
+    let inventory = acquire_selected_inventory(root, &environment, changed_sources, output)?;
+    let (report, escalations) = selected_report(&inventory, root, source, changed_sources, output)?;
+    write_reach_escalations(output, &escalations)?;
+    writeln!(
+        output,
+        "[rust-test-selection] detail=canonical-report sources={} tests={} edges={}",
+        report.changed_sources().len(),
+        report.tests().len(),
+        report.edges().len(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    if report.admits() && !report.tests().is_empty() {
+        execute_selected_tests(
+            roots,
+            root,
+            environment,
+            &inventory,
+            report.tests(),
+            &mut policy,
+            prebuild_jobs,
+            output,
+        )?;
+    }
+    Ok(report)
+}
+
+fn selected_run_environment(
+    roots: WorkspaceTestRoots<'_>,
+    environment: Environment,
+) -> Result<Environment, WorkspaceTestError> {
     let environment = without_pre_commit_dispatch(environment)?;
     let environment = with_direct_rustc(environment)?;
     let environment = without_parent_repository(environment)?;
-    let environment = match roots.reusable {
+    Ok(match roots.reusable {
         Some(workspace) => reuse_environment(environment, workspace)?,
         None => environment,
-    };
+    })
+}
+
+fn acquire_selected_inventory(
+    root: &Path,
+    environment: &Environment,
+    changed_sources: &[String],
+    output: &mut impl Write,
+) -> Result<Inventory, WorkspaceTestError> {
     writeln!(
         output,
         "[rust-test] stage=metadata-start changes={}",
@@ -855,6 +580,16 @@ fn run_selected_at_mode(
             return Err(error);
         }
     };
+    Ok(inventory)
+}
+
+fn selected_report(
+    inventory: &Inventory,
+    root: &Path,
+    source: wire::Digest,
+    changed_sources: &[String],
+    output: &mut impl Write,
+) -> Result<(crate::TestSelectionReport, Vec<CargoReachEscalation>), WorkspaceTestError> {
     writeln!(
         output,
         "[rust-test] stage=selection-start changes={}",
@@ -887,41 +622,72 @@ fn run_selected_at_mode(
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
-    let (report, escalations) = selected;
-    write_reach_escalations(output, &escalations)?;
-    for edge in report.edges() {
-        writeln!(
-            output,
-            "[rust-test-selection] source={:?} test={:?}",
-            edge.source(),
-            edge.test(),
-        )
-        .map_err(output_error)?;
-    }
-    output.flush().map_err(output_error)?;
-    if !report.admits() || report.tests().is_empty() {
-        return Ok(report);
-    }
+    Ok(selected)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_selected_tests(
+    roots: WorkspaceTestRoots<'_>,
+    root: &Path,
+    environment: Environment,
+    inventory: &Inventory,
+    tests: &[String],
+    policy: &mut RunPolicy,
+    prebuild_jobs: Option<usize>,
+    output: &mut impl Write,
+) -> Result<(), WorkspaceTestError> {
     let environment = inventory.execution_environment(
         environment,
         root,
         roots.writable,
         roots.reusable.is_some(),
     )?;
-    let selected = inventory.selected(report.tests())?;
-    let shards = partition(&selected);
-    validate_partition(&selected, &shards)?;
-    let policy = policy.for_shards(shards.len());
-    Coordinator::new(
-        shards,
-        root.to_path_buf(),
-        environment,
-        OsString::from("cargo"),
-        policy,
-        output,
-    )
-    .run()?;
-    Ok(report)
+    let selected = inventory.selected(tests)?;
+    let shards = partition_with_target_limit(&selected, SELECTED_TARGETS_PER_SHARD);
+    validate_partition_with_target_limit(&selected, &shards, SELECTED_TARGETS_PER_SHARD)?;
+    let prebuilt = if shards.len() > 1 {
+        let prebuild_environment = prebuild_jobs.map_or_else(
+            || Ok(environment.clone()),
+            |jobs| with_cargo_build_jobs(&environment, jobs),
+        )?;
+        let prebuilt = prebuild_selected_tests(
+            root,
+            &prebuild_environment,
+            OsStr::new("cargo"),
+            &selected,
+            output,
+        )?;
+        let prebuilt =
+            partition_largest_prebuilt_tests(prebuilt, &environment, policy.concurrency, output)?;
+        policy.shared_outputs = true;
+        Some(prebuilt)
+    } else {
+        None
+    };
+    let execution_shards = prebuilt.as_ref().map_or(shards.len(), Vec::len);
+    let policy = (*policy).for_shards(execution_shards);
+    if let Some(prebuilt) = prebuilt {
+        Coordinator::new_prebuilt(
+            prebuilt,
+            root.to_path_buf(),
+            environment,
+            OsString::from("cargo"),
+            policy,
+            output,
+        )
+        .run()?;
+    } else {
+        Coordinator::new(
+            shards,
+            root.to_path_buf(),
+            environment,
+            OsString::from("cargo"),
+            policy,
+            output,
+        )
+        .run()?;
+    }
+    Ok(())
 }
 
 fn write_reach_escalations(
@@ -971,6 +737,22 @@ fn reuse_environment(
     Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
+fn with_cargo_build_jobs(
+    environment: &Environment,
+    jobs: usize,
+) -> Result<Environment, WorkspaceTestError> {
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    entries.insert(
+        OsString::from(CARGO_BUILD_JOBS),
+        OsString::from(jobs.to_string()),
+    );
+    Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
+}
+
 fn without_parent_repository(environment: Environment) -> Result<Environment, WorkspaceTestError> {
     let mut entries = environment
         .entries()
@@ -1005,370 +787,7 @@ fn with_direct_rustc(environment: Environment) -> Result<Environment, WorkspaceT
     Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct Metadata {
-    packages: Vec<MetadataPackage>,
-    workspace_members: Vec<String>,
-    #[serde(default)]
-    target_directory: PathBuf,
-    #[serde(default)]
-    build_directory: PathBuf,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct MetadataPackage {
-    id: String,
-    name: String,
-    manifest_path: PathBuf,
-    #[serde(default)]
-    dependencies: Vec<MetadataDependency>,
-    targets: Vec<MetadataTarget>,
-    #[serde(default)]
-    features: BTreeMap<String, Vec<String>>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct MetadataDependency {
-    path: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct MetadataTarget {
-    name: String,
-    kind: Vec<String>,
-    test: bool,
-    src_path: PathBuf,
-    #[serde(rename = "required-features", default)]
-    required_features: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct BinaryOutput {
-    package_id: String,
-    package_name: String,
-    target_name: String,
-}
-
-struct MissingBinaryOutput<'a> {
-    binary: &'a BinaryOutput,
-    path: PathBuf,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct TargetIdentity {
-    package: String,
-    kind: String,
-    name: String,
-    required_features: Vec<String>,
-    source: PathBuf,
-    declared_path_sources: Vec<PathBuf>,
-    source_bytes: u64,
-}
-
-impl TargetIdentity {
-    fn display(&self) -> String {
-        format!("{}:{}", self.kind, self.name)
-    }
-}
-
-#[derive(Clone, Debug)]
-struct PackageInventory {
-    id: String,
-    name: String,
-    root: PathBuf,
-    dependencies: Vec<PathBuf>,
-    declared_targets: Vec<TargetIdentity>,
-    targets: Vec<TargetIdentity>,
-}
-
-#[derive(Clone, Debug)]
-struct Inventory {
-    packages: Vec<PackageInventory>,
-    binary_outputs: Vec<BinaryOutput>,
-    target_directory: PathBuf,
-    build_directory: PathBuf,
-}
-
-impl Inventory {
-    fn execution_environment(
-        &self,
-        environment: Environment,
-        selected_root: &Path,
-        writable_root: &Path,
-        allow_configured_external: bool,
-    ) -> Result<Environment, WorkspaceTestError> {
-        let selected_root =
-            fs::canonicalize(selected_root).unwrap_or_else(|_| selected_root.to_path_buf());
-        let writable_root =
-            fs::canonicalize(writable_root).unwrap_or_else(|_| writable_root.to_path_buf());
-        let target = writable_directory(
-            &self.target_directory,
-            &selected_root,
-            &writable_root.join("target"),
-            allow_configured_external,
-        );
-        let build = writable_directory(
-            &self.build_directory,
-            &selected_root,
-            &writable_root.join("target/cargo-build"),
-            allow_configured_external,
-        );
-        let mut entries = environment
-            .entries()
-            .iter()
-            .cloned()
-            .collect::<BTreeMap<OsString, OsString>>();
-        entries.insert(OsString::from(CARGO_TARGET_DIR), target.into_os_string());
-        entries.insert(
-            OsString::from(CARGO_BUILD_BUILD_DIR),
-            build.into_os_string(),
-        );
-        entries.insert(
-            OsString::from(TEST_WRITABLE_ROOT),
-            writable_root.into_os_string(),
-        );
-        Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
-    }
-
-    fn selected(&self, tests: &[String]) -> Result<Self, WorkspaceTestError> {
-        let selected = tests.iter().cloned().collect::<BTreeSet<_>>();
-        let mut packages = self
-            .packages
-            .iter()
-            .filter_map(|package| {
-                let targets = package
-                    .targets
-                    .iter()
-                    .filter(|target| {
-                        selected.contains(&format!("{}::{}", package.name, target.display()))
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                (!targets.is_empty()).then(|| PackageInventory {
-                    id: package.id.clone(),
-                    name: package.name.clone(),
-                    root: package.root.clone(),
-                    dependencies: package.dependencies.clone(),
-                    declared_targets: package.declared_targets.clone(),
-                    targets,
-                })
-            })
-            .collect::<Vec<_>>();
-        packages.sort_by(|left, right| (&left.name, &left.id).cmp(&(&right.name, &right.id)));
-        let observed = packages
-            .iter()
-            .flat_map(|package| {
-                package
-                    .targets
-                    .iter()
-                    .map(|target| format!("{}::{}", package.name, target.display()))
-            })
-            .collect::<BTreeSet<_>>();
-        if observed != selected {
-            return Err(WorkspaceTestError::new(format!(
-                "selected test inventory drifted: expected {selected:?}, observed {observed:?}"
-            )));
-        }
-        Ok(Self {
-            packages,
-            binary_outputs: self.binary_outputs.clone(),
-            target_directory: self.target_directory.clone(),
-            build_directory: self.build_directory.clone(),
-        })
-    }
-}
-
-fn writable_directory(
-    configured: &Path,
-    selected_root: &Path,
-    local: &Path,
-    allow_configured_external: bool,
-) -> PathBuf {
-    if configured.as_os_str().is_empty()
-        || configured.starts_with(selected_root)
-        || !allow_configured_external
-    {
-        local.to_path_buf()
-    } else {
-        configured.to_path_buf()
-    }
-}
-
-fn acquire_inventory(
-    root: &Path,
-    environment: &Environment,
-    cargo: &OsStr,
-) -> Result<Inventory, WorkspaceTestError> {
-    let spec = process_spec(
-        cargo,
-        ["metadata", "--locked", "--format-version", "1", "--no-deps"],
-        root,
-        environment.clone(),
-        METADATA_DEADLINE,
-        Cancellation::Never,
-        "workspace-test metadata",
-    )?;
-    let outcome = sill::spawn(spec)
-        .map_err(|error| WorkspaceTestError::new(format!("metadata launch failed: {error}")))?
-        .wait()
-        .map_err(|error| WorkspaceTestError::new(format!("metadata wait failed: {error}")))?;
-    metadata_from_outcome(outcome, root)
-}
-
-fn metadata_from_outcome(
-    outcome: WaitOutcome,
-    root: &Path,
-) -> Result<Inventory, WorkspaceTestError> {
-    match outcome.completion() {
-        Completion::Exited(status) if status.success() => {}
-        completion => {
-            return Err(WorkspaceTestError::new(format!(
-                "cargo metadata ended as {}: {}",
-                completion_name(completion),
-                captured_excerpt(outcome.stderr())
-            )));
-        }
-    }
-    let stdout = outcome
-        .stdout()
-        .ok_or_else(|| WorkspaceTestError::new("cargo metadata stdout was not captured"))?;
-    if stdout.truncated() || !stdout.complete() || !outcome.outputs_drained() {
-        return Err(WorkspaceTestError::new(
-            "cargo metadata output exceeded or escaped its capture bound",
-        ));
-    }
-    let metadata: Metadata = serde_json::from_slice(stdout.bytes())
-        .map_err(|error| WorkspaceTestError::new(format!("cargo metadata was invalid: {error}")))?;
-    inventory_from_metadata(metadata, root)
-}
-
-fn inventory_from_metadata(
-    metadata: Metadata,
-    root: &Path,
-) -> Result<Inventory, WorkspaceTestError> {
-    let target_directory = metadata.target_directory.clone();
-    let build_directory = metadata.build_directory.clone();
-    let members = metadata
-        .workspace_members
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let mut binary_outputs = metadata
-        .packages
-        .iter()
-        .filter(|package| members.contains(&package.id))
-        .flat_map(package_binary_outputs)
-        .collect::<Vec<_>>();
-    binary_outputs.sort();
-    let mut packages = metadata
-        .packages
-        .into_iter()
-        .filter(|package| members.contains(&package.id))
-        .map(|package| package_inventory(package, root))
-        .collect::<Result<Vec<_>, _>>()?;
-    packages.sort_by(|left, right| (&left.name, &left.id).cmp(&(&right.name, &right.id)));
-    if packages.is_empty() {
-        return Err(WorkspaceTestError::new(
-            "cargo metadata named no workspace packages",
-        ));
-    }
-    validate_unique_workspace_packages(&packages)?;
-    validate_workspace_dependencies(&packages, root)?;
-    Ok(Inventory {
-        packages,
-        binary_outputs,
-        target_directory,
-        build_directory,
-    })
-}
-
-fn package_binary_outputs(package: &MetadataPackage) -> Vec<BinaryOutput> {
-    let enabled = default_feature_closure(&package.features);
-    package
-        .targets
-        .iter()
-        .filter(|target| target.kind.iter().any(|kind| kind == "bin"))
-        .filter(|target| {
-            target
-                .required_features
-                .iter()
-                .all(|feature| enabled.contains(feature))
-        })
-        .map(|target| BinaryOutput {
-            package_id: package.id.clone(),
-            package_name: package.name.clone(),
-            target_name: target.name.clone(),
-        })
-        .collect()
-}
-
-fn default_feature_closure(features: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
-    let mut enabled = BTreeSet::new();
-    let mut pending = features
-        .contains_key("default")
-        .then(|| "default".to_owned())
-        .into_iter()
-        .collect::<VecDeque<_>>();
-    while let Some(feature) = pending.pop_front() {
-        if !enabled.insert(feature.clone()) {
-            continue;
-        }
-        for member in features.get(&feature).into_iter().flatten() {
-            if features.contains_key(member) && !enabled.contains(member) {
-                pending.push_back(member.clone());
-            }
-        }
-    }
-    enabled
-}
-
-fn validate_unique_workspace_packages(
-    packages: &[PackageInventory],
-) -> Result<(), WorkspaceTestError> {
-    let mut names = BTreeSet::new();
-    let mut roots = BTreeMap::new();
-    for package in packages {
-        if !names.insert(package.name.as_str()) {
-            return Err(WorkspaceTestError::new(format!(
-                "workspace package name {:?} is ambiguous for Cargo --package",
-                package.name
-            )));
-        }
-        if let Some(previous) = roots.insert(package.root.as_path(), package.name.as_str()) {
-            return Err(WorkspaceTestError::new(format!(
-                "workspace packages {previous:?} and {:?} share root {}",
-                package.name,
-                package.root.display(),
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn validate_workspace_dependencies(
-    packages: &[PackageInventory],
-    root: &Path,
-) -> Result<(), WorkspaceTestError> {
-    let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    for package in packages {
-        for dependency in &package.dependencies {
-            if dependency.starts_with(&root)
-                && !packages
-                    .iter()
-                    .any(|candidate| candidate.root == *dependency)
-            {
-                return Err(WorkspaceTestError::new(format!(
-                    "workspace package {:?} depends on unowned local path {}",
-                    package.name,
-                    dependency.display(),
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-include!("workspace_tests/source_reach.rs");
-
+#[cfg(test)]
 fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
     partition_with_target_limit(inventory, TARGETS_PER_SHARD)
 }
@@ -1487,6 +906,7 @@ fn target_source_bytes(
         .map(|bytes| bytes.max(1))
 }
 
+#[cfg(test)]
 fn validate_partition(
     inventory: &Inventory,
     shards: &[PackageInventory],

@@ -228,21 +228,10 @@ mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
 mod environment;
 #[cfg(not(target_arch = "wasm32"))]
-mod verifier_evidence;
-#[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use acquire::{
-    acquire_toolchain_arm, acquire_toolchain_observed, acquire_verifier_tools,
-};
+pub(crate) use acquire::{acquire_toolchain_arm, acquire_toolchain_observed};
 pub use declarations::*;
-#[cfg(not(target_arch = "wasm32"))]
-pub use verifier_evidence::{
-    PreparedVerifierCompiler, VerifierCompilerContract, VerifierCompilerEvidence,
-    VerifierCompilerProcessEvidence, VerifierCompilerRun, VerifierCompilerStage,
-    admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
-    semantic_verifier_compiler_authorities,
-};
 
 /// Stable selected-source and Cargo output roots completed by native analysis.
 ///

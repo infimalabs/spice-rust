@@ -31,8 +31,6 @@ pub mod names;
 pub mod policy;
 pub mod ratchet;
 pub mod report;
-#[cfg(not(target_arch = "wasm32"))]
-mod semantic_closure;
 pub mod state;
 #[cfg(not(target_arch = "wasm32"))]
 mod structural;
@@ -58,12 +56,11 @@ pub const PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP: usize = 6;
 pub use battery::{
     ActorEvidence, ArmDisposition, ArmEvidence, ArmExecution, ArmFamily,
     BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryArmResult, BatteryContext, BatteryError,
-    BatteryExecutor, BatteryInputs, BatteryManifest, BatteryManifestArm, BatteryReceipt,
-    BatteryRefusalFold, BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence,
-    BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm,
-    ConfigurationEvidence, FocusedArmReport, GATE_BATTERY_RECEIPT_VERSION, GATE_BATTERY_VERSION,
-    GateFinding, LatchEvidence, ReceiptRefusal, ResultProvenance, UnsupportedReceipt, run_battery,
-    run_battery_arm, run_focused_arm, supported_pairs,
+    BatteryExecutor, BatteryInputs, BatteryManifest, BatteryManifestArm, BatteryRefusalFold,
+    BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence, BoundActorInputsEvidence,
+    BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm, ConfigurationEvidence,
+    FocusedArmReport, GATE_BATTERY_VERSION, GateFinding, LatchEvidence, ResultProvenance,
+    run_battery, run_battery_arm, run_focused_arm,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use battery::{BatteryCapture, BatteryStateRun, RepositoryExecutionEvent, StateRunScope};
@@ -77,8 +74,7 @@ pub use change_selection::{
     CHANGE_SELECTION_REPORT_VERSION, ChangeArmReach, ChangeReachAuthority, ChangeReachEdge,
     ChangeReachMode, ChangeReachObject, ChangeReachOrigin, ChangeSelectionEdge,
     ChangeSelectionError, ChangeSelectionMode, ChangeSelectionPolicy, ChangeSelectionPolicyInputs,
-    ChangeSelectionReport, select_change_gates, select_change_gates_with_parent_evidence,
-    select_current_source_change_gates, select_current_source_change_gates_with_full_verifier,
+    ChangeSelectionReport, select_change_gates, select_current_source_change_gates,
 };
 pub use config::{Config, WalkConfig};
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,11 +116,6 @@ pub use input::{
 };
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
-};
-#[cfg(not(target_arch = "wasm32"))]
-pub use semantic_closure::{
-    GATE_SEMANTIC_CLOSURE_VERSION, GateArmClosure, GateClosureComparison, GateClosureSource,
-    GateDependencyMode, GateSemanticClosure, GateSourceClass, GateSourceDependency,
 };
 // Projection is consumed only by native hygiene acquisition, but the shared
 // jurisdiction module is deliberately type-checked on the browser target too.
@@ -207,11 +198,8 @@ pub use toolchain::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use toolchain::{
-    PreparedVerifierCompiler, RimCapture, RimDirectoryError, RustAnalysisWorkspace,
-    ToolchainSource, VerifierCompilerContract, VerifierCompilerEvidence,
-    VerifierCompilerProcessEvidence, VerifierCompilerRun, VerifierCompilerStage, acquire_toolchain,
-    admit_verifier_compiler_receipt, encode_verifier_compiler_receipt, formatter_edition,
-    formatter_sources, semantic_verifier_compiler_authorities,
+    RimCapture, RimDirectoryError, RustAnalysisWorkspace, ToolchainSource, acquire_toolchain,
+    formatter_edition, formatter_sources,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

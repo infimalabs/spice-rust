@@ -25,9 +25,8 @@ use crate::metrics::{
 };
 use crate::state::{BoundDecision, LatchEntry, LatchObservation};
 use crate::toolchain::{
-    RimCapture, TASTE_EXTENSIONS, TOOLCHAIN_ARMS, ToolchainSource, VerifierCompilerContract,
-    VerifierCompilerEvidence, acquire_toolchain_arm, acquire_toolchain_observed,
-    acquire_verifier_tools, environment_baseline_suffixes, measure_toolchain,
+    RimCapture, TASTE_EXTENSIONS, TOOLCHAIN_ARMS, ToolchainSource, acquire_toolchain_arm,
+    acquire_toolchain_observed, environment_baseline_suffixes, measure_toolchain,
     measure_toolchain_arm,
 };
 use crate::tree::{RefreshableSourceState, SelectedTree, Selector, StagedAuthority};
@@ -68,11 +67,6 @@ struct CapturedCore {
     bounds: Vec<BoundDecision>,
     observations: Vec<LatchObservation>,
     baselines: BaselineCapture,
-}
-
-pub(super) enum VerifierContractAcquisition {
-    Applicable(VerifierCompilerContract),
-    NotApplicable(String),
 }
 
 /// One capture-owning production implementation of [`BatteryExecutor`].
@@ -116,9 +110,7 @@ pub struct RepositoryExecutor<'trace> {
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
     families: [Option<FamilyExecution>; FAMILY_COUNT],
-    verifier_environment: Vec<(OsString, OsString)>,
-    verifier_evidence: Vec<VerifierCompilerEvidence>,
-    verifier_evidence_required: bool,
+    compiler_environment: Vec<(OsString, OsString)>,
     selected: Option<GateId>,
     reached_paths: Option<Vec<String>>,
     execution_objects: Option<Vec<ChangeReachObject>>,
@@ -261,9 +253,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             hygiene,
             context: None,
             families: std::array::from_fn(|_| None),
-            verifier_environment: Vec::new(),
-            verifier_evidence: Vec::new(),
-            verifier_evidence_required: false,
+            compiler_environment: Vec::new(),
             selected,
             reached_paths,
             execution_objects,
@@ -323,76 +313,6 @@ impl<'trace> RepositoryExecutor<'trace> {
         self.contract.execute_kill(self.tree.root())
     }
 
-    /// Capture the exact compiler/tool contract the full verifier may execute.
-    pub(super) fn verifier_compiler_contract(
-        &self,
-        gate_id: GateId,
-        environment: Vec<(OsString, OsString)>,
-    ) -> Result<VerifierCompilerContract, BatteryError> {
-        match self.verifier_compiler_contract_acquisition(gate_id, environment)? {
-            VerifierContractAcquisition::Applicable(contract) => Ok(contract),
-            VerifierContractAcquisition::NotApplicable(reason) => Err(BatteryError::new(reason)),
-        }
-    }
-
-    pub(super) fn verifier_compiler_contract_acquisition(
-        &self,
-        gate_id: GateId,
-        environment: Vec<(OsString, OsString)>,
-    ) -> Result<VerifierContractAcquisition, BatteryError> {
-        if self.selected.is_some() {
-            return Err(BatteryError::new(
-                "selected-arm captures cannot mint full-verifier evidence contracts",
-            ));
-        }
-        let source = ToolchainSource::capture(&self.tree, self.rim.clone());
-        let tools = match acquire_verifier_tools(&source, &self.contract, gate_id)
-            .map_err(BatteryError::new)?
-        {
-            Ok(tools) => tools,
-            Err(reason) => {
-                return Ok(VerifierContractAcquisition::NotApplicable(reason));
-            }
-        };
-        VerifierCompilerContract::new(
-            gate_id,
-            self.source.clone(),
-            self.tree.repository().to_path_buf(),
-            self.tree.root().to_path_buf(),
-            tools,
-            environment,
-        )
-        .map(VerifierContractAcquisition::Applicable)
-        .map_err(BatteryError::new)
-    }
-
-    /// Offer opaque verifier evidence before the toolchain family executes.
-    ///
-    /// Capture-time structural evidence may already have been projected by the
-    /// verifier preflight. It neither consumes nor depends on compiler evidence,
-    /// so that cached family does not close this seam.
-    pub(super) fn set_verifier_evidence(
-        &mut self,
-        evidence: &[VerifierCompilerEvidence],
-        environment: Vec<(OsString, OsString)>,
-        required: bool,
-    ) -> Result<(), BatteryError> {
-        if self.selected.is_some() {
-            return Err(BatteryError::new(
-                "selected-arm captures cannot consume full-verifier evidence",
-            ));
-        }
-        if self.families[family_index(ArmFamily::Toolchain)].is_some() {
-            return Err(BatteryError::new(
-                "full-verifier evidence must be supplied before toolchain-family execution",
-            ));
-        }
-        self.verifier_environment = environment;
-        self.verifier_evidence = evidence.to_vec();
-        self.verifier_evidence_required = required;
-        Ok(())
-    }
-
     pub(super) fn set_compiler_environment(
         &mut self,
         environment: Vec<(OsString, OsString)>,
@@ -402,12 +322,7 @@ impl<'trace> RepositoryExecutor<'trace> {
                 "compiler environment must be supplied before toolchain-family execution",
             ));
         }
-        if !self.verifier_evidence.is_empty() || self.verifier_evidence_required {
-            return Err(BatteryError::new(
-                "standalone compiler environment cannot replace verifier evidence authority",
-            ));
-        }
-        self.verifier_environment = environment;
+        self.compiler_environment = environment;
         Ok(())
     }
 
@@ -498,10 +413,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             &self.tree,
             self.rim.clone(),
             &self.baselines,
-            &self.source,
-            &self.verifier_environment,
-            &self.verifier_evidence,
-            self.verifier_evidence_required,
+            &self.compiler_environment,
             self.reached_paths.as_deref(),
         );
         if let Some(gate_id) = self.selected {

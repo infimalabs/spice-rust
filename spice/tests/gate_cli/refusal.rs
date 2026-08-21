@@ -14,7 +14,6 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     ));
     let fold = assert_oversized_json_refusal(&repository, &tripwires, &report);
     assert_oversized_text_refusal(&repository, &tripwires, &fold);
-    assert_canonical_receipt(&repository, &tripwires, &report);
     assert!(
         !marker.exists(),
         "a forbidden interpreter or Taskwarrior process crossed the Rust rim: {}",
@@ -162,38 +161,6 @@ fn assert_oversized_text_refusal(repository: &GateRepository, tripwires: &Scratc
         pre_commit.err.len() <= gate::BATTERY_REFUSAL_FOLD_MAX_BYTES + encoded_path.len() + 2_048,
         "text refusal is not structurally bounded: {} bytes",
         pre_commit.err.len(),
-    );
-}
-
-fn assert_canonical_receipt(
-    repository: &GateRepository,
-    tripwires: &Scratch,
-    report: &BatteryReport,
-) {
-    let receipt = receipt_body(&invoke_with_path(
-        &["gate", "receipt"],
-        repository.path(),
-        Some(tripwires.path()),
-    ));
-    assert_eq!(receipt.tree(), report.context().source());
-    assert_eq!(
-        receipt.manifest(),
-        &Digest::compute(
-            Domain::GateBatteryManifest,
-            gate::CANONICAL_BATTERY_MANIFEST.as_bytes(),
-        )
-    );
-    assert_eq!(receipt.gate_set(), report.gate_set());
-    assert_equivalent_except_rust_elapsed(receipt.results(), report.results());
-    assert_eq!(gate::GateId::BATTERY.len(), 27);
-    assert_eq!(report.results().len(), 27);
-    assert_eq!(
-        report
-            .results()
-            .iter()
-            .map(|result| result.gate_id())
-            .collect::<Vec<_>>(),
-        gate::GateId::BATTERY
     );
 }
 

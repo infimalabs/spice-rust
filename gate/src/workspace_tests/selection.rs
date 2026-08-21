@@ -221,12 +221,7 @@ pub(super) fn selection_plan(
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
             match containing_package(inventory, &absolute) {
-                Some(package) => {
-                    escalations.insert(CargoReachEscalation::unreached_in_package(
-                        changed,
-                        &package.name,
-                    ));
-                }
+                Some(package) => select_package_targets(package, changed, &mut tests, &mut edges)?,
                 None => {
                     escalations.insert(CargoReachEscalation::outside_package(changed));
                 }

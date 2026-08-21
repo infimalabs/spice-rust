@@ -82,7 +82,6 @@ const CASES: &[Case] = &[
         output: OutputKind::HookSilent,
         expected: ExpectedOutcome::Generic,
     },
-    case("gate receipt", &["gate", "receipt"]),
     case("proof", &["proof"]),
     case("proof replay", &["proof", "replay"]),
     case("release notes", &["release", "notes"]),

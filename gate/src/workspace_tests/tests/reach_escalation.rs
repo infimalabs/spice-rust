@@ -44,8 +44,8 @@ fn assert_diagnostic_precedes_selection(output: &str) {
         ))
         .expect("canonical outside-package escalation is observable");
     let selection = output
-        .find("[rust-test-selection] source=\"tools/outside.rs\"")
-        .expect("exhaustive selection edges remain observable");
+        .find("[rust-test-selection] detail=canonical-report sources=1 tests=2 edges=2")
+        .expect("exhaustive selection summary remains observable");
     assert!(escalation < selection);
 }
 

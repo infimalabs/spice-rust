@@ -57,6 +57,29 @@ fn shared_prebuild_policy_alone_admits_the_higher_process_lane_cap() {
 }
 
 #[test]
+fn selected_prebuild_uses_the_aggregate_lane_budget_without_moving_other_environment() {
+    let budget = WorkspaceTestBudget::new(4, 2, 1).expect("selected budget admits");
+    assert_eq!(budget.prebuild_jobs(), 8);
+    let environment = Environment::new([
+        (OsString::from("PATH"), OsString::from("/fixture/bin")),
+        (OsString::from(CARGO_BUILD_JOBS), OsString::from("2")),
+    ])
+    .expect("selected environment admits");
+
+    let prebuild =
+        with_cargo_build_jobs(&environment, budget.prebuild_jobs()).expect("prebuild budget binds");
+
+    assert_eq!(
+        environment_value(&prebuild, CARGO_BUILD_JOBS),
+        Some(&OsString::from("8")),
+    );
+    assert_eq!(
+        environment_value(&prebuild, "PATH"),
+        Some(&OsString::from("/fixture/bin")),
+    );
+}
+
+#[test]
 fn selected_test_environment_cannot_inherit_the_parent_git_repository() {
     let mut entries = BTreeMap::from([
         (OsString::from("PATH"), OsString::from("/fixture/bin")),
@@ -167,8 +190,10 @@ fn selected_tree_execution_rewrites_external_cargo_outputs_to_writable_root() {
 #[test]
 fn reusable_workspace_execution_preserves_prepared_cargo_outputs() {
     let inventory = Inventory {
-        target_directory: PathBuf::from("/worktree/target"),
-        build_directory: PathBuf::from("/worktree/target/spice-gate-native-stable-build-v1"),
+        target_directory: PathBuf::from("/worktree/target/spice-gate-native"),
+        build_directory: PathBuf::from(
+            "/worktree/target/spice-gate-native/spice-gate-native-stable-build-v1",
+        ),
         binary_outputs: Vec::new(),
         packages: vec![quick_package()],
     };
@@ -184,13 +209,13 @@ fn reusable_workspace_execution_preserves_prepared_cargo_outputs() {
 
     assert_eq!(
         environment_value(&environment, CARGO_TARGET_DIR),
-        Some(&OsString::from("/worktree/target")),
+        Some(&OsString::from("/worktree/target/spice-gate-native")),
         "reusable test execution keeps the analysis target root"
     );
     assert_eq!(
         environment_value(&environment, CARGO_BUILD_BUILD_DIR),
         Some(&OsString::from(
-            "/worktree/target/spice-gate-native-stable-build-v1"
+            "/worktree/target/spice-gate-native/spice-gate-native-stable-build-v1"
         )),
         "reusable test execution keeps the analysis build root"
     );

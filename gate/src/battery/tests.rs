@@ -1,5 +1,4 @@
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,20 +47,11 @@ mod latch_wire;
 mod magic;
 mod manifest;
 mod merge_parents;
-mod minting;
 mod report;
 mod single_arm;
 
 fn fixture_baseline(floors: &str) -> Digest {
     Digest::compute(Domain::GateBaseline, floors.as_bytes())
-}
-
-fn minted(fixture: &Fixture, baseline: &Digest) -> (BatteryReport, BatteryReceipt) {
-    let inputs = fixture.inputs();
-    let mut executor = RecordingExecutor::all_passed(&fixture.source);
-    let report = run_battery(&inputs, &mut executor).expect("complete battery");
-    let receipt = BatteryReceipt::mint(report.clone(), baseline);
-    (report, receipt)
 }
 
 struct RecordingExecutor {

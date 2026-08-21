@@ -520,7 +520,6 @@ fn execution_boundary_contains_no_shell_or_alternate_runtime() {
         include_str!("../execution.rs"),
         include_str!("../family_evidence.rs"),
         include_str!("../manifest_contract.rs"),
-        include_str!("../receipt.rs"),
     );
     for forbidden in [
         "std::process::Command",

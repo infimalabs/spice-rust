@@ -325,43 +325,43 @@ fn custom_build_target_reaches_workspace_dependents() {
     assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
 }
 
-#[test]
-fn configuration_slice_checks_reverse_dependents_without_running_their_test_binaries() {
-    fn target(package: &str, kind: &str, name: &str, source: &str) -> TargetIdentity {
-        TargetIdentity {
-            package: format!("{package}-id"),
-            kind: kind.to_owned(),
-            name: name.to_owned(),
-            required_features: Vec::new(),
-            source: PathBuf::from(source),
-            declared_path_sources: Vec::new(),
-            source_bytes: 1,
-        }
+fn configuration_target(package: &str, kind: &str, name: &str, source: &str) -> TargetIdentity {
+    TargetIdentity {
+        package: format!("{package}-id"),
+        kind: kind.to_owned(),
+        name: name.to_owned(),
+        required_features: Vec::new(),
+        source: PathBuf::from(source),
+        declared_path_sources: Vec::new(),
+        source_bytes: 1,
     }
+}
 
-    let vendor_lib = target("vendor", "lib", "vendor", "/workspace/vendor/src/lib.rs");
-    let vendor_contracts = target(
+fn configuration_slice_inventory() -> Inventory {
+    let vendor_lib =
+        configuration_target("vendor", "lib", "vendor", "/workspace/vendor/src/lib.rs");
+    let vendor_contracts = configuration_target(
         "vendor",
         "test",
         "contracts",
         "/workspace/vendor/tests/contracts.rs",
     );
-    let lane_lib = target("lane", "lib", "lane", "/workspace/lane/src/lib.rs");
-    let spice_lib = target("spice", "lib", "spice", "/workspace/spice/src/lib.rs");
-    let policy_config = target(
+    let lane_lib = configuration_target("lane", "lib", "lane", "/workspace/lane/src/lib.rs");
+    let spice_lib = configuration_target("spice", "lib", "spice", "/workspace/spice/src/lib.rs");
+    let policy_config = configuration_target(
         "spice",
         "test",
         "policy_config",
         "/workspace/spice/tests/policy_config.rs",
     );
-    let demo_cli = target(
+    let demo_cli = configuration_target(
         "spice",
         "test",
         "demo_cli",
         "/workspace/spice/tests/demo_cli.rs",
     );
-    let xtask_lib = target("xtask", "lib", "xtask", "/workspace/xtask/src/lib.rs");
-    let inventory = Inventory {
+    let xtask_lib = configuration_target("xtask", "lib", "xtask", "/workspace/xtask/src/lib.rs");
+    Inventory {
         packages: vec![
             PackageInventory {
                 id: "vendor-id".to_owned(),
@@ -402,7 +402,12 @@ fn configuration_slice_checks_reverse_dependents_without_running_their_test_bina
         binary_outputs: Vec::new(),
         target_directory: PathBuf::from("/workspace/target"),
         build_directory: PathBuf::from("/workspace/target/build"),
-    };
+    }
+}
+
+#[test]
+fn configuration_slice_checks_reverse_dependents_without_running_their_test_binaries() {
+    let inventory = configuration_slice_inventory();
     let changes = [
         "vendor/src/config.rs".to_owned(),
         "spice/tests/policy_config.rs".to_owned(),
@@ -615,7 +620,7 @@ fn explicit_exhaustive_mode_maps_even_unknown_non_build_paths_to_every_target() 
 }
 
 #[test]
-fn rust_source_inside_a_package_but_outside_target_roots_escalates_to_the_workspace() {
+fn rust_source_inside_a_package_but_outside_target_roots_stays_with_its_metadata_owner() {
     let plan = selection_plan(
         &fixture_inventory(),
         Path::new("/workspace"),
@@ -626,22 +631,9 @@ fn rust_source_inside_a_package_but_outside_target_roots_escalates_to_the_worksp
     let report = plan.report();
 
     assert!(report.admits());
-    assert_eq!(plan.escalations().len(), 1);
-    assert_eq!(
-        plan.escalations()[0].source(),
-        "fixture-a/tools/unreachable.rs"
-    );
-    assert_eq!(
-        plan.escalations()[0].reason(),
-        &CargoReachEscalationReason::UnreachedInPackage {
-            package: "fixture-a".to_owned(),
-        }
-    );
-    assert_eq!(
-        report.tests(),
-        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
-    );
-    assert_eq!(report.edges().len(), 2);
+    assert!(plan.escalations().is_empty());
+    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
+    assert_eq!(report.edges().len(), 1);
     assert!(
         report
             .edges()
@@ -720,14 +712,7 @@ fn partially_mapped_rust_sources_retain_edges_and_escalate_unknown_reach() {
                 escalation.reason().package(),
             ))
             .collect::<Vec<_>>(),
-        [
-            (
-                "fixture-a/tools/unreachable.rs",
-                "unreached-in-package",
-                Some("fixture-a"),
-            ),
-            ("tools/outside.rs", "outside-package", None),
-        ],
+        [("tools/outside.rs", "outside-package", None)],
         "escalations retain typed reasons in stable source order without duplicating inputs"
     );
     let mut diagnostics = Vec::new();
@@ -738,23 +723,16 @@ fn partially_mapped_rust_sources_retain_edges_and_escalate_unknown_reach() {
             .expect("reach escalation diagnostics are UTF-8")
             .lines()
             .collect::<Vec<_>>(),
-        [
-            concat!(
-                "[rust-test-reach-escalation] ",
-                "source=\"fixture-a/tools/unreachable.rs\" ",
-                "reason=unreached-in-package package=\"fixture-a\""
-            ),
-            concat!(
-                "[rust-test-reach-escalation] source=\"tools/outside.rs\" ",
-                "reason=outside-package"
-            ),
-        ]
+        [concat!(
+            "[rust-test-reach-escalation] source=\"tools/outside.rs\" ",
+            "reason=outside-package"
+        )]
     );
     assert_eq!(
         report.tests(),
         ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
     );
-    assert_eq!(report.edges().len(), 5);
+    assert_eq!(report.edges().len(), 4);
     assert_eq!(
         report
             .edges()

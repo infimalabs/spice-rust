@@ -1,5 +1,9 @@
+use super::*;
+
 /// Acquire exact external module and `include!` sources with their Cargo target.
-fn declared_path_sources(target_source: &Path) -> Result<Vec<PathBuf>, WorkspaceTestError> {
+pub(super) fn declared_path_sources(
+    target_source: &Path,
+) -> Result<Vec<PathBuf>, WorkspaceTestError> {
     let module_dir = target_source.parent().ok_or_else(|| {
         WorkspaceTestError::new(format!(
             "Cargo target source {} has no parent",

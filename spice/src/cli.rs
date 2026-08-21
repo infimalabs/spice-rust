@@ -279,7 +279,6 @@ fn observation_landed(path: &[&str]) -> bool {
             | ["gate", "pre-commit"]
             | ["gate", "selection"]
             | ["gate", "reference-transaction"]
-            | ["gate", "receipt"]
     )
 }
 

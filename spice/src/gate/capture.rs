@@ -17,45 +17,6 @@ pub(super) fn capture_inner_with_reach<'trace>(
     )
 }
 
-pub(super) fn capture_at(
-    directory: &Path,
-    selector: Selector,
-    input_mode: InputMode,
-) -> Result<BatteryCapture<'static>, RunError> {
-    capture_at_inner(directory, selector, input_mode, None, None, None, None)
-}
-
-pub(super) fn capture_for_semantic_comparison(
-    selector: Selector,
-    selection: &ChangeSelectionReport,
-) -> Result<BatteryCapture<'static>, RunError> {
-    let directory = env::current_dir()
-        .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
-    let repository = Repository::discover(&directory)
-        .map_err(|error| RunError::fault("gate::repository-unresolved", error))?;
-    repository.admit_state().map_err(|error| match error {
-        StateError::Filesystem { .. } => RunError::fault("gate::state-unavailable", error),
-        _ => RunError::refusal("gate::state-refused", error),
-    })?;
-    let actor = acting_actor(repository.worktree_root())?;
-    let changes = selected_changes(repository.worktree_root(), &selector)?;
-    let rim = RimCapture::new(&directory, search_path(), changes)
-        .map_err(|error| RunError::refusal("gate::rim-refused", error))?;
-    BatteryCapture::capture_for_semantic_comparison(
-        repository.worktree_root(),
-        &selector,
-        ClaimCapture::Idle,
-        ActorCapture::Acting {
-            actor,
-            bound_claims: Vec::new(),
-        },
-        rim,
-        HygieneConfiguration::current(),
-        selection,
-    )
-    .map_err(|error| RunError::refusal("gate::capture-refused", error))
-}
-
 fn capture_at_inner<'trace>(
     directory: &Path,
     selector: Selector,

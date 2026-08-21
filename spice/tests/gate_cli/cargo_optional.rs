@@ -47,10 +47,9 @@ fn generic_repository_publishes_zero_engine_evidence_without_invoking_cargo() {
         "generic repository did not admit: {boundary:?}"
     );
     let change_report = packaged_change_report(document);
-    let tests = selection_report(&boundary.progress);
+    let tests = change_report.tests();
 
     assert_eq!(change_report.selection().source(), tests.source());
-    assert_eq!(change_report.tests(), &tests);
     assert_eq!(tests.changed_sources(), &["README.md"]);
     assert!(tests.engines().is_empty());
     assert!(tests.tests().is_empty());

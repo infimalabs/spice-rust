@@ -21,7 +21,6 @@ mod tests {
             &toml::Value::Table(toml::Table::new()),
             "an absent repository policy must not invent tracked values"
         );
-        assert!(generic.baseline_digest().is_none());
         assert!(generic.tools().is_empty());
         assert!(matches!(
             generic.execute_kill(&root),

@@ -293,59 +293,6 @@ fn reached_file_shape_measures_only_the_authored_path_and_binds_its_source() {
 }
 
 #[test]
-fn semantic_comparison_capture_is_reached_and_cannot_execute_or_publish() {
-    let fixture = Fixture::new();
-    let repository = production_repository(&fixture.root);
-    fs::write(repository.join("src/lib.rs"), "unrelated\n".repeat(4_000))
-        .expect("write unrelated committed structural breach");
-    fixture_git(&repository, &["add", "src/lib.rs"]);
-    fixture_git(
-        &repository,
-        &["commit", "-q", "-m", "unrelated structural breach"],
-    );
-    fs::create_dir_all(repository.join("app/src")).expect("reached Rust source directory");
-    let reached = "app/src/reached.rs";
-    fs::write(repository.join(reached), "pub fn reached() {}\n")
-        .expect("write reached Rust source");
-    fixture_git(&repository, &["add", reached]);
-
-    let selection = reached_selection(&repository, reached);
-    let mut comparison = crate::BatteryCapture::capture_for_semantic_comparison(
-        &repository,
-        &crate::Selector::staged(),
-        crate::ClaimCapture::Idle,
-        acting(),
-        reached_rim(&repository, reached),
-        hygiene(),
-        &selection,
-    )
-    .expect("capture reached semantic comparison authority");
-    let context = comparison.context().expect("capture comparison context");
-    let measured = context
-        .bounds()
-        .iter()
-        .map(|bound| bound.actor_inputs().candidate_path())
-        .collect::<Vec<_>>();
-    assert!(
-        measured.contains(&reached),
-        "semantic comparison omitted the changed path: {measured:?}",
-    );
-    assert!(
-        !measured.contains(&"src/lib.rs"),
-        "semantic comparison crossed selected reach: {measured:?}",
-    );
-
-    let execution = comparison
-        .execute()
-        .expect_err("comparison-only authority cannot execute a battery");
-    assert!(execution.detail().contains("semantic comparison capture"));
-    let publication = comparison
-        .accept_state(crate::StateRunScope::Partial)
-        .expect_err("comparison-only authority cannot publish state");
-    assert!(publication.detail().contains("semantic comparison capture"));
-}
-
-#[test]
 fn reached_markdown_parses_only_authored_docs_but_resolves_unmodified_targets() {
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);

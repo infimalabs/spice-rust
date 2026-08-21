@@ -8,9 +8,7 @@ use std::env;
 use std::io;
 use std::path::Path;
 
-use gate::{
-    BatteryReceipt, BatteryReport, CampReport, GateId, KillReport, ReportMutationMovement, Selector,
-};
+use gate::{BatteryReport, CampReport, GateId, KillReport, ReportMutationMovement, Selector};
 #[cfg(test)]
 use gate::{GateReport, Standing};
 use wire::intent::{CommandAnswer, GateFindings};
@@ -132,14 +130,26 @@ pub(crate) fn resolution_evidence(repository: &Repository) -> Outcome<()> {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "kebab-case", tag = "evidence")]
 pub(crate) enum CurrentSourceSelectionReport {
+    /// Full validated evidence for a direct operator invocation.
     Focused {
         report: spice::change_gate::ChangeGateReport,
     },
+    /// Compact success identity for the bounded configured-command supervisor.
+    ///
+    /// The source gate has already constructed and validated the full report;
+    /// its supervisor consumes only the process disposition and exact source.
+    Supervised { source: Digest },
 }
 
 pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
-    let mut progress = SelectionProgress::new(configured_selection_progress());
+    let supervised = configured_selection_progress();
+    let mut progress = SelectionProgress::new(supervised);
     match spice::change_gate::run_current_source(&mut progress) {
+        Ok(report) if report.admits() && supervised => {
+            direct(CurrentSourceSelectionReport::Supervised {
+                source: report.selection().source().clone(),
+            })
+        }
         Ok(report) if report.admits() => direct(CurrentSourceSelectionReport::Focused { report }),
         Ok(report) => {
             progress.extend_from_slice(report.refusal_fold().as_bytes());
@@ -305,14 +315,6 @@ fn kill_report(report: KillReport) -> Outcome<KillReport> {
         return direct(report);
     };
     Outcome::Refusal(Refusal::evidence(reason, report.render(), summary))
-}
-
-/// Freshly adjudicate the captured index and return its complete receipt.
-pub(crate) fn receipt() -> Outcome<BatteryReceipt> {
-    match spice::gate::receipt(Selector::staged()) {
-        Ok(receipt) => direct(receipt),
-        Err(error) => battery_failure(error),
-    }
 }
 
 fn battery_failure<B>(error: spice::gate::RunError) -> Outcome<B> {
