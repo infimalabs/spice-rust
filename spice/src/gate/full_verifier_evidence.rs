@@ -12,7 +12,9 @@ use ::gate::{
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
-use super::{PreparedBattery, RunError, prepare, prepare_strict};
+use super::{
+    PreparedBattery, RunError, prepare, prepare_semantic_comparison_strict, prepare_strict,
+};
 use crate::gate::environment::exact_evidence_environment;
 use crate::repository::{Repository, StatePaths};
 
@@ -582,6 +584,24 @@ pub fn admit_semantic_full_verifier_evidence(
     repository: &Repository,
     selector: Selector,
 ) -> Result<SemanticFullVerifierAdmission, RunError> {
+    admit_semantic_full_verifier_evidence_inner(repository, selector, None)
+}
+
+/// Re-admit semantic evidence against the exact reach already authorized by
+/// an ordinary current-source selection.
+pub fn admit_reached_semantic_full_verifier_evidence(
+    repository: &Repository,
+    selector: Selector,
+    selection: &::gate::ChangeSelectionReport,
+) -> Result<SemanticFullVerifierAdmission, RunError> {
+    admit_semantic_full_verifier_evidence_inner(repository, selector, Some(selection))
+}
+
+fn admit_semantic_full_verifier_evidence_inner(
+    repository: &Repository,
+    selector: Selector,
+    selection: Option<&::gate::ChangeSelectionReport>,
+) -> Result<SemanticFullVerifierAdmission, RunError> {
     let paths = repository
         .admit_state()
         .map_err(|error| RunError::fault("gate::full-verifier-state-unavailable", error))?;
@@ -596,7 +616,11 @@ pub fn admit_semantic_full_verifier_evidence(
         }
         ExactEvidenceDocument::Loaded { evidence, document } => (evidence, document),
     };
-    let mut prepared = match prepare_strict(selector) {
+    let prepared = match selection {
+        Some(selection) => prepare_semantic_comparison_strict(selector, selection),
+        None => prepare_strict(selector),
+    };
+    let mut prepared = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             return Ok(SemanticFullVerifierAdmission::Unavailable {

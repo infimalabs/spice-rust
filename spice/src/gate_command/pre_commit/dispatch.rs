@@ -45,7 +45,7 @@ pub(super) fn dispatch_resolution(
             .saturating_sub(started.elapsed())
             .saturating_sub(configured::cleanup_reserve());
         dispatch
-            .execute_resolution_configured(remaining, Cancellation::Never)
+            .execute_resolution_configured(remaining, Cancellation::Never, progress)
             .map_err(configured_failure)?
     } else {
         None
@@ -76,7 +76,7 @@ pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, 
             .saturating_sub(started.elapsed())
             .saturating_sub(configured::cleanup_reserve());
         dispatch
-            .execute_configured(remaining, Cancellation::Never)
+            .execute_configured(remaining, Cancellation::Never, progress)
             .map_err(configured_failure)?
     } else {
         None

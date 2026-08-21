@@ -448,7 +448,7 @@ fn run_with_selection(
         None
     };
     let mut semantic = match &resolution_repository {
-        Some(repository) => probe_semantic_evidence(repository, &anchor, surface, progress)?,
+        Some(repository) => probe_semantic_evidence(repository, &anchor, surface, None, progress)?,
         None => None,
     };
     publish_phase(progress, "selection", Some(anchor.changes().len()))?;
@@ -462,7 +462,9 @@ fn run_with_selection(
         })?,
     };
     if !matches!(surface, SelectionSurface::Resolution) {
-        semantic = probe_semantic_evidence(&repository, &anchor, surface, progress)?;
+        publish_phase(progress, "semantic-evidence", Some(anchor.changes().len()))?;
+        semantic =
+            probe_semantic_evidence(&repository, &anchor, surface, Some(&selection), progress)?;
     }
     let execution = ChangeGateExecution {
         selected_root: anchor.root().to_path_buf(),
@@ -577,6 +579,7 @@ fn probe_semantic_evidence(
     repository: &Repository,
     anchor: &crate::gate::PreparedArm<'_>,
     surface: SelectionSurface,
+    selection: Option<&ChangeSelectionReport>,
     progress: &mut impl Write,
 ) -> Result<Option<crate::gate::AdmittedSemanticVerifierEvidence>, ChangeGateError> {
     if matches!(surface, SelectionSurface::Packaged) {
@@ -587,7 +590,17 @@ fn probe_semantic_evidence(
             crate::gate::admit_merge_parent_full_verifier_evidence(repository)
         }
         SelectionSurface::CurrentSource => {
-            crate::gate::admit_semantic_full_verifier_evidence(repository, Selector::staged())
+            let selection = selection.ok_or_else(|| {
+                ChangeGateError::protocol(
+                    "change-gate-semantic-selection-missing",
+                    "current-source semantic admission requires its validated selection",
+                )
+            })?;
+            crate::gate::admit_reached_semantic_full_verifier_evidence(
+                repository,
+                Selector::staged(),
+                selection,
+            )
         }
         SelectionSurface::Packaged => unreachable!("packaged evidence returned above"),
     }

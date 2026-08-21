@@ -4,6 +4,8 @@
 //! tracked floors, source bytes, and the root handed to every bounded process
 //! all come from one captured Git source rather than from a moving checkout.
 
+use std::env;
+use std::io;
 use std::path::Path;
 
 use gate::{
@@ -136,28 +138,72 @@ pub(crate) enum CurrentSourceSelectionReport {
 }
 
 pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
-    let mut progress = Vec::new();
+    let mut progress = SelectionProgress::new(configured_selection_progress());
     match spice::change_gate::run_current_source(&mut progress) {
         Ok(report) if report.admits() => direct(CurrentSourceSelectionReport::Focused { report }),
         Ok(report) => {
             progress.extend_from_slice(report.refusal_fold().as_bytes());
             Outcome::Refusal(Refusal::evidence(
                 "gate::selection-regressed",
-                selection_detail(&progress, "selected gate regressed"),
+                selection_detail(progress.buffered(), "selected gate regressed"),
                 "repair the selected change before committing it",
             ))
         }
         Err(error) if error.is_fault() => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: error.reason().to_owned(),
-            detail: selection_detail(&progress, error.detail()),
+            detail: selection_detail(progress.buffered(), error.detail()),
         }),
         Err(error) => Outcome::Refusal(Refusal::evidence(
             error.reason(),
-            selection_detail(&progress, error.detail()),
+            selection_detail(progress.buffered(), error.detail()),
             "repair the named selection input, then rerun the source gate",
         )),
     }
+}
+
+struct SelectionProgress {
+    buffered: Vec<u8>,
+    live: Option<io::Stderr>,
+}
+
+impl SelectionProgress {
+    fn new(live: bool) -> Self {
+        Self {
+            buffered: Vec::new(),
+            live: live.then(io::stderr),
+        }
+    }
+
+    fn buffered(&self) -> &[u8] {
+        &self.buffered
+    }
+
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.buffered.extend_from_slice(bytes);
+    }
+}
+
+impl io::Write for SelectionProgress {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Some(live) = &mut self.live {
+            live.write_all(bytes)?;
+        }
+        self.buffered.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.live.as_mut().map_or(Ok(()), io::Write::flush)
+    }
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the configured source-gate leaf detects authority injected by its supervising worker"
+)]
+fn configured_selection_progress() -> bool {
+    env::var_os(wire::SpiceVariable::PreCommitSource.as_str()).is_some()
 }
 
 fn selection_detail(progress: &[u8], detail: &str) -> String {

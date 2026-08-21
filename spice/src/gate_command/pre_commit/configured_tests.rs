@@ -3,6 +3,7 @@
 use super::*;
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -131,6 +132,135 @@ fn only_unscoped_resolution_source_gate_argv_selects_the_private_selected_leaf()
         effective_argv(&scoped[0], ExecutionMode::Resolution),
         scoped[0].run(),
     );
+}
+
+#[test]
+fn live_progress_selects_only_the_exact_unscoped_source_gate_contract() {
+    let commands = parsed_commands(&[
+        row(
+            "label is not authority",
+            &[
+                "cargo",
+                "run",
+                "--quiet",
+                "--locked",
+                "--package",
+                "spice",
+                "--bin",
+                "spice",
+                "--",
+                "gate",
+                "selection",
+            ],
+            &[],
+        ),
+        row(
+            "different selector",
+            &[
+                "cargo",
+                "run",
+                "--quiet",
+                "--locked",
+                "--package",
+                "spice",
+                "--bin",
+                "spice",
+                "--",
+                "gate",
+                "staging",
+            ],
+            &[],
+        ),
+        row(
+            "scoped source gate",
+            &[
+                "cargo",
+                "run",
+                "--quiet",
+                "--locked",
+                "--package",
+                "spice",
+                "--bin",
+                "spice",
+                "--",
+                "gate",
+                "selection",
+            ],
+            &["spice/**"],
+        ),
+        row("unrelated configured command", &["/bin/true"], &[]),
+    ]);
+
+    assert!(is_source_gate_contract(&commands[0]));
+    assert!(!is_source_gate_contract(&commands[1]));
+    assert!(!is_source_gate_contract(&commands[2]));
+    assert!(!is_source_gate_contract(&commands[3]));
+}
+
+#[test]
+fn selected_source_gate_progress_reaches_the_worker_before_child_exit() {
+    let scratch = Scratch::new("live-source-progress");
+    let progress_path = scratch.root.join("progress.log");
+    let progress = File::create(&progress_path).expect("create progress sink");
+    let programs = scratch.root.join("programs");
+    fs::create_dir(&programs).expect("create fixture program directory");
+    let cargo = programs.join("cargo");
+    fs::write(
+        &cargo,
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' ",
+            "'[change-gate-policy] gate=rust-typecheck disposition=executed' >&2\n",
+            "sleep 0.5\n",
+        ),
+    )
+    .expect("write fixture cargo");
+    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))
+        .expect("make fixture cargo executable");
+    let commands = parsed_commands(&[row("Spice source gate", &SOURCE_GATE_ARGV, &[])]);
+    let mut environment = base_environment();
+    environment.retain(|(name, _)| name != OsStr::new("PATH"));
+    environment.push((
+        OsString::from("PATH"),
+        OsString::from(format!("{}:/usr/bin:/bin", programs.display())),
+    ));
+    let root = scratch.root.clone();
+    let staged_source = source();
+    let started = Instant::now();
+    let execution = thread::spawn(move || {
+        execute_steps_with_progress(
+            &commands,
+            &staged_source,
+            &["src/lib.rs".to_owned()],
+            &root,
+            &environment,
+            test_bounds(Duration::from_secs(2)),
+            Cancellation::Never,
+            ExecutionMode::Ordinary,
+            Some(&progress),
+            &mut || Ok(()),
+        )
+        .expect("execute observed source gate")
+    });
+
+    let expected = "[change-gate-policy] gate=rust-typecheck disposition=executed\n";
+    for _ in 0..100 {
+        if fs::read_to_string(&progress_path).is_ok_and(|text| text == expected) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        fs::read_to_string(&progress_path).expect("read live progress"),
+        expected,
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(400),
+        "progress arrived only after the child could have exited",
+    );
+
+    let report = execution.join().expect("observed source gate joins");
+    assert!(report.admits(), "{}", report.refusal_evidence());
 }
 
 #[test]
