@@ -16,9 +16,9 @@ audit's three correctness blockers are closed and reviewed:
 
 Four agents are the isolated heavy mix's first saturation point; the 4/8/10
 samples received no throughput GO. Those are measurements, not admission
-thresholds. Runtime policy follows current peer Cargo pressure: re-observe after
-prebuild, reduce concurrency while pressure remains, and fail closed when it
-cannot be read. Agents defer competing full verifiers while heavy work is live.
+thresholds. Repository-wide verification is now retired; package feedback runs
+its Cargo children serially with one build job, and staged selection stays
+bounded to the changed slice.
 
 ## Authority and method
 
@@ -56,7 +56,7 @@ missing live behavior with an owner.
 | One collect-all gate roster | `gate/src/battery/manifest.toml`, `gate/src/battery.rs` | **Match:** 27 canonical arms publish one result vector. |
 | Base, flex, latch, actor, jitter share one rule | `gate/src/state/bound.rs`, `gate/src/metrics/state_binding.rs`, `gate/src/core/acquire.rs` | **Stronger:** `BoundDecision` drives evidence and pending state. |
 | Peer claims redirect flex debt | `gate/src/state/transaction.rs`, `gate/src/battery/authorities.rs`, `gate/src/battery/state_run.rs` | **Stronger:** accepted production runs publish one stale-detecting transaction; partial runs preserve unrelated claims and staged renames carry lineage. `STATE-1kLg3Pyn`, `STATE-1kLkPtDG`. |
-| Pre-commit is bounded and local | `gate/src/change_selection.rs`, `spice/src/change_gate.rs`, `gate/src/workspace_tests/selection.rs` | **Deviation:** recognized staged paths select local policy/test evidence. Selector/toolchain authority, unclassified, and out-of-workspace Rust/manifest paths refuse before execution. Only `cargo xtask verify` executes the complete battery. |
+| Pre-commit is bounded and local | `gate/src/change_selection.rs`, `spice/src/change_gate.rs`, `gate/src/workspace_tests/selection.rs` | **Deviation:** recognized staged paths select local policy/test evidence. Selector/toolchain authority, unclassified, and out-of-workspace Rust/manifest paths refuse before execution. Bare `cargo xtask verify` refuses rather than widening to the complete battery. |
 | One run reads stable selected content | `gate/src/tree.rs`, `gate/src/battery/repository_executor.rs`, `spice/src/change_gate.rs` | **Deviation:** an immutable staged tree and digest replace GOV-36's selector/content split; tree/change-gate tests prove stability and fail closed on movement. |
 | Durable gate state moves only on acceptance | `gate/src/state/transaction.rs`, `gate/src/battery/authorities.rs`, `gate/src/battery/state_run.rs` | **Stronger:** focused, selected, and full production paths publish only after total acceptance; rejection and historical revision runs are byte-preserving. `STATE-1kLg3Pyn`, `STATE-1kLkPtDG`. |
 | Install plan is read-only and apply digest-pinned | `spice/src/install.rs`, `spice/src/install/progress.rs` | **Stronger:** apply re-plans and binds destination parent/generation. |
@@ -79,16 +79,16 @@ publishes as one accepted-run transaction; rejection is byte-preserving.
 | Canvas compatibility | Resolved: `COMPATI-1kLcFlbD`; installed loading is versioned and clean. |
 | Local selector authority | Resolved: recognized paths select local evidence; selector/toolchain authority, unclassified, and out-of-workspace Rust/manifest paths refuse before execution. Renames retain both owners. |
 | Fleet operation | Reviewed: `DEVELOP-1kLbrBsW`, `PERFORM-1kLbsp1T`, `PERFORM-1kLhqWQL`, `PERFORM-1kLbfC2X`; scheduling follows observed peer pressure. |
-| Complete gate ownership | Resolved: only `cargo xtask verify` runs all 27 arms, once, with a compact source-bound summary. |
+| Complete gate ownership | Retired: no routine command runs all 27 arms; staged selection and explicit study arms are the visible paths. |
 
-The dependency chain proves the 13-action verifier, local/package feedback,
-installed entry and Canvas load, digest-bound authority switch, exact rollback,
-authenticated restore, and cleanup from Rust authority alone. Coexistence is
-only reversible preparation before the operator-authorized switch.
+The dependency chain proves selected and package feedback, installed entry and
+Canvas load, digest-bound authority switch, exact rollback, authenticated
+restore, and cleanup from Rust authority alone. Coexistence is only reversible
+preparation before the operator-authorized switch.
 
 Final decision: **GO, recoverable, with no unowned correctness gap.** Retained
-deviations have executable validation. Under peer pressure, competing full
-verification waits and the running verifier reduces its live budget; unreadable
-capacity fails closed. Canvas version mismatch reloads the authenticated current
+deviations have executable validation. Package checks serialize their Cargo
+children at one build job instead of creating a competing repository-wide
+fleet. Canvas version mismatch reloads the authenticated current
 document, gate findings migrate once or refuse with an owner, and gate state
 admits one schema or names the owning release. None keeps a silent fallback.

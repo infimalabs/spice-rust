@@ -49,7 +49,6 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("tasks.project_max_depth", TRACKED),
     ConfigKeyDeclaration::new("judge.enabled", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("policy.env_names", TRACKED),
-    ConfigKeyDeclaration::new("policy.suppress_install_apply_guidance", TRACKED),
     ConfigKeyDeclaration::new("policy.pre_commit_builtins", TRACKED),
     ConfigKeyDeclaration::new("policy.pre_commit[].label", TRACKED),
     ConfigKeyDeclaration::new("policy.pre_commit[].run", TRACKED),

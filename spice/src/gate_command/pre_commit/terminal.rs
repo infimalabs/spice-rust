@@ -77,7 +77,7 @@ fn resolution_terminal(path: &Path, progress: &Path) -> Outcome<()> {
             Ok(report) => Outcome::Refusal(Refusal::evidence(
                 "gate::resolution-regressed",
                 report.refusal_evidence(),
-                "repair the exhaustive packaged or configured finding, then retry task completion",
+                "repair the selected packaged or configured finding, then retry task completion",
             )),
             Err(error) => resolution_worker_lost(
                 progress,
@@ -147,7 +147,7 @@ pub(super) fn report_outcome(report: Report, artifact: &Path) -> Outcome<Report>
     Outcome::Refusal(Refusal::evidence(
         "gate::pre-commit-regressed",
         evidence,
-        "repair the packaged or configured finding, then retry the same plain git commit; use the explicit full verifier when repository-wide evidence is required",
+        "repair the selected packaged or configured finding, then retry the same plain git commit; file unrelated failures as separate work instead of widening this run",
     ))
 }
 

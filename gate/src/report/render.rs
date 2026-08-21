@@ -150,8 +150,8 @@ pub(super) fn render_movement(rendered: &mut String, movement: ReportMutationMov
 ///
 /// A refusal here says nothing about an earlier compiler or test step having
 /// passed: those steps can be green on a tree these assertions reject.
-/// `cargo xtask verify` reaches this battery at contract landing after its
-/// Cargo commands; only the battery reads the ratchet against the working tree.
+/// Selected execution and explicit study arms reach this battery directly;
+/// only the battery reads the ratchet against the working tree.
 ///
 /// Long-line loci are retained report evidence. The per-file metric counts
 /// come from re-running each metric's declared parser, so this attribution

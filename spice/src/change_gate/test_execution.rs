@@ -26,7 +26,7 @@ pub(super) fn run_selected_tests(
         TestExecution::CurrentSourceCargo => true,
         TestExecution::Packaged(engines) => {
             engines.contains(&crate::config::TestEngine::CargoWorkspace)
-                && gate::cargo_workspace_tests_applicable(selected_root, changes, false)
+                && gate::cargo_workspace_tests_applicable(selected_root, changes)
         }
     };
     if !cargo_selected {
@@ -37,33 +37,6 @@ pub(super) fn run_selected_tests(
     let roots = WorkspaceTestRoots::new(selected_root, writable_root);
     gate::run_selected_workspace_tests_at(
         roots,
-        source,
-        changes,
-        environment,
-        WORKSPACE_TEST_CONCURRENCY_CAP,
-        progress,
-    )
-    .map_err(|error| ChangeGateError::refusal("change-gate-tests-refused", error))
-}
-
-pub(super) fn run_resolution_tests(
-    selected_root: &Path,
-    writable_root: &Path,
-    source: wire::Digest,
-    changes: &[String],
-    engines: Vec<crate::config::TestEngine>,
-    environment: Environment,
-    progress: &mut impl Write,
-) -> Result<TestSelectionReport, ChangeGateError> {
-    let cargo_selected = engines.contains(&crate::config::TestEngine::CargoWorkspace)
-        && gate::cargo_workspace_tests_applicable(selected_root, changes, true);
-    if !cargo_selected {
-        return TestSelectionReport::complete_without_engines(source, changes.to_vec())
-            .map_err(|error| ChangeGateError::protocol("test-selection-invalid", error));
-    }
-
-    gate::run_selected_workspace_tests_at(
-        WorkspaceTestRoots::new(selected_root, writable_root),
         source,
         changes,
         environment,

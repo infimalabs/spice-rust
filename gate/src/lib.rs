@@ -184,11 +184,10 @@ pub use test_evidence::{
     TestEvidenceReport, TestEvidenceStanding, TestSelectionEdge, TestSelectionReport,
     TestSubsumptionFinding, TestSubsumptionReport,
 };
-/// Private `cargo xtask app` argument used by the native full verifier to
-/// publish a selected-source app build into its live worktree.
+/// Retired private `cargo xtask app` argument retained for a named refusal.
 pub const VERIFIER_APP_PUBLISH_FLAG: &str = "--spice-verifier-publish-root";
-/// Complete stdout record emitted after Trunk's Cargo process succeeds but
-/// before selected-source validation and atomic app publication finish.
+/// Complete stdout record emitted after Trunk's Cargo process succeeds and
+/// before source validation and atomic app publication finish.
 pub const VERIFIER_APP_COMPILER_READY_RECORD: &str = "[app] compiler-ready";
 #[cfg(not(target_arch = "wasm32"))]
 pub use structural::{
@@ -224,7 +223,6 @@ pub use verdict::{
 pub use workspace_tests::{
     WorkspaceTestError, WorkspaceTestExecution, WorkspaceTestRoots,
     cargo_workspace_tests_applicable, prebuild_shared_at, run as run_workspace_tests,
-    run_at as run_workspace_tests_at,
-    run_exhaustive_selected_at as run_exhaustive_selected_workspace_tests_at,
-    run_prebuilt_shared_at, run_selected_at as run_selected_workspace_tests_at,
+    run_at as run_workspace_tests_at, run_prebuilt_shared_at,
+    run_selected_at as run_selected_workspace_tests_at,
 };

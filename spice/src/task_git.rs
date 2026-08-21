@@ -19,7 +19,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use wire::body::{FullVerifierReceipt, GitBoundary};
+use wire::body::GitBoundary;
 
 use crate::repository::Repository;
 
@@ -158,43 +158,6 @@ impl ResolutionEvidenceError {
             reason: reason.into(),
             detail: detail.into(),
             remedy: "repair the named evidence process and retry task completion".to_owned(),
-        }
-    }
-}
-
-/// One failure while re-admitting completion evidence for a publish candidate.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CompletionEvidenceError {
-    class: ErrorClass,
-    reason: String,
-    detail: String,
-    remedy: String,
-}
-
-impl CompletionEvidenceError {
-    /// Retain an exact-evidence miss as a task-publication refusal.
-    #[must_use]
-    pub fn refusal(
-        reason: impl Into<String>,
-        detail: impl Into<String>,
-        remedy: impl Into<String>,
-    ) -> Self {
-        Self {
-            class: ErrorClass::Refusal,
-            reason: reason.into(),
-            detail: detail.into(),
-            remedy: remedy.into(),
-        }
-    }
-
-    /// Retain a filesystem, repository, or protocol failure as a fault.
-    #[must_use]
-    pub fn fault(reason: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            class: ErrorClass::Fault,
-            reason: reason.into(),
-            detail: detail.into(),
-            remedy: "repair the named evidence boundary and retry task completion".to_owned(),
         }
     }
 }
@@ -447,7 +410,7 @@ pub fn advance_at_launch(repository: &Repository) -> LaunchAdvance {
 /// Publish one task phase before its journal transition commits.
 #[cfg(test)]
 pub fn publish(repository: &Repository, meta: Metadata<'_>) -> Result<GitBoundary, Error> {
-    publish_inner(repository, meta, None, None).map(|published| published.boundary)
+    publish_inner(repository, meta, None)
 }
 
 /// Publish an allocator-authenticated phase, including an owned merge resolution.
@@ -461,44 +424,16 @@ pub fn publish_claimed(
     active: &board::Active<'_>,
     evidence: impl FnOnce() -> Result<(), ResolutionEvidenceError>,
 ) -> Result<GitBoundary, Error> {
-    publish_inner(repository, meta, Some((active, Box::new(evidence))), None)
-        .map(|published| published.boundary)
-}
-
-/// Publish one claimed phase only after every strict-source candidate tree
-/// independently re-admits one complete verifier receipt. The callback returns
-/// `None` only when the immutable candidate is outside that source-only tier.
-pub fn publish_claimed_with_completion_evidence(
-    repository: &Repository,
-    meta: Metadata<'_>,
-    active: &board::Active<'_>,
-    evidence: impl FnOnce() -> Result<(), ResolutionEvidenceError>,
-    completion: impl FnMut(&str) -> Result<Option<FullVerifierReceipt>, CompletionEvidenceError>,
-) -> Result<(GitBoundary, Option<FullVerifierReceipt>), Error> {
-    let published = publish_inner(
-        repository,
-        meta,
-        Some((active, Box::new(evidence))),
-        Some(Box::new(completion)),
-    )?;
-    Ok((published.boundary, published.verifier))
+    publish_inner(repository, meta, Some((active, Box::new(evidence))))
 }
 
 type ResolutionEvidence<'a> = Box<dyn FnOnce() -> Result<(), ResolutionEvidenceError> + 'a>;
-type CompletionEvidence<'a> =
-    Box<dyn FnMut(&str) -> Result<Option<FullVerifierReceipt>, CompletionEvidenceError> + 'a>;
-
-struct PublishedBoundary {
-    boundary: GitBoundary,
-    verifier: Option<FullVerifierReceipt>,
-}
 
 fn publish_inner<'a>(
     repository: &Repository,
     meta: Metadata<'_>,
     resolution: Option<(&board::Active<'_>, ResolutionEvidence<'a>)>,
-    mut completion: Option<CompletionEvidence<'a>>,
-) -> Result<PublishedBoundary, Error> {
+) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
     let open_merge = try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])?;
@@ -516,11 +451,13 @@ fn publish_inner<'a>(
     }
     let observed_head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let Some(target) = resolve_target(root)? else {
-        let verifier = admit_completion_evidence(&mut completion, &observed_head)?;
-        return Ok(PublishedBoundary {
-            boundary: boundary(observed_head.clone(), observed_head, None, None, 0),
-            verifier,
-        });
+        return Ok(boundary(
+            observed_head.clone(),
+            observed_head,
+            None,
+            None,
+            0,
+        ));
     };
     fetch(root, &target)?;
     let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
@@ -540,7 +477,7 @@ fn publish_inner<'a>(
             evidence,
         )?;
         let admission = Admission::resolve(repository, &integrated)?;
-        let (integrated, published_upstream, verifier) = publish_with_retry(
+        let (integrated, published_upstream) = publish_with_retry(
             root,
             &target,
             integrated.clone(),
@@ -552,18 +489,14 @@ fn publish_inner<'a>(
                 label: meta.label,
                 admission: &admission,
             },
-            &mut completion,
         )?;
-        return Ok(PublishedBoundary {
-            boundary: boundary(
-                observed_head,
-                integrated,
-                Some(&target.baseline),
-                Some(published_upstream),
-                local_commits,
-            ),
-            verifier,
-        });
+        return Ok(boundary(
+            observed_head,
+            integrated,
+            Some(&target.baseline),
+            Some(published_upstream),
+            local_commits,
+        ));
     }
     let agent_head = if is_ancestor(root, &observed_head, &upstream_head)? {
         recovered_lane_head(root, &observed_head, meta)?.unwrap_or(observed_head)
@@ -576,7 +509,7 @@ fn publish_inner<'a>(
     // An empty lane declaration deliberately defers to each integrated tree.
     let admission = Admission::resolve(repository, &agent_head)?;
     let integrated = integrate(root, &agent_head, &upstream_head, &message, meta.label)?;
-    let (integrated, published_upstream, verifier) = publish_with_retry(
+    let (integrated, published_upstream) = publish_with_retry(
         root,
         &target,
         integrated,
@@ -588,38 +521,14 @@ fn publish_inner<'a>(
             label: meta.label,
             admission: &admission,
         },
-        &mut completion,
     )?;
-    Ok(PublishedBoundary {
-        boundary: boundary(
-            agent_head,
-            integrated,
-            Some(&target.baseline),
-            Some(published_upstream),
-            local_commits,
-        ),
-        verifier,
-    })
-}
-
-fn admit_completion_evidence(
-    completion: &mut Option<CompletionEvidence<'_>>,
-    candidate: &str,
-) -> Result<Option<FullVerifierReceipt>, Error> {
-    completion
-        .as_mut()
-        .map(|admit| admit(candidate).map_err(completion_evidence_error))
-        .transpose()
-        .map(Option::flatten)
-}
-
-fn completion_evidence_error(error: CompletionEvidenceError) -> Error {
-    Error {
-        class: error.class,
-        reason: "git::completion-evidence-refused",
-        detail: format!("{}: {}", error.reason, error.detail),
-        remedy: error.remedy,
-    }
+    Ok(boundary(
+        agent_head,
+        integrated,
+        Some(&target.baseline),
+        Some(published_upstream),
+        local_commits,
+    ))
 }
 
 fn boundary(
@@ -861,8 +770,7 @@ fn publish_with_retry(
     mut integrated: String,
     mut upstream_head: String,
     publication: Publication<'_>,
-    completion: &mut Option<CompletionEvidence<'_>>,
-) -> Result<(String, String, Option<FullVerifierReceipt>), Error> {
+) -> Result<(String, String), Error> {
     let Publication {
         repository,
         agent_head,
@@ -871,10 +779,9 @@ fn publish_with_retry(
         admission,
     } = publication;
     admission.admit(repository, &integrated, label)?;
-    let mut verifier = admit_completion_evidence(completion, &integrated)?;
     let mut pushed = push(root, target, &integrated, &upstream_head)?;
     if pushed.success() {
-        return Ok((integrated, upstream_head, verifier));
+        return Ok((integrated, upstream_head));
     }
     if !is_push_race(&pushed) {
         return Err(Error::fault(
@@ -890,7 +797,7 @@ fn publish_with_retry(
             "read raced baseline",
         )?;
         if fresh == integrated {
-            return Ok((integrated, fresh, verifier));
+            return Ok((integrated, fresh));
         }
         if fresh != upstream_head {
             integrated = integrate_retry(root, &integrated, &fresh, message, label)?;
@@ -898,11 +805,10 @@ fn publish_with_retry(
             // The race produced a tree nothing has read yet. Every other path
             // out of this loop pushes the commit admitted above it.
             admission.admit(repository, &integrated, label)?;
-            verifier = admit_completion_evidence(completion, &integrated)?;
         }
         pushed = push(root, target, &integrated, &upstream_head)?;
         if pushed.success() {
-            return Ok((integrated, upstream_head, verifier));
+            return Ok((integrated, upstream_head));
         }
         if !is_push_race(&pushed) {
             return Err(Error::fault(

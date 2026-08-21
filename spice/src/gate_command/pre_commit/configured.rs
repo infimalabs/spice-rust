@@ -27,20 +27,6 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
-const SOURCE_GATE_ARGV: [&str; 11] = [
-    "cargo",
-    "run",
-    "--quiet",
-    "--locked",
-    "--package",
-    "spice",
-    "--bin",
-    "spice",
-    "--",
-    "gate",
-    "selection",
-];
-
 /// One ordered configured-command result bound to an immutable staged source.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -478,34 +464,8 @@ impl Dispatch {
         self.policy.commands.len()
     }
 
-    pub(super) fn omit_full_verifier_proven_configured(&mut self) -> usize {
-        omit_full_verifier_proven(&mut self.policy.commands)
-    }
-
     pub(super) fn source(&self) -> &Digest {
         &self.authority.source
-    }
-
-    pub(super) fn changes(&self) -> &[String] {
-        &self.authority.selected_paths
-    }
-
-    pub(super) fn into_authority(self) -> DispatchAuthority {
-        self.authority
-    }
-
-    pub(super) fn verify_authority(
-        &self,
-        expected: &DispatchAuthority,
-        trigger: &str,
-    ) -> Result<(), ConfiguredFailure> {
-        let Some(movement) = expected.movement(&self.authority) else {
-            return Ok(());
-        };
-        Err(ConfiguredFailure::refusal(
-            "gate::pre-commit-staged-source-moved",
-            format!("trigger={}; {movement}", json(trigger)),
-        ))
     }
 
     pub(super) fn verify(&mut self) -> Result<(), ConfiguredFailure> {
@@ -634,21 +594,6 @@ impl Dispatch {
         )
         .map(Some)
     }
-}
-
-fn omit_full_verifier_proven(commands: &mut Vec<PreCommitStep>) -> usize {
-    let before = commands.len();
-    commands.retain(|command| !full_verifier_proves(command));
-    before - commands.len()
-}
-
-fn full_verifier_proves(command: &PreCommitStep) -> bool {
-    command.scopes().paths().is_empty()
-        && command
-            .run()
-            .iter()
-            .map(String::as_str)
-            .eq(SOURCE_GATE_ARGV)
 }
 
 pub(super) const fn cleanup_reserve() -> Duration {
