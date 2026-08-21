@@ -831,7 +831,6 @@ impl Facts {
             task: task(),
             validation: "fixture validated".to_owned(),
             git: None,
-            verifier: None,
             source,
         });
     }

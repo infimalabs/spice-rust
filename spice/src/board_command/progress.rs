@@ -476,7 +476,6 @@ fn append_done(
                 task: entry.born().clone(),
                 validation: done.validation.clone(),
                 git: published,
-                verifier: None,
                 source,
             },
             FactCause::Root,

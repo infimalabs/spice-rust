@@ -1043,7 +1043,6 @@ fn write_gate_finding_recovery(
                 task: task.clone(),
                 validation,
                 git: None,
-                verifier: None,
                 source: source.clone(),
             },
             FactCause::Pending(cause),
