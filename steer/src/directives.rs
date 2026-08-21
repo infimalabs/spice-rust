@@ -481,14 +481,35 @@ impl Ledger {
     ///
     /// Non-steering facts are ignored. This is the incremental counterpart to
     /// [`Self::from_facts`]: a resident can retain one ledger and apply only
-    /// facts newer than its admitted cursor.
+    /// facts newer than its admitted cursor. A refused fact rolls back every
+    /// steering transition earlier in the same suffix.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn advance<'a>(
         &mut self,
         facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     ) -> Result<(), ReplayError> {
+        let order_len = self.order.len();
+        let mut originals = BTreeMap::<Key, Option<Directive>>::new();
         for envelope in facts {
-            self.apply_envelope(envelope)?;
+            if let Some(key) = transaction_key(envelope) {
+                originals
+                    .entry(key.clone())
+                    .or_insert_with(|| self.directives.get(&key).cloned());
+            }
+            if let Err(error) = self.apply_envelope(envelope) {
+                self.order.truncate(order_len);
+                for (key, original) in originals {
+                    match original {
+                        Some(directive) => {
+                            self.directives.insert(key, directive);
+                        }
+                        None => {
+                            self.directives.remove(&key);
+                        }
+                    }
+                }
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -1049,6 +1070,47 @@ impl Ledger {
     fn place(&mut self, directive: Directive) {
         self.order.push(directive.key.clone());
         self.directives.insert(directive.key.clone(), directive);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn transaction_key(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Key> {
+    let fact = &envelope.fact;
+    match fact.kind() {
+        wire::FactKind::SteerSent => fact
+            .read::<SteerSent>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::TasteReminded => fact
+            .read::<TasteReminded>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::TasteJudged => fact.read::<TasteJudged>().and_then(|body| {
+            let TasteDecision::Confirmed { key, .. } = &body.decision else {
+                return None;
+            };
+            key.parse().ok()
+        }),
+        wire::FactKind::SteerEscalated => fact
+            .read::<SteerEscalated>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::SteerRecovered => fact
+            .read::<SteerRecovered>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::SteerAcked => fact
+            .read::<SteerAcked>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::SteerDeclined => fact
+            .read::<SteerDeclined>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::SteerLapsed => fact
+            .read::<SteerLapsed>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::SteerDeadLettered => fact
+            .read::<SteerDeadLettered>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::SteerCanceled => fact
+            .read::<SteerCanceled>()
+            .and_then(|body| body.key.parse().ok()),
+        _ => None,
     }
 }
 

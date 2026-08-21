@@ -47,6 +47,7 @@ pub struct TaskEffortReducer;
 #[derive(Debug, Default)]
 pub struct TaskEffortInputs {
     facts: Vec<wire::Envelope<wire::AnyFact>>,
+    open: BTreeSet<TaskStamp>,
 }
 
 impl TaskEffortInputs {
@@ -76,12 +77,12 @@ impl TaskEffortInputs {
         facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     ) -> usize {
         let retained = self.facts.len();
-        self.facts.extend(
-            facts
-                .into_iter()
-                .filter(|envelope| effort_fact(envelope.fact.kind()))
-                .cloned(),
-        );
+        for envelope in facts {
+            if effort_fact(envelope.fact.kind()) {
+                observe_open_attempts(&mut self.open, envelope);
+                self.facts.push(envelope.clone());
+            }
+        }
         self.facts.len() - retained
     }
 
@@ -96,13 +97,15 @@ impl TaskEffortInputs {
         at: Option<Instant>,
     ) -> Result<Option<EffortAnswer>, String> {
         let retained = self.facts.len();
-        if self.advance(facts) == 0 {
+        let advanced = self.advance(facts);
+        if advanced == 0 && self.open.is_empty() {
             return Ok(None);
         }
         match self.answer(cursor, at) {
             Ok(answer) => Ok(Some(answer)),
             Err(error) => {
                 self.facts.truncate(retained);
+                self.rebuild_open_attempts();
                 Err(error)
             }
         }
@@ -123,6 +126,13 @@ impl TaskEffortInputs {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.facts.is_empty()
+    }
+
+    fn rebuild_open_attempts(&mut self) {
+        self.open.clear();
+        for envelope in &self.facts {
+            observe_open_attempts(&mut self.open, envelope);
+        }
     }
 }
 
@@ -166,6 +176,47 @@ fn effort_fact(kind: FactKind) -> bool {
             | FactKind::LineageArranged
             | FactKind::JournalIngested
     )
+}
+
+fn observe_open_attempts(open: &mut BTreeSet<TaskStamp>, envelope: &wire::Envelope<wire::AnyFact>) {
+    let Some((task, opened)) = (match envelope.fact.kind() {
+        FactKind::ClaimWon => envelope
+            .fact
+            .read::<body::ClaimWon>()
+            .map(|body| (body.task, true)),
+        FactKind::TaskAdded => envelope
+            .fact
+            .read::<body::TaskAdded>()
+            .map(|body| (body.task, false)),
+        FactKind::TaskDone => envelope
+            .fact
+            .read::<body::TaskDone>()
+            .map(|body| (body.task, false)),
+        FactKind::TaskReviewed => envelope
+            .fact
+            .read::<body::TaskReviewed>()
+            .map(|body| (body.task, false)),
+        FactKind::TaskDeleted => envelope
+            .fact
+            .read::<body::TaskDeleted>()
+            .map(|body| (body.task, false)),
+        FactKind::ClaimFreed => envelope
+            .fact
+            .read::<body::ClaimFreed>()
+            .map(|body| (body.task, false)),
+        FactKind::ClaimLapsed => envelope
+            .fact
+            .read::<body::ClaimLapsed>()
+            .map(|body| (body.task, false)),
+        _ => None,
+    }) else {
+        return;
+    };
+    if opened {
+        open.insert(task);
+    } else {
+        open.remove(&task);
+    }
 }
 
 /// Decode one materialization as the task-effort answer its fold owns.
