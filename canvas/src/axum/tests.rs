@@ -801,7 +801,7 @@ impl super::socket::Inbound for ReadyInbound {
     }
 }
 
-/// Every source a session can serve, each one ready before any of them is read.
+/// Every external source a session can serve, each one ready before any is read.
 fn every_source_ready() -> (
     bus::Bus,
     tokio::sync::broadcast::Sender<wire::AgentMessage>,
@@ -823,14 +823,14 @@ fn every_source_ready() -> (
     (bus, publisher, Some(broadcasts), Some(transcript))
 }
 
-/// Each rotation step serves its own source while all four stay ready.
+/// Each rotation step serves its own source while all five stay ready.
 ///
 /// Every source is ready before the first call and none is exhausted by the
-/// five, so the lead is the only thing left that can decide which event comes
+/// six, so the lead is the only thing left that can decide which event comes
 /// back. One fixed order answers `Journal` every time; a rotation that fails to
 /// cycle answers `Journal` after the first step; and the fifth call is what
 /// proves the cycle closes rather than parking on its last source. One lead is
-/// carried across all five calls, so the advance a session depends on is the
+/// carried across all six calls, so the advance a session depends on is the
 /// same advance under test.
 ///
 /// Readiness is established by the assertions themselves rather than by timing.
@@ -838,9 +838,10 @@ fn every_source_ready() -> (
 /// yield it would return a later source instead and fail there, so this cannot
 /// decay into a test that passes because nothing was ever ready.
 #[tokio::test(flavor = "current_thread")]
-async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
+async fn each_rotation_step_serves_its_own_source_while_all_five_stay_ready() {
     use super::socket::{
-        CommandCompletion, Event, Lead, PendingCommands, SessionSignals, next_event,
+        CommandCompletion, Event, Lead, PendingCommands, SessionReadiness, SessionSignals,
+        next_event,
     };
 
     let (bus, _publisher, mut broadcasts, mut messages) = every_source_ready();
@@ -853,7 +854,14 @@ async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
         commands.push(Box::pin(async { CommandCompletion::Closed }));
     }
 
-    for expected in ["journal", "message", "inbound", "command", "journal"] {
+    for expected in [
+        "journal",
+        "message",
+        "inbound",
+        "command",
+        "continuation",
+        "journal",
+    ] {
         let event = next_event(
             &mut lead,
             &mut inbound,
@@ -861,7 +869,7 @@ async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
             &mut broadcasts,
             &mut messages,
             &mut commands,
-            true,
+            SessionReadiness::live(true),
         )
         .await;
         let served = match event {
@@ -880,6 +888,7 @@ async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
                 assert!(matches!(completed, Some(CommandCompletion::Closed)));
                 "command"
             }
+            Event::Continuation => "continuation",
         };
         assert_eq!(
             served, expected,
@@ -895,12 +904,13 @@ async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
 /// Fairness is bought by rotating the work sources, and the risk of that is
 /// trading a starvation bug for a close-ordering one. Shutdown is re-signalled
 /// before each step because a watch marks its value seen once observed, so each
-/// step is a fresh race between a ready close, capability retirement, and four
+/// step is a fresh race between a ready close, capability retirement, and five
 /// ready work sources.
 #[tokio::test(flavor = "current_thread")]
 async fn close_outranks_every_ready_work_source_on_every_lead() {
     use super::socket::{
-        CommandCompletion, Event, Lead, PendingCommands, SessionSignals, next_event,
+        CommandCompletion, Event, Lead, PendingCommands, SessionReadiness, SessionSignals,
+        next_event,
     };
 
     let (bus, _publisher, mut broadcasts, mut messages) = every_source_ready();
@@ -914,7 +924,7 @@ async fn close_outranks_every_ready_work_source_on_every_lead() {
         commands.push(Box::pin(async { CommandCompletion::Closed }));
     }
 
-    for _ in 0..4 {
+    for _ in 0..5 {
         shutdown
             .send(true)
             .expect("the session holds the watch open");
@@ -927,7 +937,7 @@ async fn close_outranks_every_ready_work_source_on_every_lead() {
                     &mut broadcasts,
                     &mut messages,
                     &mut commands,
-                    true,
+                    SessionReadiness::live(true),
                 )
                 .await,
                 Event::Closed(Ok(()))
