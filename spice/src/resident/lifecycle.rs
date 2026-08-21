@@ -913,3 +913,6 @@ mod tests {
             .expect("fixture instant")
     }
 }
+
+#[cfg(test)]
+mod materialization_tests;

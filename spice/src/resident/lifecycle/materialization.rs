@@ -8,6 +8,7 @@ use wire::{Actor, CanonicalUuid, ClaimDisposition, Instant, Seq, TaskStamp};
 
 use super::{CommandResult, store_fault};
 
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub(super) struct Projection {
     cursor: Option<Seq>,
     ledger: steer::Ledger,
@@ -20,11 +21,28 @@ pub(super) struct Projection {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 struct Subscriptions {
     lanes_by_task: BTreeMap<TaskStamp, BTreeSet<CanonicalUuid>>,
     project_by_task: BTreeMap<TaskStamp, Option<String>>,
     projects_by_lane: BTreeMap<CanonicalUuid, BTreeMap<String, usize>>,
 }
+
+struct EntryUpdate {
+    heads: TaskHeads,
+    entry: Entry,
+    project: Option<String>,
+}
+
+struct AdvancePlan {
+    cursor: Seq,
+    fact_instants: BTreeMap<Seq, Instant>,
+    entries: BTreeMap<TaskStamp, EntryUpdate>,
+    subscriptions: Vec<(TaskStamp, CanonicalUuid)>,
+    ready_at: BTreeMap<TaskStamp, Instant>,
+}
+
+type FactDelta<'a> = Vec<&'a wire::Envelope<wire::AnyFact>>;
 
 impl Projection {
     pub(super) fn new() -> Self {
@@ -61,6 +79,25 @@ impl Projection {
         snapshot: &bus::TaskSnapshot,
         projects: &board::ProjectPolicy,
     ) -> CommandResult<()> {
+        let Some((cursor, delta)) = self.committed_delta(snapshot)? else {
+            return Ok(());
+        };
+        let plan = self.prepare(snapshot, projects, cursor, &delta)?;
+
+        // This is the final fallible operation. `Ledger::advance` rolls its
+        // touched keys back on refusal, and applying the prepared plan below is
+        // infallible, so no partial projection can escape to a retry.
+        self.ledger
+            .advance(delta.iter().copied())
+            .map_err(|error| store_fault("lifecycle::steering-invalid", &error.to_string()))?;
+        self.apply(plan);
+        Ok(())
+    }
+
+    fn committed_delta<'a>(
+        &self,
+        snapshot: &'a bus::TaskSnapshot,
+    ) -> CommandResult<Option<(Seq, FactDelta<'a>)>> {
         let cursor = snapshot.cursor().ok_or_else(|| {
             store_fault(
                 "lifecycle::snapshot-empty",
@@ -77,7 +114,7 @@ impl Projection {
             ));
         }
         if self.cursor == Some(cursor) {
-            return Ok(());
+            return Ok(None);
         }
 
         let delta = snapshot.facts().after(self.cursor).collect::<Vec<_>>();
@@ -91,13 +128,45 @@ impl Projection {
                 ),
             ));
         }
-        for fact in &delta {
-            self.fact_instants.insert(fact.seq, fact.at);
-        }
-        self.ledger
-            .advance(delta.iter().copied())
-            .map_err(|error| store_fault("lifecycle::steering-invalid", &error.to_string()))?;
+        Ok(Some((cursor, delta)))
+    }
 
+    fn prepare(
+        &self,
+        snapshot: &bus::TaskSnapshot,
+        projects: &board::ProjectPolicy,
+        cursor: Seq,
+        delta: &[&wire::Envelope<wire::AnyFact>],
+    ) -> CommandResult<AdvancePlan> {
+        let changed = self.changed_tasks(snapshot, delta)?;
+        let entries = self.entry_updates(snapshot, projects, &changed)?;
+        let subscriptions = self.subscription_events(delta, &entries)?;
+        let affected = self.affected_tasks(&changed, &entries);
+        let fact_instants = delta
+            .iter()
+            .map(|fact| (fact.seq, fact.at))
+            .collect::<BTreeMap<_, _>>();
+        let ready_at = affected
+            .into_iter()
+            .map(|task| {
+                self.projected_ready_instant(&task, &entries, &fact_instants)
+                    .map(|ready| (task, ready))
+            })
+            .collect::<CommandResult<BTreeMap<_, _>>>()?;
+        Ok(AdvancePlan {
+            cursor,
+            fact_instants,
+            entries,
+            subscriptions,
+            ready_at,
+        })
+    }
+
+    fn changed_tasks(
+        &self,
+        snapshot: &bus::TaskSnapshot,
+        delta: &[&wire::Envelope<wire::AnyFact>],
+    ) -> CommandResult<BTreeSet<TaskStamp>> {
         let changed = if self.cursor.is_none() {
             snapshot
                 .tasks()
@@ -123,27 +192,93 @@ impl Projection {
                 })
                 .collect::<CommandResult<BTreeSet<_>>>()?
         };
-        for task in &changed {
-            self.update_entry(snapshot, task, projects)?;
-        }
-        self.subscriptions
-            .advance(delta.iter().copied(), &self.entries)?;
+        Ok(changed)
+    }
 
+    fn entry_updates(
+        &self,
+        snapshot: &bus::TaskSnapshot,
+        projects: &board::ProjectPolicy,
+        changed: &BTreeSet<TaskStamp>,
+    ) -> CommandResult<BTreeMap<TaskStamp, EntryUpdate>> {
+        let mut entries = BTreeMap::new();
+        for task in changed {
+            let heads = snapshot
+                .tasks()
+                .binary_search_by(|heads| heads.statement().body().born.cmp(task))
+                .ok()
+                .map(|index| snapshot.tasks()[index].clone())
+                .ok_or_else(|| {
+                    store_fault(
+                        "lifecycle::task-head-missing",
+                        &format!("changed task {task} has no current storage heads"),
+                    )
+                })?;
+            let entry = entry(&heads, projects)?;
+            let project = (!entry.project().visibility().is_hidden())
+                .then(|| entry.project().as_str().to_owned());
+            entries.insert(
+                task.clone(),
+                EntryUpdate {
+                    heads,
+                    entry,
+                    project,
+                },
+            );
+        }
+        Ok(entries)
+    }
+
+    fn subscription_events(
+        &self,
+        delta: &[&wire::Envelope<wire::AnyFact>],
+        entries: &BTreeMap<TaskStamp, EntryUpdate>,
+    ) -> CommandResult<Vec<(TaskStamp, CanonicalUuid)>> {
+        let mut subscriptions = Vec::new();
+        for envelope in delta {
+            let event = subscription_event(envelope);
+            let Some((task, lane)) = event else {
+                continue;
+            };
+            if self.projected_entry(entries, &task).is_none() {
+                return Err(store_fault(
+                    "lifecycle::subscription-history-invalid",
+                    &format!("subscription history task {task} has no current heads"),
+                ));
+            }
+            subscriptions.push((task, lane));
+        }
+        Ok(subscriptions)
+    }
+
+    fn affected_tasks(
+        &self,
+        changed: &BTreeSet<TaskStamp>,
+        entries: &BTreeMap<TaskStamp, EntryUpdate>,
+    ) -> BTreeSet<TaskStamp> {
         let mut affected = changed.clone();
-        for task in &changed {
-            if let Some(rows) = self.dependents.get(task) {
-                affected.extend(rows.iter().cloned());
+        for dependency in changed {
+            if let Some(rows) = self.dependents.get(dependency) {
+                affected.extend(
+                    rows.iter()
+                        .filter(|task| {
+                            self.projected_entry(entries, task).is_some_and(|entry| {
+                                entry.statement().dependencies.contains(dependency)
+                            })
+                        })
+                        .cloned(),
+                );
+            }
+            for (task, update) in entries {
+                if update.entry.statement().dependencies.contains(dependency) {
+                    affected.insert(task.clone());
+                }
             }
         }
         if self.cursor.is_none() {
-            affected.extend(self.entries.iter().map(|entry| entry.born().clone()));
+            affected.extend(entries.keys().cloned());
         }
-        for task in affected {
-            let ready = self.ready_instant(&task)?;
-            self.ready_at.insert(task, ready);
-        }
-        self.cursor = Some(cursor);
-        Ok(())
+        affected
     }
 
     pub(super) fn project_residency(
@@ -153,44 +288,39 @@ impl Projection {
         self.subscriptions.project(residency)
     }
 
-    fn update_entry(
-        &mut self,
-        snapshot: &bus::TaskSnapshot,
-        task: &TaskStamp,
-        projects: &board::ProjectPolicy,
-    ) -> CommandResult<()> {
-        let heads = snapshot
-            .tasks()
-            .binary_search_by(|heads| heads.statement().body().born.cmp(task))
-            .ok()
-            .map(|index| snapshot.tasks()[index].clone())
-            .ok_or_else(|| {
-                store_fault(
-                    "lifecycle::task-head-missing",
-                    &format!("changed task {task} has no current storage heads"),
-                )
-            })?;
-        let entry = entry(&heads, projects)?;
-        if let Ok(index) = self.entries.binary_search_by(|row| row.born().cmp(task)) {
+    fn apply(&mut self, plan: AdvancePlan) {
+        self.fact_instants.extend(plan.fact_instants);
+        for (task, update) in plan.entries {
+            self.apply_entry(task, update);
+        }
+        for (task, lane) in plan.subscriptions {
+            self.subscriptions.apply(task, lane);
+        }
+        self.ready_at.extend(plan.ready_at);
+        self.cursor = Some(plan.cursor);
+    }
+
+    fn apply_entry(&mut self, task: TaskStamp, update: EntryUpdate) {
+        if let Ok(index) = self.entries.binary_search_by(|row| row.born().cmp(&task)) {
             for dependency in &self.entries[index].statement().dependencies {
                 if let Some(rows) = self.dependents.get_mut(dependency) {
-                    rows.remove(task);
+                    rows.remove(&task);
                     if rows.is_empty() {
                         self.dependents.remove(dependency);
                     }
                 }
             }
-            self.entries[index] = entry;
+            self.entries[index] = update.entry;
         } else {
             let index = self
                 .entries
-                .binary_search_by(|row| row.born().cmp(task))
+                .binary_search_by(|row| row.born().cmp(&task))
                 .expect_err("the changed task is not present");
-            self.entries.insert(index, entry);
+            self.entries.insert(index, update.entry);
         }
         let entry = self
             .entries
-            .binary_search_by(|row| row.born().cmp(task))
+            .binary_search_by(|row| row.born().cmp(&task))
             .ok()
             .map(|index| &self.entries[index])
             .expect("the changed entry was inserted");
@@ -200,26 +330,47 @@ impl Projection {
                 .or_default()
                 .insert(task.clone());
         }
-        let project = (!entry.project().visibility().is_hidden())
-            .then(|| entry.project().as_str().to_owned());
-        self.subscriptions.update_project(task, project);
-        self.heads.insert(task.clone(), heads);
-        Ok(())
+        self.subscriptions.update_project(&task, update.project);
+        self.heads.insert(task, update.heads);
     }
 
-    fn ready_instant(&self, task: &TaskStamp) -> CommandResult<Instant> {
-        let entry = self
-            .entries
-            .binary_search_by(|row| row.born().cmp(task))
-            .ok()
-            .map(|index| &self.entries[index])
-            .ok_or_else(|| {
-                store_fault(
-                    "lifecycle::task-head-missing",
-                    &format!("validated task {task} has no current entry"),
-                )
-            })?;
-        let heads = self.heads.get(task).ok_or_else(|| {
+    fn projected_entry<'a>(
+        &'a self,
+        entries: &'a BTreeMap<TaskStamp, EntryUpdate>,
+        task: &TaskStamp,
+    ) -> Option<&'a Entry> {
+        entries.get(task).map(|update| &update.entry).or_else(|| {
+            self.entries
+                .binary_search_by(|row| row.born().cmp(task))
+                .ok()
+                .map(|index| &self.entries[index])
+        })
+    }
+
+    fn projected_heads<'a>(
+        &'a self,
+        entries: &'a BTreeMap<TaskStamp, EntryUpdate>,
+        task: &TaskStamp,
+    ) -> Option<&'a TaskHeads> {
+        entries
+            .get(task)
+            .map(|update| &update.heads)
+            .or_else(|| self.heads.get(task))
+    }
+
+    fn projected_ready_instant(
+        &self,
+        task: &TaskStamp,
+        entries: &BTreeMap<TaskStamp, EntryUpdate>,
+        fact_instants: &BTreeMap<Seq, Instant>,
+    ) -> CommandResult<Instant> {
+        let entry = self.projected_entry(entries, task).ok_or_else(|| {
+            store_fault(
+                "lifecycle::task-head-missing",
+                &format!("validated task {task} has no current entry"),
+            )
+        })?;
+        let heads = self.projected_heads(entries, task).ok_or_else(|| {
             store_fault(
                 "lifecycle::task-head-missing",
                 &format!("validated task {task} has no storage heads"),
@@ -234,22 +385,26 @@ impl Projection {
             transition = transition.max(claim.position());
         }
         for dependency in &entry.statement().dependencies {
-            let dependency = self.heads.get(dependency).ok_or_else(|| {
+            let dependency_heads = self.projected_heads(entries, dependency).ok_or_else(|| {
                 store_fault(
                     "lifecycle::dependency-head-missing",
                     &format!("task {task} dependency {dependency} has no storage heads"),
                 )
             })?;
-            transition = transition.max(dependency.workflow().position());
+            transition = transition.max(dependency_heads.workflow().position());
         }
-        self.fact_instants.get(&transition).copied().ok_or_else(|| {
-            store_fault(
-                "lifecycle::ready-fact-missing",
-                &format!(
-                    "task {task} READY transition head {transition} has no retained fact instant"
-                ),
-            )
-        })
+        fact_instants
+            .get(&transition)
+            .or_else(|| self.fact_instants.get(&transition))
+            .copied()
+            .ok_or_else(|| {
+                store_fault(
+                    "lifecycle::ready-fact-missing",
+                    &format!(
+                        "task {task} READY transition head {transition} has no retained fact instant"
+                    ),
+                )
+            })
     }
 }
 
@@ -306,6 +461,25 @@ fn changed_task(
     )
 }
 
+fn subscription_event(
+    envelope: &wire::Envelope<wire::AnyFact>,
+) -> Option<(TaskStamp, CanonicalUuid)> {
+    match envelope.fact.kind() {
+        wire::FactKind::TaskAdded => match envelope.actor {
+            Actor::Lane(lane) => envelope
+                .fact
+                .read::<wire::body::TaskAdded>()
+                .map(|body| (body.task, lane)),
+            Actor::Operator | Actor::Spice => None,
+        },
+        wire::FactKind::ClaimWon => envelope
+            .fact
+            .read::<wire::body::ClaimWon>()
+            .map(|body| (body.task, body.lane)),
+        _ => None,
+    }
+}
+
 impl Subscriptions {
     fn update_project(&mut self, task: &TaskStamp, project: Option<String>) {
         let previous = self.project_by_task.insert(task.clone(), project.clone());
@@ -323,50 +497,17 @@ impl Subscriptions {
         }
     }
 
-    fn advance<'a>(
-        &mut self,
-        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
-        entries: &[Entry],
-    ) -> CommandResult<()> {
-        for envelope in facts {
-            let event = match envelope.fact.kind() {
-                wire::FactKind::TaskAdded => match envelope.actor {
-                    Actor::Lane(lane) => envelope
-                        .fact
-                        .read::<wire::body::TaskAdded>()
-                        .map(|body| (body.task, lane)),
-                    Actor::Operator | Actor::Spice => None,
-                },
-                wire::FactKind::ClaimWon => envelope
-                    .fact
-                    .read::<wire::body::ClaimWon>()
-                    .map(|body| (body.task, body.lane)),
-                _ => None,
-            };
-            let Some((task, lane)) = event else {
-                continue;
-            };
-            if entries
-                .binary_search_by(|entry| entry.born().cmp(&task))
-                .is_err()
-            {
-                return Err(store_fault(
-                    "lifecycle::subscription-history-invalid",
-                    &format!("subscription history task {task} has no current heads"),
-                ));
-            }
-            if self
-                .lanes_by_task
-                .entry(task.clone())
-                .or_default()
-                .insert(lane)
-                && let Some(Some(project)) = self.project_by_task.get(&task)
-            {
-                let project = project.clone();
-                self.add(lane, &project);
-            }
+    fn apply(&mut self, task: TaskStamp, lane: CanonicalUuid) {
+        if self
+            .lanes_by_task
+            .entry(task.clone())
+            .or_default()
+            .insert(lane)
+            && let Some(Some(project)) = self.project_by_task.get(&task)
+        {
+            let project = project.clone();
+            self.add(lane, &project);
         }
-        Ok(())
     }
 
     fn project(&self, residency: &wire::ResidencyHead) -> Result<wire::ResidencyHead, String> {

@@ -839,6 +839,24 @@ fn a_committed_suffix_advances_to_the_same_ledger_as_restart_replay() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn a_refused_committed_suffix_rolls_back_every_prior_steering_transition() {
+    let snapshot = snapshot_of(&[
+        fact_bytes(1, ROOT, "admitted prefix"),
+        fact_bytes(2, SECOND, "valid suffix publication"),
+        fact_bytes(3, SECOND, "late duplicate suffix publication"),
+    ]);
+    let mut incremental = Ledger::from_facts(&snapshot.facts()[..1]).expect("prefix replay");
+    let before = incremental.clone();
+
+    incremental
+        .advance(&snapshot.facts()[1..])
+        .expect_err("late duplicate refuses the suffix");
+
+    assert_eq!(incremental, before);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn replayed_authority_heads_reproduce_the_canonical_ledger() {
     let snapshot = snapshot_of(&[
         fact_bytes(1, ROOT, "first publication"),

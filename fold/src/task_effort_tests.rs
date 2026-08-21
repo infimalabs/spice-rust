@@ -11,6 +11,78 @@ const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116308";
 const REVIEW_CLOSE_OFFSET: u64 = 200;
 
 #[test]
+fn unrelated_suffix_advances_the_barrier_of_an_open_phase_without_becoming_input() {
+    let mut facts = Facts::new();
+    facts.task();
+    facts.lane();
+    facts.session(occupant_a(), "sonnet", "high");
+    facts.claim(occupant_a(), proven(None));
+    let admitted = facts.rows.len();
+    facts.push(body::TasteCleared {
+        taste: "unrelated".to_owned(),
+        locus: "task-effort-open-phase-fixture".to_owned(),
+    });
+    let snapshot = facts.snapshot();
+
+    let restarted = derive(&snapshot).expect("restart replay derives");
+    let mut incremental = TaskEffortInputs::from_facts(snapshot.facts()[..admitted].iter());
+    let retained = incremental.len();
+    let advanced = incremental
+        .advance_and_answer(
+            snapshot.facts()[admitted..].iter(),
+            snapshot.horizon(),
+            snapshot.facts().last().map(|fact| fact.at),
+        )
+        .expect("unrelated committed suffix advances the barrier")
+        .expect("an open retained phase is rendered at every new barrier");
+
+    assert_eq!(advanced, restarted);
+    assert_eq!(
+        incremental.len(),
+        retained,
+        "the unrelated fact is not retained as reducer input"
+    );
+}
+
+#[test]
+fn unrelated_suffix_reuses_a_generation_when_every_phase_is_closed() {
+    let mut facts = Facts::new();
+    facts.task();
+    facts.lane();
+    facts.session(occupant_a(), "sonnet", "high");
+    facts.claim(occupant_a(), proven(None));
+    facts.done(proven(None));
+    let admitted = facts.rows.len();
+    facts.push(body::TasteCleared {
+        taste: "unrelated".to_owned(),
+        locus: "task-effort-closed-phase-fixture".to_owned(),
+    });
+    let snapshot = facts.snapshot();
+
+    let mut incremental = TaskEffortInputs::from_facts(snapshot.facts()[..admitted].iter());
+    let retained = incremental.len();
+    let advanced = incremental
+        .advance_and_answer(
+            snapshot.facts()[admitted..].iter(),
+            snapshot.horizon(),
+            snapshot.facts().last().map(|fact| fact.at),
+        )
+        .expect("unrelated committed suffix advances");
+
+    assert!(advanced.is_none(), "a closed answer is barrier-insensitive");
+    assert_eq!(incremental.len(), retained);
+    assert_eq!(
+        incremental
+            .answer(
+                snapshot.horizon(),
+                snapshot.facts().last().map(|fact| fact.at)
+            )
+            .expect("retained inputs still derive"),
+        derive(&snapshot).expect("restart replay derives")
+    );
+}
+
+#[test]
 fn incremental_inputs_reproduce_restart_replay_without_retaining_unrelated_facts() {
     let mut facts = Facts::new();
     facts.task();
