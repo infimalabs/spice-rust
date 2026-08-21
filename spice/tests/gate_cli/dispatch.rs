@@ -2,34 +2,6 @@
 
 use super::*;
 
-struct PeerCargo(Vec<std::process::Child>);
-
-impl PeerCargo {
-    fn start(program: &Path, count: usize) -> Self {
-        let children = (0..count)
-            .map(|_| {
-                fixture_command(program)
-                    .arg("__peer-load")
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .expect("launch continuous peer Cargo fixture")
-            })
-            .collect();
-        Self(children)
-    }
-}
-
-impl Drop for PeerCargo {
-    fn drop(&mut self) {
-        for child in &mut self.0 {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
 #[test]
 fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_180_seconds() {
     let repository = GateRepository::new();
@@ -93,6 +65,157 @@ fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_1
             .is_file(),
         "ordinary change-gate acceptance is the publication boundary"
     );
+}
+
+/// Each selected test publishes its compiler outputs before observing its peer.
+/// Neither commit can finish this test unless both linked-worktree gates are
+/// executing concurrently, so a repository-common dispatch lock deterministically
+/// fails the fixture rather than merely making it slower.
+#[test]
+fn linked_worktrees_commit_concurrent_selected_checks_with_private_outputs() {
+    let repository = GateRepository::new();
+    let linked_parent = Scratch::new("concurrent-linked-worktree");
+    let linked = linked_parent.path().join("checkout");
+    let linked_text = linked.to_str().expect("linked fixture path is UTF-8");
+    git(
+        repository.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "concurrent-peer",
+            linked_text,
+        ],
+    );
+    repository.install_pre_commit();
+
+    let barrier = Scratch::new("concurrent-selected-barrier");
+    let main_marker = barrier.path().join("main.outputs");
+    let linked_marker = barrier.path().join("linked.outputs");
+    write_concurrent_selected_test(repository.path(), &main_marker, &linked_marker);
+    write_concurrent_selected_test(&linked, &linked_marker, &main_marker);
+    git(repository.path(), &["add", "src/lib.rs"]);
+    git(&linked, &["add", "src/lib.rs"]);
+    let started = Instant::now();
+
+    let main_commit = fixture_command("/usr/bin/git")
+        .args(["commit", "-qm", "Commit main selected slice"])
+        .current_dir(repository.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("launch main worktree commit");
+    let linked_commit = fixture_command("/usr/bin/git")
+        .args(["commit", "-qm", "Commit linked selected slice"])
+        .current_dir(&linked)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("launch linked worktree commit");
+    let main_output = main_commit
+        .wait_with_output()
+        .expect("wait for main worktree commit");
+    let linked_output = linked_commit
+        .wait_with_output()
+        .expect("wait for linked worktree commit");
+
+    assert_commit_success("main", &main_output);
+    assert_commit_success("linked", &linked_output);
+    assert!(
+        started.elapsed() < Duration::from_secs(180),
+        "concurrent linked-worktree commits crossed the ordinary gate deadline",
+    );
+    for output in [&main_output, &linked_output] {
+        let diagnostics = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !diagnostics.contains("gate::pre-commit-dispatch-active"),
+            "one worktree refused the other's selected gate: {diagnostics}",
+        );
+    }
+
+    let main_root = fs::canonicalize(repository.path()).expect("canonicalize main worktree");
+    let linked_root = fs::canonicalize(&linked).expect("canonicalize linked worktree");
+    let (main_target, main_build) = recorded_cargo_outputs(&main_marker);
+    let (linked_target, linked_build) = recorded_cargo_outputs(&linked_marker);
+    assert!(main_target.starts_with(&main_root), "{main_target:?}");
+    assert!(main_build.starts_with(&main_root), "{main_build:?}");
+    assert!(linked_target.starts_with(&linked_root), "{linked_target:?}");
+    assert!(linked_build.starts_with(&linked_root), "{linked_build:?}");
+    assert_ne!(main_target, linked_target);
+    assert_ne!(main_build, linked_build);
+    assert_eq!(
+        git_stdout(repository.path(), &["rev-list", "--count", "HEAD"]),
+        b"2\n",
+    );
+    assert_eq!(
+        git_stdout(&linked, &["rev-list", "--count", "HEAD"]),
+        b"2\n"
+    );
+}
+
+fn write_concurrent_selected_test(root: &Path, own: &Path, peer: &Path) {
+    let own = format!("{:?}", own.to_string_lossy());
+    let peer = format!("{:?}", peer.to_string_lossy());
+    fs::write(
+        root.join("src/lib.rs"),
+        format!(
+            concat!(
+                "pub fn fixture() {{}}\n\n",
+                "#[test]\n",
+                "fn concurrent_selected_target() {{\n",
+                "    let target = std::env::var(\"CARGO_TARGET_DIR\").expect(\"target authority\");\n",
+                "    let build = std::env::var(\"CARGO_BUILD_BUILD_DIR\").expect(\"build authority\");\n",
+                "    std::fs::write({own}, format!(\"{{target}}\\n{{build}}\\n\"))\n",
+                "        .expect(\"publish selected-test output roots\");\n",
+                "    let peer = std::path::Path::new({peer});\n",
+                "    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);\n",
+                "    while !peer.is_file() {{\n",
+                "        assert!(std::time::Instant::now() < deadline, \"peer selected test never overlapped\");\n",
+                "        std::thread::sleep(std::time::Duration::from_millis(10));\n",
+                "    }}\n",
+                "}}\n",
+            ),
+            own = own,
+            peer = peer,
+        ),
+    )
+    .expect("write concurrent selected-test source");
+    let output = std::process::Command::new("rustfmt")
+        .args(["--edition", "2024"])
+        .arg(root.join("src/lib.rs"))
+        .output()
+        .expect("launch rustfmt for concurrent selected-test source");
+    assert!(
+        output.status.success(),
+        "format concurrent selected-test source: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+fn assert_commit_success(label: &str, output: &std::process::Output) {
+    assert!(
+        output.status.success(),
+        "{label} worktree commit failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+fn recorded_cargo_outputs(marker: &Path) -> (PathBuf, PathBuf) {
+    let output = fs::read_to_string(marker).expect("selected test published its output roots");
+    let mut roots = output.lines().map(PathBuf::from);
+    let target = roots.next().expect("selected test published target-dir");
+    let build = roots.next().expect("selected test published build-dir");
+    assert!(
+        roots.next().is_none(),
+        "unexpected output-root record: {output:?}"
+    );
+    (target, build)
 }
 
 #[test]
@@ -450,7 +573,6 @@ fn configured_source_gate_retries_stale_state_without_repeating_selected_tests()
         &format!(
             concat!(
                 "#!/bin/sh\n",
-                "if [ \"${{1-}}\" = \"__peer-load\" ]; then read _; exit 0; fi\n",
                 "if [ \"$*\" = \"run --quiet --locked --package spice --bin spice -- gate selection\" ]; then\n",
                 "  '{}' --ignored --exact dispatch::configured_source_gate_selection_fixture_process --nocapture >'{}' 2>&1\n",
                 "  status=$?\n",
@@ -471,7 +593,6 @@ fn configured_source_gate_retries_stale_state_without_repeating_selected_tests()
         &std::env::var_os("PATH").expect("test process carries PATH"),
     ));
     let path = std::env::join_paths(path_entries).expect("compose configured source-gate path");
-    let peers = PeerCargo::start(&cargo, 2);
     let started = Instant::now();
 
     let output = fixture_command("/usr/bin/git")
@@ -492,10 +613,6 @@ fn configured_source_gate_retries_stale_state_without_repeating_selected_tests()
     assert!(
         started.elapsed() < Duration::from_secs(180),
         "configured source gate crossed its parent deadline",
-    );
-    assert!(
-        peers.0.iter().all(|peer| process_exists(peer.id())),
-        "peer Cargo fixtures did not remain live through pre-commit completion",
     );
     assert_configured_stale_retry(&repository, &marker, &progress);
 }

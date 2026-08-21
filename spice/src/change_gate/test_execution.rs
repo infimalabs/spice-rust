@@ -228,6 +228,6 @@ mod tests {
     }
 
     fn budget() -> CargoBudget {
-        CargoBudget::from_observation(4, Some(0), 4)
+        CargoBudget::from_capacity(4, 4)
     }
 }

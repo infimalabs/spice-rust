@@ -482,10 +482,10 @@ impl DispatchGuard {
         let state = repository
             .admit_state()
             .map_err(|error| fault("gate::pre-commit-state-unavailable", error))?;
-        fs::create_dir_all(state.locks())
+        fs::create_dir_all(state.worktree_locks())
             .map_err(|error| fault("gate::pre-commit-lock-unavailable", error))?;
         let name = LockName::new("pre-commit").expect("pre-commit is a valid fixed lock name");
-        let lock = LockFile::new(name, state.locks().join(DISPATCH_LOCK));
+        let lock = LockFile::new(name, state.worktree_locks().join(DISPATCH_LOCK));
         match lock.try_acquire() {
             Ok(Acquisition::Acquired(possession)) => Ok(Self {
                 _possession: possession,
