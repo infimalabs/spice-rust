@@ -275,6 +275,42 @@ fn verify_names_schema_and_sequence_defects() {
 }
 
 #[test]
+fn violation_errors_render_every_class_subject_and_detail() {
+    let cursor = crate::Violation {
+        class: ViolationClass::Cursor,
+        subject: "cursor_head:1".to_owned(),
+        detail: concat!(
+            "cursor seq Some(8914), wake None, and fact maximum ",
+            "Some(8913) disagree"
+        )
+        .to_owned(),
+    };
+    let thread = crate::Violation {
+        class: ViolationClass::Thread,
+        subject: "8914".to_owned(),
+        detail: "fact has no thread row".to_owned(),
+    };
+
+    assert_eq!(
+        crate::VerifyError::Violations(vec![cursor.clone()]).to_string(),
+        concat!(
+            "journal verification found 1 violation(s): ",
+            "Cursor:cursor_head:1:cursor seq Some(8914), wake None, ",
+            "and fact maximum Some(8913) disagree"
+        )
+    );
+    assert_eq!(
+        crate::ReindexError::Violations(vec![cursor, thread]).to_string(),
+        concat!(
+            "journal reindex refused 2 immutable-history violation(s): ",
+            "Cursor:cursor_head:1:cursor seq Some(8914), wake None, ",
+            "and fact maximum Some(8913) disagree | ",
+            "Thread:8914:fact has no thread row"
+        )
+    );
+}
+
+#[test]
 fn every_violation_plane_has_a_fixture_that_produces_it() {
     // `ViolationClass` declares itself closed, and a closed set earns nothing
     // unless something enforces it. `plane_fixture` matches it exhaustively
