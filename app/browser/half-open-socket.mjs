@@ -62,8 +62,8 @@ export async function routeCanvasSocket(page) {
 ///
 /// `duringOutage` runs while the page is offline and the resident is not, which
 /// is the only window in which authority can advance past the client's cursor.
-/// Without it the resumed stream would have nothing to resume and could carry
-/// the cursor forward vacuously.
+/// Without it the replacement operator subscription could begin at the same
+/// horizon and its live-barrier behavior would pass vacuously.
 export async function assertHalfOpenSocketRecovers(page, monitor, route, epoch, duringOutage) {
   await chooseCanvasView(page, "Chronology");
   // Establishing first is what makes the count below mean something: a page that
@@ -76,9 +76,9 @@ export async function assertHalfOpenSocketRecovers(page, monitor, route, epoch, 
 
   monitor.expectNetworkInterruption(true);
   route.withhold(true);
-  // Advance authority while the socket is still open and still being dropped, so
-  // the fact the page must later resume is one the resident genuinely tried to
-  // deliver to it. Doing this after the offline flip instead would race the
+  // Advance authority while the socket is still open and still being dropped,
+  // so the gap the replacement skips is one the resident genuinely tried to
+  // deliver. Doing this after the offline flip instead would race the
   // client's retry, which arms within the base delay and would then hand the
   // replacement socket a withheld handshake and a nondeterministic socket count.
   await duringOutage();

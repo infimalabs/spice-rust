@@ -80,23 +80,10 @@ fn consent_and_effort_requests_read_one_current_generation_at_constant_cost() {
         bus.commit(unrelated).expect("unrelated history commits"),
         CommitOutcome::Committed(_)
     ));
-    reads
-        .refresh()
-        .expect("current generation refresh schedules");
-    let deadline = Monotonic::now() + Duration::from_secs(2);
-    loop {
-        if reads
-            .current()
-            .is_ok_and(|generation| generation.cursor() == seq(513))
-        {
-            break;
-        }
-        assert!(
-            Monotonic::now() < deadline,
-            "read materialization did not reach unrelated-history cursor"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let refreshed = reads
+        .current()
+        .expect("stale request joins its coalesced generation refresh");
+    assert_eq!(refreshed.cursor(), seq(513));
 
     let unavailable_fold = paths.folds.with_extension("unavailable");
     fs::rename(&paths.folds, &unavailable_fold).expect("fold store moves out of request reach");

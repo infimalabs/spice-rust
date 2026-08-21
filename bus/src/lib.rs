@@ -8,6 +8,7 @@ pub mod timer;
 mod runtime {
     use std::error::Error;
     use std::fmt;
+    use std::sync::Arc;
     use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
     use std::thread::{self, JoinHandle};
 
@@ -20,6 +21,10 @@ mod runtime {
     const BROADCAST_CAPACITY: usize = 64;
     type FactPage =
         journal::crossing::Packed<journal::crossing::Envelope<journal::crossing::AnyFact>>;
+
+    mod task_snapshot;
+    pub use task_snapshot::TaskFacts;
+    use task_snapshot::{load_task_snapshot, refresh_task_snapshot};
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -105,8 +110,8 @@ mod runtime {
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct TaskSnapshot {
         cursor: Option<journal::crossing::Seq>,
-        facts: FactSnapshot,
-        tasks: Vec<TaskHeads>,
+        facts: TaskFacts,
+        tasks: Arc<[TaskHeads]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
@@ -142,7 +147,7 @@ mod runtime {
 
         /// Complete fact stream captured at the same board barrier.
         #[must_use]
-        pub const fn facts(&self) -> &FactSnapshot {
+        pub const fn facts(&self) -> &TaskFacts {
             &self.facts
         }
 
@@ -630,30 +635,27 @@ mod runtime {
         broadcasts: tokio::sync::broadcast::Sender<JournalCommit>,
     ) {
         let mut subscribers = Vec::<mpsc::Sender<JournalCommit>>::new();
+        let mut task_snapshot = None;
         while let Ok(request) = requests.recv() {
             match request {
                 Request::Commit { write, answer } => {
-                    let outcome = match journal.apply(*write) {
-                        Ok(applied) => {
-                            let commit = JournalCommit::from_applied(applied);
-                            subscribers.retain(|subscriber| subscriber.send(commit).is_ok());
-                            let _ = broadcasts.send(commit);
-                            CommitOutcome::Committed(commit)
-                        }
-                        Err(journal::CommitError::Refused(refusal)) => {
-                            CommitOutcome::Refused(refusal)
-                        }
-                        Err(journal::CommitError::Fault(fault)) => CommitOutcome::Fault(fault),
-                    };
-                    let _ = answer.send(outcome);
+                    answer_commit(
+                        &mut journal,
+                        &mut task_snapshot,
+                        &mut subscribers,
+                        &broadcasts,
+                        *write,
+                        answer,
+                    );
                 }
                 Request::Transaction { transaction } => {
-                    let TransactionCompletion { commit, respond } = transaction(&mut journal);
-                    if let Some(commit) = commit {
-                        subscribers.retain(|subscriber| subscriber.send(commit).is_ok());
-                        let _ = broadcasts.send(commit);
-                    }
-                    respond();
+                    answer_transaction(
+                        &mut journal,
+                        &mut task_snapshot,
+                        &mut subscribers,
+                        &broadcasts,
+                        transaction,
+                    );
                 }
                 Request::Subscribe { commits, ready } => {
                     subscribers.push(commits);
@@ -666,33 +668,10 @@ mod runtime {
                     let _ = answer.send(journal.read(|read| read.cursor()));
                 }
                 Request::Tasks { answer } => {
-                    let snapshot = journal
-                        .read_with(|read| {
-                            Ok(TaskSnapshot {
-                                cursor: read.cursor().map_err(BusReadError::Head)?,
-                                facts: read.fact_snapshot().map_err(BusReadError::Snapshot)?,
-                                tasks: read.task_heads().map_err(BusReadError::Head)?,
-                                residency: read.residency_head().map_err(BusReadError::Head)?,
-                            })
-                        })
-                        .map_err(|error| match error {
-                            journal::ReadError::Journal(error) => BusReadError::Head(error),
-                            journal::ReadError::Answer(error) => error,
-                        });
-                    let _ = answer.send(snapshot);
+                    answer_tasks(&journal, &mut task_snapshot, answer);
                 }
                 Request::CanvasHeads { answer } => {
-                    let snapshot = journal
-                        .read_with(|read| {
-                            let cursor = read.cursor().map_err(BusReadError::Head)?;
-                            let trust = read.trust_heads().map_err(BusReadError::Head)?;
-                            Ok(CanvasHeads { cursor, trust })
-                        })
-                        .map_err(|error| match error {
-                            journal::ReadError::Journal(error) => BusReadError::Head(error),
-                            journal::ReadError::Answer(error) => error,
-                        });
-                    let _ = answer.send(snapshot);
+                    let _ = answer.send(canvas_heads(&journal));
                 }
                 Request::CanvasFacts {
                     start,
@@ -730,6 +709,78 @@ mod runtime {
                 }
             }
         }
+    }
+
+    fn answer_commit(
+        journal: &mut Journal,
+        task_snapshot: &mut Option<TaskSnapshot>,
+        subscribers: &mut Vec<mpsc::Sender<JournalCommit>>,
+        broadcasts: &tokio::sync::broadcast::Sender<JournalCommit>,
+        write: JournalWrite,
+        answer: SyncSender<CommitOutcome>,
+    ) {
+        let outcome = match journal.apply(write) {
+            Ok(applied) => {
+                let commit = JournalCommit::from_applied(applied);
+                refresh_task_snapshot(journal, task_snapshot, commit);
+                publish_commit(subscribers, broadcasts, commit);
+                CommitOutcome::Committed(commit)
+            }
+            Err(journal::CommitError::Refused(refusal)) => CommitOutcome::Refused(refusal),
+            Err(journal::CommitError::Fault(fault)) => CommitOutcome::Fault(fault),
+        };
+        let _ = answer.send(outcome);
+    }
+
+    fn answer_transaction(
+        journal: &mut Journal,
+        task_snapshot: &mut Option<TaskSnapshot>,
+        subscribers: &mut Vec<mpsc::Sender<JournalCommit>>,
+        broadcasts: &tokio::sync::broadcast::Sender<JournalCommit>,
+        transaction: Box<dyn FnOnce(&mut Journal) -> TransactionCompletion + Send>,
+    ) {
+        let TransactionCompletion { commit, respond } = transaction(journal);
+        if let Some(commit) = commit {
+            refresh_task_snapshot(journal, task_snapshot, commit);
+            publish_commit(subscribers, broadcasts, commit);
+        }
+        respond();
+    }
+
+    fn publish_commit(
+        subscribers: &mut Vec<mpsc::Sender<JournalCommit>>,
+        broadcasts: &tokio::sync::broadcast::Sender<JournalCommit>,
+        commit: JournalCommit,
+    ) {
+        subscribers.retain(|subscriber| subscriber.send(commit).is_ok());
+        let _ = broadcasts.send(commit);
+    }
+
+    fn answer_tasks(
+        journal: &Journal,
+        cached: &mut Option<TaskSnapshot>,
+        answer: SyncSender<Result<TaskSnapshot, BusReadError>>,
+    ) {
+        let snapshot = cached
+            .clone()
+            .map_or_else(|| load_task_snapshot(journal), Ok);
+        if let Ok(snapshot) = &snapshot {
+            *cached = Some(snapshot.clone());
+        }
+        let _ = answer.send(snapshot);
+    }
+
+    fn canvas_heads(journal: &Journal) -> Result<CanvasHeads, BusReadError> {
+        journal
+            .read_with(|read| {
+                let cursor = read.cursor().map_err(BusReadError::Head)?;
+                let trust = read.trust_heads().map_err(BusReadError::Head)?;
+                Ok(CanvasHeads { cursor, trust })
+            })
+            .map_err(|error| match error {
+                journal::ReadError::Journal(error) => BusReadError::Head(error),
+                journal::ReadError::Answer(error) => error,
+            })
     }
 
     struct TransactionCompletion {
@@ -809,5 +860,5 @@ mod runtime {
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasHeads,
-    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, TaskSnapshot,
+    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, TaskFacts, TaskSnapshot,
 };

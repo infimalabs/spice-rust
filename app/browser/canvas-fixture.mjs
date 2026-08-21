@@ -324,6 +324,9 @@ export async function configureFixture(
     "-c", "user.email=canvas@example.invalid",
     "commit", "--quiet", "-m", "canvas fixture",
   ], { cwd: fixture });
+  const skill = join(fixture, ".git/.spice-install/agents/skills/spice/SKILL.md");
+  await mkdir(dirname(skill), { recursive: true });
+  await cp(join(root, "spice/agent/SKILL.md"), skill);
   const worktrees = [fixture];
   for (let index = 2; index <= memberCount; index += 1) {
     const worktree = join(linkedRoot, `lane-${index}`);
@@ -933,7 +936,10 @@ export async function assertResidentLossObserved(page, resident) {
   await observedWait(
     page,
     "a fault event is recorded after the resident stops",
-    () => page.locator(".event.fault").waitFor({ timeout: TRANSITION_MS }),
+    () => page
+      .locator(".event.fault")
+      .filter({ hasText: "Canvas connection reset" })
+      .waitFor({ timeout: TRANSITION_MS }),
     { resident },
   );
 }

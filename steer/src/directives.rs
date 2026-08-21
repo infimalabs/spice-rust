@@ -466,7 +466,15 @@ impl Ledger {
     /// bodies its registered DTO already accepted.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, ReplayError> {
-        replay(snapshot).map(|(ledger, _, _)| ledger)
+        Self::from_facts(snapshot.facts())
+    }
+
+    /// Rebuild standing from one canonical ordered fact iterator.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_facts<'a>(
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    ) -> Result<Self, ReplayError> {
+        replay(facts).map(|(ledger, _, _)| ledger)
     }
 
     /// Rebuild the singular bounded steering authority from immutable facts.
@@ -478,7 +486,7 @@ impl Ledger {
     pub fn authority_index(
         snapshot: &journal::FactSnapshot,
     ) -> Result<AuthorityIndex, ReplayError> {
-        let (ledger, positions, misses) = replay(snapshot)?;
+        let (ledger, positions, misses) = replay(snapshot.facts())?;
         let heads = ledger
             .order
             .iter()
@@ -915,11 +923,13 @@ impl Ledger {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn replay(snapshot: &journal::FactSnapshot) -> Result<AuthorityReplay, ReplayError> {
+fn replay<'a>(
+    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+) -> Result<AuthorityReplay, ReplayError> {
     let mut ledger = Ledger::new();
     let mut positions = BTreeMap::new();
     let mut misses = Vec::new();
-    for envelope in snapshot.facts() {
+    for envelope in facts {
         let fact = &envelope.fact;
         let (result, affected, created) = if let Some(body) = fact.read::<SteerSent>() {
             (

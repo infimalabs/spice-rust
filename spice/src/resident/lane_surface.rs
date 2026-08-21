@@ -907,7 +907,7 @@ pub(super) fn recall(
             "a running resident has no durable fact cursor",
         );
     };
-    let steering = match steer::Ledger::from_snapshot(snapshot.facts()) {
+    let steering = match steer::Ledger::from_facts(snapshot.facts().iter()) {
         Ok(steering) => steering,
         Err(error) => {
             return typed_store_fault("recall::steering-invalid", &error.to_string());
@@ -915,7 +915,6 @@ pub(super) fn recall(
     };
     let mut recent = Vec::new();
     for fact in snapshot
-        .facts()
         .facts()
         .iter()
         .rev()

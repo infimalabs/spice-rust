@@ -29,6 +29,38 @@ impl FileIdentity {
     }
 }
 
+fn installation_state(root: &Path) -> (Vec<PathBuf>, Vec<FileIdentity>) {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        directories: &mut Vec<PathBuf>,
+        files: &mut Vec<FileIdentity>,
+    ) {
+        let mut entries = fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("read install tree {}: {error}", directory.display()))
+            .map(|entry| entry.expect("read install tree entry").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                directories.push(
+                    path.strip_prefix(root)
+                        .expect("install entry stays below its root")
+                        .to_path_buf(),
+                );
+                visit(root, &path, directories, files);
+            } else {
+                files.push(FileIdentity::read(&path));
+            }
+        }
+    }
+
+    let mut directories = Vec::new();
+    let mut files = Vec::new();
+    visit(root, root, &mut directories, &mut files);
+    (directories, files)
+}
+
 struct PredecessorSystem {
     executable: FileIdentity,
     invocations: PathBuf,
@@ -419,6 +451,8 @@ fn assert_foreign_hook_preflight_refuses(fixture: &Fixture, predecessor: &mut Pr
     let repository = spice::repository::Repository::discover(&fixture.root)
         .expect("coexistence repository discovers for foreign preflight");
     let source_binary = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let install_root = repository.common_dir().join(".spice-install");
+    let before = installation_state(&install_root);
 
     let error = spice::install::plan(&repository, Some(source_binary))
         .expect_err("foreign predecessor hooks must refuse before installation");
@@ -429,9 +463,10 @@ fn assert_foreign_hook_preflight_refuses(fixture: &Fixture, predecessor: &mut Pr
             if worktree == fs::canonicalize(&predecessor.worktree).expect("worktree canonicalizes")
                 && observed == [".spice/hooks"]
     ));
-    assert!(
-        !repository.common_dir().join(".spice-install").exists(),
-        "foreign hook preflight published installation state"
+    assert_eq!(
+        installation_state(&install_root),
+        before,
+        "foreign hook preflight changed preinstalled skill state"
     );
     predecessor.assert_unchanged("foreign hook preflight");
 }

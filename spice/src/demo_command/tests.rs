@@ -247,7 +247,7 @@ fn non_utf8_executable_refuses_before_the_demo_root_exists() {
 }
 
 #[test]
-fn native_canvas_stream_renders_seeded_lane_task_and_canned_turns() {
+fn native_canvas_stream_begins_live_and_reads_seeded_lane_task() {
     let scratch = Scratch::new("browser");
     let root = scratch.child("browser-root");
     let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
@@ -598,24 +598,11 @@ fn assert_browser_seed(discovery: &canvas::Discovery) {
     let StreamFrame::Facts { packed, .. } = receive(&mut stream) else {
         panic!("browser stream begins with seeded facts");
     };
-    let notes = packed
-        .rows
-        .iter()
-        .filter(|fact| fact.kind() == wire::FactKind::TaskNoted)
-        .map(|fact| {
-            fact.body()["note"]
-                .as_str()
-                .expect("demo note is text")
-                .to_owned()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        notes,
-        CANNED_TRANSCRIPT
-            .iter()
-            .map(|(_, text)| (*text).to_owned())
-            .collect::<Vec<_>>()
+    assert!(
+        packed.rows.is_empty(),
+        "a fresh operator starts at the current live barrier without replaying demo history"
     );
+    assert!(packed.overflow.is_none());
     stream.close(None).unwrap();
 
     let board = issue(
