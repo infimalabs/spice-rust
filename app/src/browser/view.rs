@@ -58,12 +58,13 @@ pub(super) struct CanvasRender<'a> {
 
 pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
     let active_axis = **render.axis;
-    let cursor = (**render.surface)
+    let surface = render.surface.read();
+    let cursor = surface
         .as_ref()
         .and_then(CanvasRuntime::resume)
         .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
-    let topology_revision = (**render.surface)
+    let topology_revision = surface
         .as_ref()
         .and_then(CanvasRuntime::lanes)
         .map(|lanes| lanes.topology_revision.to_string());
@@ -132,7 +133,8 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
 }
 
 fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
-    let runtime = (**render.surface).as_ref();
+    let surface = render.surface.read();
+    let runtime = surface.as_ref();
     let task_count = runtime
         .and_then(CanvasRuntime::board)
         .map_or(0, |board| board.tasks.len());
@@ -290,6 +292,7 @@ pub(super) fn render_magnitude(surface: &SurfaceData) -> Html {
 }
 
 fn render_consent_budgets(surface: &SurfaceData) -> Html {
+    let surface = surface.read();
     let Some(consent) = surface.as_ref().and_then(CanvasRuntime::consent) else {
         return empty("No magnitude snapshot is available.");
     };
@@ -326,6 +329,7 @@ pub(super) fn render_flow(
     note_notice: &UseStateHandle<Notice>,
     submit_note: Callback<SubmitEvent>,
 ) -> Html {
+    let surface = surface.read();
     let Some(board) = surface.as_ref().and_then(CanvasRuntime::board) else {
         return empty("No board snapshot is available.");
     };
@@ -413,6 +417,7 @@ pub(super) fn render_flow(
 }
 
 pub(super) fn render_topology(surface: &SurfaceData) -> Html {
+    let surface = surface.read();
     let Some(runtime) = surface.as_ref() else {
         return empty("No admitted topology is available.");
     };
@@ -463,6 +468,7 @@ pub(super) fn render_chronology(
     sender: &SenderHandle,
     connection: &Connection,
 ) -> Html {
+    let surface = surface.read();
     let runtime = surface.as_ref();
     let can_decide = runtime
         .is_some_and(|runtime| runtime.grants() && runtime.offers(CommandKind::ConsentDecide));

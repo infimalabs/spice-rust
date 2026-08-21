@@ -14,7 +14,7 @@ pub(super) async fn run_surface(
     handles: SurfaceHandles,
     mut actions: UnboundedReceiver<ClientAction>,
 ) {
-    let data = Rc::new(RefCell::new(SurfaceData::default()));
+    let data = SurfaceData::default();
     let mut backoff = crate::reconnect::Backoff::new();
     while active.get() {
         if matches!(&*handles.connection, Connection::Starting) {
@@ -52,7 +52,7 @@ struct Ended {
 async fn run_connection(
     active: &Rc<Cell<bool>>,
     handles: &SurfaceHandles,
-    data: &Rc<RefCell<SurfaceData>>,
+    data: &SurfaceData,
     actions: &mut UnboundedReceiver<ClientAction>,
 ) -> Result<(), Ended> {
     let abort = web_sys::AbortController::new().map_err(|_| Ended {
@@ -114,7 +114,7 @@ async fn run_connection(
 async fn pump_session(
     active: &Rc<Cell<bool>>,
     handles: &SurfaceHandles,
-    data: &Rc<RefCell<SurfaceData>>,
+    data: &SurfaceData,
     actions: &mut UnboundedReceiver<ClientAction>,
     established: EstablishedConnection,
 ) -> Result<(), String> {
@@ -247,7 +247,7 @@ async fn establish_connection(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     speech: &UseStateHandle<wire::SpeechPlayback>,
-    data: &Rc<RefCell<SurfaceData>>,
+    data: &SurfaceData,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
     let (session, writer, mut reader) = open_socket(speech, signal).await?;
@@ -326,7 +326,7 @@ async fn admit_runtime(
     reader: &mut SocketReader,
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
-    data: &Rc<RefCell<SurfaceData>>,
+    data: &SurfaceData,
 ) -> Result<Principal, String> {
     let accepted_bytes = binary_message(
         reader
@@ -339,7 +339,7 @@ async fn admit_runtime(
         .admit_accepted(&accepted_bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
     let principal = {
-        let mut data = data.borrow_mut();
+        let mut data = data.write();
         match data.as_mut() {
             Some(runtime) => {
                 runtime.reconnect(&accepted);
@@ -351,7 +351,7 @@ async fn admit_runtime(
             .principal()
             .clone()
     };
-    surface.set(data.borrow().clone());
+    surface.set(data.publication());
     connection.set(Connection::Online {
         actor: principal.actor().to_string(),
         epoch: principal.epoch().to_string(),
@@ -928,11 +928,11 @@ async fn send_typed_as<B: Serialize>(
 
 async fn send_subscription(
     principal: &Principal,
-    data: &Rc<RefCell<SurfaceData>>,
+    data: &SurfaceData,
     writer: &mut SocketWriter,
 ) -> Result<(), String> {
     let (subjects, after, pending_thread) = {
-        let data = data.borrow();
+        let data = data.read();
         let runtime = data
             .as_ref()
             .ok_or_else(|| "canvas runtime is absent".to_owned())?;

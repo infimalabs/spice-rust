@@ -33,6 +33,7 @@ type Withheld<'a> = (&'a EffortPhaseAnswer, &'a [EffortUnavailable]);
 /// with a distinct word each, so a surface that collapsed two of them into one
 /// fails a reader's expectation loudly rather than looking plausible.
 pub(in crate::browser) fn render_effort(surface: &SurfaceData) -> Html {
+    let surface = surface.read();
     match surface.as_ref().and_then(CanvasRuntime::effort) {
         None => section(
             "loading",
