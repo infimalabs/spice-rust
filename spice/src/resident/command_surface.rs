@@ -25,17 +25,28 @@ pub(super) struct Surface<'a> {
     reads: &'a CurrentReads,
 }
 
+pub(super) struct Runtimes<'a> {
+    lane: lane_surface::Runtime<'a>,
+    recovery: lane_recovery::Runtime,
+}
+
+impl<'a> Runtimes<'a> {
+    pub(super) fn new(lane: lane_surface::Runtime<'a>, recovery: lane_recovery::Runtime) -> Self {
+        Self { lane, recovery }
+    }
+}
+
 impl<'a> Surface<'a> {
-    pub(super) const fn new(
+    pub(super) fn new(
         bus: &'a Bus,
         repository: &'a Repository,
         paths: &'a RuntimePaths,
         epoch: CanonicalUuid,
-        lane: lane_surface::Runtime<'a>,
-        recovery: lane_recovery::Runtime,
+        runtimes: Runtimes<'a>,
         config: &'a SurfaceConfig,
         reads: &'a CurrentReads,
     ) -> Self {
+        let Runtimes { lane, recovery } = runtimes;
         Self {
             bus,
             repository,

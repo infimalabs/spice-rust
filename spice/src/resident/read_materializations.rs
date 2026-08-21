@@ -5,9 +5,10 @@
 //! proves that generation current.
 
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
-use std::sync::{Arc, RwLock};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use bus::{Bus, BusReader};
 use fold::{Store, TaskEffortReducer, task_effort_answer};
@@ -43,12 +44,20 @@ enum Published {
     Fault(String),
 }
 
+#[derive(Debug)]
+struct Publication {
+    revision: u64,
+    value: Published,
+}
+
+const CURRENT_WAIT: Duration = Duration::from_secs(10);
+
 /// One coalescing background publisher and its latest immutable generation.
 pub(super) struct CurrentReads {
     reader: BusReader,
     folds: PathBuf,
     policy: consent::Policy,
-    published: Arc<RwLock<Published>>,
+    published: Arc<(Mutex<Publication>, Condvar)>,
     refresh: Option<SyncSender<()>>,
     worker: Option<JoinHandle<()>>,
     #[cfg(test)]
@@ -63,7 +72,13 @@ impl CurrentReads {
     ) -> Result<Self, String> {
         let reader = bus.reader();
         let initial = Arc::new(build_generation(&reader, paths.folds.clone(), policy)?);
-        let published = Arc::new(RwLock::new(Published::Ready(initial)));
+        let published = Arc::new((
+            Mutex::new(Publication {
+                revision: 0,
+                value: Published::Ready(initial),
+            }),
+            Condvar::new(),
+        ));
         let (refresh, requests) = mpsc::sync_channel(1);
         let worker_reader = reader.clone();
         let worker_published = Arc::clone(&published);
@@ -127,39 +142,60 @@ impl CurrentReads {
                 replacement.cursor
             ));
         }
-        let mut published = self
-            .published
-            .write()
+        let (published, changed) = &*self.published;
+        let mut published = published
+            .lock()
             .map_err(|_| "read materializer publication lock is poisoned".to_owned())?;
-        *published = Published::Ready(replacement);
+        published.revision = published.revision.wrapping_add(1);
+        published.value = Published::Ready(replacement);
+        drop(published);
+        changed.notify_all();
         Ok(())
     }
 
-    /// Capture the current immutable generation or fail on any generation gap.
+    /// Capture the current immutable generation after a bounded stale-cache join.
     pub(super) fn current(&self) -> Result<Arc<Generation>, String> {
         #[cfg(test)]
         self.request_barriers
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let authority = self
-            .reader
-            .cursor()
-            .map_err(|error| format!("authority cursor is unreadable: {error}"))?
-            .ok_or_else(|| "running resident has no durable fact cursor".to_owned())?;
-        let generation = match &*self
-            .published
-            .read()
-            .map_err(|_| "read materializer publication lock is poisoned".to_owned())?
-        {
-            Published::Ready(generation) => Arc::clone(generation),
-            Published::Fault(detail) => return Err(detail.clone()),
-        };
-        if generation.cursor != authority {
-            return Err(format!(
-                "read materialization is at {}, authority is at {authority}",
-                generation.cursor
-            ));
+        let deadline = Instant::now() + CURRENT_WAIT;
+        loop {
+            let authority = self
+                .reader
+                .cursor()
+                .map_err(|error| format!("authority cursor is unreadable: {error}"))?
+                .ok_or_else(|| "running resident has no durable fact cursor".to_owned())?;
+            let (published, changed) = &*self.published;
+            let current = published
+                .lock()
+                .map_err(|_| "read materializer publication lock is poisoned".to_owned())?;
+            match &current.value {
+                Published::Ready(generation) if generation.cursor == authority => {
+                    return Ok(Arc::clone(generation));
+                }
+                Published::Fault(detail) => return Err(detail.clone()),
+                Published::Ready(_) => {}
+            }
+
+            let revision = current.revision;
+            self.refresh()?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(format!(
+                    "read materialization did not reach authority {authority} within {}s",
+                    CURRENT_WAIT.as_secs()
+                ));
+            }
+            let (current, timeout) = changed
+                .wait_timeout_while(current, remaining, |state| state.revision == revision)
+                .map_err(|_| "read materializer publication lock is poisoned".to_owned())?;
+            if timeout.timed_out() && current.revision == revision {
+                return Err(format!(
+                    "read materialization did not reach authority {authority} within {}s",
+                    CURRENT_WAIT.as_secs()
+                ));
+            }
         }
-        Ok(generation)
     }
 
     #[cfg(test)]
@@ -183,23 +219,22 @@ fn run_worker(
     folds: PathBuf,
     policy: consent::Policy,
     requests: Receiver<()>,
-    published: Arc<RwLock<Published>>,
+    published: Arc<(Mutex<Publication>, Condvar)>,
 ) {
     while requests.recv().is_ok() {
-        loop {
-            match requests.try_recv() {
-                Ok(()) => {}
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-            }
-        }
+        while let Ok(()) = requests.try_recv() {}
         let replacement = match build_generation(&reader, folds.clone(), &policy) {
             Ok(generation) => Published::Ready(Arc::new(generation)),
             Err(error) => Published::Fault(error),
         };
-        let Ok(mut current) = published.write() else {
+        let (current, changed) = &*published;
+        let Ok(mut current) = current.lock() else {
             return;
         };
-        *current = replacement;
+        current.revision = current.revision.wrapping_add(1);
+        current.value = replacement;
+        drop(current);
+        changed.notify_all();
     }
 }
 

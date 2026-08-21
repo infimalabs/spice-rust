@@ -1,3 +1,7 @@
+use rusqlite::{Transaction, TransactionBehavior, params};
+
+use super::*;
+
 impl Journal {
     /// Evaluate a typed answer whose own error remains distinct from journal
     /// faults while both are observed inside one immutable SQLite snapshot.
@@ -378,7 +382,7 @@ fn read_cursor(connection: &Connection) -> Result<Option<wire::Seq>, CommitError
         .map_err(|error| CommitError::Fault(CommitFault::new(error.to_string())))
 }
 
-fn visible_cursor(connection: &Connection) -> Result<Option<wire::Seq>, GuardError> {
+pub(super) fn visible_cursor(connection: &Connection) -> Result<Option<wire::Seq>, GuardError> {
     let value = connection
         .query_row(
             "SELECT seq FROM cursor_head WHERE singleton = 1",
@@ -934,11 +938,11 @@ fn insert_receipt(
     Ok(())
 }
 
-fn decode_optional_seq(value: Option<i64>) -> Result<Option<wire::Seq>, String> {
+pub(super) fn decode_optional_seq(value: Option<i64>) -> Result<Option<wire::Seq>, String> {
     value.map(decode_seq).transpose()
 }
 
-fn decode_seq(value: i64) -> Result<wire::Seq, String> {
+pub(super) fn decode_seq(value: i64) -> Result<wire::Seq, String> {
     u64::try_from(value)
         .ok()
         .and_then(wire::Seq::new)

@@ -81,8 +81,10 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             &setup.repository,
             paths,
             epoch,
-            lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
-            lane_recovery::Runtime::new(reporter.clone()),
+            command_surface::Runtimes::new(
+                lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
+                lane_recovery::Runtime::new(reporter.clone()),
+            ),
             config,
             &reads,
         );
