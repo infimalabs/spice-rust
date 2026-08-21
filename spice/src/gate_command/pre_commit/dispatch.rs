@@ -71,7 +71,7 @@ pub(super) fn dispatch_resolution(
             .saturating_sub(started.elapsed())
             .saturating_sub(configured::cleanup_reserve());
         dispatch
-            .execute_resolution_configured(remaining, Cancellation::Never)
+            .execute_resolution_configured(remaining, Cancellation::Never, progress)
             .map_err(configured_failure)?
     } else {
         None
@@ -87,9 +87,10 @@ pub(super) fn dispatch_resolution(
 pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, WorkerFailure> {
     write_phase(progress, &WorkerPhase::Policy).map_err(worker_io_failure)?;
     let initial = configured::Dispatch::capture().map_err(configured_failure)?;
+    let expected_source = initial.source().clone();
     let expected_authority = initial.into_authority();
     write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
-    let (admitted, miss) = match full_verifier_evidence()? {
+    let (admitted, miss) = match full_verifier_evidence(&expected_source)? {
         spice::gate::FullVerifierEvidenceAdmission::Admitted(admitted) => (Some(*admitted), None),
         spice::gate::FullVerifierEvidenceAdmission::Unavailable(miss) => {
             writeln!(
@@ -124,7 +125,7 @@ pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, 
             .saturating_sub(started.elapsed())
             .saturating_sub(configured::cleanup_reserve());
         dispatch
-            .execute_configured(remaining, Cancellation::Never)
+            .execute_configured(remaining, Cancellation::Never, progress)
             .map_err(configured_failure)
             .map_err(|failure| with_full_verifier_miss(failure, miss.as_ref()))?
     } else {
@@ -198,7 +199,9 @@ fn packaged(
     Ok((Some(report), None, dispatch))
 }
 
-fn full_verifier_evidence() -> Result<spice::gate::FullVerifierEvidenceAdmission, WorkerFailure> {
+fn full_verifier_evidence(
+    current_source: &Digest,
+) -> Result<spice::gate::FullVerifierEvidenceAdmission, WorkerFailure> {
     let current = env::current_dir().map_err(|error| WorkerFailure {
         reason: "gate::pre-commit-working-directory-unavailable".to_owned(),
         detail: error.to_string(),
@@ -209,13 +212,16 @@ fn full_verifier_evidence() -> Result<spice::gate::FullVerifierEvidenceAdmission
         detail: error.to_string(),
         fault: true,
     })?;
-    spice::gate::inspect_full_verifier_evidence(&repository, gate::Selector::staged()).map_err(
-        |error| WorkerFailure {
-            reason: error.reason().to_owned(),
-            detail: error.detail().to_owned(),
-            fault: error.is_fault(),
-        },
+    spice::gate::inspect_full_verifier_evidence_for_source(
+        &repository,
+        gate::Selector::staged(),
+        current_source,
     )
+    .map_err(|error| WorkerFailure {
+        reason: error.reason().to_owned(),
+        detail: error.detail().to_owned(),
+        fault: error.is_fault(),
+    })
 }
 
 fn with_full_verifier_miss(

@@ -4,6 +4,8 @@
 //! tracked floors, source bytes, and the root handed to every bounded process
 //! all come from one captured Git source rather than from a moving checkout.
 
+use std::env;
+use std::io;
 use std::path::Path;
 
 use gate::{
@@ -184,7 +186,11 @@ pub(crate) enum CurrentSourceSelectionReport {
 }
 
 pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
-    let mut progress = Vec::new();
+    let configured_source = match configured_selection_source() {
+        Ok(source) => source,
+        Err(fault) => return Outcome::Fault(fault),
+    };
+    let mut progress = SelectionProgress::new(configured_source.is_some());
     let repository = match Repository::discover(Path::new(".")) {
         Ok(repository) => repository,
         Err(error) => {
@@ -195,7 +201,17 @@ pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
             });
         }
     };
-    let miss = match spice::gate::inspect_full_verifier_evidence(&repository, Selector::staged()) {
+    let admission = configured_source.as_ref().map_or_else(
+        || spice::gate::inspect_full_verifier_evidence(&repository, Selector::staged()),
+        |source| {
+            spice::gate::inspect_full_verifier_evidence_for_source(
+                &repository,
+                Selector::staged(),
+                source,
+            )
+        },
+    );
+    let miss = match admission {
         Ok(spice::gate::FullVerifierEvidenceAdmission::Admitted(admitted)) => {
             let selection = match gate::select_current_source_change_gates_with_full_verifier(
                 admitted.source().clone(),
@@ -232,21 +248,78 @@ pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
             progress.extend_from_slice(report.refusal_fold().as_bytes());
             Outcome::Refusal(Refusal::evidence(
                 "gate::selection-regressed",
-                selection_detail_with_miss(&progress, "selected gate regressed", &miss),
+                selection_detail_with_miss(progress.buffered(), "selected gate regressed", &miss),
                 "repair the selected change before committing it",
             ))
         }
         Err(error) if error.is_fault() => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: error.reason().to_owned(),
-            detail: selection_detail_with_miss(&progress, error.detail(), &miss),
+            detail: selection_detail_with_miss(progress.buffered(), error.detail(), &miss),
         }),
         Err(error) => Outcome::Refusal(Refusal::evidence(
             error.reason(),
-            selection_detail_with_miss(&progress, error.detail(), &miss),
+            selection_detail_with_miss(progress.buffered(), error.detail(), &miss),
             "repair the named selection input, then rerun the source gate",
         )),
     }
+}
+
+struct SelectionProgress {
+    buffered: Vec<u8>,
+    live: Option<io::Stderr>,
+}
+
+impl SelectionProgress {
+    fn new(live: bool) -> Self {
+        Self {
+            buffered: Vec::new(),
+            live: live.then(io::stderr),
+        }
+    }
+
+    fn buffered(&self) -> &[u8] {
+        &self.buffered
+    }
+
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.buffered.extend_from_slice(bytes);
+    }
+}
+
+impl io::Write for SelectionProgress {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Some(live) = &mut self.live {
+            live.write_all(bytes)?;
+        }
+        self.buffered.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.live.as_mut().map_or(Ok(()), io::Write::flush)
+    }
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the configured source-gate leaf reads the staged-source authority injected by its supervising worker"
+)]
+fn configured_selection_source() -> Result<Option<Digest>, Fault> {
+    let variable = wire::SpiceVariable::PreCommitSource.as_str();
+    let Some(source) = env::var_os(variable) else {
+        return Ok(None);
+    };
+    let source = source.into_string().map_err(|source| Fault {
+        class: FaultClass::Environment,
+        reason: "gate::selection-source-authority-invalid".to_owned(),
+        detail: format!("{variable} is not UTF-8: {source:?}"),
+    })?;
+    source.parse::<Digest>().map(Some).map_err(|error| Fault {
+        class: FaultClass::Environment,
+        reason: "gate::selection-source-authority-invalid".to_owned(),
+        detail: format!("{variable}: {error}"),
+    })
 }
 
 fn selection_detail_with_miss(

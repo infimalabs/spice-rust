@@ -52,8 +52,9 @@ pub use full_verifier_evidence::{
     AdmittedFullVerifierEvidence, AdmittedSemanticVerifierEvidence, FullVerifierEvidence,
     FullVerifierEvidenceAdmission, FullVerifierEvidenceMiss, FullVerifierEvidenceStage,
     SemanticFullVerifierAdmission, admit_full_verifier_evidence,
-    admit_merge_parent_full_verifier_evidence, admit_semantic_full_verifier_evidence,
-    inspect_full_verifier_completion_evidence, inspect_full_verifier_evidence,
+    admit_merge_parent_full_verifier_evidence, admit_reached_semantic_full_verifier_evidence,
+    admit_semantic_full_verifier_evidence, inspect_full_verifier_completion_evidence,
+    inspect_full_verifier_evidence, inspect_full_verifier_evidence_for_source,
     requires_full_verifier_completion_evidence,
 };
 
@@ -539,6 +540,23 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError>
 /// documents and identifies every compiled legacy parser tool before returning.
 pub fn prepare_strict(selector: Selector) -> Result<PreparedBattery<'static>, RunError> {
     prepare_with_mode(selector, InputMode::Strict)
+}
+
+/// Capture strict complete authority for semantic comparison while limiting
+/// structural parsing to one validated ordinary-selection reach plan.
+///
+/// The underlying capture refuses battery execution and state publication.
+pub fn prepare_semantic_comparison_strict(
+    selector: Selector,
+    selection: &ChangeSelectionReport,
+) -> Result<PreparedBattery<'static>, RunError> {
+    let verifier_environment = verifier_environment();
+    capture::capture_for_semantic_comparison(selector, selection).map(|capture| PreparedBattery {
+        capture,
+        verifier_environment,
+        cargo_jobs: None,
+        verifier_receipt_admitted: false,
+    })
 }
 
 /// Capture a strict source from one explicitly named linked worktree.

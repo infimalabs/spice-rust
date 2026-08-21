@@ -172,6 +172,7 @@ pub struct BatteryCapture<'trace> {
     authorities: BatteryAuthorities,
     executor: RepositoryExecutor<'trace>,
     selected: Option<crate::GateId>,
+    comparison_only: bool,
     state_run: BatteryStateRun,
 }
 
@@ -282,6 +283,11 @@ impl BatteryCapture<'_> {
         document: &[u8],
         state: Option<&StateReceipt>,
     ) -> Result<BatteryReceipt, BatteryError> {
+        if self.comparison_only {
+            return Err(BatteryError::new(
+                "semantic comparison capture cannot admit an exact battery receipt",
+            ));
+        }
         if self.selected.is_some() {
             return Err(BatteryError::new(
                 "battery receipt admission requires a complete capture",
@@ -422,6 +428,36 @@ impl BatteryCapture<'_> {
             None,
             None,
             None,
+        )
+    }
+
+    /// Capture complete receipt authority while narrowing structural parsing
+    /// to one validated ordinary-selection reach plan.
+    ///
+    /// This capture exists only for semantic comparison. It cannot execute a
+    /// battery or publish state, so reached evidence can never masquerade as a
+    /// complete verifier run.
+    pub fn capture_for_semantic_comparison(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        selection: &crate::ChangeSelectionReport,
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner_with_reach(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            InputMode::Strict,
+            None,
+            None,
+            None,
+            Some(selection),
         )
     }
 
@@ -859,6 +895,7 @@ impl<'trace> BatteryCapture<'trace> {
             authorities,
             executor,
             selected,
+            comparison_only: selection.is_some() && selected.is_none(),
             state_run,
         })
     }
@@ -870,6 +907,11 @@ impl<'trace> BatteryCapture<'trace> {
     /// Returns the manifest, context, or completeness refusal that prevented
     /// one total result vector. An arm that fails is a result, not an error.
     pub fn execute(&mut self) -> Result<BatteryReport, BatteryError> {
+        if self.comparison_only {
+            return Err(BatteryError::new(
+                "semantic comparison capture cannot execute a complete battery",
+            ));
+        }
         if let Some(gate_id) = self.selected {
             return Err(BatteryError::new(format!(
                 "selected capture for {gate_id} cannot execute a complete battery"
@@ -954,6 +996,11 @@ impl<'trace> BatteryCapture<'trace> {
         environment: Vec<(OsString, OsString)>,
         required: bool,
     ) -> Result<BatteryReport, BatteryError> {
+        if self.comparison_only {
+            return Err(BatteryError::new(
+                "semantic comparison capture cannot execute verifier evidence",
+            ));
+        }
         if self.selected.is_some() {
             return Err(BatteryError::new(
                 "selected capture cannot execute a complete battery",
@@ -1026,6 +1073,11 @@ impl<'trace> BatteryCapture<'trace> {
     pub fn execute_structural_preflight(
         &mut self,
     ) -> Result<Vec<super::FocusedArmReport>, BatteryError> {
+        if self.comparison_only {
+            return Err(BatteryError::new(
+                "semantic comparison capture cannot execute structural preflight",
+            ));
+        }
         if self.selected.is_some() {
             return Err(BatteryError::new(
                 "structural preflight requires a complete battery capture",
@@ -1063,6 +1115,11 @@ impl<'trace> BatteryCapture<'trace> {
     /// battery executes through its existing path first, then the resulting
     /// complete report is minted without acquiring a second contract.
     pub fn mint_receipt(&self, report: BatteryReport) -> Result<BatteryReceipt, BatteryError> {
+        if self.comparison_only {
+            return Err(BatteryError::new(
+                "semantic comparison capture cannot mint a battery receipt",
+            ));
+        }
         let current = self.authorities.inputs()?.snapshot()?;
         if report.context() != &current {
             return Err(BatteryError::new(
@@ -1122,6 +1179,11 @@ impl<'trace> BatteryCapture<'trace> {
 
     /// Publish this enclosing run's accumulated state after total acceptance.
     pub fn accept_state(&self, scope: StateRunScope) -> Result<StateReceipt, BatteryError> {
+        if self.comparison_only {
+            return Err(BatteryError::new(
+                "semantic comparison capture cannot publish battery state",
+            ));
+        }
         self.state_run.accept(scope)
     }
 

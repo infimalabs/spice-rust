@@ -173,9 +173,13 @@ impl<'trace> RepositoryExecutor<'trace> {
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
         let reached_paths = path_local_reach(selected, selection)?;
-        let rim = reached_paths
-            .as_ref()
-            .map_or(rim.clone(), |paths| rim.clone().with_changes(paths.clone()));
+        let rim = if selected.is_some() {
+            reached_paths
+                .as_ref()
+                .map_or(rim.clone(), |paths| rim.clone().with_changes(paths.clone()))
+        } else {
+            rim
+        };
         let execution_objects =
             bound_execution_objects(selected, selection, reached_paths.as_deref(), rim.changes())?;
         let tree = selector.materialize(&repository).map_err(|error| {
@@ -217,8 +221,14 @@ impl<'trace> RepositoryExecutor<'trace> {
                     ArmFamily::Metrics,
                     STRUCTURAL_ARMS.map(|arm| arm.id()),
                 );
-                let (evidence, bounds, observations) =
-                    metrics_family(&tree, &contract, &baselines, &actor, latches);
+                let (evidence, bounds, observations) = metrics_family(
+                    &tree,
+                    &contract,
+                    &baselines,
+                    &actor,
+                    latches,
+                    reached_paths.as_deref(),
+                );
                 (Some(evidence), bounds, observations)
             }
             Some(gate_id) if STRUCTURAL_ARMS.iter().any(|arm| arm.id() == gate_id) => {
@@ -705,12 +715,16 @@ fn metrics_family(
     baselines: &BaselineCapture,
     actor: &ActorCapture,
     latches: &[LatchEntry],
+    reached: Option<&[String]>,
 ) -> (
     Result<Vec<ArmEvidence>, String>,
     Vec<BoundDecision>,
     Vec<LatchObservation>,
 ) {
-    let source = match MetricSource::capture(tree, contract, baselines, actor, latches) {
+    let source = match reached.map_or_else(
+        || MetricSource::capture(tree, contract, baselines, actor, latches),
+        |paths| MetricSource::capture_reached(tree, contract, baselines, actor, latches, paths),
+    ) {
         Ok(source) => source,
         Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
     };
@@ -865,9 +879,7 @@ fn bound_execution_objects(
         return Ok(None);
     };
     let Some(gate_id) = selected else {
-        return Err(BatteryError::new(
-            "object reach cannot be supplied to a complete battery capture",
-        ));
+        return Ok(None);
     };
     let reach = selection.reach_for(gate_id).ok_or_else(|| {
         BatteryError::new(format!(
@@ -913,10 +925,27 @@ fn path_local_reach(
         return Ok(None);
     };
     let Some(gate_id) = selected else {
-        return Err(BatteryError::new(
-            "object reach cannot be supplied to a complete battery capture",
-        ));
+        let mut paths = std::collections::BTreeSet::new();
+        for gate_id in selection
+            .gate_ids()
+            .iter()
+            .copied()
+            .filter(|gate_id| PATH_LOCAL_ARMS.contains(gate_id))
+        {
+            let Some(reached) = path_local_arm_reach(gate_id, selection)? else {
+                return Ok(None);
+            };
+            paths.extend(reached);
+        }
+        return Ok(Some(paths.into_iter().collect()));
     };
+    path_local_arm_reach(gate_id, selection)
+}
+
+fn path_local_arm_reach(
+    gate_id: GateId,
+    selection: &ChangeSelectionReport,
+) -> Result<Option<Vec<String>>, BatteryError> {
     let reach = selection.reach_for(gate_id).ok_or_else(|| {
         BatteryError::new(format!(
             "selected arm {gate_id} has no validated object reach authority"

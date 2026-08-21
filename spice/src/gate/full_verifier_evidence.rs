@@ -12,7 +12,9 @@ use ::gate::{
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
-use super::{PreparedBattery, RunError, prepare, prepare_strict};
+use super::{
+    PreparedBattery, RunError, prepare, prepare_semantic_comparison_strict, prepare_strict,
+};
 use crate::gate::environment::exact_evidence_environment;
 use crate::repository::{Repository, StatePaths};
 
@@ -478,6 +480,24 @@ pub fn inspect_full_verifier_evidence(
     repository: &Repository,
     selector: Selector,
 ) -> Result<FullVerifierEvidenceAdmission, RunError> {
+    inspect_full_verifier_evidence_inner(repository, selector, None)
+}
+
+/// Re-admit exact evidence after first comparing its retained source to an
+/// independently captured current source.
+pub fn inspect_full_verifier_evidence_for_source(
+    repository: &Repository,
+    selector: Selector,
+    current_source: &Digest,
+) -> Result<FullVerifierEvidenceAdmission, RunError> {
+    inspect_full_verifier_evidence_inner(repository, selector, Some(current_source))
+}
+
+fn inspect_full_verifier_evidence_inner(
+    repository: &Repository,
+    selector: Selector,
+    current_source: Option<&Digest>,
+) -> Result<FullVerifierEvidenceAdmission, RunError> {
     let paths = repository
         .admit_state()
         .map_err(|error| RunError::fault("gate::full-verifier-state-unavailable", error))?;
@@ -493,7 +513,7 @@ pub fn inspect_full_verifier_evidence(
         }
         ExactEvidenceDocument::Loaded { evidence, document } => (*evidence, document),
     };
-    inspect_loaded_full_verifier_evidence(repository, selector, evidence, document)
+    inspect_loaded_full_verifier_evidence(repository, selector, evidence, document, current_source)
 }
 
 fn inspect_loaded_full_verifier_evidence(
@@ -501,6 +521,7 @@ fn inspect_loaded_full_verifier_evidence(
     selector: Selector,
     evidence: FullVerifierEvidence,
     document: Vec<u8>,
+    current_source: Option<&Digest>,
 ) -> Result<FullVerifierEvidenceAdmission, RunError> {
     let semantic = match semantic::SemanticEvidence::decode(evidence.semantic.as_bytes()) {
         Ok(semantic) => semantic,
@@ -508,6 +529,9 @@ fn inspect_loaded_full_verifier_evidence(
             return unavailable(FullVerifierEvidenceStage::SemanticDocument, detail);
         }
     };
+    if let Some(miss) = exact_source_miss(semantic.source(), current_source) {
+        return Ok(FullVerifierEvidenceAdmission::Unavailable(miss));
+    }
     let verifier_environment = match exact_evidence_environment(repository) {
         Ok(environment) => environment,
         Err(error) => return unavailable(FullVerifierEvidenceStage::Environment, error),
@@ -568,6 +592,21 @@ fn inspect_loaded_full_verifier_evidence(
     )))
 }
 
+fn exact_source_miss(
+    retained_source: &Digest,
+    current_source: Option<&Digest>,
+) -> Option<FullVerifierEvidenceMiss> {
+    let current_source = current_source?;
+    (current_source != retained_source).then(|| {
+        FullVerifierEvidenceMiss::new(
+            FullVerifierEvidenceStage::Source,
+            format!(
+                "retained source {retained_source} does not match current source {current_source}",
+            ),
+        )
+    })
+}
+
 fn unavailable(
     stage: FullVerifierEvidenceStage,
     detail: impl ToString,
@@ -581,6 +620,24 @@ fn unavailable(
 pub fn admit_semantic_full_verifier_evidence(
     repository: &Repository,
     selector: Selector,
+) -> Result<SemanticFullVerifierAdmission, RunError> {
+    admit_semantic_full_verifier_evidence_inner(repository, selector, None)
+}
+
+/// Re-admit semantic evidence against the exact reach already authorized by
+/// an ordinary current-source selection.
+pub fn admit_reached_semantic_full_verifier_evidence(
+    repository: &Repository,
+    selector: Selector,
+    selection: &::gate::ChangeSelectionReport,
+) -> Result<SemanticFullVerifierAdmission, RunError> {
+    admit_semantic_full_verifier_evidence_inner(repository, selector, Some(selection))
+}
+
+fn admit_semantic_full_verifier_evidence_inner(
+    repository: &Repository,
+    selector: Selector,
+    selection: Option<&::gate::ChangeSelectionReport>,
 ) -> Result<SemanticFullVerifierAdmission, RunError> {
     let paths = repository
         .admit_state()
@@ -596,7 +653,11 @@ pub fn admit_semantic_full_verifier_evidence(
         }
         ExactEvidenceDocument::Loaded { evidence, document } => (evidence, document),
     };
-    let mut prepared = match prepare_strict(selector) {
+    let prepared = match selection {
+        Some(selection) => prepare_semantic_comparison_strict(selector, selection),
+        None => prepare_strict(selector),
+    };
+    let mut prepared = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             return Ok(SemanticFullVerifierAdmission::Unavailable {
@@ -921,6 +982,20 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    #[test]
+    fn independently_captured_source_mismatch_is_an_immediate_typed_miss() {
+        let retained = Digest::compute(Domain::GateTree, b"retained source");
+        let current = Digest::compute(Domain::GateTree, b"current source");
+
+        assert!(exact_source_miss(&retained, None).is_none());
+        assert!(exact_source_miss(&retained, Some(&retained)).is_none());
+        let miss = exact_source_miss(&retained, Some(&current))
+            .expect("a different independently captured source must miss");
+        assert_eq!(miss.stage(), FullVerifierEvidenceStage::Source);
+        assert!(miss.detail().contains(retained.as_str()));
+        assert!(miss.detail().contains(current.as_str()));
+    }
 
     #[test]
     fn bundle_shape_refuses_partial_versioned_and_noncanonical_documents() {
@@ -1297,9 +1372,14 @@ mod tests {
     fn admit_previous_container(repository: &Repository, paths: &StatePaths) {
         let loaded = fs::read(paths.full_verifier_evidence()).expect("read previous container");
         let evidence = FullVerifierEvidence::decode(&loaded).expect("decode previous container");
-        let admission =
-            inspect_loaded_full_verifier_evidence(repository, Selector::staged(), evidence, loaded)
-                .expect("inspect previous container");
+        let admission = inspect_loaded_full_verifier_evidence(
+            repository,
+            Selector::staged(),
+            evidence,
+            loaded,
+            None,
+        )
+        .expect("inspect previous container");
         assert!(matches!(
             admission,
             FullVerifierEvidenceAdmission::Admitted(_)
@@ -1320,6 +1400,7 @@ mod tests {
             Selector::staged(),
             evidence,
             document,
+            None,
         )
         .expect("inspect current container");
         assert!(matches!(
