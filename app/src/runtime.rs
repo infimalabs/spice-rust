@@ -20,8 +20,12 @@ use crate::pane::{GrantPane, Principal, ReadPane, SteerPane};
 use crate::socket::{Admitted, SessionScope};
 use crate::state::{BrowserState, ChainWalk};
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod publication;
 mod stream;
-pub use stream::{FactRow, StreamDirective, StreamTerminal};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use publication::CanvasSurface;
+pub use stream::{FactRow, StreamApplication, StreamDirective, StreamTerminal};
 
 const EVENT_LIMIT: usize = 32;
 
@@ -421,7 +425,7 @@ struct ActivitySource {
 ///
 /// Deliberately not `Debug`: even though scopes redact themselves, snapshots
 /// should never gain an accidental whole-runtime debug path.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct CanvasRuntime {
     accepted: Admitted<Accepted>,
     principal: Principal,
@@ -433,6 +437,7 @@ pub struct CanvasRuntime {
     effort: ScopedValue<EffortState>,
     fact_pages: Vec<BrowserState<FactRow>>,
     trust_pages: Vec<BrowserState<TrustView>>,
+    trust_resume: Option<StreamCursor>,
     messages: Vec<AgentMessage>,
     /// Absent until the retained message page announces its exact capacity.
     message_limit: Option<usize>,
@@ -462,6 +467,7 @@ impl CanvasRuntime {
             effort: ScopedValue::new(accepted),
             fact_pages: Vec::new(),
             trust_pages: Vec::new(),
+            trust_resume: None,
             messages: Vec::new(),
             message_limit: None,
             thread_pages: Vec::new(),

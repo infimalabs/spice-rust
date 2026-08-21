@@ -25,7 +25,7 @@ use yew::prelude::*;
 
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
-use crate::runtime::topology_mutation_requires_refresh;
+use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
 use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
     SpeechRequest,
@@ -346,7 +346,7 @@ impl Connection {
     }
 }
 
-type SurfaceData = Option<CanvasRuntime>;
+type SurfaceData = CanvasSurface;
 
 #[derive(Clone)]
 enum ClientAction {
@@ -568,7 +568,8 @@ fn use_lineage_speech_abandonment(
     surface: &UseStateHandle<SurfaceData>,
     speech_runtime: SpeechRuntime,
 ) {
-    let lineages = (**surface)
+    let lineages = surface
+        .read()
         .as_ref()
         .and_then(CanvasRuntime::lanes)
         .map(|lanes| {
@@ -713,7 +714,7 @@ fn seat_submit(
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
         let Some(topology_revision) = surface
-            .as_ref()
+            .read()
             .as_ref()
             .and_then(|runtime| runtime.lanes())
             .map(|lanes| lanes.topology_revision)
@@ -953,6 +954,7 @@ fn short(value: &str) -> String {
 
 fn resident_state(surface: &SurfaceData) -> String {
     surface
+        .read()
         .as_ref()
         .and_then(CanvasRuntime::lanes)
         .map(|lanes| format!("{:?}", lanes.state).to_lowercase())

@@ -57,6 +57,7 @@ pub(super) fn render_lineage(
     lineage_controls: &UseReducerHandle<LineageControls>,
     controls: &view::AgentControls,
 ) -> Html {
+    let surface = surface.read();
     let Some(runtime) = surface.as_ref() else {
         return empty("No admitted live team is available.");
     };

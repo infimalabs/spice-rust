@@ -331,6 +331,80 @@ fn fact_frame(fact: serde_json::Value) -> Vec<u8> {
     .expect("fact fixture serializes")
 }
 
+fn trust_frame(position: u64, horizon: u64) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "stream": "trust",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "packed": {
+            "rows": [{
+                "position": position,
+                "head": {
+                    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "state": "granted",
+                },
+            }],
+            "horizon": horizon,
+        },
+    }))
+    .expect("trust frame serializes")
+}
+
+#[test]
+fn stream_application_invalidates_only_observable_runtime_changes() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let live = admitted_stream(&session, &fact_frame(task_fact(41, None)));
+
+    assert!(runtime.apply_stream_frame(&live).changed());
+    assert!(
+        !runtime.apply_stream_frame(&live).changed(),
+        "a duplicate live fact does not invalidate the rendered surface"
+    );
+
+    let stale = admitted_stream(&session, &fact_frame(task_fact(40, None)));
+    assert!(
+        !runtime.apply_stream_frame(&stale).changed(),
+        "a stale live fact does not invalidate the rendered surface"
+    );
+
+    let pong = wire::encode(&StreamFrame::Pong {
+        v: WireVersion::CURRENT,
+        id: uuid(REQUEST),
+        epoch: uuid(EPOCH),
+    })
+    .expect("liveness answer encodes");
+    assert!(
+        !runtime
+            .apply_stream_frame(&admitted_stream(&session, &pong))
+            .changed(),
+        "a Pong does not invalidate the rendered surface"
+    );
+
+    let next = Session::open(uuid(NEXT_CAPABILITY), uuid(NEXT_EPOCH));
+    let next_accepted = acceptance(&next, "operator", NEXT_EPOCH);
+    let mut foreign_runtime = CanvasRuntime::new(&next_accepted);
+    assert!(
+        !foreign_runtime.apply_stream_frame(&live).changed(),
+        "an admitted frame from another scope does not invalidate the rendered surface"
+    );
+
+    let mut trust_runtime = CanvasRuntime::new(&accepted);
+    let trust = admitted_stream(&session, &trust_frame(41, 41));
+    assert!(trust_runtime.apply_stream_frame(&trust).changed());
+    assert!(
+        !trust_runtime.apply_stream_frame(&trust).changed(),
+        "a duplicate trust page does not invalidate the rendered surface"
+    );
+    let stale_trust = admitted_stream(&session, &trust_frame(40, 40));
+    assert!(
+        !trust_runtime.apply_stream_frame(&stale_trust).changed(),
+        "a stale trust page does not invalidate the rendered surface"
+    );
+}
+
 #[test]
 fn stream_door_checks_nested_wire_and_terminal_cursor_epoch() {
     let session = session(OPERATOR, EPOCH);
@@ -427,7 +501,12 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
         2,
         "the same tape coordinates in two lanes are two activities"
     );
-    runtime.apply_stream(&admitted_stream(&session, &snapshot));
+    assert!(
+        !runtime
+            .apply_stream_frame(&admitted_stream(&session, &snapshot))
+            .changed(),
+        "an identical retained-message snapshot does not invalidate the surface"
+    );
     assert_eq!(
         runtime.activities().len(),
         2,
@@ -447,7 +526,12 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
         "message": second,
     }))
     .expect("duplicate message serializes");
-    runtime.apply_stream(&admitted_stream(&session, &duplicate));
+    assert!(
+        !runtime
+            .apply_stream_frame(&admitted_stream(&session, &duplicate))
+            .changed(),
+        "a duplicate live message does not invalidate the surface"
+    );
     assert_eq!(runtime.messages().len(), 2);
 
     let newest = serde_json::to_vec(&serde_json::json!({

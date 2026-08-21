@@ -65,8 +65,9 @@ mod speech;
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
     BoardView, CanvasRuntime, EffortState, EffortWithheld, FACT_PAGE_LIMIT, FactRow, LaneActivity,
-    LaneMember, LaneRow, LaneStatus, LaneView, RuntimeEvent, Stale, StreamDirective,
-    StreamTerminal, THREAD_PAGE_LIMIT, effort_identity_tag, effort_is_zero, stale_reads,
+    LaneMember, LaneRow, LaneStatus, LaneView, RuntimeEvent, Stale, StreamApplication,
+    StreamDirective, StreamTerminal, THREAD_PAGE_LIMIT, effort_identity_tag, effort_is_zero,
+    stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

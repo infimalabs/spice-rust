@@ -29,7 +29,8 @@ pub(super) struct CommandBarRender<'a> {
 }
 
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
-    let runtime = render.surface.as_ref();
+    let surface = render.surface.read();
+    let runtime = surface.as_ref();
     if **render.mosaic {
         return render_mosaic_command_bar(&render, runtime);
     }

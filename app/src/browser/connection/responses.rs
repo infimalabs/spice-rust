@@ -2,12 +2,12 @@
 ///
 /// A liveness answer reports no state, and the caller has already taken the
 /// only thing it carries by observing that a frame arrived. Answering early
-/// skips the surface publication below, which would otherwise hand the view a
-/// fresh clone and redraw an idle board on every probe.
+/// skips the surface publication below, which would otherwise redraw an idle
+/// board on every probe.
 fn handle_stream_frame(
     session: &Session,
     surface: &UseStateHandle<SurfaceData>,
-    data: &Rc<RefCell<SurfaceData>>,
+    data: &SurfaceData,
     bytes: &[u8],
 ) -> Result<(Vec<StreamDirective>, bool, Option<wire::StreamCursor>), String> {
     let admitted = session
@@ -18,23 +18,28 @@ fn handle_stream_frame(
     }
     let refresh = stale_reads(&admitted).any();
     let live_fact = matches!(admitted.get(), wire::StreamFrame::Fact { .. });
-    let (directives, refresh_thread) = {
-        let mut data = data.borrow_mut();
+    let (directives, refresh_thread, changed) = {
+        let mut data = data.write();
         let runtime = data
             .as_mut()
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?;
-        let directives = runtime.apply_stream(&admitted);
-        let refresh_thread = live_fact.then(|| runtime.pending_thread()).flatten();
-        (directives, refresh_thread)
+        let application = runtime.apply_stream_frame(&admitted);
+        let changed = application.changed();
+        let refresh_thread = (live_fact && changed)
+            .then(|| runtime.pending_thread())
+            .flatten();
+        (application.into_directives(), refresh_thread, changed)
     };
-    surface.set(data.borrow().clone());
+    if changed {
+        surface.set(data.publication());
+    }
     Ok((directives, refresh, refresh_thread))
 }
 
 pub(super) fn handle_incoming(
     session: &Session,
     handles: &SurfaceHandles,
-    data: &Rc<RefCell<SurfaceData>>,
+    data: &SurfaceData,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
 ) -> Result<(Vec<StreamDirective>, bool, Option<wire::StreamCursor>), String> {
@@ -46,12 +51,13 @@ pub(super) fn handle_incoming(
     let kind = pending
         .remove(&identity.id)
         .ok_or_else(|| format!("response named unknown command {}", identity.id))?;
-    let mut data = data.borrow_mut();
-    let runtime = data
+    let mut runtime_slot = data.write();
+    let runtime = runtime_slot
         .as_mut()
         .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
     let refresh = apply_command_response(session, handles, runtime, identity.id, kind, bytes)?;
-    handles.surface.set(data.clone());
+    drop(runtime_slot);
+    handles.surface.set(data.publication());
     Ok((Vec::new(), refresh, None))
 }
 
