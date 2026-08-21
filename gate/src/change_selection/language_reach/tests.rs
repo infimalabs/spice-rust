@@ -62,6 +62,70 @@ fn javascript_reach_keeps_import_and_symbol_dependents_but_not_a_peer_component(
 }
 
 #[test]
+fn javascript_multi_root_canvas_component_produces_one_acyclic_canonical_reach() {
+    let fixture = Fixture::new("javascript-canvas-multi-root");
+    fixture.write(
+        "app/browser/canvas-fixture.mjs",
+        "export const configureFixture = () => {};\n",
+    );
+    fixture.write(
+        "app/browser/canvas.spec.mjs",
+        concat!(
+            "import { configureFixture } from './canvas-fixture.mjs';\n",
+            "configureFixture();\n",
+        ),
+    );
+    fixture.write(
+        "app/browser/canvas-coordinator.mjs",
+        concat!(
+            "import { configureFixture } from './canvas-fixture.mjs';\n",
+            "configureFixture();\n",
+        ),
+    );
+    fixture.write("app/browser/unrelated.mjs", "export const unrelated = 1;\n");
+    let tracked = fixture.paths();
+    let changes = [
+        "app/browser/canvas-fixture.mjs".to_owned(),
+        "app/browser/canvas.spec.mjs".to_owned(),
+    ];
+    let selection = select_current_source_change_gates(source(), &changes)
+        .expect("the two changed Canvas sources select JavaScript analysis");
+
+    let expanded = compile_language_reach(&fixture.root, &tracked, &[], &[], selection)
+        .expect("one connected multi-root JavaScript component stays acyclic");
+    assert_eq!(
+        reached_paths(&expanded, GateId::JavascriptUnused),
+        BTreeSet::from([
+            "app/browser/canvas-coordinator.mjs".to_owned(),
+            "app/browser/canvas-fixture.mjs".to_owned(),
+            "app/browser/canvas.spec.mjs".to_owned(),
+        ])
+    );
+    let reach = expanded
+        .reach_for(GateId::JavascriptUnused)
+        .expect("JavaScript arm remains selected");
+    assert_eq!(reach.mode(), &ChangeReachMode::Focused);
+    assert_eq!(
+        reach.provenance().iter().cloned().collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            ChangeReachEdge::changed(
+                "app/browser/canvas-fixture.mjs",
+                path_object("app/browser/canvas-fixture.mjs"),
+            ),
+            ChangeReachEdge::changed(
+                "app/browser/canvas.spec.mjs",
+                path_object("app/browser/canvas.spec.mjs"),
+            ),
+            ChangeReachEdge::dependency(
+                "app/browser/canvas-fixture.mjs",
+                path_object("app/browser/canvas-fixture.mjs"),
+                path_object("app/browser/canvas-coordinator.mjs"),
+            ),
+        ])
+    );
+}
+
+#[test]
 fn csharp_reach_keeps_namespace_and_inheritance_dependents_only() {
     let fixture = Fixture::new("csharp-component");
     fixture.write(

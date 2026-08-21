@@ -242,9 +242,8 @@ fn expand_graph(
             ),
         );
     }
-    let mut objects = BTreeSet::new();
-    let mut provenance = BTreeSet::new();
-    for source in sources {
+    let roots = sources.iter().cloned().collect::<BTreeSet<_>>();
+    for source in &roots {
         if !graph.edges.contains_key(source) {
             return exhaustive(
                 gate_id,
@@ -252,29 +251,17 @@ fn expand_graph(
                 &format!("changed language source {source:?} is absent from the selected tree"),
             );
         }
-        let (reached, parents) = graph.component(source);
-        for path in reached {
-            let object = path_object(&path);
-            objects.insert(object.clone());
-            if path == *source {
-                provenance.insert(ChangeReachEdge::changed(source, object));
-                continue;
-            }
-            let parent = parents
-                .get(&path)
-                .expect("every non-root component path has a BFS parent");
-            provenance.insert(ChangeReachEdge::dependency(
-                source,
-                path_object(parent),
-                object,
-            ));
-        }
     }
-    ChangeArmReach::focused(
-        gate_id,
-        objects.into_iter().collect(),
-        provenance.into_iter().collect(),
-    )
+    let (reached, parents) = graph.forest(&roots);
+    let objects = reached.iter().map(|path| path_object(path)).collect();
+    let mut provenance = roots
+        .iter()
+        .map(|source| ChangeReachEdge::changed(source, path_object(source)))
+        .collect::<BTreeSet<_>>();
+    provenance.extend(parents.into_iter().map(|(path, (source, parent))| {
+        ChangeReachEdge::dependency(source, path_object(&parent), path_object(&path))
+    }));
+    ChangeArmReach::focused(gate_id, objects, provenance.into_iter().collect())
 }
 
 fn exhaustive(gate_id: GateId, sources: &[String], reason: &str) -> ChangeArmReach {
@@ -328,18 +315,35 @@ impl Graph {
             .insert(left.to_owned());
     }
 
-    fn component(&self, source: &str) -> (BTreeSet<String>, BTreeMap<String, String>) {
+    /// Build one deterministic spanning forest rooted at every changed source.
+    ///
+    /// Roots are marked before traversal, so one changed path can never become
+    /// another changed path's dependency. Every other path is claimed once by
+    /// the lexicographically first depth-first traversal that reaches it.
+    fn forest(
+        &self,
+        sources: &BTreeSet<String>,
+    ) -> (BTreeSet<String>, BTreeMap<String, (String, String)>) {
         let mut reached = BTreeSet::new();
+        let mut owners = sources
+            .iter()
+            .map(|source| (source.clone(), source.clone()))
+            .collect::<BTreeMap<_, _>>();
         let mut parents = BTreeMap::new();
-        let mut pending = vec![source.to_owned()];
+        let mut pending = sources.iter().rev().cloned().collect::<Vec<_>>();
         while let Some(path) = pending.pop() {
             if !reached.insert(path.clone()) {
                 continue;
             }
+            let owner = owners
+                .get(&path)
+                .expect("every pending graph path has a changed-source owner")
+                .clone();
             if let Some(neighbors) = self.edges.get(&path) {
                 for neighbor in neighbors.iter().rev() {
-                    if !reached.contains(neighbor) && !parents.contains_key(neighbor) {
-                        parents.insert(neighbor.clone(), path.clone());
+                    if !owners.contains_key(neighbor) {
+                        owners.insert(neighbor.clone(), owner.clone());
+                        parents.insert(neighbor.clone(), (owner.clone(), path.clone()));
                         pending.push(neighbor.clone());
                     }
                 }
