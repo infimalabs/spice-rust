@@ -29,6 +29,8 @@ mod dispatch;
 mod fixture;
 #[path = "gate_cli/refusal.rs"]
 mod refusal_artifact;
+#[path = "support/verify_claim.rs"]
+mod verify_claim_fixture;
 
 use fixture::*;
 
@@ -1119,6 +1121,11 @@ fn invoke(argv: &[&str], current: &Path) -> Spoken {
 }
 
 fn invoke_with_path(argv: &[&str], current: &Path, path: Option<&Path>) -> Spoken {
+    if verify_claim_fixture::selects_full_gate(argv)
+        && spice::repository::Repository::discover(current).is_ok()
+    {
+        verify_claim_fixture::install(current);
+    }
     let mut command = fixture_command(env!("CARGO_BIN_EXE_spice"));
     command
         .args(argv)
@@ -1126,6 +1133,12 @@ fn invoke_with_path(argv: &[&str], current: &Path, path: Option<&Path>) -> Spoke
         .env_remove(PRE_COMMIT_PATHS)
         .env_remove(PRE_COMMIT_SOURCE)
         .env_remove(steer::hook::INBOX);
+    if verify_claim_fixture::selects_full_gate(argv) {
+        command.env(
+            wire::SpiceVariable::Lane.as_str(),
+            verify_claim_fixture::LANE,
+        );
+    }
     if let Some(path) = path {
         command.env(PROCESS_PATH, path);
     }
@@ -1157,7 +1170,12 @@ fn newline_count(bytes: &[u8]) -> usize {
 }
 
 fn report_body(spoken: &Spoken) -> BatteryReport {
-    assert_eq!(spoken.code, Some(0));
+    assert_eq!(
+        spoken.code,
+        Some(0),
+        "full gate stderr: {}",
+        String::from_utf8_lossy(&spoken.err),
+    );
     assert!(spoken.err.is_empty());
     assert_eq!(newline_count(&spoken.out), 1);
     let bytes = spoken.out.strip_suffix(b"\n").unwrap().to_vec();

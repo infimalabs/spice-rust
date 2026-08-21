@@ -1,0 +1,221 @@
+use std::cell::Cell;
+
+use wire::{
+    Actor, ClaimCell, ClaimDisposition, ClaimHead, LeaseHead, Phase, ResidentState, Seq, TaskHead,
+    TaskStamp, WorkflowHead,
+};
+
+use super::*;
+
+const WORKTREE: &str = "/worktrees/current";
+
+#[test]
+fn no_claim_refuses_before_the_verifier_is_launched() {
+    let fixture = Fixture::new();
+    let launched = Cell::new(false);
+    let refusal = launch_after_admission(admit_snapshot(fixture.snapshot(None)), || {
+        launched.set(true)
+    })
+    .expect_err("missing claim refuses");
+
+    assert!(matches!(refusal, VerifyClaimRefusal::MissingClaim));
+    assert!(!launched.get(), "refusal launched the full verifier");
+}
+
+#[test]
+fn stale_claim_refuses() {
+    let fixture = Fixture::new();
+    let mut entry = fixture.entry("verify");
+    entry.lease = Some(lease(fixture.epoch, "2026-08-21T00:00:04.000Z"));
+    let entry = entry.admitted();
+
+    let refusal =
+        admit_snapshot(fixture.snapshot(Some(&entry))).expect_err("expired claim refuses");
+    assert!(matches!(
+        refusal,
+        VerifyClaimRefusal::InactiveClaim(board::ClaimRefusal::Expired { .. })
+    ));
+}
+
+#[test]
+fn foreign_worktree_claim_refuses() {
+    let mut fixture = Fixture::new();
+    fixture.residency.lanes[0].worktree = "/worktrees/peer".to_owned();
+    let entry = fixture.entry("verify").admitted();
+
+    let refusal = admit_snapshot(fixture.snapshot(Some(&entry)))
+        .expect_err("another worktree's claim refuses");
+    assert!(matches!(
+        refusal,
+        VerifyClaimRefusal::ForeignWorktree { .. }
+    ));
+}
+
+#[test]
+fn non_verify_phase_refuses() {
+    let fixture = Fixture::new();
+    let entry = fixture.entry("todo").admitted();
+
+    let refusal = admit_snapshot(fixture.snapshot(Some(&entry)))
+        .expect_err("ordinary task phase refuses full gate");
+    assert!(matches!(refusal, VerifyClaimRefusal::Phase(phase) if phase == "todo"));
+}
+
+#[test]
+fn matching_live_verify_claim_admits() {
+    let fixture = Fixture::new();
+    let entry = fixture.entry("verify").admitted();
+
+    admit_snapshot(fixture.snapshot(Some(&entry))).expect("exact live verify claim admits");
+}
+
+struct Fixture {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    residency: ResidencyHead,
+    at: Instant,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let lane = uuid(1);
+        let occupant = uuid(2);
+        let epoch = uuid(3);
+        let residency = ResidencyHead {
+            epoch,
+            state: ResidentState::Seated,
+            topology_revision: 0,
+            lanes: vec![wire::LaneResidency {
+                lane,
+                lineage_id: lane,
+                name: None,
+                worktree: WORKTREE.to_owned(),
+                life: "drive".to_owned(),
+                vendor: "codex".parse().expect("fixture vendor"),
+                occupant: Some(occupant),
+                lineage: vec![occupant],
+                capabilities: Vec::new(),
+                session: None,
+                disposition: "occupied".to_owned(),
+            }],
+            subscriptions: Vec::new(),
+        };
+        Self {
+            lane,
+            occupant,
+            epoch,
+            residency,
+            at: instant("2026-08-21T00:00:05.000Z"),
+        }
+    }
+
+    fn snapshot<'a>(&'a self, entry: Option<&'a Entry>) -> VerifyClaimSnapshot<'a> {
+        VerifyClaimSnapshot {
+            worktree: Path::new(WORKTREE),
+            lane: self.lane,
+            residency: &self.residency,
+            entry,
+            at: self.at,
+        }
+    }
+
+    fn entry(&self, current: &str) -> EntryFixture {
+        EntryFixture {
+            statement: statement(),
+            workflow: workflow(current),
+            claim: Some(ClaimHead {
+                actor: Actor::Lane(self.lane),
+                fact: seq(4),
+                claimed: seq(4),
+                cell: ClaimCell {
+                    project: "gate.selection".to_owned(),
+                    phase: phase(current),
+                },
+                lane: self.lane,
+                occupant: self.occupant,
+                epoch: self.epoch,
+                recovery: None,
+                disposition: ClaimDisposition::Active,
+            }),
+            lease: Some(lease(self.epoch, "2026-08-21T00:00:10.000Z")),
+        }
+    }
+}
+
+struct EntryFixture {
+    statement: TaskHead,
+    workflow: WorkflowHead,
+    claim: Option<ClaimHead>,
+    lease: Option<LeaseHead>,
+}
+
+impl EntryFixture {
+    fn admitted(&self) -> Entry {
+        Entry::new(
+            self.statement.clone(),
+            self.workflow.clone(),
+            self.claim.clone(),
+            self.lease.clone(),
+            &board::ProjectPolicy::new(["gate".to_owned()], Vec::new(), 2, 3)
+                .expect("fixture project policy"),
+        )
+        .expect("fixture entry admits")
+    }
+}
+
+fn statement() -> TaskHead {
+    let born = TaskStamp::for_millis(1).expect("fixture task stamp");
+    TaskHead {
+        born,
+        queue_origin: seq(1),
+        title: "Run full verification".to_owned(),
+        description: None,
+        acceptance: Vec::new(),
+        project: "gate.selection".to_owned(),
+        tags: Vec::new(),
+        dependencies: Vec::new(),
+        provenance: "task:fixture".parse().expect("fixture origin"),
+        revision: seq(1),
+    }
+}
+
+fn workflow(current: &str) -> WorkflowHead {
+    WorkflowHead {
+        flow: ["todo", "verify", "review"].map(phase).to_vec(),
+        phase: phase(current),
+        status: "pending".to_owned(),
+        review: "unassigned".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: None,
+    }
+}
+
+fn lease(epoch: CanonicalUuid, expiry: &str) -> LeaseHead {
+    LeaseHead {
+        start: instant("2026-08-21T00:00:00.000Z"),
+        renewal: instant("2026-08-21T00:00:02.000Z"),
+        maximum: instant("2026-08-21T00:00:20.000Z"),
+        expiry: instant(expiry),
+        epoch,
+    }
+}
+
+fn phase(value: &str) -> Phase {
+    value.parse().expect("fixture phase")
+}
+
+fn instant(value: &str) -> Instant {
+    value.parse().expect("fixture instant")
+}
+
+fn seq(value: u64) -> Seq {
+    Seq::new(value).expect("fixture sequence")
+}
+
+fn uuid(value: u64) -> CanonicalUuid {
+    format!("018f82d4-6f59-7d06-92e3-{value:012x}")
+        .parse()
+        .expect("fixture UUID")
+}

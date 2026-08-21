@@ -20,6 +20,9 @@ use steer::directives::{Ledger, Steering};
 use wire::body::SteerSent;
 use wire::{CanonicalUuid, SpiceVariable};
 
+#[path = "support/verify_claim.rs"]
+mod verify_claim_fixture;
+
 /// Representative durable state Python Spice owns inside `.spice`.
 const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
     ("data/taskchampion.sqlite3", b"taskchampion pages"),
@@ -544,6 +547,7 @@ impl Fixture {
         }
         git(&self.root, &["add", "."]);
         git(&self.root, &["commit", "-qm", "fixture"]);
+        verify_claim_fixture::install(&self.root);
     }
 
     fn state_root(&self) -> PathBuf {
@@ -566,6 +570,9 @@ impl Fixture {
 
     fn invoke(&self, args: &[&str]) -> Output {
         let mut command = self.command();
+        if verify_claim_fixture::selects_full_gate(args) {
+            command.env(SpiceVariable::Lane.as_str(), verify_claim_fixture::LANE);
+        }
         command.args(args).output().expect("run the spice binary")
     }
 
