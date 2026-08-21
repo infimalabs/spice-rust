@@ -282,7 +282,8 @@ struct SourceClaim<'a> {
 
 /// Derive every target claim before selecting a package. Exact target roots,
 /// `#[path]`, and `include!` reach may cross package roots; the conservative
-/// library-directory fallback belongs only to the deepest containing package.
+/// library-directory fallback belongs only to the deepest containing package
+/// and applies only when that package has no explicit claim for the source.
 fn source_claims<'a>(
     inventory: &'a Inventory,
     changed: &str,
@@ -293,15 +294,21 @@ fn source_claims<'a>(
         .packages
         .iter()
         .filter_map(|package| {
-            let targets = package
+            let explicit = package
                 .declared_targets
                 .iter()
-                .filter(|target| {
-                    target_explicitly_reaches_source(target, absolute)
-                        || (containing.is_some_and(|owner| owner.id == package.id)
-                            && target_reaches_source(target, absolute))
-                })
+                .filter(|target| target_explicitly_reaches_source(target, absolute))
                 .collect::<Vec<_>>();
+            let targets =
+                if explicit.is_empty() && containing.is_some_and(|owner| owner.id == package.id) {
+                    package
+                        .declared_targets
+                        .iter()
+                        .filter(|target| library_fallback_reaches_source(target, absolute))
+                        .collect()
+                } else {
+                    explicit
+                };
             let package_wide = package_wide_source(changed, package, absolute);
             (!targets.is_empty() || package_wide).then_some(SourceClaim {
                 package,
@@ -518,12 +525,9 @@ fn select_package_targets(
     select_targets(package, &package.targets, changed, tests, edges)
 }
 
-/// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
-/// module declaration establishes; ordinary directory proximity is not reach.
-fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
-    if target_explicitly_reaches_source(target, source) {
-        return true;
-    }
+/// Apply the conventional library-directory fallback after a package has no
+/// exact target-root or declared module claim for the source.
+fn library_fallback_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
     let direct_root = target_is_library(target)
         .then(|| target.source.parent())
         .flatten();
