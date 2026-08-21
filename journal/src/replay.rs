@@ -264,9 +264,9 @@ impl Journal {
 }
 
 impl JournalReader {
-    /// Verifies a finalized authority without acquiring writer capability.
+    /// Verifies a finalized authority inside one immutable read-only snapshot.
     pub fn verify(&self) -> Result<Verification, VerifyError> {
-        verify_connection(&self.connection)
+        verify_reader_connection(&self.connection)
     }
 
     /// Resolves one sequence or exact origin into a verified cause thread.
@@ -374,10 +374,18 @@ fn sqlite_integer(value: u64) -> Result<i64, ReindexError> {
 }
 
 pub(crate) fn verify_connection(connection: &Connection) -> Result<Verification, VerifyError> {
+    verify_connection_after_facts(connection, || {})
+}
+
+fn verify_connection_after_facts(
+    connection: &Connection,
+    after_facts: impl FnOnce(),
+) -> Result<Verification, VerifyError> {
     crate::migrate::finalized_version(connection).map_err(VerifyError::Open)?;
     let mut violations = Vec::new();
     verify_sqlite(connection, &mut violations)?;
     let facts = verify_facts(connection, &mut violations)?;
+    after_facts();
     let threads = verify_threads(connection, &facts, &mut violations)?;
     let mut heads = verify_heads(connection, &mut violations)?;
     heads += steering::verify(connection, &facts, &mut violations)?;
@@ -394,6 +402,32 @@ pub(crate) fn verify_connection(connection: &Connection) -> Result<Verification,
     } else {
         Err(VerifyError::Violations(violations))
     }
+}
+
+fn verify_reader_connection(connection: &Connection) -> Result<Verification, VerifyError> {
+    verify_reader_connection_with(connection, verify_connection)
+}
+
+fn verify_reader_connection_with(
+    connection: &Connection,
+    verify: impl FnOnce(&Connection) -> Result<Verification, VerifyError>,
+) -> Result<Verification, VerifyError> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(VerifyError::Sqlite)?;
+    let verification = verify(&transaction);
+    transaction.commit().map_err(VerifyError::Sqlite)?;
+    verification
+}
+
+#[cfg(test)]
+pub(crate) fn verify_reader_connection_with_concurrent_commit(
+    connection: &Connection,
+    commit: impl FnOnce(),
+) -> Result<Verification, VerifyError> {
+    verify_reader_connection_with(connection, |snapshot| {
+        verify_connection_after_facts(snapshot, commit)
+    })
 }
 
 fn verify_sqlite(
