@@ -19,10 +19,10 @@ pub(super) struct Evidence {
 }
 
 impl Evidence {
-    pub(super) fn collect(facts: &journal::FactSnapshot) -> Self {
+    pub(super) fn collect(facts: &[wire::Envelope<wire::AnyFact>]) -> Self {
         let mut batches = Vec::new();
         let mut sessions = Vec::new();
-        for envelope in facts.facts() {
+        for envelope in facts {
             match envelope.fact.kind() {
                 FactKind::JournalIngested => batches.push(Batch {
                     seq: envelope.seq,
@@ -242,11 +242,11 @@ pub(super) struct LineageTimeline {
 }
 
 impl LineageTimeline {
-    pub(super) fn collect(facts: &journal::FactSnapshot) -> Self {
+    pub(super) fn collect(facts: &[wire::Envelope<wire::AnyFact>]) -> Self {
         let mut current = BTreeMap::<CanonicalUuid, CanonicalUuid>::new();
         let mut points = Vec::new();
         let mut moves = Vec::new();
-        for envelope in facts.facts() {
+        for envelope in facts {
             match envelope.fact.kind() {
                 FactKind::LaneSeated => {
                     let body: body::LaneSeated = read(envelope);

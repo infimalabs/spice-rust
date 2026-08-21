@@ -22,7 +22,9 @@ pub use store::{
     Materialization, ReadOutcome, RebuildCause, Reducer, Reduction, Refusal, Store, StoreError,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use task_effort::{TaskEffortReducer, select_task_effort, task_effort_answer};
+pub use task_effort::{
+    TaskEffortInputs, TaskEffortReducer, select_task_effort, task_effort_answer,
+};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

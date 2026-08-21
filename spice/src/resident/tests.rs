@@ -84,6 +84,40 @@ fn consent_and_effort_requests_read_one_current_generation_at_constant_cost() {
         .current()
         .expect("stale request joins its coalesced generation refresh");
     assert_eq!(refreshed.cursor(), seq(513));
+    assert_eq!(refreshed.decoded_facts(), 512);
+    assert_eq!(
+        refreshed.effort_inputs(),
+        0,
+        "unrelated retained facts never enter the task-effort input set"
+    );
+
+    let mut one_more = JournalWrite::new(
+        Actor::Spice,
+        "recovery:one-more-unrelated"
+            .parse()
+            .expect("fixture recovery origin"),
+        "2030-04-12T18:46:00.271Z".parse().expect("fixture instant"),
+        Producer::Judge,
+    );
+    one_more
+        .fact(
+            wire::body::TasteCleared {
+                taste: "one-more-unrelated".to_owned(),
+                locus: "request-cost-fixture".to_owned(),
+            },
+            FactCause::Root,
+        )
+        .expect("one unrelated fact builds");
+    assert!(matches!(
+        bus.commit(one_more).expect("one unrelated fact commits"),
+        CommitOutcome::Committed(_)
+    ));
+    let advanced = reads.current().expect("one-fact delta advances");
+    assert_eq!(advanced.cursor(), seq(514));
+    assert_eq!(advanced.decoded_facts(), 1);
+    assert_eq!(advanced.effort_inputs(), 0);
+    assert!(!advanced.consent_rebuilt());
+    assert!(!advanced.effort_rebuilt());
 
     let unavailable_fold = paths.folds.with_extension("unavailable");
     fs::rename(&paths.folds, &unavailable_fold).expect("fold store moves out of request reach");
@@ -95,7 +129,7 @@ fn consent_and_effort_requests_read_one_current_generation_at_constant_cost() {
         let Outcome::Reply(Reply { position, .. }) = outcome else {
             panic!("current materialized request did not reply")
         };
-        assert_eq!(position, ReplyPosition::Snapshot(seq(513)));
+        assert_eq!(position, ReplyPosition::Snapshot(seq(514)));
     }
     assert!(
         !paths.folds.exists(),

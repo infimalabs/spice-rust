@@ -133,6 +133,13 @@ fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
     let after = bus.task_snapshot().expect("advanced snapshot reads");
     assert_eq!(after.facts().len(), FLEET_FACTS + 1);
     assert_eq!(after.facts().horizon().map(Seq::get), Some(8_502));
+    let committed_tail = after.facts().after(before.cursor()).collect::<Vec<_>>();
+    assert_eq!(
+        committed_tail.len(),
+        1,
+        "a caught-up lifecycle consumer touches only the one-fact suffix"
+    );
+    assert_eq!(committed_tail[0].seq.get(), 8_502);
     assert!(
         std::ptr::eq(
             shared_first,
