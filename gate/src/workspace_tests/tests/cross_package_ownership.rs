@@ -25,9 +25,9 @@ fn path_include_and_conventional_sources_retain_every_cross_package_owner() {
     assert!(shared.escalations().is_empty());
     assert_eq!(
         shared.report().tests(),
-        ["app::lib:app", "nested::lib:nested", "outer::test:bridge"]
+        ["nested::lib:nested", "outer::test:bridge"]
     );
-    assert_eq!(shared.report().edges().len(), 6);
+    assert_eq!(shared.report().edges().len(), 4);
     for source in &shared_changes {
         assert_eq!(
             shared
@@ -36,8 +36,8 @@ fn path_include_and_conventional_sources_retain_every_cross_package_owner() {
                 .iter()
                 .filter(|edge| edge.source() == source)
                 .count(),
-            3,
-            "each cross-package source reaches both owners and the reverse dependent"
+            2,
+            "each cross-package source reaches both direct owners"
         );
     }
 
@@ -50,10 +50,7 @@ fn path_include_and_conventional_sources_retain_every_cross_package_owner() {
     .expect("ordinary nested source keeps its exact package reach");
 
     assert!(ordinary.escalations().is_empty());
-    assert_eq!(
-        ordinary.report().tests(),
-        ["app::lib:app", "nested::lib:nested"]
-    );
+    assert_eq!(ordinary.report().tests(), ["nested::lib:nested"]);
     assert!(
         ordinary
             .report()
@@ -79,17 +76,12 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
     assert_eq!(
         reach.cargo_check_arguments(),
         [
-            [
-                "check",
-                "--locked",
-                "--all-targets",
-                "--package",
-                "app",
-                "--package",
-                "nested",
-            ]
-            .map(str::to_owned)
-            .to_vec(),
+            ["check", "--locked", "--all-targets", "--package", "nested",]
+                .map(str::to_owned)
+                .to_vec(),
+            ["check", "--locked", "--package", "app", "--lib"]
+                .map(str::to_owned)
+                .to_vec(),
             [
                 "check",
                 "--locked",
@@ -117,17 +109,14 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
     .expect("ordinary nested native reach resolves");
     assert_eq!(
         ordinary.cargo_check_arguments(),
-        [[
-            "check",
-            "--locked",
-            "--all-targets",
-            "--package",
-            "app",
-            "--package",
-            "nested",
+        [
+            ["check", "--locked", "--all-targets", "--package", "nested",]
+                .map(str::to_owned)
+                .to_vec(),
+            ["check", "--locked", "--package", "app", "--lib"]
+                .map(str::to_owned)
+                .to_vec(),
         ]
-        .map(str::to_owned)
-        .to_vec(),]
     );
     assert!(!ordinary.reaches_root(&fixture.root.join("outer")));
 
@@ -148,10 +137,7 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
         )
     });
 
-    assert_eq!(
-        report.tests(),
-        ["app::lib:app", "nested::lib:nested", "outer::test:bridge"]
-    );
+    assert_eq!(report.tests(), ["nested::lib:nested", "outer::test:bridge"]);
     assert!(!String::from_utf8_lossy(&output).contains("reach-escalation"));
     assert_eq!(
         fs::read_to_string(fixture.root.join("commands.log"))
@@ -160,11 +146,10 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
             .collect::<Vec<_>>(),
         [
             "metadata --locked --format-version 1 --no-deps",
-            "test --locked --package app-id --lib",
             "test --locked --package nested-id --lib",
             "test --locked --package outer-id --test bridge",
         ],
-        "selected tests launch every owner and dependent through deterministic selectors"
+        "selected tests launch direct owners through deterministic selectors"
     );
 }
 

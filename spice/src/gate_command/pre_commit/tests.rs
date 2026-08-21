@@ -210,6 +210,25 @@ fn last_phase_prefers_later_selected_test_progress() {
 }
 
 #[test]
+fn last_phase_reports_in_process_change_gate_selection() {
+    let files = WorkerFiles::create().expect("create progress worker files");
+    fs::write(
+        &files.progress,
+        concat!(
+            "{\"phase\":\"test-selection\"}\n",
+            "[change-gate-phase] stage=capture\n",
+            "[change-gate-phase] stage=selection changes=2\n",
+        ),
+    )
+    .expect("write change-gate phase evidence");
+    assert_eq!(
+        last_phase(&files.progress),
+        "change-gate selection changes=2"
+    );
+    files.cleanup().expect("remove progress worker files");
+}
+
+#[test]
 fn last_phase_accepts_policy_disposition_evidence_after_the_gate_token() {
     let files = WorkerFiles::create().expect("create progress worker files");
     fs::write(

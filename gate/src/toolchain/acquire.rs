@@ -555,23 +555,29 @@ fn examine(
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
-            GateId::RustTypecheck => analyze::rust_typecheck(
-                declaration,
-                source.root,
-                source.repository,
-                source.changes(),
-                bounds,
-                &resolved_programs(declaration, tools),
-            ),
-            GateId::CanvasWebTypecheck => analyze::canvas_web_typecheck(
-                declaration,
-                source.root,
-                source.repository,
-                source.changes(),
-                bounds,
-                &resolved_programs(declaration, tools),
-                refusal(declaration, tools),
-            ),
+            GateId::RustTypecheck => {
+                let programs = resolved_programs(declaration, tools);
+                analyze::rust_typecheck(
+                    declaration,
+                    source.root,
+                    source.repository,
+                    source.changes(),
+                    bounds,
+                    analyze::CompilerResources::new(&programs, source.verifier_environment()),
+                )
+            }
+            GateId::CanvasWebTypecheck => {
+                let programs = resolved_programs(declaration, tools);
+                analyze::canvas_web_typecheck(
+                    declaration,
+                    source.root,
+                    source.repository,
+                    source.changes(),
+                    bounds,
+                    analyze::CompilerResources::new(&programs, source.verifier_environment()),
+                    refusal(declaration, tools),
+                )
+            }
             GateId::LocalPaths => {
                 let changes = source.chargeable_changes();
                 analyze::local_paths(declaration, source.root, &changes)

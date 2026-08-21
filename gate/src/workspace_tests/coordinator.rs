@@ -15,6 +15,8 @@ const MAX_TEST_HARNESS_THREADS_PER_SHARD: usize = 3;
 pub(super) struct RunPolicy {
     pub(super) concurrency: usize,
     pub(super) shared_outputs: bool,
+    pub(super) cargo_jobs: Option<usize>,
+    pub(super) test_threads: Option<usize>,
     pub(super) shard_deadline: Duration,
     pub(super) coordinator_deadline: Duration,
     pub(super) progress_interval: Duration,
@@ -51,6 +53,8 @@ impl RunPolicy {
         Ok(Self {
             concurrency,
             shared_outputs,
+            cargo_jobs: None,
+            test_threads: None,
             shard_deadline: SHARD_DEADLINE,
             coordinator_deadline: COORDINATOR_DEADLINE,
             progress_interval: PROGRESS_INTERVAL,
@@ -58,6 +62,21 @@ impl RunPolicy {
             reap: REAP_DEADLINE,
             grace: TERMINATION_GRACE,
         })
+    }
+
+    pub(super) const fn production_budgeted(budget: WorkspaceTestBudget) -> Self {
+        Self {
+            concurrency: budget.concurrency,
+            shared_outputs: false,
+            cargo_jobs: Some(budget.cargo_jobs),
+            test_threads: Some(budget.test_threads),
+            shard_deadline: SHARD_DEADLINE,
+            coordinator_deadline: COORDINATOR_DEADLINE,
+            progress_interval: PROGRESS_INTERVAL,
+            output_drain: OUTPUT_DRAIN_DEADLINE,
+            reap: REAP_DEADLINE,
+            grace: TERMINATION_GRACE,
+        }
     }
 
     pub(super) fn for_shards(mut self, shards: usize) -> Self {
@@ -654,6 +673,9 @@ fn shard_spec(
         OsString::from("--package"),
         OsString::from(&shard.id),
     ];
+    if let Some(jobs) = policy.cargo_jobs {
+        arguments.extend([OsString::from("--jobs"), OsString::from(jobs.to_string())]);
+    }
     for target in &shard.targets {
         arguments.extend(target_arguments(target)?);
     }
@@ -665,10 +687,14 @@ fn shard_spec(
     })) {
         arguments.extend([OsString::from("--features"), OsString::from(features)]);
     }
-    if policy.shared_outputs {
+    if policy.shared_outputs || policy.test_threads.is_some() {
+        let threads = policy.test_threads.map_or_else(
+            || shard_test_threads(shard),
+            |cap| cap.min(shard_test_threads(shard)),
+        );
         arguments.extend([
             OsString::from("--"),
-            OsString::from(format!("--test-threads={}", shard_test_threads(shard))),
+            OsString::from(format!("--test-threads={threads}")),
         ]);
     }
     let mut spec = process_spec(

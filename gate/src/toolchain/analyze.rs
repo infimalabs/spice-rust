@@ -22,6 +22,7 @@
 //! arms that share none of it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -77,6 +78,32 @@ pub(super) struct Analysis {
     pub(super) findings: Vec<ArmFinding>,
     pub(super) exit_code: Option<i32>,
     pub(super) timing: Option<ArmTiming>,
+}
+
+/// Resolved compiler programs and the admitted environment they must inherit.
+pub(super) struct CompilerResources<'a> {
+    programs: &'a BTreeMap<&'a str, &'a str>,
+    environment: &'a [(OsString, OsString)],
+}
+
+impl<'a> CompilerResources<'a> {
+    pub(super) const fn new(
+        programs: &'a BTreeMap<&'a str, &'a str>,
+        environment: &'a [(OsString, OsString)],
+    ) -> Self {
+        Self {
+            programs,
+            environment,
+        }
+    }
+
+    pub(super) fn program(&self, name: &str) -> Option<&'a str> {
+        self.programs.get(name).copied()
+    }
+
+    pub(super) const fn environment(&self) -> &'a [(OsString, OsString)] {
+        self.environment
+    }
 }
 
 impl Analysis {
@@ -724,8 +751,21 @@ fn canvas_locus(root: &Path, cwd: &Path, location: &str) -> Option<(String, u32,
 /// process environment everywhere else while making those declared programs
 /// mutually discoverable.
 fn tool_environment(label: &str, programs: &[&str]) -> Result<Environment, String> {
+    tool_environment_with(label, programs, &[])
+}
+
+fn tool_environment_with(
+    label: &str,
+    programs: &[&str],
+    inherited: &[(OsString, OsString)],
+) -> Result<Environment, String> {
     let path = tool_search_path(label, programs)?;
-    Environment::new([("PATH", path)])
+    let mut entries = inherited
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    entries.insert(OsString::from("PATH"), path);
+    Environment::new(entries)
         .map_err(|error| format!("{label} tool environment was refused: {error}"))
 }
 
