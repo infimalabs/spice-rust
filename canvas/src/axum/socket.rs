@@ -128,6 +128,10 @@ impl ActiveSession {
             .subscription
             .as_ref()
             .is_some_and(crate::stream::Subscription::is_live);
+        let continuing = self
+            .subscription
+            .as_ref()
+            .is_some_and(crate::stream::Subscription::has_continuation);
         next_event(
             &mut self.lead,
             socket,
@@ -135,7 +139,7 @@ impl ActiveSession {
             &mut self.broadcasts,
             &mut self.messages,
             &mut self.commands,
-            live,
+            SessionReadiness { live, continuing },
         )
         .await
     }
@@ -169,6 +173,18 @@ impl ActiveSession {
                         .as_mut()
                         .expect("live branch has a subscription"),
                     notice,
+                )
+                .await
+            }
+            Event::Continuation => {
+                route_broadcast_continuation(
+                    socket,
+                    &self.state,
+                    &self.accepted,
+                    self.capability,
+                    self.subscription
+                        .as_mut()
+                        .expect("continuation branch has a subscription"),
                 )
                 .await
             }
@@ -300,6 +316,7 @@ pub(super) enum Lead {
     Message,
     Inbound,
     Command,
+    Continuation,
 }
 
 impl Lead {
@@ -314,7 +331,8 @@ impl Lead {
             Self::Journal => Self::Message,
             Self::Message => Self::Inbound,
             Self::Inbound => Self::Command,
-            Self::Command => Self::Journal,
+            Self::Command => Self::Continuation,
+            Self::Continuation => Self::Journal,
         };
         leading
     }
@@ -345,12 +363,30 @@ pub(super) enum Event {
     Message(Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError>),
     Inbound(Option<Result<Message, ::axum::Error>>),
     Command(Option<CommandCompletion>),
+    Continuation,
 }
 
 /// The two lifecycle signals that permanently end an authenticated session.
 pub(super) struct SessionSignals<'session> {
     closed: &'session mut tokio::sync::watch::Receiver<bool>,
     retired: &'session CancellationToken,
+}
+
+/// Work branches enabled by the subscription's current delivery state.
+#[derive(Clone, Copy)]
+pub(super) struct SessionReadiness {
+    live: bool,
+    continuing: bool,
+}
+
+impl SessionReadiness {
+    #[cfg(test)]
+    pub(super) const fn live(continuing: bool) -> Self {
+        Self {
+            live: true,
+            continuing,
+        }
+    }
 }
 
 impl<'session> SessionSignals<'session> {
@@ -371,8 +407,8 @@ impl<'session> SessionSignals<'session> {
 /// without a bound, which per-connection isolation does not help: the flood and
 /// the starved requests share the connection.
 ///
-/// Rotating which of the four work sources is evaluated first bounds the wait
-/// at three iterations rather than at the journal falling quiet. No source is
+/// Rotating which of the five work sources is evaluated first bounds the wait
+/// at four iterations rather than at the journal falling quiet. No source is
 /// ever *disabled* to make room, because a disabled broadcast receiver stops
 /// draining its channel and converts a scheduling question into a lag question,
 /// changing the retained-cursor overflow behavior this rotation must leave
@@ -384,8 +420,9 @@ pub(super) async fn next_event(
     broadcasts: &mut Option<bus::BroadcastSubscriber>,
     messages: &mut Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
     commands: &mut PendingCommands,
-    live: bool,
+    readiness: SessionReadiness,
 ) -> Event {
+    let SessionReadiness { live, continuing } = readiness;
     let journal = broadcasts.is_some() && live;
     let transcript = messages.is_some() && live;
     let command = !commands.is_empty();
@@ -399,6 +436,7 @@ pub(super) async fn next_event(
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
+            _ = std::future::ready(()), if continuing => Event::Continuation,
         },
         Lead::Message => tokio::select! {
             biased;
@@ -407,6 +445,7 @@ pub(super) async fn next_event(
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
+            _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
         },
         Lead::Inbound => tokio::select! {
@@ -415,6 +454,7 @@ pub(super) async fn next_event(
             () = retired.cancelled() => Event::Retired,
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
+            _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
         },
@@ -423,9 +463,20 @@ pub(super) async fn next_event(
             changed = closed.changed() => Event::Closed(changed),
             () = retired.cancelled() => Event::Retired,
             completed = commands.next(), if command => Event::Command(completed),
+            _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
+        },
+        Lead::Continuation => tokio::select! {
+            biased;
+            changed = closed.changed() => Event::Closed(changed),
+            () = retired.cancelled() => Event::Retired,
+            _ = std::future::ready(()), if continuing => Event::Continuation,
+            notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
+            notice = recv_message(messages), if transcript => Event::Message(notice),
+            message = socket.next_message() => Event::Inbound(message),
+            completed = commands.next(), if command => Event::Command(completed),
         },
     }
 }
@@ -541,26 +592,64 @@ async fn send_broadcast_update(
     subscription: &mut crate::stream::Subscription,
     commit: bus::JournalCommit,
 ) -> SessionFlow {
-    let frames = match subscription.advance(
+    let delivery = match subscription.advance(
         state.stream.as_ref().expect("broadcast has a source"),
         commit,
     ) {
-        Ok(frames) => frames,
+        Ok(delivery) => delivery,
         Err(failure) => {
             let frame = failure.frame(state.epoch, Some(subscription.id()));
             send_encoded(socket, &frame).await;
             return SessionFlow::Close;
         }
     };
+    send_live_delivery(socket, state, accepted, capability, subscription, delivery).await
+}
+
+async fn route_broadcast_continuation(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    subscription: &mut crate::stream::Subscription,
+) -> SessionFlow {
+    let delivery = match subscription.continue_live(
+        state
+            .stream
+            .as_ref()
+            .expect("continuation has a stream source"),
+    ) {
+        Ok(delivery) => delivery,
+        Err(failure) => {
+            let frame = failure.frame(state.epoch, Some(subscription.id()));
+            send_encoded(socket, &frame).await;
+            return SessionFlow::Close;
+        }
+    };
+    send_live_delivery(socket, state, accepted, capability, subscription, delivery).await
+}
+
+async fn send_live_delivery(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    subscription: &mut crate::stream::Subscription,
+    delivery: Option<crate::stream::LiveDelivery>,
+) -> SessionFlow {
     if !state.capabilities.matches(capability, &accepted.actor) {
         send_replaced(socket, state.epoch, Some(subscription.id())).await;
         return SessionFlow::Close;
     }
-    for frame in frames {
-        if !send_encoded(socket, &frame).await {
+    let Some(delivery) = delivery else {
+        return SessionFlow::Continue;
+    };
+    for frame in delivery.frames() {
+        if !send_encoded(socket, frame).await {
             return SessionFlow::Close;
         }
     }
+    subscription.admit(delivery);
     SessionFlow::Continue
 }
 

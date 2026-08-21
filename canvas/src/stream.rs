@@ -1,6 +1,10 @@
 //! Authenticated Canvas subscriptions over journal and transcript sources.
 
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bus::{BusReader, CanvasHeads, JournalCommit};
 use wire::{
@@ -26,6 +30,15 @@ pub struct Source {
     epoch: wire::CanonicalUuid,
     rows: usize,
     messages: MessageFeed,
+    #[cfg(test)]
+    reads: Arc<ReadCounts>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct ReadCounts {
+    facts: AtomicUsize,
+    heads: AtomicUsize,
 }
 
 impl Source {
@@ -37,6 +50,8 @@ impl Source {
             epoch,
             rows,
             messages: MessageFeed::new(),
+            #[cfg(test)]
+            reads: Arc::new(ReadCounts::default()),
         }
     }
 
@@ -108,6 +123,7 @@ impl Source {
             cursor,
             pending: BTreeMap::new(),
             barrier: Some(heads),
+            catch_up: None,
             rows: self.rows,
         };
         let mut frames = Vec::new();
@@ -167,6 +183,8 @@ impl Source {
         start: journal::FactPageStart,
         horizon: Seq,
     ) -> Result<Packed<wire::Envelope<wire::AnyFact>>, Failure> {
+        #[cfg(test)]
+        self.reads.facts.fetch_add(1, Ordering::Relaxed);
         self.bus
             .canvas_facts(start, horizon, self.rows)
             .map_err(|error| {
@@ -179,6 +197,8 @@ impl Source {
     }
 
     fn heads(&self) -> Result<CanvasHeads, Failure> {
+        #[cfg(test)]
+        self.reads.heads.fetch_add(1, Ordering::Relaxed);
         self.bus.canvas_heads().map_err(|error| {
             Failure::Fault(Fault {
                 class: FaultClass::Store,
@@ -186,6 +206,31 @@ impl Source {
                 detail: error.to_string(),
             })
         })
+    }
+
+    #[cfg(test)]
+    fn read_counts(&self) -> (usize, usize) {
+        (
+            self.reads.heads.load(Ordering::Relaxed),
+            self.reads.facts.load(Ordering::Relaxed),
+        )
+    }
+}
+
+/// One bounded live-delivery transaction awaiting successful socket sends.
+#[derive(Debug)]
+pub struct LiveDelivery {
+    frames: Vec<StreamFrame>,
+    fact_cursor: Option<Seq>,
+    complete: bool,
+    trust_continuation: Option<Seq>,
+}
+
+impl LiveDelivery {
+    /// Frames materialized by this one delivery quantum.
+    #[must_use]
+    pub fn frames(&self) -> &[StreamFrame] {
+        &self.frames
     }
 }
 
@@ -198,6 +243,7 @@ pub struct Subscription {
     cursor: Option<Seq>,
     pending: BTreeMap<ViewSubject, Seq>,
     barrier: Option<CanvasHeads>,
+    catch_up: Option<CanvasHeads>,
     rows: usize,
 }
 
@@ -265,56 +311,115 @@ impl Subscription {
         Ok(frame)
     }
 
-    /// Derive later fact and trust updates after a durable Bus notification.
+    /// Whether a proved live barrier still has facts to deliver.
+    #[must_use]
+    pub const fn has_continuation(&self) -> bool {
+        self.catch_up.is_some()
+    }
+
+    /// Materialize at most one live fact quantum after a durable Bus notification.
+    ///
+    /// The returned delivery has not yet advanced the resumable cursor. The
+    /// socket owner must call [`Self::admit`] only after every frame was sent.
     pub fn advance(
         &mut self,
         source: &Source,
         commit: JournalCommit,
-    ) -> Result<Vec<StreamFrame>, Failure> {
-        if !self.is_live()
-            || self
+    ) -> Result<Option<LiveDelivery>, Failure> {
+        if !self.is_live() {
+            return Ok(None);
+        }
+        let target = self.catch_up.as_ref().map(required_horizon).transpose()?;
+        if target.is_none_or(|target| commit.last() > target.get()) {
+            if self
                 .cursor
                 .is_some_and(|cursor| commit.last() <= cursor.get())
-        {
-            return Ok(Vec::new());
-        }
-        let heads = source.heads()?;
-        let horizon = required_horizon(&heads)?;
-        let mut frames = Vec::new();
-        if self.subjects.contains(&ViewSubject::Facts) {
-            let mut start = journal::FactPageStart::After(self.cursor);
-            loop {
-                let packed = source.facts(start, horizon)?;
-                frames.extend(packed.rows.into_iter().map(StreamFact::from).map(|fact| {
-                    StreamFrame::Fact {
-                        v: WireVersion::CURRENT,
-                        id: self.id,
-                        epoch: self.epoch,
-                        fact,
-                    }
-                }));
-                let Some(overflow) = packed.overflow else {
-                    break;
-                };
-                start = journal::FactPageStart::At(overflow.continuation);
+            {
+                return Ok(None);
             }
+            let heads = source.heads()?;
+            let horizon = required_horizon(&heads)?;
+            if self.cursor.is_some_and(|cursor| horizon <= cursor) {
+                return Ok(None);
+            }
+            self.catch_up = Some(heads);
         }
-        if self.subjects.contains(&ViewSubject::Trust) {
-            let trust = trust_rows(&heads);
+        self.next_delivery(source).map(Some)
+    }
+
+    /// Materialize the next quantum from the retained live barrier.
+    pub fn continue_live(&self, source: &Source) -> Result<Option<LiveDelivery>, Failure> {
+        self.catch_up
+            .as_ref()
+            .map(|_| self.next_delivery(source))
+            .transpose()
+    }
+
+    /// Admit one delivery after every frame in it reached the socket.
+    pub fn admit(&mut self, delivery: LiveDelivery) {
+        if let Some(cursor) = delivery.fact_cursor {
+            self.cursor = Some(cursor);
+        }
+        if !delivery.complete {
+            return;
+        }
+        let heads = self
+            .catch_up
+            .take()
+            .expect("a complete live delivery retains its proved barrier");
+        let horizon = required_horizon(&heads).expect("a retained barrier has a horizon");
+        if let Some(continuation) = delivery.trust_continuation {
+            self.pending.insert(ViewSubject::Trust, continuation);
+            self.barrier = Some(heads);
+        } else {
+            self.pending.remove(&ViewSubject::Trust);
+            self.barrier = None;
+        }
+        self.cursor = Some(horizon);
+    }
+
+    fn next_delivery(&self, source: &Source) -> Result<LiveDelivery, Failure> {
+        let heads = self
+            .catch_up
+            .as_ref()
+            .expect("live continuation retains its proved barrier");
+        let horizon = required_horizon(heads)?;
+        let mut frames = Vec::new();
+        let mut fact_cursor = None;
+        let mut complete = true;
+        if self.subjects.contains(&ViewSubject::Facts) {
+            let packed = source.facts(journal::FactPageStart::After(self.cursor), horizon)?;
+            fact_cursor = packed.rows.last().map(|fact| fact.seq);
+            complete = packed.overflow.is_none();
+            frames.extend(packed.rows.into_iter().map(StreamFact::from).map(|fact| {
+                StreamFrame::Fact {
+                    v: WireVersion::CURRENT,
+                    id: self.id,
+                    epoch: self.epoch,
+                    fact,
+                }
+            }));
+        }
+        let trust_continuation = if complete && self.subjects.contains(&ViewSubject::Trust) {
+            let trust = trust_rows(heads);
             let packed = pack_unique(trust, self.rows, horizon, |row| row.position)?;
-            self.record_page(ViewSubject::Trust, &packed, |row| row.position);
+            let continuation = packed.overflow.map(|overflow| overflow.continuation);
             frames.push(StreamFrame::Trust {
                 v: WireVersion::CURRENT,
                 id: self.id,
                 epoch: self.epoch,
                 packed,
             });
-        }
-        self.cursor = Some(horizon);
-        if !self.pending.is_empty() {
-            self.barrier = Some(heads);
-        }
-        Ok(frames)
+            continuation
+        } else {
+            None
+        };
+        Ok(LiveDelivery {
+            frames,
+            fact_cursor,
+            complete,
+            trust_continuation,
+        })
     }
 
     /// Project one live transcript activity for subscriptions that asked for it.
@@ -684,6 +789,19 @@ mod tests {
         packed
     }
 
+    fn fact_sequences(delivery: &LiveDelivery) -> Vec<Seq> {
+        delivery
+            .frames()
+            .iter()
+            .map(|frame| {
+                let StreamFrame::Fact { fact, .. } = frame else {
+                    panic!("fact subscription emitted {frame:?}")
+                };
+                fact.seq()
+            })
+            .collect()
+    }
+
     #[test]
     fn packed_subscription_continues_exactly_then_becomes_live() {
         let bus = fixture(5);
@@ -827,15 +945,194 @@ mod tests {
         let committed = commit_notes(&bus, 1, false);
         let noticed = broadcasts.recv().await.expect("commit broadcasts");
         assert_eq!(noticed, committed);
-        let frames = subscription
+        let delivery = subscription
             .advance(&source, noticed)
-            .expect("broadcast advances stream");
-        assert_eq!(frames.len(), 1);
-        let StreamFrame::Fact { fact, .. } = &frames[0] else {
-            panic!("expected live fact: {frames:?}");
+            .expect("broadcast advances stream")
+            .expect("new fact creates a delivery");
+        assert_eq!(delivery.frames().len(), 1);
+        let StreamFrame::Fact { fact, .. } = &delivery.frames()[0] else {
+            panic!("expected live fact: {delivery:?}");
         };
         assert_eq!(fact.seq(), seq(3));
+        assert_eq!(
+            subscription.cursor(),
+            Some(seq(2)),
+            "materialization cannot move the resumable cursor before send"
+        );
+        subscription.admit(delivery);
         assert_eq!(subscription.cursor(), Some(seq(3)));
+        drop(source);
+        bus.shutdown().expect("bus shuts down");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_large_commit_delivers_one_indexed_fact_quantum_per_turn() {
+        let bus = fixture(1);
+        let source = Source::new(bus.reader(), epoch(), 3);
+        let mut broadcasts = source.subscribe();
+        let (mut subscription, _) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(0xc4, vec![ViewSubject::Facts], None),
+            )
+            .expect("subscription begins");
+        let initial = subscription.cursor().expect("operator begins live");
+
+        let committed = commit_notes(&bus, 11, false);
+        let noticed = broadcasts.recv().await.expect("commit broadcasts");
+        assert_eq!(noticed, committed);
+        let mut delivered = Vec::new();
+        let mut first = true;
+        loop {
+            let before = source.read_counts();
+            let delivery = if first {
+                first = false;
+                subscription
+                    .advance(&source, noticed)
+                    .expect("notice advances")
+                    .expect("notice creates delivery")
+            } else {
+                subscription
+                    .continue_live(&source)
+                    .expect("continuation advances")
+                    .expect("catch-up retains a delivery")
+            };
+            let after = source.read_counts();
+            assert_eq!(after.1 - before.1, 1, "one fact-page query per turn");
+            assert_eq!(
+                after.0 - before.0,
+                usize::from(delivered.is_empty()),
+                "only the notification captures one head barrier"
+            );
+            assert!(delivery.frames().len() <= 3);
+            delivered.extend(fact_sequences(&delivery));
+            if delivered.len() == 3 {
+                assert_eq!(
+                    subscription.cursor(),
+                    Some(initial),
+                    "materialized frames are not yet resumable"
+                );
+            }
+            subscription.admit(delivery);
+            if !subscription.has_continuation() {
+                break;
+            }
+        }
+
+        assert_eq!(
+            delivered,
+            (initial.get() + 1..=committed.last())
+                .map(seq)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(subscription.cursor(), Some(seq(committed.last())));
+        drop(source);
+        bus.shutdown().expect("bus shuts down");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn queued_commits_coalesce_to_the_newest_barrier_without_duplicates() {
+        let bus = fixture(1);
+        let source = Source::new(bus.reader(), epoch(), 2);
+        let mut broadcasts = source.subscribe();
+        let (mut subscription, _) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(0xc4, vec![ViewSubject::Facts], None),
+            )
+            .expect("subscription begins");
+        let initial = subscription.cursor().expect("operator begins live");
+
+        let first = commit_notes(&bus, 5, false);
+        let second = commit_notes(&bus, 4, false);
+        let first_notice = broadcasts.recv().await.expect("first commit broadcasts");
+        let second_notice = broadcasts.recv().await.expect("second commit broadcasts");
+        assert_eq!((first_notice, second_notice), (first, second));
+
+        let before = source.read_counts();
+        let first_delivery = subscription
+            .advance(&source, first_notice)
+            .expect("first notice advances")
+            .expect("first notice creates delivery");
+        let after = source.read_counts();
+        assert_eq!((after.0 - before.0, after.1 - before.1), (1, 1));
+        let mut delivered = fact_sequences(&first_delivery);
+        subscription.admit(first_delivery);
+
+        let before = source.read_counts();
+        let second_delivery = subscription
+            .advance(&source, second_notice)
+            .expect("queued notice advances")
+            .expect("queued notice creates one delivery");
+        let after = source.read_counts();
+        assert_eq!(
+            (after.0 - before.0, after.1 - before.1),
+            (0, 1),
+            "the queued notice reuses the already coalesced newest head"
+        );
+        delivered.extend(fact_sequences(&second_delivery));
+        subscription.admit(second_delivery);
+
+        while subscription.has_continuation() {
+            let delivery = subscription
+                .continue_live(&source)
+                .expect("continuation advances")
+                .expect("catch-up retains a delivery");
+            delivered.extend(fact_sequences(&delivery));
+            subscription.admit(delivery);
+        }
+        assert_eq!(
+            delivered,
+            (initial.get() + 1..=second.last())
+                .map(seq)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(subscription.cursor(), Some(seq(second.last())));
+        drop(source);
+        bus.shutdown().expect("bus shuts down");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn broadcast_lag_during_catch_up_resumes_after_the_last_admitted_quantum() {
+        let bus = fixture(1);
+        let source = Source::new(bus.reader(), epoch(), 3);
+        let mut broadcasts = source.subscribe();
+        let (mut subscription, _) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(0xc4, vec![ViewSubject::Facts], None),
+            )
+            .expect("subscription begins");
+        let initial = subscription.cursor().expect("operator begins live");
+
+        let large = commit_notes(&bus, 11, false);
+        let notice = broadcasts.recv().await.expect("large commit broadcasts");
+        assert_eq!(notice, large);
+        let delivery = subscription
+            .advance(&source, notice)
+            .expect("notice advances")
+            .expect("large commit creates delivery");
+        subscription.admit(delivery);
+        let admitted = seq(initial.get() + 3);
+        assert_eq!(subscription.cursor(), Some(admitted));
+        assert!(subscription.has_continuation());
+
+        for _ in 0..70 {
+            commit_notes(&bus, 1, false);
+        }
+        let tokio::sync::broadcast::error::RecvError::Lagged(dropped) = broadcasts
+            .recv()
+            .await
+            .expect_err("the retained notice channel overflows")
+        else {
+            panic!("the retained broadcast closed instead of lagging")
+        };
+        let overflow = subscription.overflow(dropped).expect("lag is resumable");
+        assert!(matches!(
+            overflow,
+            StreamFrame::Overflow { after, dropped: observed, .. }
+                if after.seq == admitted && observed == dropped
+        ));
         drop(source);
         bus.shutdown().expect("bus shuts down");
     }
@@ -856,11 +1153,12 @@ mod tests {
         let committed = commit_trust_heads(&bus, &[b"second", b"third"]);
         let noticed = broadcasts.recv().await.expect("commit broadcasts");
         assert_eq!(noticed, committed);
-        let frames = subscription
+        let delivery = subscription
             .advance(&source, noticed)
-            .expect("broadcast advances stream");
-        let StreamFrame::Trust { packed, .. } = &frames[0] else {
-            panic!("expected trust replacement: {frames:?}");
+            .expect("broadcast advances stream")
+            .expect("new trust heads create a delivery");
+        let StreamFrame::Trust { packed, .. } = &delivery.frames()[0] else {
+            panic!("expected trust replacement: {delivery:?}");
         };
         let continuation = packed.overflow.expect("trust page overflows").continuation;
         let first_positions = packed
@@ -869,6 +1167,7 @@ mod tests {
             .map(|row| row.position)
             .collect::<Vec<_>>();
         assert_eq!(packed.rows.len(), 2);
+        subscription.admit(delivery);
         assert!(!subscription.is_live());
 
         let request = StreamRequest::Continue {
