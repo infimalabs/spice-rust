@@ -52,13 +52,17 @@ pub(super) fn publish_test_selection(
     progress: &mut impl Write,
     tests: &TestSelectionReport,
 ) -> Result<(), ChangeGateError> {
-    let encoded = tests
-        .encode()
-        .map_err(|error| ChangeGateError::protocol("test-selection-unencodable", error))?;
-    let document = String::from_utf8(encoded)
-        .map_err(|error| ChangeGateError::protocol("test-selection-non-utf8", error))?;
-    writeln!(progress, "[rust-test-selection-report] {document}")
-        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    writeln!(
+        progress,
+        "[rust-test-selection-report] detail=canonical-report source={} changes={} engines={} tests={} edges={} admits={}",
+        tests.source(),
+        tests.changed_sources().len(),
+        tests.engines().len(),
+        tests.tests().len(),
+        tests.edges().len(),
+        tests.admits(),
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
     progress
         .flush()
         .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))

@@ -192,6 +192,7 @@ fn canvas_environment(
         TRUNK_DISTRIBUTION_DIRECTORY.into(),
         outputs.trunk_dist.as_os_str().to_owned(),
     );
+    entries.insert("NO_COLOR".into(), "true".into());
     Environment::new(entries)
         .map_err(|error| format!("canvas tool environment was refused: {error}"))
 }
@@ -247,4 +248,39 @@ pub(in crate::toolchain) fn canvas_output_roots(repository: &Path) -> (PathBuf, 
         repository.join("target/xtask-app"),
         repository.join("target/xtask-app-build"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canvas_normalizes_trunks_boolean_no_color_input() {
+        let outputs = CanvasOutputs {
+            cargo_target: PathBuf::from("/fixture/cargo-target"),
+            cargo_build: PathBuf::from("/fixture/cargo-build"),
+            trunk_dist: PathBuf::from("/fixture/trunk-dist"),
+        };
+        let inherited = [
+            ("NO_COLOR".into(), "1".into()),
+            ("PRESERVED_COMPILER_INPUT".into(), "value".into()),
+        ];
+
+        let environment = canvas_environment("/bin/echo", "/bin/echo", &outputs, &inherited)
+            .expect("valid Canvas environment");
+        let entries = environment
+            .entries()
+            .iter()
+            .cloned()
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            entries.get(std::ffi::OsStr::new("NO_COLOR")),
+            Some(&"true".into())
+        );
+        assert_eq!(
+            entries.get(std::ffi::OsStr::new("PRESERVED_COMPILER_INPUT")),
+            Some(&"value".into()),
+        );
+    }
 }

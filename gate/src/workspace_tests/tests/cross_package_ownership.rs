@@ -146,10 +146,14 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
             .collect::<Vec<_>>(),
         [
             "metadata --locked --format-version 1 --no-deps",
-            "test --locked --package nested-id --lib",
-            "test --locked --package outer-id --test bridge",
+            concat!(
+                "test --locked --package nested-id --package outer-id --all-targets ",
+                "--no-run --message-format=json-render-diagnostics",
+            ),
+            "artifact bridge --test-threads=3",
+            "artifact nested --test-threads=3",
         ],
-        "selected tests launch direct owners through deterministic selectors"
+        "selected tests prebuild once and launch their exact compiled artifacts"
     );
 }
 
@@ -323,6 +327,24 @@ fn write_metadata(root: &Path) {
 fn write_fake_cargo(programs: &Path) {
     executable(
         programs,
+        "nested-test",
+        concat!(
+            "#!/bin/sh\n",
+            "printf 'artifact nested %s\\n' \"$*\" >> \"$FIXTURE_ROOT/commands.log\"\n",
+            "printf 'test cross_package::nested ... ok\\n'\n",
+        ),
+    );
+    executable(
+        programs,
+        "bridge-test",
+        concat!(
+            "#!/bin/sh\n",
+            "printf 'artifact bridge %s\\n' \"$*\" >> \"$FIXTURE_ROOT/commands.log\"\n",
+            "printf 'test cross_package::bridge ... ok\\n'\n",
+        ),
+    );
+    executable(
+        programs,
         "cargo",
         concat!(
             "#!/bin/sh\n",
@@ -331,6 +353,25 @@ fn write_fake_cargo(programs: &Path) {
             "  /bin/cat \"$FIXTURE_ROOT/metadata.json\"\n",
             "  exit 0\n",
             "fi\n",
+            "for argument in \"$@\"; do\n",
+            "  if [ \"$argument\" = --no-run ]; then\n",
+            concat!(
+                "    printf '{\"reason\":\"compiler-artifact\",",
+                "\"package_id\":\"nested-id\",",
+                "\"target\":{\"name\":\"nested\",\"kind\":[\"lib\"]},",
+                "\"profile\":{\"test\":true},",
+                "\"executable\":\"%s/programs/nested-test\"}\\n' \"$FIXTURE_ROOT\"\n",
+            ),
+            concat!(
+                "    printf '{\"reason\":\"compiler-artifact\",",
+                "\"package_id\":\"outer-id\",",
+                "\"target\":{\"name\":\"bridge\",\"kind\":[\"test\"]},",
+                "\"profile\":{\"test\":true},",
+                "\"executable\":\"%s/programs/bridge-test\"}\\n' \"$FIXTURE_ROOT\"\n",
+            ),
+            "    exit 0\n",
+            "  fi\n",
+            "done\n",
             "printf 'test cross_package::selected ... ok\\n'\n",
         ),
     );

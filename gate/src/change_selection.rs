@@ -3,10 +3,11 @@
 //! This module decides only which canonical battery arms are owed. It executes
 //! none of them and performs no repository walk: the command rim supplies the
 //! exact changed paths and the source digest they came from. Changes to an
-//! authority that can alter the selector itself, or a path class this build
-//! does not understand, refuse selection before any selected work can begin.
-//! The explicit xtask current-source selector retains its richer source-tree
-//! knowledge in a separate module under the same local-only contract.
+//! authority that can alter the selector itself selects direct exhaustive
+//! execution; a path class this build does not understand refuses selection
+//! before any selected work can begin. The explicit xtask current-source
+//! selector retains its richer source-tree knowledge in a separate module
+//! under the same local-only contract.
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -23,14 +24,7 @@ mod language_reach;
 mod policy;
 mod reach;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use current_source::{
-    gates_for_path as current_source_gates_for_path, known_workspace_rust_source,
-    selector_authority as current_source_selector_authority,
-};
-pub use current_source::{
-    select_current_source_change_gates, select_current_source_change_gates_with_full_verifier,
-};
+pub use current_source::select_current_source_change_gates;
 #[cfg(not(target_arch = "wasm32"))]
 pub use language_reach::compile_language_reach;
 pub use policy::{ChangeSelectionPolicy, ChangeSelectionPolicyInputs};
@@ -131,7 +125,12 @@ impl ChangeSelectionReport {
         &self.gate_ids
     }
 
-    /// Exact per-path reasons each arm entered the plan.
+    /// Canonical changed-source-to-arm provenance for the selected plan.
+    ///
+    /// Direct selection retains every exact path-to-arm reason. When one
+    /// compiled authority selects exhaustive execution, the graph is a compact
+    /// spanning proof: every changed source and every selected arm still has an
+    /// edge, without manufacturing their Cartesian product.
     #[must_use]
     pub fn edges(&self) -> &[ChangeSelectionEdge] {
         &self.edges
@@ -268,27 +267,10 @@ impl ChangeSelectionReport {
 ///
 /// This function is pure and intentionally has no repository parameter. The
 /// supplied policy was compiled from the same retained staged tree. A path it
-/// cannot prove local refuses rather than omitting evidence or broadening the
-/// ordinary gate into a complete verifier.
+/// cannot prove local refuses rather than omitting execution. A known compiled
+/// selection authority conservatively selects every applicable arm with
+/// repository-exhaustive reach, so no retained verifier result is required.
 pub fn select_change_gates(
-    source: Digest,
-    changed_sources: &[String],
-    policy: &ChangeSelectionPolicy,
-) -> Result<ChangeSelectionReport, ChangeSelectionError> {
-    let applicable = policy.applicable_gates(changed_sources);
-    select_with(source, changed_sources, applicable, |path| {
-        policy.gates_for_path(path)
-    })
-}
-
-/// Select packaged reach after both full-verifier merge parents were admitted.
-///
-/// Known authority paths may select every applicable arm only on this explicit
-/// merge surface. Their reach is repository-exhaustive: a reused arm consumes
-/// its matching parent receipt, while any invalidated arm executes its complete
-/// invariant rather than a path-focused approximation. Unknown paths and
-/// sources outside compiled repository structure continue to refuse.
-pub fn select_change_gates_with_parent_evidence(
     source: Digest,
     changed_sources: &[String],
     policy: &ChangeSelectionPolicy,
@@ -301,15 +283,59 @@ pub fn select_change_gates_with_parent_evidence(
             policy.gates_for_path(path)
         }
     })?;
-    let authority_paths = report
+    if let Some(authority_source) = report
         .changed_sources()
         .iter()
-        .filter(|path| policy.selection_authority(path))
+        .find(|path| policy.selection_authority(path))
         .cloned()
-        .collect::<BTreeSet<_>>();
-    if authority_paths.is_empty() {
-        return Ok(report);
+    {
+        report = with_exhaustive_authority_reach(
+            report,
+            "compiled packaged selection authority changed",
+            &authority_source,
+        )?;
     }
+    Ok(report)
+}
+
+pub(super) fn with_exhaustive_authority_reach(
+    mut report: ChangeSelectionReport,
+    reason: &str,
+    authority_source: &str,
+) -> Result<ChangeSelectionReport, ChangeSelectionError> {
+    if !report
+        .changed_sources
+        .iter()
+        .any(|source| source == authority_source)
+        || report.gate_ids.iter().any(|gate_id| {
+            !report
+                .edges
+                .iter()
+                .any(|edge| edge.source() == authority_source && edge.gate_id() == *gate_id)
+        })
+    {
+        return Err(ChangeSelectionError::new(format!(
+            "selection authority {authority_source:?} did not select every exhaustive arm"
+        )));
+    }
+
+    let anchor = ALWAYS[0];
+    let mut edges = report
+        .changed_sources
+        .iter()
+        .map(|source| ChangeSelectionEdge::new(source, anchor))
+        .chain(
+            report
+                .gate_ids
+                .iter()
+                .copied()
+                .map(|gate_id| ChangeSelectionEdge::new(authority_source, gate_id)),
+        )
+        .collect::<Vec<_>>();
+    edges.sort();
+    edges.dedup();
+    report.edges = edges;
+
     let reach = report
         .reach()
         .iter()
@@ -333,7 +359,7 @@ pub fn select_change_gates_with_parent_evidence(
             ChangeArmReach::exhaustive(
                 gate_id,
                 ChangeReachAuthority::SelectionPolicy,
-                "an admitted merge parent owns changed selection authority",
+                reason,
                 vec![ChangeReachObject::Repository],
                 provenance,
             )

@@ -43,9 +43,8 @@ use wire::{Digest, Domain};
 
 use super::analyze::{self, Analysis};
 use super::{
-    ArmObservation, ArmOutcome, ArmTiming, ProbeFailure, TOOLCHAIN_ARMS, ToolEvidence,
-    ToolRequirement, ToolchainDeclaration, ToolchainError, TreeInput, VerifierCompilerEvidence,
-    contracted_version,
+    ArmObservation, ArmOutcome, ProbeFailure, TOOLCHAIN_ARMS, ToolEvidence, ToolRequirement,
+    ToolchainDeclaration, ToolchainError, TreeInput, contracted_version,
 };
 use crate::GateId;
 use crate::input::Contract;
@@ -173,10 +172,7 @@ pub struct ToolchainSource<'a> {
     rim: RimCapture,
     reached_paths: Option<Vec<String>>,
     baselines: Option<&'a BaselineCapture>,
-    identity: Option<&'a Digest>,
-    verifier_environment: &'a [(OsString, OsString)],
-    verifier_evidence: &'a [VerifierCompilerEvidence],
-    verifier_evidence_required: bool,
+    compiler_environment: &'a [(OsString, OsString)],
 }
 
 impl<'a> ToolchainSource<'a> {
@@ -194,10 +190,7 @@ impl<'a> ToolchainSource<'a> {
             rim,
             reached_paths: None,
             baselines: None,
-            identity: None,
-            verifier_environment: &[],
-            verifier_evidence: &[],
-            verifier_evidence_required: false,
+            compiler_environment: &[],
         }
     }
 
@@ -205,16 +198,13 @@ impl<'a> ToolchainSource<'a> {
     #[must_use]
     #[expect(
         clippy::too_many_arguments,
-        reason = "source, ancestry, verifier, rim, and reach are independent captured authorities"
+        reason = "source, ancestry, compiler environment, rim, and reach are independent captured authorities"
     )]
     pub(crate) fn capture_with_baselines(
         tree: &'a SelectedTree,
         rim: RimCapture,
         baselines: &'a BaselineCapture,
-        identity: &'a Digest,
-        verifier_environment: &'a [(OsString, OsString)],
-        verifier_evidence: &'a [VerifierCompilerEvidence],
-        verifier_evidence_required: bool,
+        compiler_environment: &'a [(OsString, OsString)],
         reached_paths: Option<&[String]>,
     ) -> Self {
         Self {
@@ -224,10 +214,7 @@ impl<'a> ToolchainSource<'a> {
             rim,
             reached_paths: reached_paths.map(<[String]>::to_vec),
             baselines: Some(baselines),
-            identity: Some(identity),
-            verifier_environment,
-            verifier_evidence,
-            verifier_evidence_required,
+            compiler_environment,
         }
     }
 
@@ -249,24 +236,9 @@ impl<'a> ToolchainSource<'a> {
         &self.rim
     }
 
-    /// Selected-tree identity reusable verifier evidence must name.
-    pub(super) const fn identity(&self) -> Option<&Digest> {
-        self.identity
-    }
-
-    /// Opaque successful verifier evidence offered to this battery run.
-    pub(super) const fn verifier_evidence(&self) -> &[VerifierCompilerEvidence] {
-        self.verifier_evidence
-    }
-
-    /// Ambient compiler environment captured by the consuming verifier.
-    pub(super) const fn verifier_environment(&self) -> &[(OsString, OsString)] {
-        self.verifier_environment
-    }
-
-    /// Whether compiler arms must refuse rather than execute on evidence drift.
-    pub(super) const fn verifier_evidence_required(&self) -> bool {
-        self.verifier_evidence_required
+    /// Ambient compiler environment captured by the command rim.
+    pub(super) const fn compiler_environment(&self) -> &[(OsString, OsString)] {
+        self.compiler_environment
     }
 
     /// Selected-tree-relative paths the rim captured as changed.
@@ -409,49 +381,6 @@ fn scoped_declaration(
     declaration
 }
 
-/// Probe and validate the exact declared tools a reusable verifier contract
-/// must bind, without running the arm's analysis.
-///
-/// The inner result distinguishes an inapplicable arm from acquired tools;
-/// the outer result retains actual acquisition failures.
-pub(crate) fn acquire_verifier_tools(
-    source: &ToolchainSource<'_>,
-    contract: &Contract,
-    gate_id: GateId,
-) -> Result<Result<Vec<ToolEvidence>, String>, String> {
-    let declaration = TOOLCHAIN_ARMS
-        .into_iter()
-        .find(|declaration| declaration.id == gate_id)
-        .ok_or_else(|| format!("{gate_id} is not a toolchain arm"))?;
-    if !matches!(gate_id, GateId::RustTypecheck | GateId::CanvasWebTypecheck) {
-        return Err(format!(
-            "{} has no reusable verifier compiler contract",
-            gate_id.as_str()
-        ));
-    }
-    if let Some(analysis) = analyze::before_tools(
-        declaration,
-        source.root(),
-        source.reached_paths(),
-        source.analysis_paths(),
-    ) {
-        return if analysis.outcome == ArmOutcome::NotApplicable {
-            Ok(Err(analysis.reason))
-        } else {
-            Err(analysis.reason)
-        };
-    }
-    let tools = declaration
-        .tools
-        .iter()
-        .map(|requirement| probe(requirement, source, contract.bounds()))
-        .collect::<Vec<_>>();
-    if let Some(analysis) = refusal(declaration, &tools) {
-        return Err(analysis.reason);
-    }
-    Ok(Ok(tools))
-}
-
 fn observe(
     declaration: ToolchainDeclaration,
     source: &ToolchainSource<'_>,
@@ -529,23 +458,6 @@ fn examine(
     if let Some(refusal) = analyzer_refusal(declaration, tools) {
         return refusal;
     }
-    if let Some(reused) = reusable_verifier_analysis(declaration, source, bounds, tools) {
-        return reused;
-    }
-    if source.verifier_evidence_required()
-        && matches!(
-            declaration.id,
-            GateId::RustTypecheck | GateId::CanvasWebTypecheck
-        )
-    {
-        return Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!(
-                "{} required admitted verifier evidence, but current tool evidence no longer matches",
-                declaration.id.as_str()
-            ),
-        );
-    }
     let Some(owed) = owed_analyzer(declaration.id) else {
         return match declaration.id {
             GateId::Formatters => analyze::formatters(
@@ -563,7 +475,7 @@ fn examine(
                     source.repository,
                     source.changes(),
                     bounds,
-                    analyze::CompilerResources::new(&programs, source.verifier_environment()),
+                    analyze::CompilerResources::new(&programs, source.compiler_environment()),
                 )
             }
             GateId::CanvasWebTypecheck => {
@@ -574,7 +486,7 @@ fn examine(
                     source.repository,
                     source.changes(),
                     bounds,
-                    analyze::CompilerResources::new(&programs, source.verifier_environment()),
+                    analyze::CompilerResources::new(&programs, source.compiler_environment()),
                     refusal(declaration, tools),
                 )
             }
@@ -626,50 +538,6 @@ fn examine(
             declaration.id.as_str()
         ),
     )
-}
-
-/// Admit one opaque full-verifier proof or leave the ordinary arm untouched.
-///
-/// Rejection is deliberately a fall-through, not a refusal: stale, forged,
-/// partial, or failed evidence has no authority, so the standalone analysis
-/// executes exactly as it did before evidence was offered.
-fn reusable_verifier_analysis(
-    declaration: ToolchainDeclaration,
-    source: &ToolchainSource<'_>,
-    bounds: &Bounds,
-    tools: &[ToolEvidence],
-) -> Option<Analysis> {
-    let identity = source.identity()?;
-    let evidence = source.verifier_evidence().iter().find(|evidence| {
-        evidence.admits(
-            declaration.id,
-            identity,
-            source.repository(),
-            source.root(),
-            source.verifier_environment(),
-            tools,
-        )
-    })?;
-    let analysis = Analysis::terminal(
-        ArmOutcome::Passed,
-        format!(
-            "{} reused exact successful full-verifier compiler evidence",
-            declaration.id.as_str()
-        ),
-    );
-    if declaration.id != GateId::RustTypecheck {
-        return Some(analysis);
-    }
-    let deadlines = bounds.deadlines();
-    let observation = deadlines
-        .runtime()
-        .saturating_add(deadlines.output_drain())
-        .saturating_add(deadlines.reap())
-        .saturating_add(bounds.grace());
-    Some(analysis.timed(ArmTiming {
-        elapsed_ms: evidence.elapsed_ms(),
-        observation_bound_ms: u64::try_from(observation.as_millis()).unwrap_or(u64::MAX),
-    }))
 }
 
 /// The refusal this arm's probed evidence earns before any analysis runs.

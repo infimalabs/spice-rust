@@ -96,7 +96,7 @@ fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_1
 }
 
 #[test]
-fn resolution_worker_refuses_an_unselected_authority_change_without_exhaustive_fallback() {
+fn resolution_worker_executes_known_authority_with_the_same_exhaustive_reach() {
     let repository = GateRepository::new();
     let authority = repository.path().join("spice-rust.toml");
     let mut policy = fs::read_to_string(&authority).expect("read fixture policy authority");
@@ -105,32 +105,16 @@ fn resolution_worker_refuses_an_unselected_authority_change_without_exhaustive_f
     repository.add("spice-rust.toml");
 
     let ordinary = run_commit_worker(repository.path());
-    let Some((ordinary_kind, ordinary_document)) = ordinary.terminal.split_first() else {
-        panic!("ordinary authority selection published no terminal");
-    };
-    assert_eq!(*ordinary_kind, b'F');
-    let ordinary: serde_json::Value =
-        serde_json::from_slice(ordinary_document).expect("decode ordinary authority refusal");
-    assert_eq!(ordinary["reason"], "gate::change-selection-refused");
-
     let resolution = run_resolution_worker(repository.path());
-    let Some((resolution_kind, resolution_document)) = resolution.terminal.split_first() else {
-        panic!("resolution authority evidence published no terminal");
-    };
-    assert_eq!(*resolution_kind, b'F');
-    let resolution_failure: serde_json::Value =
-        serde_json::from_slice(resolution_document).expect("decode resolution refusal");
-    assert_eq!(
-        resolution_failure["reason"],
-        "gate::change-selection-refused"
-    );
-    assert!(
-        !resolution.progress.contains("[rust-test-selection]")
-            && !resolution.progress.contains("[change-gate-policy]")
-            && !resolution.progress.contains("[change-gate-execution]"),
-        "resolution refusal escalated into unselected work: {}",
-        resolution.progress,
-    );
+    let ordinary = selected_execution_signature(&ordinary);
+    let resolution = selected_execution_signature(&resolution);
+
+    assert_eq!(resolution, ordinary);
+    assert_eq!(resolution.0.gate_ids(), resolution.0.applicable_gate_ids());
+    assert!(resolution.0.reach().iter().all(|reach| {
+        matches!(reach.mode(), ChangeReachMode::Exhaustive { .. })
+            && reach.objects() == [ChangeReachObject::Repository]
+    }));
 }
 
 #[test]
@@ -473,6 +457,7 @@ fn configured_source_gate_retries_stale_state_without_repeating_selected_tests()
                 "  if [ \"$status\" -ne 0 ]; then /bin/cat '{}' >&2; fi\n",
                 "  exit \"$status\"\n",
                 "fi\n",
+                "if [ \"$*\" = \"check --locked --all-targets --package gate-fixture\" ]; then exit 0; fi\n",
                 "exec '{}' \"$@\"\n",
             ),
             test_executable.display(),
@@ -545,7 +530,8 @@ fn configured_source_gate_selection_fixture_process() {
         .expect("run configured current-source selection");
     assert!(
         report.admits(),
-        "configured current-source selection refused"
+        "configured current-source selection refused: {}",
+        report.refusal_fold(),
     );
 }
 

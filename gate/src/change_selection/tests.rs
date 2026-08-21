@@ -94,6 +94,56 @@ fn contains(report: &ChangeSelectionReport, gates: &[GateId]) {
     }
 }
 
+fn assert_selection_authority_exhaustive(report: &ChangeSelectionReport, reason: &str) {
+    assert_eq!(report.gate_ids(), report.applicable_gate_ids());
+    assert_eq!(
+        report.edges().len(),
+        report.changed_sources().len() + report.gate_ids().len() - 1,
+        "authority escalation proof must grow linearly, not by path-arm product",
+    );
+    for reach in report.reach() {
+        assert_eq!(
+            reach.mode(),
+            &ChangeReachMode::Exhaustive {
+                authority: ChangeReachAuthority::SelectionPolicy,
+                reason: reason.to_owned(),
+            }
+        );
+        assert_eq!(reach.objects(), &[ChangeReachObject::Repository]);
+    }
+}
+
+#[test]
+fn authority_escalation_retains_every_source_in_a_linear_report() {
+    let mut changed = (0..64)
+        .map(|index| format!("docs/report-{index:02}.md"))
+        .collect::<Vec<_>>();
+    changed.push("gate/src/change_selection.rs".to_owned());
+    changed.sort();
+
+    let report = select_current_source_change_gates(source(), &changed)
+        .expect("known authority and document paths select direct exhaustive execution");
+
+    assert_selection_authority_exhaustive(
+        &report,
+        "compiled current-source selection authority changed",
+    );
+    for source in &changed {
+        assert!(
+            report.edges().iter().any(|edge| edge.source() == source),
+            "authority escalation dropped changed source {source:?}",
+        );
+    }
+    assert_eq!(
+        report
+            .reach()
+            .iter()
+            .map(|reach| reach.provenance().len())
+            .sum::<usize>(),
+        report.edges().len() + ALWAYS.len(),
+    );
+}
+
 #[test]
 fn a_non_cargo_repository_has_a_deterministic_generic_selection() {
     let scratch = Scratch::new("non-cargo");
@@ -172,11 +222,11 @@ fn a_differently_shaped_rust_repository_uses_policy_not_package_names() {
         "rust-toolchain",
         "rust-toolchain.toml",
     ] {
-        let error = select_change_gates(source(), &strings(&[authority]), &policy)
-            .expect_err("repository build authorities must refuse");
-        assert_eq!(
-            error.detail(),
-            format!("{authority:?} changes repository build or test selection authority")
+        let report = select_change_gates(source(), &strings(&[authority]), &policy)
+            .expect("repository build authorities select direct exhaustive execution");
+        assert_selection_authority_exhaustive(
+            &report,
+            "compiled packaged selection authority changed",
         );
     }
 }
@@ -246,51 +296,21 @@ fn deleting_the_last_configured_source_keeps_its_gate_class_applicable() {
 }
 
 #[test]
-fn policy_and_unknown_changes_refuse_without_manufacturing_applicable_execution() {
+fn policy_authority_executes_exhaustively_while_unknown_changes_refuse() {
     let tracked = strings(&["assets/opaque.bin", "notes/readme.md", "spice-rust.toml"]);
     let suffixes = strings(&[".md"]);
     let policy = policy(&tracked, true, Some(&suffixes), &[], &[], &[]);
     let authority = select_change_gates(source(), &strings(&["spice-rust.toml"]), &policy)
-        .expect_err("packaged selector authority must refuse");
-    assert_eq!(
-        authority.detail(),
-        "\"spice-rust.toml\" changes packaged selection policy"
+        .expect("packaged selector authority selects direct exhaustive execution");
+    assert_selection_authority_exhaustive(
+        &authority,
+        "compiled packaged selection authority changed",
     );
     let unknown = select_change_gates(source(), &strings(&["assets/opaque.bin"]), &policy)
         .expect_err("unclassified packaged path must refuse");
     assert_eq!(
         unknown.detail(),
         "\"assets/opaque.bin\" has no repository-declared packaged policy class"
-    );
-}
-
-#[test]
-fn admitted_parent_authority_selects_complete_exhaustive_reach_only_for_known_authorities() {
-    let tracked = strings(&["notes/readme.md", "spice-rust.toml"]);
-    let suffixes = strings(&[".md"]);
-    let policy = policy(&tracked, true, Some(&suffixes), &[], &[], &[]);
-    let report =
-        select_change_gates_with_parent_evidence(source(), &strings(&["spice-rust.toml"]), &policy)
-            .expect("admitted parent expands one known selection authority");
-
-    assert_eq!(report.gate_ids(), report.applicable_gate_ids());
-    assert!(report.reach().iter().all(|reach| {
-        matches!(
-            reach.mode(),
-            ChangeReachMode::Exhaustive {
-                authority: ChangeReachAuthority::SelectionPolicy,
-                ..
-            }
-        ) && reach.objects() == [ChangeReachObject::Repository]
-    }));
-    assert!(
-        select_change_gates_with_parent_evidence(
-            source(),
-            &strings(&["assets/opaque.bin"]),
-            &policy,
-        )
-        .is_err(),
-        "parent evidence must not classify an unknown path",
     );
 }
 
@@ -454,7 +474,7 @@ fn current_source_classification_gaps_refuse_with_exact_paths() {
 }
 
 #[test]
-fn current_source_authorities_refuse_and_local_reports_are_canonical() {
+fn current_source_authorities_execute_exhaustively_and_local_reports_are_canonical() {
     for path in [
         "spice-rust.toml",
         "gate/src/change_selection.rs",
@@ -462,11 +482,11 @@ fn current_source_authorities_refuse_and_local_reports_are_canonical() {
         "spice/src/change_gate.rs",
         "xtask/src/gate_command.rs",
     ] {
-        let error = select_current_source_change_gates(source(), &strings(&[path]))
-            .expect_err("selector authority must refuse");
-        assert_eq!(
-            error.detail(),
-            format!("{path:?} changes gate or toolchain selection authority")
+        let report = select_current_source_change_gates(source(), &strings(&[path]))
+            .expect("selector authority selects direct exhaustive execution");
+        assert_selection_authority_exhaustive(
+            &report,
+            "compiled current-source selection authority changed",
         );
     }
 
@@ -488,37 +508,16 @@ fn current_source_authorities_refuse_and_local_reports_are_canonical() {
 }
 
 #[test]
-fn full_verifier_evidence_admits_only_known_current_source_authorities() {
-    let report = select_current_source_change_gates_with_full_verifier(
-        source(),
-        &strings(&[
-            "gate/src/change_selection.rs",
-            "spice/src/gate_command/pre_commit.rs",
-        ]),
-    )
-    .expect("exact full-verifier evidence reaches compiled selector authorities");
-
-    assert_eq!(report.gate_ids(), GateId::BATTERY);
-    assert_eq!(report.applicable_gate_ids(), GateId::BATTERY);
-    for path in ["assets/opaque.bin", "tools/outside.rs"] {
-        let error =
-            select_current_source_change_gates_with_full_verifier(source(), &strings(&[path]))
-                .expect_err("full-verifier evidence must not classify unknown source");
-        assert!(error.detail().starts_with(&format!("{path:?} ")));
-    }
-}
-
-#[test]
 fn current_source_report_modules_remain_selector_authorities() {
-    let error = select_current_source_change_gates(
+    let report = select_current_source_change_gates(
         source(),
         &strings(&["gate/src/test_evidence/reports.rs"]),
     )
-    .expect_err("moved report authority must refuse");
+    .expect("moved report authority selects direct exhaustive execution");
 
-    assert_eq!(
-        error.detail(),
-        "\"gate/src/test_evidence/reports.rs\" changes gate or toolchain selection authority"
+    assert_selection_authority_exhaustive(
+        &report,
+        "compiled current-source selection authority changed",
     );
 }
 

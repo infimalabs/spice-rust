@@ -306,17 +306,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     reference_transaction::CONTRACT,
     row!(
-        ["gate", "receipt"],
-        "gate receipt",
-        Local,
-        None,
-        [],
-        [Daemonless, Toolful],
-        GATE_POLICY_TOOLS,
-        Reply,
-        "gate::receipt"
-    ),
-    row!(
         ["proof"],
         "proof",
         Local,

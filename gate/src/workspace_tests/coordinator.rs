@@ -85,17 +85,80 @@ impl RunPolicy {
     }
 }
 
+#[derive(Clone, Debug)]
+enum ExecutionShard {
+    Cargo(PackageInventory),
+    Prebuilt(PrebuiltTest),
+}
+
+impl ExecutionShard {
+    fn package(package: PackageInventory) -> Self {
+        Self::Cargo(package)
+    }
+
+    fn prebuilt(test: PrebuiltTest) -> Self {
+        Self::Prebuilt(test)
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Cargo(package) => package.name.clone(),
+            Self::Prebuilt(test) => test.package.clone(),
+        }
+    }
+
+    fn target_list(&self) -> String {
+        match self {
+            Self::Cargo(package) => package
+                .targets
+                .iter()
+                .map(TargetIdentity::display)
+                .collect::<Vec<_>>()
+                .join(","),
+            Self::Prebuilt(test) => format!(
+                "{}#partition-{}/{}",
+                test.target.display(),
+                test.partition_index() + 1,
+                test.partition_count(),
+            ),
+        }
+    }
+
+    fn is_prebuilt(&self) -> bool {
+        matches!(self, Self::Prebuilt(_))
+    }
+
+    fn requires_exclusive_lane(&self) -> bool {
+        matches!(
+            self,
+            Self::Prebuilt(test)
+                if test
+                    .partition
+                    .as_ref()
+                    .is_some_and(|partition| partition.exclusive)
+        )
+    }
+
+    fn binary(&self) -> Option<&Path> {
+        match self {
+            Self::Cargo(_) => None,
+            Self::Prebuilt(test) => Some(&test.executable),
+        }
+    }
+}
+
 struct ActiveShard {
     package: String,
     targets: String,
     output_lane: usize,
     started: Instant,
     observer: Arc<LastTest>,
+    exclusive: bool,
     thread: thread::JoinHandle<()>,
 }
 
 pub(super) struct Coordinator<'a, W> {
-    pending: VecDeque<(usize, PackageInventory)>,
+    pending: VecDeque<(usize, ExecutionShard)>,
     available_lanes: VecDeque<usize>,
     active: BTreeMap<usize, ActiveShard>,
     results: Vec<ShardResult>,
@@ -126,6 +189,42 @@ impl<W> Drop for Coordinator<'_, W> {
 impl<'a, W: Write> Coordinator<'a, W> {
     pub(super) fn new(
         shards: Vec<PackageInventory>,
+        root: PathBuf,
+        environment: Environment,
+        cargo: OsString,
+        policy: RunPolicy,
+        output: &'a mut W,
+    ) -> Self {
+        Self::from_execution_shards(
+            shards.into_iter().map(ExecutionShard::package).collect(),
+            root,
+            environment,
+            cargo,
+            policy,
+            output,
+        )
+    }
+
+    pub(super) fn new_prebuilt(
+        tests: Vec<PrebuiltTest>,
+        root: PathBuf,
+        environment: Environment,
+        cargo: OsString,
+        policy: RunPolicy,
+        output: &'a mut W,
+    ) -> Self {
+        Self::from_execution_shards(
+            tests.into_iter().map(ExecutionShard::prebuilt).collect(),
+            root,
+            environment,
+            cargo,
+            policy,
+            output,
+        )
+    }
+
+    fn from_execution_shards(
+        shards: Vec<ExecutionShard>,
         root: PathBuf,
         environment: Environment,
         cargo: OsString,
@@ -185,15 +284,23 @@ impl<'a, W: Write> Coordinator<'a, W> {
     }
 
     fn start_available(&mut self) -> Result<(), WorkspaceTestError> {
+        if self.active.values().any(|active| active.exclusive) {
+            return Ok(());
+        }
         while self.failure.is_none() && self.active.len() < self.policy.concurrency {
             let Some((index, shard)) = self.pending.pop_front() else {
                 break;
             };
+            let exclusive = shard.requires_exclusive_lane();
+            if exclusive && !self.active.is_empty() {
+                self.pending.push_front((index, shard));
+                break;
+            }
             let Some(output_lane) = self.available_lanes.pop_front() else {
                 self.pending.push_front((index, shard));
                 break;
             };
-            let targets = target_list(&shard);
+            let targets = shard.target_list();
             writeln!(
                 self.output,
                 concat!(
@@ -202,25 +309,22 @@ impl<'a, W: Write> Coordinator<'a, W> {
                 ),
                 index + 1,
                 self.total,
-                shard.name,
+                shard.label(),
                 targets,
                 output_lane + 1
             )
             .map_err(output_error)?;
             self.output.flush().map_err(output_error)?;
             self.launch(index, shard, targets, output_lane);
+            if exclusive {
+                break;
+            }
         }
         self.peak_concurrency = self.peak_concurrency.max(self.active.len());
         Ok(())
     }
 
-    fn launch(
-        &mut self,
-        index: usize,
-        shard: PackageInventory,
-        targets: String,
-        output_lane: usize,
-    ) {
+    fn launch(&mut self, index: usize, shard: ExecutionShard, targets: String, output_lane: usize) {
         let sender = self.sender.clone();
         let root = self.root.clone();
         let environment = self.environment.clone();
@@ -232,7 +336,8 @@ impl<'a, W: Write> Coordinator<'a, W> {
         let panic_observer = Arc::clone(&observer);
         let panic_shard = shard.clone();
         let panic_targets = targets.clone();
-        let package = shard.name.clone();
+        let package = shard.label();
+        let exclusive = shard.requires_exclusive_lane();
         let started = Instant::now();
         let handle = thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -268,6 +373,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
                 output_lane,
                 started,
                 observer,
+                exclusive,
                 thread: handle,
             },
         );
@@ -421,15 +527,6 @@ pub(super) fn output_error(error: io::Error) -> WorkspaceTestError {
     WorkspaceTestError::new(format!("report output failed: {error}"))
 }
 
-fn target_list(shard: &PackageInventory) -> String {
-    shard
-        .targets
-        .iter()
-        .map(TargetIdentity::display)
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 #[derive(Default)]
 pub(super) struct LastTest {
     line: Mutex<Option<String>>,
@@ -481,7 +578,7 @@ struct ShardResult {
 #[allow(clippy::too_many_arguments)]
 fn run_shard(
     index: usize,
-    shard: PackageInventory,
+    shard: ExecutionShard,
     root: PathBuf,
     environment: Environment,
     cargo: OsString,
@@ -491,9 +588,11 @@ fn run_shard(
     output_lane: usize,
 ) -> ShardResult {
     let started = Instant::now();
-    let targets = target_list(&shard);
-    let owner = format!("workspace test package {}", shard.name);
-    let environment = if policy.shared_outputs && policy.concurrency > 1 {
+    let targets = shard.target_list();
+    let owner = format!("workspace test package(s) {}", shard.label());
+    let environment = if shard.is_prebuilt() {
+        Ok(environment)
+    } else if policy.shared_outputs && policy.concurrency > 1 {
         isolate_shared_target_output(environment, output_lane)
     } else if policy.concurrency == 1 {
         Ok(environment)
@@ -660,47 +759,62 @@ fn isolate_shared_target_output(
 
 fn shard_spec(
     cargo: &OsStr,
-    shard: &PackageInventory,
+    shard: &ExecutionShard,
     root: &Path,
     environment: Environment,
     cancellation: CancellationToken,
     policy: RunPolicy,
     owner: &str,
 ) -> Result<Spec, WorkspaceTestError> {
-    let mut arguments = vec![
-        OsString::from("test"),
-        OsString::from("--locked"),
-        OsString::from("--package"),
-        OsString::from(&shard.id),
-    ];
-    if let Some(jobs) = policy.cargo_jobs {
-        arguments.extend([OsString::from("--jobs"), OsString::from(jobs.to_string())]);
-    }
-    for target in &shard.targets {
-        arguments.extend(target_arguments(target)?);
-    }
-    if let Some(features) = qualified_required_features(shard.targets.iter().flat_map(|target| {
-        target
-            .required_features
-            .iter()
-            .map(|feature| (shard.name.as_str(), feature.as_str()))
-    })) {
-        arguments.extend([OsString::from("--features"), OsString::from(features)]);
-    }
-    if policy.shared_outputs || policy.test_threads.is_some() {
-        let threads = policy.test_threads.map_or_else(
-            || shard_test_threads(shard),
-            |cap| cap.min(shard_test_threads(shard)),
-        );
-        arguments.extend([
-            OsString::from("--"),
-            OsString::from(format!("--test-threads={threads}")),
-        ]);
-    }
+    let threads = policy.test_threads.map_or_else(
+        || execution_test_threads(shard),
+        |cap| cap.min(execution_test_threads(shard)),
+    );
+    let (program, arguments, cwd) = match shard {
+        ExecutionShard::Cargo(package) => {
+            let mut arguments = vec![
+                OsString::from("test"),
+                OsString::from("--locked"),
+                OsString::from("--package"),
+                OsString::from(&package.id),
+            ];
+            if let Some(jobs) = policy.cargo_jobs {
+                arguments.extend([OsString::from("--jobs"), OsString::from(jobs.to_string())]);
+            }
+            for target in &package.targets {
+                arguments.extend(target_arguments(target)?);
+            }
+            if let Some(features) =
+                qualified_required_features(package.targets.iter().flat_map(|target| {
+                    target
+                        .required_features
+                        .iter()
+                        .map(|feature| (package.name.as_str(), feature.as_str()))
+                }))
+            {
+                arguments.extend([OsString::from("--features"), OsString::from(features)]);
+            }
+            if policy.shared_outputs || policy.test_threads.is_some() {
+                arguments.extend([
+                    OsString::from("--"),
+                    OsString::from(format!("--test-threads={threads}")),
+                ]);
+            }
+            (cargo, arguments, root)
+        }
+        ExecutionShard::Prebuilt(test) => {
+            let arguments = test.direct_arguments(threads);
+            (
+                test.executable.as_os_str(),
+                arguments,
+                test.package_root.as_path(),
+            )
+        }
+    };
     let mut spec = process_spec(
-        cargo,
+        program,
         arguments,
-        root,
+        cwd,
         environment,
         policy.shard_deadline,
         Cancellation::Token(cancellation),
@@ -712,10 +826,26 @@ fn shard_spec(
     Ok(spec)
 }
 
+fn execution_test_threads(shard: &ExecutionShard) -> usize {
+    let is_sill = match shard {
+        ExecutionShard::Cargo(package) => package.name == "sill",
+        ExecutionShard::Prebuilt(test) => test.package == "sill",
+    };
+    if is_sill {
+        return 1;
+    }
+    default_test_threads()
+}
+
+#[cfg(test)]
 pub(super) fn shard_test_threads(shard: &PackageInventory) -> usize {
     if shard.name == "sill" {
         return 1;
     }
+    default_test_threads()
+}
+
+fn default_test_threads() -> usize {
     thread::available_parallelism()
         .map(std::num::NonZero::get)
         .unwrap_or(1)
@@ -784,7 +914,7 @@ where
 
 fn shard_result(
     index: usize,
-    shard: PackageInventory,
+    shard: ExecutionShard,
     targets: String,
     elapsed: Duration,
     last_test: String,
@@ -802,7 +932,10 @@ fn shard_result(
     };
     let stdout_tail = captured_excerpt(outcome.stdout());
     let stderr_tail = captured_excerpt(outcome.stderr());
-    let binary = last_binary(outcome.stderr());
+    let binary = shard.binary().map_or_else(
+        || last_binary(outcome.stderr()),
+        |executable| executable.display().to_string(),
+    );
     let capture_failed = outcome.observation_failure().is_some()
         || !outcome.outputs_drained()
         || outcome.stdout().is_some_and(|output| output.truncated())
@@ -821,7 +954,7 @@ fn shard_result(
     };
     ShardResult {
         index,
-        package: shard.name,
+        package: shard.label(),
         targets,
         elapsed,
         disposition,
@@ -835,7 +968,7 @@ fn shard_result(
 
 fn failed_shard(
     index: usize,
-    shard: PackageInventory,
+    shard: ExecutionShard,
     targets: String,
     elapsed: Duration,
     last_test: String,
@@ -843,7 +976,7 @@ fn failed_shard(
 ) -> ShardResult {
     ShardResult {
         index,
-        package: shard.name,
+        package: shard.label(),
         targets,
         elapsed,
         disposition: format!("supervision-error: {error}"),

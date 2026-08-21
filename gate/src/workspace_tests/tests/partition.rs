@@ -134,6 +134,33 @@ fn full_verifier_partition_uses_deterministic_multi_target_work_units() {
 }
 
 #[test]
+fn selected_partition_uses_broad_post_prebuild_package_groups() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[0].targets = (0..SELECTED_TARGETS_PER_SHARD + 1)
+        .map(|index| TargetIdentity {
+            package: "fixture-a-id".to_owned(),
+            kind: "test".to_owned(),
+            name: format!("target-{index:02}"),
+            required_features: Vec::new(),
+            source: PathBuf::from(format!("/workspace/tests/target-{index:02}.rs")),
+            declared_path_sources: Vec::new(),
+            source_bytes: 1,
+        })
+        .collect();
+
+    let shards = partition_with_target_limit(&inventory, SELECTED_TARGETS_PER_SHARD);
+
+    assert_eq!(shards.len(), 3);
+    assert!(
+        shards
+            .iter()
+            .all(|shard| shard.targets.len() <= SELECTED_TARGETS_PER_SHARD)
+    );
+    validate_partition_with_target_limit(&inventory, &shards, SELECTED_TARGETS_PER_SHARD)
+        .expect("selected post-prebuild partition remains exact");
+}
+
+#[test]
 fn partition_spreads_large_source_targets_across_the_same_shard_count() {
     let mut inventory = fixture_inventory();
     inventory.packages[0].targets = [900, 800, 700, 600, 500, 400, 300, 200, 100]

@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::{ChangeSelectionError, ChangeSelectionReport, select_with};
+use super::{
+    ChangeSelectionError, ChangeSelectionReport, select_with, with_exhaustive_authority_reach,
+};
 use crate::GateId;
 use wire::Digest;
 
@@ -56,37 +58,33 @@ const SHELL: [GateId; 4] = [
 ///
 /// # Errors
 ///
-/// Returns the exact staged path and classification failure for any authority,
-/// unknown class, or source outside the compiled current-source roots.
+/// Returns the exact staged path and classification failure for any unknown
+/// class or source outside the compiled current-source roots. Known selector
+/// authorities conservatively select direct exhaustive execution.
 pub fn select_current_source_change_gates(
     source: Digest,
     changed_sources: &[String],
 ) -> Result<ChangeSelectionReport, ChangeSelectionError> {
-    select_with(
-        source,
-        changed_sources,
-        GateId::BATTERY.to_vec(),
-        gates_for_path,
-    )
-}
-
-/// Select current-source reach after a complete verifier has independently
-/// proved this exact source and every canonical arm.
-///
-/// The exception is deliberately limited to paths that are already compiled
-/// selector authorities. Unknown classes and sources outside the compiled
-/// workspace continue through the ordinary classifier and still refuse.
-pub fn select_current_source_change_gates_with_full_verifier(
-    source: Digest,
-    changed_sources: &[String],
-) -> Result<ChangeSelectionReport, ChangeSelectionError> {
-    select_with(source, changed_sources, GateId::BATTERY.to_vec(), |path| {
+    let mut report = select_with(source, changed_sources, GateId::BATTERY.to_vec(), |path| {
         if selector_authority(path) {
             Ok(GateId::BATTERY.to_vec())
         } else {
             gates_for_path(path)
         }
-    })
+    })?;
+    if let Some(authority_source) = report
+        .changed_sources()
+        .iter()
+        .find(|path| selector_authority(path))
+        .cloned()
+    {
+        report = with_exhaustive_authority_reach(
+            report,
+            "compiled current-source selection authority changed",
+            &authority_source,
+        )?;
+    }
+    Ok(report)
 }
 
 pub(crate) fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
@@ -257,7 +255,6 @@ pub(crate) fn selector_authority(path: &str) -> bool {
             | "gate/src/change_selection.rs"
             | "gate/src/lib.rs"
             | "gate/src/manifest.rs"
-            | "gate/src/semantic_closure.rs"
             | "gate/src/test_evidence.rs"
             | "gate/src/workspace_tests.rs"
             | "spice/src/change_gate.rs"
@@ -266,7 +263,6 @@ pub(crate) fn selector_authority(path: &str) -> bool {
             | "spice/src/cli/mounts.rs"
             | "spice/src/cli/syntax.rs"
             | "spice/src/gate.rs"
-            | "spice/src/gate/full_verifier_evidence.rs"
             | "spice/src/gate_command.rs"
             | "spice/src/install/git-hooks/pre-commit"
             | "spice/src/install/git_hooks.rs"
@@ -278,7 +274,6 @@ pub(crate) fn selector_authority(path: &str) -> bool {
     ) || path.starts_with("gate/src/change_selection/")
         || path.starts_with("gate/src/test_evidence/")
         || path.starts_with("gate/src/workspace_tests/")
-        || path.starts_with("spice/src/gate/full_verifier_evidence/")
         || path.starts_with("spice/src/gate_command/pre_commit")
 }
 

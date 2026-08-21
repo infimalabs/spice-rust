@@ -146,13 +146,13 @@ fn verifier_cargo_budget_binds_once_and_refuses_drift() {
 }
 
 #[test]
-fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs() {
+fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs() {
     let shell_hook_name = |suffix: &str| {
         let mut name = String::from_utf8_lossy(SHELL_HOOK_PREFIX).into_owned();
         name.push_str(suffix);
         OsString::from(name)
     };
-    let producer = verifier_environment_from([
+    let producer = compiler_environment_from([
         (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
         (
             OsString::from(SHELL_LAST_COMMAND),
@@ -172,7 +172,7 @@ fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from("retained"),
         ),
     ]);
-    let consumer = verifier_environment_from([
+    let consumer = compiler_environment_from([
         (
             OsString::from(SHELL_LAST_COMMAND),
             OsString::from("/fixture/consumer-spice"),
@@ -201,7 +201,7 @@ fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
         ]
     );
 
-    let drifted = verifier_environment_from([
+    let drifted = compiler_environment_from([
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
             OsString::from("changed"),
@@ -213,7 +213,7 @@ fn verifier_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
 
 #[test]
 fn cargo_launcher_metadata_normalizes_to_the_installed_compiler_environment() {
-    let producer = verifier_environment_from([
+    let producer = compiler_environment_from([
         (OsString::from("HOME"), OsString::from("/fixture/home")),
         (
             OsString::from("CARGO_HOME"),
@@ -243,7 +243,7 @@ fn cargo_launcher_metadata_normalizes_to_the_installed_compiler_environment() {
             OsString::from("retained"),
         ),
     ]);
-    let consumer = verifier_environment_from([
+    let consumer = compiler_environment_from([
         (OsString::from("HOME"), OsString::from("/fixture/home")),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
@@ -261,7 +261,7 @@ fn cargo_launcher_metadata_normalizes_to_the_installed_compiler_environment() {
         OsString::from("/fixture/home/.rustup"),
     )));
 
-    let custom = verifier_environment_from([
+    let custom = compiler_environment_from([
         (OsString::from("HOME"), OsString::from("/fixture/home")),
         (
             OsString::from("CARGO_HOME"),
@@ -274,15 +274,15 @@ fn cargo_launcher_metadata_normalizes_to_the_installed_compiler_environment() {
     ]);
     assert_ne!(
         consumer, custom,
-        "a custom Cargo home remains evidence-bound"
+        "a custom Cargo home remains a distinct compiler input"
     );
 }
 
 #[test]
-fn isolated_exact_evidence_rebinds_the_lane_to_the_manual_cargo_home() {
+fn isolated_execution_rebinds_the_lane_to_the_manual_cargo_home() {
     let bootstrap = crate::cargo_isolation::BOOTSTRAP_HOME_VARIABLE;
     let native = crate::cargo_isolation::NATIVE_CARGO_VARIABLE;
-    let producer = verifier_environment_from([
+    let producer = compiler_environment_from([
         (OsString::from("HOME"), OsString::from("/fixture/home")),
         (
             OsString::from("CARGO_HOME"),
@@ -298,7 +298,7 @@ fn isolated_exact_evidence_rebinds_the_lane_to_the_manual_cargo_home() {
             OsString::from("retained"),
         ),
     ]);
-    let consumer = verifier_environment_from_with_cargo_home(
+    let consumer = compiler_environment_from_with_cargo_home(
         [
             (OsString::from("HOME"), OsString::from("/fixture/home")),
             (
@@ -322,15 +322,15 @@ fn isolated_exact_evidence_rebinds_the_lane_to_the_manual_cargo_home() {
 }
 
 #[test]
-fn git_commit_metadata_normalizes_to_the_verifier_compiler_environment() {
-    let producer = verifier_environment_from([
+fn git_commit_metadata_normalizes_to_the_compiler_environment() {
+    let producer = compiler_environment_from([
         (OsString::from("HOME"), OsString::from("/fixture/home")),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
             OsString::from("retained"),
         ),
     ]);
-    let consumer = verifier_environment_from([
+    let consumer = compiler_environment_from([
         (OsString::from("HOME"), OsString::from("/fixture/home")),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
@@ -371,23 +371,4 @@ fn git_commit_metadata_normalizes_to_the_verifier_compiler_environment() {
     ]);
 
     assert_eq!(producer, consumer);
-}
-
-#[test]
-fn verifier_compiler_failure_names_both_bounded_output_streams() {
-    let detail = verifier_compiler_failure_detail(
-        ::gate::VerifierCompilerStage::NativeClippy,
-        "exited",
-        Some(101),
-        b"compiler stdout witness",
-        b"compiler stderr witness",
-    );
-
-    assert_eq!(
-        detail,
-        concat!(
-            "stage=NativeClippy; completion=exited; code=Some(101); ",
-            "stdout=compiler stdout witness; stderr=compiler stderr witness"
-        )
-    );
 }

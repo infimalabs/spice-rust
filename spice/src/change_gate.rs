@@ -342,7 +342,6 @@ struct PartialStateContext<'a> {
     selection: &'a ChangeSelectionReport,
     source: &'a wire::Digest,
     surface: SelectionSurface,
-    parent_evidence: bool,
     budget: CargoBudget,
 }
 
@@ -380,11 +379,10 @@ pub fn run_current_source(
     run_with_selection(progress, SelectionSurface::CurrentSource)
 }
 
-/// Run the packaged selector with independently admitted merge-parent credit.
+/// Run the packaged selector over the resolved index captured for a merge.
 ///
-/// Only an open two-parent Git merge can reach the parent archive. Missing or
-/// mismatched evidence simply leaves the selected arm executable, preserving
-/// the ordinary fail-closed path for every conflict-resolution change.
+/// Resolution derives its selection from the same staged source and compiled
+/// reach policy as an ordinary commit. It reads no retained verifier state.
 pub fn run_resolution(
     progress: &mut (impl Write + Send),
 ) -> Result<ChangeGateReport, ChangeGateError> {
@@ -438,34 +436,15 @@ fn run_with_selection(
 ) -> Result<ChangeGateReport, ChangeGateError> {
     publish_phase(progress, "capture", None)?;
     let budget = CargoBudget::detect(gate::WORKSPACE_TEST_CONCURRENCY_CAP);
-    publish_budget(progress, budget, "serial-cargo")?;
+    publish_budget(progress, budget, "overlapped-policy-tests")?;
     let mut anchor = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
-    let resolution_repository = if matches!(surface, SelectionSurface::Resolution) {
-        Some(Repository::discover(Path::new(".")).map_err(|error| {
-            ChangeGateError::environment("change-gate-repository-unresolved", error)
-        })?)
-    } else {
-        None
-    };
-    let mut semantic = match &resolution_repository {
-        Some(repository) => probe_semantic_evidence(repository, &anchor, surface, None, progress)?,
-        None => None,
-    };
     publish_phase(progress, "selection", Some(anchor.changes().len()))?;
-    let (selection, test_execution) = select_changes(&anchor, surface, semantic.is_some())?;
+    let (selection, test_execution) = select_changes(&anchor, surface)?;
     publish_selection(progress, &selection)?;
 
-    let repository = match resolution_repository {
-        Some(repository) => repository,
-        None => Repository::discover(Path::new(".")).map_err(|error| {
-            ChangeGateError::environment("change-gate-repository-unresolved", error)
-        })?,
-    };
-    if !matches!(surface, SelectionSurface::Resolution) {
-        publish_phase(progress, "semantic-evidence", Some(anchor.changes().len()))?;
-        semantic =
-            probe_semantic_evidence(&repository, &anchor, surface, Some(&selection), progress)?;
-    }
+    let repository = Repository::discover(Path::new(".")).map_err(|error| {
+        ChangeGateError::environment("change-gate-repository-unresolved", error)
+    })?;
     let execution = ChangeGateExecution {
         selected_root: anchor.root().to_path_buf(),
         writable_root: repository.worktree_root().to_path_buf(),
@@ -484,7 +463,6 @@ fn run_with_selection(
         &selection,
         &source,
         surface,
-        semantic.as_ref(),
         execution,
         &mut shared_progress,
     )?;
@@ -508,7 +486,6 @@ fn run_with_selection(
             selection: &selection,
             source: &source,
             surface,
-            parent_evidence: semantic.is_some(),
             budget,
         },
         policy,
@@ -548,24 +525,22 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
                     .surface
                     .prepare_anchor()
                     .map_err(ChangeGateError::gate)?;
-                let (retry_selection, _) =
-                    select_changes(&retry, context.surface, context.parent_evidence)?;
+                let (retry_selection, _) = select_changes(&retry, context.surface)?;
                 if &retry_selection != context.selection || retry.source() != context.source {
                     return Err(ChangeGateError::refusal(
                         "change-gate-source-moved",
                         "staged source or selected policy changed while retrying state publication",
                     ));
                 }
-                let results = run_focused_policy(
+                let focused = run_focused_policy(
                     &mut retry,
                     context.selection,
                     context.source,
                     context.surface,
-                    None,
                     context.budget,
                     progress,
                 )?;
-                policy = ChangePolicyReport::focused_summaries(context.source, results);
+                policy = ChangePolicyReport::focused_summaries(context.source, focused.summaries);
                 policy.validate(context.selection.gate_ids(), context.source)?;
                 *anchor = retry;
             }
@@ -575,142 +550,19 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
     unreachable!("the fixed state publication attempt loop always returns")
 }
 
-fn probe_semantic_evidence(
-    repository: &Repository,
-    anchor: &crate::gate::PreparedArm<'_>,
-    surface: SelectionSurface,
-    selection: Option<&ChangeSelectionReport>,
-    progress: &mut impl Write,
-) -> Result<Option<crate::gate::AdmittedSemanticVerifierEvidence>, ChangeGateError> {
-    if matches!(surface, SelectionSurface::Packaged) {
-        return Ok(None);
-    }
-    let admission = match surface {
-        SelectionSurface::Resolution => {
-            crate::gate::admit_merge_parent_full_verifier_evidence(repository)
-        }
-        SelectionSurface::CurrentSource => {
-            let selection = selection.ok_or_else(|| {
-                ChangeGateError::protocol(
-                    "change-gate-semantic-selection-missing",
-                    "current-source semantic admission requires its validated selection",
-                )
-            })?;
-            crate::gate::admit_reached_semantic_full_verifier_evidence(
-                repository,
-                Selector::staged(),
-                selection,
-            )
-        }
-        SelectionSurface::Packaged => unreachable!("packaged evidence returned above"),
-    }
-    .map_err(ChangeGateError::gate)?;
-    match admission {
-        crate::gate::SemanticFullVerifierAdmission::Unavailable { detail } => {
-            writeln!(
-                progress,
-                "[change-gate-semantic] disposition=unavailable detail={detail:?}",
-            )
-            .map_err(|error| {
-                ChangeGateError::environment("change-gate-progress-unavailable", error)
-            })?;
-            progress.flush().map_err(|error| {
-                ChangeGateError::environment("change-gate-progress-unavailable", error)
-            })?;
-            Ok(None)
-        }
-        crate::gate::SemanticFullVerifierAdmission::Admitted(admitted) => {
-            let anchor_context = anchor.context().map_err(ChangeGateError::gate)?;
-            let drift = capture_authority_drift(admitted.context(), &anchor_context);
-            if admitted.source() != anchor.source() || !drift.is_empty() {
-                return Err(ChangeGateError::refusal(
-                    "change-gate-source-moved",
-                    format!(
-                        concat!(
-                            "staged source or captured gate authority changed while comparing ",
-                            "semantic verifier evidence: {}"
-                        ),
-                        drift.join(", "),
-                    ),
-                ));
-            }
-            writeln!(
-                progress,
-                concat!(
-                    "[change-gate-semantic] disposition=admitted evidence={} ",
-                    "reusable={} invalidated={} changed_sources={}"
-                ),
-                admitted.digest(),
-                admitted.reusable_gate_ids().len(),
-                admitted.invalidated_gate_ids().len(),
-                admitted.changed_sources().len(),
-            )
-            .map_err(|error| {
-                ChangeGateError::environment("change-gate-progress-unavailable", error)
-            })?;
-            progress.flush().map_err(|error| {
-                ChangeGateError::environment("change-gate-progress-unavailable", error)
-            })?;
-            for detail in admitted.diagnostics() {
-                writeln!(progress, "[change-gate-semantic-refusal] detail={detail:?}",).map_err(
-                    |error| ChangeGateError::environment("change-gate-progress-unavailable", error),
-                )?;
-            }
-            progress.flush().map_err(|error| {
-                ChangeGateError::environment("change-gate-progress-unavailable", error)
-            })?;
-            Ok(Some(*admitted))
-        }
-    }
-}
-
-fn capture_authority_drift(
-    left: &gate::BatteryContext,
-    right: &gate::BatteryContext,
-) -> Vec<&'static str> {
-    // The semantic capture is exhaustive while the anchor is the focused
-    // Staging arm, so their scopes, bounds, and latches are deliberately
-    // different projections. Semantic admission already binds the exhaustive
-    // bound and latch authority per reusable arm; this seam compares only the
-    // capture-wide invariants both projections must share.
-    [
-        (left.source() != right.source(), "source"),
-        (left.actor() != right.actor(), "actor"),
-        (
-            left.configuration() != right.configuration(),
-            "configuration",
-        ),
-        (left.policy() != right.policy(), "policy"),
-        (left.state() != right.state(), "state"),
-        (left.tools() != right.tools(), "tools"),
-    ]
-    .into_iter()
-    .filter_map(|(moved, name)| moved.then_some(name))
-    .collect()
-}
-
 fn select_changes(
     anchor: &crate::gate::PreparedArm<'_>,
     surface: SelectionSurface,
-    parent_evidence: bool,
 ) -> Result<(ChangeSelectionReport, TestExecution), ChangeGateError> {
     let (selection, test_execution) =
         match surface {
             SelectionSurface::Packaged | SelectionSurface::Resolution => {
                 let policy = packaged_policy(anchor.root(), anchor.paths())?;
-                let selection = if parent_evidence {
-                    gate::select_change_gates_with_parent_evidence(
-                        anchor.source().clone(),
-                        anchor.changes(),
-                        &policy.selection,
-                    )
-                } else {
-                    gate::select_change_gates(
-                        anchor.source().clone(),
-                        anchor.changes(),
-                        &policy.selection,
-                    )
-                }
+                let selection = gate::select_change_gates(
+                    anchor.source().clone(),
+                    anchor.changes(),
+                    &policy.selection,
+                )
                 .and_then(|selection| {
                     gate::compile_language_reach(
                         anchor.root(),
@@ -720,7 +572,12 @@ fn select_changes(
                         selection,
                     )
                 });
-                (selection, TestExecution::Packaged(policy.test_engines))
+                (
+                    selection,
+                    TestExecution::Packaged {
+                        engines: policy.test_engines,
+                    },
+                )
             }
             SelectionSurface::CurrentSource => {
                 let selection = gate::select_current_source_change_gates(
@@ -752,11 +609,11 @@ fn publish_selection(
     .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
     writeln!(
         progress,
-        "[change-gate-selection-report] {}",
-        String::from_utf8(selection.encode().map_err(|error| {
-            ChangeGateError::protocol("change-selection-unencodable", error)
-        })?,)
-        .map_err(|error| ChangeGateError::protocol("change-selection-non-utf8", error))?,
+        "[change-gate-selection-report] detail=canonical-report source={} changes={} arms={} edges={}",
+        selection.source(),
+        selection.changed_sources().len(),
+        selection.gate_ids().len(),
+        selection.edges().len(),
     )
     .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
     progress
@@ -862,7 +719,6 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     surface: SelectionSurface,
-    semantic: Option<&crate::gate::AdmittedSemanticVerifierEvidence>,
     execution: ChangeGateExecution,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<(TestSelectionReport, ChangePolicyReport), ChangeGateError> {
@@ -875,23 +731,37 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         budget,
         environment,
     } = execution;
-    let policy = run_focused_policy(
-        anchor, selection, source, surface, semantic, budget, progress,
-    )
-    .map(|results| ChangePolicyReport::focused_summaries(source, results))?;
-    let tests = run_selected_tests(
-        TestRun::new(
-            &selected_root,
-            &writable_root,
-            test_source,
-            &test_changes,
-            budget,
-            environment,
-        ),
-        test_execution,
-        progress,
-    )?;
+    let mut test_progress = progress.clone();
+    let (focused, tests) = std::thread::scope(|scope| {
+        let tests = scope.spawn(move || {
+            run_selected_tests(
+                TestRun::new(
+                    &selected_root,
+                    &writable_root,
+                    test_source,
+                    &test_changes,
+                    budget,
+                    environment,
+                ),
+                test_execution,
+                &mut test_progress,
+            )
+        });
+        let focused = run_focused_policy(anchor, selection, source, surface, budget, progress);
+        let tests = tests.join().map_err(|_| {
+            ChangeGateError::protocol(
+                "change-gate-tests-panicked",
+                "selected workspace-test execution panicked",
+            )
+        })?;
+        Ok::<_, ChangeGateError>((focused?, tests?))
+    })?;
+    let policy = ChangePolicyReport::focused_summaries(source, focused.summaries);
     Ok((tests, policy))
+}
+
+struct FocusedPolicyExecution {
+    summaries: Vec<PolicyArmSummary>,
 }
 
 fn run_focused_policy(
@@ -899,64 +769,56 @@ fn run_focused_policy(
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     surface: SelectionSurface,
-    semantic: Option<&crate::gate::AdmittedSemanticVerifierEvidence>,
     budget: CargoBudget,
     progress: &mut impl Write,
-) -> Result<Vec<PolicyArmSummary>, ChangeGateError> {
+) -> Result<FocusedPolicyExecution, ChangeGateError> {
     let state_run = anchor.state_run();
     let mut policy = Vec::with_capacity(selection.reach().len());
-    let reusable = semantic
-        .map(crate::gate::AdmittedSemanticVerifierEvidence::reusable_gate_ids)
-        .unwrap_or_default();
-    let plan = plan_policy_execution(selection.gate_ids(), &reusable);
-    for (reach, disposition) in selection.reach().iter().zip(plan) {
+    let mut reaches = selection.reach().iter().peekable();
+    while let Some(reach) = reaches.next() {
         let gate_id = reach.gate_id();
-        if disposition == PolicyExecutionDisposition::Reuse {
-            let semantic = semantic.ok_or_else(|| {
-                ChangeGateError::protocol(
-                    "change-gate-semantic-incomplete",
-                    "semantic execution plan selected reuse without admitted evidence",
-                )
-            })?;
-            let result = semantic.result(gate_id).ok_or_else(|| {
-                ChangeGateError::protocol(
-                    "change-gate-semantic-incomplete",
-                    format!(
-                        "semantic evidence omitted selected arm {}",
-                        gate_id.as_str()
-                    ),
-                )
-            })?;
-            let authority = semantic.authority(gate_id).ok_or_else(|| {
-                ChangeGateError::protocol(
-                    "change-gate-semantic-incomplete",
-                    format!("semantic evidence omitted {} authority", gate_id.as_str()),
-                )
-            })?;
-            writeln!(
+        publish_policy_start(progress, gate_id)?;
+        if gate_id == GateId::RustTypecheck
+            && reaches
+                .peek()
+                .is_some_and(|next| next.gate_id() == GateId::CanvasWebTypecheck)
+        {
+            let rust = prepare_policy_arm(
+                surface,
+                selection,
+                reach,
+                state_run.clone(),
+                budget,
                 progress,
-                "[change-gate-policy] gate={} disposition=reused evidence={}",
-                gate_id.as_str(),
-                semantic.digest(),
-            )
-            .map_err(|error| {
-                ChangeGateError::environment("change-gate-progress-unavailable", error)
+            )?;
+            let canvas_reach = reaches
+                .next()
+                .expect("the adjacent Canvas reach was observed above");
+            publish_policy_start(progress, GateId::CanvasWebTypecheck)?;
+            let canvas = prepare_policy_arm(
+                surface,
+                selection,
+                canvas_reach,
+                state_run.clone(),
+                budget,
+                progress,
+            )?;
+            let (rust, canvas) = std::thread::scope(|scope| {
+                let canvas = scope.spawn(|| execute_prepared_policy_arm(canvas));
+                let rust = execute_prepared_policy_arm(rust);
+                let canvas = canvas.join().map_err(|_| {
+                    ChangeGateError::protocol(
+                        "change-gate-policy-panicked",
+                        "focused Canvas policy arm panicked",
+                    )
+                })?;
+                Ok::<_, ChangeGateError>((rust?, canvas?))
             })?;
-            progress.flush().map_err(|error| {
-                ChangeGateError::environment("change-gate-progress-unavailable", error)
-            })?;
-            policy.push(PolicyArmSummary::from_result(result, authority.clone()));
+            record_policy_report(&mut policy, rust, source)?;
+            record_policy_report(&mut policy, canvas, source)?;
             continue;
         }
-        writeln!(
-            progress,
-            "[change-gate-policy] gate={} disposition=executed",
-            gate_id.as_str(),
-        )
-        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
-        progress.flush().map_err(|error| {
-            ChangeGateError::environment("change-gate-progress-unavailable", error)
-        })?;
+
         let report = if gate_id == GateId::Staging {
             anchor
                 .bind_cargo_jobs(budget.policy_jobs())
@@ -969,42 +831,89 @@ fn run_focused_policy(
             )?;
             anchor.execute().map_err(ChangeGateError::gate)?
         } else {
-            let mut prepared = surface
-                .prepare_arm_in_state(selection, gate_id, state_run.clone())
-                .map_err(ChangeGateError::gate)?;
-            prepared
-                .bind_cargo_jobs(budget.policy_jobs())
-                .map_err(ChangeGateError::gate)?;
-            let execution_objects = prepared.execution_objects().ok_or_else(|| {
-                ChangeGateError::protocol(
-                    "change-gate-reach-unbound",
-                    format!(
-                        "focused arm {} retained no execution object inventory",
-                        gate_id.as_str()
-                    ),
-                )
-            })?;
-            publish_execution_scope(progress, gate_id, reach.objects(), execution_objects)?;
-            prepared.execute().map_err(ChangeGateError::gate)?
+            let prepared = prepare_policy_arm(
+                surface,
+                selection,
+                reach,
+                state_run.clone(),
+                budget,
+                progress,
+            )?;
+            execute_prepared_policy_arm(prepared)?
         };
-        if report.context().source() != source {
-            return Err(ChangeGateError::refusal(
-                "change-gate-source-moved",
-                format!(
-                    "staged source changed while executing focused arm {}",
-                    gate_id.as_str(),
-                ),
-            ));
-        }
-        let encoded = report.encode().map_err(|error| {
-            ChangeGateError::protocol("change-gate-focused-policy-unencodable", error)
-        })?;
-        policy.push(PolicyArmSummary::from_result(
-            report.result(),
-            wire::Digest::compute(wire::Domain::GateFocusedReport, &encoded),
+        record_policy_report(&mut policy, report, source)?;
+    }
+    Ok(FocusedPolicyExecution { summaries: policy })
+}
+
+fn publish_policy_start(progress: &mut impl Write, gate_id: GateId) -> Result<(), ChangeGateError> {
+    writeln!(
+        progress,
+        "[change-gate-policy] gate={} disposition=executed",
+        gate_id.as_str(),
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    progress
+        .flush()
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
+}
+
+fn prepare_policy_arm(
+    surface: SelectionSurface,
+    selection: &ChangeSelectionReport,
+    reach: &gate::ChangeArmReach,
+    state_run: gate::BatteryStateRun,
+    budget: CargoBudget,
+    progress: &mut impl Write,
+) -> Result<crate::gate::PreparedArm<'static>, ChangeGateError> {
+    let gate_id = reach.gate_id();
+    let mut prepared = surface
+        .prepare_arm_in_state(selection, gate_id, state_run)
+        .map_err(ChangeGateError::gate)?;
+    prepared
+        .bind_cargo_jobs(budget.policy_jobs())
+        .map_err(ChangeGateError::gate)?;
+    let execution_objects = prepared.execution_objects().ok_or_else(|| {
+        ChangeGateError::protocol(
+            "change-gate-reach-unbound",
+            format!(
+                "focused arm {} retained no execution object inventory",
+                gate_id.as_str()
+            ),
+        )
+    })?;
+    publish_execution_scope(progress, gate_id, reach.objects(), execution_objects)?;
+    Ok(prepared)
+}
+
+fn execute_prepared_policy_arm(
+    mut prepared: crate::gate::PreparedArm<'static>,
+) -> Result<gate::FocusedArmReport, ChangeGateError> {
+    prepared.execute().map_err(ChangeGateError::gate)
+}
+
+fn record_policy_report(
+    policy: &mut Vec<PolicyArmSummary>,
+    report: gate::FocusedArmReport,
+    source: &wire::Digest,
+) -> Result<(), ChangeGateError> {
+    if report.context().source() != source {
+        return Err(ChangeGateError::refusal(
+            "change-gate-source-moved",
+            format!(
+                "staged source changed while executing focused arm {}",
+                report.gate_id().as_str(),
+            ),
         ));
     }
-    Ok(policy)
+    let encoded = report.encode().map_err(|error| {
+        ChangeGateError::protocol("change-gate-focused-policy-unencodable", error)
+    })?;
+    policy.push(PolicyArmSummary::from_result(
+        report.result(),
+        wire::Digest::compute(wire::Domain::GateFocusedReport, &encoded),
+    ));
+    Ok(())
 }
 
 fn publish_execution_scope(
@@ -1033,28 +942,6 @@ fn publish_execution_scope(
     progress
         .flush()
         .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PolicyExecutionDisposition {
-    Reuse,
-    Execute,
-}
-
-fn plan_policy_execution(
-    selected: &[GateId],
-    reusable: &[GateId],
-) -> Vec<PolicyExecutionDisposition> {
-    selected
-        .iter()
-        .map(|gate_id| {
-            if reusable.binary_search(gate_id).is_ok() {
-                PolicyExecutionDisposition::Reuse
-            } else {
-                PolicyExecutionDisposition::Execute
-            }
-        })
-        .collect()
 }
 
 #[expect(

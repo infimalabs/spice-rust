@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use gate::{
-    BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryReceipt, BatteryReport, BatteryState, CampReport,
-    CampStanding, ChangeReachAuthority, ChangeReachMode, ChangeReachObject, ChangeSelectionReport,
-    CoverageCompleteness, GateId, TestSelectionReport,
+    BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryReport, BatteryState, CampReport, CampStanding,
+    ChangeReachAuthority, ChangeReachMode, ChangeReachObject, ChangeSelectionReport,
+    CoverageCompleteness, GateId,
 };
 use sill::{
     Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
@@ -19,7 +19,7 @@ use sill::{
 };
 use spice::change_gate::ChangeGateReport;
 use spice::placeholder::PlaceholderReason;
-use wire::{Digest, Domain, Outcome, Refusal, ReplyPosition};
+use wire::{Digest, Outcome, Refusal, ReplyPosition};
 
 #[path = "gate_cli/cargo_optional.rs"]
 mod cargo_optional;
@@ -44,7 +44,7 @@ const FIXTURE_PUBLICATION_POLL: Duration = Duration::from_millis(50);
 const COMPACT_CHANGE_REPORT_MAX_BYTES: usize = 128 * 1_024;
 
 #[test]
-fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selected_work() {
+fn commit_worker_executes_known_and_authority_targets_but_refuses_unknown_sources() {
     let marker_scratch = Scratch::new("selected-test-marker");
     let marker = marker_scratch.path().join("executed");
     let repository = GateRepository::new();
@@ -65,7 +65,7 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
         fs::read_to_string(&marker).expect("selected target wrote its execution marker"),
         "canonical selected target executed\n",
     );
-    let report = selection_report(&known.progress);
+    let report = gate_report.tests();
     assert!(report.admits());
     assert_eq!(report.changed_sources(), &["src/lib.rs"]);
     assert_eq!(report.engines(), &["cargo-workspace"]);
@@ -74,7 +74,7 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
     assert_eq!(report.edges()[0].source(), "src/lib.rs");
     assert_eq!(report.edges()[0].test(), "gate-fixture::lib:gate_fixture");
     assert_eq!(report.coverage(), &CoverageCompleteness::Complete);
-    assert_execution_matches_reach(&known.progress);
+    assert_execution_matches_reach(&known);
 
     let refused_marker_scratch = Scratch::new("refused-selected-test-marker");
     let refused_marker = refused_marker_scratch.path().join("executed");
@@ -107,11 +107,99 @@ fn commit_worker_executes_known_targets_and_refuses_unknown_sources_before_selec
     repository.add("spice-rust.toml");
 
     let authority = run_commit_worker(repository.path());
-    assert_selection_refusal(
-        &authority,
-        "\"spice-rust.toml\" changes packaged selection policy",
-        &authority_marker,
+    let (selection, _) = selected_execution_signature(&authority);
+    assert_eq!(selection.gate_ids(), selection.applicable_gate_ids());
+    assert!(selection.reach().iter().all(|reach| {
+        matches!(reach.mode(), ChangeReachMode::Exhaustive { .. })
+            && reach.objects() == [ChangeReachObject::Repository]
+    }));
+    assert_eq!(
+        fs::read_to_string(&authority_marker).expect("read authority selected-test marker"),
+        "canonical selected target executed\n",
     );
+    let authority_report = packaged_change_report(&authority.terminal[1..]);
+    assert_eq!(
+        authority_report.tests().changed_sources(),
+        ["spice-rust.toml", "src/lib.rs"]
+    );
+    assert_eq!(authority_report.tests().tests().len(), 1);
+    assert_eq!(authority_report.tests().edges().len(), 2);
+    assert_eq!(
+        authority_report
+            .tests()
+            .edges()
+            .iter()
+            .map(gate::TestSelectionEdge::source)
+            .collect::<Vec<_>>(),
+        ["spice-rust.toml", "src/lib.rs"],
+    );
+}
+
+#[test]
+fn selected_execution_ignores_absent_malformed_and_present_verifier_residue() {
+    let repository = GateRepository::new();
+    let root = repository.path();
+    fs::create_dir(root.join("docs")).expect("create residue fixture docs");
+    fs::write(root.join("docs/guide.md"), "# Initial guide\n").expect("write committed guide");
+    git(root, &["add", "docs/guide.md"]);
+    git(root, &["commit", "-qm", "add residue fixture guide"]);
+    fs::write(root.join("docs/guide.md"), "# Updated guide\n")
+        .expect("write selected guide change");
+    repository.add("docs/guide.md");
+
+    let absent_commit = selected_execution_signature(&run_commit_worker(root));
+    let absent_resolution = selected_execution_signature(&run_resolution_worker(root));
+
+    let state = root.join(".git/.spice-rs");
+    let exact = state.join("full-verifier-evidence.json");
+    let archive = state.join("full-verifier-evidence");
+    fs::create_dir_all(&archive).expect("create retired evidence archive residue");
+    fs::write(&exact, b"not-json").expect("write malformed exact residue");
+    fs::write(archive.join("malformed.json"), b"{broken").expect("write malformed archive residue");
+
+    assert_eq!(
+        selected_execution_signature(&run_commit_worker(root)),
+        absent_commit,
+    );
+    assert_eq!(
+        selected_execution_signature(&run_resolution_worker(root)),
+        absent_resolution,
+    );
+
+    fs::write(&exact, br#"{"version":1,"status":"historical"}"#)
+        .expect("write valid-looking exact residue");
+    fs::write(
+        archive.join("malformed.json"),
+        br#"{"version":1,"status":"historical"}"#,
+    )
+    .expect("write valid-looking archive residue");
+
+    assert_eq!(
+        selected_execution_signature(&run_commit_worker(root)),
+        absent_commit,
+    );
+    assert_eq!(
+        selected_execution_signature(&run_resolution_worker(root)),
+        absent_resolution,
+    );
+}
+
+fn selected_execution_signature(boundary: &WorkerBoundary) -> (ChangeSelectionReport, Vec<String>) {
+    assert_eq!(
+        boundary.terminal.first(),
+        Some(&b'R'),
+        "selected execution refused: {boundary:?}",
+    );
+    assert_execution_matches_reach(boundary);
+    let execution = boundary
+        .progress
+        .lines()
+        .filter(|line| {
+            line.starts_with("[change-gate-policy]") || line.starts_with("[change-gate-execution]")
+        })
+        .map(str::to_owned)
+        .collect();
+    (change_selection_report(boundary), execution)
 }
 
 #[test]
@@ -155,8 +243,8 @@ fn mixed_language_worker_executes_exactly_its_published_components() {
         "mixed fixture refused before complete execution: {}",
         String::from_utf8_lossy(&boundary.terminal)
     );
-    assert_execution_matches_reach(&boundary.progress);
-    let selection = change_selection_report(&boundary.progress);
+    assert_execution_matches_reach(&boundary);
+    let selection = change_selection_report(&boundary);
     assert_eq!(
         reached_paths(&selection, GateId::JavascriptUnused),
         ["web/dep.js", "web/entry.js"],
@@ -320,8 +408,8 @@ fn rename_and_delete_worker_binds_both_sides_without_scanning_unrelated_debt() {
         "rename/delete fixture refused: {}",
         String::from_utf8_lossy(&boundary.terminal)
     );
-    assert_execution_matches_reach(&boundary.progress);
-    let selection = change_selection_report(&boundary.progress);
+    assert_execution_matches_reach(&boundary);
+    let selection = change_selection_report(&boundary);
     assert_eq!(
         selection.changed_sources(),
         ["docs/deleted.md", "docs/new.md", "docs/old.md"]
@@ -370,8 +458,8 @@ fn dynamic_javascript_worker_publishes_and_executes_explicit_exhaustive_reach() 
 
     let boundary = run_commit_worker(root);
 
-    assert_execution_matches_reach(&boundary.progress);
-    let selection = change_selection_report(&boundary.progress);
+    assert_execution_matches_reach(&boundary);
+    let selection = change_selection_report(&boundary);
     let reach = selection
         .reach_for(GateId::JavascriptUnused)
         .expect("JavaScript arm retains exhaustive reach");
@@ -933,8 +1021,7 @@ fn assert_selection_refusal(boundary: &WorkerBoundary, detail: &str, test_marker
     assert_eq!(failure["fault"], false);
     assert!(!test_marker.exists(), "refused selection executed a test");
     assert!(
-        !boundary.progress.contains("full-verifier")
-            && !boundary.progress.contains("[change-gate-policy]")
+        !boundary.progress.contains("[change-gate-policy]")
             && !boundary.progress.contains("[change-gate-execution]")
             && !boundary.progress.contains("[rust-test"),
         "refused selection started policy or workspace tests: {}",
@@ -942,23 +1029,9 @@ fn assert_selection_refusal(boundary: &WorkerBoundary, detail: &str, test_marker
     );
 }
 
-fn selection_report(progress: &str) -> TestSelectionReport {
-    const PREFIX: &str = "[rust-test-selection-report] ";
-    let encoded = progress
-        .lines()
-        .filter_map(|line| line.strip_prefix(PREFIX))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        encoded.len(),
-        1,
-        "worker must publish exactly one selection report: {progress}"
-    );
-    TestSelectionReport::decode(encoded[0].as_bytes()).expect("decode worker selection report")
-}
-
-fn assert_execution_matches_reach(progress: &str) {
+fn assert_execution_matches_reach(boundary: &WorkerBoundary) {
     const EXECUTION_PREFIX: &str = "[change-gate-execution] gate=";
-    let report = change_selection_report(progress);
+    let report = change_selection_report(boundary);
     let expected = report
         .reach()
         .iter()
@@ -970,7 +1043,8 @@ fn assert_execution_matches_reach(progress: &str) {
         })
         .collect::<BTreeMap<_, _>>();
     let mut executed = BTreeMap::new();
-    for line in progress
+    for line in boundary
+        .progress
         .lines()
         .filter_map(|line| line.strip_prefix(EXECUTION_PREFIX))
     {
@@ -981,27 +1055,26 @@ fn assert_execution_matches_reach(progress: &str) {
             .expect("execution scope carries typed objects");
         assert!(
             executed.insert(gate.to_owned(), objects).is_none(),
-            "gate executed more than once: {gate}: {progress}"
+            "gate executed more than once: {gate}: {}",
+            boundary.progress,
         );
     }
     assert_eq!(
         executed, expected,
-        "executed scope diverged from reach plan: {progress}"
+        "executed scope diverged from reach plan: {}",
+        boundary.progress,
     );
 }
 
-fn change_selection_report(progress: &str) -> ChangeSelectionReport {
-    const PREFIX: &str = "[change-gate-selection-report] ";
-    let reports = progress
-        .lines()
-        .filter_map(|line| line.strip_prefix(PREFIX))
-        .collect::<Vec<_>>();
+fn change_selection_report(boundary: &WorkerBoundary) -> ChangeSelectionReport {
     assert_eq!(
-        reports.len(),
-        1,
-        "worker must publish exactly one change reach report: {progress}"
+        boundary.terminal.first(),
+        Some(&b'R'),
+        "worker must publish one admitted change report: {boundary:?}",
     );
-    ChangeSelectionReport::decode(reports[0].as_bytes()).expect("decode worker change reach report")
+    packaged_change_report(&boundary.terminal[1..])
+        .selection()
+        .clone()
 }
 
 fn reached_paths(report: &ChangeSelectionReport, gate_id: GateId) -> Vec<&str> {
@@ -1026,6 +1099,17 @@ fn packaged_change_report(document: &[u8]) -> ChangeGateReport {
     let packaged = report
         .get("packaged")
         .expect("default pre-commit report carries the packaged result");
+    if packaged.get("coverage").and_then(serde_json::Value::as_str) == Some("selected") {
+        let encoded: Vec<u8> = serde_json::from_value(
+            packaged
+                .get("report")
+                .expect("selected resolution package carries report bytes")
+                .clone(),
+        )
+        .expect("selected resolution report bytes decode");
+        return ChangeGateReport::decode(&encoded)
+            .expect("selected resolution carries a canonical change-gate report");
+    }
     serde_json::from_value(packaged.clone())
         .expect("composite terminal carries a shaped packaged change-gate report")
 }
@@ -1080,13 +1164,6 @@ fn report_body(spoken: &Spoken) -> BatteryReport {
     BatteryReport::decode(&bytes).expect("complete canonical battery report")
 }
 
-fn receipt_body(spoken: &Spoken) -> BatteryReceipt {
-    assert_eq!(spoken.code, Some(0));
-    assert!(spoken.err.is_empty());
-    let bytes = spoken.out.strip_suffix(b"\n").unwrap().to_vec();
-    BatteryReceipt::verify(&bytes).expect("complete canonical battery receipt")
-}
-
 fn assert_structured_body(spoken: &Spoken, expected: &impl serde::Serialize) {
     assert_eq!(spoken.code, Some(0));
     assert!(spoken.err.is_empty());
@@ -1114,14 +1191,6 @@ fn normalize_rust_elapsed(value: &mut serde_json::Value) -> usize {
     match value {
         serde_json::Value::Array(values) => values.iter_mut().map(normalize_rust_elapsed).sum(),
         serde_json::Value::Object(fields) => {
-            if fields.contains_key("run") && fields.contains_key("baseline") {
-                let report = fields
-                    .get_mut("report")
-                    .expect("a receipt carries its report digest");
-                assert!(report.is_string(), "a receipt report digest is a string");
-                *report =
-                    serde_json::Value::String("normalized-run-specific-report-digest".to_owned());
-            }
             let is_rust = fields.get("gate_id").and_then(serde_json::Value::as_str)
                 == Some(gate::GateId::RustTypecheck.as_str());
             let mut normalized = 0;
@@ -1185,25 +1254,12 @@ fn ordinary_gate_uses_only_the_captured_index_and_one_selected_commit() {
     assert_eq!(committed.context().source(), text_report.context().source());
     assert_eq!(committed.gate_set(), text_report.gate_set());
 
-    let receipt = receipt_body(&invoke(&["gate", "receipt"], repository.path()));
-    assert_eq!(receipt.tree(), staged.context().source());
-    assert_eq!(receipt.gate_set(), staged.gate_set());
-    assert_eq!(
-        receipt
-            .results()
-            .iter()
-            .map(|result| result.gate_id())
-            .collect::<Vec<_>>(),
-        staged
-            .results()
-            .iter()
-            .map(|result| result.gate_id())
-            .collect::<Vec<_>>()
-    );
+    let removed_receipt = invoke(&["gate", "receipt"], repository.path());
+    assert_ne!(removed_receipt.code, Some(0));
 }
 
 #[test]
-fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_mutation() {
+fn camp_and_kill_are_fresh_direct_leaves_without_checkout_mutation() {
     let repository = GateRepository::new();
     repository.write_camp_lines(100);
     repository.add("gate/src/camp.rs");
@@ -1227,14 +1283,6 @@ fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_mutation() {
     assert_eq!(camp_text, camp_json);
     assert_eq!(camp_json.standing, CampStanding::Camped);
 
-    let receipt_text = invoke(&["gate", "receipt"], repository.path());
-    let receipt_json = invoke(&["--json", "gate", "receipt"], repository.path());
-    assert_eq!(receipt_text.code, Some(0));
-    assert!(receipt_text.err.is_empty());
-    let receipt_text = receipt_body(&receipt_text);
-    assert_structured_body(&receipt_json, &receipt_text);
-    assert_eq!(receipt_text.results().len(), gate::GateId::BATTERY.len());
-
     let kill = invoke(&["--json", "gate", "kill"], repository.path());
     assert_eq!(kill.code, Some(REFUSAL_EXIT));
     assert!(kill.out.is_empty());
@@ -1253,20 +1301,6 @@ fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_mutation() {
     assert_eq!(
         fs::read(repository.path().join("src/lib.rs")).expect("reread source"),
         selected_source
-    );
-    let current =
-        gate::CurrentState::load(gate::current_state_path(&repository.path().join(".git")))
-            .expect("accepted receipt published canonical gate state");
-    assert_eq!(
-        current.before().version(),
-        gate::state::STATE_LEDGER_VERSION
-    );
-    assert!(
-        repository
-            .path()
-            .join(".git/.spice-rs/data/gate-state.json")
-            .is_file(),
-        "the accepted battery publishes only its Git-common quality state"
     );
     assert!(
         !repository.path().join(".spice-gate-mutants").exists(),

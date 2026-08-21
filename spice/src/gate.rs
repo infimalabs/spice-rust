@@ -12,10 +12,9 @@ use std::path::Path;
 use std::process::Command;
 
 use ::gate::{
-    ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport,
-    ChangeSelectionReport, ClaimCapture, FocusedArmReport, GateId, HygieneConfiguration, KillRun,
-    RepositoryExecutionEvent, RimCapture, Selector, StateRunScope, VerifierCompilerContract,
-    VerifierCompilerEvidence, admit_verifier_compiler_receipt, encode_verifier_compiler_receipt,
+    ActorCapture, BatteryArmResult, BatteryCapture, BatteryReport, ChangeSelectionReport,
+    ClaimCapture, FocusedArmReport, GateId, HygieneConfiguration, KillRun,
+    RepositoryExecutionEvent, RimCapture, Selector, StateRunScope,
 };
 use wire::Digest;
 
@@ -34,39 +33,24 @@ enum InputMode {
 mod capture;
 mod environment;
 mod finding_source;
-mod full_verifier_evidence;
 
+use environment::compiler_environment;
 pub use environment::git_local_environment;
-use environment::verifier_environment;
 #[cfg(test)]
 use environment::{
-    SHELL_HOOK_PREFIX, SHELL_LAST_COMMAND, verifier_environment_from,
-    verifier_environment_from_with_cargo_home,
+    SHELL_HOOK_PREFIX, SHELL_LAST_COMMAND, compiler_environment_from,
+    compiler_environment_from_with_cargo_home,
 };
 
 pub use finding_source::{
     GateFindingAnchor, capture_gate_finding_anchor, require_gate_finding_source_forward,
     validate_gate_finding_source,
 };
-pub use full_verifier_evidence::{
-    AdmittedFullVerifierEvidence, AdmittedSemanticVerifierEvidence, FullVerifierEvidence,
-    FullVerifierEvidenceAdmission, FullVerifierEvidenceMiss, FullVerifierEvidenceStage,
-    SemanticFullVerifierAdmission, admit_full_verifier_evidence,
-    admit_merge_parent_full_verifier_evidence, admit_reached_semantic_full_verifier_evidence,
-    admit_semantic_full_verifier_evidence, inspect_full_verifier_completion_evidence,
-    inspect_full_verifier_evidence, requires_full_verifier_completion_evidence,
-};
-
-/// One staged battery capture retained across the full verifier's actions.
-///
-/// Keeping this capture alive is what makes every compiler token and the later
-/// battery execution name one immutable selected source rather than two
-/// independently materialized readings of the index.
+/// One staged battery capture retained across explicit diagnostic actions.
 pub struct PreparedBattery<'trace> {
     capture: BatteryCapture<'trace>,
-    verifier_environment: Vec<(OsString, OsString)>,
+    compiler_environment: Vec<(OsString, OsString)>,
     cargo_jobs: Option<usize>,
-    verifier_receipt_admitted: bool,
 }
 
 /// One retained staged capture selected for one canonical arm.
@@ -77,7 +61,7 @@ pub struct PreparedBattery<'trace> {
 pub struct PreparedArm<'trace> {
     capture: BatteryCapture<'trace>,
     gate_id: GateId,
-    verifier_environment: Vec<(OsString, OsString)>,
+    compiler_environment: Vec<(OsString, OsString)>,
     cargo_jobs: Option<usize>,
 }
 
@@ -162,7 +146,7 @@ impl PreparedArm<'_> {
     /// Returns the canonical focused-arm refusal without acquiring siblings.
     pub fn execute(&mut self) -> Result<FocusedArmReport, RunError> {
         self.capture
-            .execute_arm_report_with_environment(self.gate_id, self.verifier_environment.clone())
+            .execute_arm_report_with_environment(self.gate_id, self.compiler_environment.clone())
             .map_err(|error| RunError::refusal("gate::battery-refused", error))
     }
 
@@ -173,7 +157,7 @@ impl PreparedArm<'_> {
     /// Refuses a different second budget after this retained capture was bound.
     pub fn bind_cargo_jobs(&mut self, cargo_jobs: usize) -> Result<(), RunError> {
         bind_cargo_jobs(
-            &mut self.verifier_environment,
+            &mut self.compiler_environment,
             &mut self.cargo_jobs,
             cargo_jobs,
         )
@@ -202,10 +186,6 @@ impl PreparedArm<'_> {
 }
 
 impl PreparedBattery<'_> {
-    fn bind_exact_evidence_environment(&mut self, verifier_environment: Vec<(OsString, OsString)>) {
-        self.verifier_environment = verifier_environment;
-    }
-
     /// Cap standalone Cargo analyses owned by this retained battery capture.
     ///
     /// # Errors
@@ -213,7 +193,7 @@ impl PreparedBattery<'_> {
     /// Refuses a different second budget after the capture was bound.
     pub fn bind_cargo_jobs(&mut self, cargo_jobs: usize) -> Result<(), RunError> {
         bind_cargo_jobs(
-            &mut self.verifier_environment,
+            &mut self.compiler_environment,
             &mut self.cargo_jobs,
             cargo_jobs,
         )
@@ -267,39 +247,6 @@ impl PreparedBattery<'_> {
             .map_err(|error| RunError::refusal("gate::source-moved", error))
     }
 
-    /// Source-independent compiler authorities for semantic receipt comparison.
-    pub fn semantic_compiler_authorities(
-        &mut self,
-        cargo_jobs: usize,
-    ) -> Result<Vec<(GateId, Digest)>, RunError> {
-        let mut authorities = Vec::new();
-        for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
-            if let Some(contract) =
-                self.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
-            {
-                authorities.push((gate_id, contract.semantic_authority()));
-            }
-        }
-        Ok(authorities)
-    }
-
-    /// Compiler authorities portable between linked worktrees for one merge.
-    pub fn merge_semantic_compiler_authorities(
-        &mut self,
-        cargo_jobs: usize,
-        repository: &Digest,
-    ) -> Result<Vec<(GateId, Digest)>, RunError> {
-        let mut authorities = Vec::new();
-        for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
-            if let Some(contract) =
-                self.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
-            {
-                authorities.push((gate_id, contract.merge_semantic_authority(repository)));
-            }
-        }
-        Ok(authorities)
-    }
-
     /// Execute the existing canonical mutation profile over the retained source.
     ///
     /// # Errors
@@ -322,135 +269,15 @@ impl PreparedBattery<'_> {
             .map_err(|error| RunError::refusal("gate::structural-preflight-refused", error))
     }
 
-    /// Capture an exact compiler contract for one reusable arm.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a foreign arm, an unavailable/drifted declared tool, or a Cargo
-    /// job cap that differs from the first contract minted by this capture.
-    pub fn verifier_compiler_contract(
-        &mut self,
-        gate_id: GateId,
-        cargo_jobs: usize,
-    ) -> Result<VerifierCompilerContract, RunError> {
-        bind_cargo_jobs(
-            &mut self.verifier_environment,
-            &mut self.cargo_jobs,
-            cargo_jobs,
-        )?;
-        self.capture
-            .verifier_compiler_contract(gate_id, self.verifier_environment.clone())
-            .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
-    }
-
-    /// Capture an exact compiler contract when its reusable arm is applicable.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a foreign arm, an unavailable/drifted declared tool, or a Cargo
-    /// job cap that differs from the first contract minted by this capture.
-    pub fn applicable_verifier_compiler_contract(
-        &mut self,
-        gate_id: GateId,
-        cargo_jobs: usize,
-    ) -> Result<Option<VerifierCompilerContract>, RunError> {
-        bind_cargo_jobs(
-            &mut self.verifier_environment,
-            &mut self.cargo_jobs,
-            cargo_jobs,
-        )?;
-        self.capture
-            .applicable_verifier_compiler_contract(gate_id, self.verifier_environment.clone())
-            .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
-    }
-
-    /// Admit a cross-process compiler receipt against this retained capture.
-    ///
-    /// # Errors
-    ///
-    /// Refuses missing, stale, partial, mismatched, or untrusted evidence.
-    pub fn admit_verifier_compiler_receipt(
-        &mut self,
-        receipt: &[u8],
-        cargo_jobs: usize,
-        authority: &[u8],
-    ) -> Result<Vec<VerifierCompilerEvidence>, RunError> {
-        let mut contracts = Vec::new();
-        for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
-            if let Some(contract) =
-                self.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
-            {
-                contracts.push(contract);
-            }
-        }
-        let evidence = admit_verifier_compiler_receipt(receipt, &contracts, authority)
-            .map_err(|error| RunError::refusal("gate::verifier-receipt-refused", error))?;
-        self.verifier_receipt_admitted = true;
-        Ok(evidence)
-    }
-
-    /// Re-admit one complete battery receipt against this fresh strict capture.
-    pub fn admit_battery_receipt(&self, receipt: &[u8]) -> Result<BatteryReceipt, RunError> {
-        self.capture
-            .admit_receipt(receipt)
-            .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
-    }
-
-    /// Execute this retained capture with any completed compiler evidence.
+    /// Execute this retained capture directly.
     ///
     /// # Errors
     ///
     /// Returns the canonical battery refusal.
-    pub fn execute(
-        &mut self,
-        evidence: &[VerifierCompilerEvidence],
-    ) -> Result<BatteryReport, RunError> {
-        let result = if self.verifier_receipt_admitted {
-            self.capture.execute_with_required_verifier_evidence(
-                evidence,
-                self.verifier_environment.clone(),
-            )
-        } else {
-            self.capture
-                .execute_with_verifier_evidence(evidence, self.verifier_environment.clone())
-        };
-        result.map_err(|error| RunError::refusal("gate::battery-refused", error))
-    }
-
-    /// Execute the complete battery and bind its report to this capture.
-    pub fn execute_receipt(
-        &mut self,
-        evidence: &[VerifierCompilerEvidence],
-    ) -> Result<BatteryReceipt, RunError> {
-        let report = self.execute(evidence)?;
+    pub fn execute(&mut self) -> Result<BatteryReport, RunError> {
         self.capture
-            .mint_receipt(report)
-            .map_err(|error| RunError::fault("gate::battery-receipt-unavailable", error))
-    }
-
-    /// Rebind stable-source compiler proof to this retained battery capture and
-    /// execute with required evidence.
-    ///
-    /// The stable private mirror exists only to preserve Cargo fingerprints;
-    /// the receipt boundary reconstructs opaque process tokens against this
-    /// capture's exact source, repository, environment, tools, and stages. A
-    /// missing or mismatched proof refuses instead of falling back to compilers
-    /// whose stable source locks are still held by the verifier.
-    ///
-    /// # Errors
-    ///
-    /// Refuses incomplete, stale, mismatched, noncanonical, or untrusted
-    /// compiler evidence and all ordinary battery receipt failures.
-    pub fn execute_prepared_compiler_receipt(
-        &mut self,
-        evidence: &[VerifierCompilerEvidence],
-        cargo_jobs: usize,
-    ) -> Result<BatteryReceipt, RunError> {
-        let authority = full_verifier_evidence::prepared_compiler_authority(self.source());
-        let receipt = encode_verifier_compiler_receipt(evidence, &authority)
-            .map_err(|error| RunError::fault("gate::verifier-receipt-unavailable", error))?;
-        let evidence = self.admit_verifier_compiler_receipt(&receipt, cargo_jobs, &authority)?;
-        self.execute_receipt(&evidence)
+            .execute_with_environment(self.compiler_environment.clone())
+            .map_err(|error| RunError::refusal("gate::battery-refused", error))
     }
 
     /// Publish the exhaustive state transaction after the enclosing verifier accepts.
@@ -458,37 +285,6 @@ impl PreparedBattery<'_> {
         self.capture
             .accept_state(StateRunScope::Exhaustive)
             .map_err(RunError::state_publication)
-    }
-
-    /// Re-admit a complete battery receipt across its exact accepted state transition.
-    pub fn admit_battery_receipt_after_state(
-        &self,
-        receipt: &[u8],
-        state: &::gate::StateReceipt,
-    ) -> Result<BatteryReceipt, RunError> {
-        self.capture
-            .admit_receipt_after_state(receipt, state)
-            .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
-    }
-
-    /// Re-admit a receipt's global authorities before per-arm semantic comparison.
-    pub fn admit_battery_receipt_for_semantic_comparison(
-        &self,
-        receipt: &[u8],
-    ) -> Result<BatteryReceipt, RunError> {
-        self.capture
-            .admit_receipt_for_semantic_comparison(receipt)
-            .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
-    }
-
-    /// Re-admit a staged parent receipt against a fresh revision capture.
-    pub fn admit_battery_receipt_for_merge_parent_comparison(
-        &self,
-        receipt: &[u8],
-    ) -> Result<BatteryReceipt, RunError> {
-        self.capture
-            .admit_receipt_for_merge_parent_comparison(receipt)
-            .map_err(|error| RunError::refusal("gate::battery-receipt-refused", error))
     }
 
     /// Discard the exhaustive state transaction after refusal or interruption.
@@ -524,7 +320,7 @@ fn bind_cargo_jobs(
     }
 }
 
-/// Capture the selected source once for a full verifier run.
+/// Capture the selected source once for an explicit diagnostic run.
 ///
 /// # Errors
 ///
@@ -541,53 +337,15 @@ pub fn prepare_strict(selector: Selector) -> Result<PreparedBattery<'static>, Ru
     prepare_with_mode(selector, InputMode::Strict)
 }
 
-/// Capture strict complete authority for semantic comparison while limiting
-/// structural parsing to one validated ordinary-selection reach plan.
-///
-/// The underlying capture refuses battery execution and state publication.
-pub fn prepare_semantic_comparison_strict(
-    selector: Selector,
-    selection: &ChangeSelectionReport,
-) -> Result<PreparedBattery<'static>, RunError> {
-    let verifier_environment = verifier_environment();
-    capture::capture_for_semantic_comparison(selector, selection).map(|capture| PreparedBattery {
-        capture,
-        verifier_environment,
-        cargo_jobs: None,
-        verifier_receipt_admitted: false,
-    })
-}
-
-/// Capture a strict source from one explicitly named linked worktree.
-///
-/// Archive reachability discovery cannot change the process working directory:
-/// another thread may be preparing or executing the current worktree at the
-/// same time. This path-explicit rim preserves the ordinary strict capture
-/// contract while letting archive grooming resolve open merge parents in every
-/// linked worktree.
-fn prepare_strict_at(
-    directory: &Path,
-    selector: Selector,
-) -> Result<PreparedBattery<'static>, RunError> {
-    let verifier_environment = verifier_environment();
-    capture::capture_at(directory, selector, InputMode::Strict).map(|capture| PreparedBattery {
-        capture,
-        verifier_environment,
-        cargo_jobs: None,
-        verifier_receipt_admitted: false,
-    })
-}
-
 fn prepare_with_mode(
     selector: Selector,
     input_mode: InputMode,
 ) -> Result<PreparedBattery<'static>, RunError> {
-    let verifier_environment = verifier_environment();
+    let compiler_environment = compiler_environment();
     capture(selector, input_mode, None, None).map(|capture| PreparedBattery {
         capture,
-        verifier_environment,
+        compiler_environment,
         cargo_jobs: None,
-        verifier_receipt_admitted: false,
     })
 }
 
@@ -597,7 +355,7 @@ pub fn prepare_in_state_traced<'trace>(
     state_run: ::gate::BatteryStateRun,
     trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<PreparedBattery<'trace>, RunError> {
-    let verifier_environment = verifier_environment();
+    let compiler_environment = compiler_environment();
     capture_inner(
         selector,
         InputMode::Generic,
@@ -607,9 +365,8 @@ pub fn prepare_in_state_traced<'trace>(
     )
     .map(|capture| PreparedBattery {
         capture,
-        verifier_environment,
+        compiler_environment,
         cargo_jobs: None,
-        verifier_receipt_admitted: false,
     })
 }
 
@@ -635,11 +392,11 @@ fn prepare_arm_with_mode(
     gate_id: GateId,
     input_mode: InputMode,
 ) -> Result<PreparedArm<'static>, RunError> {
-    let verifier_environment = verifier_environment();
+    let compiler_environment = compiler_environment();
     capture(selector, input_mode, Some(gate_id), None).map(|capture| PreparedArm {
         capture,
         gate_id,
-        verifier_environment,
+        compiler_environment,
         cargo_jobs: None,
     })
 }
@@ -670,12 +427,12 @@ pub fn prepare_arm_in_state_reached(
     gate_id: GateId,
     state_run: ::gate::BatteryStateRun,
 ) -> Result<PreparedArm<'static>, RunError> {
-    let verifier_environment = verifier_environment();
+    let compiler_environment = compiler_environment();
     capture_reached_in_state(selector, InputMode::Generic, selection, gate_id, state_run).map(
         |capture| PreparedArm {
             capture,
             gate_id,
-            verifier_environment,
+            compiler_environment,
             cargo_jobs: None,
         },
     )
@@ -689,12 +446,12 @@ pub fn prepare_arm_in_state_reached_strict(
     gate_id: GateId,
     state_run: ::gate::BatteryStateRun,
 ) -> Result<PreparedArm<'static>, RunError> {
-    let verifier_environment = verifier_environment();
+    let compiler_environment = compiler_environment();
     capture_reached_in_state(selector, InputMode::Strict, selection, gate_id, state_run).map(
         |capture| PreparedArm {
             capture,
             gate_id,
-            verifier_environment,
+            compiler_environment,
             cargo_jobs: None,
         },
     )
@@ -706,125 +463,13 @@ fn prepare_arm_in_state_with_mode(
     state_run: ::gate::BatteryStateRun,
     input_mode: InputMode,
 ) -> Result<PreparedArm<'static>, RunError> {
-    let verifier_environment = verifier_environment();
+    let compiler_environment = compiler_environment();
     capture_in_state(selector, input_mode, gate_id, state_run).map(|capture| PreparedArm {
         capture,
         gate_id,
-        verifier_environment,
+        compiler_environment,
         cargo_jobs: None,
     })
-}
-
-/// Compile every reusable verifier stage and encode its source-bound receipt.
-///
-/// This operation is intentionally separate from the bounded commit worker.
-/// The later consumer admits the receipt against a fresh capture and never
-/// falls back to compiler execution when the artifact is absent or stale.
-///
-/// # Errors
-///
-/// Returns capture, compiler, completeness, or receipt-encoding failures.
-pub fn verifier_compiler_receipt(
-    selector: Selector,
-    cargo_jobs: usize,
-    authority: &[u8],
-) -> Result<Vec<u8>, RunError> {
-    let mut battery = prepare_strict(selector)?;
-    let mut evidence = Vec::new();
-    for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
-        let Some(contract) = battery.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
-        else {
-            continue;
-        };
-        let compiler = contract
-            .prepare_stable()
-            .map_err(|error| RunError::fault("gate::verifier-source-unavailable", error))?;
-        let mut processes = Vec::new();
-        for stage in compiler.stages() {
-            let run = compiler
-                .run(*stage)
-                .map_err(|error| RunError::fault("gate::verifier-compiler-unavailable", error))?;
-            if !run.success() {
-                return Err(RunError::refusal(
-                    "gate::verifier-compiler-refused",
-                    verifier_compiler_failure(*stage, &run),
-                ));
-            }
-            processes.push(run.into_evidence().ok_or_else(|| {
-                RunError::fault(
-                    "gate::verifier-compiler-evidence-missing",
-                    format!("successful {stage:?} run minted no compiler evidence"),
-                )
-            })?);
-        }
-        evidence.push(
-            compiler
-                .complete(&processes)
-                .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))?,
-        );
-    }
-    encode_verifier_compiler_receipt(&evidence, authority)
-        .map_err(|error| RunError::fault("gate::verifier-receipt-unavailable", error))
-}
-
-/// Execute a traced battery using only a fresh, exact compiler receipt.
-///
-/// Receipt admission occurs before battery execution. Missing, stale, partial,
-/// or mismatched evidence is a refusal and never invokes a compiler here.
-///
-/// # Errors
-///
-/// Returns capture, receipt-admission, or canonical battery failures.
-pub fn run_traced_with_verifier_receipt(
-    selector: Selector,
-    receipt: &[u8],
-    cargo_jobs: usize,
-    authority: &[u8],
-    trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-) -> Result<BatteryReport, RunError> {
-    let mut prepared = prepare_traced_with_mode(selector, trace, InputMode::Strict)?;
-    let evidence = prepared.admit_verifier_compiler_receipt(receipt, cargo_jobs, authority)?;
-    let report = prepared.execute(&evidence)?;
-    if report.admits() {
-        prepared.accept_state()?;
-    } else {
-        prepared.reject_state()?;
-    }
-    Ok(report)
-}
-
-fn verifier_compiler_failure(
-    stage: ::gate::VerifierCompilerStage,
-    run: &::gate::VerifierCompilerRun,
-) -> String {
-    let completion = if run.cancelled() {
-        "cancelled"
-    } else if run.timed_out() {
-        "timed-out"
-    } else {
-        "exited"
-    };
-    verifier_compiler_failure_detail(stage, completion, run.code(), run.stdout(), run.stderr())
-}
-
-fn verifier_compiler_failure_detail(
-    stage: ::gate::VerifierCompilerStage,
-    completion: &str,
-    code: Option<i32>,
-    stdout: &[u8],
-    stderr: &[u8],
-) -> String {
-    format!(
-        "stage={stage:?}; completion={completion}; code={code:?}; stdout={}; stderr={}",
-        bounded_compiler_output(stdout),
-        bounded_compiler_output(stderr),
-    )
-}
-
-fn bounded_compiler_output(bytes: &[u8]) -> String {
-    const LIMIT: usize = 16 * 1024;
-    let start = bytes.len().saturating_sub(LIMIT);
-    String::from_utf8_lossy(&bytes[start..]).trim().to_owned()
 }
 
 /// Capture the selected source once while exposing execution progress.
@@ -848,12 +493,11 @@ fn prepare_traced_with_mode<'trace>(
     trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
     input_mode: InputMode,
 ) -> Result<PreparedBattery<'trace>, RunError> {
-    let verifier_environment = verifier_environment();
+    let compiler_environment = compiler_environment();
     capture(selector, input_mode, None, Some(trace)).map(|capture| PreparedBattery {
         capture,
-        verifier_environment,
+        compiler_environment,
         cargo_jobs: None,
-        verifier_receipt_admitted: false,
     })
 }
 
@@ -874,7 +518,7 @@ pub fn run_strict(selector: Selector) -> Result<BatteryReport, RunError> {
 
 fn run_with_mode(selector: Selector, input_mode: InputMode) -> Result<BatteryReport, RunError> {
     let mut prepared = prepare_with_mode(selector, input_mode)?;
-    let report = prepared.execute(&[])?;
+    let report = prepared.execute()?;
     if report.admits() {
         prepared.accept_state()?;
     } else {
@@ -926,25 +570,6 @@ fn run_arm_report_with_mode(
     Ok(report)
 }
 
-/// Execute the canonical battery and mint its current receipt.
-///
-/// # Errors
-///
-/// Returns the same acquisition and completeness refusals as [`run`].
-pub fn receipt(selector: Selector) -> Result<BatteryReceipt, RunError> {
-    let mut prepared = prepare(selector)?;
-    let receipt = prepared
-        .capture
-        .execute_receipt()
-        .map_err(|error| RunError::refusal("gate::battery-refused", error))?;
-    if receipt.run().admits() {
-        prepared.accept_state()?;
-    } else {
-        prepared.reject_state()?;
-    }
-    Ok(receipt)
-}
-
 /// Execute as [`run`] while exposing the gate-owned invocation trace.
 ///
 /// This is an observation seam for tests and diagnostics. It cannot replace
@@ -958,7 +583,7 @@ pub fn run_traced(
     trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<BatteryReport, RunError> {
     let mut prepared = prepare_traced(selector, trace)?;
-    let report = prepared.execute(&[])?;
+    let report = prepared.execute()?;
     if report.admits() {
         prepared.accept_state()?;
     } else {

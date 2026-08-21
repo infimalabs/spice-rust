@@ -197,7 +197,7 @@ fn last_phase_prefers_later_selected_test_progress() {
     fs::write(
         &files.progress,
         concat!(
-            "[change-gate-policy] gate=repo-docs disposition=reused evidence=gate-v1-fixture\n",
+            "[change-gate-policy] gate=repo-docs disposition=executed\n",
             "[rust-test] stage=progress shard=2/4 package=\"spice\" last_test=\"fixture\"\n",
         ),
     )
@@ -441,24 +441,6 @@ fn composite_report_refuses_an_empty_battery_or_mismatched_source() {
             .expect_err("mismatched configured source must refuse")
             .contains("different staged source")
     );
-}
-
-#[test]
-fn pre_commit_report_rejects_the_retired_full_verifier_cache_arm() {
-    let source = Digest::compute(wire::Domain::GateTree, b"pre-commit source");
-    let legacy = serde_json::json!({
-        "version": PRE_COMMIT_REPORT_VERSION,
-        "source": source,
-        "full_verifier": {
-            "evidence": Digest::compute(wire::Domain::GateReceipt, b"legacy evidence"),
-            "battery": Digest::compute(wire::Domain::GateBatteryReceipt, b"legacy battery"),
-            "selection": {},
-        },
-    });
-
-    let error = Report::decode(&serde_json::to_vec(&legacy).expect("encode legacy report"))
-        .expect_err("retired full-verifier cache arm refuses");
-    assert!(error.contains("unknown field"), "{error}");
 }
 
 #[cfg(unix)]

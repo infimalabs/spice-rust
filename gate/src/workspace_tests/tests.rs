@@ -39,6 +39,7 @@ mod cross_package_ownership;
 mod environment;
 mod metadata;
 mod partition;
+mod prebuilt;
 mod reach_escalation;
 mod required_features;
 mod selection;
@@ -699,7 +700,7 @@ fn selected_workspace_runner_executes_the_reported_target_from_changed_rust_sour
     assert!(
         String::from_utf8(output)
             .unwrap()
-            .contains("[rust-test-selection] source=\"tests/gate_cli.rs\"")
+            .contains("[rust-test-selection] detail=canonical-report sources=1 tests=1 edges=1")
     );
     fs::remove_dir_all(root).expect("remove selected workspace fixture");
 }

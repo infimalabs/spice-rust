@@ -314,10 +314,7 @@ impl FocusedArmReport {
 ///
 /// This type deliberately does not implement [`Deserialize`]. A derived one
 /// would let any caller lift retained bytes straight into a report without the
-/// completeness check that [`Self::decode`] and every receipt decode both run,
-/// and because [`BatteryReceipt::mint`](super::BatteryReceipt::mint) takes a
-/// report by value, that report could then be bound into a published receipt.
-/// Its completeness is a precondition of minting, so the only way to hold one
+/// completeness check that [`Self::decode`] performs. The only way to hold one
 /// is to have run the battery or to have decoded through the private shape
 /// below.
 ///
