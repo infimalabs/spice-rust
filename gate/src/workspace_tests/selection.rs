@@ -240,13 +240,7 @@ pub(super) fn selection_plan(
                     .iter()
                     .any(|target| target_reaches_dependents(target))
             {
-                select_reached_package_targets(
-                    inventory,
-                    claim.package,
-                    changed,
-                    &mut tests,
-                    &mut edges,
-                )?;
+                select_package_targets(claim.package, changed, &mut tests, &mut edges)?;
                 continue;
             }
             let direct_tests = claim
@@ -324,8 +318,11 @@ pub(super) fn cargo_check_selections(
                     .iter()
                     .any(|target| target_reaches_dependents(target))
             {
-                select_all_package_checks(
-                    reverse_dependency_closure(inventory, claim.package),
+                select_all_package_checks([claim.package], &mut reached);
+                select_reverse_package_checks(
+                    reverse_dependency_closure(inventory, claim.package)
+                        .into_iter()
+                        .filter(|package| package.id != claim.package.id),
                     &mut reached,
                 );
                 continue;
@@ -434,17 +431,50 @@ fn select_all_package_checks<'a>(
     }
 }
 
+/// Retain library targets for reverse dependents without compiling every test,
+/// example, bench, and auxiliary binary in those packages. A package with no
+/// library keeps Cargo's ordinary default targets as its conservative fallback.
+/// An exact target already selected in the same package remains more specific;
+/// an all-targets owner selection remains stronger than either.
+fn select_reverse_package_checks<'a>(
+    packages: impl IntoIterator<Item = &'a PackageInventory>,
+    reached: &mut BTreeMap<&'a str, Option<BTreeSet<CargoTargetSelection>>>,
+) {
+    for package in packages {
+        let targets = reached
+            .entry(package.id.as_str())
+            .or_insert_with(|| Some(BTreeSet::new()));
+        let Some(targets) = targets else {
+            continue;
+        };
+        for target in package
+            .declared_targets
+            .iter()
+            .filter(|target| target_is_library(target))
+        {
+            targets.insert(CargoTargetSelection {
+                flag: "--lib",
+                name: None,
+                required_features: target.required_features.clone(),
+            });
+        }
+    }
+}
+
 fn cargo_target_selection(
     target: &TargetIdentity,
 ) -> Result<CargoTargetSelection, WorkspaceTestError> {
-    let flag = target
+    let (flag, named) = target
         .kind
         .split('+')
         .find_map(|kind| match kind {
-            "bin" => Some("--bin"),
-            "test" => Some("--test"),
-            "example" => Some("--example"),
-            "bench" => Some("--bench"),
+            "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro" => {
+                Some(("--lib", false))
+            }
+            "bin" => Some(("--bin", true)),
+            "test" => Some(("--test", true)),
+            "example" => Some(("--example", true)),
+            "bench" => Some(("--bench", true)),
             _ => None,
         })
         .ok_or_else(|| {
@@ -455,22 +485,9 @@ fn cargo_target_selection(
         })?;
     Ok(CargoTargetSelection {
         flag,
-        name: target.name.clone(),
+        name: named.then(|| target.name.clone()),
         required_features: target.required_features.clone(),
     })
-}
-
-fn select_reached_package_targets(
-    inventory: &Inventory,
-    package: &PackageInventory,
-    changed: &str,
-    tests: &mut BTreeSet<String>,
-    edges: &mut BTreeSet<crate::TestSelectionEdge>,
-) -> Result<(), WorkspaceTestError> {
-    for reached in reverse_dependency_closure(inventory, package) {
-        select_package_targets(reached, changed, tests, edges)?;
-    }
-    Ok(())
 }
 
 fn reverse_dependency_closure<'a>(

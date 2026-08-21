@@ -383,6 +383,24 @@ impl<'trace> RepositoryExecutor<'trace> {
         Ok(())
     }
 
+    pub(super) fn set_compiler_environment(
+        &mut self,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<(), BatteryError> {
+        if self.families[family_index(ArmFamily::Toolchain)].is_some() {
+            return Err(BatteryError::new(
+                "compiler environment must be supplied before toolchain-family execution",
+            ));
+        }
+        if !self.verifier_evidence.is_empty() || self.verifier_evidence_required {
+            return Err(BatteryError::new(
+                "standalone compiler environment cannot replace verifier evidence authority",
+            ));
+        }
+        self.verifier_environment = environment;
+        Ok(())
+    }
+
     /// The tracked contract this capture loaded from the selected tree.
     pub(super) const fn contract(&self) -> &Contract {
         &self.contract

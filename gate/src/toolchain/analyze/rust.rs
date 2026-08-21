@@ -17,7 +17,7 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CompileInvocation, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER,
+    CompileInvocation, CompilerResources, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER,
     run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
@@ -26,7 +26,7 @@ use crate::toolchain::{
 };
 use sill::{Acquisition, Environment, Possession, WaitPolicy};
 
-/// Compile the selected workspace natively, including every reached target.
+/// Compile changed owners and the exact native surface reached in dependents.
 ///
 /// The canvas arm beside this one already compiles Rust, but only for
 /// `wasm32-unknown-unknown` and only the default targets, so nothing in the
@@ -41,14 +41,14 @@ pub(in crate::toolchain) fn rust_typecheck(
     repository: &Path,
     changes: &[String],
     bounds: &Bounds,
-    programs: &BTreeMap<&str, &str>,
+    resources: CompilerResources<'_>,
 ) -> Analysis {
     rust_typecheck_with_workspace(
         declaration,
         root,
         changes,
         bounds,
-        programs,
+        resources,
         || RustWorkspace::create(root, repository),
         None,
     )
@@ -59,14 +59,14 @@ fn rust_typecheck_with_workspace(
     root: &Path,
     changes: &[String],
     bounds: &Bounds,
-    programs: &BTreeMap<&str, &str>,
+    resources: CompilerResources<'_>,
     create_workspace: impl FnOnce() -> Result<RustWorkspace, String>,
     wait: Option<WaitPolicy>,
 ) -> Analysis {
     if !root.join("Cargo.toml").is_file() {
         return Analysis::not_applicable(declaration);
     }
-    let Some(cargo) = programs.get(CARGO) else {
+    let Some(cargo) = resources.program(CARGO) else {
         return Analysis::terminal(
             ArmOutcome::ToolUnavailable,
             format!("{} declares no {CARGO} program", declaration.id.as_str()),
@@ -76,7 +76,7 @@ fn rust_typecheck_with_workspace(
         Ok(workspace) => workspace,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let analysis = match rust_environment(cargo, &workspace) {
+    let analysis = match rust_environment(cargo, &workspace, resources.environment()) {
         Err(reason) => Analysis::terminal(ArmOutcome::ParseFailure, reason),
         Ok(environment) => {
             let reach = crate::workspace_tests::workspace_package_reach_at(
@@ -487,23 +487,32 @@ fn unsafe_cache_entry(path: &Path) -> io::Error {
     ))
 }
 
-fn rust_environment(cargo: &str, workspace: &RustWorkspace) -> Result<Environment, String> {
+fn rust_environment(
+    cargo: &str,
+    workspace: &RustWorkspace,
+    inherited: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Result<Environment, String> {
     let path = tool_search_path("rust-typecheck", &[cargo, "/usr/bin/cc", "/bin/sh"])?;
-    Environment::new([
-        ("PATH", path),
-        (HOME_DIRECTORY, COMPILED_HOME_DIRECTORY.into()),
-        (
-            CARGO_TARGET_DIRECTORY,
-            workspace.cargo_target.as_os_str().to_owned(),
-        ),
-        (
-            CARGO_BUILD_DIRECTORY,
-            workspace.cargo_build.as_os_str().to_owned(),
-        ),
-        (RUSTC_WRAPPER, std::ffi::OsString::new()),
-        (RUSTC_WORKSPACE_WRAPPER, std::ffi::OsString::new()),
-    ])
-    .map_err(|error| format!("native typecheck tool environment was refused: {error}"))
+    let mut entries = inherited
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<std::ffi::OsString, std::ffi::OsString>>();
+    entries.insert("PATH".into(), path);
+    entries
+        .entry(HOME_DIRECTORY.into())
+        .or_insert_with(|| COMPILED_HOME_DIRECTORY.into());
+    entries.insert(
+        CARGO_TARGET_DIRECTORY.into(),
+        workspace.cargo_target.as_os_str().to_owned(),
+    );
+    entries.insert(
+        CARGO_BUILD_DIRECTORY.into(),
+        workspace.cargo_build.as_os_str().to_owned(),
+    );
+    entries.insert(RUSTC_WRAPPER.into(), std::ffi::OsString::new());
+    entries.insert(RUSTC_WORKSPACE_WRAPPER.into(), std::ffi::OsString::new());
+    Environment::new(entries)
+        .map_err(|error| format!("native typecheck tool environment was refused: {error}"))
 }
 
 #[cfg(test)]
@@ -513,6 +522,46 @@ mod tests {
 
     use crate::toolchain::{ArmFinding, GateId, declaration, exclusive_scratch_root};
     use sill::{Cancellation, CancellationToken, Deadlines, RestartDisposition, WaitPolicy};
+
+    #[test]
+    fn focused_native_check_retains_private_cargo_home_and_job_budget() {
+        let workspace = RustWorkspace {
+            source: PathBuf::from("/selected"),
+            cargo_target: PathBuf::from("/outputs/target"),
+            cargo_build: PathBuf::from("/outputs/build"),
+            possession: None,
+        };
+        let inherited = vec![
+            (
+                std::ffi::OsString::from("CARGO_HOME"),
+                std::ffi::OsString::from("/private/cargo-home"),
+            ),
+            (
+                std::ffi::OsString::from("CARGO_BUILD_JOBS"),
+                std::ffi::OsString::from("2"),
+            ),
+        ];
+
+        let environment = rust_environment("/toolchain/bin/cargo", &workspace, &inherited)
+            .expect("focused native environment");
+        let entries = environment
+            .entries()
+            .iter()
+            .cloned()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            entries.get(std::ffi::OsStr::new("CARGO_HOME")),
+            Some(&std::ffi::OsString::from("/private/cargo-home"))
+        );
+        assert_eq!(
+            entries.get(std::ffi::OsStr::new("CARGO_BUILD_JOBS")),
+            Some(&std::ffi::OsString::from("2"))
+        );
+        assert_eq!(
+            entries.get(std::ffi::OsStr::new(CARGO_TARGET_DIRECTORY)),
+            Some(&std::ffi::OsString::from("/outputs/target"))
+        );
+    }
 
     /// The manifest of a workspace whose only crate is the planted one.
     const FIXTURE_MANIFEST: &str = "\
@@ -757,7 +806,7 @@ mod tests {
                 &self.root,
                 changes,
                 bounds,
-                &programs,
+                CompilerResources::new(&programs, &[]),
                 || {
                     RustWorkspace::create_at(
                         &self.root,
@@ -811,7 +860,7 @@ mod tests {
                         "if [ \"$1\" = metadata ]; then\n",
                         "  exec '{cargo}' \"$@\"\n",
                         "fi\n",
-                        "printf '%s\\n' \"$*\" > '{log}'\n",
+                        "printf '%s\\n' \"$*\" >> '{log}'\n",
                     ),
                     cargo = cargo,
                     log = log.display(),

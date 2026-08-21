@@ -119,15 +119,15 @@ impl Error for ReviewHistoryError {}
 /// Only tasks present in `entries` contribute edges, preserving the board's
 /// actor-filtered visibility boundary. Input is sorted by durable position so
 /// callers cannot change history by changing collection order.
-pub fn review_history(
-    facts: &[wire::Envelope<wire::AnyFact>],
+pub fn review_history<'a>(
+    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     entries: &[Entry],
 ) -> Result<Vec<ReviewEdge>, ReviewHistoryError> {
     let handles = entries
         .iter()
         .map(|entry| (entry.born().clone(), entry.handle().clone()))
         .collect::<BTreeMap<_, _>>();
-    let mut ordered = facts.iter().collect::<Vec<_>>();
+    let mut ordered = facts.into_iter().collect::<Vec<_>>();
     ordered.sort_by_key(|envelope| envelope.seq);
     let mut phases = BTreeMap::<TaskStamp, Phase>::new();
     let mut authors = BTreeMap::<TaskStamp, (Phase, Actor)>::new();

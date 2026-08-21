@@ -3,44 +3,77 @@
 use std::io::Write;
 use std::path::Path;
 
-use gate::{TestSelectionReport, WORKSPACE_TEST_CONCURRENCY_CAP, WorkspaceTestRoots};
+use gate::{TestSelectionReport, WorkspaceTestBudget, WorkspaceTestRoots};
 use sill::Environment;
 
-use super::ChangeGateError;
+use super::{CargoBudget, ChangeGateError};
 
 pub(super) enum TestExecution {
     Packaged(Vec<crate::config::TestEngine>),
     CurrentSourceCargo,
 }
 
-pub(super) fn run_selected_tests(
-    selected_root: &Path,
-    writable_root: &Path,
+pub(super) struct TestRun<'a> {
+    selected_root: &'a Path,
+    roots: WorkspaceTestRoots<'a>,
     source: wire::Digest,
-    changes: &[String],
-    execution: TestExecution,
+    changes: &'a [String],
+    budget: CargoBudget,
     environment: Environment,
+}
+
+impl<'a> TestRun<'a> {
+    pub(super) fn new(
+        selected_root: &'a Path,
+        writable_root: &'a Path,
+        source: wire::Digest,
+        changes: &'a [String],
+        budget: CargoBudget,
+        environment: Environment,
+    ) -> Self {
+        Self {
+            selected_root,
+            roots: WorkspaceTestRoots::new(selected_root, writable_root),
+            source,
+            changes,
+            budget,
+            environment,
+        }
+    }
+}
+
+pub(super) fn run_selected_tests(
+    run: TestRun<'_>,
+    execution: TestExecution,
     progress: &mut impl Write,
 ) -> Result<TestSelectionReport, ChangeGateError> {
     let cargo_selected = match execution {
-        TestExecution::CurrentSourceCargo => true,
+        TestExecution::CurrentSourceCargo => {
+            gate::cargo_workspace_tests_applicable(run.selected_root, run.changes)
+        }
         TestExecution::Packaged(engines) => {
             engines.contains(&crate::config::TestEngine::CargoWorkspace)
-                && gate::cargo_workspace_tests_applicable(selected_root, changes)
+                && gate::cargo_workspace_tests_applicable(run.selected_root, run.changes)
         }
     };
     if !cargo_selected {
-        return TestSelectionReport::complete_without_engines(source, changes.to_vec())
+        return TestSelectionReport::complete_without_engines(run.source, run.changes.to_vec())
             .map_err(|error| ChangeGateError::protocol("test-selection-invalid", error));
     }
 
-    let roots = WorkspaceTestRoots::new(selected_root, writable_root);
-    gate::run_selected_workspace_tests_at(
-        roots,
-        source,
-        changes,
+    let environment = run.budget.bind_test_environment(run.environment)?;
+    let budget = WorkspaceTestBudget::new(
+        run.budget.test_concurrency(),
+        run.budget.shard_jobs(),
+        run.budget.test_threads(),
+    )
+    .map_err(|error| ChangeGateError::refusal("change-gate-tests-refused", error))?;
+    gate::run_selected_workspace_tests_with_budget_at(
+        run.roots,
+        run.source,
+        run.changes,
         environment,
-        WORKSPACE_TEST_CONCURRENCY_CAP,
+        budget,
         progress,
     )
     .map_err(|error| ChangeGateError::refusal("change-gate-tests-refused", error))
@@ -66,12 +99,15 @@ mod tests {
         let mut progress = Vec::new();
 
         let report = run_selected_tests(
-            &root,
-            &root,
-            source.clone(),
-            &changes,
+            TestRun::new(
+                &root,
+                &root,
+                source.clone(),
+                &changes,
+                budget(),
+                environment,
+            ),
             TestExecution::Packaged(Vec::new()),
-            environment,
             &mut progress,
         )
         .expect("zero-engine repository needs no Cargo executable");
@@ -98,12 +134,15 @@ mod tests {
         let mut progress = Vec::new();
 
         let report = run_selected_tests(
-            &root,
-            &root,
-            wire::Digest::compute(wire::Domain::GateTree, b"documentation-only source"),
-            &["README.md".to_owned()],
+            TestRun::new(
+                &root,
+                &root,
+                wire::Digest::compute(wire::Domain::GateTree, b"documentation-only source"),
+                &["README.md".to_owned()],
+                budget(),
+                environment,
+            ),
             TestExecution::Packaged(vec![crate::config::TestEngine::CargoWorkspace]),
-            environment,
             &mut progress,
         )
         .expect("irrelevant Cargo scope needs no Cargo executable");
@@ -125,12 +164,15 @@ mod tests {
                 .expect("minimal environment");
 
         let error = run_selected_tests(
-            &root,
-            &root,
-            wire::Digest::compute(wire::Domain::GateTree, b"Cargo source"),
-            &["src/lib.rs".to_owned()],
+            TestRun::new(
+                &root,
+                &root,
+                wire::Digest::compute(wire::Domain::GateTree, b"Cargo source"),
+                &["src/lib.rs".to_owned()],
+                budget(),
+                environment,
+            ),
             TestExecution::Packaged(vec![crate::config::TestEngine::CargoWorkspace]),
-            environment,
             &mut Vec::new(),
         )
         .expect_err("applicable declared Cargo engine needs its compiled executable");
@@ -141,26 +183,30 @@ mod tests {
     }
 
     #[test]
-    fn current_source_surface_retains_cargo_without_packaged_applicability() {
+    fn current_source_surface_skips_cargo_for_an_irrelevant_slice() {
         let root = fixture_root("current-source-cargo");
         fs::create_dir_all(&root).expect("create current-source fixture");
         let environment =
             Environment::new([(OsString::from("PATH"), root.clone().into_os_string())])
                 .expect("minimal environment");
 
-        let error = run_selected_tests(
-            &root,
-            &root,
-            wire::Digest::compute(wire::Domain::GateTree, b"current-source documentation"),
-            &["README.md".to_owned()],
+        let report = run_selected_tests(
+            TestRun::new(
+                &root,
+                &root,
+                wire::Digest::compute(wire::Domain::GateTree, b"current-source documentation"),
+                &["README.md".to_owned()],
+                budget(),
+                environment,
+            ),
             TestExecution::CurrentSourceCargo,
-            environment,
             &mut Vec::new(),
         )
-        .expect_err("the explicit current-source surface retains Cargo execution");
+        .expect("an irrelevant current-source slice needs no Cargo executable");
 
-        assert_eq!(error.reason(), "gate::change-gate-tests-refused");
-        assert!(error.detail().contains("metadata launch failed"), "{error}");
+        assert!(report.engines().is_empty());
+        assert!(report.tests().is_empty());
+        assert!(report.admits());
         fs::remove_dir_all(root).expect("remove current-source fixture");
     }
 
@@ -171,5 +217,9 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed),
         ))
+    }
+
+    fn budget() -> CargoBudget {
+        CargoBudget::from_observation(4, Some(0), 4)
     }
 }

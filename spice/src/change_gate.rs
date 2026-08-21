@@ -7,7 +7,6 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::thread;
 
 use gate::{
     ArmDisposition, ArmFamily, BatteryArmResult, BatteryManifest, BatteryState, ChangeReachObject,
@@ -18,11 +17,13 @@ use sill::Environment;
 
 use crate::repository::Repository;
 
+mod cargo_budget;
 mod progress;
 mod test_execution;
 
+use cargo_budget::CargoBudget;
 use progress::{SharedProgress, publish_test_selection};
-use test_execution::{TestExecution, run_selected_tests};
+use test_execution::{TestExecution, TestRun, run_selected_tests};
 
 /// Current combined ordinary-change-gate report schema.
 pub const CHANGE_GATE_REPORT_VERSION: u64 = 4;
@@ -333,7 +334,16 @@ struct ChangeGateExecution {
     test_source: wire::Digest,
     test_changes: Vec<String>,
     test_execution: TestExecution,
+    budget: CargoBudget,
     environment: Environment,
+}
+
+struct PartialStateContext<'a> {
+    selection: &'a ChangeSelectionReport,
+    source: &'a wire::Digest,
+    surface: SelectionSurface,
+    parent_evidence: bool,
+    budget: CargoBudget,
 }
 
 struct PackagedPolicy {
@@ -380,7 +390,6 @@ pub fn run_resolution(
 ) -> Result<ChangeGateReport, ChangeGateError> {
     run_with_selection(progress, SelectionSurface::Resolution)
 }
-
 #[derive(Clone, Copy)]
 enum SelectionSurface {
     Packaged,
@@ -427,6 +436,9 @@ fn run_with_selection(
     progress: &mut (impl Write + Send),
     surface: SelectionSurface,
 ) -> Result<ChangeGateReport, ChangeGateError> {
+    publish_phase(progress, "capture", None)?;
+    let budget = CargoBudget::detect(gate::WORKSPACE_TEST_CONCURRENCY_CAP);
+    publish_budget(progress, budget, "serial-cargo")?;
     let mut anchor = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
     let resolution_repository = if matches!(surface, SelectionSurface::Resolution) {
         Some(Repository::discover(Path::new(".")).map_err(|error| {
@@ -439,6 +451,7 @@ fn run_with_selection(
         Some(repository) => probe_semantic_evidence(repository, &anchor, surface, progress)?,
         None => None,
     };
+    publish_phase(progress, "selection", Some(anchor.changes().len()))?;
     let (selection, test_execution) = select_changes(&anchor, surface, semantic.is_some())?;
     publish_selection(progress, &selection)?;
 
@@ -457,6 +470,7 @@ fn run_with_selection(
         test_source: anchor.source().clone(),
         test_changes: anchor.changes().to_vec(),
         test_execution,
+        budget,
         environment: ambient_environment().map_err(|error| {
             ChangeGateError::environment("change-gate-environment-unavailable", error)
         })?,
@@ -488,10 +502,13 @@ fn run_with_selection(
 
     let policy = settle_partial_state(
         &mut anchor,
-        &selection,
-        &source,
-        surface,
-        semantic.is_some(),
+        PartialStateContext {
+            selection: &selection,
+            source: &source,
+            surface,
+            parent_evidence: semantic.is_some(),
+            budget,
+        },
         policy,
         &mut shared_progress,
     )?;
@@ -500,10 +517,7 @@ fn run_with_selection(
 
 fn settle_partial_state<W: Write + Send + ?Sized>(
     anchor: &mut crate::gate::PreparedArm<'static>,
-    selection: &ChangeSelectionReport,
-    source: &wire::Digest,
-    surface: SelectionSurface,
-    parent_evidence: bool,
+    context: PartialStateContext<'_>,
     mut policy: ChangePolicyReport,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<ChangePolicyReport, ChangeGateError> {
@@ -528,18 +542,29 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
                     ChangeGateError::environment("change-gate-progress-unavailable", error)
                 })?;
 
-                let mut retry = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
-                let (retry_selection, _) = select_changes(&retry, surface, parent_evidence)?;
-                if &retry_selection != selection || retry.source() != source {
+                let mut retry = context
+                    .surface
+                    .prepare_anchor()
+                    .map_err(ChangeGateError::gate)?;
+                let (retry_selection, _) =
+                    select_changes(&retry, context.surface, context.parent_evidence)?;
+                if &retry_selection != context.selection || retry.source() != context.source {
                     return Err(ChangeGateError::refusal(
                         "change-gate-source-moved",
                         "staged source or selected policy changed while retrying state publication",
                     ));
                 }
-                let results =
-                    run_focused_policy(&mut retry, selection, source, surface, None, progress)?;
-                policy = ChangePolicyReport::focused_summaries(source, results);
-                policy.validate(selection.gate_ids(), source)?;
+                let results = run_focused_policy(
+                    &mut retry,
+                    context.selection,
+                    context.source,
+                    context.surface,
+                    None,
+                    context.budget,
+                    progress,
+                )?;
+                policy = ChangePolicyReport::focused_summaries(context.source, results);
+                policy.validate(context.selection.gate_ids(), context.source)?;
                 *anchor = retry;
             }
             Err(error) => return Err(ChangeGateError::gate(error)),
@@ -726,6 +751,49 @@ fn publish_selection(
         .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
 }
 
+fn publish_phase(
+    progress: &mut (impl Write + Send),
+    stage: &str,
+    changes: Option<usize>,
+) -> Result<(), ChangeGateError> {
+    match changes {
+        Some(changes) => writeln!(
+            progress,
+            "[change-gate-phase] stage={stage} changes={changes}"
+        ),
+        None => writeln!(progress, "[change-gate-phase] stage={stage}"),
+    }
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    progress
+        .flush()
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
+}
+
+fn publish_budget(
+    progress: &mut (impl Write + Send),
+    budget: CargoBudget,
+    scheduling: &str,
+) -> Result<(), ChangeGateError> {
+    writeln!(
+        progress,
+        concat!(
+            "[change-gate-budget] cpus={} peer_cargo_roots={} policy_jobs={} ",
+            "test_concurrency={} shard_jobs={} test_threads={} scheduling={}"
+        ),
+        budget.cpus(),
+        budget.peer_cargo_roots(),
+        budget.policy_jobs(),
+        budget.test_concurrency(),
+        budget.shard_jobs(),
+        budget.test_threads(),
+        scheduling,
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    progress
+        .flush()
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
+}
+
 #[cfg(test)]
 fn packaged_selection_policy(
     root: &Path,
@@ -791,33 +859,25 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         test_source,
         test_changes,
         test_execution,
+        budget,
         environment,
     } = execution;
-    let (tests, policy) = thread::scope(|scope| {
-        let mut test_progress = progress.clone();
-        let test_worker = scope.spawn(move || {
-            run_selected_tests(
-                &selected_root,
-                &writable_root,
-                test_source,
-                &test_changes,
-                test_execution,
-                environment,
-                &mut test_progress,
-            )
-        });
-        let policy = run_focused_policy(anchor, selection, source, surface, semantic, progress)
-            .map(|results| ChangePolicyReport::focused_summaries(source, results));
-        let tests = test_worker.join().map_err(|_| {
-            ChangeGateError::environment(
-                "change-gate-test-worker-panicked",
-                "selected workspace test worker panicked",
-            )
-        });
-        (tests, policy)
-    });
-    let tests = tests??;
-    let policy = policy?;
+    let policy = run_focused_policy(
+        anchor, selection, source, surface, semantic, budget, progress,
+    )
+    .map(|results| ChangePolicyReport::focused_summaries(source, results))?;
+    let tests = run_selected_tests(
+        TestRun::new(
+            &selected_root,
+            &writable_root,
+            test_source,
+            &test_changes,
+            budget,
+            environment,
+        ),
+        test_execution,
+        progress,
+    )?;
     Ok((tests, policy))
 }
 
@@ -827,6 +887,7 @@ fn run_focused_policy(
     source: &wire::Digest,
     surface: SelectionSurface,
     semantic: Option<&crate::gate::AdmittedSemanticVerifierEvidence>,
+    budget: CargoBudget,
     progress: &mut impl Write,
 ) -> Result<Vec<PolicyArmSummary>, ChangeGateError> {
     let state_run = anchor.state_run();
@@ -884,6 +945,9 @@ fn run_focused_policy(
             ChangeGateError::environment("change-gate-progress-unavailable", error)
         })?;
         let report = if gate_id == GateId::Staging {
+            anchor
+                .bind_cargo_jobs(budget.policy_jobs())
+                .map_err(ChangeGateError::gate)?;
             publish_execution_scope(
                 progress,
                 gate_id,
@@ -894,6 +958,9 @@ fn run_focused_policy(
         } else {
             let mut prepared = surface
                 .prepare_arm_in_state(selection, gate_id, state_run.clone())
+                .map_err(ChangeGateError::gate)?;
+            prepared
+                .bind_cargo_jobs(budget.policy_jobs())
                 .map_err(ChangeGateError::gate)?;
             let execution_objects = prepared.execution_objects().ok_or_else(|| {
                 ChangeGateError::protocol(

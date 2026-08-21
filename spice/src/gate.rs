@@ -77,6 +77,8 @@ pub struct PreparedBattery<'trace> {
 pub struct PreparedArm<'trace> {
     capture: BatteryCapture<'trace>,
     gate_id: GateId,
+    verifier_environment: Vec<(OsString, OsString)>,
+    cargo_jobs: Option<usize>,
 }
 
 impl PreparedArm<'_> {
@@ -160,8 +162,21 @@ impl PreparedArm<'_> {
     /// Returns the canonical focused-arm refusal without acquiring siblings.
     pub fn execute(&mut self) -> Result<FocusedArmReport, RunError> {
         self.capture
-            .execute_arm_report(self.gate_id)
+            .execute_arm_report_with_environment(self.gate_id, self.verifier_environment.clone())
             .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    }
+
+    /// Cap Cargo work performed by this focused arm without changing compiler semantics.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a different second budget after this retained capture was bound.
+    pub fn bind_cargo_jobs(&mut self, cargo_jobs: usize) -> Result<(), RunError> {
+        bind_cargo_jobs(
+            &mut self.verifier_environment,
+            &mut self.cargo_jobs,
+            cargo_jobs,
+        )
     }
 
     /// Shared state transaction for additional focused captures in this run.
@@ -189,6 +204,19 @@ impl PreparedArm<'_> {
 impl PreparedBattery<'_> {
     fn bind_exact_evidence_environment(&mut self, verifier_environment: Vec<(OsString, OsString)>) {
         self.verifier_environment = verifier_environment;
+    }
+
+    /// Cap standalone Cargo analyses owned by this retained battery capture.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a different second budget after the capture was bound.
+    pub fn bind_cargo_jobs(&mut self, cargo_jobs: usize) -> Result<(), RunError> {
+        bind_cargo_jobs(
+            &mut self.verifier_environment,
+            &mut self.cargo_jobs,
+            cargo_jobs,
+        )
     }
 
     /// Identity of the immutable selected source retained by this preparation.
@@ -480,13 +508,7 @@ fn bind_cargo_jobs(
     match *bound {
         Some(current) if current != requested => Err(RunError::refusal(
             "gate::verifier-budget-refused",
-            format!(
-                concat!(
-                    "full verifier Cargo job cap changed from {} to {} ",
-                    "after capture"
-                ),
-                current, requested
-            ),
+            format!("Cargo job cap changed from {current} to {requested} after capture"),
         )),
         Some(_) => Ok(()),
         None => {
@@ -596,8 +618,13 @@ fn prepare_arm_with_mode(
     gate_id: GateId,
     input_mode: InputMode,
 ) -> Result<PreparedArm<'static>, RunError> {
-    capture(selector, input_mode, Some(gate_id), None)
-        .map(|capture| PreparedArm { capture, gate_id })
+    let verifier_environment = verifier_environment();
+    capture(selector, input_mode, Some(gate_id), None).map(|capture| PreparedArm {
+        capture,
+        gate_id,
+        verifier_environment,
+        cargo_jobs: None,
+    })
 }
 
 /// Capture one focused arm into an existing enclosing state transaction.
@@ -626,8 +653,15 @@ pub fn prepare_arm_in_state_reached(
     gate_id: GateId,
     state_run: ::gate::BatteryStateRun,
 ) -> Result<PreparedArm<'static>, RunError> {
-    capture_reached_in_state(selector, InputMode::Generic, selection, gate_id, state_run)
-        .map(|capture| PreparedArm { capture, gate_id })
+    let verifier_environment = verifier_environment();
+    capture_reached_in_state(selector, InputMode::Generic, selection, gate_id, state_run).map(
+        |capture| PreparedArm {
+            capture,
+            gate_id,
+            verifier_environment,
+            cargo_jobs: None,
+        },
+    )
 }
 
 /// Capture one strict current-source arm with its validated authored reach in
@@ -638,8 +672,15 @@ pub fn prepare_arm_in_state_reached_strict(
     gate_id: GateId,
     state_run: ::gate::BatteryStateRun,
 ) -> Result<PreparedArm<'static>, RunError> {
-    capture_reached_in_state(selector, InputMode::Strict, selection, gate_id, state_run)
-        .map(|capture| PreparedArm { capture, gate_id })
+    let verifier_environment = verifier_environment();
+    capture_reached_in_state(selector, InputMode::Strict, selection, gate_id, state_run).map(
+        |capture| PreparedArm {
+            capture,
+            gate_id,
+            verifier_environment,
+            cargo_jobs: None,
+        },
+    )
 }
 
 fn prepare_arm_in_state_with_mode(
@@ -648,8 +689,13 @@ fn prepare_arm_in_state_with_mode(
     state_run: ::gate::BatteryStateRun,
     input_mode: InputMode,
 ) -> Result<PreparedArm<'static>, RunError> {
-    capture_in_state(selector, input_mode, gate_id, state_run)
-        .map(|capture| PreparedArm { capture, gate_id })
+    let verifier_environment = verifier_environment();
+    capture_in_state(selector, input_mode, gate_id, state_run).map(|capture| PreparedArm {
+        capture,
+        gate_id,
+        verifier_environment,
+        cargo_jobs: None,
+    })
 }
 
 /// Compile every reusable verifier stage and encode its source-bound receipt.

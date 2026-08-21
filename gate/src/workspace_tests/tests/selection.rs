@@ -186,7 +186,7 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
 }
 
 #[test]
-fn staged_library_source_selects_transitive_reverse_workspace_dependents() {
+fn staged_library_source_does_not_run_reverse_dependent_test_binaries() {
     let mut inventory = fixture_inventory();
     inventory.packages[1]
         .dependencies
@@ -222,17 +222,10 @@ fn staged_library_source_selects_transitive_reverse_workspace_dependents() {
         wire::Digest::compute(wire::Domain::GateTree, b"reverse dependency reach"),
         &["fixture-a/src/behavior.rs".to_owned()],
     )
-    .expect("library reach expands through transitive reverse dependencies");
+    .expect("library reach stays inside its owning package tests");
 
-    assert_eq!(
-        report.tests(),
-        [
-            "fixture-a::lib:fixture-a",
-            "fixture-b::bin:fixture-b",
-            "fixture-c::test:behavior",
-        ]
-    );
-    assert_eq!(report.edges().len(), 3);
+    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
+    assert_eq!(report.edges().len(), 1);
     assert!(
         report
             .edges()
@@ -328,10 +321,149 @@ fn custom_build_target_reaches_workspace_dependents() {
         wire::Digest::compute(wire::Domain::GateTree, b"custom build reach"),
         &["fixture-a/tools/generate.rs".to_owned()],
     )
-    .expect("custom build test reach uses its reverse dependency closure");
+    .expect("custom build test reach stays inside its owning package");
+    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
+}
+
+#[test]
+fn configuration_slice_checks_reverse_dependents_without_running_their_test_binaries() {
+    fn target(package: &str, kind: &str, name: &str, source: &str) -> TargetIdentity {
+        TargetIdentity {
+            package: format!("{package}-id"),
+            kind: kind.to_owned(),
+            name: name.to_owned(),
+            required_features: Vec::new(),
+            source: PathBuf::from(source),
+            declared_path_sources: Vec::new(),
+            source_bytes: 1,
+        }
+    }
+
+    let vendor_lib = target("vendor", "lib", "vendor", "/workspace/vendor/src/lib.rs");
+    let vendor_contracts = target(
+        "vendor",
+        "test",
+        "contracts",
+        "/workspace/vendor/tests/contracts.rs",
+    );
+    let lane_lib = target("lane", "lib", "lane", "/workspace/lane/src/lib.rs");
+    let spice_lib = target("spice", "lib", "spice", "/workspace/spice/src/lib.rs");
+    let policy_config = target(
+        "spice",
+        "test",
+        "policy_config",
+        "/workspace/spice/tests/policy_config.rs",
+    );
+    let demo_cli = target(
+        "spice",
+        "test",
+        "demo_cli",
+        "/workspace/spice/tests/demo_cli.rs",
+    );
+    let xtask_lib = target("xtask", "lib", "xtask", "/workspace/xtask/src/lib.rs");
+    let inventory = Inventory {
+        packages: vec![
+            PackageInventory {
+                id: "vendor-id".to_owned(),
+                name: "vendor".to_owned(),
+                root: PathBuf::from("/workspace/vendor"),
+                dependencies: Vec::new(),
+                declared_targets: vec![vendor_lib.clone(), vendor_contracts.clone()],
+                targets: vec![vendor_lib, vendor_contracts],
+            },
+            PackageInventory {
+                id: "lane-id".to_owned(),
+                name: "lane".to_owned(),
+                root: PathBuf::from("/workspace/lane"),
+                dependencies: vec![PathBuf::from("/workspace/vendor")],
+                declared_targets: vec![lane_lib.clone()],
+                targets: vec![lane_lib],
+            },
+            PackageInventory {
+                id: "spice-id".to_owned(),
+                name: "spice".to_owned(),
+                root: PathBuf::from("/workspace/spice"),
+                dependencies: vec![
+                    PathBuf::from("/workspace/lane"),
+                    PathBuf::from("/workspace/vendor"),
+                ],
+                declared_targets: vec![spice_lib.clone(), policy_config.clone(), demo_cli.clone()],
+                targets: vec![spice_lib, policy_config, demo_cli],
+            },
+            PackageInventory {
+                id: "xtask-id".to_owned(),
+                name: "xtask".to_owned(),
+                root: PathBuf::from("/workspace/xtask"),
+                dependencies: vec![PathBuf::from("/workspace/spice")],
+                declared_targets: vec![xtask_lib.clone()],
+                targets: vec![xtask_lib],
+            },
+        ],
+        binary_outputs: Vec::new(),
+        target_directory: PathBuf::from("/workspace/target"),
+        build_directory: PathBuf::from("/workspace/target/build"),
+    };
+    let changes = [
+        "vendor/src/config.rs".to_owned(),
+        "spice/tests/policy_config.rs".to_owned(),
+    ];
+
+    let plan = selection_plan(
+        &inventory,
+        Path::new("/workspace"),
+        wire::Digest::compute(wire::Domain::GateTree, b"configuration slice"),
+        &changes,
+    )
+    .expect("configuration slice selects owning tests");
     assert_eq!(
-        report.tests(),
-        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+        plan.report().tests(),
+        [
+            "spice::test:policy_config",
+            "vendor::lib:vendor",
+            "vendor::test:contracts",
+        ]
+    );
+    assert!(
+        plan.report()
+            .tests()
+            .iter()
+            .all(|test| !test.contains("demo_cli") && !test.starts_with("xtask::"))
+    );
+
+    let checks = crate::workspace_tests::selection::cargo_check_selections(
+        &inventory,
+        Path::new("/workspace"),
+        &changes,
+    )
+    .expect("configuration slice resolves native checks");
+    let reach = WorkspacePackageReach {
+        roots: checks.iter().map(|check| check.root.clone()).collect(),
+        checks,
+    };
+    assert_eq!(
+        reach.cargo_check_arguments(),
+        [
+            ["check", "--locked", "--all-targets", "--package", "vendor",]
+                .map(str::to_owned)
+                .to_vec(),
+            ["check", "--locked", "--package", "lane", "--lib"]
+                .map(str::to_owned)
+                .to_vec(),
+            [
+                "check",
+                "--locked",
+                "--package",
+                "spice",
+                "--lib",
+                "--test",
+                "policy_config",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            ["check", "--locked", "--package", "xtask", "--lib"]
+                .map(str::to_owned)
+                .to_vec(),
+        ]
     );
 }
 

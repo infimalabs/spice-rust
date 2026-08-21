@@ -199,8 +199,10 @@ pub(super) async fn run_surface(
         repository,
         paths,
         epoch,
-        lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
-        lane_recovery::Runtime::new(reporter),
+        command_surface::Runtimes::new(
+            lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
+            lane_recovery::Runtime::new(reporter),
+        ),
         config,
         &reads,
     );

@@ -49,7 +49,7 @@ pub(super) fn validated_snapshot_from(
         )
     })?;
     let mut residency = positioned(residency);
-    let origin_threads = task_origin_threads(observed.facts().facts(), &residency.body)?;
+    let origin_threads = task_origin_threads(observed.facts().iter(), &residency.body)?;
     let mut tasks = Vec::with_capacity(observed.tasks().len());
     let mut entries = Vec::with_capacity(observed.tasks().len());
     for heads in observed.tasks() {
@@ -91,10 +91,10 @@ pub(super) fn validated_snapshot_from(
             lease,
         ));
     }
-    board::project_subscription_history(&mut residency.body, &entries, observed.facts().facts())
+    board::project_subscription_history(&mut residency.body, &entries, observed.facts().iter())
         .map_err(|error| store_fault("lineage::subscription-history-invalid", &error))?;
-    let recent_cell = board::recent_claim_cell(&entries, observed.facts().facts(), &principal);
-    let review_history = board::graph::review_history(observed.facts().facts(), &entries)
+    let recent_cell = board::recent_claim_cell(&entries, observed.facts().iter(), &principal);
+    let review_history = board::graph::review_history(observed.facts().iter(), &entries)
         .map_err(|error| error.to_string());
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
@@ -179,8 +179,8 @@ fn route_actor_identity(identity: &str) -> Option<String> {
     .then(|| identity.to_owned())
 }
 
-fn task_origin_threads(
-    facts: &[wire::Envelope<wire::AnyFact>],
+fn task_origin_threads<'a>(
+    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     residency: &wire::ResidencyHead,
 ) -> Result<std::collections::BTreeMap<wire::TaskStamp, String>, Outcome<CommandAnswer>> {
     let mut occupants = std::collections::BTreeMap::new();

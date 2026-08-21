@@ -339,7 +339,6 @@ impl Runtime {
     fn synchronize_holds(&mut self, snapshot: &bus::TaskSnapshot) -> CommandResult<()> {
         for envelope in snapshot
             .facts()
-            .facts()
             .iter()
             .filter(|envelope| self.hold_cursor.is_none_or(|cursor| envelope.seq > cursor))
         {
@@ -527,10 +526,10 @@ fn project_targets(
     board::project_subscription_history(
         &mut projected_residency,
         &entries,
-        snapshot.facts().facts(),
+        snapshot.facts().iter(),
     )
     .map_err(|error| store_fault("lifecycle::subscription-history-invalid", &error))?;
-    let ledger = steer::Ledger::from_snapshot(snapshot.facts())
+    let ledger = steer::Ledger::from_facts(snapshot.facts().iter())
         .map_err(|error| store_fault("lifecycle::steering-invalid", &error.to_string()))?;
     let ready_at = ready_instants(snapshot, &entries)?;
     let mut rows = projected_residency.lanes.iter().collect::<Vec<_>>();
@@ -632,7 +631,6 @@ fn ready_instants(
         .map(|heads| (heads.statement().body().born.clone(), heads))
         .collect::<BTreeMap<_, _>>();
     let facts = snapshot
-        .facts()
         .facts()
         .iter()
         .map(|fact| (fact.seq, fact.at))

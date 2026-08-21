@@ -110,6 +110,8 @@ fn sequential_shards_reuse_the_base_output_authority() {
     let policy = RunPolicy {
         concurrency: 1,
         shared_outputs: false,
+        cargo_jobs: None,
+        test_threads: None,
         shard_deadline: Duration::from_secs(5),
         coordinator_deadline: Duration::from_secs(10),
         progress_interval: Duration::from_secs(1),
@@ -181,6 +183,8 @@ fn shared_output_policy_isolates_publications_but_reuses_the_build_cache() {
     let policy = RunPolicy {
         concurrency: 2,
         shared_outputs: true,
+        cargo_jobs: None,
+        test_threads: None,
         shard_deadline: Duration::from_secs(5),
         coordinator_deadline: Duration::from_secs(10),
         progress_interval: Duration::from_secs(1),
@@ -235,6 +239,46 @@ fn shared_output_policy_isolates_publications_but_reuses_the_build_cache() {
 }
 
 #[test]
+fn selected_slice_budget_caps_cargo_and_test_harness_parallelism() {
+    let root = fixture_root("workspace-selected-budget");
+    fs::create_dir_all(&root).expect("selected budget fixture root creates");
+    let arguments_log = root.join("arguments.log");
+    let cargo = executable(
+        &root,
+        "cargo",
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\n' \"$*\" > \"$PID_ROOT/arguments.log\"\n",
+            "printf 'test lane::done ... ok\\n'\n",
+        ),
+    );
+    let environment = Environment::new([
+        (OsString::from("PID_ROOT"), root.clone().into_os_string()),
+        (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+    ])
+    .expect("selected budget environment admits");
+    let budget = WorkspaceTestBudget::new(2, 1, 1).expect("selected budget admits");
+    let policy = RunPolicy::production_budgeted(budget);
+    let mut output = Vec::new();
+
+    Coordinator::new(
+        vec![quick_package()],
+        root.clone(),
+        environment,
+        cargo.into_os_string(),
+        policy,
+        &mut output,
+    )
+    .run()
+    .expect("selected budget execution succeeds");
+
+    let arguments = fs::read_to_string(arguments_log).expect("selected argument log reads");
+    assert!(arguments.contains("--jobs 1"), "{arguments}");
+    assert!(arguments.ends_with("-- --test-threads=1\n"), "{arguments}");
+    fs::remove_dir_all(root).expect("selected budget fixture removes");
+}
+
+#[test]
 fn sill_process_and_lock_fixtures_use_one_harness_thread() {
     let mut sill = quick_package();
     sill.name = "sill".to_owned();
@@ -269,6 +313,8 @@ fn every_shard_owns_one_private_temporary_root_that_is_reaped_after_exit() {
     let policy = RunPolicy {
         concurrency: 2,
         shared_outputs: true,
+        cargo_jobs: None,
+        test_threads: None,
         shard_deadline: Duration::from_secs(5),
         coordinator_deadline: Duration::from_secs(10),
         progress_interval: Duration::from_secs(1),
@@ -786,6 +832,8 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
     let policy = RunPolicy {
         concurrency: 1,
         shared_outputs: false,
+        cargo_jobs: None,
+        test_threads: None,
         shard_deadline: Duration::from_secs(5),
         coordinator_deadline: Duration::from_secs(7),
         progress_interval: Duration::from_secs(1),
@@ -901,6 +949,8 @@ fn reporting_failure_case(point: ReportPoint, failure: ReportFailure) {
     let policy = RunPolicy {
         concurrency: 2,
         shared_outputs: false,
+        cargo_jobs: None,
+        test_threads: None,
         shard_deadline: Duration::from_secs(15),
         coordinator_deadline: Duration::from_secs(17),
         progress_interval: Duration::from_millis(40),

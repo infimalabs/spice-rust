@@ -1,3 +1,7 @@
+use rusqlite::OptionalExtension;
+
+use super::commit::decode_optional_seq;
+use super::indexed_read::decode_head;
 use super::*;
 
 impl JournalRead<'_> {

@@ -17,8 +17,8 @@ fn native_process_receives_only_explicit_reached_packages() {
     assert_eq!(
         fs::read_to_string(log).expect("read native Cargo arguments"),
         concat!(
-            "check --locked --all-targets ",
-            "--package consumer --package planted\n"
+            "check --locked --all-targets --package planted\n",
+            "check --locked --package consumer --lib\n",
         )
     );
 }

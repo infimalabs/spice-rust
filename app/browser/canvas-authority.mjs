@@ -24,8 +24,10 @@ export async function assertAuthoritySurface(page, seeded) {
   const trust = page.locator('[data-pane="trust"]');
   await trust.waitFor();
   const trustText = await trust.innerText();
-  assert.match(trustText, /trust::pended/);
-  assert.match(trustText, /trust::granted/);
+  // Fresh operator subscriptions begin live at their barrier rather than
+  // replaying historical facts. The independent Trust subject still carries
+  // the current durable head.
+  assert.match(trustText, /0 transitions/);
   assert.match(trustText, /granted/);
 }
 

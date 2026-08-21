@@ -19,6 +19,11 @@ fn one_writer_commits_then_broadcasts_monotone_cursors() {
     let bus = Bus::start(Journal::in_memory().expect("in-memory authority"))
         .expect("dedicated writer starts");
     let commits = bus.subscribe().expect("subscription registers");
+    let empty = bus
+        .task_snapshot()
+        .expect("empty task snapshot initializes");
+    assert!(empty.facts().is_empty());
+    assert!(empty.tasks().is_empty());
 
     let first = committed(
         bus.commit(initial_write(uuid(COMMAND_ONE), Arc::clone(&observed)))
@@ -27,6 +32,10 @@ fn one_writer_commits_then_broadcasts_monotone_cursors() {
     assert_eq!((first.first(), first.last()), (1, 1));
     assert_eq!(first.cursor().position().map(Seq::get), Some(1));
     assert_eq!(commits.recv().expect("post-durability signal"), first);
+    let tasks = bus.task_snapshot().expect("incremental task head reads");
+    assert_eq!(tasks.facts().len(), 1);
+    assert_eq!(tasks.tasks().len(), 1);
+    assert_eq!(tasks.tasks()[0].statement().body().born, stamp());
     assert_eq!(
         bus.fact_snapshot().expect("durable snapshot").facts().len(),
         1
@@ -55,6 +64,95 @@ fn one_writer_commits_then_broadcasts_monotone_cursors() {
             .all(|thread| *thread == writer_threads[0])
     );
     drop(writer_threads);
+    bus.shutdown().expect("writer shuts down");
+}
+
+#[test]
+fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
+    const FLEET_FACTS: usize = 8_501;
+    const FLEET_BYTES: usize = 14_700_000;
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let mut journal = Journal::in_memory().expect("in-memory authority");
+    journal
+        .apply(initial_write(uuid(COMMAND_ONE), Arc::clone(&observed)))
+        .expect("initial task commits");
+    let mut bulk = JournalWrite::new(
+        Actor::Operator,
+        "task:BUS-a1".parse().expect("origin"),
+        instant("2030-04-12T18:44:10.271Z"),
+        Producer::CommandDoor,
+    );
+    let padding = "x".repeat(1_800);
+    let mut cause = FactCause::Existing(Seq::new(1).expect("initial cause"));
+    for index in 1..FLEET_FACTS {
+        let pending = bulk
+            .fact(
+                body::TaskNoted {
+                    task: stamp(),
+                    note: format!("{index:04}-{padding}"),
+                },
+                cause,
+            )
+            .expect("fleet fact builds");
+        cause = FactCause::Pending(pending);
+    }
+    let applied = journal.apply(bulk).expect("fleet history commits");
+    assert_eq!(applied.last().get(), FLEET_FACTS as u64);
+
+    let bus = Bus::start(journal).expect("dedicated writer starts");
+    let before = bus.task_snapshot().expect("fleet snapshot loads once");
+    let payload_bytes = before
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<body::TaskNoted>())
+        .map(|note| note.note.len())
+        .sum::<usize>();
+    assert_eq!(before.facts().len(), FLEET_FACTS);
+    assert!(
+        payload_bytes >= FLEET_BYTES,
+        "fleet fixture measured only {payload_bytes} fact-body bytes"
+    );
+    let shared_first = before.facts().iter().next().expect("history is nonempty");
+
+    let mut tail = JournalWrite::new(
+        Actor::Operator,
+        "task:BUS-a1".parse().expect("origin"),
+        instant("2030-04-12T18:44:11.271Z"),
+        Producer::CommandDoor,
+    );
+    tail.fact(
+        body::TaskNoted {
+            task: stamp(),
+            note: "one proportional tail".to_owned(),
+        },
+        FactCause::Existing(applied.last()),
+    )
+    .expect("tail fact builds");
+    committed(bus.commit(tail).expect("tail commit answers"));
+
+    let after = bus.task_snapshot().expect("advanced snapshot reads");
+    assert_eq!(after.facts().len(), FLEET_FACTS + 1);
+    assert_eq!(after.facts().horizon().map(Seq::get), Some(8_502));
+    assert!(
+        std::ptr::eq(
+            shared_first,
+            after
+                .facts()
+                .iter()
+                .next()
+                .expect("history remains nonempty")
+        ),
+        "the one-fact commit rebuilt rather than shared 8,501 decoded facts"
+    );
+    assert_eq!(
+        after
+            .facts()
+            .iter()
+            .last()
+            .and_then(|fact| fact.fact.read::<body::TaskNoted>())
+            .map(|note| note.note),
+        Some("one proportional tail".to_owned())
+    );
     bus.shutdown().expect("writer shuts down");
 }
 

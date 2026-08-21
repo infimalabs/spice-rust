@@ -628,107 +628,108 @@ fn checkout_skill_source_matches_the_embedded_install_asset() {
     assert_eq!(fs::read_to_string(source).unwrap(), SKILL);
 }
 
+const COMMANDS: &[(&str, &[&str], &[&str])] = &[
+    (
+        "spice session briefing",
+        &["session", "briefing"],
+        &["spice", "session", "briefing"],
+    ),
+    (
+        "spice task status",
+        &["task", "status"],
+        &["spice", "task", "status"],
+    ),
+    (
+        "spice session sweep --count N",
+        &["session", "sweep"],
+        &["spice", "session", "sweep", "--count", "1"],
+    ),
+    (
+        "spice session turns --turn-id ID --view full",
+        &["session", "turns"],
+        &[
+            "spice",
+            "session",
+            "turns",
+            "--turn-id",
+            "1",
+            "--view",
+            "full",
+        ],
+    ),
+    (
+        "spice run -- <command>",
+        &["run"],
+        &["spice", "run", "--", "/bin/true"],
+    ),
+    (
+        "spice task add TITLE --project PROJECT",
+        &["task", "add"],
+        &["spice", "task", "add", "title", "--project", "rim.cli"],
+    ),
+    (
+        "spice task next",
+        &["task", "next"],
+        &["spice", "task", "next"],
+    ),
+    (
+        "spice task depends PARENT CHILD...",
+        &["task", "depends"],
+        &["spice", "task", "depends", "PARENT", "CHILD"],
+    ),
+    (
+        "spice task free HANDLE",
+        &["task", "free"],
+        &["spice", "task", "free", "HANDLE"],
+    ),
+    (
+        "spice gate pre-commit",
+        &["gate", "pre-commit"],
+        &["spice", "gate", "pre-commit"],
+    ),
+    (
+        "spice task done --validation TEXT",
+        &["task", "done"],
+        &["spice", "task", "done", "--validation", "checked"],
+    ),
+    (
+        "spice task review HANDLE --finding FINDING --note NOTE",
+        &["task", "review"],
+        &[
+            "spice",
+            "task",
+            "review",
+            "HANDLE",
+            "--finding",
+            "clean",
+            "--note",
+            "checked",
+        ],
+    ),
+    (
+        "spice task capture",
+        &["task", "capture"],
+        &["spice", "task", "capture"],
+    ),
+    (
+        "spice task oops TEXT --origin ORIGIN",
+        &["task", "oops"],
+        &["spice", "task", "oops", "friction", "--origin", "ack:key"],
+    ),
+    (
+        "spice trust grant DIGEST",
+        &["trust", "grant"],
+        &["spice", "trust", "grant", "digest"],
+    ),
+    (
+        "spice trust revoke DIGEST",
+        &["trust", "revoke"],
+        &["spice", "trust", "revoke", "digest"],
+    ),
+];
+
 #[test]
 fn generated_guidance_and_install_errors_name_spice() {
-    const COMMANDS: &[(&str, &[&str], &[&str])] = &[
-        (
-            "spice session briefing",
-            &["session", "briefing"],
-            &["spice", "session", "briefing"],
-        ),
-        (
-            "spice task status",
-            &["task", "status"],
-            &["spice", "task", "status"],
-        ),
-        (
-            "spice session sweep --count N",
-            &["session", "sweep"],
-            &["spice", "session", "sweep", "--count", "1"],
-        ),
-        (
-            "spice session turns --turn-id ID --view full",
-            &["session", "turns"],
-            &[
-                "spice",
-                "session",
-                "turns",
-                "--turn-id",
-                "1",
-                "--view",
-                "full",
-            ],
-        ),
-        (
-            "spice run -- <command>",
-            &["run"],
-            &["spice", "run", "--", "/bin/true"],
-        ),
-        (
-            "spice task add TITLE --project PROJECT",
-            &["task", "add"],
-            &["spice", "task", "add", "title", "--project", "rim.cli"],
-        ),
-        (
-            "spice task next",
-            &["task", "next"],
-            &["spice", "task", "next"],
-        ),
-        (
-            "spice task depends PARENT CHILD...",
-            &["task", "depends"],
-            &["spice", "task", "depends", "PARENT", "CHILD"],
-        ),
-        (
-            "spice task free HANDLE",
-            &["task", "free"],
-            &["spice", "task", "free", "HANDLE"],
-        ),
-        (
-            "spice gate pre-commit",
-            &["gate", "pre-commit"],
-            &["spice", "gate", "pre-commit"],
-        ),
-        (
-            "spice task done --validation TEXT",
-            &["task", "done"],
-            &["spice", "task", "done", "--validation", "checked"],
-        ),
-        (
-            "spice task review HANDLE --finding FINDING --note NOTE",
-            &["task", "review"],
-            &[
-                "spice",
-                "task",
-                "review",
-                "HANDLE",
-                "--finding",
-                "clean",
-                "--note",
-                "checked",
-            ],
-        ),
-        (
-            "spice task capture",
-            &["task", "capture"],
-            &["spice", "task", "capture"],
-        ),
-        (
-            "spice task oops TEXT --origin ORIGIN",
-            &["task", "oops"],
-            &["spice", "task", "oops", "friction", "--origin", "ack:key"],
-        ),
-        (
-            "spice trust grant DIGEST",
-            &["trust", "grant"],
-            &["spice", "trust", "grant", "digest"],
-        ),
-        (
-            "spice trust revoke DIGEST",
-            &["trust", "revoke"],
-            &["spice", "trust", "revoke", "digest"],
-        ),
-    ];
     let named = SKILL
         .split('`')
         .filter(|span| span.starts_with("spice "))

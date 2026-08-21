@@ -43,10 +43,10 @@ impl<'a> Selection<'a> {
 /// facts: task creation and claim transactions already record the lane and
 /// task atomically, so replaying those facts avoids a second mutable authority
 /// while surviving restart exactly.
-pub fn project_subscription_history(
+pub fn project_subscription_history<'a>(
     residency: &mut wire::ResidencyHead,
     entries: &[Entry],
-    facts: &[wire::Envelope<wire::AnyFact>],
+    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
 ) -> Result<(), String> {
     for subscription in &mut residency.subscriptions {
         subscription.auto_projects.clear();
@@ -218,13 +218,13 @@ fn movement_cost(recent: &ClaimCell, candidate: &Entry) -> u8 {
 /// its cell when it still names the same win. Older superseded legacy wins have
 /// no invented locality and therefore remain neutral.
 #[must_use]
-pub fn recent_claim_cell(
+pub fn recent_claim_cell<'a>(
     entries: &[Entry],
-    facts: &[wire::Envelope<wire::AnyFact>],
+    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     actor: &Actor,
 ) -> Option<ClaimCell> {
     let latest = facts
-        .iter()
+        .into_iter()
         .filter_map(|envelope| {
             let won = envelope.fact.read::<wire::body::ClaimWon>()?;
             (&won.actor == actor).then_some((envelope.seq, won.cell))

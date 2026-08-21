@@ -275,7 +275,7 @@ fn canvas_reverse_dependency_reach_runs_for_core_but_skips_unrelated_packages() 
         &no_trunk.output,
         &["other/src/lib.rs".to_owned()],
         &canvas_exit_bounds(),
-        &programs,
+        CompilerResources::new(&programs, &[]),
         None,
     );
     assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
@@ -321,7 +321,7 @@ fn canvas_surfaces_each_deferred_trunk_refusal_only_after_reach() {
             &unrelated.output,
             &["other/src/lib.rs".to_owned()],
             &canvas_exit_bounds(),
-            &programs,
+            CompilerResources::new(&programs, &[]),
             Some(Analysis::terminal(outcome, reason.clone())),
         );
         assert_eq!(analysis.outcome, ArmOutcome::NotApplicable, "{label}");
@@ -338,7 +338,7 @@ fn canvas_surfaces_each_deferred_trunk_refusal_only_after_reach() {
             &reached.output,
             &["core/src/lib.rs".to_owned()],
             &canvas_exit_bounds(),
-            &programs,
+            CompilerResources::new(&programs, &[]),
             Some(Analysis::terminal(outcome, reason.clone())),
         );
         assert_eq!(analysis.outcome, outcome, "{label}");
@@ -1074,7 +1074,7 @@ impl CanvasFixture {
             &self.output,
             changes,
             bounds,
-            &programs,
+            CompilerResources::new(&programs, &[]),
             None,
         )
     }
