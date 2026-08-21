@@ -1,5 +1,6 @@
 //! Listener cancellation that interrupts accepted Canvas transports.
 
+use std::io::IoSlice;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -78,6 +79,21 @@ impl AsyncWrite for ClosingStream {
         Pin::new(&mut self.stream).poll_write(context, buffer)
     }
 
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffers: &[IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.cancelled.as_mut().poll(context).is_ready() {
+            return Poll::Ready(Err(connection_closed()));
+        }
+        Pin::new(&mut self.stream).poll_write_vectored(context, buffers)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.stream.is_write_vectored()
+    }
+
     fn poll_flush(
         mut self: Pin<&mut Self>,
         context: &mut Context<'_>,
@@ -101,4 +117,38 @@ fn connection_closed() -> std::io::Error {
         std::io::ErrorKind::BrokenPipe,
         "canvas connection closed with the resident",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::AsyncWrite as _;
+
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn closing_stream_preserves_tcp_vectored_writes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("fixture listener binds");
+        let address = listener.local_addr().expect("fixture address");
+        let client = tokio::spawn(TcpStream::connect(address));
+        let (stream, _) = listener.accept().await.expect("fixture stream accepts");
+        let stream = ClosingStream {
+            stream,
+            cancelled: Box::pin(CancellationToken::new().cancelled_owned()),
+        };
+        client
+            .await
+            .expect("fixture connect task completes")
+            .expect("fixture client connects");
+
+        assert!(
+            stream.stream.is_write_vectored(),
+            "the fixture platform's TCP transport supports vectored writes"
+        );
+        assert!(
+            stream.is_write_vectored(),
+            "the cancellation wrapper must not make Hyper flatten large bodies"
+        );
+    }
 }

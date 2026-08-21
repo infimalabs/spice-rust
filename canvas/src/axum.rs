@@ -13,10 +13,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ::axum::Router;
-use ::axum::body::Body;
+use ::axum::body::{Body, Bytes};
 use ::axum::extract::DefaultBodyLimit;
 use ::axum::extract::{Json, OriginalUri, RawQuery, State};
-use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, ORIGIN};
+use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, IF_NONE_MATCH, ORIGIN};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
 use ::axum::routing::{get, post};
@@ -727,9 +727,8 @@ async fn app(
     let asset = match state.app.served(uri.path()) {
         Ok(Some(asset)) => asset,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        // The generation was complete when admitted, so a read failure means
-        // immutable staged bytes moved underneath the resident. That is a
-        // served answer nobody should cache.
+        // A new or evicted generation must cross complete admission before it
+        // can answer. Any failure here is an answer nobody should cache.
         Err(error) => {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -750,14 +749,20 @@ async fn app(
     } else {
         None
     };
-    let mut response = Response::new(Body::from(asset.into_bytes()));
+    let etag = format!("\"{digest}\"");
+    let mut response = if if_none_match(&headers, &etag) {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NOT_MODIFIED;
+        response
+    } else {
+        Response::new(Body::from(Bytes::from_owner(asset.into_shared_bytes())))
+    };
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
     response.headers_mut().insert(
         ETAG,
-        HeaderValue::from_str(&format!("\"{digest}\""))
-            .expect("a canonical digest is an admitted ETag"),
+        HeaderValue::from_str(&etag).expect("a canonical digest is an admitted ETag"),
     );
     response
         .headers_mut()
@@ -769,6 +774,18 @@ async fn app(
             .insert("content-security-policy", policy);
     }
     response
+}
+
+fn if_none_match(headers: &HeaderMap, etag: &str) -> bool {
+    headers
+        .get_all(IF_NONE_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .any(|candidate| {
+            candidate == "*" || candidate.strip_prefix("W/").unwrap_or(candidate) == etag
+        })
 }
 
 mod bootstrap;

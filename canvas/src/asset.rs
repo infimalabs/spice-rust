@@ -1,8 +1,10 @@
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +33,9 @@ pub const APP_STAGE_CURRENT: &str = "current";
 pub const APP_STAGE_GENERATIONS: &str = "generations";
 /// Route prefix that pins a page's dependent assets to one generation.
 pub const APP_GENERATION_ROUTE: &str = "/_spice/app";
+/// Generations retained in resident memory: the active page and the page that
+/// can still be loading across one atomic publication.
+const APP_GENERATION_CACHE_CAPACITY: usize = 2;
 
 /// One route in the closed browser app inventory.
 #[derive(Clone, Copy)]
@@ -118,9 +123,10 @@ impl fmt::Debug for App {
 }
 
 /// The lane-built browser app served by one canvas generation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct AppSource {
     stage: PathBuf,
+    generations: Arc<Mutex<GenerationCache>>,
 }
 
 /// One immutable, complete lane-app generation.
@@ -128,20 +134,24 @@ pub struct AppSource {
 pub struct AppGeneration {
     directory: PathBuf,
     identity: wire::Digest,
+    assets: Arc<BTreeMap<&'static str, ServedAsset>>,
+}
+
+#[derive(Debug, Default)]
+struct GenerationCache {
+    generations: BTreeMap<wire::Digest, AppGeneration>,
+    oldest_first: VecDeque<wire::Digest>,
+    current: Option<wire::Digest>,
 }
 
 impl AppSource {
     /// Resolve the one app stage this worktree must serve.
     ///
-    /// This is the only stage freshness check on a hot path, and it is kept
-    /// because it is the one that matters: without it a lane serves whatever
-    /// generation happens to be lying in its stage, so an operator reads a UI
-    /// that is not the one this worktree built. It costs 36.8us measured over
-    /// 20000 iterations -- one read of the pointer plus one directory read and
-    /// one `symlink_metadata` per entry, over a closed four-file inventory that
-    /// cannot grow with the repository. Nothing here builds; publishing a new
-    /// generation is `cargo xtask app`, 20.66s of native `trunk` with no
-    /// emulated container anywhere in it.
+    /// The current pointer remains the only stage freshness check on the hot
+    /// path. A new identity is admitted under the generation-cache lock: its
+    /// closed inventory is validated, then all six files and their digests are
+    /// loaded exactly once. Requests for an admitted identity clone shared byte
+    /// handles and never reopen or rehash its files.
     ///
     /// # Errors
     ///
@@ -150,6 +160,7 @@ impl AppSource {
     pub fn resolve(worktree: &Path) -> Result<Self, AppSourceError> {
         let source = Self {
             stage: worktree.join(APP_STAGE),
+            generations: Arc::new(Mutex::new(GenerationCache::default())),
         };
         source.current_generation()?;
         Ok(source)
@@ -177,19 +188,58 @@ impl AppSource {
         let identity = wire::Digest::from_str(spelling).map_err(|error| {
             AppSourceError::Generation(format!("{}: {error}", pointer.display()))
         })?;
-        self.generation(identity)
+        self.generation(identity, true)
     }
 
-    fn generation(&self, identity: wire::Digest) -> Result<AppGeneration, AppSourceError> {
+    fn generation(
+        &self,
+        identity: wire::Digest,
+        current: bool,
+    ) -> Result<AppGeneration, AppSourceError> {
+        let mut cache = self
+            .generations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(generation) = cache.generations.get(&identity).cloned() {
+            if current {
+                cache.current = Some(identity.clone());
+            }
+            cache.touch(&identity);
+            return Ok(generation);
+        }
+
         let directory = self
             .stage
             .join(APP_STAGE_GENERATIONS)
             .join(identity.as_str());
         validate_generation(&directory)?;
-        Ok(AppGeneration {
+        let assets = APP
+            .assets()
+            .iter()
+            .map(|asset| {
+                let path = directory.join(asset.file());
+                let bytes = Arc::<[u8]>::from(
+                    std::fs::read(&path)
+                        .map_err(|source| AppSourceError::Unreadable { path, source })?,
+                );
+                let digest = wire::Digest::compute(wire::Domain::DistArtifact, &bytes);
+                Ok((
+                    asset.file(),
+                    ServedAsset {
+                        bytes,
+                        content_type: asset.content_type(),
+                        digest: Arc::new(digest),
+                    },
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, AppSourceError>>()?;
+        let generation = AppGeneration {
             directory,
-            identity,
-        })
+            identity: identity.clone(),
+            assets: Arc::new(assets),
+        };
+        cache.insert(identity, generation.clone(), current);
+        Ok(generation)
     }
 
     /// Serve one exact route. Unknown paths have no shell fallback.
@@ -216,18 +266,18 @@ impl AppSource {
         let Some(asset) = APP.asset_file(file) else {
             return Ok(None);
         };
-        self.generation(identity)?.served(asset).map(Some)
+        self.generation(identity, false)?.served(asset).map(Some)
     }
 
     /// Identity of the HTML shell this lane build serves.
     ///
     /// # Errors
     ///
-    /// Returns [`AppSourceError::Unreadable`] when the staged shell cannot be
-    /// read after startup.
+    /// Returns a generation or inventory error if the current shell cannot be
+    /// admitted.
     pub fn digest(&self) -> Result<wire::Digest, AppSourceError> {
         self.served("/")?
-            .map(|asset| asset.digest())
+            .map(|asset| asset.digest().clone())
             .ok_or_else(|| AppSourceError::Inventory("the root route is absent".to_owned()))
     }
 }
@@ -235,6 +285,56 @@ impl AppSource {
 impl fmt::Display for AppSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "lane app at {}", self.stage.display())
+    }
+}
+
+impl fmt::Debug for AppSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AppSource")
+            .field("stage", &self.stage)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for AppSource {
+    fn eq(&self, other: &Self) -> bool {
+        self.stage == other.stage
+    }
+}
+
+impl Eq for AppSource {}
+
+impl GenerationCache {
+    fn touch(&mut self, identity: &wire::Digest) {
+        if let Some(index) = self
+            .oldest_first
+            .iter()
+            .position(|candidate| candidate == identity)
+        {
+            self.oldest_first.remove(index);
+        }
+        self.oldest_first.push_back(identity.clone());
+    }
+
+    fn insert(&mut self, identity: wire::Digest, generation: AppGeneration, current: bool) {
+        self.generations.insert(identity.clone(), generation);
+        if current {
+            self.current = Some(identity.clone());
+        }
+        self.touch(&identity);
+        while self.generations.len() > APP_GENERATION_CACHE_CAPACITY {
+            let oldest_index = self
+                .oldest_first
+                .iter()
+                .position(|candidate| Some(candidate) != self.current.as_ref())
+                .expect("a bounded generation cache has a non-current entry");
+            let oldest = self
+                .oldest_first
+                .remove(oldest_index)
+                .expect("the selected generation-cache entry exists");
+            self.generations.remove(&oldest);
+        }
     }
 }
 
@@ -251,19 +351,19 @@ impl AppGeneration {
         format!("{APP_GENERATION_ROUTE}/{}/{}", self.identity, asset.file())
     }
 
-    /// Read one asset from this immutable generation.
+    /// Clone one shared asset from this admitted immutable generation.
     ///
     /// # Errors
     ///
-    /// Returns [`AppSourceError::Unreadable`] when the generation moved or
-    /// became unreadable after it was admitted.
+    /// Returns [`AppSourceError::Inventory`] only if the closed inventory and
+    /// the admitted generation disagree, which is an internal invariant.
     pub fn served(&self, asset: AppAsset) -> Result<ServedAsset, AppSourceError> {
-        let path = self.directory.join(asset.file());
-        let bytes =
-            std::fs::read(&path).map_err(|source| AppSourceError::Unreadable { path, source })?;
-        Ok(ServedAsset {
-            bytes,
-            content_type: asset.content_type(),
+        self.assets.get(asset.file()).cloned().ok_or_else(|| {
+            AppSourceError::Inventory(format!(
+                "admitted generation {} has no {}",
+                self.identity,
+                asset.file()
+            ))
         })
     }
 }
@@ -344,10 +444,12 @@ fn validate_generation(directory: &Path) -> Result<(), AppSourceError> {
     Ok(())
 }
 
-/// One lane-built asset resolved for one request.
+/// One shared lane-built asset resolved for one request.
+#[derive(Clone, Eq, PartialEq)]
 pub struct ServedAsset {
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     content_type: &'static str,
+    digest: Arc<wire::Digest>,
 }
 
 impl ServedAsset {
@@ -359,8 +461,8 @@ impl ServedAsset {
 
     /// Content identity under the domain the distribution stage uses.
     #[must_use]
-    pub fn digest(&self) -> wire::Digest {
-        wire::Digest::compute(wire::Domain::DistArtifact, &self.bytes)
+    pub fn digest(&self) -> &wire::Digest {
+        self.digest.as_ref()
     }
 
     /// Borrow the exact response bytes before consuming the asset.
@@ -369,9 +471,14 @@ impl ServedAsset {
         &self.bytes
     }
 
-    /// The bytes read for this request.
+    /// Copy the bytes for build-time consumers that need an owned vector.
     #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes.to_vec()
+    }
+
+    /// Move a shared handle to the immutable response bytes into the server.
+    pub(crate) fn into_shared_bytes(self) -> Arc<[u8]> {
         self.bytes
     }
 }
@@ -382,7 +489,7 @@ impl fmt::Debug for ServedAsset {
             .debug_struct("ServedAsset")
             .field("bytes", &self.bytes.len())
             .field("content_type", &self.content_type)
-            .field("digest", &self.digest())
+            .field("digest", self.digest())
             .finish()
     }
 }
@@ -399,7 +506,7 @@ pub enum AppSourceError {
         /// File-system failure that made the generation incomplete, if any.
         source: Option<io::Error>,
     },
-    /// A file the directory named at startup cannot be read now.
+    /// A generation file cannot be read while that generation is admitted.
     Unreadable {
         /// Exact path that failed.
         path: PathBuf,
@@ -555,6 +662,7 @@ impl Error for PublishError {
 mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Barrier};
 
     use super::*;
 
@@ -563,6 +671,8 @@ mod tests {
         "1111111111111111111111111111111111111111111111111111111111111111";
     const SECOND_GENERATION: &str =
         "2222222222222222222222222222222222222222222222222222222222222222";
+    const THIRD_GENERATION: &str =
+        "3333333333333333333333333333333333333333333333333333333333333333";
 
     fn uuid(text: &str) -> wire::CanonicalUuid {
         text.parse().expect("canonical fixture UUID")
@@ -660,7 +770,7 @@ mod tests {
             .expect("staged files are readable")
             .expect("the root route is served");
         assert_eq!(served.content_type(), "text/html; charset=utf-8");
-        assert_eq!(served.into_bytes(), b"locally built canvas-app.html");
+        assert_eq!(served.bytes(), b"locally built canvas-app.html");
         let wasm_route = first_generation.route(
             APP.asset("/app_bg.wasm")
                 .expect("the closed inventory has wasm"),
@@ -670,7 +780,7 @@ mod tests {
             .expect("staged files are readable")
             .expect("the wasm route is served");
         assert_eq!(wasm.content_type(), "application/wasm");
-        assert_eq!(wasm.into_bytes(), b"locally built app_bg.wasm");
+        assert_eq!(wasm.bytes(), b"locally built app_bg.wasm");
 
         let mut rebuilt = app();
         rebuilt
@@ -686,19 +796,20 @@ mod tests {
             .expect("the root route is served");
         assert_eq!(
             served.digest(),
-            wire::Digest::compute(wire::Domain::DistArtifact, b"rebuilt")
+            &wire::Digest::compute(wire::Domain::DistArtifact, b"rebuilt")
         );
         assert_eq!(
             source.digest().expect("rebuilt shell digests"),
-            served.digest()
+            served.digest().clone()
         );
-        assert_eq!(served.into_bytes(), b"rebuilt");
+        assert_eq!(served.bytes(), b"rebuilt");
         assert_eq!(
             source
                 .served(&wasm_route)
                 .expect("the first generation remains readable")
                 .expect("the first wasm route remains admitted")
-                .into_bytes(),
+                .bytes()
+                .to_vec(),
             b"locally built app_bg.wasm",
             "publication mixed the first page's dependent asset with the second generation"
         );
@@ -741,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn a_staged_file_lost_after_startup_names_itself() {
+    fn an_admitted_generation_survives_loss_of_its_staged_files() {
         let root = worktree();
         let stage = staged(&root, &app());
         let source = AppSource::resolve(&root).expect("a complete stage resolves");
@@ -755,17 +866,132 @@ mod tests {
             APP.asset("/style.css")
                 .expect("the closed inventory has a stylesheet"),
         );
-        let error = source
+        let served = source
             .served(&route)
-            .expect_err("a vanished staged file refuses");
-        let AppSourceError::Incomplete { directory, .. } = &error else {
-            panic!("a vanished staged file refused as {error:?}");
-        };
-        assert_eq!(directory, &stage);
-        assert!(
-            source.served("/").is_err(),
-            "a partial generation was served route by route"
+            .expect("an admitted generation no longer needs the staged file")
+            .expect("the admitted stylesheet remains routed");
+        assert_eq!(served.bytes(), b"locally built style.css");
+        assert_eq!(
+            source
+                .served("/")
+                .expect("the admitted generation remains complete")
+                .expect("the root remains routed")
+                .bytes()
+                .to_vec(),
+            b"locally built canvas-app.html"
         );
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn a_new_incomplete_generation_is_never_admitted() {
+        let root = worktree();
+        staged(&root, &app());
+        let source = AppSource::resolve(&root).expect("a complete stage resolves");
+        let second = staged_as(&root, SECOND_GENERATION, &app()[..2]);
+
+        let error = source
+            .served("/")
+            .expect_err("a newly published partial generation refuses");
+        let AppSourceError::Incomplete {
+            directory, missing, ..
+        } = error
+        else {
+            panic!("a partial publication refused as {error:?}");
+        };
+        assert_eq!(directory, second);
+        assert!(missing.iter().any(|file| file == "app_bg.wasm"));
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn concurrent_asset_handles_share_one_admitted_byte_allocation() {
+        const CONCURRENT_REQUESTS: usize = 32;
+
+        let root = worktree();
+        let stage = staged(&root, &app());
+        let source = Arc::new(AppSource::resolve(&root).expect("a complete stage resolves"));
+        let generation = source
+            .current_generation()
+            .expect("current generation resolves");
+        let route = Arc::new(
+            generation.route(
+                APP.asset("/app_bg.wasm")
+                    .expect("the closed inventory has wasm"),
+            ),
+        );
+        fs::remove_file(stage.join("app_bg.wasm"))
+            .expect("the admitted file is no longer available for request-time reads");
+
+        let barrier = Arc::new(Barrier::new(CONCURRENT_REQUESTS));
+        let handles = (0..CONCURRENT_REQUESTS)
+            .map(|_| {
+                let source = Arc::clone(&source);
+                let route = Arc::clone(&route);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    source
+                        .served(&route)
+                        .expect("the admitted generation serves without disk")
+                        .expect("the generation-qualified route exists")
+                })
+            })
+            .collect::<Vec<_>>();
+        let assets = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("request thread completes"))
+            .collect::<Vec<_>>();
+        let shared = assets[0].bytes().as_ptr();
+        assert!(
+            assets.iter().all(|asset| asset.bytes().as_ptr() == shared),
+            "concurrent responses must share one large immutable allocation"
+        );
+        assert!(assets.iter().all(|asset| {
+            asset.digest()
+                == &wire::Digest::compute(wire::Domain::DistArtifact, b"locally built app_bg.wasm")
+        }));
+        drop(assets);
+        let after = source
+            .served(&route)
+            .expect("a completed request retains only the admitted cache")
+            .expect("the generation-qualified route remains present");
+        assert_eq!(after.bytes().as_ptr(), shared);
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn the_generation_cache_is_bounded_and_pins_the_current_page() {
+        let root = worktree();
+        staged(&root, &app());
+        let source = AppSource::resolve(&root).expect("a complete stage resolves");
+        let first_route = source
+            .current_generation()
+            .expect("first generation resolves")
+            .route(
+                APP.asset("/app_bg.wasm")
+                    .expect("the closed inventory has wasm"),
+            );
+        staged_as(&root, SECOND_GENERATION, &app());
+        source.served("/").expect("second generation admits");
+        staged_as(&root, THIRD_GENERATION, &app());
+        source.served("/").expect("third generation admits");
+        source
+            .served(&first_route)
+            .expect("an older stored generation can be read through the bounded cache");
+
+        let cache = source
+            .generations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(cache.generations.len(), APP_GENERATION_CACHE_CAPACITY);
+        let first = wire::Digest::from_str(FIRST_GENERATION).expect("canonical generation");
+        let second = wire::Digest::from_str(SECOND_GENERATION).expect("canonical generation");
+        let third = wire::Digest::from_str(THIRD_GENERATION).expect("canonical generation");
+        assert!(cache.generations.contains_key(&first));
+        assert!(!cache.generations.contains_key(&second));
+        assert!(cache.generations.contains_key(&third));
+        assert_eq!(cache.current.as_ref(), Some(&third));
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
