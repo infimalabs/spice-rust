@@ -65,12 +65,6 @@ project_max_depth = 3
 # Adjudicate maxim trigger candidates before they become lane direction.
 enabled = true
 
-[vendor.claude]
-# Operator-directed lane occupancy: Claude lanes launch as Fable at maximum
-# reasoning effort so an imported session continues under the same identity.
-model = "fable"
-effort = "max"
-
 [policy]
 # Source verification omits appliance apply guidance from task completion.
 suppress_install_apply_guidance = true
