@@ -1079,13 +1079,28 @@ async fn wait_for_admission(
 mod binding;
 
 async fn request(address: SocketAddr, host: &str, path: &str) -> Vec<u8> {
+    request_with_headers(address, host, path, &[]).await
+}
+
+async fn request_with_headers(
+    address: SocketAddr,
+    host: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(address)
         .await
         .expect("connect to canvas");
+    let mut request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n");
+    for (name, value) in headers {
+        request.push_str(name);
+        request.push_str(": ");
+        request.push_str(value);
+        request.push_str("\r\n");
+    }
+    request.push_str("Connection: close\r\n\r\n");
     stream
-        .write_all(
-            format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes(),
-        )
+        .write_all(request.as_bytes())
         .await
         .expect("write request");
     let mut response = Vec::new();
@@ -1163,6 +1178,15 @@ fn response_body(response: &[u8]) -> &[u8] {
         .expect("response carries headers")
         + 4;
     &response[split..]
+}
+
+fn response_header<'a>(response: &'a [u8], expected: &str) -> Option<&'a str> {
+    let response = std::str::from_utf8(response).ok()?;
+    let head = response.split_once("\r\n\r\n")?.0;
+    head.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case(expected).then(|| value.trim())
+    })
 }
 
 fn external_speech(command: &[&str]) -> crate::SpeechConfig {
@@ -1389,7 +1413,7 @@ fn app_worktree_directory_is_removed_during_assertion_unwind() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
+async fn live_server_keeps_serving_an_admitted_generation_from_memory() {
     let fixture = app_worktree();
     let app = crate::AppSource::resolve(fixture.root()).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
@@ -1415,20 +1439,18 @@ async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
     assert!(served.starts_with(b"HTTP/1.1 200 OK\r\n"));
     assert!(served[split..].starts_with(b"locally built canvas-app.html"));
 
-    // A stage that stops answering mid-flight is reported as this endpoint's
-    // own failure, not as the app the operator asked to stop serving.
+    // Once the immutable generation is admitted, request completion no longer
+    // depends on reopening every file from disk.
     std::fs::remove_file(fixture.generation().join("canvas-app.html"))
         .expect("fixture removes one staged file");
 
-    let refused = request(address, &address.to_string(), "/").await;
-    assert!(refused.starts_with(b"HTTP/1.1 503 Service Unavailable\r\n"));
-    assert!(
-        String::from_utf8_lossy(&refused).contains("canvas-app.html"),
-        "the refusal does not name the file it could not read"
-    );
+    let cached = request(address, &address.to_string(), "/").await;
+    assert!(cached.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    assert!(response_body(&cached).starts_with(b"locally built canvas-app.html"));
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
 
+mod app;
 mod lifecycle;
