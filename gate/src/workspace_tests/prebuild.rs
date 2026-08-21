@@ -46,45 +46,52 @@ pub(super) fn prebuild_selected_tests(
     inventory: &Inventory,
     output: &mut impl Write,
 ) -> Result<Vec<PrebuiltTest>, WorkspaceTestError> {
-    let features = qualified_required_features(inventory.packages.iter().flat_map(|package| {
-        package.targets.iter().flat_map(|target| {
-            target
-                .required_features
-                .iter()
-                .map(|feature| (package.name.as_str(), feature.as_str()))
-        })
-    }));
-    let mut arguments = ["test", "--locked"]
-        .into_iter()
-        .map(OsString::from)
-        .collect::<Vec<_>>();
-    let mut command = "cargo test --locked".to_owned();
+    let mut artifacts = Vec::new();
     for package in &inventory.packages {
-        arguments.extend([OsString::from("--package"), OsString::from(&package.id)]);
-        command.push_str(" --package ");
-        command.push_str(&format!("{:?}", package.id));
+        for target in &package.targets {
+            let mut arguments = ["test", "--locked", "--package"]
+                .into_iter()
+                .map(OsString::from)
+                .collect::<Vec<_>>();
+            arguments.push(OsString::from(&package.id));
+            arguments.extend(target_arguments(target)?);
+            if let Some(features) = qualified_required_features(
+                target
+                    .required_features
+                    .iter()
+                    .map(|feature| (package.name.as_str(), feature.as_str())),
+            ) {
+                arguments.extend([OsString::from("--features"), OsString::from(features)]);
+            }
+            arguments.extend([
+                OsString::from("--no-run"),
+                OsString::from("--message-format=json-render-diagnostics"),
+            ]);
+            let command = std::iter::once(OsStr::new("cargo"))
+                .chain(arguments.iter().map(OsString::as_os_str))
+                .map(|argument| format!("{argument:?}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let owner = format!(
+                "selected workspace-test prebuild for {}::{}",
+                package.name,
+                target.display(),
+            );
+            let mut selected = run_prebuild_command_capture(
+                root,
+                environment,
+                cargo,
+                output,
+                &command,
+                arguments,
+                &owner,
+            )?;
+            artifacts.append(&mut selected);
+            if artifacts.last().is_some_and(|byte| *byte != b'\n') {
+                artifacts.push(b'\n');
+            }
+        }
     }
-    arguments.push(OsString::from("--all-targets"));
-    command.push_str(" --all-targets");
-    if let Some(features) = features {
-        arguments.extend([OsString::from("--features"), OsString::from(&features)]);
-        command.push_str(" --features ");
-        command.push_str(&features);
-    }
-    arguments.extend([
-        OsString::from("--no-run"),
-        OsString::from("--message-format=json-render-diagnostics"),
-    ]);
-    command.push_str(" --no-run --message-format=json-render-diagnostics");
-    let artifacts = run_prebuild_command_capture(
-        root,
-        environment,
-        cargo,
-        output,
-        &command,
-        arguments,
-        "selected workspace-test prebuild",
-    )?;
     repair_missing_binary_outputs(root, environment, cargo, inventory, output)?;
     prebuilt_test_plan(inventory, &artifacts)
 }

@@ -2,63 +2,9 @@
 
 use super::*;
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum CargoReachEscalationReason {
-    OutsidePackage,
-    UnreachedInPackage { package: String },
-}
-
-impl CargoReachEscalationReason {
-    pub(super) const fn kind(&self) -> &'static str {
-        match self {
-            Self::OutsidePackage => "outside-package",
-            Self::UnreachedInPackage { .. } => "unreached-in-package",
-        }
-    }
-
-    pub(super) fn package(&self) -> Option<&str> {
-        match self {
-            Self::OutsidePackage => None,
-            Self::UnreachedInPackage { package } => Some(package),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct CargoReachEscalation {
-    source: String,
-    reason: CargoReachEscalationReason,
-}
-
-impl CargoReachEscalation {
-    fn outside_package(source: &str) -> Self {
-        Self {
-            source: source.to_owned(),
-            reason: CargoReachEscalationReason::OutsidePackage,
-        }
-    }
-
-    fn unreached_in_package(source: &str, package: &str) -> Self {
-        Self {
-            source: source.to_owned(),
-            reason: CargoReachEscalationReason::UnreachedInPackage {
-                package: package.to_owned(),
-            },
-        }
-    }
-
-    pub(super) fn source(&self) -> &str {
-        &self.source
-    }
-
-    pub(super) const fn reason(&self) -> &CargoReachEscalationReason {
-        &self.reason
-    }
-}
-
+#[derive(Debug)]
 pub(super) struct SelectionPlan {
     report: crate::TestSelectionReport,
-    escalations: Vec<CargoReachEscalation>,
 }
 
 impl SelectionPlan {
@@ -67,13 +13,8 @@ impl SelectionPlan {
         &self.report
     }
 
-    #[cfg(test)]
-    pub(super) fn escalations(&self) -> &[CargoReachEscalation] {
-        &self.escalations
-    }
-
-    pub(super) fn into_parts(self) -> (crate::TestSelectionReport, Vec<CargoReachEscalation>) {
-        (self.report, self.escalations)
+    pub(super) fn into_report(self) -> crate::TestSelectionReport {
+        self.report
     }
 }
 
@@ -207,7 +148,6 @@ pub(super) fn selection_plan(
         .collect::<Vec<_>>();
     build_sources.sort();
     build_sources.dedup();
-    let mut escalations = BTreeSet::new();
     let mut tests = BTreeSet::new();
     let mut edges = BTreeSet::new();
     for changed in &build_sources {
@@ -220,13 +160,7 @@ pub(super) fn selection_plan(
         }
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
-            match containing_package(inventory, &absolute) {
-                Some(package) => select_package_targets(package, changed, &mut tests, &mut edges)?,
-                None => {
-                    escalations.insert(CargoReachEscalation::outside_package(changed));
-                }
-            }
-            continue;
+            return Err(unclassified_source(inventory, changed, &absolute));
         }
         for claim in claims {
             if claim.package_wide
@@ -235,7 +169,9 @@ pub(super) fn selection_plan(
                     .iter()
                     .any(|target| target_reaches_dependents(target))
             {
-                select_package_targets(claim.package, changed, &mut tests, &mut edges)?;
+                for package in reverse_dependency_closure(inventory, claim.package) {
+                    select_package_targets(package, changed, &mut tests, &mut edges)?;
+                }
                 continue;
             }
             let direct_tests = claim
@@ -243,19 +179,14 @@ pub(super) fn selection_plan(
                 .into_iter()
                 .filter(|target| claim.package.targets.contains(target))
                 .collect::<Vec<_>>();
-            if direct_tests.is_empty() {
-                escalations.insert(CargoReachEscalation::unreached_in_package(
-                    changed,
-                    &claim.package.name,
-                ));
-            } else {
+            if !direct_tests.is_empty() {
                 select_targets(claim.package, direct_tests, changed, &mut tests, &mut edges)?;
             }
         }
-    }
-    for escalation in &escalations {
-        for package in &inventory.packages {
-            select_package_targets(package, escalation.source(), &mut tests, &mut edges)?;
+        if !edges.iter().any(|edge| edge.source() == changed) {
+            return Err(WorkspaceTestError::new(format!(
+                "changed Rust source {changed:?} has no proven test-enabled Cargo target reach"
+            )));
         }
     }
     let report = crate::TestEvidenceGraph::select_tests(
@@ -266,10 +197,7 @@ pub(super) fn selection_plan(
         crate::CoverageCompleteness::Complete,
     )
     .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
-    Ok(SelectionPlan {
-        report,
-        escalations: escalations.into_iter().collect(),
-    })
+    Ok(SelectionPlan { report })
 }
 
 #[cfg(test)]
@@ -279,7 +207,7 @@ pub(super) fn selection_report(
     source: wire::Digest,
     changed_sources: &[String],
 ) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    selection_plan(inventory, root, source, changed_sources).map(|plan| plan.into_parts().0)
+    selection_plan(inventory, root, source, changed_sources).map(SelectionPlan::into_report)
 }
 
 pub(super) fn cargo_check_selections(
@@ -288,23 +216,22 @@ pub(super) fn cargo_check_selections(
     changed_sources: &[String],
 ) -> Result<Vec<CargoCheckSelection>, WorkspaceTestError> {
     let selected_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut reached = BTreeMap::<&str, Option<BTreeSet<CargoTargetSelection>>>::new();
+    let mut reached = BTreeMap::<&str, BTreeSet<CargoTargetSelection>>::new();
     if changed_sources.is_empty() {
-        select_all_package_checks(inventory.packages.iter(), &mut reached);
+        select_package_checks(inventory.packages.iter(), &mut reached)?;
     }
     for changed in changed_sources
         .iter()
         .filter(|path| test_relevant_source(path))
     {
         if workspace_wide_source(changed) {
-            select_all_package_checks(inventory.packages.iter(), &mut reached);
+            select_package_checks(inventory.packages.iter(), &mut reached)?;
             continue;
         }
         let absolute = selected_root.join(changed);
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
-            select_all_package_checks(inventory.packages.iter(), &mut reached);
-            continue;
+            return Err(unclassified_source(inventory, changed, &absolute));
         }
         for claim in claims {
             if claim.package_wide
@@ -313,21 +240,21 @@ pub(super) fn cargo_check_selections(
                     .iter()
                     .any(|target| target_reaches_dependents(target))
             {
-                select_all_package_checks([claim.package], &mut reached);
+                select_package_checks([claim.package], &mut reached)?;
                 select_reverse_package_checks(
                     reverse_dependency_closure(inventory, claim.package)
                         .into_iter()
                         .filter(|package| package.id != claim.package.id),
                     &mut reached,
-                );
+                )?;
                 continue;
             }
-            let targets = reached
-                .entry(claim.package.id.as_str())
-                .or_insert_with(|| Some(BTreeSet::new()));
-            if let Some(targets) = targets {
-                for target in claim.targets {
-                    targets.insert(cargo_target_selection(target)?);
+            let targets = reached.entry(claim.package.id.as_str()).or_default();
+            for target in claim.targets {
+                if let Some(target) =
+                    cargo_target_selection(target, claim.package.targets.contains(target))?
+                {
+                    targets.insert(target);
                 }
             }
         }
@@ -341,28 +268,7 @@ pub(super) fn cargo_check_selections(
                 .map(|targets| CargoCheckSelection {
                     name: package.name.clone(),
                     root: package.root.clone(),
-                    all_targets: targets.is_none(),
-                    required_features: targets
-                        .as_ref()
-                        .map(|targets| {
-                            targets
-                                .iter()
-                                .flat_map(|target| target.required_features.iter().cloned())
-                                .collect::<BTreeSet<_>>()
-                        })
-                        .unwrap_or_else(|| {
-                            package
-                                .declared_targets
-                                .iter()
-                                .flat_map(|target| target.required_features.iter().cloned())
-                                .collect()
-                        })
-                        .into_iter()
-                        .collect(),
-                    targets: targets
-                        .as_ref()
-                        .map(|targets| targets.iter().cloned().collect())
-                        .unwrap_or_default(),
+                    targets: targets.iter().cloned().collect(),
                 })
         })
         .collect())
@@ -417,48 +323,68 @@ fn containing_package<'a>(
         .max_by_key(|package| package.root.components().count())
 }
 
-fn select_all_package_checks<'a>(
-    packages: impl IntoIterator<Item = &'a PackageInventory>,
-    reached: &mut BTreeMap<&'a str, Option<BTreeSet<CargoTargetSelection>>>,
-) {
-    for package in packages {
-        reached.insert(package.id.as_str(), None);
-    }
+fn unclassified_source(
+    inventory: &Inventory,
+    changed: &str,
+    absolute: &Path,
+) -> WorkspaceTestError {
+    containing_package(inventory, absolute).map_or_else(
+        || {
+            WorkspaceTestError::new(format!(
+                "changed Rust source {changed:?} is outside every Cargo package"
+            ))
+        },
+        |package| {
+            WorkspaceTestError::new(format!(
+                "changed Rust source {changed:?} is inside Cargo package {:?} but no declared target owns it",
+                package.name,
+            ))
+        },
+    )
 }
 
-/// Retain library targets for reverse dependents without compiling every test,
-/// example, bench, and auxiliary binary in those packages. A package with no
-/// library keeps Cargo's ordinary default targets as its conservative fallback.
-/// An exact target already selected in the same package remains more specific;
-/// an all-targets owner selection remains stronger than either.
-fn select_reverse_package_checks<'a>(
+fn select_package_checks<'a>(
     packages: impl IntoIterator<Item = &'a PackageInventory>,
-    reached: &mut BTreeMap<&'a str, Option<BTreeSet<CargoTargetSelection>>>,
-) {
+    reached: &mut BTreeMap<&'a str, BTreeSet<CargoTargetSelection>>,
+) -> Result<(), WorkspaceTestError> {
     for package in packages {
-        let targets = reached
-            .entry(package.id.as_str())
-            .or_insert_with(|| Some(BTreeSet::new()));
-        let Some(targets) = targets else {
-            continue;
-        };
-        for target in package
-            .declared_targets
-            .iter()
-            .filter(|target| target_is_library(target))
-        {
-            targets.insert(CargoTargetSelection {
-                flag: "--lib",
-                name: None,
-                required_features: target.required_features.clone(),
-            });
+        let targets = reached.entry(package.id.as_str()).or_default();
+        for target in &package.declared_targets {
+            if let Some(target) = cargo_target_selection(target, package.targets.contains(target))?
+            {
+                targets.insert(target);
+            }
+        }
+        if targets.is_empty() {
+            return Err(WorkspaceTestError::new(format!(
+                "Cargo package {:?} has no directly addressable build target",
+                package.name,
+            )));
         }
     }
+    Ok(())
+}
+
+/// Retain every addressable target in reverse-dependent packages.
+///
+/// Cargo metadata proves dependencies at package granularity, not at the
+/// individual target that uses them. Naming only a library target would omit a
+/// bin-only consumer or a dependent integration target, so the package's exact
+/// target inventory is the narrowest complete downstream reach available.
+fn select_reverse_package_checks<'a>(
+    packages: impl IntoIterator<Item = &'a PackageInventory>,
+    reached: &mut BTreeMap<&'a str, BTreeSet<CargoTargetSelection>>,
+) -> Result<(), WorkspaceTestError> {
+    select_package_checks(packages, reached)
 }
 
 fn cargo_target_selection(
     target: &TargetIdentity,
-) -> Result<CargoTargetSelection, WorkspaceTestError> {
+    test_harness: bool,
+) -> Result<Option<CargoTargetSelection>, WorkspaceTestError> {
+    if target.kind.split('+').all(|kind| kind == "custom-build") {
+        return Ok(None);
+    }
     let (flag, named) = target
         .kind
         .split('+')
@@ -478,11 +404,13 @@ fn cargo_target_selection(
                 target.display()
             ))
         })?;
-    Ok(CargoTargetSelection {
+    Ok(Some(CargoTargetSelection {
+        identity: target.display(),
         flag,
         name: named.then(|| target.name.clone()),
         required_features: target.required_features.clone(),
-    })
+        test_harness,
+    }))
 }
 
 fn reverse_dependency_closure<'a>(

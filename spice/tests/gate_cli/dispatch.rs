@@ -457,7 +457,7 @@ fn configured_source_gate_retries_stale_state_without_repeating_selected_tests()
                 "  if [ \"$status\" -ne 0 ]; then /bin/cat '{}' >&2; fi\n",
                 "  exit \"$status\"\n",
                 "fi\n",
-                "if [ \"$*\" = \"check --locked --all-targets --package gate-fixture\" ]; then exit 0; fi\n",
+                "if [ \"$*\" = \"test --locked --package gate-fixture --lib --no-run\" ]; then exit 0; fi\n",
                 "exec '{}' \"$@\"\n",
             ),
             test_executable.display(),

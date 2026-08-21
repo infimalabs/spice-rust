@@ -17,7 +17,6 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
     let report = plan.report();
 
     assert!(report.admits());
-    assert!(plan.escalations().is_empty());
     assert_eq!(report.source(), &source);
     assert_eq!(report.changed_sources(), ["fixture-a/src/behavior.rs"]);
     assert_eq!(report.engines(), ["cargo-workspace"]);
@@ -171,7 +170,6 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
     let report = plan.report();
 
     assert!(report.admits());
-    assert!(plan.escalations().is_empty());
     assert_eq!(
         report.tests(),
         ["fixture-a::lib:fixture-a", "fixture-a::test:behavior"]
@@ -186,7 +184,7 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
 }
 
 #[test]
-fn staged_library_source_does_not_run_reverse_dependent_test_binaries() {
+fn staged_library_source_runs_only_its_proven_reverse_dependency_closure() {
     let mut inventory = fixture_inventory();
     inventory.packages[1]
         .dependencies
@@ -222,10 +220,17 @@ fn staged_library_source_does_not_run_reverse_dependent_test_binaries() {
         wire::Digest::compute(wire::Domain::GateTree, b"reverse dependency reach"),
         &["fixture-a/src/behavior.rs".to_owned()],
     )
-    .expect("library reach stays inside its owning package tests");
+    .expect("library reach follows the declared reverse dependency closure");
 
-    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
-    assert_eq!(report.edges().len(), 1);
+    assert_eq!(
+        report.tests(),
+        [
+            "fixture-a::lib:fixture-a",
+            "fixture-b::bin:fixture-b",
+            "fixture-c::test:behavior",
+        ]
+    );
+    assert_eq!(report.edges().len(), 3);
     assert!(
         report
             .edges()
@@ -254,33 +259,45 @@ fn non_test_declared_target_still_owns_native_check_reach() {
         ["fixture-a"],
         "a declared target remains an exact check owner even when Cargo disables its test harness"
     );
+    let reach = WorkspacePackageReach {
+        roots: reached.iter().map(|check| check.root.clone()).collect(),
+        checks: reached,
+    };
+    assert_eq!(
+        reach
+            .cargo_check_units()
+            .iter()
+            .map(|unit| (unit.identity().to_owned(), unit.arguments().to_vec()))
+            .collect::<Vec<_>>(),
+        [(
+            "fixture-a::lib:fixture-a".to_owned(),
+            ["check", "--locked", "--package", "fixture-a", "--lib"]
+                .map(str::to_owned)
+                .to_vec(),
+        )],
+    );
 }
 
 #[test]
-fn non_test_binary_target_escalates_test_reach_instead_of_dropping_the_source() {
+fn non_test_binary_target_refuses_when_no_test_target_is_proven() {
     let mut inventory = fixture_inventory();
     inventory.packages[1].targets.clear();
 
-    let plan = selection_plan(
+    let error = selection_plan(
         &inventory,
         Path::new("/workspace"),
         wire::Digest::compute(wire::Domain::GateTree, b"non-test binary reach"),
         &["fixture-b/src/main.rs".to_owned()],
     )
-    .expect("a source without a test-enabled owner escalates test reach");
+    .expect_err("a source without test reach must refuse instead of widening")
+    .to_string();
 
-    assert_eq!(plan.escalations().len(), 1);
-    assert_eq!(plan.escalations()[0].source(), "fixture-b/src/main.rs");
-    assert_eq!(
-        plan.escalations()[0].reason(),
-        &CargoReachEscalationReason::UnreachedInPackage {
-            package: "fixture-b".to_owned(),
-        }
-    );
-    assert_eq!(
-        plan.report().tests(),
-        ["fixture-a::lib:fixture-a"],
-        "exhaustive fallback retains every available workspace test target"
+    assert!(
+        error.contains(concat!(
+            "changed Rust source \"fixture-b/src/main.rs\" ",
+            "has no proven test-enabled Cargo target reach",
+        )),
+        "{error}",
     );
 }
 
@@ -314,6 +331,26 @@ fn custom_build_target_reaches_workspace_dependents() {
             .collect::<Vec<_>>(),
         ["fixture-a", "fixture-b"]
     );
+    let reach = WorkspacePackageReach {
+        roots: reached.iter().map(|check| check.root.clone()).collect(),
+        checks: reached,
+    };
+    assert!(
+        reach.cargo_check_units().iter().any(|unit| {
+            unit.identity() == "fixture-b::bin:fixture-b"
+                && unit.arguments()
+                    == [
+                        "test",
+                        "--locked",
+                        "--package",
+                        "fixture-b",
+                        "--bin",
+                        "fixture-b",
+                        "--no-run",
+                    ]
+        }),
+        "a bin-only reverse dependent retains one exact native unit",
+    );
 
     let report = selection_report(
         &inventory,
@@ -321,8 +358,11 @@ fn custom_build_target_reaches_workspace_dependents() {
         wire::Digest::compute(wire::Domain::GateTree, b"custom build reach"),
         &["fixture-a/tools/generate.rs".to_owned()],
     )
-    .expect("custom build test reach stays inside its owning package");
-    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
+    .expect("custom build test reach follows declared dependents");
+    assert_eq!(
+        report.tests(),
+        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
+    );
 }
 
 fn configuration_target(package: &str, kind: &str, name: &str, source: &str) -> TargetIdentity {
@@ -406,7 +446,7 @@ fn configuration_slice_inventory() -> Inventory {
 }
 
 #[test]
-fn configuration_slice_checks_reverse_dependents_without_running_their_test_binaries() {
+fn configuration_slice_reaches_only_declared_reverse_dependent_packages() {
     let inventory = configuration_slice_inventory();
     let changes = [
         "vendor/src/config.rs".to_owned(),
@@ -423,16 +463,14 @@ fn configuration_slice_checks_reverse_dependents_without_running_their_test_bina
     assert_eq!(
         plan.report().tests(),
         [
+            "lane::lib:lane",
+            "spice::lib:spice",
+            "spice::test:demo_cli",
             "spice::test:policy_config",
             "vendor::lib:vendor",
             "vendor::test:contracts",
+            "xtask::lib:xtask",
         ]
-    );
-    assert!(
-        plan.report()
-            .tests()
-            .iter()
-            .all(|test| !test.contains("demo_cli") && !test.starts_with("xtask::"))
     );
 
     let checks = crate::workspace_tests::selection::cargo_check_selections(
@@ -448,26 +486,72 @@ fn configuration_slice_checks_reverse_dependents_without_running_their_test_bina
     assert_eq!(
         reach.cargo_check_arguments(),
         [
-            ["check", "--locked", "--all-targets", "--package", "vendor",]
-                .map(str::to_owned)
-                .to_vec(),
-            ["check", "--locked", "--package", "lane", "--lib"]
+            [
+                "test",
+                "--locked",
+                "--package",
+                "vendor",
+                "--lib",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            [
+                "test",
+                "--locked",
+                "--package",
+                "vendor",
+                "--test",
+                "contracts",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            ["test", "--locked", "--package", "lane", "--lib", "--no-run"]
                 .map(str::to_owned)
                 .to_vec(),
             [
-                "check",
+                "test",
                 "--locked",
                 "--package",
                 "spice",
                 "--lib",
-                "--test",
-                "policy_config",
+                "--no-run",
             ]
             .map(str::to_owned)
             .to_vec(),
-            ["check", "--locked", "--package", "xtask", "--lib"]
-                .map(str::to_owned)
-                .to_vec(),
+            [
+                "test",
+                "--locked",
+                "--package",
+                "spice",
+                "--test",
+                "demo_cli",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            [
+                "test",
+                "--locked",
+                "--package",
+                "spice",
+                "--test",
+                "policy_config",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            [
+                "test",
+                "--locked",
+                "--package",
+                "xtask",
+                "--lib",
+                "--no-run",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
         ]
     );
 }
@@ -559,7 +643,6 @@ fn package_manifest_and_build_script_select_every_test_target_in_their_package()
         .expect("package-wide build source selects tests");
         let report = plan.report();
 
-        assert!(plan.escalations().is_empty());
         assert!(report.admits());
         assert_eq!(
             report.tests(),
@@ -582,7 +665,6 @@ fn workspace_and_gate_authorities_select_the_complete_test_inventory() {
         .expect("workspace authority selects every test target");
         let report = plan.report();
 
-        assert!(plan.escalations().is_empty());
         assert!(report.admits());
         assert_eq!(
             report.tests(),
@@ -620,128 +702,61 @@ fn explicit_exhaustive_mode_maps_even_unknown_non_build_paths_to_every_target() 
 }
 
 #[test]
-fn rust_source_inside_a_package_but_outside_target_roots_stays_with_its_metadata_owner() {
-    let plan = selection_plan(
+fn rust_source_inside_a_package_but_outside_target_roots_refuses_exactly() {
+    let error = selection_plan(
         &fixture_inventory(),
         Path::new("/workspace"),
         wire::Digest::compute(wire::Domain::GateTree, b"unreachable package source"),
         &["fixture-a/tools/unreachable.rs".to_owned()],
     )
-    .expect("unreachable package source remains reportable");
-    let report = plan.report();
+    .expect_err("unowned package source must refuse")
+    .to_string();
 
-    assert!(report.admits());
-    assert!(plan.escalations().is_empty());
-    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
-    assert_eq!(report.edges().len(), 1);
     assert!(
-        report
-            .edges()
-            .iter()
-            .all(|edge| edge.source() == "fixture-a/tools/unreachable.rs")
+        error.contains(concat!(
+            "changed Rust source \"fixture-a/tools/unreachable.rs\" is inside ",
+            "Cargo package \"fixture-a\" but no declared target owns it",
+        )),
+        "{error}",
     );
-    assert_eq!(report.coverage(), &crate::CoverageCompleteness::Complete);
 }
 
 #[test]
-fn rust_source_outside_workspace_packages_escalates_to_the_workspace() {
-    let plan = selection_plan(
+fn rust_source_outside_workspace_packages_refuses_exactly() {
+    let error = selection_plan(
         &fixture_inventory(),
         Path::new("/workspace"),
         wire::Digest::compute(wire::Domain::GateTree, b"unknown Rust tree"),
         &["tools/outside.rs".to_owned()],
     )
-    .expect("unknown selection remains reportable");
-    let report = plan.report();
+    .expect_err("outside-package source must refuse")
+    .to_string();
 
-    assert!(report.admits());
-    assert_eq!(plan.escalations().len(), 1);
-    assert_eq!(plan.escalations()[0].source(), "tools/outside.rs");
-    assert_eq!(
-        plan.escalations()[0].reason(),
-        &CargoReachEscalationReason::OutsidePackage
-    );
-    assert_eq!(
-        report.tests(),
-        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
-    );
-    assert_eq!(report.edges().len(), 2);
     assert!(
-        report
-            .edges()
-            .iter()
-            .all(|edge| edge.source() == "tools/outside.rs")
+        error.contains("changed Rust source \"tools/outside.rs\" is outside every Cargo package"),
+        "{error}",
     );
-    assert_eq!(report.coverage(), &crate::CoverageCompleteness::Complete);
-    let document = String::from_utf8(report.encode().expect("encode escalation")).unwrap();
-    assert!(document.contains("tools/outside.rs"));
 }
 
 #[test]
-fn partially_mapped_rust_sources_retain_edges_and_escalate_unknown_reach() {
-    let plan = selection_plan(
+fn partially_mapped_rust_sources_refuse_at_the_first_canonical_unknown_path() {
+    let error = selection_plan(
         &fixture_inventory(),
         Path::new("/workspace"),
         wire::Digest::compute(wire::Domain::GateTree, b"incomplete Rust tree"),
         &[
             "tools/outside.rs".to_owned(),
             "fixture-a/src/behavior.rs".to_owned(),
-            "fixture-a/tools/unreachable.rs".to_owned(),
             "tools/outside.rs".to_owned(),
         ],
     )
-    .expect("incomplete selection remains reportable");
-    let report = plan.report();
+    .expect_err("mixed owned and unknown sources must refuse without partial evidence")
+    .to_string();
 
-    assert!(report.admits());
-    assert_eq!(
-        report.changed_sources(),
-        [
-            "fixture-a/src/behavior.rs",
-            "fixture-a/tools/unreachable.rs",
-            "tools/outside.rs",
-        ],
-        "selected sources are canonical, sorted, and deduplicated"
+    assert!(
+        error.contains("changed Rust source \"tools/outside.rs\" is outside every Cargo package"),
+        "{error}",
     );
-    assert_eq!(
-        plan.escalations()
-            .iter()
-            .map(|escalation| (
-                escalation.source(),
-                escalation.reason().kind(),
-                escalation.reason().package(),
-            ))
-            .collect::<Vec<_>>(),
-        [("tools/outside.rs", "outside-package", None)],
-        "escalations retain typed reasons in stable source order without duplicating inputs"
-    );
-    let mut diagnostics = Vec::new();
-    write_reach_escalations(&mut diagnostics, plan.escalations())
-        .expect("render mixed reach escalations");
-    assert_eq!(
-        String::from_utf8(diagnostics)
-            .expect("reach escalation diagnostics are UTF-8")
-            .lines()
-            .collect::<Vec<_>>(),
-        [concat!(
-            "[rust-test-reach-escalation] source=\"tools/outside.rs\" ",
-            "reason=outside-package"
-        )]
-    );
-    assert_eq!(
-        report.tests(),
-        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
-    );
-    assert_eq!(report.edges().len(), 4);
-    assert_eq!(
-        report
-            .edges()
-            .iter()
-            .filter(|edge| edge.source() == "tools/outside.rs")
-            .count(),
-        2,
-    );
-    assert_eq!(report.coverage(), &crate::CoverageCompleteness::Complete);
 }
 
 #[test]
