@@ -121,7 +121,7 @@ impl Authority {
             }
         };
         if let Err(error) = reader.verify() {
-            return Self::Unavailable(verification_failure(&error));
+            return Self::Unavailable(format!("journal authority verification failed: {error}"));
         }
         match reader.read_with(|read| -> Result<AuthoritySnapshot, String> {
             let _ = read
@@ -164,18 +164,6 @@ impl Authority {
             Self::Ready(snapshot) => Ok(snapshot),
         }
     }
-}
-
-fn verification_failure(error: &journal::VerifyError) -> String {
-    let detail = match error {
-        journal::VerifyError::Violations(violations) => violations
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(" | "),
-        journal::VerifyError::Open(_) | journal::VerifyError::Sqlite(_) => error.to_string(),
-    };
-    format!("journal authority verification failed: {detail}")
 }
 
 struct AuthoritySnapshot {
@@ -437,39 +425,5 @@ fn unavailable(reason: impl Into<String>) -> DoctorObservation {
 fn not_applicable(reason: impl Into<String>) -> DoctorObservation {
     DoctorObservation::NotApplicable {
         reason: reason.into(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn doctor_retains_every_verification_class_subject_and_detail() {
-        let error = journal::VerifyError::Violations(vec![
-            journal::Violation {
-                class: journal::ViolationClass::Thread,
-                subject: "8914".to_owned(),
-                detail: "thread row has no fact envelope".to_owned(),
-            },
-            journal::Violation {
-                class: journal::ViolationClass::Cursor,
-                subject: "cursor_head:1".to_owned(),
-                detail: concat!(
-                    "cursor seq Some(8914), wake None, and fact maximum Some(8913) disagree"
-                )
-                .to_owned(),
-            },
-        ]);
-
-        assert_eq!(
-            verification_failure(&error),
-            concat!(
-                "journal authority verification failed: ",
-                "Thread:8914:thread row has no fact envelope | ",
-                "Cursor:cursor_head:1:cursor seq Some(8914), wake None, ",
-                "and fact maximum Some(8913) disagree",
-            ),
-        );
     }
 }

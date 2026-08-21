@@ -703,7 +703,12 @@ fn verify_failure(error: journal::VerifyError) -> Failure {
             "one valid schema, history, index, heads, receipts, and cursor closure",
             violations
                 .iter()
-                .map(ToString::to_string)
+                .map(|violation| {
+                    format!(
+                        "{:?}:{}:{}",
+                        violation.class, violation.subject, violation.detail
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(" | "),
             "restore valid authority or use the named recovery command for a derived index",

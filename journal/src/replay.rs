@@ -45,10 +45,11 @@ impl fmt::Display for ReindexError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Sqlite(error) => write!(formatter, "journal reindex failed: {error}"),
-            Self::Violations(violations) => write!(
+            Self::Violations(violations) => write_violations(
                 formatter,
-                "journal reindex refused {} immutable-history violation(s)",
-                violations.len()
+                "journal reindex refused",
+                " immutable-history",
+                violations,
             ),
         }
     }
@@ -141,6 +142,27 @@ impl fmt::Display for Violation {
     }
 }
 
+fn write_violations(
+    formatter: &mut fmt::Formatter<'_>,
+    prefix: &str,
+    qualifier: &str,
+    violations: &[Violation],
+) -> fmt::Result {
+    write!(
+        formatter,
+        "{prefix} {}{qualifier} violation(s)",
+        violations.len()
+    )?;
+    for (index, violation) in violations.iter().enumerate() {
+        write!(
+            formatter,
+            "{}{violation}",
+            if index == 0 { ": " } else { " | " }
+        )?;
+    }
+    Ok(())
+}
+
 /// Verification either could not inspect SQLite or found authority defects.
 #[derive(Debug)]
 pub enum VerifyError {
@@ -165,11 +187,7 @@ impl fmt::Display for VerifyError {
             Self::Open(error) => write!(formatter, "journal schema verification failed: {error}"),
             Self::Sqlite(error) => write!(formatter, "journal verification query failed: {error}"),
             Self::Violations(violations) => {
-                write!(
-                    formatter,
-                    "journal verification found {} violation(s)",
-                    violations.len()
-                )
+                write_violations(formatter, "journal verification found", "", violations)
             }
         }
     }
