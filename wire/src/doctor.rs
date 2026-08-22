@@ -65,6 +65,12 @@ pub enum SpiceVariable {
     /// Native Cargo executable resolved before the private home is installed.
     #[serde(rename = "SPICE_RS_NATIVE_CARGO")] // env-policy: allow
     NativeCargo,
+    /// Native rustc executable paired with the isolated Cargo authority.
+    #[serde(rename = "SPICE_RS_NATIVE_RUSTC")] // env-policy: allow
+    NativeRustc,
+    /// Native rustdoc executable paired with the isolated Cargo authority.
+    #[serde(rename = "SPICE_RS_NATIVE_RUSTDOC")] // env-policy: allow
+    NativeRustdoc,
     /// User shell restored behind the Rust structural command wrapper.
     #[serde(rename = "SPICE_RS_NATIVE_SHELL")] // env-policy: allow
     NativeShell,
@@ -103,6 +109,8 @@ impl SpiceVariable {
         Self::Inbox,
         Self::Lane,
         Self::NativeCargo,
+        Self::NativeRustc,
+        Self::NativeRustdoc,
         Self::NativeShell,
         Self::PreCommitPaths,
         Self::PreCommitSource,
@@ -143,6 +151,8 @@ impl SpiceVariable {
             Self::MutationSeed => "SPICE_MUTATION_SEED", // env-policy: allow
             Self::NativePins => "SPICE_NATIVE_PINS", // env-policy: allow
             Self::NativeCargo => "SPICE_RS_NATIVE_CARGO", // env-policy: allow
+            Self::NativeRustc => "SPICE_RS_NATIVE_RUSTC", // env-policy: allow
+            Self::NativeRustdoc => "SPICE_RS_NATIVE_RUSTDOC", // env-policy: allow
             Self::NativeShell => "SPICE_RS_NATIVE_SHELL", // env-policy: allow
             Self::PreCommitPaths => "SPICE_RS_PRE_COMMIT_PATHS", // env-policy: allow
             Self::PreCommitSource => "SPICE_RS_PRE_COMMIT_SOURCE", // env-policy: allow

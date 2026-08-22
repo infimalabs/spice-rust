@@ -61,6 +61,7 @@ struct CapturedLaunch {
     argv: Vec<String>,
     environment: BTreeMap<String, String>,
     cwd: String,
+    toolchain: Vec<String>,
 }
 
 #[test]

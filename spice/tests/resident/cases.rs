@@ -600,10 +600,10 @@ const FLEET_HANDSHAKE_BOUND: Duration = Duration::from_secs(3);
 const FLEET_STREAM_COMMITS: usize = 12;
 
 fn create_fleet_task(fixture: &Fixture) -> String {
-    let mut initial = RunningResident::spawn(&fixture);
-    initial.assert_ready(&fixture);
+    let mut initial = RunningResident::spawn(fixture);
+    initial.assert_ready(fixture);
     let added = invoke_args(
-        &fixture,
+        fixture,
         &[
             "task",
             "oops",
@@ -625,7 +625,7 @@ fn create_fleet_task(fixture: &Fixture) -> String {
         .as_str()
         .expect("task add answer names its handle")
         .to_owned();
-    let down = invoke(&fixture, "down");
+    let down = invoke(fixture, "down");
     assert!(
         down.status.success(),
         "initial down failed: {:?}",
@@ -692,14 +692,14 @@ fn fill_fleet_history(fixture: &Fixture, task: &str) -> usize {
 }
 
 fn measure_fleet_client(fixture: &Fixture, task: &str, encoded_bytes: usize) {
-    let mut resident = RunningResident::spawn(&fixture);
-    resident.assert_ready(&fixture);
+    let mut resident = RunningResident::spawn(fixture);
+    resident.assert_ready(fixture);
     let completed = AtomicU64::new(0);
     std::thread::scope(|scope| {
         scope.spawn(|| {
             for index in 0..FLEET_STREAM_COMMITS {
                 let note = format!("sustained commit {index}");
-                let output = invoke_args(&fixture, &["task", "note", &task, &note], true);
+                let output = invoke_args(fixture, &["task", "note", task, &note], true);
                 assert!(
                     output.status.success(),
                     "sustained commit {index} failed: {:?}",
@@ -712,7 +712,7 @@ fn measure_fleet_client(fixture: &Fixture, task: &str, encoded_bytes: usize) {
             std::thread::yield_now();
         }
         let started = Monotonic::now();
-        let board = invoke_args(&fixture, &["board"], true);
+        let board = invoke_args(fixture, &["board"], true);
         let elapsed = started.elapsed();
         assert!(board.status.success(), "board failed: {:?}", board.stderr);
         eprintln!(
@@ -729,11 +729,11 @@ fn measure_fleet_client(fixture: &Fixture, task: &str, encoded_bytes: usize) {
         FLEET_STREAM_COMMITS as u64
     );
     assert!(
-        journal_cursor(&fixture).get() >= FLEET_FACTS + FLEET_STREAM_COMMITS as u64,
+        journal_cursor(fixture).get() >= FLEET_FACTS + FLEET_STREAM_COMMITS as u64,
         "every sustained commit advances the fleet journal"
     );
 
-    let down = invoke(&fixture, "down");
+    let down = invoke(fixture, "down");
     assert!(
         down.status.success(),
         "final down failed: {:?}",

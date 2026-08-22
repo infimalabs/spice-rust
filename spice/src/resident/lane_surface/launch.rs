@@ -291,7 +291,7 @@ fn launch_environment(
     lane: CanonicalUuid,
 ) -> CommandResult<Environment> {
     let inbox = paths.inbox_for_repository(repository)?;
-    let cargo_host = crate::cargo_command::host()
+    let cargo_host = crate::cargo_command::host(repository)
         .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
     // The lane-specific home is the resident reader pin: one occupied seat
     // admits one process group, and a replacement occupant cannot prepare the
@@ -322,6 +322,22 @@ fn launch_environment(
         (
             OsString::from(spice::cargo_isolation::NATIVE_CARGO_VARIABLE),
             cargo_host.cargo().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::NATIVE_RUSTC_VARIABLE),
+            cargo_host.rustc().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE),
+            cargo_host.rustdoc().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::RUSTC_VARIABLE),
+            cargo_host.rustc().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::RUSTDOC_VARIABLE),
+            cargo_host.rustdoc().as_os_str().to_owned(),
         ),
         (
             OsString::from("SHELL"),

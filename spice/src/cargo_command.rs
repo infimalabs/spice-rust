@@ -8,7 +8,9 @@ use std::thread::JoinHandle;
 
 use serde::Serialize;
 use spice::cargo_isolation::{
-    BOOTSTRAP_HOME_VARIABLE, CARGO_HOME_VARIABLE, Host, NATIVE_CARGO_VARIABLE, prepare_manual,
+    BOOTSTRAP_HOME_VARIABLE, CARGO_HOME_VARIABLE, Host, NATIVE_CARGO_VARIABLE,
+    NATIVE_RUSTC_VARIABLE, NATIVE_RUSTDOC_VARIABLE, RUSTC_VARIABLE, RUSTDOC_VARIABLE,
+    prepare_manual,
 };
 use spice::repository::Repository;
 use wire::{Fault, FaultClass, Outcome, Reply, ReplyPosition};
@@ -81,13 +83,35 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
     clippy::disallowed_methods,
     reason = "the native binary rim captures the exact Cargo seed environment"
 )]
-pub(crate) fn host() -> Result<Host, spice::cargo_isolation::IsolationError> {
-    Host::from_environment(std::env::vars_os())
+pub(crate) fn host(
+    repository: &Repository,
+) -> Result<Host, spice::cargo_isolation::IsolationError> {
+    Host::from_environment(repository.worktree_root(), std::env::vars_os())
 }
 
 /// Inspect the owned store or conservatively reclaim expired unreferenced state.
 pub(crate) fn store(matches: &clap::ArgMatches) -> Outcome<StoreAnswer> {
-    let host = match host() {
+    let working = match std::env::current_dir() {
+        Ok(working) => working,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "cargo-isolation::working-directory-unavailable".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    let repository = match Repository::discover(&working) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "cargo-isolation::repository-unresolved".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    let host = match host(&repository) {
         Ok(host) => host,
         Err(error) => return isolation_outcome(error),
     };
@@ -127,7 +151,7 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, (Outcome<()>, i32
             1,
         )
     })?;
-    let host = host().map_err(isolation_rejection)?;
+    let host = host(&repository).map_err(isolation_rejection)?;
     let mut prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
     let mut command = Command::new(prepared.cargo());
     command
@@ -135,7 +159,11 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, (Outcome<()>, i32
         .current_dir(&working)
         .env(CARGO_HOME_VARIABLE, prepared.home())
         .env(BOOTSTRAP_HOME_VARIABLE, host.bootstrap_home())
-        .env(NATIVE_CARGO_VARIABLE, host.cargo());
+        .env(NATIVE_CARGO_VARIABLE, host.cargo())
+        .env(NATIVE_RUSTC_VARIABLE, host.rustc())
+        .env(NATIVE_RUSTDOC_VARIABLE, host.rustdoc())
+        .env(RUSTC_VARIABLE, host.rustc())
+        .env(RUSTDOC_VARIABLE, host.rustdoc());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;

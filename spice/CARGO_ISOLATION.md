@@ -4,7 +4,14 @@ Spice resident lanes receive a private `CARGO_HOME` over one immutable,
 content-addressed directory-source store. The store is rooted at
 `$SPICE_RS_BOOTSTRAP_CARGO_HOME/spice/source-store-v2` (normally below the
 native `~/.cargo`) and is keyed by the exact `Cargo.lock` bytes plus schema
-version. Native Cargo is resolved before `CARGO_HOME` changes.
+version. Cargo, rustc, and rustdoc are admitted as one exact native toolchain
+before `CARGO_HOME` changes. A complete explicit
+`SPICE_RS_NATIVE_CARGO`/`SPICE_RS_NATIVE_RUSTC`/`SPICE_RS_NATIVE_RUSTDOC`
+trio takes precedence; otherwise Spice resolves all three through the channel
+declared by the worktree's `rust-toolchain.toml` and the exact `rustup` below
+the bootstrap Cargo home. Partial declarations, missing executables, and paths
+from different toolchain directories are refused before Cargo starts. `PATH`
+is not a compiler-authority resolver.
 
 This repository currently uses a hybrid command boundary. Unqualified
 `spice session`, `spice task`, and `spice steering` commands remain on the
