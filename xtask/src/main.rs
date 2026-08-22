@@ -27,7 +27,9 @@ fn help() -> String {
         concat!(
             "{usage}\n\n",
             "For focused arms, gate ARM emits bounded diagnostics only on refusal; ",
-            "gate --report ARM emits one canonical machine report.\n\n",
+            "gate --report ARM emits one canonical machine report.\n",
+            "build-cache inventories and collects Cargo's configured managed build roots ",
+            "and Cargo-tagged worktree target roots through one lock-aware policy.\n\n",
             "gate ARM accepts:\n  {arms}"
         ),
         usage = USAGE,
