@@ -74,6 +74,13 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
     )
     .expect("native reach resolves every cross-package owner");
 
+    assert_native_check_reach(&reach);
+    assert_canvas_reach(&fixture, &reach);
+    assert_ordinary_nested_reach(&fixture);
+    assert_selected_test_reach(&fixture, &shared_changes);
+}
+
+fn assert_native_check_reach(reach: &WorkspacePackageReach) {
     assert_eq!(
         reach
             .cargo_check_units()
@@ -111,12 +118,18 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
             .to_vec(),
         ]
     );
+}
+
+fn assert_canvas_reach(fixture: &CrossPackageFixture, reach: &WorkspacePackageReach) {
     for package in ["app", "outer", "outer/src/nested"] {
         assert!(
             reach.reaches_root(&fixture.root.join(package)),
             "Canvas applicability must observe reached package {package}"
         );
     }
+}
+
+fn assert_ordinary_nested_reach(fixture: &CrossPackageFixture) {
     let ordinary = workspace_package_reach_at(
         &fixture.root,
         &["outer/src/nested/src/only_nested.rs".to_owned()],
@@ -143,13 +156,15 @@ fn native_checks_selected_tests_and_canvas_consume_one_multi_owner_decision() {
         ]
     );
     assert!(!ordinary.reaches_root(&fixture.root.join("outer")));
+}
 
+fn assert_selected_test_reach(fixture: &CrossPackageFixture, shared_changes: &[String]) {
     fs::write(fixture.root.join("commands.log"), "").expect("clear metadata command log");
     let mut output = Vec::new();
     let report = run_selected_at(
         WorkspaceTestRoots::new(&fixture.root, &fixture.root),
         wire::Digest::compute(wire::Domain::GateTree, b"cross-package selected execution"),
-        &shared_changes,
+        shared_changes,
         fixture.environment.clone(),
         1,
         &mut output,
