@@ -518,6 +518,11 @@ fn authenticated_down_rejects_a_stale_epoch_then_reaches_verified_dark() {
 #[test]
 fn shutdown_preserves_an_unfinished_claim_before_releasing_authority() {
     let fixture = Fixture::new("claim-preservation");
+    fs::write(
+        fixture.root.join("spice-rust.toml"),
+        "[tasks]\nstems = [\"spice\"]\n",
+    )
+    .expect("claim fixture project policy writes");
 
     let mut initial = RunningResident::spawn(&fixture);
     initial.assert_ready(&fixture);

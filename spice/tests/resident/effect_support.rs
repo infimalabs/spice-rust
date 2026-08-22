@@ -22,6 +22,8 @@ pub(super) fn hold(path: &Path, identity: &str) -> sill::Possession {
 }
 
 pub(super) fn seed_active_claim(fixture: &Fixture) {
+    const PROJECT: &str = "spice.resident";
+
     let journal = journal::Journal::open(fixture.journal()).expect("journal opens for fixture");
     let bus = Bus::start(journal).expect("fixture bus starts");
     let task: wire::TaskStamp = "1kKRRsDP".parse().expect("task stamp");
@@ -47,7 +49,7 @@ pub(super) fn seed_active_claim(fixture: &Fixture) {
                 title: "Preserve an active claim".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
-                project: "resident".to_owned(),
+                project: PROJECT.to_owned(),
                 tags: Vec::new(),
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
@@ -65,7 +67,7 @@ pub(super) fn seed_active_claim(fixture: &Fixture) {
         title: "Preserve an active claim".to_owned(),
         description: None,
         acceptance: Vec::new(),
-        project: "resident".to_owned(),
+        project: PROJECT.to_owned(),
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: origin_for_head,
@@ -94,7 +96,7 @@ pub(super) fn seed_active_claim(fixture: &Fixture) {
                 occupant,
                 epoch,
                 cell: Some(wire::ClaimCell {
-                    project: "resident".to_owned(),
+                    project: PROJECT.to_owned(),
                     phase: phase.clone(),
                 }),
                 until: expiry,
@@ -112,7 +114,7 @@ pub(super) fn seed_active_claim(fixture: &Fixture) {
         fact: seq,
         claimed: seq,
         cell: wire::ClaimCell {
-            project: "resident".to_owned(),
+            project: PROJECT.to_owned(),
             phase,
         },
         lane,
