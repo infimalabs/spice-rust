@@ -318,19 +318,24 @@ pub(super) fn prebuilt_test_plan(
 
 /// Split only the largest prebuilt artifacts into deterministic libtest complements.
 ///
-/// The direct coordinator already orders artifacts by selected source bytes. Inspecting
-/// at most one ordinary candidate per worker lane keeps discovery bounded while
-/// preventing a handful of very large unit-test binaries from monopolizing those
-/// lanes. One additional binary candidate admits explicitly isolated process-timing
-/// tests without displacing an ordinary large harness. Every partition executes one
-/// disjoint complement under libtest's exact skip semantics.
+/// The direct coordinator orders ordinary artifacts by selected source bytes. Inspecting
+/// at most five ordinary candidates per worker lane keeps discovery bounded while
+/// reaching the process-heavy integration harnesses that otherwise become the terminal
+/// execution tail. One additional binary candidate admits explicitly isolated
+/// process-timing tests without displacing an ordinary large harness. Every partition
+/// executes one disjoint complement under libtest's exact skip semantics. Exclusive
+/// complements lead the queue so their barriers cannot strand a process lane behind an
+/// already-running ordinary wave. Ordinary complements retain their parent artifact's
+/// scheduling priority so a split long-running harness cannot fall behind smaller
+/// unsplit targets.
 pub(super) fn partition_largest_prebuilt_tests(
     tests: Vec<PrebuiltTest>,
     environment: &Environment,
     concurrency: usize,
     output: &mut impl Write,
 ) -> Result<Vec<PrebuiltTest>, WorkspaceTestError> {
-    const CASES_PER_PARTITION: usize = 64;
+    const CANDIDATES_PER_LANE: usize = 5;
+    const CASES_PER_PARTITION: usize = 5;
 
     let original_count = tests.len();
     if concurrency <= 1 {
@@ -342,9 +347,11 @@ pub(super) fn partition_largest_prebuilt_tests(
         output.flush().map_err(output_error)?;
         return Ok(tests);
     }
-    let candidate_limit = concurrency.saturating_add(usize::from(
-        tests.iter().any(|test| test.target.kind == "bin"),
-    ));
+    let candidate_limit = concurrency
+        .saturating_mul(CANDIDATES_PER_LANE)
+        .saturating_add(usize::from(
+            tests.iter().any(|test| test.target.kind == "bin"),
+        ));
     let mut candidates = 0;
     let mut partitioned = Vec::new();
     for test in tests {
@@ -362,8 +369,9 @@ pub(super) fn partition_largest_prebuilt_tests(
     }
     partitioned.sort_by(|left, right| {
         right
-            .effective_source_bytes()
-            .cmp(&left.effective_source_bytes())
+            .requires_exclusive_lane()
+            .cmp(&left.requires_exclusive_lane())
+            .then_with(|| right.target.source_bytes.cmp(&left.target.source_bytes))
             .then_with(|| left.package.cmp(&right.package))
             .then_with(|| left.target.cmp(&right.target))
             .then_with(|| left.partition_index().cmp(&right.partition_index()))
@@ -659,6 +667,12 @@ pub(super) struct PrebuiltTest {
 }
 
 impl PrebuiltTest {
+    pub(super) fn requires_exclusive_lane(&self) -> bool {
+        self.partition
+            .as_ref()
+            .is_some_and(|partition| partition.exclusive)
+    }
+
     pub(super) fn into_partitions(self, cases: &[String], count: usize) -> Vec<Self> {
         const EXCLUSIVE_LANE_PREFIX: &str = "exclusive_lane_";
 
@@ -717,12 +731,6 @@ impl PrebuiltTest {
             .collect()
     }
 
-    fn effective_source_bytes(&self) -> u64 {
-        self.target
-            .source_bytes
-            .div_ceil(u64::try_from(self.partition_count()).unwrap_or(u64::MAX))
-    }
-
     pub(super) fn partition_index(&self) -> usize {
         self.partition
             .as_ref()
@@ -743,7 +751,11 @@ impl PrebuiltTest {
                 arguments.extend([OsString::from("--skip"), OsString::from(skipped)]);
             }
         }
-        let threads = if self.partition.is_some() { 1 } else { threads };
+        let threads = if self.requires_exclusive_lane() {
+            1
+        } else {
+            threads
+        };
         arguments.push(OsString::from(format!("--test-threads={threads}")));
         arguments
     }

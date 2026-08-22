@@ -5,6 +5,11 @@ const MANY_SELECTED_PACKAGES: usize = 12;
 const TARGETS_PER_SELECTED_PACKAGE: usize = 3;
 const MANY_SELECTED_TARGETS: usize = MANY_SELECTED_PACKAGES * TARGETS_PER_SELECTED_PACKAGE;
 const SELECTED_PREBUILD_LANES: usize = SELECTED_PREBUILD_CONCURRENCY;
+const LARGE_DIRECT_TARGETS: usize = 32;
+const LARGE_DIRECT_SOURCE_LANES: usize = 4;
+const LARGE_DIRECT_SOURCE_THREADS: usize = 3;
+const LARGE_DIRECT_LANES: usize = 6;
+const LARGE_DIRECT_THREADS: usize = 2;
 
 #[derive(Default)]
 struct PrebuildLaunchState {
@@ -300,6 +305,124 @@ fn prebuilt_selected_tests_execute_directly_under_bounded_lanes() {
 }
 
 #[test]
+fn large_prebuilt_inventory_finishes_inside_the_selected_source_execution_reserve() {
+    let root = fixture_root("workspace-large-prebuilt-direct");
+    fs::create_dir_all(&root).expect("large direct fixture root creates");
+    let mut tests = vec![large_direct_test(&root, "exclusive", true)];
+    tests.extend(
+        (0..LARGE_DIRECT_TARGETS)
+            .map(|index| large_direct_test(&root, &format!("large-{index:03}"), false)),
+    );
+    let environment = Environment::new([
+        (OsString::from("PID_ROOT"), root.clone().into_os_string()),
+        (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+    ])
+    .expect("large direct environment admits");
+    let policy = RunPolicy::production_prebuilt_budgeted(
+        WorkspaceTestBudget::new(
+            LARGE_DIRECT_SOURCE_LANES,
+            LARGE_DIRECT_SOURCE_THREADS,
+            LARGE_DIRECT_SOURCE_THREADS,
+        )
+        .expect("large direct budget admits"),
+    );
+    let mut output = Vec::new();
+    let started = Instant::now();
+
+    Coordinator::new_prebuilt(
+        tests,
+        root.clone(),
+        environment,
+        OsString::from("unused-cargo"),
+        policy,
+        &mut output,
+    )
+    .run()
+    .expect("large direct inventory completes");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(12),
+        "large direct inventory exceeded its scaled execution reserve: {:?}",
+        started.elapsed(),
+    );
+    assert_large_direct_execution(&root, &output);
+    fs::remove_dir_all(root).expect("large direct fixture removes");
+}
+
+fn large_direct_test(root: &Path, name: &str, exclusive: bool) -> PrebuiltTest {
+    let executable = executable(
+        root,
+        &format!("{name}-test"),
+        concat!(
+            "#!/bin/sh\n",
+            "case \"$*\" in\n",
+            "  *--test-threads=1*|*--test-threads=2*) ;;\n",
+            "  *) exit 64 ;;\n",
+            "esac\n",
+            "printf '%s|%s\\n' \"${0##*/}\" \"$*\" >> \"$PID_ROOT/executions.log\"\n",
+            "sleep 0.04\n",
+            "printf 'test large::done ... ok\\n'\n",
+        ),
+    );
+    let package = quick_package();
+    PrebuiltTest {
+        package: package.name,
+        package_root: root.to_owned(),
+        target: TargetIdentity {
+            name: name.to_owned(),
+            ..package.targets[0].clone()
+        },
+        executable,
+        partition: Some(PrebuiltTestPartition {
+            index: 0,
+            count: usize::from(exclusive) + 1,
+            skipped: vec!["large::complement".to_owned()],
+            exclusive,
+        }),
+    }
+}
+
+fn assert_large_direct_execution(root: &Path, output: &[u8]) {
+    let log = fs::read_to_string(root.join("executions.log")).expect("large direct log reads");
+    let mut rows = log.lines().map(str::to_owned).collect::<Vec<_>>();
+    rows.sort();
+    let mut expected =
+        vec!["exclusive-test|--exact --skip large::complement --test-threads=1".to_owned()];
+    expected.extend((0..LARGE_DIRECT_TARGETS).map(|index| {
+        format!(
+            "large-{index:03}-test|--exact --skip large::complement --test-threads={LARGE_DIRECT_THREADS}",
+        )
+    }));
+    expected.sort();
+    assert_eq!(rows, expected, "every exact artifact executes once");
+
+    let output = String::from_utf8(output.to_vec()).expect("large direct progress is UTF-8");
+    let starts = output
+        .lines()
+        .filter(|line| line.contains("stage=start"))
+        .collect::<Vec<_>>();
+    let total = LARGE_DIRECT_TARGETS + 1;
+    assert_eq!(starts.len(), total);
+    for (index, line) in starts.iter().enumerate() {
+        assert!(
+            line.contains(&format!("shard={}/{total}", index + 1)),
+            "{line}"
+        );
+    }
+    let exclusive_terminal = output
+        .find(&format!("stage=terminal shard=1/{total}"))
+        .expect("exclusive shard reaches terminal");
+    let ordinary_start = output
+        .find(&format!("stage=start shard=2/{total}"))
+        .expect("ordinary shards start after the barrier");
+    assert!(exclusive_terminal < ordinary_start, "{output}");
+    assert!(
+        output.contains(&format!("peak_concurrency={LARGE_DIRECT_LANES}")),
+        "{output}",
+    );
+}
+
+#[test]
 fn prebuilt_partitions_cover_every_case_once_with_exact_complements() {
     let package = quick_package();
     let test = PrebuiltTest {
@@ -336,8 +459,95 @@ fn prebuilt_partitions_cover_every_case_once_with_exact_complements() {
     for partition in partitions {
         let arguments = partition.direct_arguments(2);
         assert_eq!(arguments.first(), Some(&OsString::from("--exact")));
-        assert_eq!(arguments.last(), Some(&OsString::from("--test-threads=1")),);
+        assert_eq!(arguments.last(), Some(&OsString::from("--test-threads=2")),);
     }
+}
+
+#[test]
+fn partition_discovery_reaches_five_large_targets_per_lane_without_becoming_unbounded() {
+    const LANES: usize = 6;
+    const DISCOVERED_TARGETS: usize = LANES * 5 + 1;
+    const CASES: usize = 33;
+
+    let root = fixture_root("workspace-prebuilt-partition-bound");
+    fs::create_dir_all(&root).expect("partition-bound fixture root creates");
+    let listing = format!(
+        "#!/bin/sh\n{}",
+        (0..CASES)
+            .map(|index| {
+                let case = if index == 0 {
+                    "suite::exclusive_lane_observes_timing".to_owned()
+                } else {
+                    format!("suite::case_{index:02}")
+                };
+                format!("printf '{case}: test\\n'\n")
+            })
+            .collect::<String>(),
+    );
+    let listed = executable(&root, "listed-test", &listing);
+    let undiscovered = executable(&root, "undiscovered-test", "#!/bin/sh\nexit 67\n");
+    let package = quick_package();
+    let tests = (0..=DISCOVERED_TARGETS)
+        .map(|index| PrebuiltTest {
+            package: package.name.clone(),
+            package_root: root.clone(),
+            target: TargetIdentity {
+                kind: if index == 0 { "bin" } else { "test" }.to_owned(),
+                name: format!("candidate-{index:02}"),
+                source_bytes: u64::try_from(DISCOVERED_TARGETS - index + 1)
+                    .expect("fixture source weight fits"),
+                ..package.targets[0].clone()
+            },
+            executable: if index < DISCOVERED_TARGETS {
+                listed.clone()
+            } else {
+                undiscovered.clone()
+            },
+            partition: None,
+        })
+        .collect();
+    let environment = Environment::new([(OsString::from("PATH"), OsString::from("/usr/bin:/bin"))])
+        .expect("partition-bound environment admits");
+    let mut output = Vec::new();
+
+    let partitioned = partition_largest_prebuilt_tests(tests, &environment, LANES, &mut output)
+        .expect("bounded large-target discovery succeeds");
+
+    assert_eq!(partitioned.len(), DISCOVERED_TARGETS * 6 + 1);
+    assert!(
+        partitioned[..DISCOVERED_TARGETS]
+            .iter()
+            .all(PrebuiltTest::requires_exclusive_lane),
+        "every exclusive complement leads the ordinary waves",
+    );
+    assert!(
+        partitioned[DISCOVERED_TARGETS..]
+            .iter()
+            .all(|test| !test.requires_exclusive_lane()),
+        "no ordinary complement crosses the exclusive prefix",
+    );
+    for index in 0..DISCOVERED_TARGETS {
+        let name = format!("candidate-{index:02}");
+        assert_eq!(
+            partitioned
+                .iter()
+                .filter(|test| test.target.name == name)
+                .count(),
+            6,
+            "every bounded candidate divides its 33 cases into six complements",
+        );
+    }
+    let terminal = partitioned
+        .iter()
+        .find(|test| test.target.name == format!("candidate-{DISCOVERED_TARGETS:02}"))
+        .expect("the first target outside the discovery bound remains present");
+    assert!(terminal.partition.is_none());
+    let output = String::from_utf8(output).expect("partition progress is UTF-8");
+    assert!(
+        output.contains("artifacts=32 candidates=31 shards=187"),
+        "{output}",
+    );
+    fs::remove_dir_all(root).expect("partition-bound fixture removes");
 }
 
 #[test]
