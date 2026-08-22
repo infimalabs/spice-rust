@@ -34,6 +34,7 @@ const CONFIGURED_BOUNDARY_TEST: &str = concat!(
     "}\n",
 );
 
+mod cfg_test_reach;
 mod cross_package_ownership;
 mod dual_target_ownership;
 mod environment;
@@ -675,13 +676,13 @@ fn materialized_fixture_inventory(label: &str) -> (PathBuf, Inventory) {
         for target in &mut package.declared_targets {
             target.source = relocate_fixture_path(&target.source, &root);
             for declared in &mut target.declared_path_sources {
-                *declared = relocate_fixture_path(declared, &root);
+                declared.path = relocate_fixture_path(&declared.path, &root);
             }
         }
         for target in &mut package.targets {
             target.source = relocate_fixture_path(&target.source, &root);
             for declared in &mut target.declared_path_sources {
-                *declared = relocate_fixture_path(declared, &root);
+                declared.path = relocate_fixture_path(&declared.path, &root);
             }
         }
     }

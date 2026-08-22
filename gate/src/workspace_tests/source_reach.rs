@@ -3,28 +3,38 @@ use super::*;
 /// Acquire exact external module and `include!` sources with their Cargo target.
 pub(super) fn declared_path_sources(
     target_source: &Path,
-) -> Result<Vec<PathBuf>, WorkspaceTestError> {
+) -> Result<Vec<DeclaredPathSource>, WorkspaceTestError> {
     let module_dir = target_source.parent().ok_or_else(|| {
         WorkspaceTestError::new(format!(
             "Cargo target source {} has no parent",
             target_source.display()
         ))
     })?;
-    let mut declared = BTreeSet::new();
+    let mut declared = BTreeMap::new();
     let mut visited = BTreeSet::new();
-    collect_declared_sources(target_source, module_dir, &mut declared, &mut visited)?;
+    collect_declared_sources(
+        target_source,
+        module_dir,
+        false,
+        &mut declared,
+        &mut visited,
+    )?;
     declared.remove(target_source);
-    Ok(declared.into_iter().collect())
+    Ok(declared
+        .into_iter()
+        .map(|(path, test_only)| DeclaredPathSource { path, test_only })
+        .collect())
 }
 
 fn collect_declared_sources(
     source: &Path,
     module_dir: &Path,
-    declared: &mut BTreeSet<PathBuf>,
-    visited: &mut BTreeSet<PathBuf>,
+    test_only: bool,
+    declared: &mut BTreeMap<PathBuf, bool>,
+    visited: &mut BTreeSet<(PathBuf, bool)>,
 ) -> Result<(), WorkspaceTestError> {
     let source = fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
-    if !visited.insert(source.clone()) {
+    if !visited.insert((source.clone(), test_only)) {
         return Ok(());
     }
     let document = match fs::read_to_string(&source) {
@@ -43,32 +53,50 @@ fn collect_declared_sources(
             source.display()
         ))
     })?;
-    collect_declared_items(&syntax.items, &source, module_dir, declared, visited)
+    collect_declared_items(
+        &syntax.items,
+        &source,
+        module_dir,
+        test_only,
+        declared,
+        visited,
+    )
 }
 
 fn collect_declared_items(
     items: &[Item],
     source: &Path,
     module_dir: &Path,
-    declared: &mut BTreeSet<PathBuf>,
-    visited: &mut BTreeSet<PathBuf>,
+    test_only: bool,
+    declared: &mut BTreeMap<PathBuf, bool>,
+    visited: &mut BTreeSet<(PathBuf, bool)>,
 ) -> Result<(), WorkspaceTestError> {
     for item in items {
         match item {
             Item::Mod(module) => {
+                let test_only = test_only || exact_cfg_test(&module.attrs);
                 if let Some((_, inline)) = &module.content {
                     let child_dir = module_dir.join(module.ident.to_string());
-                    collect_declared_items(inline, source, &child_dir, declared, visited)?;
+                    collect_declared_items(
+                        inline, source, &child_dir, test_only, declared, visited,
+                    )?;
                 } else if let Some(module_source) =
                     external_module_source(module, source, module_dir)?
                 {
                     let module_source = fs::canonicalize(&module_source).unwrap_or(module_source);
                     let child_dir = child_module_dir(&module_source)?;
-                    declared.insert(module_source.clone());
-                    collect_declared_sources(&module_source, &child_dir, declared, visited)?;
+                    record_declared_source(declared, module_source.clone(), test_only);
+                    collect_declared_sources(
+                        &module_source,
+                        &child_dir,
+                        test_only,
+                        declared,
+                        visited,
+                    )?;
                 }
             }
             Item::Macro(invocation) if invocation.mac.path.is_ident("include") => {
+                let test_only = test_only || exact_cfg_test(&invocation.attrs);
                 let path =
                     syn::parse2::<LitStr>(invocation.mac.tokens.clone()).map_err(|error| {
                         WorkspaceTestError::new(format!(
@@ -84,13 +112,40 @@ fn collect_declared_items(
                 })?;
                 let included = parent.join(path.value());
                 let included = fs::canonicalize(&included).unwrap_or(included);
-                declared.insert(included.clone());
-                collect_declared_sources(&included, module_dir, declared, visited)?;
+                record_declared_source(declared, included.clone(), test_only);
+                collect_declared_sources(&included, module_dir, test_only, declared, visited)?;
             }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn exact_cfg_test(attributes: &[syn::Attribute]) -> bool {
+    // Compound cfg expressions may admit a non-test build, so only an exact
+    // `#[cfg(test)]` edge can prove that every descendant is test-only.
+    attributes.iter().any(|attribute| {
+        if !attribute.path().is_ident("cfg") {
+            return false;
+        }
+        let Meta::List(list) = &attribute.meta else {
+            return false;
+        };
+        syn::parse2::<syn::Path>(list.tokens.clone()).is_ok_and(|path| path.is_ident("test"))
+    })
+}
+
+fn record_declared_source(
+    declared: &mut BTreeMap<PathBuf, bool>,
+    source: PathBuf,
+    test_only: bool,
+) {
+    // One production edge is enough to make a multiply-declared source part
+    // of ordinary library reach; test-only survives only when every edge is.
+    declared
+        .entry(source)
+        .and_modify(|existing| *existing &= test_only)
+        .or_insert(test_only);
 }
 
 fn child_module_dir(source: &Path) -> Result<PathBuf, WorkspaceTestError> {
