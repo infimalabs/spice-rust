@@ -67,14 +67,17 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
     let cargo = fs::read_to_string(&cargo_log).expect("read standalone Cargo trace");
     assert!(
         cargo.lines().any(|line| {
-            line == "check --locked --all-targets --package verify-process-fixture"
+            line == "test --locked --package verify-process-fixture --lib --no-run"
         }),
         "native standalone analysis did not run: {cargo}"
     );
     assert!(
-        cargo
-            .lines()
-            .any(|line| { line == "check --locked --package app --target wasm32-unknown-unknown" }),
+        cargo.lines().any(|line| {
+            line == concat!(
+                "clippy --locked --package app --target wasm32-unknown-unknown ",
+                "-- -D warnings",
+            )
+        }),
         "canvas standalone Cargo analysis did not run: {cargo}"
     );
     let trunk = fs::read_to_string(&trunk_log).expect("read standalone Trunk trace");

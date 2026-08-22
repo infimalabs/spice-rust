@@ -224,7 +224,7 @@ fn canvas_runs_both_declared_commands_in_order_from_their_owned_directories() {
         fixture.log_lines(),
         [
             format!(
-                "{}|check --locked --package app --target wasm32-unknown-unknown",
+                "{}|clippy --locked --package app --target wasm32-unknown-unknown -- -D warnings",
                 root.display()
             ),
             format!(
@@ -638,7 +638,7 @@ fn canvas_small_runtime_bound_reports_timeout_and_stops_the_pair() {
     assert_eq!(analysis.outcome, ArmOutcome::Timeout);
     assert_eq!(analysis.exit_code, None);
     assert!(analysis.findings.is_empty());
-    assert!(analysis.reason.contains("cargo wasm32 check"));
+    assert!(analysis.reason.contains("cargo Canvas WASM typecheck"));
     assert!(
         fixture
             .log_lines()

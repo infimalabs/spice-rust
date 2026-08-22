@@ -466,7 +466,7 @@ pub(crate) fn canvas_nonzero_directory(label: &str) -> Tree {
                     "if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{version}'; exit 0; fi\n",
                     "if [ \"$1\" = \"fmt\" ]; then exit 0; fi\n",
                     "if [ \"$1\" = \"metadata\" ]; then printf '%s\\n' \"{metadata}\"; exit 0; fi\n",
-                    "if [ \"$1\" = \"check\" ]; then printf 'opaque refusal\\n' >&2; exit 17; fi\n",
+                    "if [ \"$1\" = \"clippy\" ]; then printf 'opaque refusal\\n' >&2; exit 17; fi\n",
                     "exit 91\n",
                 ),
                 version = version,

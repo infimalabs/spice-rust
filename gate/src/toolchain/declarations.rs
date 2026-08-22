@@ -306,7 +306,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
         },
         tools: CANVAS_TOOLS,
         analysis: &[
-            "cargo check --locked --package app --target wasm32-unknown-unknown",
+            "cargo clippy --locked --package app --target wasm32-unknown-unknown -- -D warnings",
             "trunk build index.html --release --locked --filehash=false",
         ],
     },

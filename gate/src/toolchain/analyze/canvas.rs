@@ -122,7 +122,7 @@ fn canvas_analysis(
     };
     let invocations = [
         CompileInvocation {
-            name: "cargo wasm32 check",
+            name: "cargo Canvas WASM typecheck",
             program: cargo,
             arguments: CARGO_WASM_ARGUMENTS,
             cwd: source,
