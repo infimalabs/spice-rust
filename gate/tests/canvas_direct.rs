@@ -19,6 +19,7 @@ fn canvas_wasm_typecheck_uses_only_the_app_unit_graph_from_a_cold_cache() {
         )),
         "the direct alias must remain the package-scoped canonical Canvas command",
     );
+    fixture.write(".cargo/config.toml", &repository_config);
     fixture.package("app", "pub fn canvas() -> u8 { 1 }\n");
     fixture.package(
         "unrelated-native",
@@ -80,7 +81,7 @@ impl Fixture {
             .expect("gate package has a repository parent");
         let root = loop {
             let ordinal = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let candidate = repository.join("target").join(format!(
+            let candidate = std::env::temp_dir().join(format!(
                 "canvas-direct-fixture-{}-{ordinal}",
                 std::process::id()
             ));
