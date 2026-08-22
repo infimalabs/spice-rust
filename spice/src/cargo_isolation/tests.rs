@@ -93,6 +93,76 @@ impl Drop for Fixture {
     }
 }
 
+const TRACKED_CARGO_GUIDANCE: [(&str, &str); 3] = [
+    ("AGENTS.md", include_str!("../../../AGENTS.md")),
+    (
+        "spice/CARGO_ISOLATION.md",
+        include_str!("../../CARGO_ISOLATION.md"),
+    ),
+    ("spice/COEXISTENCE.md", include_str!("../../COEXISTENCE.md")),
+];
+
+#[test]
+fn tracked_guidance_routes_only_rust_cargo_through_the_git_common_appliance() {
+    for (path, guidance) in TRACKED_CARGO_GUIDANCE {
+        let normalized = guidance.split_whitespace().collect::<Vec<_>>().join(" ");
+        for required in [
+            "/usr/bin/git",
+            "--path-format=absolute --git-common-dir",
+            ".spice-install/bin/spice",
+            "[ ! -f \"$spice_rs\" ]",
+            "[ -L \"$spice_rs\" ]",
+            "[ ! -x \"$spice_rs\" ]",
+            "\"$spice_rs\" dev cargo --",
+            "hard stop",
+            "Do not search `PATH`",
+            "shared mutable",
+            "`spice session`",
+            "`spice task`",
+            "`spice steering`",
+        ] {
+            assert!(
+                normalized.contains(required),
+                "{path} must retain the hybrid Cargo authority marker {required:?}",
+            );
+        }
+        assert!(
+            !normalized.contains("spice dev cargo"),
+            "{path} must not route Rust Cargo through an unqualified Spice command",
+        );
+        assert!(
+            !normalized.contains("CARGO_HOME="),
+            "{path} must not prescribe a direct Cargo-home override",
+        );
+
+        let rust_invocations = guidance
+            .lines()
+            .filter(|line| line.contains("\"$spice_rs\" dev"))
+            .collect::<Vec<_>>();
+        assert!(
+            rust_invocations
+                .iter()
+                .any(|line| line.contains("\"$spice_rs\" dev cargo --")),
+            "{path} must invoke the exact appliance's Cargo surface",
+        );
+        for invocation in rust_invocations {
+            for control in [
+                " session",
+                " task",
+                " steering",
+                " status",
+                " done",
+                " next",
+            ] {
+                assert!(
+                    !invocation.contains(control),
+                    "{path} must keep Python control command {control:?} out of Rust invocation {invocation:?}",
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn identical_lanes_reuse_one_immutable_generation_and_bounded_homes() {
     let fixture = Fixture::new();

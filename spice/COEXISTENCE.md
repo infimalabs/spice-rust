@@ -153,6 +153,32 @@ resident's ambient path; bare agent-shell commands still reach the installed
 wrapper and exact Rust appliance, and the predecessor invocation log stays
 absent.
 
+### Hybrid operator command ownership
+
+That resident wrapper closure does not move an externally launched Python
+agent into the Rust control plane. In the current hybrid operation,
+unqualified `spice session`, `spice task`, and `spice steering` commands remain
+owned by the ambient Python controls plane. Rust hooks keep their installed
+absolute launchers, and an operator or agent reaches the Rust-specific
+`dev cargo` surface only through the exact Git-common appliance:
+
+```sh
+git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
+spice_rs="${git_common}/.spice-install/bin/spice"
+if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
+  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
+  exit 1
+fi
+"$spice_rs" dev cargo -- <cargo-arguments>
+```
+
+The installed asset must be a non-symbolic executable regular file. Its
+absence or invalidity is a hard stop for the Rust-specific operation and says
+nothing about whether this Python-controlled agent owns a Rust lane or claim.
+Do not search `PATH`, dispatch Rust task or session commands, choose another
+Cargo route, or point `CARGO_HOME` at a shared mutable cache to bypass that
+boundary.
+
 ## Tracked configuration
 
 Tracked policy is physically separate. Python builds its repository layer from
