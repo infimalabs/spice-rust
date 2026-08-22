@@ -601,15 +601,10 @@ version = \"0.0.0\"
 
     /// The planted source: a call, in a test body, to a spelling nothing defines.
     ///
-    /// Both halves of the placement are load-bearing. It is a *reference*, not a
-    /// declaration, because `gate/tests/retired_names.rs` judges declarations
-    /// only: its `scan_item` reads `Item::Fn`'s `sig.ident` and `attrs` and
-    /// never descends into `node.block`. Widening that walk is refused from
-    /// inside by a law the same suite pins at line 219,
-    /// `a_local_binding_is_not_a_coined_name`, which asserts that a local binding
-    /// coins nothing even when its spelling is retired; judging every path
-    /// expression turns that law red, and judging only qualified paths still
-    /// misses a bare call exactly like this one.
+    /// Both halves of the placement are load-bearing. It is a *reference* in a
+    /// function body, not a declaration, so a declaration inventory cannot
+    /// establish whether it resolves. The native compiler must inspect the
+    /// body and report the unresolved call.
     ///
     /// And it sits in a `#[cfg(test)]` body because the exact test-enabled unit
     /// uses `cargo test --no-run`. A plain `cargo check` builds no test body, so

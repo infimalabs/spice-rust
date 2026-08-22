@@ -160,6 +160,12 @@ pub(super) fn selection_plan(
         }
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
+            if let Some(package) =
+                removed_source_package(inventory, &selected_root, changed, &absolute)?
+            {
+                select_package_targets(package, changed, &mut tests, &mut edges)?;
+                continue;
+            }
             return Err(unclassified_source(inventory, changed, &absolute));
         }
         for claim in claims {
@@ -231,6 +237,12 @@ pub(super) fn cargo_check_selections(
         let absolute = selected_root.join(changed);
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
+            if let Some(package) =
+                removed_source_package(inventory, &selected_root, changed, &absolute)?
+            {
+                select_package_checks([package], &mut reached)?;
+                continue;
+            }
             return Err(unclassified_source(inventory, changed, &absolute));
         }
         for claim in claims {
@@ -328,6 +340,44 @@ fn containing_package<'a>(
         .iter()
         .filter(|package| absolute.starts_with(&package.root))
         .max_by_key(|package| package.root.components().count())
+}
+
+/// Recover package reach for an unclaimed source removed from the selected tree.
+///
+/// Cargo metadata cannot retain an auto-discovered target after its root is
+/// deleted. Absence is therefore classified from the materialized selected
+/// tree itself, never guessed from path convention. A present source with no
+/// target claim remains an error, as does a removed source outside every Cargo
+/// package. Removed library sources never arrive here: the existing library
+/// fallback claims their source directory and retains reverse-dependent reach.
+fn removed_source_package<'a>(
+    inventory: &'a Inventory,
+    selected_root: &Path,
+    changed: &str,
+    absolute: &Path,
+) -> Result<Option<&'a PackageInventory>, WorkspaceTestError> {
+    let root = fs::symlink_metadata(selected_root).map_err(|error| {
+        WorkspaceTestError::new(format!(
+            "selected root {} is unavailable while classifying changed Rust source {changed:?}: {error}",
+            selected_root.display(),
+        ))
+    })?;
+    if !root.is_dir() {
+        return Err(WorkspaceTestError::new(format!(
+            "selected root {} is not a directory while classifying changed Rust source {changed:?}",
+            selected_root.display(),
+        )));
+    }
+    match fs::symlink_metadata(absolute) {
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Ok(containing_package(inventory, absolute))
+        }
+        Err(error) => Err(WorkspaceTestError::new(format!(
+            "changed Rust source {changed:?} is unavailable at {}: {error}",
+            absolute.display(),
+        ))),
+    }
 }
 
 fn unclassified_source(

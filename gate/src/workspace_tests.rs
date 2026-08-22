@@ -40,7 +40,7 @@ pub(crate) use inventory::workspace_package_reach_at;
 use inventory::*;
 use prebuild::*;
 #[cfg(test)]
-use selection::{exhaustive_selection_report, selection_report};
+use selection::{cargo_check_selections, exhaustive_selection_report, selection_report};
 use selection::{package_inventory, selection_plan};
 use source_reach::declared_path_sources;
 

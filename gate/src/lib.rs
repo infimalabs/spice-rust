@@ -27,7 +27,6 @@ pub mod manifest;
 pub mod measure;
 pub mod message;
 pub mod metrics;
-pub mod names;
 pub mod policy;
 pub mod ratchet;
 pub mod report;
@@ -140,9 +139,6 @@ pub use measure::{
 pub use message::{
     CommitMessageError, CommitMessagePolicy, OriginTrailer, OriginTrailerError, TrailerRejection,
     validate_commit_message,
-};
-pub use names::{
-    RETIRED_NAMES, RetiredMatch, RetiredName, retired_command_matches, retired_matches,
 };
 pub use policy::{
     Applicability, BoundLimits, BoundName, CompileError as PolicyCompileError, FileClasses,

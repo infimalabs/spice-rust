@@ -76,12 +76,12 @@ fn measured(state: &EvidenceState) -> &MetricMeasurement {
 #[test]
 fn a_planted_citation_names_its_line_and_target_in_the_encoded_report() {
     let tree = Tree::new("absence");
-    let source = "gate/tests/retired_names.rs";
+    let source = "gate/tests/markdown_refs.rs";
     tree.write(
         source,
-        "//! The retirement ledger's jurisdiction.\n\
+        "//! Documentation-link metric fixtures.\n\
          //!\n\
-         //! The deny-list is scoped by NAMES.md and nothing else.\n\
+         //! The guide is scoped by MISSING.md and nothing else.\n\
          pub const OWNED: u8 = 0;\n",
     );
     let tracked = vec![source.to_owned()];
@@ -96,7 +96,7 @@ fn a_planted_citation_names_its_line_and_target_in_the_encoded_report() {
 
     let report = encoded(MetricId::RustDocMarkdownTargetAbsences, source, state);
     assert!(
-        report.contains("NAMES.md"),
+        report.contains("MISSING.md"),
         "the unresolved target is named in the report: {report}"
     );
     assert!(

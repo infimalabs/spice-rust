@@ -1272,6 +1272,46 @@ fn fixture_inventory() -> Inventory {
     }
 }
 
+fn materialized_fixture_inventory(label: &str) -> (PathBuf, Inventory) {
+    let root = fixture_root(label);
+    fs::create_dir_all(root.join("fixture-a/src")).expect("create fixture-a source directory");
+    fs::create_dir_all(root.join("fixture-b/src")).expect("create fixture-b source directory");
+    fs::write(root.join("fixture-a/src/lib.rs"), "pub fn fixture_a() {}\n")
+        .expect("write fixture-a library");
+    fs::write(root.join("fixture-b/src/main.rs"), "fn main() {}\n")
+        .expect("write fixture-b binary");
+    let root = fs::canonicalize(root).expect("canonical materialized fixture root");
+    let mut inventory = fixture_inventory();
+    inventory.target_directory = root.join("target");
+    inventory.build_directory = root.join("target/cargo-build");
+    for package in &mut inventory.packages {
+        package.root = relocate_fixture_path(&package.root, &root);
+        for dependency in &mut package.dependencies {
+            *dependency = relocate_fixture_path(dependency, &root);
+        }
+        for target in &mut package.declared_targets {
+            target.source = relocate_fixture_path(&target.source, &root);
+            for declared in &mut target.declared_path_sources {
+                *declared = relocate_fixture_path(declared, &root);
+            }
+        }
+        for target in &mut package.targets {
+            target.source = relocate_fixture_path(&target.source, &root);
+            for declared in &mut target.declared_path_sources {
+                *declared = relocate_fixture_path(declared, &root);
+            }
+        }
+    }
+    (root, inventory)
+}
+
+fn relocate_fixture_path(path: &Path, root: &Path) -> PathBuf {
+    root.join(
+        path.strip_prefix("/workspace")
+            .expect("fixture inventory path starts at /workspace"),
+    )
+}
+
 fn binary_output_inventory(root: &Path) -> Inventory {
     Inventory {
         packages: Vec::new(),
