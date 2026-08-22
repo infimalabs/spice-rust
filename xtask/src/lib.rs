@@ -21,7 +21,8 @@ mod workspace_tests;
 pub use app::{AppBuildError, app, app_to};
 pub use build_cache::{
     BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
-    BuildCacheRootReport, build_cache, collect_build_cache_at, parse_byte_quantity,
+    BuildCacheRootKind, BuildCacheRootReport, BuildCacheTargetDirectory, build_cache,
+    collect_build_cache_at, parse_byte_quantity,
 };
 pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh};
 pub use gate_command::{gate_arm, gate_arm_report};

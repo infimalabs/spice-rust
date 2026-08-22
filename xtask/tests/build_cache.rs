@@ -1,6 +1,8 @@
 #![cfg(unix)]
 
+use std::ffi::OsStr;
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,13 +11,15 @@ use std::time::{Duration, Instant};
 
 use sill::{Acquisition, Availability, LockFile, LockName, Possession};
 use xtask::{
-    BuildCacheContext, BuildCacheDisposition, BuildCacheRequest, BuildCacheRootReport,
-    collect_build_cache_at, parse_byte_quantity,
+    BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheRequest,
+    BuildCacheRootKind, BuildCacheRootReport, BuildCacheTargetDirectory, collect_build_cache_at,
+    parse_byte_quantity,
 };
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const CACHE_TAG: &str = "CACHEDIR.TAG";
 const LOCK_NAME: &str = ".cargo-build-lock";
+const TARGET_LOCK_NAME: &str = ".cargo-lock";
 const WAIT_LIMIT: Duration = Duration::from_secs(15);
 
 /// Cargo's own profile lock is an externally observable active-build marker.
@@ -238,7 +242,8 @@ fn build_cache_retains_current_and_configured_hottest_live_worktree_roots() {
     let victim = write_cache_root(&cache, "00", "00000000000000", "victim");
     let cold_live = write_cache_root(&cache, "01", "00000000000000", "cold-live");
     thread::sleep(Duration::from_millis(5));
-    let hot_live = write_cache_root(&cache, "02", "00000000000000", "hot-live");
+    let hot_worktree = scratch.join("hot-worktree");
+    let hot_live = write_target_root(&hot_worktree, "hot-live");
     let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
     let request = BuildCacheRequest {
         apply: true,
@@ -247,10 +252,12 @@ fn build_cache_retains_current_and_configured_hottest_live_worktree_roots() {
         ..BuildCacheRequest::default()
     };
 
-    let report = collect_cache(
+    let (report, _) = collect_cache_with_targets(
         &current,
         request,
-        vec![cold_live.clone(), hot_live.clone()],
+        vec![cold_live.clone()],
+        None,
+        vec![BuildCacheTargetDirectory::new(&hot_worktree, &hot_live)],
         None,
     );
 
@@ -357,6 +364,210 @@ fn build_cache_removal_never_follows_symlinks_or_collects_malformed_root_links()
 }
 
 #[test]
+fn build_cache_dry_run_reports_managed_and_worktree_targets_in_one_inventory() {
+    let scratch = Scratch::new("mixed-inventory");
+    let cache = scratch.join("CargoBuild");
+    let linked_build = write_cache_root(&cache, "00", "00000000000000", "linked-build");
+    let current_build = write_cache_root(&cache, "ff", "ffffffffffffff", "current-build");
+    let current_worktree = scratch.join("current-worktree");
+    let linked_worktree = scratch.join("linked-worktree");
+    let current_target = write_target_root(&current_worktree, "current-target");
+    let linked_target = write_target_root(&linked_worktree, "linked-target");
+    let (report, output) = collect_cache_with_targets(
+        &current_build,
+        BuildCacheRequest {
+            max_bytes: Some(0),
+            retain_live_worktrees: 0,
+            ..BuildCacheRequest::default()
+        },
+        vec![linked_build.clone()],
+        Some(BuildCacheTargetDirectory::new(
+            &current_worktree,
+            &current_target,
+        )),
+        vec![BuildCacheTargetDirectory::new(
+            &linked_worktree,
+            &linked_target,
+        )],
+        None,
+    );
+
+    assert_eq!(
+        root_report(&report, &current_build).kind,
+        BuildCacheRootKind::ManagedBuild
+    );
+    assert_eq!(
+        root_report(&report, &current_target).kind,
+        BuildCacheRootKind::WorktreeTarget
+    );
+    for current in [&current_build, &current_target] {
+        assert_eq!(
+            root_report(&report, current).disposition,
+            BuildCacheDisposition::RetainedCurrent,
+            "{} was not retained as a current root",
+            current.display()
+        );
+    }
+    for linked in [&linked_build, &linked_target] {
+        assert_eq!(
+            root_report(&report, linked).disposition,
+            BuildCacheDisposition::WouldReclaim,
+            "{} was not selected in the global LRU inventory",
+            linked.display()
+        );
+    }
+    assert_eq!(report.current_target, Some(current_target.clone()));
+    assert_eq!(
+        report.total_bytes,
+        report.roots.iter().map(|root| root.bytes).sum::<u64>()
+    );
+    let target = root_report(&report, &linked_target);
+    assert!(
+        target
+            .locks
+            .iter()
+            .any(|lock| lock.file_name() == Some(OsStr::new(TARGET_LOCK_NAME)))
+    );
+    assert!(
+        target
+            .locks
+            .iter()
+            .any(|lock| lock.file_name() == Some(OsStr::new(LOCK_NAME)))
+    );
+    assert!(
+        output.contains("scope=managed-build-and-worktree-targets"),
+        "{output}"
+    );
+    assert!(output.contains("kind=managed-build"), "{output}");
+    assert!(output.contains("kind=worktree-target"), "{output}");
+}
+
+#[test]
+fn build_cache_reprobes_target_and_build_locks_before_removal() {
+    let scratch = Scratch::new("target-locks");
+    let cache = scratch.join("CargoBuild");
+    let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
+    let linked_worktree = scratch.join("linked-worktree");
+    let target = write_target_root(&linked_worktree, "linked-target");
+    let target_lock = target.join("debug").join(TARGET_LOCK_NAME);
+    let held = hold_named_lock(&target_lock);
+    let request = BuildCacheRequest {
+        apply: true,
+        max_bytes: Some(0),
+        retain_live_worktrees: 0,
+        ..BuildCacheRequest::default()
+    };
+
+    let (blocked, _) = collect_cache_with_targets(
+        &current,
+        request.clone(),
+        Vec::new(),
+        None,
+        vec![BuildCacheTargetDirectory::new(&linked_worktree, &target)],
+        None,
+    );
+    assert_eq!(
+        root_report(&blocked, &target).disposition,
+        BuildCacheDisposition::SkippedActive
+    );
+    assert!(target.is_dir(), "held worktree target was removed");
+
+    drop(held);
+    let (collected, _) = collect_cache_with_targets(
+        &current,
+        request,
+        Vec::new(),
+        None,
+        vec![BuildCacheTargetDirectory::new(&linked_worktree, &target)],
+        None,
+    );
+    assert_eq!(
+        root_report(&collected, &target).disposition,
+        BuildCacheDisposition::Reclaimed
+    );
+    assert!(!target.exists(), "released worktree target survived");
+}
+
+#[test]
+fn build_cache_skips_malformed_symlinked_and_outside_worktree_targets() {
+    let scratch = Scratch::new("target-boundaries");
+    let cache = scratch.join("CargoBuild");
+    let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
+    let worktree = scratch.join("worktree");
+    fs::create_dir_all(&worktree).expect("create owning worktree");
+    let outside = scratch.join("outside-target");
+    write_target_at(&outside, "outside");
+    let symlink = worktree.join("symlink-target");
+    std::os::unix::fs::symlink(&outside, &symlink).expect("link target outside worktree");
+    let untagged = worktree.join("untagged-target");
+    fs::create_dir(&untagged).expect("create untagged target");
+    fs::write(untagged.join("payload"), b"untagged").expect("write untagged target");
+
+    let (report, _) = collect_cache_with_targets(
+        &current,
+        BuildCacheRequest {
+            apply: true,
+            max_bytes: Some(0),
+            retain_live_worktrees: 0,
+            ..BuildCacheRequest::default()
+        },
+        Vec::new(),
+        None,
+        [&outside, &symlink, &untagged]
+            .map(|target| BuildCacheTargetDirectory::new(&worktree, target))
+            .to_vec(),
+        None,
+    );
+
+    for target in [&outside, &symlink, &untagged] {
+        assert!(matches!(
+            root_report(&report, target).disposition,
+            BuildCacheDisposition::SkippedMalformed(_)
+        ));
+        assert!(target.exists(), "{} was removed", target.display());
+    }
+    assert!(outside.join("payload").is_file());
+}
+
+#[test]
+fn build_cache_names_the_exact_owner_read_only_target_path() {
+    let scratch = Scratch::new("read-only-target");
+    let cache = scratch.join("CargoBuild");
+    let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
+    let worktree = scratch.join("worktree");
+    let target = write_target_root(&worktree, "read-only");
+    let read_only = target.join("xtask-app-source/journal");
+    fs::create_dir_all(&read_only).expect("create read-only snapshot");
+    let refused = read_only.join("Cargo.toml");
+    fs::write(&refused, b"[workspace]\n").expect("write refused snapshot file");
+    fs::set_permissions(&read_only, fs::Permissions::from_mode(0o500))
+        .expect("make snapshot owner-read-only");
+    let mut context = BuildCacheContext::new(&current);
+    context
+        .live_target_directories
+        .push(BuildCacheTargetDirectory::new(&worktree, &target));
+    let mut output = Vec::new();
+    let error = collect_build_cache_at(
+        &BuildCacheRequest {
+            apply: true,
+            max_bytes: Some(0),
+            retain_live_worktrees: 0,
+            ..BuildCacheRequest::default()
+        },
+        &context,
+        &mut output,
+    )
+    .expect_err("owner-read-only target subtree refuses removal");
+    fs::set_permissions(&read_only, fs::Permissions::from_mode(0o700))
+        .expect("restore snapshot permissions");
+
+    let BuildCacheError::Io { path, .. } = error else {
+        panic!("read-only target returned the wrong refusal: {error}");
+    };
+    assert_eq!(path, refused);
+}
+
+#[test]
 fn build_cache_byte_parser_accepts_documented_binary_suffixes() {
     assert_eq!(
         parse_byte_quantity("7G").expect("parse G"),
@@ -400,9 +611,35 @@ fn add_lock(root: &Path, relative: &str) -> PathBuf {
     path
 }
 
+fn write_target_root(worktree: &Path, label: &str) -> PathBuf {
+    let target = worktree.join("target");
+    write_target_at(&target, label);
+    target
+}
+
+fn write_target_at(target: &Path, label: &str) {
+    fs::create_dir_all(target.join("debug")).expect("create worktree target");
+    fs::write(
+        target.join(CACHE_TAG),
+        b"Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .expect("write target cache tag");
+    fs::write(target.join("payload"), label).expect("write target payload");
+    fs::write(target.join("debug").join(TARGET_LOCK_NAME), b"").expect("write target lock");
+    fs::write(target.join("debug").join(LOCK_NAME), b"").expect("write build lock");
+}
+
 fn hold_lock(path: &Path) -> Possession {
+    hold_named_lock(path)
+}
+
+fn hold_named_lock(path: &Path) -> Possession {
+    let name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("fixture lock has a UTF-8 name");
     let lock = LockFile::new(
-        LockName::new(LOCK_NAME).expect("Cargo lock name is one component"),
+        LockName::new(name).expect("Cargo lock name is one component"),
         path,
     );
     match lock.try_acquire().expect("hold lock") {
@@ -417,11 +654,37 @@ fn collect_cache(
     live_build_directories: Vec<PathBuf>,
     available_bytes: Option<u64>,
 ) -> xtask::BuildCacheReport {
+    collect_cache_with_targets(
+        current,
+        request,
+        live_build_directories,
+        None,
+        Vec::new(),
+        available_bytes,
+    )
+    .0
+}
+
+fn collect_cache_with_targets(
+    current: &Path,
+    request: BuildCacheRequest,
+    live_build_directories: Vec<PathBuf>,
+    current_target: Option<BuildCacheTargetDirectory>,
+    live_target_directories: Vec<BuildCacheTargetDirectory>,
+    available_bytes: Option<u64>,
+) -> (xtask::BuildCacheReport, String) {
     let mut context = BuildCacheContext::new(current);
+    context.target_directory = current_target;
     context.live_build_directories = live_build_directories;
+    context.live_target_directories = live_target_directories;
     context.available_bytes = available_bytes;
     let mut output = Vec::new();
-    collect_build_cache_at(&request, &context, &mut output).expect("collect build cache")
+    let report = collect_build_cache_at(&request, &context, &mut output)
+        .expect("collect build and target cache");
+    (
+        report,
+        String::from_utf8(output).expect("build-cache report is UTF-8"),
+    )
 }
 
 fn root_report<'a>(report: &'a xtask::BuildCacheReport, root: &Path) -> &'a BuildCacheRootReport {
@@ -429,11 +692,13 @@ fn root_report<'a>(report: &'a xtask::BuildCacheReport, root: &Path) -> &'a Buil
     report
         .roots
         .iter()
-        .find(|entry| {
-            canonical
-                .as_ref()
-                .is_some_and(|canonical| entry.path == *canonical)
-                || entry.path == root
+        .find(|entry| entry.path == root)
+        .or_else(|| {
+            report.roots.iter().find(|entry| {
+                canonical
+                    .as_ref()
+                    .is_some_and(|canonical| entry.path == *canonical)
+            })
         })
         .unwrap_or_else(|| panic!("{} was not reported", root.display()))
 }

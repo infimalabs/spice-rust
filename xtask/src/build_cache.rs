@@ -1,4 +1,12 @@
-//! Lock-aware collection for Cargo's configured build-directory cache.
+//! Lock-aware collection for Cargo's configured build and target directories.
+
+mod discovery;
+mod report;
+mod targets;
+
+use report::render_report;
+pub use targets::BuildCacheTargetDirectory;
+use targets::{insert_distinct_root, inventory_target_root};
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -7,14 +15,13 @@ use std::fmt;
 use std::fs::{self, Metadata};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Deserialize;
 use sill::{Acquisition, LockFile, LockName, Possession};
 
 const CACHE_TAG: &str = "CACHEDIR.TAG";
-const LOCK_NAME: &str = ".cargo-build-lock";
+const BUILD_LOCK_NAME: &str = ".cargo-build-lock";
+const TARGET_LOCK_NAME: &str = ".cargo-lock";
 const DEFAULT_RETAIN_LIVE_WORKTREES: usize = 2;
 
 macro_rules! is_hex_name {
@@ -55,8 +62,12 @@ impl Default for BuildCacheRequest {
 pub struct BuildCacheContext {
     /// Cargo's `build_directory` for the current worktree.
     pub build_directory: PathBuf,
+    /// Cargo's target directory and owning current worktree, when it exists.
+    pub target_directory: Option<BuildCacheTargetDirectory>,
     /// Build directories for linked worktrees in the same hierarchy.
     pub live_build_directories: Vec<PathBuf>,
+    /// Cargo target directories and owning linked worktrees.
+    pub live_target_directories: Vec<BuildCacheTargetDirectory>,
     /// Available bytes for the filesystem containing the hierarchy.
     pub available_bytes: Option<u64>,
 }
@@ -67,7 +78,9 @@ impl BuildCacheContext {
     pub fn new(build_directory: impl Into<PathBuf>) -> Self {
         Self {
             build_directory: build_directory.into(),
+            target_directory: None,
             live_build_directories: Vec::new(),
+            live_target_directories: Vec::new(),
             available_bytes: None,
         }
     }
@@ -80,6 +93,8 @@ pub struct BuildCacheReport {
     pub hierarchy: PathBuf,
     /// The current worktree's resolved build root.
     pub current: PathBuf,
+    /// The current worktree's resolved target root, when it is an admitted root.
+    pub current_target: Option<PathBuf>,
     /// Physical bytes inventoried below candidate roots.
     pub total_bytes: u64,
     /// Bytes selected for removal by this run.
@@ -98,11 +113,15 @@ pub struct BuildCacheReport {
     pub roots: Vec<BuildCacheRootReport>,
 }
 
-/// Inventory and outcome for one two-level workspace hash root.
+/// Inventory and outcome for one Cargo cache root.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BuildCacheRootReport {
+    /// Cargo cache class this root belongs to.
+    pub kind: BuildCacheRootKind,
     /// Absolute path to the candidate root.
     pub path: PathBuf,
+    /// Resolved boundary the root must remain below during removal.
+    pub removal_boundary: PathBuf,
     /// Physical bytes below this root, computed without following symlinks.
     pub bytes: u64,
     /// Seconds since the Unix epoch for the newest metadata timestamp observed.
@@ -111,10 +130,19 @@ pub struct BuildCacheRootReport {
     pub last_use_epoch_nanos: u128,
     /// Root-relative path that supplied the newest timestamp.
     pub last_use_evidence: PathBuf,
-    /// Existing `.cargo-build-lock` files observed below this root.
+    /// Existing `.cargo-lock` and `.cargo-build-lock` files observed below this root.
     pub locks: Vec<PathBuf>,
     /// Final disposition.
     pub disposition: BuildCacheDisposition,
+}
+
+/// Cargo cache class represented by one report row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuildCacheRootKind {
+    /// A hashed root in Cargo's configured `build_directory` hierarchy.
+    ManagedBuild,
+    /// A Cargo-tagged `target_directory` below its owning worktree.
+    WorktreeTarget,
 }
 
 /// What one root's collection pass did with it.
@@ -152,12 +180,12 @@ impl BuildCacheDisposition {
     }
 }
 
-/// Discover Cargo's build-directory hierarchy and collect it.
+/// Discover Cargo's build and target directories and collect them.
 ///
-/// The command asks Cargo for the `build_directory` field emitted by
-/// `cargo metadata`, then treats its grandparent as the managed hierarchy. Only
-/// roots shaped like `CargoBuild/<two lowercase hex>/<fourteen lowercase hex>`
-/// and carrying a regular `CACHEDIR.TAG` are removable.
+/// The command asks Cargo once per linked worktree for the `build_directory`
+/// and `target_directory` fields emitted by `cargo metadata`. It inventories
+/// both the two-level managed hierarchy and real Cargo-tagged target roots below
+/// their owning worktrees in one global report and LRU selection.
 ///
 /// `max_bytes` is a physical-byte cap for all candidate roots. A
 /// `free_space_floor` asks the collector to reclaim at least the byte deficit
@@ -168,14 +196,29 @@ pub fn build_cache(
     output: &mut impl Write,
 ) -> Result<BuildCacheReport, BuildCacheError> {
     let workspace = workspace_root()?;
-    let build_directory = metadata_build_directory(&workspace, true)?;
+    let directories = discovery::discover_cargo_directories(&workspace)?;
+    let build_directory = directories.current.build_directory;
     let hierarchy = hierarchy_from_build_directory(&build_directory)?;
     let available_bytes = filesystem_available_bytes(&hierarchy.root).ok();
-    let live_build_directories =
-        discover_live_build_directories(&workspace, &hierarchy.root, &build_directory)?;
+    let mut live_build_directories = Vec::new();
+    let mut live_target_directories = Vec::new();
+    for linked in directories.linked {
+        if root_under_boundary(&hierarchy.root, &linked.directories.build_directory).is_ok() {
+            live_build_directories.push(linked.directories.build_directory);
+        }
+        live_target_directories.push(BuildCacheTargetDirectory::new(
+            linked.worktree,
+            linked.directories.target_directory,
+        ));
+    }
     let context = BuildCacheContext {
         build_directory,
+        target_directory: Some(BuildCacheTargetDirectory::new(
+            &workspace,
+            directories.current.target_directory,
+        )),
         live_build_directories,
+        live_target_directories,
         available_bytes,
     };
     collect_build_cache_at(request, &context, output)
@@ -197,15 +240,35 @@ pub fn collect_build_cache_at(
             path: context.build_directory.clone(),
             source,
         })?;
-    let live_roots = retained_live_roots(
-        request.retain_live_worktrees,
-        &hierarchy.root,
-        &context.live_build_directories,
-        &roots,
-    )?;
+    let mut current_roots = BTreeSet::from([current.clone()]);
+    let mut requested_live_roots = context
+        .live_build_directories
+        .iter()
+        .map(|path| root_under_boundary(&hierarchy.root, path))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let mut current_target = None;
+    if let Some(target) = &context.target_directory
+        && let Some(root) = inventory_target_root(target)?
+    {
+        if root.disposition == BuildCacheDisposition::Kept {
+            current_target = Some(root.path.clone());
+            current_roots.insert(root.path.clone());
+        }
+        insert_distinct_root(&mut roots, root);
+    }
+    for target in &context.live_target_directories {
+        if let Some(root) = inventory_target_root(target)? {
+            if root.disposition == BuildCacheDisposition::Kept {
+                requested_live_roots.insert(root.path.clone());
+            }
+            insert_distinct_root(&mut roots, root);
+        }
+    }
+    let live_roots =
+        retained_live_roots(request.retain_live_worktrees, &requested_live_roots, &roots);
 
     for root in &mut roots {
-        if root.path == current {
+        if current_roots.contains(&root.path) {
             root.disposition = BuildCacheDisposition::RetainedCurrent;
         } else if live_roots.contains(&root.path) {
             root.disposition = BuildCacheDisposition::RetainedLiveWorktree;
@@ -233,7 +296,7 @@ pub fn collect_build_cache_at(
                 root.disposition = BuildCacheDisposition::SkippedActive;
                 continue;
             };
-            remove_tree(&hierarchy.root, &root.path)?;
+            remove_tree(&root.removal_boundary, &root.path)?;
             root.disposition = BuildCacheDisposition::Reclaimed;
         }
     }
@@ -259,6 +322,7 @@ pub fn collect_build_cache_at(
     let report = BuildCacheReport {
         hierarchy: hierarchy.root,
         current,
+        current_target,
         total_bytes,
         selected_bytes,
         reclaimed_bytes,
@@ -366,13 +430,21 @@ fn inventory_hierarchy(
             if !is_hex_name!(&hash, 14) {
                 continue;
             }
-            roots.push(inventory_root(&root)?);
+            roots.push(inventory_root(
+                &root,
+                BuildCacheRootKind::ManagedBuild,
+                &hierarchy.root,
+            )?);
         }
     }
     Ok(roots)
 }
 
-fn inventory_root(path: &Path) -> Result<BuildCacheRootReport, BuildCacheError> {
+fn inventory_root(
+    path: &Path,
+    kind: BuildCacheRootKind,
+    removal_boundary: &Path,
+) -> Result<BuildCacheRootReport, BuildCacheError> {
     let metadata = fs::symlink_metadata(path).map_err(|source| BuildCacheError::Io {
         path: path.to_path_buf(),
         source,
@@ -381,6 +453,8 @@ fn inventory_root(path: &Path) -> Result<BuildCacheRootReport, BuildCacheError> 
         return Ok(malformed_root(
             path,
             &metadata,
+            kind,
+            removal_boundary,
             "candidate root is not a real directory",
         ));
     }
@@ -400,7 +474,9 @@ fn inventory_root(path: &Path) -> Result<BuildCacheRootReport, BuildCacheError> 
         }
     };
     Ok(BuildCacheRootReport {
+        kind,
         path: path.to_path_buf(),
+        removal_boundary: removal_boundary.to_path_buf(),
         bytes: tree.bytes,
         last_use_epoch_seconds: tree.last_use_epoch_seconds(),
         last_use_epoch_nanos: tree.last_use_epoch_nanos(),
@@ -410,9 +486,17 @@ fn inventory_root(path: &Path) -> Result<BuildCacheRootReport, BuildCacheError> 
     })
 }
 
-fn malformed_root(path: &Path, metadata: &Metadata, reason: &str) -> BuildCacheRootReport {
+fn malformed_root(
+    path: &Path,
+    metadata: &Metadata,
+    kind: BuildCacheRootKind,
+    removal_boundary: &Path,
+    reason: &str,
+) -> BuildCacheRootReport {
     BuildCacheRootReport {
+        kind,
         path: path.to_path_buf(),
+        removal_boundary: removal_boundary.to_path_buf(),
         bytes: physical_bytes(metadata),
         last_use_epoch_seconds: epoch_seconds(metadata.modified().unwrap_or(UNIX_EPOCH)),
         last_use_epoch_nanos: epoch_nanos(metadata.modified().unwrap_or(UNIX_EPOCH)),
@@ -450,7 +534,12 @@ impl TreeInventory {
             })?;
             self.bytes = checked_add(self.bytes, physical_bytes(&metadata))?;
             self.record_last_use(&path, &metadata);
-            if path.file_name() == Some(OsStr::new(LOCK_NAME)) {
+            if matches!(
+                path.file_name(),
+                Some(name)
+                    if name == OsStr::new(BUILD_LOCK_NAME)
+                        || name == OsStr::new(TARGET_LOCK_NAME)
+            ) {
                 self.locks.push(path.clone());
             }
             if metadata.file_type().is_dir() {
@@ -491,20 +580,15 @@ impl TreeInventory {
 
 fn retained_live_roots(
     count: usize,
-    hierarchy: &Path,
-    requested: &[PathBuf],
+    requested: &BTreeSet<PathBuf>,
     roots: &[BuildCacheRootReport],
-) -> Result<BTreeSet<PathBuf>, BuildCacheError> {
+) -> BTreeSet<PathBuf> {
     if count == 0 || requested.is_empty() {
-        return Ok(BTreeSet::new());
+        return BTreeSet::new();
     }
-    let mut requested = requested
-        .iter()
-        .map(|path| root_under_hierarchy(hierarchy, path))
-        .collect::<Result<BTreeSet<_>, _>>()?;
     let mut live = roots
         .iter()
-        .filter(|root| requested.remove(&root.path))
+        .filter(|root| requested.contains(&root.path))
         .collect::<Vec<_>>();
     live.sort_by(|left, right| {
         right
@@ -513,26 +597,26 @@ fn retained_live_roots(
             .then_with(|| right.last_use_epoch_nanos.cmp(&left.last_use_epoch_nanos))
             .then_with(|| left.path.cmp(&right.path))
     });
-    Ok(live
-        .into_iter()
+    live.into_iter()
         .take(count)
         .map(|root| root.path.clone())
-        .collect())
+        .collect()
 }
 
-fn root_under_hierarchy(
-    hierarchy: &Path,
-    build_directory: &Path,
-) -> Result<PathBuf, BuildCacheError> {
-    let root = fs::canonicalize(build_directory).map_err(|source| BuildCacheError::Io {
-        path: build_directory.to_path_buf(),
+fn root_under_boundary(boundary: &Path, candidate: &Path) -> Result<PathBuf, BuildCacheError> {
+    let boundary = fs::canonicalize(boundary).map_err(|source| BuildCacheError::Io {
+        path: boundary.to_path_buf(),
         source,
     })?;
-    if root.starts_with(hierarchy) {
+    let root = fs::canonicalize(candidate).map_err(|source| BuildCacheError::Io {
+        path: candidate.to_path_buf(),
+        source,
+    })?;
+    if root != boundary && root.starts_with(&boundary) {
         Ok(root)
     } else {
         Err(BuildCacheError::OutsideHierarchy {
-            hierarchy: hierarchy.to_path_buf(),
+            hierarchy: boundary,
             path: root,
         })
     }
@@ -551,10 +635,13 @@ fn probe_locks(locks: &[PathBuf]) -> Result<LockProbe, BuildCacheError> {
 }
 
 fn acquire_locks(locks: &[PathBuf]) -> Result<Option<Vec<Possession>>, BuildCacheError> {
-    let name = LockName::new(LOCK_NAME).map_err(BuildCacheError::LockName)?;
     let mut possessions = Vec::new();
     for path in locks {
-        let lock = LockFile::new(name.clone(), path);
+        let name = path.file_name().and_then(OsStr::to_str).ok_or_else(|| {
+            BuildCacheError::RefuseRemove(format!("lock path has no file name: {}", path.display()))
+        })?;
+        let name = LockName::new(name).map_err(BuildCacheError::LockName)?;
+        let lock = LockFile::new(name, path);
         match lock.try_acquire() {
             Ok(Acquisition::Acquired(possession)) => possessions.push(possession),
             Ok(Acquisition::Contended) => return Ok(None),
@@ -611,8 +698,8 @@ fn mark_lru_victims(target_bytes: u64, total_bytes: u64, roots: &mut [BuildCache
     }
 }
 
-fn remove_tree(hierarchy: &Path, root: &Path) -> Result<(), BuildCacheError> {
-    let root = root_under_hierarchy(hierarchy, root)?;
+fn remove_tree(boundary: &Path, root: &Path) -> Result<(), BuildCacheError> {
+    let root = root_under_boundary(boundary, root)?;
     let metadata = fs::symlink_metadata(&root).map_err(|source| BuildCacheError::Io {
         path: root.clone(),
         source,
@@ -666,166 +753,12 @@ fn sorted_children(path: &Path) -> Result<Vec<PathBuf>, BuildCacheError> {
     Ok(children)
 }
 
-fn discover_live_build_directories(
-    workspace: &Path,
-    hierarchy: &Path,
-    current: &Path,
-) -> Result<Vec<PathBuf>, BuildCacheError> {
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(workspace)
-        .output()
-        .map_err(|source| BuildCacheError::Launch {
-            program: "git",
-            source,
-        })?;
-    if !output.status.success() {
-        return Ok(Vec::new());
-    }
-    let text = std::str::from_utf8(&output.stdout).map_err(|_| BuildCacheError::Observation {
-        label: "git worktree inventory",
-        observed: "non-UTF-8 output".to_owned(),
-    })?;
-    let mut roots = Vec::new();
-    for line in text.lines() {
-        let Some(path) = line.strip_prefix("worktree ") else {
-            continue;
-        };
-        let worktree = PathBuf::from(path);
-        if same_path(&worktree, workspace) || !worktree.join("Cargo.toml").is_file() {
-            continue;
-        }
-        let Ok(build_directory) = metadata_build_directory(&worktree, true) else {
-            continue;
-        };
-        let Ok(root) = root_under_hierarchy(hierarchy, &build_directory) else {
-            continue;
-        };
-        if root != current {
-            roots.push(root);
-        }
-    }
-    roots.sort();
-    roots.dedup();
-    Ok(roots)
-}
-
-fn metadata_build_directory(workspace: &Path, offline: bool) -> Result<PathBuf, BuildCacheError> {
-    let mut command = Command::new(env!("CARGO"));
-    command
-        .arg("metadata")
-        .arg("--no-deps")
-        .arg("--format-version")
-        .arg("1")
-        .current_dir(workspace);
-    if offline {
-        command.arg("--offline");
-    }
-    let output = command.output().map_err(|source| BuildCacheError::Launch {
-        program: env!("CARGO"),
-        source,
-    })?;
-    if !output.status.success() {
-        return Err(BuildCacheError::CommandFailed {
-            program: env!("CARGO"),
-            code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-    let metadata = serde_json::from_slice::<CargoMetadata>(&output.stdout).map_err(|source| {
-        BuildCacheError::Json {
-            label: "cargo metadata",
-            source,
-        }
-    })?;
-    Ok(metadata.build_directory)
-}
-
-#[derive(Deserialize)]
-struct CargoMetadata {
-    build_directory: PathBuf,
-}
-
-fn render_report(
-    report: &BuildCacheReport,
-    apply: bool,
-    output: &mut impl Write,
-) -> Result<(), BuildCacheError> {
-    writeln!(
-        output,
-        "[build-cache] hierarchy={} mode={}",
-        report.hierarchy.display(),
-        if apply { "apply" } else { "dry-run" },
-    )
-    .map_err(BuildCacheError::Output)?;
-    writeln!(
-        output,
-        "[build-cache] total={} selected={} reclaimed={} kept={} skipped={} target={} available={}",
-        format_bytes(report.total_bytes),
-        format_bytes(report.selected_bytes),
-        format_bytes(report.reclaimed_bytes),
-        format_bytes(report.kept_bytes),
-        format_bytes(report.skipped_bytes),
-        format_bytes(report.target_bytes),
-        report
-            .available_bytes
-            .map(format_bytes)
-            .unwrap_or_else(|| "unknown".to_owned()),
-    )
-    .map_err(BuildCacheError::Output)?;
-    for root in &report.roots {
-        writeln!(
-            output,
-            "[build-cache] {} bytes={} last_use={} evidence={} locks={} disposition={}",
-            root.path.display(),
-            root.bytes,
-            root.last_use_epoch_seconds,
-            root.last_use_evidence.display(),
-            root.locks.len(),
-            disposition_label(&root.disposition),
-        )
-        .map_err(BuildCacheError::Output)?;
-    }
-    Ok(())
-}
-
-fn disposition_label(disposition: &BuildCacheDisposition) -> &str {
-    match disposition {
-        BuildCacheDisposition::Kept => "kept",
-        BuildCacheDisposition::RetainedCurrent => "retained-current",
-        BuildCacheDisposition::RetainedLiveWorktree => "retained-live-worktree",
-        BuildCacheDisposition::SkippedActive => "skipped-active",
-        BuildCacheDisposition::SkippedMalformed(_) => "skipped-malformed",
-        BuildCacheDisposition::WouldReclaim => "would-reclaim",
-        BuildCacheDisposition::Reclaimed => "reclaimed",
-    }
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const GIB: u64 = 1024 * 1024 * 1024;
-    const MIB: u64 = 1024 * 1024;
-    if bytes >= GIB {
-        format!("{:.1}GiB({bytes})", bytes as f64 / GIB as f64)
-    } else if bytes >= MIB {
-        format!("{:.1}MiB({bytes})", bytes as f64 / MIB as f64)
-    } else {
-        format!("{bytes}B")
-    }
-}
-
 fn checked_add(left: u64, right: u64) -> Result<u64, BuildCacheError> {
     left.checked_add(right).ok_or(BuildCacheError::SizeOverflow)
 }
 
 fn file_name(path: &Path) -> Option<String> {
     path.file_name().and_then(OsStr::to_str).map(str::to_owned)
-}
-
-fn same_path(left: &Path, right: &Path) -> bool {
-    match (fs::canonicalize(left), fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => left == right,
-    }
 }
 
 fn epoch_seconds(time: SystemTime) -> u64 {
@@ -943,12 +876,12 @@ impl fmt::Display for BuildCacheError {
         match self {
             Self::Shape(path) => write!(
                 formatter,
-                "Cargo build directory is not CargoBuild/<hex>/<hash>: {}",
+                "Cargo managed build directory is not CargoBuild/<hex>/<hash>: {}",
                 path.display()
             ),
             Self::OutsideHierarchy { hierarchy, path } => write!(
                 formatter,
-                "{} is outside resolved CargoBuild hierarchy {}",
+                "{} is outside resolved build-cache removal boundary {}",
                 path.display(),
                 hierarchy.display()
             ),
