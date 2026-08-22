@@ -52,7 +52,7 @@ const RETIRED_REPOSITORY_ACTIONS: [&str; 13] = [
     "repository completion publication boundary",
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>",
     "cargo clippy --locked --workspace --all-targets -- -D warnings",
-    "cargo clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+    "cargo canvas-wasm-typecheck",
     "cargo check --locked --workspace --target wasm32-unknown-unknown",
     "cargo xtask app (canvas compiler evidence)",
     "npm run test:canvas (BROWSER-1kKSWhZk guard)",

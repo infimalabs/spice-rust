@@ -83,7 +83,7 @@ fn canvas_public_acquisition_retains_unparsed_nonzero_without_running_trunk() {
     assert!(
         observation
             .reason
-            .contains("cargo wasm32 check refused with 17")
+            .contains("cargo Canvas WASM typecheck refused with 17")
     );
     assert!(
         !stubs.path("trunk-analysis-ran").exists(),

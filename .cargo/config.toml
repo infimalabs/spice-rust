@@ -20,3 +20,7 @@ rustc-wrapper = ""
 
 [alias]
 xtask = "run --package xtask --"
+# Keep the change-local Canvas compiler check on the app's Wasm unit graph.
+# Routing this through `cargo xtask` first would compile the native xtask graph
+# before xtask could launch the same package-scoped command.
+canvas-wasm-typecheck = "clippy --locked --package app --target wasm32-unknown-unknown -- -D warnings"

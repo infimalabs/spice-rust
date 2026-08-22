@@ -50,6 +50,7 @@ name. Use Cargo metadata and `--list` for the current inventory.
 | Package integration targets | Public seams, CLI behavior, Git/SQLite/process fixtures, policy contracts. | `cargo test --locked -p PACKAGE --all-targets`; normally use the scoped verifier below. |
 | Doctests | Public API examples and compile-time documentation contracts. | `cargo test --locked -p PACKAGE --doc`. |
 | Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
+| Canvas-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `cargo canvas-wasm-typecheck`. |
 | Canvas browser guard | App build/resident/socket/browser behavior, shard inventory, timing, and descendant cleanup. | Run `npm run test:canvas` when the changed slice reaches its harness. |
 | Change-local gate, battery, and landing | Staged path-to-test and path-to-policy evidence plus final selected contract admission. | `cargo run --quiet --locked --package spice --bin spice -- gate selection`. |
 

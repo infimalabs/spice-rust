@@ -306,12 +306,15 @@ const HOME_DIRECTORY: &str = concat!("HO", "ME");
 
 /// The first canvas analysis, kept in its declaration order.
 const CARGO_WASM_ARGUMENTS: &[&str] = &[
-    "check",
+    "clippy",
     "--locked",
     "--package",
     "app",
     "--target",
     "wasm32-unknown-unknown",
+    "--",
+    "-D",
+    "warnings",
 ];
 
 /// The second canvas analysis, kept in its declaration order.
