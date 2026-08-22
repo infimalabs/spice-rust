@@ -135,7 +135,7 @@ pub(crate) fn resolution_evidence(repository: &Repository) -> Outcome<()> {
 pub(crate) enum CurrentSourceSelectionReport {
     /// Full validated evidence for a direct operator invocation.
     Focused {
-        report: spice::change_gate::ChangeGateReport,
+        report: Box<spice::change_gate::ChangeGateReport>,
     },
     /// Compact success identity for the bounded configured-command supervisor.
     ///
@@ -153,7 +153,9 @@ pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
                 source: report.selection().source().clone(),
             })
         }
-        Ok(report) if report.admits() => direct(CurrentSourceSelectionReport::Focused { report }),
+        Ok(report) if report.admits() => direct(CurrentSourceSelectionReport::Focused {
+            report: Box::new(report),
+        }),
         Ok(report) => {
             progress.extend_from_slice(report.refusal_fold().as_bytes());
             Outcome::Refusal(Refusal::evidence(
