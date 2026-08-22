@@ -57,25 +57,49 @@ fn shared_prebuild_policy_alone_admits_the_higher_process_lane_cap() {
 }
 
 #[test]
-fn selected_prebuild_divides_the_aggregate_job_grant_between_two_package_batches() {
-    let budget = WorkspaceTestBudget::new(4, 2, 1).expect("selected budget admits");
+fn selected_prebuild_odd_grants_stay_within_the_aggregate_budget() {
+    let budget = WorkspaceTestBudget::new(3, 1, 1).expect("odd selected budget admits");
+    let grants = budget.prebuild_job_grants(2);
+    assert_eq!(grants, [2, 1]);
+    assert_eq!(grants.iter().sum::<usize>(), 3);
     let environment = Environment::new([
         (OsString::from("PATH"), OsString::from("/fixture/bin")),
-        (OsString::from(CARGO_BUILD_JOBS), OsString::from("2")),
+        (OsString::from(CARGO_BUILD_JOBS), OsString::from("1")),
     ])
     .expect("selected environment admits");
-
-    let prebuild = with_cargo_build_jobs(&environment, budget.prebuild_jobs_per_batch())
-        .expect("per-batch prebuild budget binds");
-
+    let prebuilds = grants
+        .into_iter()
+        .map(|jobs| {
+            with_cargo_build_jobs(&environment, jobs).expect("per-lane prebuild budget binds")
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        environment_value(&prebuild, CARGO_BUILD_JOBS),
-        Some(&OsString::from("4")),
+        prebuilds
+            .iter()
+            .map(|prebuild| environment_value(prebuild, CARGO_BUILD_JOBS))
+            .collect::<Vec<_>>(),
+        [Some(&OsString::from("2")), Some(&OsString::from("1"))],
     );
-    assert_eq!(
-        environment_value(&prebuild, "PATH"),
-        Some(&OsString::from("/fixture/bin")),
-    );
+    assert!(prebuilds.iter().all(|prebuild| {
+        environment_value(prebuild, "PATH") == Some(&OsString::from("/fixture/bin"))
+    }));
+}
+
+#[test]
+fn selected_prebuild_even_grants_retain_full_bounded_capacity() {
+    let budget = WorkspaceTestBudget::new(4, 2, 1).expect("even selected budget admits");
+    let grants = budget.prebuild_job_grants(2);
+    assert_eq!(grants, [4, 4]);
+    assert_eq!(grants.iter().sum::<usize>(), 8);
+}
+
+#[test]
+fn selected_prebuild_single_active_lane_retains_the_full_grant() {
+    let one_package = WorkspaceTestBudget::new(3, 1, 1).expect("one-package budget admits");
+    assert_eq!(one_package.prebuild_job_grants(1), [3]);
+
+    let one_lane = WorkspaceTestBudget::new(1, 3, 1).expect("one-lane budget admits");
+    assert_eq!(one_lane.prebuild_job_grants(2), [3]);
 }
 
 #[test]

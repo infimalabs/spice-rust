@@ -44,15 +44,26 @@ pub(super) fn prebuild_selected_tests(
     environment: &Environment,
     cargo: &OsStr,
     inventory: &Inventory,
+    budget: Option<WorkspaceTestBudget>,
     concurrency: usize,
     output: &mut impl Write,
 ) -> Result<Vec<PrebuiltTest>, WorkspaceTestError> {
     let batches = selected_prebuild_batches(inventory)?;
-    let artifacts = run_selected_prebuild_batches(&batches, concurrency, output, |batch| {
+    let lanes = concurrency.min(batches.len());
+    let environments = match budget {
+        Some(budget) => budget
+            .prebuild_job_grants(lanes)
+            .into_iter()
+            .map(|jobs| with_cargo_build_jobs(environment, jobs))
+            .collect::<Result<Vec<_>, _>>()?,
+        None => vec![environment.clone(); lanes],
+    };
+    debug_assert_eq!(environments.len(), lanes);
+    let artifacts = run_selected_prebuild_batches(&batches, concurrency, output, |batch, lane| {
         let mut progress = Vec::new();
         let artifacts = run_prebuild_command_capture(
             root,
-            environment,
+            &environments[lane],
             cargo,
             &mut progress,
             &batch.command,
@@ -135,7 +146,7 @@ pub(super) fn run_selected_prebuild_batches<F>(
     run: F,
 ) -> Result<Vec<u8>, WorkspaceTestError>
 where
-    F: Fn(&SelectedPrebuildBatch) -> SelectedPrebuildResult + Sync,
+    F: Fn(&SelectedPrebuildBatch, usize) -> SelectedPrebuildResult + Sync,
 {
     if concurrency == 0 {
         return Err(WorkspaceTestError::new(
@@ -159,7 +170,7 @@ where
     let failed = AtomicBool::new(false);
     let mut completed = thread::scope(|scope| {
         let mut workers = Vec::with_capacity(lanes);
-        for _ in 0..lanes {
+        for lane in 0..lanes {
             let run = &run;
             let next = &next;
             let failed = &failed;
@@ -170,7 +181,7 @@ where
                     let Some(batch) = batches.get(ordinal) else {
                         break;
                     };
-                    let result = run(batch);
+                    let result = run(batch, lane);
                     if result.artifacts.is_err() {
                         failed.store(true, AtomicOrdering::Release);
                     }
