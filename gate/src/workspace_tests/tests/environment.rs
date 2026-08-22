@@ -57,21 +57,20 @@ fn shared_prebuild_policy_alone_admits_the_higher_process_lane_cap() {
 }
 
 #[test]
-fn selected_prebuild_uses_the_aggregate_lane_budget_without_moving_other_environment() {
+fn selected_prebuild_divides_the_aggregate_job_grant_between_two_package_batches() {
     let budget = WorkspaceTestBudget::new(4, 2, 1).expect("selected budget admits");
-    assert_eq!(budget.prebuild_jobs(), 8);
     let environment = Environment::new([
         (OsString::from("PATH"), OsString::from("/fixture/bin")),
         (OsString::from(CARGO_BUILD_JOBS), OsString::from("2")),
     ])
     .expect("selected environment admits");
 
-    let prebuild =
-        with_cargo_build_jobs(&environment, budget.prebuild_jobs()).expect("prebuild budget binds");
+    let prebuild = with_cargo_build_jobs(&environment, budget.prebuild_jobs_per_batch())
+        .expect("per-batch prebuild budget binds");
 
     assert_eq!(
         environment_value(&prebuild, CARGO_BUILD_JOBS),
-        Some(&OsString::from("8")),
+        Some(&OsString::from("4")),
     );
     assert_eq!(
         environment_value(&prebuild, "PATH"),

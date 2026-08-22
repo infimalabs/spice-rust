@@ -1,4 +1,222 @@
 use super::*;
+use std::sync::Condvar;
+
+const MANY_SELECTED_PACKAGES: usize = 12;
+const TARGETS_PER_SELECTED_PACKAGE: usize = 3;
+const MANY_SELECTED_TARGETS: usize = MANY_SELECTED_PACKAGES * TARGETS_PER_SELECTED_PACKAGE;
+const SELECTED_PREBUILD_LANES: usize = SELECTED_PREBUILD_CONCURRENCY;
+
+#[derive(Default)]
+struct PrebuildLaunchState {
+    active: usize,
+    peak: usize,
+    release: bool,
+}
+
+#[test]
+fn many_selected_targets_prebuild_in_bounded_exact_lanes() {
+    let root = fixture_root("workspace-many-selected-prebuild");
+    fs::create_dir_all(&root).expect("many-target prebuild fixture root creates");
+    let selected = many_target_selected_inventory(&root);
+    let batches = selected_prebuild_batches(&selected).expect("exact prebuild batches render");
+    assert_many_target_commands_are_exact(&selected, &batches);
+    let artifacts = many_target_artifacts(&root);
+
+    let (messages, output, peak) = run_many_target_prebuild(&batches, &artifacts);
+
+    assert_eq!(peak, SELECTED_PREBUILD_LANES);
+    let plan = prebuilt_test_plan(&selected, &messages)
+        .expect("every selected artifact has complete exact coverage");
+    assert_eq!(plan.len(), MANY_SELECTED_TARGETS);
+    assert!(plan.iter().all(|test| test.target.name != "unrelated"));
+    assert!(
+        output.contains("stage=selected-prebuild targets=36 batches=12 lanes=2"),
+        "{output}",
+    );
+    fs::remove_dir_all(root).expect("many-target prebuild fixture removes");
+}
+
+fn many_target_selected_inventory(root: &Path) -> Inventory {
+    let mut packages = (0..MANY_SELECTED_PACKAGES)
+        .map(|package_index| {
+            let mut package = quick_package();
+            package.id = format!("many-id-{package_index:02}");
+            package.name = format!("many-{package_index:02}");
+            package.root = root.join(&package.name);
+            package.targets = (0..TARGETS_PER_SELECTED_PACKAGE)
+                .map(|target_index| TargetIdentity {
+                    package: package.id.clone(),
+                    kind: "test".to_owned(),
+                    name: format!("reached-{package_index:02}-{target_index:02}"),
+                    required_features: Vec::new(),
+                    source: package
+                        .root
+                        .join(format!("tests/target-{target_index:02}.rs")),
+                    declared_path_sources: Vec::new(),
+                    source_bytes: 1,
+                })
+                .collect();
+            package.declared_targets = package.targets.clone();
+            package
+        })
+        .collect::<Vec<_>>();
+    let mut unrelated = quick_package();
+    unrelated.id = "unrelated-id".to_owned();
+    unrelated.name = "unrelated".to_owned();
+    unrelated.targets[0].package = unrelated.id.clone();
+    unrelated.declared_targets = unrelated.targets.clone();
+    packages.push(unrelated);
+    let inventory = Inventory {
+        packages,
+        binary_outputs: Vec::new(),
+        target_directory: root.join("target"),
+        build_directory: root.join("target/cargo-build"),
+    };
+    let selected_identities = (0..MANY_SELECTED_PACKAGES)
+        .flat_map(|package_index| {
+            (0..TARGETS_PER_SELECTED_PACKAGE).map(move |target_index| {
+                format!(
+                    "many-{package_index:02}::test:reached-{package_index:02}-{target_index:02}",
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    inventory
+        .selected(&selected_identities)
+        .expect("Cargo-proven selected inventory admits")
+}
+
+fn assert_many_target_commands_are_exact(selected: &Inventory, batches: &[SelectedPrebuildBatch]) {
+    assert_eq!(batches.len(), MANY_SELECTED_PACKAGES);
+    assert!(
+        batches.iter().all(|batch| {
+            batch.arguments.windows(2).any(|pair| {
+                pair[0] == OsStr::new("--package")
+                    && pair[1].to_string_lossy().starts_with("many-id-")
+            }) && batch
+                .arguments
+                .iter()
+                .filter(|argument| *argument == "--test")
+                .count()
+                == TARGETS_PER_SELECTED_PACKAGE
+                && batch
+                    .arguments
+                    .iter()
+                    .all(|argument| argument != "--workspace" && argument != "--all-targets")
+                && !batch
+                    .arguments
+                    .iter()
+                    .any(|argument| argument == "unrelated")
+        }),
+        "every launched Cargo unit stays package-and-target exact",
+    );
+    let mut published = Vec::new();
+    write_selected_test_units(selected, &mut published).expect("selected direct commands publish");
+    let published = String::from_utf8(published).expect("published commands are UTF-8");
+    assert_eq!(published.lines().count(), MANY_SELECTED_TARGETS);
+    assert!(!published.contains("unrelated"), "{published}");
+    assert!(!published.contains("--workspace"), "{published}");
+    assert!(!published.contains("--all-targets"), "{published}");
+}
+
+fn many_target_artifacts(root: &Path) -> BTreeMap<String, PathBuf> {
+    let mut artifacts = BTreeMap::new();
+    for package_index in 0..MANY_SELECTED_PACKAGES {
+        for target_index in 0..TARGETS_PER_SELECTED_PACKAGE {
+            let name = format!("reached-{package_index:02}-{target_index:02}");
+            let executable = executable(root, &format!("{name}-test"), "#!/bin/sh\nexit 0\n");
+            artifacts.insert(name, executable);
+        }
+    }
+    artifacts
+}
+
+fn run_many_target_prebuild(
+    batches: &[SelectedPrebuildBatch],
+    artifacts: &BTreeMap<String, PathBuf>,
+) -> (Vec<u8>, String, usize) {
+    let state = Arc::new((Mutex::new(PrebuildLaunchState::default()), Condvar::new()));
+    let release_state = Arc::clone(&state);
+    let release = thread::spawn(move || {
+        let (lock, ready) = &*release_state;
+        let state = lock.lock().expect("launch state locks");
+        let (mut state, _) = ready
+            .wait_timeout_while(state, Duration::from_secs(2), |state| {
+                state.active < SELECTED_PREBUILD_LANES
+            })
+            .expect("launch observation waits");
+        let filled_every_lane = state.active == SELECTED_PREBUILD_LANES;
+        state.release = true;
+        ready.notify_all();
+        filled_every_lane
+    });
+    let mut output = Vec::new();
+    let messages =
+        run_selected_prebuild_batches(batches, SELECTED_PREBUILD_LANES, &mut output, |batch| {
+            many_target_prebuild_result(batch, artifacts, &state)
+        })
+        .expect("many exact selected prebuilds complete");
+    assert!(
+        release.join().expect("launch observer joins"),
+        "the selected prebuild never filled its bounded lanes",
+    );
+    let launch = state.0.lock().expect("launch state locks");
+    assert_eq!(launch.active, 0);
+    let peak = launch.peak;
+
+    let output = String::from_utf8(output).expect("prebuild progress is UTF-8");
+    (messages, output, peak)
+}
+
+fn many_target_prebuild_result(
+    batch: &SelectedPrebuildBatch,
+    artifacts: &BTreeMap<String, PathBuf>,
+    state: &Arc<(Mutex<PrebuildLaunchState>, Condvar)>,
+) -> SelectedPrebuildResult {
+    let package_id = batch
+        .arguments
+        .windows(2)
+        .find_map(|pair| (pair[0] == OsStr::new("--package")).then(|| pair[1].clone()))
+        .expect("exact package selector has an identity")
+        .into_string()
+        .expect("fixture package identity is UTF-8");
+    let (lock, ready) = &**state;
+    let mut launch = lock.lock().expect("launch state locks");
+    launch.active += 1;
+    launch.peak = launch.peak.max(launch.active);
+    ready.notify_all();
+    launch = ready
+        .wait_while(launch, |launch| !launch.release)
+        .expect("launch release waits");
+    launch.active -= 1;
+    drop(launch);
+
+    let messages = batch
+        .arguments
+        .windows(2)
+        .filter(|pair| pair[0] == OsStr::new("--test"))
+        .map(|pair| pair[1].clone())
+        .map(|name| {
+            let name = name.into_string().expect("fixture target name is UTF-8");
+            let executable = artifacts
+                .get(&name)
+                .expect("selected target owns an artifact");
+            serde_json::json!({
+                "reason": "compiler-artifact",
+                "package_id": package_id.clone(),
+                "target": { "name": name, "kind": ["test"] },
+                "profile": { "test": true },
+                "executable": executable,
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    SelectedPrebuildResult {
+        progress: Vec::new(),
+        artifacts: Ok(format!("{messages}\n").into_bytes()),
+    }
+}
 
 #[test]
 fn prebuilt_selected_tests_execute_directly_under_bounded_lanes() {

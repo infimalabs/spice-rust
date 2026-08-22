@@ -44,56 +44,178 @@ pub(super) fn prebuild_selected_tests(
     environment: &Environment,
     cargo: &OsStr,
     inventory: &Inventory,
+    concurrency: usize,
     output: &mut impl Write,
 ) -> Result<Vec<PrebuiltTest>, WorkspaceTestError> {
-    let mut artifacts = Vec::new();
+    let batches = selected_prebuild_batches(inventory)?;
+    let artifacts = run_selected_prebuild_batches(&batches, concurrency, output, |batch| {
+        let mut progress = Vec::new();
+        let artifacts = run_prebuild_command_capture(
+            root,
+            environment,
+            cargo,
+            &mut progress,
+            &batch.command,
+            batch.arguments.clone(),
+            &batch.owner,
+        );
+        SelectedPrebuildResult {
+            progress,
+            artifacts,
+        }
+    })?;
+    repair_missing_binary_outputs(root, environment, cargo, inventory, output)?;
+    prebuilt_test_plan(inventory, &artifacts)
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SelectedPrebuildBatch {
+    pub(super) arguments: Vec<OsString>,
+    command: String,
+    owner: String,
+    targets: usize,
+}
+
+pub(super) struct SelectedPrebuildResult {
+    pub(super) progress: Vec<u8>,
+    pub(super) artifacts: Result<Vec<u8>, WorkspaceTestError>,
+}
+
+pub(super) fn selected_prebuild_batches(
+    inventory: &Inventory,
+) -> Result<Vec<SelectedPrebuildBatch>, WorkspaceTestError> {
+    let mut batches = Vec::new();
     for package in &inventory.packages {
+        let mut arguments = ["test", "--locked", "--package"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        arguments.push(OsString::from(&package.id));
         for target in &package.targets {
-            let mut arguments = ["test", "--locked", "--package"]
-                .into_iter()
-                .map(OsString::from)
-                .collect::<Vec<_>>();
-            arguments.push(OsString::from(&package.id));
             arguments.extend(target_arguments(target)?);
-            if let Some(features) = qualified_required_features(
+        }
+        if let Some(features) =
+            qualified_required_features(package.targets.iter().flat_map(|target| {
                 target
                     .required_features
                     .iter()
-                    .map(|feature| (package.name.as_str(), feature.as_str())),
-            ) {
-                arguments.extend([OsString::from("--features"), OsString::from(features)]);
+                    .map(|feature| (package.name.as_str(), feature.as_str()))
+            }))
+        {
+            arguments.extend([OsString::from("--features"), OsString::from(features)]);
+        }
+        arguments.extend([
+            OsString::from("--no-run"),
+            OsString::from("--message-format=json-render-diagnostics"),
+        ]);
+        let command = std::iter::once(OsStr::new("cargo"))
+            .chain(arguments.iter().map(OsString::as_os_str))
+            .map(|argument| format!("{argument:?}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let owner = format!(
+            "selected workspace-test prebuild for package {:?} with {} exact target(s)",
+            package.name,
+            package.targets.len(),
+        );
+        batches.push(SelectedPrebuildBatch {
+            arguments,
+            command,
+            owner,
+            targets: package.targets.len(),
+        });
+    }
+    Ok(batches)
+}
+
+pub(super) fn run_selected_prebuild_batches<F>(
+    batches: &[SelectedPrebuildBatch],
+    concurrency: usize,
+    output: &mut impl Write,
+    run: F,
+) -> Result<Vec<u8>, WorkspaceTestError>
+where
+    F: Fn(&SelectedPrebuildBatch) -> SelectedPrebuildResult + Sync,
+{
+    if concurrency == 0 {
+        return Err(WorkspaceTestError::new(
+            "selected prebuild concurrency must be nonzero",
+        ));
+    }
+    if batches.is_empty() {
+        return Ok(Vec::new());
+    }
+    let lanes = concurrency.min(batches.len());
+    let targets = batches.iter().map(|batch| batch.targets).sum::<usize>();
+    writeln!(
+        output,
+        "[rust-test] stage=selected-prebuild targets={targets} batches={} lanes={lanes}",
+        batches.len(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let mut completed = thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(lanes);
+        for _ in 0..lanes {
+            let run = &run;
+            let next = &next;
+            let failed = &failed;
+            workers.push(scope.spawn(move || {
+                let mut completed = Vec::new();
+                while !failed.load(AtomicOrdering::Acquire) {
+                    let ordinal = next.fetch_add(1, AtomicOrdering::AcqRel);
+                    let Some(batch) = batches.get(ordinal) else {
+                        break;
+                    };
+                    let result = run(batch);
+                    if result.artifacts.is_err() {
+                        failed.store(true, AtomicOrdering::Release);
+                    }
+                    completed.push((ordinal, result));
+                }
+                completed
+            }));
+        }
+        workers
+            .into_iter()
+            .map(|worker| {
+                worker.join().map_err(|_| {
+                    WorkspaceTestError::new("selected prebuild worker thread panicked")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|completed| completed.into_iter().flatten().collect::<Vec<_>>())
+    })?;
+    completed.sort_by_key(|(ordinal, _)| *ordinal);
+
+    let mut artifacts = Vec::new();
+    let mut failure = None;
+    for (_, result) in completed {
+        output.write_all(&result.progress).map_err(output_error)?;
+        match result.artifacts {
+            Ok(mut selected) => {
+                artifacts.append(&mut selected);
+                if artifacts.last().is_some_and(|byte| *byte != b'\n') {
+                    artifacts.push(b'\n');
+                }
             }
-            arguments.extend([
-                OsString::from("--no-run"),
-                OsString::from("--message-format=json-render-diagnostics"),
-            ]);
-            let command = std::iter::once(OsStr::new("cargo"))
-                .chain(arguments.iter().map(OsString::as_os_str))
-                .map(|argument| format!("{argument:?}"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let owner = format!(
-                "selected workspace-test prebuild for {}::{}",
-                package.name,
-                target.display(),
-            );
-            let mut selected = run_prebuild_command_capture(
-                root,
-                environment,
-                cargo,
-                output,
-                &command,
-                arguments,
-                &owner,
-            )?;
-            artifacts.append(&mut selected);
-            if artifacts.last().is_some_and(|byte| *byte != b'\n') {
-                artifacts.push(b'\n');
-            }
+            Err(error) if failure.is_none() => failure = Some(error),
+            Err(_) => {}
         }
     }
-    repair_missing_binary_outputs(root, environment, cargo, inventory, output)?;
-    prebuilt_test_plan(inventory, &artifacts)
+    output.flush().map_err(output_error)?;
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    if next.load(AtomicOrdering::Acquire) < batches.len() {
+        return Err(WorkspaceTestError::new(
+            "selected prebuild stopped before every exact package batch completed",
+        ));
+    }
+    Ok(artifacts)
 }
 
 pub(super) fn prebuilt_test_plan(
