@@ -12,6 +12,8 @@ struct Fixture {
     first: PathBuf,
     second: PathBuf,
     cargo: PathBuf,
+    rustc: PathBuf,
+    rustdoc: PathBuf,
     seed_count: PathBuf,
     hold: PathBuf,
     ready: PathBuf,
@@ -31,6 +33,8 @@ impl Fixture {
         let first = root.join("first");
         let second = root.join("second");
         let cargo = root.join("native-cargo");
+        let rustc = root.join("native-rustc");
+        let rustdoc = root.join("native-rustdoc");
         let seed_count = root.join("seed-count");
         let hold = root.join("hold-build-script");
         let ready = root.join("build-script-ready");
@@ -106,6 +110,8 @@ impl Fixture {
         .expect("write real Cargo counting wrapper");
         fs::set_permissions(&cargo, fs::Permissions::from_mode(0o700))
             .expect("make real Cargo wrapper executable");
+        write_forwarder(&rustc, &native_tool("rustc"));
+        write_forwarder(&rustdoc, &native_tool("rustdoc"));
 
         Self {
             root,
@@ -113,6 +119,8 @@ impl Fixture {
             first,
             second,
             cargo,
+            rustc,
+            rustdoc,
             seed_count,
             hold,
             ready,
@@ -139,6 +147,11 @@ impl Fixture {
                 &self.bootstrap,
             )
             .env(spice::cargo_isolation::NATIVE_CARGO_VARIABLE, &self.cargo)
+            .env(spice::cargo_isolation::NATIVE_RUSTC_VARIABLE, &self.rustc)
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+                &self.rustdoc,
+            )
             .env_remove("CARGO_HOME")
             .env_remove("CARGO_TARGET_DIR")
             .env_remove("CARGO_BUILD_BUILD_DIR");
@@ -446,13 +459,31 @@ fn directory_paths(path: &Path) -> Vec<PathBuf> {
 }
 
 fn native_cargo() -> PathBuf {
+    native_tool("cargo")
+}
+
+fn native_tool(name: &str) -> PathBuf {
     let cargo = PathBuf::from(env!("CARGO"));
-    let metadata = fs::metadata(&cargo).expect("Cargo supplies its executable to the test");
+    let tool = cargo
+        .parent()
+        .expect("Cargo test executable has one toolchain directory")
+        .join(name);
+    let metadata = fs::metadata(&tool).expect("Cargo supplies its toolchain to the test");
     assert!(
         metadata.is_file() && metadata.permissions().mode() & 0o111 != 0,
-        "Cargo's test executable is runnable: {cargo:?}",
+        "Cargo's {name} executable is runnable: {tool:?}",
     );
-    cargo
+    tool
+}
+
+fn write_forwarder(path: &Path, target: &Path) {
+    fs::write(
+        path,
+        format!("#!/bin/sh\nexec {} \"$@\"\n", shell_word(target)),
+    )
+    .expect("write native tool forwarder");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("make native tool forwarder executable");
 }
 
 fn initialize_repository(repository: &Path) {

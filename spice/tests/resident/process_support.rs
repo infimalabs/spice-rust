@@ -208,15 +208,26 @@ pub(super) struct RunningResident {
     pub(super) child: Option<Child>,
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the resident process fixture captures its native binary-rim PATH"
-)]
 pub(super) fn fixture_native_cargo() -> PathBuf {
-    std::env::split_paths(&std::env::var_os("PATH").expect("test PATH exists"))
-        .map(|directory| directory.join("cargo"))
-        .find(|candidate| candidate.is_file())
-        .expect("test PATH contains native Cargo")
+    fixture_native_tool("cargo")
+}
+
+pub(super) fn fixture_native_rustc() -> PathBuf {
+    fixture_native_tool("rustc")
+}
+
+pub(super) fn fixture_native_rustdoc() -> PathBuf {
+    fixture_native_tool("rustdoc")
+}
+
+fn fixture_native_tool(name: &str) -> PathBuf {
+    let cargo = PathBuf::from(env!("CARGO"));
+    let tool = cargo
+        .parent()
+        .expect("Cargo test executable has one toolchain directory")
+        .join(name);
+    assert!(tool.is_file(), "native fixture tool exists: {tool:?}");
+    tool
 }
 
 impl RunningResident {
@@ -264,6 +275,14 @@ impl RunningResident {
                 spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
                 fixture_native_cargo(),
             )
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+                fixture_native_rustc(),
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+                fixture_native_rustdoc(),
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let child = command
@@ -293,6 +312,14 @@ impl RunningResident {
             .env(
                 spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
                 fixture_native_cargo(),
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+                fixture_native_rustc(),
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+                fixture_native_rustdoc(),
             )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -327,6 +354,14 @@ impl RunningResident {
         command.env(
             spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
             fixture_native_cargo(),
+        );
+        command.env(
+            spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+            fixture_native_rustc(),
+        );
+        command.env(
+            spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+            fixture_native_rustdoc(),
         );
         let child = command
             .current_dir(&fixture.root)

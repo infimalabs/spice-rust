@@ -446,8 +446,29 @@ fn invoke(root: &Path, case: &Case, json: bool) -> Output {
         .env("CODEX_HOME", root.join("absent-codex-home"))
         .env("CLAUDE_CONFIG_DIR", root.join("absent-claude-home"))
         .env(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE, root)
+        .env(
+            spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+            fixture_native_tool("cargo"),
+        )
+        .env(
+            spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+            fixture_native_tool("rustc"),
+        )
+        .env(
+            spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+            fixture_native_tool("rustdoc"),
+        )
         .output()
         .unwrap_or_else(|error| panic!("{} process did not launch: {error}", case.path))
+}
+
+fn fixture_native_tool(name: &str) -> PathBuf {
+    let tool = PathBuf::from(env!("CARGO"))
+        .parent()
+        .expect("Cargo test executable has one toolchain directory")
+        .join(name);
+    assert!(tool.is_file(), "native fixture tool exists: {tool:?}");
+    tool
 }
 
 fn assert_one_stream(output: &Output, path: &str) {

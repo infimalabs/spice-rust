@@ -198,6 +198,18 @@ impl RunningResident {
                 spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
                 &fixture.cargo_home,
             )
+            .env(
+                spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+                fixture_native_tool("cargo"),
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+                fixture_native_tool("rustc"),
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+                fixture_native_tool("rustdoc"),
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -249,6 +261,15 @@ impl RunningResident {
             .wait_with_output()
             .expect("foreground resident exits")
     }
+}
+
+fn fixture_native_tool(name: &str) -> PathBuf {
+    let tool = PathBuf::from(env!("CARGO"))
+        .parent()
+        .expect("Cargo test executable has one toolchain directory")
+        .join(name);
+    assert!(tool.is_file(), "native fixture tool exists: {tool:?}");
+    tool
 }
 
 impl Drop for RunningResident {

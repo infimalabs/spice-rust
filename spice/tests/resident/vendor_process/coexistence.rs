@@ -363,6 +363,10 @@ fn installed_spice_lifecycle_requires_explicit_predecessor_hook_handoff() {
         )),
         Some(&resident_path),
     );
+    assert!(
+        !fixture.cleanup.join("hostile-rust-tool-invoked").exists(),
+        "resident child selected a competing Rust proxy from PATH"
+    );
 
     let empty_path = fixture.cleanup.join("empty-path");
     fs::create_dir(&empty_path).expect("empty PATH directory");
@@ -396,8 +400,8 @@ fn installed_spice_lifecycle_requires_explicit_predecessor_hook_handoff() {
          same_uuid={python_same_uuid_key} predecessor_pid={} predecessor_files={} \
          predecessor_context=[thread,inbox,socket-marker,same-uuid-inbox] \
          predecessor_hooks=preserved-after-explicit-handoff \
-         resident_path=[git:{},sleep:{},spice:predecessor] \
-         agent_path_head={} rust_binary_path_excluded=true \
+         resident_path=[git:{},sleep:{},spice:predecessor,rust-tools:hostile] \
+         agent_path_head={} admitted_rust_trio_exercised=true \
          client_path_entries=0 shutdown=clean",
         fixture.journal().display(),
         created[0],
@@ -427,6 +431,10 @@ fn start_coexisting_resident(
         native_resident_path(fixture, &predecessor.executable.path);
     let mut resident = RunningResident::spawn_with_path(fixture, installed_binary, &resident_path);
     resident.assert_ready(fixture);
+    assert!(
+        !fixture.cleanup.join("hostile-rust-tool-invoked").exists(),
+        "resident setup selected a competing Rust proxy from PATH"
+    );
     predecessor.assert_unchanged("start");
     (resident_path, resident_tools, resident)
 }

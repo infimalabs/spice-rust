@@ -9,10 +9,12 @@ use std::error::Error as StdError;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::os::unix::ffi::OsStringExt as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sill::Environment;
 use wire::CanonicalUuid;
 
@@ -28,8 +30,16 @@ mod tests;
 pub const BOOTSTRAP_HOME_VARIABLE: &str = "SPICE_RS_BOOTSTRAP_CARGO_HOME"; // env-policy: allow
 /// Child authority naming the native Cargo executable resolved before isolation.
 pub const NATIVE_CARGO_VARIABLE: &str = "SPICE_RS_NATIVE_CARGO"; // env-policy: allow
+/// Child authority naming the native rustc executable paired with Cargo.
+pub const NATIVE_RUSTC_VARIABLE: &str = "SPICE_RS_NATIVE_RUSTC"; // env-policy: allow
+/// Child authority naming the native rustdoc executable paired with Cargo.
+pub const NATIVE_RUSTDOC_VARIABLE: &str = "SPICE_RS_NATIVE_RUSTDOC"; // env-policy: allow
 /// Cargo's supported home override.
 pub const CARGO_HOME_VARIABLE: &str = "CARGO_HOME";
+/// Cargo's supported compiler override.
+pub const RUSTC_VARIABLE: &str = "RUSTC";
+/// Cargo's supported documentation compiler override.
+pub const RUSTDOC_VARIABLE: &str = "RUSTDOC";
 
 const STORE_RELATIVE: &str = "spice/source-store-v2";
 
@@ -38,6 +48,8 @@ const STORE_RELATIVE: &str = "spice/source-store-v2";
 pub struct Host {
     bootstrap_home: PathBuf,
     cargo: PathBuf,
+    rustc: PathBuf,
+    rustdoc: PathBuf,
     seed_environment: Environment,
 }
 
@@ -47,19 +59,23 @@ impl fmt::Debug for Host {
             .debug_struct("Host")
             .field("bootstrap_home", &self.bootstrap_home)
             .field("cargo", &self.cargo)
+            .field("rustc", &self.rustc)
+            .field("rustdoc", &self.rustdoc)
             .field("seed_environment", &"<redacted>")
             .finish()
     }
 }
 
 impl Host {
-    /// Capture the bootstrap Cargo home and exact native Cargo executable.
+    /// Capture the bootstrap Cargo home and one exact native Rust toolchain.
     ///
     /// # Errors
     ///
     /// Refuses missing, relative, non-directory, or recursively isolated host
-    /// authorities and a Cargo executable that is absent or not executable.
+    /// authorities and any Cargo, rustc, or rustdoc executable that is absent,
+    /// non-executable, or outside the other tools' generation directory.
     pub fn from_environment(
+        repository: &Path,
         entries: impl IntoIterator<Item = (OsString, OsString)>,
     ) -> Result<Self, IsolationError> {
         let entries = entries
@@ -76,41 +92,37 @@ impl Host {
                     "neither SPICE_RS_BOOTSTRAP_CARGO_HOME, CARGO_HOME, nor HOME names the native Cargo home",
                 )
             })?;
-        let cargo = entries
-            .get(std::ffi::OsStr::new(NATIVE_CARGO_VARIABLE))
-            .map(PathBuf::from)
-            .map_or_else(
-                || {
-                    resolve_cargo_from_path(
-                        entries
-                            .get(std::ffi::OsStr::new("PATH"))
-                            .map(OsString::as_os_str),
-                    )
-                },
-                Ok,
-            )?;
+        let toolchain = resolve_native_toolchain(repository, &bootstrap, &entries)?;
         let environment = Environment::new(entries).map_err(|error| {
             IsolationError::new(
                 "cargo-isolation::seed-environment-invalid",
                 error.to_string(),
             )
         })?;
-        Self::with_environment(PathBuf::from(bootstrap), cargo, environment)
+        Self::with_environment(PathBuf::from(bootstrap), toolchain, environment)
     }
 
     /// Admit explicit host authorities. This is the deterministic test and
     /// embedding seam; it performs no ambient reads.
-    pub fn new(bootstrap_home: PathBuf, cargo: PathBuf) -> Result<Self, IsolationError> {
-        Self::with_environment(bootstrap_home, cargo, Environment::empty())
+    pub fn new(
+        bootstrap_home: PathBuf,
+        cargo: PathBuf,
+        rustc: PathBuf,
+        rustdoc: PathBuf,
+    ) -> Result<Self, IsolationError> {
+        Self::with_environment(
+            bootstrap_home,
+            NativeToolchain::admit(cargo, rustc, rustdoc)?,
+            Environment::empty(),
+        )
     }
 
     fn with_environment(
         bootstrap_home: PathBuf,
-        cargo: PathBuf,
+        toolchain: NativeToolchain,
         seed_environment: Environment,
     ) -> Result<Self, IsolationError> {
         require_absolute(&bootstrap_home, "bootstrap Cargo home")?;
-        require_absolute(&cargo, "native Cargo executable")?;
         let bootstrap_home = fs::canonicalize(&bootstrap_home).map_err(|error| {
             IsolationError::io(
                 "cargo-isolation::bootstrap-home-unavailable",
@@ -131,27 +143,20 @@ impl Host {
                 format!("bootstrap Cargo home is not a directory: {bootstrap_home:?}"),
             ));
         }
-        let resolved_cargo = fs::canonicalize(&cargo).map_err(|error| {
-            IsolationError::io("cargo-isolation::native-cargo-unavailable", &cargo, error)
-        })?;
-        if resolved_cargo.starts_with(bootstrap_home.join(STORE_RELATIVE)) {
+        if toolchain
+            .cargo
+            .starts_with(bootstrap_home.join(STORE_RELATIVE))
+        {
             return Err(IsolationError::new(
                 "cargo-isolation::native-cargo-recursive",
                 "native Cargo executable resolves inside the generated source store",
             ));
         }
-        let metadata = fs::metadata(&cargo).map_err(|error| {
-            IsolationError::io("cargo-isolation::native-cargo-unavailable", &cargo, error)
-        })?;
-        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
-            return Err(IsolationError::new(
-                "cargo-isolation::native-cargo-invalid",
-                format!("native Cargo is not an executable file: {cargo:?}"),
-            ));
-        }
         Ok(Self {
             bootstrap_home,
-            cargo,
+            cargo: toolchain.cargo,
+            rustc: toolchain.rustc,
+            rustdoc: toolchain.rustdoc,
             seed_environment,
         })
     }
@@ -166,6 +171,18 @@ impl Host {
     #[must_use]
     pub fn cargo(&self) -> &Path {
         &self.cargo
+    }
+
+    /// Native rustc paired with [`Self::cargo`].
+    #[must_use]
+    pub fn rustc(&self) -> &Path {
+        &self.rustc
+    }
+
+    /// Native rustdoc paired with [`Self::cargo`].
+    #[must_use]
+    pub fn rustdoc(&self) -> &Path {
+        &self.rustdoc
     }
 
     fn seed_environment(&self) -> &Environment {
@@ -306,31 +323,194 @@ fn default_cargo_home(home: Option<&OsString>) -> Option<OsString> {
     home.map(|home| PathBuf::from(home).join(".cargo").into_os_string())
 }
 
-fn resolve_cargo_from_path(path: Option<&std::ffi::OsStr>) -> Result<PathBuf, IsolationError> {
-    let path = path.ok_or_else(|| {
-        IsolationError::new(
-            "cargo-isolation::native-cargo-unavailable",
-            "PATH is absent and SPICE_RS_NATIVE_CARGO was not supplied",
+#[derive(Debug)]
+struct NativeToolchain {
+    cargo: PathBuf,
+    rustc: PathBuf,
+    rustdoc: PathBuf,
+}
+
+impl NativeToolchain {
+    fn admit(cargo: PathBuf, rustc: PathBuf, rustdoc: PathBuf) -> Result<Self, IsolationError> {
+        let cargo = admit_native_executable(cargo, "Cargo")?;
+        let rustc = admit_native_executable(rustc, "rustc")?;
+        let rustdoc = admit_native_executable(rustdoc, "rustdoc")?;
+        let cargo_directory = cargo.parent();
+        if cargo_directory != rustc.parent() || cargo_directory != rustdoc.parent() {
+            return Err(IsolationError::new(
+                "cargo-isolation::native-toolchain-mixed",
+                format!(
+                    "native Cargo, rustc, and rustdoc do not resolve inside one toolchain directory: {cargo:?}, {rustc:?}, {rustdoc:?}"
+                ),
+            ));
+        }
+        Ok(Self {
+            cargo,
+            rustc,
+            rustdoc,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrackedToolchain {
+    toolchain: TrackedToolchainBody,
+}
+
+#[derive(Deserialize)]
+struct TrackedToolchainBody {
+    channel: String,
+}
+
+fn resolve_native_toolchain(
+    repository: &Path,
+    bootstrap_home: &std::ffi::OsStr,
+    entries: &std::collections::BTreeMap<OsString, OsString>,
+) -> Result<NativeToolchain, IsolationError> {
+    let declared = [
+        entries.get(std::ffi::OsStr::new(NATIVE_CARGO_VARIABLE)),
+        entries.get(std::ffi::OsStr::new(NATIVE_RUSTC_VARIABLE)),
+        entries.get(std::ffi::OsStr::new(NATIVE_RUSTDOC_VARIABLE)),
+    ];
+    match declared.iter().filter(|value| value.is_some()).count() {
+        3 => NativeToolchain::admit(
+            PathBuf::from(declared[0].expect("complete native trio has Cargo")),
+            PathBuf::from(declared[1].expect("complete native trio has rustc")),
+            PathBuf::from(declared[2].expect("complete native trio has rustdoc")),
+        ),
+        0 => resolve_tracked_toolchain(repository, Path::new(bootstrap_home), entries),
+        _ => Err(IsolationError::new(
+            "cargo-isolation::native-toolchain-incomplete",
+            "SPICE_RS_NATIVE_CARGO, SPICE_RS_NATIVE_RUSTC, and SPICE_RS_NATIVE_RUSTDOC must be supplied together",
+        )),
+    }
+}
+
+fn resolve_tracked_toolchain(
+    repository: &Path,
+    bootstrap_home: &Path,
+    entries: &std::collections::BTreeMap<OsString, OsString>,
+) -> Result<NativeToolchain, IsolationError> {
+    let declaration = repository.join("rust-toolchain.toml");
+    let bytes = fs::read(&declaration).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::tracked-toolchain-unavailable",
+            &declaration,
+            error,
         )
     })?;
-    for directory in std::env::split_paths(path) {
-        let candidate = directory.join("cargo");
-        if fs::metadata(&candidate)
-            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        {
-            return std::path::absolute(&candidate).map_err(|error| {
-                IsolationError::io(
-                    "cargo-isolation::native-cargo-unavailable",
-                    &candidate,
-                    error,
-                )
-            });
-        }
+    let text = std::str::from_utf8(&bytes).map_err(|error| {
+        IsolationError::new(
+            "cargo-isolation::tracked-toolchain-invalid",
+            format!("{} is not UTF-8: {error}", declaration.display()),
+        )
+    })?;
+    let tracked = toml::from_str::<TrackedToolchain>(text).map_err(|error| {
+        IsolationError::new(
+            "cargo-isolation::tracked-toolchain-invalid",
+            format!("{} is invalid: {error}", declaration.display()),
+        )
+    })?;
+    if tracked.toolchain.channel.trim().is_empty() {
+        return Err(IsolationError::new(
+            "cargo-isolation::tracked-toolchain-invalid",
+            format!("{} declares an empty channel", declaration.display()),
+        ));
     }
-    Err(IsolationError::new(
-        "cargo-isolation::native-cargo-unavailable",
-        "PATH contains no executable named cargo",
-    ))
+    let rustup = admit_native_executable(bootstrap_home.join("bin/rustup"), "rustup")?;
+    let rustup_home = entries
+        .get(std::ffi::OsStr::new("RUSTUP_HOME"))
+        .map(PathBuf::from)
+        .or_else(|| {
+            entries
+                .get(std::ffi::OsStr::new("HOME"))
+                .map(|home| PathBuf::from(home).join(".rustup"))
+        })
+        .ok_or_else(|| {
+            IsolationError::new(
+                "cargo-isolation::rustup-home-unavailable",
+                "neither RUSTUP_HOME nor HOME names the tracked toolchain store",
+            )
+        })?;
+    require_absolute(&rustup_home, "Rustup home")?;
+    NativeToolchain::admit(
+        rustup_which(&rustup, &rustup_home, &tracked.toolchain.channel, "cargo")?,
+        rustup_which(&rustup, &rustup_home, &tracked.toolchain.channel, "rustc")?,
+        rustup_which(&rustup, &rustup_home, &tracked.toolchain.channel, "rustdoc")?,
+    )
+}
+
+fn rustup_which(
+    rustup: &Path,
+    rustup_home: &Path,
+    channel: &str,
+    tool: &str,
+) -> Result<PathBuf, IsolationError> {
+    let output = Command::new(rustup)
+        .args(["which", "--toolchain", channel, tool])
+        .env_clear()
+        .env("RUSTUP_HOME", rustup_home)
+        .output()
+        .map_err(|error| {
+            IsolationError::io(
+                "cargo-isolation::tracked-toolchain-resolution-failed",
+                rustup,
+                error,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(IsolationError::new(
+            "cargo-isolation::tracked-toolchain-resolution-failed",
+            format!(
+                "{} could not resolve {tool} for tracked channel {channel:?}: {}",
+                rustup.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    let mut bytes = output.stdout;
+    while bytes
+        .last()
+        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+    {
+        bytes.pop();
+    }
+    if bytes.is_empty() {
+        return Err(IsolationError::new(
+            "cargo-isolation::tracked-toolchain-resolution-failed",
+            format!(
+                "{} returned no path for {tool} in tracked channel {channel:?}",
+                rustup.display()
+            ),
+        ));
+    }
+    Ok(PathBuf::from(OsString::from_vec(bytes)))
+}
+
+fn admit_native_executable(path: PathBuf, name: &str) -> Result<PathBuf, IsolationError> {
+    require_absolute(&path, &format!("native {name} executable"))?;
+    let resolved = fs::canonicalize(&path).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::native-toolchain-unavailable",
+            &path,
+            error,
+        )
+    })?;
+    let metadata = fs::metadata(&resolved).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::native-toolchain-unavailable",
+            &resolved,
+            error,
+        )
+    })?;
+    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+        return Err(IsolationError::new(
+            "cargo-isolation::native-toolchain-invalid",
+            format!("native {name} is not an executable file: {resolved:?}"),
+        ));
+    }
+    Ok(resolved)
 }
 
 fn require_absolute(path: &Path, label: &str) -> Result<(), IsolationError> {

@@ -65,6 +65,11 @@ pub(super) fn write_vendor(binary: &Path, captures: &Path, index: &Path, dialect
                 "printf '%s\\0' \"$0\" \"$@\" > \"$base.argv\"\n",
                 "/usr/bin/env -0 > \"$base.env\"\n",
                 "pwd -P > \"$base.cwd\"\n",
+                "if [ -n \"${{SPICE_RS_NATIVE_CARGO:-}}\" ]; then\n",
+                "  \"$SPICE_RS_NATIVE_CARGO\" --version > \"$base.toolchain\"\n",
+                "  \"$RUSTC\" --version >> \"$base.toolchain\"\n",
+                "  \"$RUSTDOC\" --version >> \"$base.toolchain\"\n",
+                "fi\n",
                 "printf '%s\\n' \"$base\" >> {}\n",
                 "sleep 600 &\n",
                 "child=$!\n",
@@ -305,6 +310,17 @@ pub(super) fn assert_launches_with_executable(
                 routing.executable,
             )
         );
+        assert_eq!(capture.toolchain.len(), 3);
+        for (observed, prefix) in capture
+            .toolchain
+            .iter()
+            .zip(["cargo ", "rustc ", "rustdoc "])
+        {
+            assert!(
+                observed.starts_with(prefix),
+                "resident child did not execute admitted {prefix:?}: {observed:?}"
+            );
+        }
     }
 }
 
@@ -397,10 +413,16 @@ impl CapturedLaunch {
             .expect("cwd capture reads")
             .trim_end()
             .to_owned();
+        let toolchain = fs::read_to_string(base.with_extension("toolchain"))
+            .expect("exact native toolchain capture reads")
+            .lines()
+            .map(str::to_owned)
+            .collect();
         Self {
             argv,
             environment,
             cwd,
+            toolchain,
         }
     }
 }
@@ -519,9 +541,13 @@ fn expected_environment(
             .display()
             .to_string(),
     );
-    let cargo_host =
-        spice::cargo_isolation::Host::new(fixture.cargo_home.clone(), fixture_native_cargo())
-            .expect("fixture Cargo host admits");
+    let cargo_host = spice::cargo_isolation::Host::new(
+        fixture.cargo_home.clone(),
+        fixture_native_cargo(),
+        fixture_native_rustc(),
+        fixture_native_rustdoc(),
+    )
+    .expect("fixture Cargo host admits");
     let cargo_home = spice::cargo_isolation::prepare_lane(&repository, lane, &cargo_host)
         .expect("fixture lane Cargo home prepares");
     expected.insert(
@@ -535,6 +561,22 @@ fn expected_environment(
     expected.insert(
         spice::cargo_isolation::NATIVE_CARGO_VARIABLE.to_owned(),
         cargo_host.cargo().display().to_string(),
+    );
+    expected.insert(
+        spice::cargo_isolation::NATIVE_RUSTC_VARIABLE.to_owned(),
+        cargo_host.rustc().display().to_string(),
+    );
+    expected.insert(
+        spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE.to_owned(),
+        cargo_host.rustdoc().display().to_string(),
+    );
+    expected.insert(
+        spice::cargo_isolation::RUSTC_VARIABLE.to_owned(),
+        cargo_host.rustc().display().to_string(),
+    );
+    expected.insert(
+        spice::cargo_isolation::RUSTDOC_VARIABLE.to_owned(),
+        cargo_host.rustdoc().display().to_string(),
     );
     expected.insert(
         "PATH".to_owned(),
@@ -805,6 +847,21 @@ pub(super) fn native_resident_path(
         #[cfg(not(unix))]
         fs::copy(source, path.join(name)).expect("native resident tool copies");
     }
+    let hostile_marker = fixture.cleanup.join("hostile-rust-tool-invoked");
+    for name in ["cargo", "rustc", "rustdoc"] {
+        fs::write(
+            path.join(name),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' {} >> {}\nexit 91\n",
+                name,
+                shell_word(&hostile_marker.display().to_string()),
+            ),
+        )
+        .expect("hostile Rust proxy writes");
+        #[cfg(unix)]
+        fs::set_permissions(path.join(name), fs::Permissions::from_mode(0o700))
+            .expect("hostile Rust proxy becomes executable");
+    }
     let mut entries = fs::read_dir(&path)
         .expect("native resident PATH reads")
         .map(|entry| {
@@ -816,7 +873,10 @@ pub(super) fn native_resident_path(
         })
         .collect::<Vec<_>>();
     entries.sort();
-    assert_eq!(entries, ["git", "sleep", "spice"]);
+    assert_eq!(
+        entries,
+        ["cargo", "git", "rustc", "rustdoc", "sleep", "spice"]
+    );
     assert!(
         entries
             .iter()

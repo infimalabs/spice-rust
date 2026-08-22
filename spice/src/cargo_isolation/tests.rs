@@ -14,6 +14,8 @@ struct Fixture {
     repository: PathBuf,
     package: PathBuf,
     cargo: PathBuf,
+    rustc: PathBuf,
+    rustdoc: PathBuf,
 }
 
 impl Fixture {
@@ -56,6 +58,8 @@ impl Fixture {
             .expect("write exact lockfile");
 
         let cargo = root.join("native-cargo");
+        let rustc = root.join("native-rustc");
+        let rustdoc = root.join("native-rustdoc");
         let script = format!(
             concat!(
                 "#!/bin/sh\n",
@@ -71,6 +75,8 @@ impl Fixture {
         fs::write(&cargo, script).expect("write fake native Cargo");
         fs::set_permissions(&cargo, fs::Permissions::from_mode(0o700))
             .expect("make fake native Cargo executable");
+        write_executable(&rustc, "#!/bin/sh\nexit 0\n");
+        write_executable(&rustdoc, "#!/bin/sh\nexit 0\n");
 
         Self {
             root,
@@ -78,11 +84,19 @@ impl Fixture {
             repository,
             package,
             cargo,
+            rustc,
+            rustdoc,
         }
     }
 
     fn host(&self) -> Host {
-        Host::new(self.bootstrap.clone(), self.cargo.clone()).expect("admit fixture host")
+        Host::new(
+            self.bootstrap.clone(),
+            self.cargo.clone(),
+            self.rustc.clone(),
+            self.rustdoc.clone(),
+        )
+        .expect("admit fixture host")
     }
 }
 
@@ -183,14 +197,22 @@ fn native_cargo_inside_the_owned_store_is_refused() {
     let recursive = fixture
         .bootstrap
         .join(STORE_RELATIVE)
-        .join("recursive-cargo");
-    fs::create_dir_all(recursive.parent().expect("recursive Cargo parent"))
-        .expect("create recursive store path");
-    fs::copy(&fixture.cargo, &recursive).expect("copy recursive Cargo fixture");
-    fs::set_permissions(&recursive, fs::Permissions::from_mode(0o700))
-        .expect("make recursive Cargo executable");
+        .join("recursive-toolchain");
+    fs::create_dir_all(&recursive).expect("create recursive store path");
+    let cargo = recursive.join("native-cargo");
+    let rustc = recursive.join("native-rustc");
+    let rustdoc = recursive.join("native-rustdoc");
+    for (source, destination) in [
+        (&fixture.cargo, &cargo),
+        (&fixture.rustc, &rustc),
+        (&fixture.rustdoc, &rustdoc),
+    ] {
+        fs::copy(source, destination).expect("copy recursive toolchain fixture");
+        fs::set_permissions(destination, fs::Permissions::from_mode(0o700))
+            .expect("make recursive native tool executable");
+    }
 
-    let error = Host::new(fixture.bootstrap.clone(), recursive)
+    let error = Host::new(fixture.bootstrap.clone(), cargo, rustc, rustdoc)
         .expect_err("recursive native Cargo must be refused");
     assert_eq!(error.reason(), "cargo-isolation::native-cargo-recursive");
 }
@@ -297,25 +319,129 @@ fn registry_checksum_cannot_escape_the_package_store() {
 #[test]
 fn host_debug_output_redacts_the_seed_environment() {
     let fixture = Fixture::new();
-    let host = Host::from_environment([
-        (
-            OsString::from(BOOTSTRAP_HOME_VARIABLE),
-            fixture.bootstrap.clone().into_os_string(),
-        ),
-        (
-            OsString::from(NATIVE_CARGO_VARIABLE),
-            fixture.cargo.clone().into_os_string(),
-        ),
-        (
-            OsString::from("CARGO_REGISTRY_TOKEN"),
-            OsString::from("secret-fixture-token"),
-        ),
-    ])
+    let host = Host::from_environment(
+        &fixture.repository,
+        [
+            (
+                OsString::from(BOOTSTRAP_HOME_VARIABLE),
+                fixture.bootstrap.clone().into_os_string(),
+            ),
+            (
+                OsString::from(NATIVE_CARGO_VARIABLE),
+                fixture.cargo.clone().into_os_string(),
+            ),
+            (
+                OsString::from(NATIVE_RUSTC_VARIABLE),
+                fixture.rustc.clone().into_os_string(),
+            ),
+            (
+                OsString::from(NATIVE_RUSTDOC_VARIABLE),
+                fixture.rustdoc.clone().into_os_string(),
+            ),
+            (
+                OsString::from("CARGO_REGISTRY_TOKEN"),
+                OsString::from("secret-fixture-token"),
+            ),
+        ],
+    )
     .expect("admit explicit secret-bearing seed environment");
 
     let debug = format!("{host:?}");
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("secret-fixture-token"));
+}
+
+#[test]
+fn partial_native_toolchain_authority_is_refused() {
+    let fixture = Fixture::new();
+    let error = Host::from_environment(
+        &fixture.repository,
+        [
+            (
+                OsString::from(BOOTSTRAP_HOME_VARIABLE),
+                fixture.bootstrap.clone().into_os_string(),
+            ),
+            (
+                OsString::from(NATIVE_CARGO_VARIABLE),
+                fixture.cargo.clone().into_os_string(),
+            ),
+        ],
+    )
+    .expect_err("a partial native toolchain cannot launch Cargo");
+    assert_eq!(
+        error.reason(),
+        "cargo-isolation::native-toolchain-incomplete"
+    );
+}
+
+#[test]
+fn mixed_native_toolchain_directories_are_refused() {
+    let fixture = Fixture::new();
+    let other = fixture.root.join("other");
+    fs::create_dir(&other).expect("create mixed toolchain directory");
+    let rustdoc = other.join("native-rustdoc");
+    write_executable(&rustdoc, "#!/bin/sh\nexit 0\n");
+
+    let error = Host::new(
+        fixture.bootstrap.clone(),
+        fixture.cargo.clone(),
+        fixture.rustc.clone(),
+        rustdoc,
+    )
+    .expect_err("mixed native toolchain directories cannot launch Cargo");
+    assert_eq!(error.reason(), "cargo-isolation::native-toolchain-mixed");
+}
+
+#[test]
+fn tracked_toolchain_resolves_the_complete_trio_through_exact_rustup() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.repository.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"fixture-1.0\"\n",
+    )
+    .expect("write tracked toolchain fixture");
+    let bin = fixture.bootstrap.join("bin");
+    fs::create_dir(&bin).expect("create bootstrap bin");
+    let rustup = bin.join("rustup");
+    write_executable(
+        &rustup,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "set -eu\n",
+                "test \"$1\" = which\n",
+                "test \"$2\" = --toolchain\n",
+                "test \"$3\" = fixture-1.0\n",
+                "case \"$4\" in\n",
+                "  cargo) printf '%s\\n' {} ;;\n",
+                "  rustc) printf '%s\\n' {} ;;\n",
+                "  rustdoc) printf '%s\\n' {} ;;\n",
+                "  *) exit 44 ;;\n",
+                "esac\n",
+            ),
+            shell_word(&fixture.cargo),
+            shell_word(&fixture.rustc),
+            shell_word(&fixture.rustdoc),
+        ),
+    );
+
+    let host = Host::from_environment(
+        &fixture.repository,
+        [
+            (
+                OsString::from(BOOTSTRAP_HOME_VARIABLE),
+                fixture.bootstrap.clone().into_os_string(),
+            ),
+            (
+                OsString::from("HOME"),
+                fixture.root.clone().into_os_string(),
+            ),
+        ],
+    )
+    .expect("tracked toolchain resolves one native trio");
+    assert_eq!(host.cargo(), fs::canonicalize(&fixture.cargo).unwrap());
+    assert_eq!(host.rustc(), fs::canonicalize(&fixture.rustc).unwrap());
+    assert_eq!(host.rustdoc(), fs::canonicalize(&fixture.rustdoc).unwrap());
 }
 
 #[test]
@@ -534,6 +660,11 @@ fn sha256(bytes: &[u8]) -> String {
 
 fn shell_word(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+}
+
+fn write_executable(path: &Path, contents: &str) {
+    fs::write(path, contents).expect("write executable fixture");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).expect("make fixture executable");
 }
 
 fn mode(path: &Path) -> u32 {
