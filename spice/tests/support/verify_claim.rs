@@ -15,6 +15,15 @@ pub const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163d1";
 const OCCUPANT: &str = "018f82d4-6f59-7d06-92e3-bce9131163d2";
 const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163d3";
 
+#[derive(Clone, Copy)]
+struct VerifyAuthority {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    now: Instant,
+    expiry: Instant,
+}
+
 pub fn install(root: &Path) {
     let repository = Repository::discover(root).expect("verify fixture repository resolves");
     let state = repository
@@ -31,12 +40,28 @@ pub fn install(root: &Path) {
     )
     .expect("create verify fixture state directory");
     let mut journal = Journal::open(state.journal()).expect("create verify fixture journal");
-    let lane = uuid(LANE);
-    let occupant = uuid(OCCUPANT);
-    let epoch = uuid(EPOCH);
     let now = now();
-    let expiry = after(now, 600);
+    let authority = VerifyAuthority {
+        lane: uuid(LANE),
+        occupant: uuid(OCCUPANT),
+        epoch: uuid(EPOCH),
+        now,
+        expiry: after(now, 600),
+    };
 
+    install_residency(&mut journal, &repository, authority);
+    let task = install_task(&mut journal, authority.now);
+    install_claim(&mut journal, task, authority);
+}
+
+fn install_residency(journal: &mut Journal, repository: &Repository, authority: VerifyAuthority) {
+    let VerifyAuthority {
+        lane,
+        occupant,
+        epoch,
+        now,
+        ..
+    } = authority;
     let mut residency = JournalWrite::new(
         Actor::Spice,
         "resident:verify-fixture"
@@ -71,7 +96,9 @@ pub fn install(root: &Path) {
     journal
         .apply(residency)
         .expect("verify fixture residency commits");
+}
 
+fn install_task(journal: &mut Journal, now: Instant) -> TaskStamp {
     let task = TaskStamp::for_millis(1).expect("verify fixture task stamp");
     let flow = ["todo", "verify", "review"]
         .map(|phase| phase.parse().expect("verify fixture phase"))
@@ -130,7 +157,17 @@ pub fn install(root: &Path) {
     journal
         .apply(addition)
         .expect("verify fixture task commits");
+    task
+}
 
+fn install_claim(journal: &mut Journal, task: TaskStamp, authority: VerifyAuthority) {
+    let VerifyAuthority {
+        lane,
+        occupant,
+        epoch,
+        now,
+        expiry,
+    } = authority;
     let actor = Actor::Lane(lane);
     let cell = ClaimCell {
         project: "task.verify".to_owned(),
