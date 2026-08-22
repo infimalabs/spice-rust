@@ -9,6 +9,7 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -65,6 +66,11 @@ const TARGETS_PER_SHARD: usize = 8;
 /// than compiler work. Keep each package in fewer, broader groups to avoid
 /// spending the enclosing gate deadline on shared build-directory lock waves.
 const SELECTED_TARGETS_PER_SHARD: usize = 24;
+/// Exact selected prebuild batches share one Cargo graph and output authority.
+/// Admit only two package batches and divide the aggregate compiler grant
+/// between them. This retains package overlap without recreating a four-way
+/// Cargo lock wave over their shared graph and output authority.
+const SELECTED_PREBUILD_CONCURRENCY: usize = 2;
 /// Retain finer work units inside the full verifier so a constrained two-lane
 /// schedule can rebalance long test targets without paying one Cargo launch
 /// for every target.
@@ -242,8 +248,10 @@ impl WorkspaceTestBudget {
         })
     }
 
-    const fn prebuild_jobs(self) -> usize {
-        self.concurrency.saturating_mul(self.cargo_jobs)
+    const fn prebuild_jobs_per_batch(self) -> usize {
+        self.concurrency
+            .saturating_mul(self.cargo_jobs)
+            .div_ceil(SELECTED_PREBUILD_CONCURRENCY)
     }
 }
 
@@ -497,7 +505,7 @@ fn run_selected_at_mode(
         SelectedRunPolicy::Legacy(concurrency) => (RunPolicy::production(concurrency)?, None),
         SelectedRunPolicy::Budgeted(budget) => (
             RunPolicy::production_budgeted(budget),
-            Some(budget.prebuild_jobs()),
+            Some(budget.prebuild_jobs_per_batch()),
         ),
     };
     let root = roots
@@ -656,6 +664,7 @@ fn execute_selected_tests(
             &prebuild_environment,
             OsStr::new("cargo"),
             &selected,
+            policy.concurrency.min(SELECTED_PREBUILD_CONCURRENCY),
             output,
         )?;
         let prebuilt =
