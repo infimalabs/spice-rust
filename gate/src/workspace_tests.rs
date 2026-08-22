@@ -68,8 +68,9 @@ const TARGETS_PER_SHARD: usize = 8;
 const SELECTED_TARGETS_PER_SHARD: usize = 24;
 /// Exact selected prebuild batches share one Cargo graph and output authority.
 /// Admit only two package batches and divide the aggregate compiler grant
-/// between them. This retains package overlap without recreating a four-way
-/// Cargo lock wave over their shared graph and output authority.
+/// between their stable worker lanes. This retains package overlap without
+/// recreating a four-way Cargo lock wave over their shared graph and output
+/// authority.
 const SELECTED_PREBUILD_CONCURRENCY: usize = 2;
 /// Retain finer work units inside the full verifier so a constrained two-lane
 /// schedule can rebalance long test targets without paying one Cargo launch
@@ -248,10 +249,19 @@ impl WorkspaceTestBudget {
         })
     }
 
-    const fn prebuild_jobs_per_batch(self) -> usize {
-        self.concurrency
-            .saturating_mul(self.cargo_jobs)
-            .div_ceil(SELECTED_PREBUILD_CONCURRENCY)
+    fn prebuild_job_grants(self, active_batches: usize) -> Vec<usize> {
+        let lanes = active_batches
+            .min(self.concurrency)
+            .min(SELECTED_PREBUILD_CONCURRENCY);
+        if lanes == 0 {
+            return Vec::new();
+        }
+        let aggregate = self.concurrency.saturating_mul(self.cargo_jobs);
+        let jobs_per_lane = aggregate / lanes;
+        let remainder = aggregate % lanes;
+        (0..lanes)
+            .map(|lane| jobs_per_lane + usize::from(lane < remainder))
+            .collect()
     }
 }
 
@@ -501,12 +511,11 @@ fn run_selected_at_mode(
     selected_policy: SelectedRunPolicy,
     output: &mut impl Write,
 ) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    let (mut policy, prebuild_jobs) = match selected_policy {
+    let (mut policy, prebuild_budget) = match selected_policy {
         SelectedRunPolicy::Legacy(concurrency) => (RunPolicy::production(concurrency)?, None),
-        SelectedRunPolicy::Budgeted(budget) => (
-            RunPolicy::production_budgeted(budget),
-            Some(budget.prebuild_jobs_per_batch()),
-        ),
+        SelectedRunPolicy::Budgeted(budget) => {
+            (RunPolicy::production_budgeted(budget), Some(budget))
+        }
     };
     let root = roots
         .reusable
@@ -531,7 +540,7 @@ fn run_selected_at_mode(
             &inventory,
             report.tests(),
             &mut policy,
-            prebuild_jobs,
+            prebuild_budget,
             output,
         )?;
     }
@@ -641,7 +650,7 @@ fn execute_selected_tests(
     inventory: &Inventory,
     tests: &[String],
     policy: &mut RunPolicy,
-    prebuild_jobs: Option<usize>,
+    prebuild_budget: Option<WorkspaceTestBudget>,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
     let environment = inventory.execution_environment(
@@ -655,15 +664,12 @@ fn execute_selected_tests(
     let shards = partition_with_target_limit(&selected, SELECTED_TARGETS_PER_SHARD);
     validate_partition_with_target_limit(&selected, &shards, SELECTED_TARGETS_PER_SHARD)?;
     let prebuilt = if shards.len() > 1 {
-        let prebuild_environment = prebuild_jobs.map_or_else(
-            || Ok(environment.clone()),
-            |jobs| with_cargo_build_jobs(&environment, jobs),
-        )?;
         let prebuilt = prebuild_selected_tests(
             root,
-            &prebuild_environment,
+            &environment,
             OsStr::new("cargo"),
             &selected,
+            prebuild_budget,
             policy.concurrency.min(SELECTED_PREBUILD_CONCURRENCY),
             output,
         )?;

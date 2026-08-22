@@ -151,11 +151,13 @@ fn run_many_target_prebuild(
         filled_every_lane
     });
     let mut output = Vec::new();
-    let messages =
-        run_selected_prebuild_batches(batches, SELECTED_PREBUILD_LANES, &mut output, |batch| {
-            many_target_prebuild_result(batch, artifacts, &state)
-        })
-        .expect("many exact selected prebuilds complete");
+    let messages = run_selected_prebuild_batches(
+        batches,
+        SELECTED_PREBUILD_LANES,
+        &mut output,
+        |batch, _lane| many_target_prebuild_result(batch, artifacts, &state),
+    )
+    .expect("many exact selected prebuilds complete");
     assert!(
         release.join().expect("launch observer joins"),
         "the selected prebuild never filled its bounded lanes",
