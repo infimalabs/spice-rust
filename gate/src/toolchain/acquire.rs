@@ -196,10 +196,6 @@ impl<'a> ToolchainSource<'a> {
 
     /// Capture one selected tree with the parents that can prove merge authorship.
     #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "source, ancestry, compiler environment, rim, and reach are independent captured authorities"
-    )]
     pub(crate) fn capture_with_baselines(
         tree: &'a SelectedTree,
         rim: RimCapture,
