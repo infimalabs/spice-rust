@@ -638,7 +638,7 @@ fn canvas_small_runtime_bound_reports_timeout_and_stops_the_pair() {
     assert_eq!(analysis.outcome, ArmOutcome::Timeout);
     assert_eq!(analysis.exit_code, None);
     assert!(analysis.findings.is_empty());
-    assert!(analysis.reason.contains("cargo Canvas WASM typecheck"));
+    assert!(analysis.reason.contains("cargo canvas-wasm-typecheck"));
     assert!(
         fixture
             .log_lines()
