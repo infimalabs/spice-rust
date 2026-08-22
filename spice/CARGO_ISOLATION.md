@@ -6,6 +6,27 @@ content-addressed directory-source store. The store is rooted at
 native `~/.cargo`) and is keyed by the exact `Cargo.lock` bytes plus schema
 version. Native Cargo is resolved before `CARGO_HOME` changes.
 
+This repository currently uses a hybrid command boundary. Unqualified
+`spice session`, `spice task`, and `spice steering` commands remain on the
+ambient Python controls plane. Rust-specific development surfaces such as
+`dev cargo` use only the exact Git-common Rust appliance; they do not establish
+or imply a Rust lane, session, or task claim. Bind that appliance before the
+first isolated Cargo command:
+
+```sh
+git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
+spice_rs="${git_common}/.spice-install/bin/spice"
+if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
+  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
+  exit 1
+fi
+"$spice_rs" dev cargo -- <cargo-arguments>
+```
+
+A missing, symbolic, non-regular, or non-executable appliance is a hard stop.
+Do not search `PATH`, select another Cargo route, or point `CARGO_HOME` at a
+shared mutable cache to bypass that refusal.
+
 Package directory entries are sealed after their atomic publication. Regular
 source files retain owner-write permission because supported Cargo build
 scripts may preserve source permissions when copying generated inputs into
@@ -14,16 +35,16 @@ Cargo's directory-source checksums reject changed package bytes during builds,
 and Spice inspection independently verifies every package tree digest and
 reports any permission or content drift without repairing it.
 
-Use `spice dev cargo -- <cargo arguments>` whenever a command may create or
-refresh `Cargo.lock`, or when a non-resident command needs the supported
-isolated boundary. Use `spice dev cargo-store` to inspect the owned schema and
-`spice dev cargo-store --cleanup` to remove only recognized expired temporary
-state and valid unreferenced generations/packages. Cleanup has a seven-day
-grace, retains all generations if any home has uncertain liveness, and reports
-malformed links, records, modes, file types, or digests rather than repairing or
-deleting them.
+Use `"$spice_rs" dev cargo -- <cargo arguments>` whenever a command may create
+or refresh `Cargo.lock`, or when a non-resident command needs the supported
+isolated boundary. Use `"$spice_rs" dev cargo-store` to inspect the owned schema
+and `"$spice_rs" dev cargo-store --cleanup` to remove only recognized expired
+temporary state and valid unreferenced generations/packages. Cleanup has a
+seven-day grace, retains all generations if any home has uncertain liveness,
+and reports malformed links, records, modes, file types, or digests rather than
+repairing or deleting them.
 
-Each `spice dev cargo` process holds a unique kernel-backed reader pin from
+Each Rust `dev cargo` process holds a unique kernel-backed reader pin from
 before store preparation unlocks until its native Cargo child exits. Cleanup
 retains every actively pinned generation, removes unlocked records left by a
 crashed wrapper, and retains all generations if a pin cannot be classified.
@@ -38,8 +59,14 @@ The following measurements were recorded on 2026-08-14 on arm64 macOS using
 `spice-rust-b` and `spice-rust-z`.
 
 ```sh
-/usr/bin/time -p spice dev cargo -- --version
-/usr/bin/time -p spice dev cargo -- check --locked -p atomic --lib
+git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
+spice_rs="${git_common}/.spice-install/bin/spice"
+if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
+  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
+  exit 1
+fi
+/usr/bin/time -p "$spice_rs" dev cargo -- --version
+/usr/bin/time -p "$spice_rs" dev cargo -- check --locked -p atomic --lib
 du -sk ~/.cargo/spice/source-store-v2{,/packages,/generations,/homes}
 du -sk -A ~/.cargo/spice/source-store-v2{,/packages,/generations,/homes}
 find ~/.cargo/spice/source-store-v2/generations -type l | wc -l
@@ -47,10 +74,10 @@ find ~/.cargo/spice/source-store-v2/generations -type f | wc -l
 ```
 
 After warming the focused check once in each worktree, start those same two
-`spice dev cargo -- check --locked -p atomic --lib` commands together, wait for
-both immediate children, record each `/usr/bin/time -p` result, and search both
-stderr captures for `Blocking waiting`, `package cache lock`, and
-`global-cache`.
+isolated `check --locked -p atomic --lib` commands through `"$spice_rs"`
+together, wait for both immediate children, record each `/usr/bin/time -p`
+result, and search both stderr captures for `Blocking waiting`, `package cache
+lock`, and `global-cache`.
 
 | Observation | Result |
 | --- | ---: |
