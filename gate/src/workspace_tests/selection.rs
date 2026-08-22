@@ -168,12 +168,14 @@ pub(super) fn selection_plan(
             }
             return Err(unclassified_source(inventory, changed, &absolute));
         }
+        let direct_test_only = exact_test_only_claim(&claims, &absolute);
         for claim in claims {
             if claim.package_wide
-                || claim
-                    .targets
-                    .iter()
-                    .any(|target| target_reaches_dependents(target))
+                || (!direct_test_only
+                    && claim
+                        .targets
+                        .iter()
+                        .any(|target| target_reaches_dependents(target)))
             {
                 for package in reverse_dependency_closure(inventory, claim.package) {
                     select_package_targets(package, changed, &mut tests, &mut edges)?;
@@ -245,12 +247,14 @@ pub(super) fn cargo_check_selections(
             }
             return Err(unclassified_source(inventory, changed, &absolute));
         }
+        let direct_test_only = exact_test_only_claim(&claims, &absolute);
         for claim in claims {
             if claim.package_wide
-                || claim
-                    .targets
-                    .iter()
-                    .any(|target| target_reaches_dependents(target))
+                || (!direct_test_only
+                    && claim
+                        .targets
+                        .iter()
+                        .any(|target| target_reaches_dependents(target)))
             {
                 select_package_checks([claim.package], &mut reached)?;
                 select_reverse_package_checks(
@@ -290,6 +294,7 @@ struct SourceClaim<'a> {
     package: &'a PackageInventory,
     targets: Vec<&'a TargetIdentity>,
     package_wide: bool,
+    test_only: bool,
 }
 
 /// Derive every target claim before selecting a package. Exact target roots,
@@ -309,9 +314,14 @@ fn source_claims<'a>(
             let explicit = package
                 .declared_targets
                 .iter()
-                .filter(|target| target_explicitly_reaches_source(target, absolute))
+                .filter_map(|target| {
+                    target_explicit_source_reach(target, absolute)
+                        .map(|test_only| (target, test_only))
+                })
                 .collect::<Vec<_>>();
-            let targets =
+            let test_only =
+                !explicit.is_empty() && explicit.iter().all(|(_, test_only)| *test_only);
+            let targets: Vec<&TargetIdentity> =
                 if explicit.is_empty() && containing.is_some_and(|owner| owner.id == package.id) {
                     package
                         .declared_targets
@@ -319,16 +329,27 @@ fn source_claims<'a>(
                         .filter(|target| library_fallback_reaches_source(target, absolute))
                         .collect()
                 } else {
-                    explicit
+                    explicit.into_iter().map(|(target, _)| target).collect()
                 };
             let package_wide = package_wide_source(changed, package, absolute);
             (!targets.is_empty() || package_wide).then_some(SourceClaim {
                 package,
                 targets,
                 package_wide,
+                test_only,
             })
         })
         .collect()
+}
+
+fn exact_test_only_claim(claims: &[SourceClaim<'_>], source: &Path) -> bool {
+    // Narrow only one present source with one proven owner. Removed sources
+    // and multiply-reached paths deliberately retain the package-level
+    // fallback because the selected tree cannot prove an exclusive test edge.
+    let [claim] = claims else {
+        return false;
+    };
+    source.is_file() && claim.test_only && claim.targets.len() == 1
 }
 
 fn containing_package<'a>(
@@ -584,12 +605,14 @@ fn library_fallback_reaches_source(target: &TargetIdentity, source: &Path) -> bo
     direct_root.is_some_and(|root| source.starts_with(root))
 }
 
-fn target_explicitly_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
-    source == target.source
-        || target
-            .declared_path_sources
-            .iter()
-            .any(|declared| declared == source)
+fn target_explicit_source_reach(target: &TargetIdentity, source: &Path) -> Option<bool> {
+    if source == target.source {
+        return Some(false);
+    }
+    target
+        .declared_path_sources
+        .iter()
+        .find_map(|declared| (declared.path == source).then_some(declared.test_only))
 }
 
 fn target_is_library(target: &TargetIdentity) -> bool {

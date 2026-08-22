@@ -164,13 +164,19 @@ pub(super) struct MissingBinaryOutput<'a> {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct DeclaredPathSource {
+    pub(super) path: PathBuf,
+    pub(super) test_only: bool,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct TargetIdentity {
     pub(super) package: String,
     pub(super) kind: String,
     pub(super) name: String,
     pub(super) required_features: Vec<String>,
     pub(super) source: PathBuf,
-    pub(super) declared_path_sources: Vec<PathBuf>,
+    pub(super) declared_path_sources: Vec<DeclaredPathSource>,
     pub(super) source_bytes: u64,
 }
 

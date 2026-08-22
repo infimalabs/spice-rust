@@ -930,10 +930,14 @@ fn partition_package(
 
 fn target_source_bytes(
     source: &Path,
-    declared_path_sources: &[PathBuf],
+    declared_path_sources: &[DeclaredPathSource],
 ) -> Result<u64, WorkspaceTestError> {
     std::iter::once(source)
-        .chain(declared_path_sources.iter().map(PathBuf::as_path))
+        .chain(
+            declared_path_sources
+                .iter()
+                .map(|declared| declared.path.as_path()),
+        )
         .try_fold(0_u64, |total, path| {
             fs::metadata(path)
                 .map(|metadata| total.saturating_add(metadata.len()))
