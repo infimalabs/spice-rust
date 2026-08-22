@@ -703,9 +703,16 @@ fn explicit_exhaustive_mode_maps_even_unknown_non_build_paths_to_every_target() 
 
 #[test]
 fn rust_source_inside_a_package_but_outside_target_roots_refuses_exactly() {
+    let (root, inventory) = materialized_fixture_inventory("unowned-package-source");
+    fs::create_dir_all(root.join("fixture-a/tools")).expect("create unowned source directory");
+    fs::write(
+        root.join("fixture-a/tools/unreachable.rs"),
+        "pub fn unreachable() {}\n",
+    )
+    .expect("write unowned package source");
     let error = selection_plan(
-        &fixture_inventory(),
-        Path::new("/workspace"),
+        &inventory,
+        &root,
         wire::Digest::compute(wire::Domain::GateTree, b"unreachable package source"),
         &["fixture-a/tools/unreachable.rs".to_owned()],
     )
@@ -719,13 +726,18 @@ fn rust_source_inside_a_package_but_outside_target_roots_refuses_exactly() {
         )),
         "{error}",
     );
+    fs::remove_dir_all(root).expect("remove unowned package source fixture");
 }
 
 #[test]
 fn rust_source_outside_workspace_packages_refuses_exactly() {
+    let (root, inventory) = materialized_fixture_inventory("outside-package-source");
+    fs::create_dir_all(root.join("tools")).expect("create outside source directory");
+    fs::write(root.join("tools/outside.rs"), "pub fn outside() {}\n")
+        .expect("write outside package source");
     let error = selection_plan(
-        &fixture_inventory(),
-        Path::new("/workspace"),
+        &inventory,
+        &root,
         wire::Digest::compute(wire::Domain::GateTree, b"unknown Rust tree"),
         &["tools/outside.rs".to_owned()],
     )
@@ -736,13 +748,18 @@ fn rust_source_outside_workspace_packages_refuses_exactly() {
         error.contains("changed Rust source \"tools/outside.rs\" is outside every Cargo package"),
         "{error}",
     );
+    fs::remove_dir_all(root).expect("remove outside package source fixture");
 }
 
 #[test]
 fn partially_mapped_rust_sources_refuse_at_the_first_canonical_unknown_path() {
+    let (root, inventory) = materialized_fixture_inventory("partially-mapped-source");
+    fs::create_dir_all(root.join("tools")).expect("create partially mapped source directory");
+    fs::write(root.join("tools/outside.rs"), "pub fn outside() {}\n")
+        .expect("write partially mapped outside source");
     let error = selection_plan(
-        &fixture_inventory(),
-        Path::new("/workspace"),
+        &inventory,
+        &root,
         wire::Digest::compute(wire::Domain::GateTree, b"incomplete Rust tree"),
         &[
             "tools/outside.rs".to_owned(),
@@ -757,6 +774,41 @@ fn partially_mapped_rust_sources_refuse_at_the_first_canonical_unknown_path() {
         error.contains("changed Rust source \"tools/outside.rs\" is outside every Cargo package"),
         "{error}",
     );
+    fs::remove_dir_all(root).expect("remove partially mapped source fixture");
+}
+
+#[test]
+fn removed_cargo_target_source_selects_only_its_package() {
+    let (root, mut inventory) = materialized_fixture_inventory("removed-target-source");
+    inventory.packages[1]
+        .dependencies
+        .push(root.join("fixture-a"));
+    let removed = "fixture-a/tests/retired.rs";
+    assert!(
+        !root.join(removed).exists(),
+        "removed target fixture unexpectedly exists"
+    );
+
+    let report = selection_report(
+        &inventory,
+        &root,
+        wire::Digest::compute(wire::Domain::GateTree, b"removed integration target"),
+        &[removed.to_owned()],
+    )
+    .expect("removed target source selects conservative package reach");
+    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
+    assert!(report.edges().iter().all(|edge| edge.source() == removed));
+
+    let checks = cargo_check_selections(&inventory, &root, &[removed.to_owned()])
+        .expect("removed target source selects conservative compiler reach");
+    assert_eq!(
+        checks
+            .iter()
+            .map(|check| check.name.as_str())
+            .collect::<Vec<_>>(),
+        ["fixture-a"]
+    );
+    fs::remove_dir_all(root).expect("remove deleted target source fixture");
 }
 
 #[test]

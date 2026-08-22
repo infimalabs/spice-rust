@@ -191,7 +191,7 @@ fn gate_findings_project_every_non_admitting_metric_key_once() {
 ///
 /// A metric key names a file and a value says how many times it offends; before
 /// the measurement carried findings the fold stopped exactly there, so the
-/// reader of a refusal was told `retired_names.rs` has one phantom citation and
+/// reader of a refusal was told `markdown_refs.rs` has one phantom citation and
 /// left to find it by reading. Both halves are asserted: an absence has no
 /// correct spelling to offer and must not invent one, while a case mismatch
 /// knows the tracked spelling and is useless without it.
@@ -200,8 +200,13 @@ fn a_metric_fold_names_the_site_inside_the_file_it_refused() {
     let report = markdown_breach_report(vec![
         (
             MetricId::RustDocMarkdownTargetAbsences,
-            "gate/tests/retired_names.rs",
-            vec![finding("gate/tests/retired_names.rs", 3, "NAMES.md", None)],
+            "gate/tests/markdown_refs.rs",
+            vec![finding(
+                "gate/tests/markdown_refs.rs",
+                3,
+                "MISSING.md",
+                None,
+            )],
         ),
         (
             MetricId::MarkdownLinkCaseMismatches,
@@ -218,7 +223,7 @@ fn a_metric_fold_names_the_site_inside_the_file_it_refused() {
     let text = fold.as_str();
 
     assert!(
-        text.contains("  site path=\"gate/tests/retired_names.rs\" line=3 target=\"NAMES.md\"\n"),
+        text.contains("  site path=\"gate/tests/markdown_refs.rs\" line=3 target=\"MISSING.md\"\n"),
         "the fold names the citing line and the unresolved target: {text}"
     );
     assert!(

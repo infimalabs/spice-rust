@@ -146,10 +146,10 @@ pub fn scan_markdown_link_case(
 ///
 /// A Markdown path spelled in doc text is a citation whether or not it sits in
 /// a code span, because a code span is typography and carries no intent. The
-/// sentence this arm exists to catch grounds a rule in a document -- "`README.md`
-/// scopes this deny-list" -- and is written as prose without the span far more
-/// often than with it, so reading only the decorated spelling refused the
-/// citations that were merely typeset and admitted the ones doing the work.
+/// prose this arm exists to catch can ground a rule in `README.md` without a
+/// code span just as readily as with one, so reading only the decorated
+/// spelling would refuse citations that were merely typeset and admit the ones
+/// doing the work.
 ///
 /// What separates a citation from an incidental mention is therefore not the
 /// punctuation around the name but whether the name resolves. Naming a document
