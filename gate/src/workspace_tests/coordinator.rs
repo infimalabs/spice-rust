@@ -79,6 +79,34 @@ impl RunPolicy {
         }
     }
 
+    /// Rebalance the admitted aggregate harness grant toward direct process lanes.
+    pub(super) fn production_prebuilt_budgeted(budget: WorkspaceTestBudget) -> Self {
+        let aggregate_threads = budget.concurrency.saturating_mul(budget.test_threads);
+        let (concurrency, test_threads) = (1..=crate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP
+            .min(aggregate_threads))
+            .map(|concurrency| {
+                let test_threads =
+                    (aggregate_threads / concurrency).clamp(1, MAX_TEST_HARNESS_THREADS_PER_SHARD);
+                (concurrency, test_threads)
+            })
+            .max_by_key(|(concurrency, test_threads)| {
+                (concurrency.saturating_mul(*test_threads), *concurrency)
+            })
+            .expect("an admitted workspace-test budget retains direct capacity");
+        Self {
+            concurrency,
+            shared_outputs: true,
+            cargo_jobs: Some(budget.cargo_jobs),
+            test_threads: Some(test_threads),
+            shard_deadline: SHARD_DEADLINE,
+            coordinator_deadline: COORDINATOR_DEADLINE,
+            progress_interval: PROGRESS_INTERVAL,
+            output_drain: OUTPUT_DRAIN_DEADLINE,
+            reap: REAP_DEADLINE,
+            grace: TERMINATION_GRACE,
+        }
+    }
+
     pub(super) fn for_shards(mut self, shards: usize) -> Self {
         self.concurrency = self.concurrency.min(if shards == 0 { 1 } else { shards });
         self
@@ -131,11 +159,7 @@ impl ExecutionShard {
     fn requires_exclusive_lane(&self) -> bool {
         matches!(
             self,
-            Self::Prebuilt(test)
-                if test
-                    .partition
-                    .as_ref()
-                    .is_some_and(|partition| partition.exclusive)
+            Self::Prebuilt(test) if test.requires_exclusive_lane()
         )
     }
 

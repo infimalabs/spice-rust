@@ -673,9 +673,13 @@ fn execute_selected_tests(
             policy.concurrency.min(SELECTED_PREBUILD_CONCURRENCY),
             output,
         )?;
+        if let Some(budget) = prebuild_budget {
+            *policy = RunPolicy::production_prebuilt_budgeted(budget);
+        } else {
+            policy.shared_outputs = true;
+        }
         let prebuilt =
             partition_largest_prebuilt_tests(prebuilt, &environment, policy.concurrency, output)?;
-        policy.shared_outputs = true;
         Some(prebuilt)
     } else {
         None

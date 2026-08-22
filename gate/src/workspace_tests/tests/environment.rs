@@ -57,6 +57,28 @@ fn shared_prebuild_policy_alone_admits_the_higher_process_lane_cap() {
 }
 
 #[test]
+fn budgeted_prebuilt_policy_rebalances_only_the_admitted_harness_capacity() {
+    let production = WorkspaceTestBudget::new(4, 3, 3).expect("production budget admits");
+    let direct = RunPolicy::production_prebuilt_budgeted(production);
+    assert_eq!(direct.concurrency, 6);
+    assert_eq!(direct.test_threads, Some(2));
+    assert_eq!(
+        direct.concurrency * direct.test_threads.expect("threads bind"),
+        12
+    );
+    assert!(direct.shared_outputs);
+
+    let indivisible = WorkspaceTestBudget::new(4, 2, 2).expect("indivisible budget admits");
+    let direct = RunPolicy::production_prebuilt_budgeted(indivisible);
+    assert_eq!(direct.concurrency, 4);
+    assert_eq!(direct.test_threads, Some(2));
+    assert_eq!(
+        direct.concurrency * direct.test_threads.expect("threads bind"),
+        8
+    );
+}
+
+#[test]
 fn selected_prebuild_odd_grants_stay_within_the_aggregate_budget() {
     let budget = WorkspaceTestBudget::new(3, 1, 1).expect("odd selected budget admits");
     let grants = budget.prebuild_job_grants(2);
