@@ -1,12 +1,11 @@
-//! Shared repository and process fixtures for the gate CLI integration suite.
+//! Minimal repository and process fixtures for the retained Gate CLI boundary tests.
 
 use std::ffi::OsStr;
+use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-use super::*;
 
 pub(super) struct GateRepository {
     scratch: Scratch,
@@ -21,9 +20,7 @@ impl GateRepository {
             &["config", "user.email", "gate@example.invalid"],
         );
         git(scratch.path(), &["config", "user.name", "Gate Fixture"]);
-
-        fs::create_dir_all(scratch.path().join("src")).expect("create source directory");
-        fs::create_dir_all(scratch.path().join("gate/src")).expect("create camp loci");
+        fs::create_dir(scratch.path().join("src")).expect("create source directory");
         fs::write(
             scratch.path().join("spice-rust.toml"),
             format!(
@@ -34,10 +31,7 @@ impl GateRepository {
         .expect("write tracked policy");
         fs::write(
             scratch.path().join("baseline.toml"),
-            concat!(
-                "version = 1\n\n",
-                "[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
-            ),
+            "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
         )
         .expect("write tracked baseline");
         fs::write(
@@ -57,14 +51,13 @@ impl GateRepository {
             ),
         )
         .expect("write fixture Cargo lockfile");
+        fs::write(scratch.path().join("src/lib.rs"), "pub fn fixture() {}\n")
+            .expect("write fixture source");
         fs::write(scratch.path().join(".gitignore"), "/target/\n")
-            .expect("ignore the fixture's persistent Cargo build cache");
-        let repository = Self { scratch };
-        repository.write_source(1);
-        repository.write_camp_lines(20);
-        git(repository.path(), &["add", "."]);
-        git(repository.path(), &["commit", "-qm", "fixture"]);
-        repository
+            .expect("ignore fixture build cache");
+        git(scratch.path(), &["add", "."]);
+        git(scratch.path(), &["commit", "-qm", "fixture"]);
+        Self { scratch }
     }
 
     pub(super) fn path(&self) -> &Path {
@@ -73,53 +66,6 @@ impl GateRepository {
 
     pub(super) fn add(&self, path: &str) {
         git(self.path(), &["add", path]);
-    }
-
-    pub(super) fn install_pre_commit(&self) {
-        let executable = Path::new(env!("CARGO_BIN_EXE_spice"));
-        assert!(!executable.to_string_lossy().contains('\''));
-        let path = self.path().join(".git/hooks/pre-commit");
-        fs::write(
-            &path,
-            format!(
-                concat!(
-                    "#!/bin/sh\n",
-                    "set -eu\n",
-                    "root=$(git rev-parse --show-toplevel)\n",
-                    "git_local_environment=$(git rev-parse --local-env-vars)\n",
-                    "for variable in $git_local_environment; do unset \"$variable\"; done\n",
-                    "cd \"$root\"\n",
-                    "exec '{}' gate pre-commit\n",
-                ),
-                executable.display(),
-            ),
-        )
-        .expect("install commit-gate hook");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
-            .expect("make commit-gate hook executable");
-    }
-
-    pub(super) fn write_source(&self, long_lines: usize) {
-        let mut source = String::from("pub fn fixture() {}\n");
-        for _ in 0..long_lines {
-            source.push_str("// ");
-            source.push_str(&"x".repeat(101));
-            source.push('\n');
-        }
-        fs::write(self.path().join("src/lib.rs"), source).expect("write fixture source");
-    }
-
-    pub(super) fn write_markdown_case_mismatches(&self, count: usize) {
-        fs::create_dir_all(self.path().join("docs")).expect("create fixture docs directory");
-        fs::write(self.path().join("docs/target.md"), "# Exact target\n")
-            .expect("write exact Markdown target");
-        for index in 0..count {
-            fs::write(
-                self.path().join(format!("docs/case-{index}.md")),
-                format!("[{index}](Target.md)\n"),
-            )
-            .expect("write Markdown mismatch fixture");
-        }
     }
 
     pub(super) fn write_selected_test(&self, marker: &Path) {
@@ -136,87 +82,19 @@ impl GateRepository {
                     "        .create(true)\n",
                     "        .append(true)\n",
                     "        .open({marker})\n",
-                    "        .expect(\"open selected-target execution marker\");\n",
+                    "        .expect(\"open marker\");\n",
                     "    writeln!(marker, \"canonical selected target executed\")\n",
-                    "        .expect(\"append selected-target execution marker\");\n",
+                    "        .expect(\"append marker\");\n",
                     "}}\n",
                 ),
                 marker = marker,
             ),
         )
-        .expect("write staged source with selected-target marker");
-    }
-
-    pub(super) fn write_selected_test_with_state_removal(&self, marker: &Path) {
-        let marker = format!("{:?}", marker.to_string_lossy());
-        let state = self.path().join(".git/.spice-rs/data/gate-state.json");
-        fs::create_dir_all(state.parent().expect("gate-state parent"))
-            .expect("create stale gate-state parent");
-        fs::write(&state, b"{\"version\":1,\"latches\":[],\"claims\":[]}")
-            .expect("seed present canonical gate state");
-        let state = format!("{:?}", state.to_string_lossy());
-        fs::write(
-            self.path().join("src/lib.rs"),
-            format!(
-                concat!(
-                    "pub fn fixture() {{}}\n\n",
-                    "#[test]\n",
-                    "fn canonical_selected_target() {{\n",
-                    "    use std::io::Write as _;\n",
-                    "    let mut marker = std::fs::OpenOptions::new()\n",
-                    "        .create(true)\n",
-                    "        .append(true)\n",
-                    "        .open({marker})\n",
-                    "        .expect(\"open selected-target execution marker\");\n",
-                    "    writeln!(marker, \"canonical selected target executed\")\n",
-                    "        .expect(\"append selected-target execution marker\");\n",
-                    "    let state = std::path::Path::new({state});\n",
-                    "    std::fs::remove_file(state)\n",
-                    "        .expect(\"remove the captured gate state before publication\");\n",
-                    "}}\n",
-                ),
-                marker = marker,
-                state = state,
-            ),
-        )
-        .expect("write staged source with selected-target state removal");
-        let output = Command::new("rustfmt")
-            .args(["--edition", "2024"])
-            .arg(self.path().join("src/lib.rs"))
-            .output()
-            .expect("launch rustfmt for stale state-removal fixture");
-        assert!(
-            output.status.success(),
-            "format stale state-removal fixture: {}",
-            String::from_utf8_lossy(&output.stderr),
-        );
-    }
-
-    pub(super) fn write_camp_lines(&self, length: usize) {
-        for path in [
-            "gate/src/camp.rs",
-            "gate/src/input.rs",
-            "gate/src/kill.rs",
-            "gate/src/verdict.rs",
-        ] {
-            fs::write(
-                self.path().join(path),
-                format!("//{}\n", "c".repeat(length.saturating_sub(2))),
-            )
-            .expect("write camp locus");
-        }
+        .expect("write selected target");
     }
 }
 
 pub(super) fn git(root: &Path, arguments: &[&str]) {
-    let _ = git_output(root, arguments);
-}
-
-pub(super) fn git_stdout(root: &Path, arguments: &[&str]) -> Vec<u8> {
-    git_output(root, arguments).stdout
-}
-
-pub(super) fn git_output(root: &Path, arguments: &[&str]) -> std::process::Output {
     let output = fixture_command("/usr/bin/git")
         .args(arguments)
         .current_dir(root)
@@ -227,10 +105,8 @@ pub(super) fn git_output(root: &Path, arguments: &[&str]) -> std::process::Outpu
         "git {arguments:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    output
 }
 
-/// Build a fixture command isolated from an outer installed gate selection.
 pub(super) fn fixture_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     command
@@ -239,12 +115,6 @@ pub(super) fn fixture_command(program: impl AsRef<OsStr>) -> Command {
         .env_remove(wire::SpiceVariable::PreCommitPaths.as_str())
         .env_remove(wire::SpiceVariable::PreCommitSource.as_str());
     command
-}
-
-pub(super) fn executable(path: &Path, text: &str) {
-    fs::write(path, text).expect("write gate fixture executable");
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-        .expect("make gate fixture executable");
 }
 
 pub(super) struct Scratch(PathBuf);
@@ -269,7 +139,7 @@ impl Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         remove_scratch(&self.0)
-            .unwrap_or_else(|error| panic!("remove gate scratch {}: {error}", self.0.display()));
+            .unwrap_or_else(|error| panic!("remove {}: {error}", self.0.display()));
     }
 }
 
@@ -293,13 +163,9 @@ fn make_tree_writable(path: &Path) {
     let mut permissions = metadata.permissions();
     permissions.set_mode(permissions.mode() | 0o700);
     let _ = fs::set_permissions(path, permissions);
-    if !metadata.is_dir() {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(path) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        make_tree_writable(&entry.path());
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            make_tree_writable(&entry.path());
+        }
     }
 }

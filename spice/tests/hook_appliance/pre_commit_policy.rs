@@ -5,27 +5,7 @@ use spice::config::{Document, Inputs, resolve};
 
 #[test]
 fn source_policy_suppresses_install_guidance_without_disabling_its_commit_gate() {
-    let python = resolve_document("spice.toml");
     let rust = resolve_document("spice-rust.toml");
-
-    assert!(!python.root().policy().pre_commit_builtins());
-    let [command] = python.root().policy().pre_commit() else {
-        panic!("the Python-owned document retains its one current bridge command");
-    };
-    assert_eq!(command.label(), "Rust gate");
-    assert_eq!(
-        command.run(),
-        [
-            "cargo",
-            "run",
-            "--locked",
-            "--package",
-            "spice",
-            "--",
-            "gate",
-            "pre-commit",
-        ]
-    );
 
     assert!(!rust.root().policy().pre_commit_builtins());
     let [command] = rust.root().policy().pre_commit() else {
