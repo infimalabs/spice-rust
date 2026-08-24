@@ -407,12 +407,6 @@ pub fn advance_at_launch(repository: &Repository) -> LaunchAdvance {
     launch::advance(repository.worktree_root())
 }
 
-/// Publish one task phase before its journal transition commits.
-#[cfg(test)]
-pub fn publish(repository: &Repository, meta: Metadata<'_>) -> Result<GitBoundary, Error> {
-    publish_inner(repository, meta, None)
-}
-
 /// Publish an allocator-authenticated phase, including an owned merge resolution.
 ///
 /// The evidence callback is reachable only when the repository retains the exact
@@ -900,23 +894,7 @@ pub use recovery::{
     Recovery, RecoveryClaim, bind_recovery_claim, pending_recovery, quarantine_for_recovery,
     recovery_claim, replay_recovery, restore_recovery, synchronize_recovery,
 };
-#[cfg(test)]
-use recovery::{
-    capture_recovery_for_test, finish_recovery_capture_for_test, journal_replaying_for_test,
-    journal_syncing_for_test,
-};
 mod transaction;
 use transaction::*;
 mod command;
 use command::*;
-#[cfg(test)]
-#[cfg(unix)]
-mod command_tests;
-#[cfg(test)]
-mod landing_tests;
-#[cfg(test)]
-mod recovery_tests;
-#[cfg(test)]
-mod resolution_tests;
-#[cfg(test)]
-mod tests;

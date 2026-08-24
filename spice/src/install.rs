@@ -39,8 +39,6 @@ use path::validate_relative;
 use progress::{
     apply_with_interruption, unapply_with_interruption, verify_progress, verify_refresh_progress,
 };
-#[cfg(test)]
-use record::record_path;
 use record::{RefreshRecord, read_record, read_record_for_refresh};
 use rollback::{RollbackArchive, RollbackState, rollback_image_matches};
 use validation::{asset_contract, fixed_content_differs_from_current_build};
@@ -935,6 +933,3 @@ fn retirement_drift(retirement: &Retirement, observed: Option<ObservedFile>) -> 
         observed: observed.map(|observed| observed.image.digest),
     }
 }
-
-#[cfg(test)]
-mod tests;

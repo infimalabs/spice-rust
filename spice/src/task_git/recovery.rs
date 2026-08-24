@@ -221,59 +221,6 @@ pub fn quarantine_for_recovery(repository: &Repository) -> Result<Recovery, Erro
     Ok(recovery(&manifest))
 }
 
-#[cfg(test)]
-pub(super) fn capture_recovery_for_test(repository: &Repository) -> Result<Recovery, Error> {
-    let root = create_recovery_root(repository)?;
-    let payload = capture_payload(repository, &root)?;
-    let transaction = digest_json(&payload)?;
-    let manifest = Manifest {
-        version: RECOVERY_VERSION,
-        transaction,
-        state: RecoveryState::Captured,
-        claim: None,
-        payload,
-    };
-    write_manifest(&root, &manifest)?;
-    Ok(recovery(&manifest))
-}
-
-#[cfg(test)]
-pub(super) fn finish_recovery_capture_for_test(
-    repository: &Repository,
-    recovery: &Recovery,
-) -> Result<(), Error> {
-    let root = recovery_root(repository);
-    let mut manifest = read_expected(&root, recovery)?;
-    verify_original(repository, &root, &manifest)?;
-    clean_manifest_paths(repository.worktree_root(), &manifest.payload)?;
-    manifest.state = RecoveryState::Quarantined;
-    write_manifest(&root, &manifest)
-}
-
-#[cfg(test)]
-pub(super) fn journal_syncing_for_test(
-    repository: &Repository,
-    recovery: &Recovery,
-    boundary: GitBoundary,
-) -> Result<(), Error> {
-    let root = recovery_root(repository);
-    let mut manifest = read_expected(&root, recovery)?;
-    manifest.state = RecoveryState::Syncing { boundary };
-    write_manifest(&root, &manifest)
-}
-
-#[cfg(test)]
-pub(super) fn journal_replaying_for_test(
-    repository: &Repository,
-    recovery: &Recovery,
-) -> Result<(), Error> {
-    let root = recovery_root(repository);
-    let mut manifest = read_expected(&root, recovery)?;
-    let boundary = replay_boundary(&manifest)?;
-    manifest.state = RecoveryState::Replaying { boundary };
-    write_manifest(&root, &manifest)
-}
-
 fn resume_quarantine(repository: &Repository, recovery: Recovery) -> Result<Recovery, Error> {
     let root = recovery_root(repository);
     let manifest = read_expected(&root, &recovery)?;
@@ -908,11 +855,6 @@ fn admitted_path(worktree: &Path, written: &str) -> Result<PathBuf, Error> {
         }
     }
     Ok(worktree.join(relative))
-}
-
-#[cfg(test)]
-pub(super) fn admitted_path_for_test(worktree: &Path, written: &str) -> Result<PathBuf, Error> {
-    admitted_path(worktree, written)
 }
 
 fn union_paths(left: &[String], right: &[String]) -> Vec<String> {

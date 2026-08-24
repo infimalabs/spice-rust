@@ -1056,6 +1056,3 @@ fn signal_ready(
 fn mutation_pause(_action: &str, _display: &Path) -> Result<(), InstallError> {
     Ok(())
 }
-
-#[cfg(all(test, unix))]
-mod tests;

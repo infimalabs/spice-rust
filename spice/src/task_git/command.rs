@@ -34,15 +34,6 @@ fn run_bounded(root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<GitOu
     run_bounded_observed(root, args, input, None)
 }
 
-#[cfg(test)]
-pub(super) fn run_observing_descendant_grace(
-    root: &Path,
-    args: &[&str],
-    descendant_grace_started: &mut dyn FnMut(),
-) -> Result<GitOutput, Error> {
-    run_bounded_observed(root, args, None, Some(descendant_grace_started))
-}
-
 fn run_bounded_observed(
     root: &Path,
     args: &[&str],
@@ -289,16 +280,6 @@ impl GitProcess {
                 classify_group_probe(rustix::process::test_kill_process_group(group))
             }),
         }
-    }
-
-    #[cfg(all(test, unix))]
-    pub(super) fn with_group_probe(
-        child: std::process::Child,
-        probe: impl FnMut(GroupProbeSite, rustix::process::Pid) -> GroupPresence + 'static,
-    ) -> Self {
-        let mut process = Self::new(child);
-        process.group_probe = Box::new(probe);
-        process
     }
 
     fn poll_exit(&mut self) -> Result<Option<std::process::ExitStatus>, Error> {

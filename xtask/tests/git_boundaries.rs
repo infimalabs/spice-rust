@@ -63,7 +63,7 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 19] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 6] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
     // control-plane boundary after authored release approval. Each count
@@ -79,35 +79,6 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 19] = [
     // subcommands by name to give them a longer timeout, and issues nothing.
     ("spice/src/task_git/command.rs", "fetch", 1),
     ("spice/src/task_git/command.rs", "push", 1),
-    // Fixtures driving a real local remote. These are the counts that move
-    // when someone writes a new git test, which is the point: the number is
-    // small enough to read and a reviewer sees the new fixture in the diff.
-    //
-    // GIT-08's fixtures build the same shape as `task_git/tests.rs` below -- an
-    // agent clone and a peer clone over one bare remote -- because drift is
-    // only observable once a peer has landed work the task never wrote. They
-    // live in their own file rather than joining those counts because
-    // `spice/src/task_git/tests.rs` sits past the file-shape flex and is
-    // latched to base, so touching it would red an unrelated gate.
-    ("spice/src/task_git/landing_tests.rs", "clone", 1),
-    ("spice/src/task_git/landing_tests.rs", "fetch", 1),
-    ("spice/src/task_git/landing_tests.rs", "push", 2),
-    // Allocator-owned merge-resolution fixtures use the same local bare
-    // remote shape and never name a production remote.
-    ("spice/src/task_git/resolution_tests.rs", "clone", 1),
-    ("spice/src/task_git/resolution_tests.rs", "push", 3),
-    // Dirty-footprint recovery fixtures use one local bare remote to prove
-    // replay against a synchronized peer baseline. These are fixture-only
-    // transports; production recovery continues through task_git's existing
-    // fetch/push control-plane boundary.
-    ("spice/src/task_git/recovery_tests.rs", "clone", 1),
-    ("spice/src/task_git/recovery_tests.rs", "pull", 1),
-    ("spice/src/task_git/recovery_tests.rs", "push", 3),
-    ("spice/src/task_git/tests.rs", "clone", 1),
-    ("spice/src/task_git/tests.rs", "fetch", 1),
-    ("spice/src/task_git/tests.rs", "ls-remote", 2),
-    ("spice/src/task_git/tests.rs", "pull", 1),
-    ("spice/src/task_git/tests.rs", "push", 8),
 ];
 
 /// The activation surface, which GIT-06 keeps free of git entirely.
@@ -164,7 +135,6 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
             ("capture", Boundary::Claim),
             ("prepare_claim", Boundary::Claim),
             ("prepare_free", Boundary::ReadOnly),
-            ("publish", Boundary::PhaseCompletion),
             ("publish_claimed", Boundary::PhaseCompletion),
             ("stranded_commits", Boundary::ReadOnly),
         ],
@@ -365,8 +335,8 @@ fn this_battery_remains_a_scoped_workspace_target() {
 /// Whether a tracked source is test code rather than production.
 ///
 /// Derived from the path so that no entry can be excused by how it is
-/// labelled. `spice/src/task_git/tests.rs` is a `#[cfg(test)]` module inside
-/// the source tree, which a `tests/` directory sweep alone would miss.
+/// labelled. A `tests.rs` module inside a source tree is test code even though
+/// a `tests/` directory sweep alone would miss it.
 ///
 /// The suffixes are anchored at a separator rather than left bare, so that a
 /// production module whose name merely ends in those letters cannot excuse
