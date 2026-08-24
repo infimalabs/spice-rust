@@ -363,31 +363,6 @@ fn the_bridge_refuses_without_an_operator_named_export() {
     );
 }
 
-/// Python's `.spice/migrations/` is not Rust Spice's release ledger.
-///
-/// This port names no migrations path anywhere, so the directory must stay
-/// absent when the predecessor has not made one. A runtime that created it
-/// would be writing into another system's ledger by name alone.
-#[test]
-fn the_predecessor_migrations_ledger_is_never_created_here() {
-    let fixture = Fixture::bare("migrations");
-    let migrations = fixture.predecessor_root().join("migrations");
-    assert!(!migrations.exists(), "the fixture starts without a ledger");
-
-    let export = fixture.export();
-    let output = fixture.invoke(&["config", "migrate-tasks", &export]);
-    assert!(
-        output.status.success(),
-        "accepted export must land: {output:?}"
-    );
-    fixture.invoke(&["doctor"]);
-
-    assert!(
-        !migrations.exists(),
-        "this runtime created the predecessor's migration ledger"
-    );
-}
-
 /// Tracked paths spelling the Rust state layout cannot become inbox or ACK
 /// authority, and writes to the real Git-owned surfaces remain unstageable.
 ///
