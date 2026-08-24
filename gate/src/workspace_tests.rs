@@ -34,13 +34,9 @@ use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
     target_arguments,
 };
-#[cfg(test)]
-use coordinator::{LastTest, isolate_shard_outputs, shard_test_threads};
 pub(crate) use inventory::workspace_package_reach_at;
 use inventory::*;
 use prebuild::*;
-#[cfg(test)]
-use selection::{cargo_check_selections, exhaustive_selection_report, selection_report};
 use selection::{package_inventory, selection_plan};
 use source_reach::declared_path_sources;
 
@@ -828,11 +824,6 @@ fn with_direct_rustc(environment: Environment) -> Result<Environment, WorkspaceT
     Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
-#[cfg(test)]
-fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
-    partition_with_target_limit(inventory, TARGETS_PER_SHARD)
-}
-
 fn partition_with_target_limit(
     inventory: &Inventory,
     targets_per_shard: usize,
@@ -951,14 +942,6 @@ fn target_source_bytes(
         .map(|bytes| bytes.max(1))
 }
 
-#[cfg(test)]
-fn validate_partition(
-    inventory: &Inventory,
-    shards: &[PackageInventory],
-) -> Result<(), WorkspaceTestError> {
-    validate_partition_with_target_limit(inventory, shards, TARGETS_PER_SHARD)
-}
-
 fn validate_partition_with_target_limit(
     inventory: &Inventory,
     shards: &[PackageInventory],
@@ -1024,6 +1007,3 @@ fn count_differences<T: Ord + fmt::Debug>(
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests;

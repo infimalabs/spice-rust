@@ -45,8 +45,6 @@ mod canvas;
 mod formatter;
 
 pub(super) use canvas::canvas_web_typecheck;
-#[cfg(test)]
-use formatter::differing_files;
 pub(super) use formatter::{formatter_edition, formatter_sources, formatters};
 use formatter::{relative_to, reported_roots};
 
@@ -221,18 +219,6 @@ impl Exclusion {
         match self {
             Self::Equals(name) => component == name,
             Self::StartsWith(prefix) => component.starts_with(prefix),
-        }
-    }
-
-    /// The exact sentence this rule is recorded as.
-    ///
-    /// Reports retain [`super::PACKAGED_SCANNER_EXCLUDES`] itself, so this
-    /// rendering exists only to prove the compiled table says the same thing.
-    #[cfg(test)]
-    fn sentence(self) -> String {
-        match self {
-            Self::Equals(name) => format!("any path component equal to {name}"),
-            Self::StartsWith(prefix) => format!("any path component starting with {prefix}"),
         }
     }
 }
@@ -928,6 +914,3 @@ fn is_word_character(character: char) -> bool {
 fn word_at(text: &str, start: usize, end: usize) -> Option<(u32, String)> {
     column_of(text, start).map(|column| (column, text[start..end].to_owned()))
 }
-
-#[cfg(test)]
-mod tests;

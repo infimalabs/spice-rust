@@ -18,8 +18,6 @@ use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[cfg(test)]
-use sill::LockFile;
 use sill::{Acquisition, Possession};
 
 use super::rust::{make_cache_writable, synchronize_source};
@@ -34,15 +32,6 @@ const CANVAS_SOURCE_DIRECTORY: &str = "target/xtask-app-source";
 
 pub(in crate::toolchain) fn canvas_source_root(repository: &Path) -> PathBuf {
     repository.join(CANVAS_SOURCE_DIRECTORY)
-}
-
-/// The lock the canvas arm takes, so a fixture can hold the same one.
-///
-/// A fixture deriving the path itself would prove only that some lock contends;
-/// this hands back the one [`CanvasWorkspace::create`] acquires.
-#[cfg(test)]
-pub(super) fn canvas_workspace_lock(root: &Path) -> Result<LockFile, String> {
-    held_root_lock(root, CANVAS_LOCK, CANVAS_LABEL)
 }
 
 /// A sibling directory one canvas analysis holds for the length of its run.

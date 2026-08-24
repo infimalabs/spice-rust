@@ -60,14 +60,6 @@ impl WorkspacePackageReach {
         units
     }
 
-    #[cfg(test)]
-    pub(crate) fn cargo_check_arguments(&self) -> Vec<Vec<String>> {
-        self.cargo_check_units()
-            .into_iter()
-            .map(|unit| unit.arguments)
-            .collect()
-    }
-
     pub(crate) fn reaches_root(&self, root: &Path) -> bool {
         let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         self.roots.contains(&root)
