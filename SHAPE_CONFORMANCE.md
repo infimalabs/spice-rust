@@ -50,9 +50,9 @@ missing live behavior with an owner.
 | Lane outlives occupant; server owns topology revision | `lane/src/table.rs`, `spice/src/resident/arrangement/concurrency.rs` | **Stronger:** every topology mutation shares one revision predicate. |
 | Git writes only at claim, completion, launch | `spice/src/task_git.rs`, `xtask/tests/git_boundaries.rs` | **Stronger:** one module plus a tree-wide network-command audit. |
 | Claim advances only a clean non-diverged lane | `spice/src/task_git.rs::prepare_claim` | **Match:** dirt, loose commits, divergence, and missing recovery refuse. |
-| Completion publishes before phase movement | `spice/src/task_git.rs::publish`, `spice/src/board_command/mutation.rs` | **Match:** the committing task fact carries the Git boundary. |
+| Completion publishes before phase movement | `spice/src/task_git.rs::publish_claimed`, `spice/src/board_command/mutation.rs` | **Match:** the committing task fact carries the Git boundary. |
 | Publication retry is narrow; conflict recoverable | `spice/src/task_git.rs::publish_with_retry`, `spice/src/task_git/transaction.rs` | **Stronger:** bounded CAS retry and write-ahead conflict state. |
-| Only the task footprint lands | `spice/src/task_git/landing.rs`, `spice/src/task_git/landing_tests.rs` | **Stronger:** drift is classified with an executable remedy. |
+| Only the task footprint lands | `spice/src/task_git/landing.rs` | **Stronger:** drift is classified with an executable remedy. |
 | One collect-all gate roster | `gate/src/battery/manifest.toml`, `gate/src/battery.rs` | **Match:** 27 canonical arms publish one result vector. |
 | Base, flex, latch, actor, jitter share one rule | `gate/src/state/bound.rs`, `gate/src/metrics/state_binding.rs`, `gate/src/core/acquire.rs` | **Stronger:** `BoundDecision` drives evidence and pending state. |
 | Peer claims redirect flex debt | `gate/src/state/transaction.rs`, `gate/src/battery/authorities.rs`, `gate/src/battery/state_run.rs` | **Stronger:** accepted production runs publish one stale-detecting transaction; partial runs preserve unrelated claims and staged renames carry lineage. `STATE-1kLg3Pyn`, `STATE-1kLkPtDG`. |

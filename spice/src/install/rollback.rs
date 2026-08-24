@@ -38,12 +38,6 @@ const RECLAIM_CANDIDATE_LIMIT: usize = 32;
 const RECLAIM_GRACE: Duration = Duration::from_secs(60 * 60);
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(test)]
-thread_local! {
-    static DEEP_DECODE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static BLOB_WRITE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 #[derive(Default)]
 pub(super) struct RollbackReclamation {
     pub(super) examined_entries: usize,
@@ -296,24 +290,6 @@ impl RollbackArchive {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn set_stored_bytes_for_test(&mut self, stored_bytes: u64) {
-        let Self::Blob(blob) = self else {
-            panic!("stored bytes exist only on current rollback blobs");
-        };
-        blob.stored_bytes = stored_bytes;
-    }
-
-    #[cfg(test)]
-    pub(super) fn reseal_stored_bytes_for_test(&mut self, bytes: &[u8]) {
-        let Self::Blob(blob) = self else {
-            panic!("stored bytes exist only on current rollback blobs");
-        };
-        blob.stored_bytes = u64::try_from(bytes.len()).unwrap();
-        blob.stored_digest = Digest::compute(Domain::InstallArtifact, bytes);
-        blob.staged = None;
-    }
-
     pub(super) fn validate_structure(&self) -> Result<(), InstallError> {
         match self {
             Self::Inline(inline) => inline.validate_structure(),
@@ -519,8 +495,6 @@ fn decode_compressed(
     digest: &Digest,
     compressed: &[u8],
 ) -> Result<RollbackState, InstallError> {
-    #[cfg(test)]
-    DEEP_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
     if format != FORMAT_VERSION {
         return Err(invalid(
             "migration rollback archive has an unsupported format",
@@ -548,26 +522,6 @@ fn decode_compressed(
         ));
     }
     decode_state(&bytes)
-}
-
-#[cfg(test)]
-pub(super) fn reset_deep_decode_count() {
-    DEEP_DECODE_COUNT.with(|count| count.set(0));
-}
-
-#[cfg(test)]
-pub(super) fn deep_decode_count() -> usize {
-    DEEP_DECODE_COUNT.with(std::cell::Cell::get)
-}
-
-#[cfg(test)]
-pub(super) fn reset_blob_write_count() {
-    BLOB_WRITE_COUNT.with(|count| count.set(0));
-}
-
-#[cfg(test)]
-pub(super) fn blob_write_count() -> usize {
-    BLOB_WRITE_COUNT.with(std::cell::Cell::get)
 }
 
 fn blob_name(digest: &Digest) -> String {
@@ -1054,8 +1008,6 @@ fn publish_blob(
             .map_err(|source| {
                 InstallError::io("set staged migration rollback blob mode", &path, source)
             })?;
-        #[cfg(test)]
-        BLOB_WRITE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
         staged.write_all(bytes).map_err(|source| {
             InstallError::io("write staged migration rollback blob", &path, source)
         })?;

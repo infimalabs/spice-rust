@@ -696,74 +696,6 @@ mod tests {
         repository: Repository,
     }
 
-    enum BoundaryAction {
-        RemoveAfterScan,
-        ReplaceBeforeOpen,
-        SymlinkBeforeOpen,
-    }
-
-    struct BoundaryHooks {
-        action: Option<BoundaryAction>,
-        target: PathBuf,
-        syncs: usize,
-    }
-
-    #[derive(Default)]
-    struct FailSecondUnlink {
-        unlinks: usize,
-        syncs: usize,
-    }
-
-    impl MaintenanceHooks for BoundaryHooks {
-        fn after_scan(&mut self, _runtime: &Path) -> Result<(), InstallError> {
-            if matches!(self.action, Some(BoundaryAction::RemoveAfterScan)) {
-                fs::remove_file(&self.target).unwrap();
-                self.action = None;
-            }
-            Ok(())
-        }
-
-        fn before_open(&mut self, _path: &Path, _name: &str) -> Result<(), InstallError> {
-            match self.action.take() {
-                Some(BoundaryAction::ReplaceBeforeOpen) => {
-                    fs::remove_file(&self.target).unwrap();
-                    fs::write(&self.target, b"replacement").unwrap();
-                    fs::set_permissions(&self.target, fs::Permissions::from_mode(0o600)).unwrap();
-                }
-                Some(BoundaryAction::SymlinkBeforeOpen) => {
-                    fs::remove_file(&self.target).unwrap();
-                    symlink("unrelated", &self.target).unwrap();
-                }
-                Some(BoundaryAction::RemoveAfterScan) | None => {}
-            }
-            Ok(())
-        }
-
-        fn before_sync(&mut self, _runtime: &Path, deleted: usize) -> Result<(), InstallError> {
-            assert_ne!(deleted, 0);
-            self.syncs += 1;
-            Ok(())
-        }
-    }
-
-    impl MaintenanceHooks for FailSecondUnlink {
-        fn before_unlink(&mut self, _path: &Path, _name: &str) -> Result<(), InstallError> {
-            self.unlinks += 1;
-            if self.unlinks == 2 {
-                return Err(InstallError::InvalidRecord(
-                    "injected second-unlink failure".to_owned(),
-                ));
-            }
-            Ok(())
-        }
-
-        fn before_sync(&mut self, _runtime: &Path, deleted: usize) -> Result<(), InstallError> {
-            assert_eq!(deleted, 1);
-            self.syncs += 1;
-            Ok(())
-        }
-    }
-
     impl Fixture {
         fn new(label: &str) -> Self {
             let root = std::env::temp_dir().join(format!(
@@ -1014,6 +946,4 @@ mod tests {
                 .all(|candidate| !candidate.contains("foreign"))
         );
     }
-
-    mod races;
 }
