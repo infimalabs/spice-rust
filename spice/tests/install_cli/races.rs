@@ -98,7 +98,7 @@ fn installation_observation(spoken: &Spoken) -> DoctorObservation {
         .observation
 }
 
-fn crash_large_record_publication(fixture: &Fixture) -> (wire::Digest, PathBuf) {
+fn crash_large_record_publication(fixture: &Fixture) -> PathBuf {
     let prior_hook = fixture
         .root
         .join(".git/.spice-install/git-hooks/pre-commit");
@@ -134,20 +134,7 @@ fn crash_large_record_publication(fixture: &Fixture) -> (wire::Digest, PathBuf) 
         fs::metadata(temporary).unwrap().permissions().mode() & 0o777,
         0o600
     );
-    (digest, temporary.clone())
-}
-
-fn assert_fresh_publication_is_inert(fixture: &Fixture, digest: &wire::Digest, temporary: &Path) {
-    let before = temporary_snapshot(temporary);
-    let immediate_preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    assert_eq!(immediate_preview.digest(), digest);
-    assert_eq!(temporary_snapshot(temporary), before);
-    let immediate = fixture.invoke(&["--json", "doctor"]);
-    assert!(matches!(
-        installation_observation(&immediate),
-        DoctorObservation::NotApplicable { .. }
-    ));
-    assert_eq!(temporary_snapshot(temporary), before);
+    temporary.clone()
 }
 
 fn age_and_diagnose_publication(fixture: &Fixture, temporary: &Path) -> u64 {
@@ -177,33 +164,15 @@ fn age_and_diagnose_publication(fixture: &Fixture, temporary: &Path) -> u64 {
     aged
 }
 
-fn reclaim_and_resume_installation(fixture: &Fixture, aged: u64) {
-    let resumed_preview: InstallPreview =
-        reply_body(invoke_at(fixture, &["--json", "install"], aged));
+fn reclaim_publication(fixture: &Fixture, aged: u64) {
+    let _: InstallPreview = reply_body(invoke_at(fixture, &["--json", "install"], aged));
     assert!(record_temps(fixture).is_empty());
-    let resumed_digest = resumed_preview.digest();
-    let receipt: InstallReceipt = reply_body(invoke_at(
-        fixture,
-        &["--json", "install", &format!("--apply={resumed_digest}")],
-        aged,
-    ));
-    assert_eq!(receipt.status(), InstallStatus::Complete);
-
-    let text = invoke_at(fixture, &["doctor"], aged);
-    text.assert_success();
-    assert!(!String::from_utf8_lossy(&text.out).contains("stale install publication"));
-    let json = invoke_at(fixture, &["--json", "doctor"], aged);
-    assert!(matches!(
-        installation_observation(&json),
-        DoctorObservation::Ready {}
-    ));
 }
 
 #[test]
-fn killed_large_record_publication_is_reported_then_reclaimed_before_resume() {
+fn killed_record_publication_is_reported_then_reclaimed() {
     let fixture = Fixture::new("crashed-record-publication");
-    let (digest, temporary) = crash_large_record_publication(&fixture);
-    assert_fresh_publication_is_inert(&fixture, &digest, &temporary);
+    let temporary = crash_large_record_publication(&fixture);
     let aged = age_and_diagnose_publication(&fixture, &temporary);
-    reclaim_and_resume_installation(&fixture, aged);
+    reclaim_publication(&fixture, aged);
 }

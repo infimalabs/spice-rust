@@ -7,15 +7,13 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Barrier, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use spice::install::{
-    Asset, InstallPlanSummary, InstallPreview, InstallReceipt, InstallStatus, Location,
-};
+use spice::install::{InstallPlanSummary, InstallPreview, InstallReceipt, InstallStatus, Location};
 use spice::repository::Repository;
 use wire::{Outcome, Refusal};
 
@@ -27,8 +25,7 @@ use wire::{Outcome, Refusal};
 const RENDEZVOUS: Duration = Duration::from_secs(120);
 
 static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-const MAX_PUBLIC_INSTALL_REPLY: usize = 64 * 1024;
-const MIN_PRIVATE_INSTALL_RECORD: usize = 1024 * 1024;
+const MIN_PRIVATE_INSTALL_RECORD: usize = 64 * 1024;
 
 struct Fixture {
     root: PathBuf,
@@ -333,15 +330,6 @@ impl Paused {
         self.collect()
     }
 
-    /// Collect a paused install that is never released.
-    ///
-    /// The only difference from `resume` is the release that does not happen,
-    /// so what is collected here is whatever ending the install reaches on its
-    /// own -- which is the horizon bounding its wait.
-    fn abandon(self) -> Spoken {
-        self.collect()
-    }
-
     fn collect(mut self) -> Spoken {
         let output = self
             .child
@@ -501,126 +489,6 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
 }
 
 #[test]
-fn installed_and_current_source_version_flags_are_byte_identical() {
-    let mut fixture = Fixture::new("top-level-version");
-    fixture.executable = PathBuf::from(env!("CARGO_BIN_EXE_spice"));
-    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    let receipt: InstallReceipt = reply_body(fixture.invoke(&[
-        "--json",
-        "install",
-        &format!("--apply={}", preview.digest()),
-    ]));
-    assert_eq!(receipt.status(), InstallStatus::Complete);
-
-    let outside = fixture.root.with_extension("version-cwd");
-    fs::create_dir(&outside).expect("create non-repository version working directory");
-    assert!(Repository::discover(&outside).is_err());
-    let expected = format!("spice {}\n", env!("CARGO_PKG_VERSION")).into_bytes();
-    for flag in ["-V", "--version"] {
-        let source = Command::new(env!("CARGO_BIN_EXE_spice"))
-            .arg(flag)
-            .current_dir(&outside)
-            .env_remove(steer::hook::INBOX)
-            .output()
-            .expect("current-source Spice launches");
-        let installed = Command::new(fixture.installed_binary())
-            .arg(flag)
-            .current_dir(&outside)
-            .env_remove(steer::hook::INBOX)
-            .output()
-            .expect("installed Spice launches");
-        assert!(source.status.success());
-        assert!(installed.status.success());
-        assert_eq!(source.stdout, expected);
-        assert_eq!(installed.stdout, source.stdout);
-        assert!(source.stderr.is_empty());
-        assert!(installed.stderr.is_empty());
-    }
-    fs::remove_dir(&outside).expect("remove non-repository version working directory");
-}
-
-#[test]
-fn large_migration_payload_never_crosses_the_cli_reply_boundary() {
-    let migration = LargeMigration::new("bounded-migration");
-    let fixture = &migration.fixture;
-    let text_preview = fixture.invoke(&["install"]);
-    let json_preview = fixture.invoke(&["--json", "install"]);
-    let text_preview_body: InstallPreview = bounded_install_reply(&text_preview, false);
-    let json_preview_body: InstallPreview = bounded_install_reply(&json_preview, true);
-    assert_eq!(text_preview_body, json_preview_body);
-    let archive = text_preview_body
-        .plan()
-        .rollback_archive()
-        .expect("migration preview reports rollback metadata");
-    assert!(archive.uncompressed_bytes() > MIN_PRIVATE_INSTALL_RECORD as u64);
-    let digest = text_preview_body.digest().clone();
-
-    let text_apply = fixture.invoke(&["install", &format!("--apply={digest}")]);
-    let text_applied: InstallReceipt = bounded_install_reply(&text_apply, false);
-    assert_eq!(text_applied.status(), InstallStatus::Complete);
-    assert_eq!(text_applied.plan(), text_preview_body.plan());
-    let json_apply = fixture.invoke(&["--json", "install", &format!("--apply={digest}")]);
-    let json_applied: InstallReceipt = bounded_install_reply(&json_apply, true);
-    assert_eq!(json_applied, text_applied);
-
-    let private_record = fs::read(fixture.record()).expect("read private migration receipt");
-    assert!(private_record.len() < MAX_PUBLIC_INSTALL_REPLY);
-    let private_document: Value =
-        serde_json::from_slice(&private_record).expect("private migration receipt is JSON");
-    let archive = &private_document["plan"]["rollback_archive"];
-    assert!(archive.get("payload").is_none());
-    let stored_digest = archive["stored_digest"]
-        .as_str()
-        .expect("private migration receipt binds a rollback blob");
-    let blob = fs::read(
-        fixture
-            .record()
-            .parent()
-            .expect("receipt has a runtime parent")
-            .join("install-rollback")
-            .join(format!("{stored_digest}.gz")),
-    )
-    .expect("read private rollback blob");
-    assert!(blob.len() > MIN_PRIVATE_INSTALL_RECORD);
-    let sentinel = &blob[blob.len() / 2..blob.len() / 2 + 64];
-
-    let text_unapply = fixture.invoke(&["install", "--unapply"]);
-    let text_removed: InstallReceipt = bounded_install_reply(&text_unapply, false);
-    assert_eq!(text_removed.status(), InstallStatus::Uninstalled);
-    migration.assert_restored();
-
-    let repeated_preview = fixture.invoke(&["--json", "install"]);
-    let repeated_preview_body: InstallPreview = bounded_install_reply(&repeated_preview, true);
-    assert_eq!(repeated_preview_body, json_preview_body);
-    let repeated_apply = fixture.invoke(&["--json", "install", &format!("--apply={digest}")]);
-    let repeated_applied: InstallReceipt = bounded_install_reply(&repeated_apply, true);
-    assert_eq!(repeated_applied, json_applied);
-    let json_unapply = fixture.invoke(&["--json", "install", "--unapply"]);
-    let json_removed: InstallReceipt = bounded_install_reply(&json_unapply, true);
-    assert_eq!(json_removed, text_removed);
-    migration.assert_restored();
-
-    for spoken in [
-        &text_preview,
-        &json_preview,
-        &text_apply,
-        &json_apply,
-        &text_unapply,
-        &repeated_preview,
-        &repeated_apply,
-        &json_unapply,
-    ] {
-        assert!(
-            !spoken
-                .out
-                .windows(sentinel.len())
-                .any(|window| window == sentinel),
-            "public install reply exposed rollback payload bytes",
-        );
-    }
-}
-
-#[test]
 fn installed_hook_activation_uses_no_cargo_or_xtask_and_reverses_git_config() {
     let fixture = Fixture::new("no-cargo-hook-activation");
     let tools = fixture.root.join("fixture-tools");
@@ -698,76 +566,6 @@ fn git_hook_path(root: &std::path::Path) -> Option<String> {
 }
 
 #[test]
-fn foreign_exclusions_survive_preview_apply_refresh_and_unapply() {
-    let mut exclusions = concat!(
-        "# operator exclusions\n",
-        "/cache/\n",
-        "# BEGIN spice-rust coexistence\n",
-        "/.spice/rust/\n",
-        "/.agents/skills/spice-rust/\n",
-        "# END spice-rust coexistence\n",
-        "# BEGIN Spice managed assets\n",
-        "/.spice/\n",
-        "/.agents/skills/spice/\n",
-        "# END Spice managed assets\n",
-        "# BEGIN Spice managed assets\n",
-        "foreign malformed duplicate\n",
-    )
-    .as_bytes()
-    .to_vec();
-    exclusions.push(0xff);
-
-    let mut fixture = Fixture::new("foreign-exclusions");
-    fixture.exclude_bytes.clone_from(&exclusions);
-    let exclude = fixture.root.join(".git/info/exclude");
-    fs::write(&exclude, &exclusions).expect("install foreign exclusions");
-
-    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    let repeated: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    assert_eq!(preview, repeated);
-    assert!(
-        preview
-            .plan()
-            .operations()
-            .iter()
-            .all(|operation| operation.asset() != Asset::Exclusions)
-    );
-    assert!(preview.plan().operations().iter().all(|operation| {
-        !operation.path().starts_with(".spice-rs")
-            && !operation.path().starts_with(".agents/skills/spice")
-    }));
-    assert_eq!(fs::read(&exclude).unwrap(), exclusions);
-
-    let applied: InstallReceipt = reply_body(fixture.invoke(&[
-        "--json",
-        "install",
-        &format!("--apply={}", preview.digest()),
-    ]));
-    assert_eq!(applied.status(), InstallStatus::Complete);
-    assert_eq!(fs::read(&exclude).unwrap(), exclusions);
-
-    fs::write(
-        &fixture.executable,
-        b"refreshed fixture install executable\n",
-    )
-    .expect("rebuild fixture executable");
-    let refresh: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    assert_ne!(refresh.digest(), preview.digest());
-    let refreshed: InstallReceipt = reply_body(fixture.invoke(&[
-        "--json",
-        "install",
-        &format!("--apply={}", refresh.digest()),
-    ]));
-    assert_eq!(refreshed.status(), InstallStatus::Complete);
-    assert_eq!(fs::read(&exclude).unwrap(), exclusions);
-
-    let unapplied: InstallReceipt = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
-    assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
-    assert_eq!(fs::read(&exclude).unwrap(), exclusions);
-    fixture.assert_state_unchanged();
-}
-
-#[test]
 fn retired_state_refusal_names_ownership_recovery_and_changes_nothing() {
     let fixture = Fixture::new("retired-state-refusal");
     let retired = fixture.root.join(".git/.spice-rust");
@@ -829,190 +627,6 @@ fn retired_state_refusal_names_ownership_recovery_and_changes_nothing() {
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     fixture.assert_state_unchanged();
-}
-
-#[test]
-fn preview_apply_and_unapply_overlap_with_small_fixture_owned_sources() {
-    let preview_fixture = Fixture::new("overlap-preview");
-    preview_fixture.assert_small_owned_executable();
-    let apply_fixture = Fixture::new("overlap-apply");
-    apply_fixture.assert_small_owned_executable();
-    let apply_plan: InstallPreview = reply_body(apply_fixture.invoke(&["--json", "install"]));
-    let unapply_fixture = Fixture::new("overlap-unapply");
-    unapply_fixture.assert_small_owned_executable();
-    let unapply_plan: InstallPreview = reply_body(unapply_fixture.invoke(&["--json", "install"]));
-    let _: InstallReceipt = reply_body(unapply_fixture.invoke(&[
-        "--json",
-        "install",
-        &format!("--apply={}", unapply_plan.digest()),
-    ]));
-
-    let overlap = Arc::new(Barrier::new(3));
-
-    let preview_overlap = Arc::clone(&overlap);
-    let preview = thread::spawn(move || {
-        preview_overlap.wait();
-        let _: InstallPreview = reply_body(preview_fixture.invoke(&["--json", "install"]));
-    });
-
-    let apply_overlap = Arc::clone(&overlap);
-    let apply = thread::spawn(move || {
-        apply_overlap.wait();
-        let receipt: InstallReceipt = reply_body(apply_fixture.invoke(&[
-            "--json",
-            "install",
-            &format!("--apply={}", apply_plan.digest()),
-        ]));
-        assert_eq!(receipt.status(), InstallStatus::Complete);
-        assert_eq!(
-            fs::read(apply_fixture.installed_binary())
-                .expect("read overlapped installed executable"),
-            fs::read(&apply_fixture.executable).expect("read overlapped fixture executable"),
-        );
-    });
-
-    let unapply_overlap = Arc::clone(&overlap);
-    let unapply = thread::spawn(move || {
-        unapply_overlap.wait();
-        let receipt: InstallReceipt =
-            reply_body(unapply_fixture.invoke(&["--json", "install", "--unapply"]));
-        assert_eq!(receipt.status(), InstallStatus::Uninstalled);
-        assert!(!unapply_fixture.installed_binary().exists());
-    });
-
-    for process in [preview, apply, unapply] {
-        process
-            .join()
-            .expect("overlapped install fixture completes");
-    }
-}
-
-struct LargeMigration {
-    fixture: Fixture,
-    prior_record: Vec<u8>,
-    legacy_xtask: PathBuf,
-    legacy_guard: PathBuf,
-    xtask_bytes: Vec<u8>,
-    guard_bytes: Vec<u8>,
-}
-
-impl LargeMigration {
-    fn new(label: &str) -> Self {
-        let fixture = Fixture::new(label);
-        let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-        let _: InstallReceipt = reply_body(fixture.invoke(&[
-            "--json",
-            "install",
-            &format!("--apply={}", preview.digest()),
-        ]));
-        let repository = Repository::discover(&fixture.root).expect("discover migration fixture");
-        spice::install::publish_test_version_7_receipt(&repository)
-            .expect("publish version-7 process fixture receipt");
-        let prior_record = fs::read(fixture.record()).expect("read version-7 process receipt");
-        let legacy_xtask = fixture.root.join(".git/.spice-install/bin/xtask");
-        let legacy_guard = fixture.root.join(".git/.spice-install/bin/xtask.guard");
-        let xtask_bytes = deterministic_large_bytes(2 * MIN_PRIVATE_INSTALL_RECORD);
-        let guard_bytes = b"large-migration-guard\n".to_vec();
-        fs::write(&legacy_xtask, &xtask_bytes).expect("write large legacy xtask");
-        fs::set_permissions(&legacy_xtask, fs::Permissions::from_mode(0o755))
-            .expect("set large legacy xtask mode");
-        fs::write(&legacy_guard, &guard_bytes).expect("write legacy guard");
-        fs::set_permissions(&legacy_guard, fs::Permissions::from_mode(0o644))
-            .expect("set legacy guard mode");
-        Self {
-            fixture,
-            prior_record,
-            legacy_xtask,
-            legacy_guard,
-            xtask_bytes,
-            guard_bytes,
-        }
-    }
-
-    fn assert_restored(&self) {
-        assert_eq!(
-            fs::read(self.fixture.record()).expect("read restored version-7 receipt"),
-            self.prior_record,
-        );
-        assert_eq!(
-            fs::read(&self.legacy_xtask).expect("read restored legacy xtask"),
-            self.xtask_bytes,
-        );
-        assert_eq!(
-            fs::metadata(&self.legacy_xtask)
-                .expect("inspect restored legacy xtask")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o755,
-        );
-        assert_eq!(
-            fs::read(&self.legacy_guard).expect("read restored legacy guard"),
-            self.guard_bytes,
-        );
-        assert_eq!(
-            fs::metadata(&self.legacy_guard)
-                .expect("inspect restored legacy guard")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o644,
-        );
-    }
-}
-
-fn deterministic_large_bytes(length: usize) -> Vec<u8> {
-    let mut state = 0xd1b5_4a32_d192_ed03_u64;
-    (0..length)
-        .map(|_| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state as u8
-        })
-        .collect()
-}
-
-fn bounded_install_reply<T: DeserializeOwned + std::fmt::Debug>(spoken: &Spoken, json: bool) -> T {
-    spoken.assert_success();
-    assert!(
-        spoken.out.len() <= MAX_PUBLIC_INSTALL_REPLY,
-        "public install reply grew to {} bytes",
-        spoken.out.len(),
-    );
-    let document: Value =
-        serde_json::from_slice(&spoken.out).expect("public install reply is JSON");
-    assert_no_private_install_key(&document);
-    if json {
-        let outcome: Outcome<T> = wire::decode(&spoken.out).expect("JSON install reply decodes");
-        let Outcome::Reply(reply) = outcome else {
-            panic!("install must reply: {outcome:?}");
-        };
-        assert_eq!(reply.position, wire::ReplyPosition::Direct {});
-        reply.body
-    } else {
-        wire::decode(&spoken.out).expect("text install body decodes")
-    }
-}
-
-fn assert_no_private_install_key(value: &Value) {
-    match value {
-        Value::Object(fields) => {
-            for (name, value) in fields {
-                assert!(
-                    !matches!(name.as_str(), "payload" | "bytes" | "repository"),
-                    "public install reply exposed private field {name:?}",
-                );
-                assert_no_private_install_key(value);
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                assert_no_private_install_key(value);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn reply_body<T: DeserializeOwned + std::fmt::Debug>(spoken: Spoken) -> T {

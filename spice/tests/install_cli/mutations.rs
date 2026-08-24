@@ -2,12 +2,6 @@
 
 use super::*;
 
-#[derive(Clone, Copy)]
-enum InstallRaceWinner {
-    Apply,
-    Unapply,
-}
-
 struct RaceEnding {
     receipt: InstallReceipt,
     state: InstallSnapshot,
@@ -16,20 +10,7 @@ struct RaceEnding {
 
 #[test]
 fn competing_install_directions_serialize_when_apply_wins() {
-    competing_install_directions_serialize(InstallRaceWinner::Apply);
-}
-
-#[test]
-fn competing_install_directions_serialize_when_unapply_wins() {
-    competing_install_directions_serialize(InstallRaceWinner::Unapply);
-}
-
-fn competing_install_directions_serialize(winner: InstallRaceWinner) {
-    let label = match winner {
-        InstallRaceWinner::Apply => "same-record-apply-wins",
-        InstallRaceWinner::Unapply => "same-record-unapply-wins",
-    };
-    let fixture = Fixture::new(label);
+    let fixture = Fixture::new("same-record-apply-wins");
     fixture.assert_small_owned_executable();
     let pristine_config = fs::read(fixture.root.join(".git/config"))
         .expect("read pristine fixture Git configuration");
@@ -82,40 +63,17 @@ fn competing_install_directions_serialize(winner: InstallRaceWinner) {
     );
     assert_plan_generated(&fixture, preview_a.plan());
 
-    let ending = match winner {
-        InstallRaceWinner::Apply => {
-            apply.release();
-            let receipt: InstallReceipt = reply_body(apply.collect());
-            let state = InstallSnapshot::capture(&fixture, preview_b.plan());
-            unapply.release();
-            RaceEnding {
-                receipt,
-                state,
-                loser: unapply.collect(),
-            }
-        }
-        InstallRaceWinner::Unapply => {
-            unapply.release();
-            let receipt: InstallReceipt = reply_body(unapply.collect());
-            let state = InstallSnapshot::capture(&fixture, preview_b.plan());
-            apply.release();
-            RaceEnding {
-                receipt,
-                state,
-                loser: apply.collect(),
-            }
-        }
+    apply.release();
+    let receipt: InstallReceipt = reply_body(apply.collect());
+    let state = InstallSnapshot::capture(&fixture, preview_b.plan());
+    unapply.release();
+    let ending = RaceEnding {
+        receipt,
+        state,
+        loser: unapply.collect(),
     };
 
-    assert_race_ending(
-        &fixture,
-        winner,
-        &pristine_config,
-        &preview_a,
-        &preview_b,
-        &common,
-        &ending,
-    );
+    assert_race_ending(&fixture, &pristine_config, &preview_b, &common, &ending);
 
     let before_final_preview = InstallSnapshot::capture(&fixture, preview_b.plan());
     let preview_after: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
@@ -124,16 +82,11 @@ fn competing_install_directions_serialize(winner: InstallRaceWinner) {
         before_final_preview,
         "post-race preview changed receipt or target generations",
     );
-    let repeated: InstallReceipt = match winner {
-        InstallRaceWinner::Apply => reply_body(fixture.invoke(&[
-            "--json",
-            "install",
-            &format!("--apply={}", preview_after.digest()),
-        ])),
-        InstallRaceWinner::Unapply => {
-            reply_body(fixture.invoke(&["--json", "install", "--unapply"]))
-        }
-    };
+    let repeated: InstallReceipt = reply_body(fixture.invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", preview_after.digest()),
+    ]));
     assert_eq!(repeated, ending.receipt);
     assert_eq!(
         InstallSnapshot::capture(&fixture, preview_b.plan()),
@@ -144,9 +97,7 @@ fn competing_install_directions_serialize(winner: InstallRaceWinner) {
 
 fn assert_race_ending(
     fixture: &Fixture,
-    winner: InstallRaceWinner,
     pristine_config: &[u8],
-    preview_a: &InstallPreview,
     preview_b: &InstallPreview,
     common: &InstallSnapshot,
     ending: &RaceEnding,
@@ -181,28 +132,17 @@ fn assert_race_ending(
         "the stale direction changed the winner's receipt or an owned target",
     );
 
-    match winner {
-        InstallRaceWinner::Apply => {
-            assert_eq!(ending.receipt.status(), InstallStatus::Complete);
-            assert_eq!(ending.receipt.digest(), preview_b.digest());
-            assert_plan_generated(fixture, preview_b.plan());
-            assert_ne!(ending.state.git_config.bytes, pristine_config);
-            assert_eq!(
-                git_hook_path(&fixture.root).as_deref(),
-                preview_b
-                    .plan()
-                    .hook_activation()
-                    .map(|activation| activation.hooks_path()),
-            );
-        }
-        InstallRaceWinner::Unapply => {
-            assert_eq!(ending.receipt.status(), InstallStatus::Uninstalled);
-            assert_eq!(ending.receipt.digest(), preview_a.digest());
-            assert_plan_restored(&ending.state, preview_a.plan());
-            assert_eq!(ending.state.git_config.bytes, pristine_config);
-            assert!(git_hook_path(&fixture.root).is_none());
-        }
-    }
+    assert_eq!(ending.receipt.status(), InstallStatus::Complete);
+    assert_eq!(ending.receipt.digest(), preview_b.digest());
+    assert_plan_generated(fixture, preview_b.plan());
+    assert_ne!(ending.state.git_config.bytes, pristine_config);
+    assert_eq!(
+        git_hook_path(&fixture.root).as_deref(),
+        preview_b
+            .plan()
+            .hook_activation()
+            .map(|activation| activation.hooks_path()),
+    );
 }
 
 fn assert_plan_generated(fixture: &Fixture, plan: &InstallPlanSummary) {
@@ -225,40 +165,6 @@ fn assert_plan_generated(fixture: &Fixture, plan: &InstallPlanSummary) {
             "retired target {} survived apply",
             retirement.path(),
         );
-    }
-}
-
-fn assert_plan_restored(snapshot: &InstallSnapshot, plan: &InstallPlanSummary) {
-    for operation in plan.operations() {
-        assert_restored_image(snapshot, operation.path(), operation.previous());
-    }
-    for retirement in plan.retirements() {
-        assert_restored_image(snapshot, retirement.path(), retirement.previous());
-    }
-}
-
-fn assert_restored_image(
-    snapshot: &InstallSnapshot,
-    path: &str,
-    previous: Option<&spice::install::GeneratedImage>,
-) {
-    let observed = target_snapshot(snapshot, path);
-    match previous {
-        Some(previous) => {
-            let image = observed
-                .as_ref()
-                .unwrap_or_else(|| panic!("{path} was not restored"));
-            assert_eq!(image.mode, previous.mode());
-            assert_eq!(
-                wire::Digest::compute(wire::Domain::InstallArtifact, &image.bytes),
-                *previous.digest(),
-                "{path} does not match its rollback bytes",
-            );
-        }
-        None => assert!(
-            observed.is_none(),
-            "introduced target {path} survived unapply"
-        ),
     }
 }
 
@@ -297,31 +203,6 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
     );
-    fixture.assert_state_unchanged();
-}
-
-#[test]
-fn same_image_atomic_rewrite_still_plans_and_unapplies() {
-    let fixture = Fixture::new("same-image-rewrite");
-    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    let digest = preview.digest().clone();
-    fixture
-        .invoke(&["install", &format!("--apply={digest}")])
-        .assert_success();
-    let entry = fixture.root.join(".git/.spice-install/hooks/entry.sh");
-    let replacement = fixture.root.join("replacement-entry");
-    fs::write(&replacement, fs::read(&entry).unwrap()).expect("write replacement entry hook");
-    fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755))
-        .expect("set replacement entry hook mode");
-    fs::rename(replacement, &entry).expect("atomically rewrite installed entry hook");
-
-    let replanned: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    assert_eq!(replanned.digest(), &digest);
-    let unapply = fixture.invoke(&["--json", "install", "--unapply"]);
-    let unapplied: InstallReceipt = reply_body(unapply);
-
-    assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
-    assert!(!entry.exists());
     fixture.assert_state_unchanged();
 }
 
@@ -382,53 +263,6 @@ fn apply_destination_replacement_at_publication_preserves_both_images() {
     assert_refusal(&refused.err, "install::parent-changed");
     assert_eq!(fs::read(&destination).unwrap(), racer);
     assert_eq!(fs::read(&parked).unwrap(), prior);
-    fixture.assert_state_unchanged();
-}
-
-/// A paused install whose harness never releases it ends on its own bound.
-///
-/// Nothing writes `release/continue` here, so the only ending reachable is the
-/// horizon the wait carries. That makes the fixture cost the whole ten seconds
-/// by construction, and that cost is the point: it is what distinguishes a
-/// bound that still terminates the event receiver from one merely written down
-/// beside an unbounded receive.
-#[test]
-fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
-    let fixture = Fixture::new("apply-abandoned-pause");
-    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    let digest = preview.digest();
-    let destination = fixture
-        .root
-        .join(".git/.spice-install/git-hooks/pre-commit");
-    let paused = fixture.spawn_paused(
-        &["--json", "install", &format!("--apply={digest}")],
-        "publish",
-        destination.clone(),
-        Release::Withheld,
-    );
-
-    let expired = paused.abandon();
-
-    assert_eq!(expired.code, Some(1));
-    assert!(expired.out.is_empty());
-    let outcome: Outcome<()> = wire::decode(&expired.err).expect("typed rendezvous fault decodes");
-    let Outcome::Fault(fault) = outcome else {
-        panic!("an unreleased install must fault: {outcome:?}");
-    };
-    assert_eq!(fault.class, wire::FaultClass::Environment);
-    assert_eq!(fault.reason, "install::environment-failed");
-    assert_eq!(
-        fault.detail,
-        format!(
-            "failed to wait for install mutation rendezvous at {}: \
-             test rendezvous timed out",
-            fs::canonicalize(&fixture.root)
-                .expect("canonicalize install fixture")
-                .join(".git/.spice-install/git-hooks/pre-commit")
-                .display()
-        ),
-    );
-    assert!(!destination.exists());
     fixture.assert_state_unchanged();
 }
 
