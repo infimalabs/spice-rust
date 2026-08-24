@@ -91,8 +91,8 @@ impl WorkerPhase {
     }
 }
 
-const PRE_COMMIT_REPORT_VERSION: u64 = 3;
-const RESOLUTION_REPORT_VERSION: u64 = 3;
+const PRE_COMMIT_REPORT_VERSION: u64 = 4;
+const RESOLUTION_REPORT_VERSION: u64 = 4;
 
 /// One complete packaged-plus-configured pre-commit battery result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
