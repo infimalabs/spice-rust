@@ -8,11 +8,6 @@ pub(super) struct SelectionPlan {
 }
 
 impl SelectionPlan {
-    #[cfg(test)]
-    pub(super) fn report(&self) -> &crate::TestSelectionReport {
-        &self.report
-    }
-
     pub(super) fn into_report(self) -> crate::TestSelectionReport {
         self.report
     }
@@ -206,16 +201,6 @@ pub(super) fn selection_plan(
     )
     .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
     Ok(SelectionPlan { report })
-}
-
-#[cfg(test)]
-pub(super) fn selection_report(
-    inventory: &Inventory,
-    root: &Path,
-    source: wire::Digest,
-    changed_sources: &[String],
-) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    selection_plan(inventory, root, source, changed_sources).map(SelectionPlan::into_report)
 }
 
 pub(super) fn cargo_check_selections(
@@ -532,32 +517,6 @@ fn select_targets<'a>(
         );
     }
     Ok(())
-}
-
-#[cfg(test)]
-pub(super) fn exhaustive_selection_report(
-    inventory: &Inventory,
-    source: wire::Digest,
-    changed_sources: &[String],
-) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    let mut changed_sources = changed_sources.to_vec();
-    changed_sources.sort();
-    changed_sources.dedup();
-    let mut tests = BTreeSet::new();
-    let mut edges = BTreeSet::new();
-    for changed in &changed_sources {
-        for package in &inventory.packages {
-            select_package_targets(package, changed, &mut tests, &mut edges)?;
-        }
-    }
-    crate::TestEvidenceGraph::select_tests(
-        source,
-        changed_sources,
-        tests.into_iter().collect(),
-        edges.into_iter().collect(),
-        crate::CoverageCompleteness::Complete,
-    )
-    .map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
 pub(super) fn test_relevant_source(path: &str) -> bool {

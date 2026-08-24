@@ -861,14 +861,6 @@ fn execution_test_threads(shard: &ExecutionShard) -> usize {
     default_test_threads()
 }
 
-#[cfg(test)]
-pub(super) fn shard_test_threads(shard: &PackageInventory) -> usize {
-    if shard.name == "sill" {
-        return 1;
-    }
-    default_test_threads()
-}
-
 fn default_test_threads() -> usize {
     thread::available_parallelism()
         .map(std::num::NonZero::get)

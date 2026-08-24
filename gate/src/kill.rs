@@ -27,9 +27,6 @@ pub(crate) use support::decode_attempt;
 pub use support::{KillError, RateError};
 use support::{classify, movement, process_evidence};
 
-#[cfg(all(test, unix))]
-mod fixtures;
-
 /// Exact build-tool identity already carried by the distribution pin set.
 pub const PINNED_CARGO_MUTANTS: &str = "cargo-mutants 27.1.0";
 
