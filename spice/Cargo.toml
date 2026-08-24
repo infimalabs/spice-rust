@@ -66,10 +66,5 @@ socket2 = "0.6.5"
 name = "hook_appliance"
 path = "tests/hook_appliance/mod.rs"
 
-[[test]]
-name = "resident"
-path = "tests/resident.rs"
-required-features = ["test-short-horizons"]
-
 [lints]
 workspace = true

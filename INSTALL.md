@@ -256,16 +256,6 @@ worker checks its receipt, assets, and exact current binary before selected
 source verification; freshness failures name the repair preview. Nothing
 outside Rust Spice stops.
 
-## The independence proof
-
-This test proves Rust can install, run, and stop in an isolated linked worktree
-without Python or Taskwarrior while predecessor state remains unchanged:
-
-```sh
-cargo test --locked -p spice --test resident \
-  installed_spice_lifecycle_leaves_the_predecessor_system_untouched
-```
-
 ## Retirement is separate from the authority switch
 
 Preview retires nothing; apply changes command and hook authority but deletes no

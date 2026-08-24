@@ -7,10 +7,8 @@ pending direction, acknowledgments, resident discovery, sockets, configuration,
 artifacts, receipts, and Git shadow files have distinct physical names.
 
 `spice/tests/coexistence.rs` snapshots Python's complete state tree around real
-Rust commands. The concurrent process proof is
-`spice/tests/resident/vendor_process/coexistence.rs#installed_spice_lifecycle_requires_explicit_predecessor_hook_handoff`.
-This record maps the policy those tests enforce; `spice/tests/coexistence_record.rs`
-keeps every local citation resolvable.
+Rust commands. This record maps the policy those tests enforce;
+`spice/tests/coexistence_record.rs` keeps every local citation resolvable.
 
 ## Reading a citation
 
@@ -280,11 +278,6 @@ The tests cover both static and running coexistence:
   and
   `spice/tests/coexistence.rs#installing_this_port_leaves_predecessor_state_byte_identical`
   snapshot Python's entire tree around real commands.
-- `spice/tests/resident/vendor_process/coexistence.rs#assert_coexistence_steering`
-  proves same-UUID and cross-lane inbox/ACK isolation with both systems live.
-- `spice/tests/resident/vendor_process/coexistence.rs#fn agent_shell_command`
-  reproduces bare-shell lookup through the occupant environment.
-
 The contract is intentionally asymmetric only where the repository cannot
 execute the separate Python checkout. Rust proves it never touches Python
 state. Python-side citations are dated measurements and must be rechecked in
