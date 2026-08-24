@@ -420,11 +420,6 @@ fn independent_child_failures_are_aggregated_in_authored_order() {
             &["/bin/sh", "-c", "kill -TERM $$", "fixture"],
             &[],
         ),
-        row(
-            "overflow",
-            &["/bin/sh", "-c", "yes overflow | head -c 1024", "fixture"],
-            &[],
-        ),
         row("spawn", &["/definitely/missing/configured-command"], &[]),
     ]);
     let source = source();
@@ -444,7 +439,7 @@ fn independent_child_failures_are_aggregated_in_authored_order() {
     .expect("independent failures remain report evidence");
 
     assert!(!report.admits());
-    assert_eq!(report.steps().len(), 4);
+    assert_eq!(report.steps().len(), 3);
     assert_eq!(
         report.steps()[0].findings()[0].kind(),
         StepFindingKind::Exit
@@ -465,14 +460,10 @@ fn independent_child_failures_are_aggregated_in_authored_order() {
     );
     assert_eq!(
         report.steps()[2].findings()[0].kind(),
-        StepFindingKind::OutputOverflow,
-    );
-    assert_eq!(
-        report.steps()[3].findings()[0].kind(),
         StepFindingKind::Spawn
     );
     let evidence = report.refusal_evidence();
-    for label in ["exit", "signal", "overflow", "spawn"] {
+    for label in ["exit", "signal", "spawn"] {
         assert!(
             evidence.contains(&format!("label={}", json(&label))),
             "{evidence}"
@@ -485,7 +476,7 @@ fn independent_child_failures_are_aggregated_in_authored_order() {
 }
 
 #[test]
-fn truncated_capture_on_a_successful_step_is_recorded_not_fatal() {
+fn large_successful_output_is_drained_without_a_finding() {
     let scratch = Scratch::new("overflow-admission");
     let commands = parsed_commands(&[row(
         "overflow",
@@ -506,22 +497,21 @@ fn truncated_capture_on_a_successful_step_is_recorded_not_fatal() {
         ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
-    .expect("truncated successful step remains report evidence");
+    .expect("large successful step drains to completion");
 
     assert!(
         report.admits(),
-        "clean exit must not fail on capture volume"
+        "clean exit must not fail on retained capture volume"
     );
     assert_eq!(report.steps().len(), 1);
-    assert_eq!(
-        report.steps()[0].findings()[0].kind(),
-        StepFindingKind::OutputOverflow,
-        "the truncation stays recorded in the step report",
+    assert!(
+        report.steps()[0].findings().is_empty(),
+        "a drained stream is not a command finding"
     );
 }
 
 #[test]
-fn truncation_beside_a_failing_exit_still_refuses() {
+fn truncated_failure_reports_exit_with_a_retention_marker() {
     let scratch = Scratch::new("overflow-with-exit");
     let commands = parsed_commands(&[row(
         "overflow-exit",
@@ -547,16 +537,19 @@ fn truncation_beside_a_failing_exit_still_refuses() {
         ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
-    .expect("truncated failing step remains report evidence");
+    .expect("truncated failing step remains bounded report evidence");
 
     assert!(!report.admits());
-    let kinds = report.steps()[0]
-        .findings()
-        .iter()
-        .map(StepFinding::kind)
-        .collect::<Vec<_>>();
-    assert!(kinds.contains(&StepFindingKind::OutputOverflow));
-    assert!(kinds.contains(&StepFindingKind::Exit));
+    assert_eq!(report.steps()[0].findings().len(), 1);
+    assert_eq!(
+        report.steps()[0].findings()[0].kind(),
+        StepFindingKind::Exit
+    );
+    assert!(
+        report.steps()[0].findings()[0]
+            .detail()
+            .contains("capture truncated after retained prefix")
+    );
 }
 
 #[test]

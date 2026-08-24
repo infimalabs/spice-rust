@@ -26,6 +26,9 @@ use crate::trust_command::Surface;
 pub(super) const PATHS_VARIABLE: &str = wire::SpiceVariable::PreCommitPaths.as_str();
 pub(super) const SOURCE_VARIABLE: &str = wire::SpiceVariable::PreCommitSource.as_str();
 
+// Sill keeps draining each stream after this retained prefix fills. The limit
+// bounds resident and serialized failure evidence; it does not bound how much
+// legitimate output a configured command may produce.
 const OUTPUT_LIMIT: usize = 64 * 1024;
 const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
@@ -62,17 +65,9 @@ enum ExecutionMode {
 }
 
 impl ConfiguredReport {
-    /// Truncated capture on an otherwise clean step is recorded evidence, not
-    /// failure: the per-stream ceiling bounds what the report retains, never
-    /// the verdict of a command that exited successfully. Overflow findings
-    /// only ever stand alone on a clean exit with drained outputs; every
-    /// other finding kind, and overflow beside one, still refuses.
+    /// The capture ceiling bounds retained diagnostics, not command success.
     pub(super) fn admits(&self) -> bool {
-        self.steps.iter().all(|step| {
-            step.findings
-                .iter()
-                .all(|finding| matches!(finding.kind, StepFindingKind::OutputOverflow))
-        })
+        self.steps.iter().all(|step| step.findings.is_empty())
     }
 
     pub(super) fn source(&self) -> &Digest {
@@ -158,7 +153,6 @@ pub(super) enum StepFindingKind {
     Exit,
     Signal,
     Spawn,
-    OutputOverflow,
     Timeout,
     Cancellation,
     Cleanup,
@@ -170,7 +164,6 @@ impl StepFindingKind {
             Self::Exit => "exit",
             Self::Signal => "signal",
             Self::Spawn => "spawn",
-            Self::OutputOverflow => "output-overflow",
             Self::Timeout => "timeout",
             Self::Cancellation => "cancellation",
             Self::Cleanup => "cleanup",
@@ -911,22 +904,6 @@ fn classify_wait(waited: &WaitOutcome) -> Vec<StepFinding> {
             "captured output did not drain before its cleanup deadline",
         ));
     }
-    let mut overflow = Vec::new();
-    if waited.stdout().is_some_and(|output| output.truncated()) {
-        overflow.push("stdout");
-    }
-    if waited.stderr().is_some_and(|output| output.truncated()) {
-        overflow.push("stderr");
-    }
-    if !overflow.is_empty() {
-        findings.push(finding(
-            StepFindingKind::OutputOverflow,
-            format!(
-                "{} exceeded the per-stream capture limit",
-                overflow.join("+")
-            ),
-        ));
-    }
     match waited.completion() {
         Completion::TimedOut(status) => findings.push(finding(
             StepFindingKind::Timeout,
@@ -977,7 +954,14 @@ fn status_text(status: &std::process::ExitStatus) -> String {
 fn captured(output: Option<&sill::CapturedOutput>) -> String {
     output.map_or_else(
         || "null".to_owned(),
-        |output| json(&String::from_utf8_lossy(output.bytes())),
+        |output| {
+            let retained = json(&String::from_utf8_lossy(output.bytes()));
+            if output.truncated() {
+                format!("{retained} (capture truncated after retained prefix)")
+            } else {
+                retained
+            }
+        },
     )
 }
 
