@@ -763,7 +763,11 @@ fn proof(expected: Option<&str>) -> Proof {
         session: SessionProof {
             session,
             state,
-            horizon: std::time::Duration::from_secs(10),
+            // Every declaration and witness in these unit proofs is recorded
+            // synchronously before `await_session`; no producer remains to
+            // schedule. A zero horizon reaches the missing-declaration arm
+            // deterministically without borrowing production's wait budget.
+            horizon: std::time::Duration::ZERO,
         },
     }
 }
