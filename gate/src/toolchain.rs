@@ -267,6 +267,17 @@ impl RustAnalysisWorkspace {
     }
 }
 
+/// Recover the stable paths whose source and outputs a successful native arm completed.
+///
+/// This remains crate-private so only an executor that observed that success can
+/// mint the typed handoff used by a later canonical test coordinator.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn completed_rust_analysis_workspace(
+    repository: &Path,
+) -> Result<RustAnalysisWorkspace, String> {
+    analyze::rust_analysis_workspace(repository)
+}
+
 /// Extensions selected by the compiled prose scanner, without their leading dot.
 ///
 /// Kept beside the toolchain surface because both the scanner and the atomic

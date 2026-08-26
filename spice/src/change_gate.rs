@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use gate::{
     ArmDisposition, ArmFamily, BatteryArmResult, BatteryManifest, BatteryState, ChangeReachObject,
@@ -434,13 +435,18 @@ fn run_with_selection(
     progress: &mut (impl Write + Send),
     surface: SelectionSurface,
 ) -> Result<ChangeGateReport, ChangeGateError> {
+    let total_started = Instant::now();
     publish_phase(progress, "capture", None)?;
+    let capture_started = Instant::now();
     let budget = CargoBudget::detect(gate::WORKSPACE_TEST_CONCURRENCY_CAP);
     publish_budget(progress, budget, "overlapped-policy-tests")?;
     let mut anchor = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
+    publish_phase_terminal(progress, "capture", capture_started, "success")?;
     publish_phase(progress, "selection", Some(anchor.changes().len()))?;
+    let selection_started = Instant::now();
     let (selection, test_execution) = select_changes(&anchor, surface)?;
     publish_selection(progress, &selection)?;
+    publish_phase_terminal(progress, "selection", selection_started, "success")?;
 
     let repository = Repository::discover(Path::new(".")).map_err(|error| {
         ChangeGateError::environment("change-gate-repository-unresolved", error)
@@ -458,6 +464,7 @@ fn run_with_selection(
     };
     let source = selection.source().clone();
     let mut shared_progress = SharedProgress::new(progress);
+    let execution_started = Instant::now();
     let (tests, policy) = run_policy_and_tests(
         &mut anchor,
         &selection,
@@ -466,6 +473,13 @@ fn run_with_selection(
         execution,
         &mut shared_progress,
     )?;
+    publish_phase_terminal(
+        &mut shared_progress,
+        "policy-tests",
+        execution_started,
+        "success",
+    )?;
+    let publication_started = Instant::now();
     publish_test_selection(&mut shared_progress, &tests)?;
     if !tests.admits() {
         let evidence = String::from_utf8(
@@ -491,7 +505,15 @@ fn run_with_selection(
         policy,
         &mut shared_progress,
     )?;
-    ChangeGateReport::new(selection, tests, policy)
+    let report = ChangeGateReport::new(selection, tests, policy)?;
+    publish_phase_terminal(
+        &mut shared_progress,
+        "publication",
+        publication_started,
+        "success",
+    )?;
+    publish_phase_terminal(&mut shared_progress, "complete", total_started, "success")?;
+    Ok(report)
 }
 
 fn settle_partial_state<W: Write + Send + ?Sized>(
@@ -538,6 +560,7 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
                     context.source,
                     context.surface,
                     context.budget,
+                    None,
                     progress,
                 )?;
                 policy = ChangePolicyReport::focused_summaries(context.source, focused.summaries);
@@ -639,6 +662,23 @@ fn publish_phase(
         .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
 }
 
+fn publish_phase_terminal(
+    progress: &mut (impl Write + Send + ?Sized),
+    stage: &str,
+    started: Instant,
+    disposition: &str,
+) -> Result<(), ChangeGateError> {
+    writeln!(
+        progress,
+        "[change-gate-phase] stage={stage}-terminal elapsed_ms={} disposition={disposition}",
+        started.elapsed().as_millis(),
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    progress
+        .flush()
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
+}
+
 fn publish_budget(
     progress: &mut (impl Write + Send),
     budget: CargoBudget,
@@ -730,23 +770,48 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         budget,
         environment,
     } = execution;
+    let preexecuted_rust =
+        preexecute_reusable_rust_policy(anchor, selection, source, surface, budget, progress)?;
+    let (rust_report, rust_workspace) =
+        preexecuted_rust.map_or((None, None), |rust| (Some(rust.report), rust.workspace));
+    let test_run = TestRun::new(
+        &selected_root,
+        &writable_root,
+        test_source,
+        &test_changes,
+        budget,
+        environment,
+    );
+    let test_run = match rust_workspace.as_ref() {
+        Some(workspace) => test_run.with_reusable(workspace),
+        None => test_run,
+    };
     let mut test_progress = progress.clone();
     let (focused, tests) = std::thread::scope(|scope| {
         let tests = scope.spawn(move || {
-            run_selected_tests(
-                TestRun::new(
-                    &selected_root,
-                    &writable_root,
-                    test_source,
-                    &test_changes,
-                    budget,
-                    environment,
-                ),
-                test_execution,
-                &mut test_progress,
-            )
+            let started = Instant::now();
+            let result = run_selected_tests(test_run, test_execution, &mut test_progress);
+            let disposition = if result.is_ok() { "success" } else { "failed" };
+            publish_phase_terminal(&mut test_progress, "tests", started, disposition)?;
+            result
         });
-        let focused = run_focused_policy(anchor, selection, source, surface, budget, progress);
+        let policy_started = Instant::now();
+        let focused = run_focused_policy(
+            anchor,
+            selection,
+            source,
+            surface,
+            budget,
+            rust_report,
+            progress,
+        );
+        let policy_disposition = if focused.is_ok() { "success" } else { "failed" };
+        publish_phase_terminal(
+            progress,
+            "policy-remainder",
+            policy_started,
+            policy_disposition,
+        )?;
         let tests = tests.join().map_err(|_| {
             ChangeGateError::protocol(
                 "change-gate-tests-panicked",
@@ -763,12 +828,61 @@ struct FocusedPolicyExecution {
     summaries: Vec<PolicyArmSummary>,
 }
 
+struct PreexecutedRustPolicy {
+    report: gate::FocusedArmReport,
+    workspace: Option<gate::RustAnalysisWorkspace>,
+}
+
+fn preexecute_reusable_rust_policy<W: Write + Send + ?Sized>(
+    anchor: &crate::gate::PreparedArm<'_>,
+    selection: &ChangeSelectionReport,
+    source: &wire::Digest,
+    surface: SelectionSurface,
+    budget: CargoBudget,
+    progress: &mut SharedProgress<'_, W>,
+) -> Result<Option<PreexecutedRustPolicy>, ChangeGateError> {
+    let Some(reach) = selection
+        .reach()
+        .iter()
+        .find(|reach| reach.gate_id() == GateId::RustTypecheck)
+    else {
+        return Ok(None);
+    };
+    publish_policy_start(progress, GateId::RustTypecheck)?;
+    let mut prepared = prepare_policy_arm(
+        surface,
+        selection,
+        reach,
+        anchor.state_run(),
+        budget,
+        progress,
+    )?;
+    let started = Instant::now();
+    let report = prepared.execute().map_err(ChangeGateError::gate);
+    let disposition = if report.is_ok() {
+        "completed"
+    } else {
+        "failed"
+    };
+    publish_policy_terminal(progress, GateId::RustTypecheck, started, disposition)?;
+    let report = report?;
+    if report.context().source() != source {
+        return Err(ChangeGateError::refusal(
+            "change-gate-source-moved",
+            "focused native Rust arm observed a different staged source",
+        ));
+    }
+    let workspace = prepared.reusable_rust_workspace().cloned();
+    Ok(Some(PreexecutedRustPolicy { report, workspace }))
+}
+
 fn run_focused_policy(
     anchor: &mut crate::gate::PreparedArm<'_>,
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     surface: SelectionSurface,
     budget: CargoBudget,
+    mut preexecuted_rust: Option<gate::FocusedArmReport>,
     progress: &mut impl Write,
 ) -> Result<FocusedPolicyExecution, ChangeGateError> {
     let state_run = anchor.state_run();
@@ -776,7 +890,14 @@ fn run_focused_policy(
     let mut reaches = selection.reach().iter().peekable();
     while let Some(reach) = reaches.next() {
         let gate_id = reach.gate_id();
+        if gate_id == GateId::RustTypecheck {
+            if let Some(report) = preexecuted_rust.take() {
+                record_policy_report(&mut policy, report, source)?;
+                continue;
+            }
+        }
         publish_policy_start(progress, gate_id)?;
+        let started = Instant::now();
         if gate_id == GateId::RustTypecheck
             && reaches
                 .peek()
@@ -813,6 +934,8 @@ fn run_focused_policy(
                 })?;
                 Ok::<_, ChangeGateError>((rust?, canvas?))
             })?;
+            publish_policy_terminal(progress, GateId::RustTypecheck, started, "completed")?;
+            publish_policy_terminal(progress, GateId::CanvasWebTypecheck, started, "completed")?;
             record_policy_report(&mut policy, rust, source)?;
             record_policy_report(&mut policy, canvas, source)?;
             continue;
@@ -828,7 +951,7 @@ fn run_focused_policy(
                 reach.objects(),
                 &[ChangeReachObject::Repository],
             )?;
-            anchor.execute().map_err(ChangeGateError::gate)?
+            anchor.execute().map_err(ChangeGateError::gate)
         } else {
             let prepared = prepare_policy_arm(
                 surface,
@@ -838,8 +961,15 @@ fn run_focused_policy(
                 budget,
                 progress,
             )?;
-            execute_prepared_policy_arm(prepared)?
+            execute_prepared_policy_arm(prepared)
         };
+        let disposition = if report.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        };
+        publish_policy_terminal(progress, gate_id, started, disposition)?;
+        let report = report?;
         record_policy_report(&mut policy, report, source)?;
     }
     Ok(FocusedPolicyExecution { summaries: policy })
@@ -850,6 +980,24 @@ fn publish_policy_start(progress: &mut impl Write, gate_id: GateId) -> Result<()
         progress,
         "[change-gate-policy] gate={} disposition=executed",
         gate_id.as_str(),
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    progress
+        .flush()
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
+}
+
+fn publish_policy_terminal(
+    progress: &mut impl Write,
+    gate_id: GateId,
+    started: Instant,
+    disposition: &str,
+) -> Result<(), ChangeGateError> {
+    writeln!(
+        progress,
+        "[change-gate-policy] gate={} stage=terminal elapsed_ms={} disposition={disposition}",
+        gate_id.as_str(),
+        started.elapsed().as_millis(),
     )
     .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
     progress

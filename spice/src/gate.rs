@@ -90,6 +90,12 @@ impl PreparedArm<'_> {
         self.capture.execution_objects()
     }
 
+    /// Stable source and outputs completed by this focused native Rust arm.
+    #[must_use]
+    pub fn reusable_rust_workspace(&self) -> Option<&::gate::RustAnalysisWorkspace> {
+        self.capture.reusable_rust_workspace()
+    }
+
     /// Every regular path retained by the immutable selected tree.
     #[must_use]
     pub fn paths(&self) -> &[String] {
