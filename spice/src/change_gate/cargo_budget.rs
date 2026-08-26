@@ -9,6 +9,7 @@ use sill::Environment;
 use super::ChangeGateError;
 
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
+const CONCURRENT_ORDINARY_GATE_SLICES: usize = 4;
 const TEST_HARNESS_THREADS_PER_SHARD: usize = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,7 +30,9 @@ impl CargoBudget {
     pub(super) fn from_capacity(cpus: usize, test_concurrency_cap: usize) -> Self {
         let cpus = cpus.max(1);
         let slice_jobs = cpus;
-        let test_concurrency = slice_jobs.min(test_concurrency_cap.max(1));
+        let test_concurrency = slice_jobs
+            .div_ceil(CONCURRENT_ORDINARY_GATE_SLICES)
+            .min(test_concurrency_cap.max(1));
         let shard_jobs = (slice_jobs / test_concurrency).max(1);
         Self {
             cpus,
@@ -86,11 +89,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn budget_keeps_each_selected_test_process_single_threaded() {
+    fn budget_reserves_four_ordinary_gate_slices_and_single_threads_each_shard() {
         let budget = CargoBudget::from_capacity(12, 4);
         assert_eq!(budget.policy_jobs(), 12);
-        assert_eq!(budget.test_concurrency(), 4);
-        assert_eq!(budget.shard_jobs(), 3);
+        assert_eq!(budget.test_concurrency(), 3);
+        assert_eq!(budget.shard_jobs(), 4);
         assert_eq!(budget.test_threads(), 1);
 
         let minimum = CargoBudget::from_capacity(0, 4);
@@ -118,7 +121,7 @@ mod tests {
                 .iter()
                 .find(|(name, _)| name == OsStr::new(CARGO_BUILD_JOBS))
                 .map(|(_, value)| value),
-            Some(&OsString::from("2"))
+            Some(&OsString::from("4"))
         );
     }
 }
