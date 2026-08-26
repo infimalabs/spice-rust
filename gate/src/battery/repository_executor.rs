@@ -114,6 +114,7 @@ pub struct RepositoryExecutor<'trace> {
     selected: Option<GateId>,
     reached_paths: Option<Vec<String>>,
     execution_objects: Option<Vec<ChangeReachObject>>,
+    reusable_rust_workspace: Option<crate::RustAnalysisWorkspace>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 }
 
@@ -257,6 +258,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             selected,
             reached_paths,
             execution_objects,
+            reusable_rust_workspace: None,
             trace,
         })
     }
@@ -282,6 +284,11 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// Objects the validated ordinary reach plan actually bound to this capture.
     pub(super) fn execution_objects(&self) -> Option<&[ChangeReachObject]> {
         self.execution_objects.as_deref()
+    }
+
+    /// Stable source and outputs retained after a successful focused native check.
+    pub(super) fn reusable_rust_workspace(&self) -> Option<&crate::RustAnalysisWorkspace> {
+        self.reusable_rust_workspace.as_ref()
     }
 
     /// Prove the live selector source still names this retained tree.
@@ -420,6 +427,13 @@ impl<'trace> RepositoryExecutor<'trace> {
             let observation = acquire_toolchain_arm(&source, &self.contract, gate_id)
                 .map_err(|error| error.to_string())?;
             let report = measure_toolchain_arm(observation).map_err(|error| error.to_string())?;
+            if gate_id == GateId::RustTypecheck
+                && report.outcome == crate::toolchain::ArmOutcome::Passed
+            {
+                self.reusable_rust_workspace = Some(
+                    crate::toolchain::completed_rust_analysis_workspace(self.tree.repository())?,
+                );
+            }
             return Ok(vec![ArmEvidence::Toolchain { report }]);
         }
         let trace = &mut self.trace;

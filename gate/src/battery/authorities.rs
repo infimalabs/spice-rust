@@ -756,6 +756,12 @@ impl<'trace> BatteryCapture<'trace> {
         self.executor.execution_objects()
     }
 
+    /// Stable source and outputs completed by a successful focused native Rust arm.
+    #[must_use]
+    pub fn reusable_rust_workspace(&self) -> Option<&crate::RustAnalysisWorkspace> {
+        self.executor.reusable_rust_workspace()
+    }
+
     /// Execute the existing canonical mutation profile over this same source.
     ///
     /// # Errors

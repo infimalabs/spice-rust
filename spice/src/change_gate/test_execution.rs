@@ -42,6 +42,11 @@ impl<'a> TestRun<'a> {
             environment,
         }
     }
+
+    pub(super) fn with_reusable(mut self, workspace: &'a gate::RustAnalysisWorkspace) -> Self {
+        self.roots = self.roots.with_reusable(workspace);
+        self
+    }
 }
 
 pub(super) fn run_selected_tests(

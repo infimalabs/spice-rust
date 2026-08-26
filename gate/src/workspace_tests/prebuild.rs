@@ -165,6 +165,7 @@ where
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
+    let started = Instant::now();
 
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
@@ -219,13 +220,34 @@ where
     }
     output.flush().map_err(output_error)?;
     if let Some(error) = failure {
+        writeln!(
+            output,
+            "[rust-test] stage=selected-prebuild-terminal elapsed_ms={} disposition=failed",
+            started.elapsed().as_millis(),
+        )
+        .map_err(output_error)?;
+        output.flush().map_err(output_error)?;
         return Err(error);
     }
     if next.load(AtomicOrdering::Acquire) < batches.len() {
+        writeln!(
+            output,
+            "[rust-test] stage=selected-prebuild-terminal elapsed_ms={} disposition=incomplete",
+            started.elapsed().as_millis(),
+        )
+        .map_err(output_error)?;
+        output.flush().map_err(output_error)?;
         return Err(WorkspaceTestError::new(
             "selected prebuild stopped before every exact package batch completed",
         ));
     }
+    writeln!(
+        output,
+        "[rust-test] stage=selected-prebuild-terminal elapsed_ms={} disposition=success",
+        started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
     Ok(artifacts)
 }
 
