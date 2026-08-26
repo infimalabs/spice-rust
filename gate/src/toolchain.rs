@@ -568,14 +568,17 @@ impl ArmOutcome {
 /// Measured wall time for one bounded external analysis.
 ///
 /// The complete observation bound includes runtime, output drain, reap, and
-/// termination grace. Retaining it beside the elapsed value lets measurement
-/// reject evidence that claims the bounded wait outlived its own contract.
+/// termination grace for every external process the analysis observed. Most
+/// arms invoke one process; a workspace-wide native analysis may invoke one
+/// bounded Cargo unit per selected package target. Retaining the aggregate
+/// bound beside aggregate elapsed time lets measurement reject evidence that
+/// claims the observed waits outlived their combined contract.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArmTiming {
-    /// Milliseconds observed around the blocking process invocation.
+    /// Milliseconds observed around the complete blocking invocation set.
     pub elapsed_ms: u64,
-    /// Maximum milliseconds the complete bounded wait may consume.
+    /// Maximum milliseconds the complete set of bounded waits may consume.
     pub observation_bound_ms: u64,
 }
 
