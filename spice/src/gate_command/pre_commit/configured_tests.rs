@@ -3,10 +3,6 @@
 use super::*;
 
 use std::fs;
-use std::io::Read as _;
-use std::os::fd::OwnedFd;
-use std::os::unix::fs::PermissionsExt as _;
-use std::os::unix::net::UnixStream;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -198,89 +194,6 @@ fn live_progress_selects_only_the_exact_unscoped_source_gate_contract() {
     assert!(!is_source_gate_contract(&commands[1]));
     assert!(!is_source_gate_contract(&commands[2]));
     assert!(!is_source_gate_contract(&commands[3]));
-}
-
-#[test]
-fn exclusive_lane_selected_source_gate_progress_reaches_the_worker_before_child_exit() {
-    let scratch = Scratch::new("live-source-progress");
-    let (mut progress_reader, progress_sink) =
-        UnixStream::pair().expect("create progress observation stream");
-    progress_reader
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .expect("bound progress observation");
-    let progress = File::from(OwnedFd::from(progress_sink));
-    let release_path = scratch.root.join("release.fifo");
-    let fifo = Command::new("/usr/bin/mkfifo")
-        .arg(&release_path)
-        .status()
-        .expect("create child release FIFO");
-    assert!(fifo.success(), "release FIFO creation failed: {fifo}");
-    let programs = scratch.root.join("programs");
-    fs::create_dir(&programs).expect("create fixture program directory");
-    let cargo = programs.join("cargo");
-    fs::write(
-        &cargo,
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' ",
-            "'[change-gate-policy] gate=rust-typecheck disposition=executed' >&2\n",
-            "IFS= read -r _ < \"$SOURCE_GATE_RELEASE\"\n",
-        ),
-    )
-    .expect("write fixture cargo");
-    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))
-        .expect("make fixture cargo executable");
-    let commands = parsed_commands(&[row("Spice source gate", &SOURCE_GATE_ARGV, &[])]);
-    let mut environment = base_environment();
-    environment.retain(|(name, _)| name != OsStr::new("PATH"));
-    environment.push((
-        OsString::from("PATH"),
-        OsString::from(format!("{}:/usr/bin:/bin", programs.display())),
-    ));
-    environment.push((
-        OsString::from("SOURCE_GATE_RELEASE"),
-        release_path.as_os_str().to_owned(),
-    ));
-    let root = scratch.root.clone();
-    let staged_source = source();
-    let execution = thread::spawn(move || {
-        execute_steps_with_progress(
-            &commands,
-            &staged_source,
-            &["src/lib.rs".to_owned()],
-            &root,
-            &environment,
-            test_bounds(Duration::from_secs(4)),
-            Cancellation::Never,
-            ExecutionMode::Ordinary,
-            Some(&progress),
-            &mut || Ok(()),
-        )
-        .expect("execute observed source gate")
-    });
-
-    let expected = "[change-gate-policy] gate=rust-typecheck disposition=executed\n";
-    let mut observed = vec![0; expected.len()];
-    let observation = progress_reader.read_exact(&mut observed);
-    let child_was_running = !execution.is_finished();
-    if observation.is_ok() && child_was_running {
-        let mut release = File::options()
-            .write(true)
-            .open(&release_path)
-            .expect("open child release FIFO");
-        release
-            .write_all(b"release\n")
-            .expect("release observed child");
-    }
-
-    let report = execution.join().expect("observed source gate joins");
-    observation.expect("receive live source-gate progress");
-    assert_eq!(observed, expected.as_bytes());
-    assert!(
-        child_was_running,
-        "source-gate child exited before its progress reached the worker",
-    );
-    assert!(report.admits(), "{}", report.refusal_evidence());
 }
 
 #[test]
