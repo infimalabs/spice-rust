@@ -6,14 +6,21 @@ fn native_process_receives_only_explicit_reached_packages() {
     fixture.source(REMOVED_PLANT);
     fixture.add_reach_packages();
     let (cargo, log) = fixture.logging_cargo();
+    let bounds = rust_bounds();
 
-    let analysis = fixture.analyze_with(
-        cargo.to_str().expect("UTF-8 logging Cargo"),
-        &rust_bounds(),
-        None,
-    );
+    let analysis =
+        fixture.analyze_with(cargo.to_str().expect("UTF-8 logging Cargo"), &bounds, None);
 
     assert_eq!(analysis.outcome, ArmOutcome::Passed);
+    let timing = analysis
+        .timing
+        .expect("both reached native units retain aggregate timing");
+    assert_eq!(
+        timing.observation_bound_ms,
+        observation_bound_ms(&bounds).saturating_mul(2),
+        "each observed Cargo unit contributes its own complete wait bound",
+    );
+    assert!(timing.elapsed_ms <= timing.observation_bound_ms);
     assert_eq!(
         fs::read_to_string(log).expect("read native Cargo arguments"),
         concat!(

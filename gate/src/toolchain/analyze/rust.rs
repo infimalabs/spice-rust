@@ -88,7 +88,7 @@ fn rust_typecheck_with_workspace(
             match reach.map(|reach| reach.cargo_check_units()) {
                 Ok(units) if !units.is_empty() => {
                     let mut elapsed = Duration::ZERO;
-                    let mut observed = false;
+                    let mut observed_units = 0_u64;
                     let mut refusal = None;
                     let unit_count = units.len();
                     let unit_identities = units
@@ -118,12 +118,14 @@ fn rust_typecheck_with_workspace(
                             wait.clone(),
                         ) {
                             Ok(duration) => {
-                                observed = true;
+                                observed_units = observed_units.saturating_add(1);
                                 elapsed = elapsed.saturating_add(duration);
                             }
                             Err(failure) => {
                                 let (analysis, duration) = failure.into_parts();
-                                observed |= duration.is_some();
+                                if duration.is_some() {
+                                    observed_units = observed_units.saturating_add(1);
+                                }
                                 elapsed = duration
                                     .map_or(elapsed, |duration| elapsed.saturating_add(duration));
                                 refusal = Some(analysis);
@@ -140,8 +142,8 @@ fn rust_typecheck_with_workspace(
                             ),
                         )
                     });
-                    if observed {
-                        analysis.timed(timing(elapsed, bounds))
+                    if observed_units > 0 {
+                        analysis.timed(timing(elapsed, bounds, observed_units))
                     } else {
                         analysis
                     }
@@ -157,10 +159,10 @@ fn rust_typecheck_with_workspace(
     }
 }
 
-fn timing(elapsed: Duration, bounds: &Bounds) -> ArmTiming {
+fn timing(elapsed: Duration, bounds: &Bounds, observed_units: u64) -> ArmTiming {
     ArmTiming {
         elapsed_ms: milliseconds(elapsed),
-        observation_bound_ms: observation_bound_ms(bounds),
+        observation_bound_ms: observation_bound_ms(bounds).saturating_mul(observed_units),
     }
 }
 
