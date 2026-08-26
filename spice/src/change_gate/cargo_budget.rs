@@ -9,7 +9,7 @@ use sill::Environment;
 use super::ChangeGateError;
 
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
-const MAX_TEST_HARNESS_THREADS: usize = 3;
+const TEST_HARNESS_THREADS_PER_SHARD: usize = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct CargoBudget {
@@ -31,15 +31,12 @@ impl CargoBudget {
         let slice_jobs = cpus;
         let test_concurrency = slice_jobs.min(test_concurrency_cap.max(1));
         let shard_jobs = (slice_jobs / test_concurrency).max(1);
-        let test_threads = slice_jobs
-            .div_ceil(test_concurrency)
-            .clamp(1, MAX_TEST_HARNESS_THREADS);
         Self {
             cpus,
             slice_jobs,
             test_concurrency,
             shard_jobs,
-            test_threads,
+            test_threads: TEST_HARNESS_THREADS_PER_SHARD,
         }
     }
 
@@ -89,12 +86,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn budget_uses_only_the_slice_capacity() {
+    fn budget_keeps_each_selected_test_process_single_threaded() {
         let budget = CargoBudget::from_capacity(12, 4);
         assert_eq!(budget.policy_jobs(), 12);
         assert_eq!(budget.test_concurrency(), 4);
         assert_eq!(budget.shard_jobs(), 3);
-        assert_eq!(budget.test_threads(), 3);
+        assert_eq!(budget.test_threads(), 1);
 
         let minimum = CargoBudget::from_capacity(0, 4);
         assert_eq!(minimum.policy_jobs(), 1);
