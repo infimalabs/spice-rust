@@ -405,6 +405,53 @@ fn overlapping_linked_worktree_claims_refuse_with_the_exact_conflict() {
 }
 
 #[test]
+fn overlapping_same_actor_claim_refreshes_compose_monotonically() {
+    let fixture = StateFixture::new();
+    let actors = ActorInputs::new("src/live.rs")
+        .expect("actor inputs")
+        .with_active_actor("actor-a");
+    let mut seed = CurrentState::load(&fixture.current).expect("seed load");
+    seed.begin_run(&RenameMap::default(), ["src/live.rs"], 50.0)
+        .expect("begin seed run");
+    seed.reconcile([]).expect("empty seed latch inventory");
+    seed.claim(["src/live.rs"], &actors).expect("seed claim");
+    seed.finish()
+        .expect("finish seed")
+        .accept()
+        .expect("accept seed");
+
+    let mut first = CurrentState::load(&fixture.current).expect("first refresh load");
+    let mut second = CurrentState::load(&fixture.current).expect("second refresh load");
+    for (state, now) in [(&mut first, 100.0), (&mut second, 200.0)] {
+        state
+            .begin_run(&RenameMap::default(), ["src/live.rs"], now)
+            .expect("begin concurrent refresh");
+        state.reconcile([]).expect("empty latch inventory");
+        state
+            .claim(["src/live.rs"], &actors)
+            .expect("refresh same-actor claim");
+    }
+
+    first
+        .finish()
+        .expect("finish first refresh")
+        .accept()
+        .expect("accept first refresh");
+    second
+        .finish()
+        .expect("finish stale second refresh")
+        .accept()
+        .expect("compose stale same-actor refresh");
+
+    let current = CurrentState::load(&fixture.current).expect("load composed state");
+    assert_eq!(current.before().claims().len(), 1);
+    let claim = &current.before().claims()[0];
+    assert_eq!(claim.actor(), "actor-a");
+    assert_eq!(claim.created_at(), 50.0);
+    assert_eq!(claim.expires_at(), 200.0 + PEER_CLAIM_TTL_SECONDS as f64);
+}
+
+#[test]
 fn disjoint_linked_worktree_latches_and_claims_compose_without_lost_updates() {
     let fixture = StateFixture::new();
     let mut first = CurrentState::load(&fixture.current).expect("first load");

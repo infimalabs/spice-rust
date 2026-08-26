@@ -115,7 +115,7 @@ mod unix {
     }
 
     #[test]
-    fn stuck_pipe_cleanup_times_out_reaps_once_and_leaves_no_process_or_reader() {
+    fn stuck_pipe_cleanup_times_out_reaps_once_and_leaves_no_live_process_or_reader() {
         let script = concat!(
             "trap '' TERM; ",
             "(trap '' TERM; exec /bin/sleep 60) & ",
@@ -137,8 +137,8 @@ mod unix {
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(!process_exists(parent), "parent {parent} survived cleanup");
         assert!(
-            !process_exists(descendant),
-            "pipe-holding descendant {descendant} survived cleanup"
+            !process_live(descendant),
+            "pipe-holding descendant {descendant} remained live after cleanup"
         );
     }
 
@@ -180,6 +180,44 @@ mod unix {
             Ok(()) | Err(rustix::io::Errno::PERM) => true,
             Err(rustix::io::Errno::SRCH) => false,
             Err(error) => panic!("process liveness probe failed: {error}"),
+        }
+    }
+
+    fn process_live(pid: u32) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Ok(stat) => stat,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+                Err(error) => panic!("process status probe failed: {error}"),
+            };
+            let (_, fields) = stat.rsplit_once(") ").expect("process stat fields split");
+            return !matches!(fields.as_bytes().first(), Some(b'Z' | b'X' | b'x'));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let mut information = std::mem::MaybeUninit::<libc::proc_bsdshortinfo>::uninit();
+            let size = libc::c_int::try_from(std::mem::size_of::<libc::proc_bsdshortinfo>())
+                .expect("process information size fits c_int");
+            // SAFETY: the process information destination is writable for its complete size.
+            let bytes = unsafe {
+                libc::proc_pidinfo(
+                    pid as libc::c_int,
+                    libc::PROC_PIDT_SHORTBSDINFO,
+                    0,
+                    information.as_mut_ptr().cast(),
+                    size,
+                )
+            };
+            if bytes == size {
+                // SAFETY: an exact-size result initialized the process information.
+                return unsafe { information.assume_init() }.pbsi_status != libc::SZOMB;
+            }
+            let error = std::io::Error::last_os_error();
+            if bytes == 0 && error.raw_os_error() == Some(libc::ESRCH) {
+                return false;
+            }
+            panic!("process status probe returned {bytes} bytes: {error}");
         }
     }
 

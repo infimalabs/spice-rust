@@ -483,8 +483,9 @@ impl PendingState {
     }
 
     /// Atomically publish the after-ledger at the sole accepted-run boundary.
-    /// A concurrent ledger is composed under the same lock only when its
-    /// latch and claim keys are disjoint from this proposal.
+    /// A concurrent ledger is composed under the same lock when its latch and
+    /// claim keys are disjoint from this proposal, or when both sides only
+    /// refresh the same claim for the same actor.
     ///
     /// The first accepted run always writes its current ledger, even when
     /// reconciliation did not otherwise move it.
@@ -599,13 +600,17 @@ fn compose_disjoint(
 
     let proposed_claims = changed_claim_paths(before, proposed);
     let concurrent_claims = changed_claim_paths(before, current);
-    if let Some(path) = proposed_claims.intersection(&concurrent_claims).next() {
-        return Err(StateError::current(
-            StateErrorKind::Conflict,
-            destination,
-            format!("concurrent gate-state conflict kind=claim path={path:?}"),
-            "recapture and rerun against the accepted actor/claim authority",
-        ));
+    let mut merged_claims = BTreeMap::new();
+    for path in proposed_claims.intersection(&concurrent_claims) {
+        let Some(claim) = merge_same_actor_claim(path, proposed, current) else {
+            return Err(StateError::current(
+                StateErrorKind::Conflict,
+                destination,
+                format!("concurrent gate-state conflict kind=claim path={path:?}"),
+                "recapture and rerun against the accepted actor/claim authority",
+            ));
+        };
+        merged_claims.insert(path.clone(), claim);
     }
 
     let mut composed = current.clone();
@@ -622,16 +627,40 @@ fn compose_disjoint(
 
     for path in proposed_claims {
         composed.claims.retain(|claim| claim.path != path);
-        composed.claims.extend(
-            proposed
-                .claims
-                .iter()
-                .filter(|claim| claim.path == path)
-                .cloned(),
-        );
+        if let Some(claim) = merged_claims.remove(&path) {
+            composed.claims.push(claim);
+        } else {
+            composed.claims.extend(
+                proposed
+                    .claims
+                    .iter()
+                    .filter(|claim| claim.path == path)
+                    .cloned(),
+            );
+        }
     }
     sort_claims(&mut composed.claims);
     Ok(composed)
+}
+
+fn merge_same_actor_claim(
+    path: &str,
+    proposed: &StateLedger,
+    current: &StateLedger,
+) -> Option<PeerClaim> {
+    let exactly_one = |ledger: &StateLedger| {
+        let mut claims = ledger.claims.iter().filter(|claim| claim.path == path);
+        let claim = claims.next()?.clone();
+        claims.next().is_none().then_some(claim)
+    };
+    let proposed = exactly_one(proposed)?;
+    let current = exactly_one(current)?;
+    (proposed.actor == current.actor).then(|| PeerClaim {
+        path: path.to_owned(),
+        actor: proposed.actor,
+        created_at: proposed.created_at.min(current.created_at),
+        expires_at: proposed.expires_at.max(current.expires_at),
+    })
 }
 
 fn changed_latches(left: &StateLedger, right: &StateLedger) -> BTreeSet<LatchEntry> {
