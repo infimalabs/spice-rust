@@ -59,9 +59,6 @@ pub(crate) const PROSE: &str = "docs/guide.md";
 /// The Rust file the formatter reads and the marker scanner searches.
 pub(crate) const SOURCE: &str = "src/main.rs";
 
-/// The Rust file no module path reaches, named only by a macro in [`SOURCE`].
-pub(crate) const INCLUDED: &str = "src/included.rs";
-
 /// The Python file carrying one waived access and three unwaived lines.
 pub(crate) const SETTINGS: &str = "app/settings.py";
 
@@ -240,78 +237,6 @@ pub(crate) fn scanning_repository(label: &str, source: &str, prose: &str) -> Tre
     repository.write(CSHARP, CSHARP_SOURCE);
     git_commit(&repository, "fixture sources");
     repository
-}
-
-/// One committed repository whose only unformatted file is reached by a macro.
-///
-/// [`SOURCE`] is canonical and reaches [`INCLUDED`] through `include!`, which is
-/// exactly the shape the command this arm replaced calls clean: rustfmt opens a
-/// file by walking `mod` declarations down from the crate root, and a file named
-/// by a macro sits on no module path, so `cargo fmt --all` never reads it.
-///
-/// The included content is the caller's, because the two things this shape can
-/// do to the arm -- give it a file to name, and give it a file it cannot read
-/// -- are different reports and each is asserted on its own.
-pub(crate) fn including_repository(label: &str, included: &str) -> Tree {
-    let repository = contract_repository(label);
-    set_environment_names(&repository, &[]);
-    repository.write(
-        "Cargo.toml",
-        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
-    );
-    repository.write(SOURCE, "include!(\"included.rs\");\n\nfn main() {}\n");
-    repository.write(INCLUDED, included);
-    git_commit(&repository, "fixture included sources");
-    repository
-}
-
-/// An included file that is readable Rust and is not formatted like rustfmt.
-///
-/// The file opens on `async fn` on purpose: a file `cargo fmt` never opened
-/// reaches rustfmt with no package behind it and must be told which edition to
-/// parse under. `async fn` is a parse error before Rust 2018, so a pass that
-/// named the wrong edition, or none, refuses this file outright rather than
-/// quietly reporting a difference that happened not to depend on the edition at
-/// all. The spacing that makes it uncanonical is spread across both lines,
-/// because the arm reports the file and no locus within it.
-pub(crate) const UNFORMATTED_INCLUDED: &str = "async fn included( ) {\n    let  reached=1;\n}\n";
-
-/// An included file no edition can parse, so the formatter names nothing.
-///
-/// The arm is then left with an empty finding list and a nonzero exit, which is
-/// the shape a canonical tree also has minus the exit code. Reporting clean
-/// here is the failure mode the formatter gap was made of, so the refusal is
-/// what has to survive rather than the count.
-pub(crate) const UNPARSABLE_INCLUDED: &str = "fn included( {\n";
-
-/// What `cargo fmt --all -- --check` on its own says about one fixture tree.
-///
-/// Run for real rather than inferred, because the whole claim under test is
-/// that this exact command reports nothing about a file the arm reports. An
-/// assertion that read only the arm could not tell a formatter gap from a
-/// fixture that was never unformatted in the first place.
-///
-/// Callers read this to establish an absence, so silence has to mean the
-/// command looked and found nothing rather than that it never ran. Only one
-/// nonzero exit is legitimate here -- `--check` reports a diff that way, and it
-/// prints that diff on stdout first. A nonzero carrying no stdout at all is a
-/// pass that did not happen, and handing it back would let a control assert the
-/// absence of a report the command was never in a position to make.
-pub(crate) fn workspace_formatter_output(root: &Path) -> String {
-    let output = Command::new(toolchain_directory().join("cargo"))
-        .args(["fmt", "--all", "--", "--check"])
-        .current_dir(root)
-        .output()
-        .expect("the declared workspace formatter pass runs over the fixture");
-    let rendered = String::from_utf8_lossy(&output.stdout).into_owned();
-    assert!(
-        output.status.success() || !rendered.is_empty(),
-        "the workspace formatter pass reported nothing because it did not run \
-         over the fixture: {}, stderr: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    rendered
 }
 
 /// One committed fixture repository whose Python names the environment.
