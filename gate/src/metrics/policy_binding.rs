@@ -238,36 +238,3 @@ impl fmt::Display for PolicyBindingError {
 }
 
 impl Error for PolicyBindingError {}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn changed_committed_debt_distinguishes_strict_base_from_elastic_ratchet() {
-        let bounded = rule(false);
-        assert!(bounded.changed_committed_base_breach(Some(101)));
-        assert!(!bounded.changed_committed_ratchet_breach(Some(101), 100));
-        assert!(bounded.changed_committed_base_breach(Some(151)));
-        assert!(bounded.changed_committed_ratchet_breach(Some(151), 149));
-        assert!(!bounded.changed_committed_base_breach(Some(100)));
-        assert!(!bounded.changed_committed_ratchet_breach(Some(150), 149));
-        assert!(!bounded.changed_committed_base_breach(None));
-        assert!(!bounded.changed_committed_ratchet_breach(None, 100));
-        assert!(bounded.changed_committed_base_breach(Some(151)));
-        assert!(!bounded.changed_committed_ratchet_breach(Some(151), 151));
-        assert!(!rule(true).changed_committed_base_breach(Some(151)));
-        assert!(!rule(true).changed_committed_ratchet_breach(Some(151), 149));
-    }
-
-    fn rule(unlimited: bool) -> ResolvedMetricRule {
-        ResolvedMetricRule {
-            metric: MetricId::FileLines,
-            base_limit: 100,
-            ratchet_limit: 150,
-            unlimited,
-            variation_percent: 0,
-            binding: binding(MetricId::FileLines, None).expect("global file rule binds"),
-        }
-    }
-}

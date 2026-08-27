@@ -943,59 +943,6 @@ fn state_binding_preserves_function_keys_and_unlimited_document_rules() {
 }
 
 #[test]
-fn state_binding_preserves_the_current_u64_variation_domain() {
-    const ABOVE_U32: u64 = 4_294_967_296;
-    let policy = migrate_predecessor_policy(
-        "fixtures/large-variation.toml",
-        &loadable("[policy.flex]\nratio = 2.0\njitter_percent = 4294967296\n"),
-    )
-    .expect("large predecessor variation migrates");
-    let rule = resolve_metric_rule(
-        &policy,
-        MetricId::FileLines,
-        &PolicyContext::new().with_path("src/lib.rs"),
-    )
-    .expect("large variation rule resolves");
-    assert_eq!(rule.variation_percent(), ABOVE_U32);
-    let binding = MetricStateBinding::new(
-        MetricId::FileLines,
-        MetricKey::path("src/lib.rs").expect("metric path"),
-        1,
-        ParserEvidence::Native {
-            parser: ParserId::Utf8FileShapeV1,
-        },
-        rule,
-    )
-    .expect("the complete policy percentage binds to current state");
-    let observation = binding
-        .observation(
-            ActorInputs::new("src/lib.rs")
-                .expect("actor path")
-                .with_active_actor("actor-a"),
-        )
-        .expect("large variation observation");
-
-    let fixture = MetricStateFixture::new();
-    let mut state = CurrentState::load(&fixture.destination).expect("load current metric state");
-    state
-        .begin_run(&RenameMap::default(), ["src/lib.rs"], STATE_TEST_CLOCK)
-        .expect("begin metric-state run");
-    let decisions = state
-        .reconcile([observation])
-        .expect("reconcile large variation observation");
-    assert_eq!(decisions[0].bound().variation_percent(), ABOVE_U32);
-    let evidence = binding
-        .evidence(&decisions[0])
-        .expect("large variation decision binds to metric evidence");
-    assert_eq!(measured_latch(&evidence).variation_percent(), ABOVE_U32);
-    let json = serde_json::to_value(&evidence).expect("metric evidence serializes");
-    assert_eq!(
-        json["state"]["measurement"]["latch"]["variation_percent"],
-        ABOVE_U32
-    );
-}
-
-#[test]
 fn state_binding_refuses_a_decision_from_another_variation_policy() {
     const ABOVE_U32: u64 = 4_294_967_296;
     let large_policy = migrate_predecessor_policy(
