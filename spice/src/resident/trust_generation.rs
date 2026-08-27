@@ -196,12 +196,15 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
     let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
     let bus = Bus::start(journal).expect("fixture bus starts");
     commit_startup(&bus, &repository, &surface, epoch, None).expect("surface pends and seats");
+    let ruling_epoch = test_uuid(23);
+    commit_startup(&bus, &repository, &surface, ruling_epoch, None)
+        .expect("replacement resident seats without repending the surface");
 
     let grant = admitted_trust_command(
         CommandKind::TrustGrant,
         digest.clone(),
         TrustState::Pended,
-        epoch,
+        ruling_epoch,
         test_uuid(21),
     );
     let reference = TrustRef {
@@ -212,7 +215,7 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
         .trust_head(&digest)
         .expect("head before refused grant reads");
     let receipts_before_grant = receipt_count(&paths.journal);
-    let refused = trust_rule_with(&bus, &repository, epoch, &grant, &reference, || {
+    let refused = trust_rule_with(&bus, &repository, ruling_epoch, &grant, &reference, || {
         replace_policy(&tracked, bytes)
     });
     assert!(matches!(
@@ -232,14 +235,26 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
 
     let current = crate::trust_command::Surface::load(&repository).expect("current surface loads");
     assert_eq!(current.digest(), &digest);
-    let granted = trust_rule(&bus, &repository, epoch, &grant, &reference);
+    let granted = trust_rule(&bus, &repository, ruling_epoch, &grant, &reference);
     assert!(matches!(granted, Outcome::Reply(_)));
+    let head_after_grant = bus
+        .trust_head(&digest)
+        .expect("granted head reads")
+        .expect("granted head exists");
+    assert_same_origin_cause(
+        &bus.fact_snapshot().expect("granted facts read"),
+        head_before_grant
+            .as_ref()
+            .expect("pended head exists")
+            .position(),
+        head_after_grant.position(),
+    );
 
     let revoke = admitted_trust_command(
         CommandKind::TrustRevoke,
         digest.clone(),
         TrustState::Granted,
-        epoch,
+        ruling_epoch,
         test_uuid(22),
     );
     let before_revoke = bus.fact_snapshot().expect("facts before refused revoke");
@@ -247,7 +262,7 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
         .trust_head(&digest)
         .expect("head before refused revoke reads");
     let receipts_before_revoke = receipt_count(&paths.journal);
-    let refused = trust_rule_with(&bus, &repository, epoch, &revoke, &reference, || {
+    let refused = trust_rule_with(&bus, &repository, ruling_epoch, &revoke, &reference, || {
         publish_local_policy(&root, "# newly published local policy\n")
     });
     assert!(matches!(
@@ -267,6 +282,21 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
     bus.verify().expect("ruling authority verifies");
     bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+fn assert_same_origin_cause(snapshot: &journal::FactSnapshot, cause: wire::Seq, child: wire::Seq) {
+    let cause = snapshot
+        .facts()
+        .iter()
+        .find(|fact| fact.seq == cause)
+        .expect("cause fact exists");
+    let child = snapshot
+        .facts()
+        .iter()
+        .find(|fact| fact.seq == child)
+        .expect("child fact exists");
+    assert_eq!(child.cause, Some(cause.seq));
+    assert_eq!(child.origin, cause.origin);
 }
 
 fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
