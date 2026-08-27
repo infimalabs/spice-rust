@@ -7,7 +7,8 @@ This repository develops and self-hosts the Rust Spice appliance.
 Resident lanes receive a private admitted `CARGO_HOME`. When a development
 command can create or refresh `Cargo.lock`, or needs dependencies outside the
 admitted generation, invoke the Rust-owned `dev cargo` surface through the
-exact Git-common appliance:
+exact Git-common appliance. Repository xtasks use the sibling `dev xtask`
+surface backed by the same admitted Cargo home:
 
 ```sh
 git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
@@ -17,12 +18,13 @@ if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
   exit 1
 fi
 "$spice_rs" dev cargo -- <cargo-arguments>
+"$spice_rs" dev xtask -- <xtask-arguments>
 ```
 
 This repository currently has a hybrid command boundary: unqualified
 `spice session`, `spice task`, and `spice steering` commands remain owned by
 the ambient Python controls plane. The exact Rust appliance above owns only
-Rust-specific surfaces such as `dev cargo`; its existence does not imply that
+Rust-specific surfaces such as `dev cargo` and `dev xtask`; its existence does not imply that
 the current agent has a Rust lane, session, or task claim. A missing, symbolic,
 non-regular, or non-executable asset is a hard stop. Do not search `PATH` for a
 replacement, invoke another Cargo route, or point `CARGO_HOME` at a shared

@@ -14,8 +14,8 @@ The measurements remain useful; the cutover recommendations are superseded and
 authorize no present removal. The ordinary hook selects deterministic local
 evidence for recognized paths. Selector/toolchain authority, unclassified, and
 out-of-workspace Rust/manifest paths refuse with the exact path before policy or
-test execution. Repository-wide verification is now retired: bare `cargo xtask
-verify` refuses before work, package checks serialize Cargo at one build job,
+test execution. Repository-wide verification is now retired: the unscoped
+developer verifier refuses before work, package checks serialize Cargo at one build job,
 and staged selection does not escalate. `README.md`, `DEVELOPMENT.md`, and
 `SHAPE_CONFORMANCE.md` own those current paths.
 
@@ -28,7 +28,7 @@ dual execution is not a qualified runtime mode.
 
 Measurements were taken on 2026-08-06 at repository commit `44f505a`, on an
 Apple M4 Pro running arm64 macOS 26.5.2. `/usr/bin/time -p` measured the seven
-canonical `cargo xtask verify` actions. Temporary `Instant` probes measured the
+then-current full-verifier actions. Temporary `Instant` probes measured the
 27 compiled battery arms and their fused acquisition seams; the probes were
 then removed and the clean battery was repeated. The measured staged index was
 identical to `HEAD`, so changed-path scanners show their clean no-op floor.
@@ -166,7 +166,7 @@ find one.
 The workspace test command stopped at its first failure, so 232.13 seconds is a
 lower bound rather than a complete-suite time. Measuring the later actions
 independently gives a lower-bound full verify cost of about **338.22 seconds**.
-A real `cargo xtask verify` on this snapshot stops after about 256.03 seconds at
+A real full-verifier run on this snapshot stops after about 256.03 seconds at
 the integration failure and never reaches doc tests, the battery, or landing.
 
 ## Workspace test sharding follow-up

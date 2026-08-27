@@ -1,6 +1,6 @@
 //! One-command developer refresh of the repository-embedded Spice appliance.
 //!
-//! `cargo xtask install` builds the current browser app and native tree,
+//! Installed Spice `dev xtask -- install` builds the current browser app and native tree,
 //! republishes `.spice-install/bin/spice` through the digest-bound installer,
 //! and restarts the resident on the endpoint it had already published.
 //!

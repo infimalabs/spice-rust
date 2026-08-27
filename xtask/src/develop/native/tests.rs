@@ -293,7 +293,7 @@ fn a_refused_stop_with_a_live_endpoint_is_named_rather_than_waited_out() {
     );
 }
 
-/// The refresh `cargo xtask install` performs, and the withdrawal it must not.
+/// The refresh installed Spice `dev xtask -- install` performs, and the withdrawal it must not.
 ///
 /// A rebuilt binary over a completed receipt derives a refresh rather than
 /// refusing, so this command has nothing to withdraw first: it applies the very

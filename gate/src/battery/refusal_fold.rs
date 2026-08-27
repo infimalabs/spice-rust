@@ -283,7 +283,10 @@ fn arm_fold(result: &BatteryArmResult) -> ArmFold {
         result.state().as_str()
     );
     let command = format!(
-        "  full-evidence: cargo xtask gate --report {}\n",
+        concat!(
+            "  full-evidence: \"$(/usr/bin/git rev-parse --path-format=absolute ",
+            "--git-common-dir)/.spice-install/bin/spice\" dev xtask -- gate --report {}\n"
+        ),
         result.gate_id()
     );
     ArmFold {

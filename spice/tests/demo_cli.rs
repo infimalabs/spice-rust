@@ -174,7 +174,7 @@ fn stale_real_stage_precondition_names_the_missing_asset_without_mutating_it() {
         "demo_cli precondition",
         "stale lane app generation",
         "mosaic.css",
-        "cargo xtask app",
+        "dev xtask -- app",
     ] {
         assert!(error.contains(required), "missing {required:?}: {error}");
     }

@@ -321,7 +321,7 @@ pub fn run_at(
 /// and before starting the supervised test branches. [`run_prebuilt_shared_at`]
 /// then reuses that completed native build cache after wasm analysis and the
 /// Canvas compiler-ready boundary, without repeating setup inside the test
-/// clock. The launcher build keeps `cargo xtask app` from recompiling its native
+/// clock. The launcher build keeps the app xtask from recompiling its native
 /// entry point before it can start Trunk.
 ///
 /// # Errors

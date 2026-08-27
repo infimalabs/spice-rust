@@ -17,7 +17,8 @@ closure, and a readable copy of the pin document under
 before reporting the runner's identity.
 
 Bind that path as `proof.runner` in machine-local configuration. Nothing else
-selects a runner: `cargo xtask stage-target aarch64-apple-darwin` refuses to
+selects a runner: the exact Git-common Spice appliance's
+`dev xtask -- stage-target aarch64-apple-darwin` refuses to
 stage until the configured runner attests, and proof replay admits the runner by
 digesting the exact bytes it is about to execute.
 

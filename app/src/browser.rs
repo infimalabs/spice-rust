@@ -47,7 +47,7 @@ use view::{CanvasRender, render_canvas};
 use watchband::ComposerAction;
 use watchband::{ComposerDrafts, LineageControlAction, LineageControls};
 
-/// Source identity injected by `cargo xtask app` and verified before publish.
+/// Source identity injected by installed Spice `dev xtask -- app` and verified before publish.
 const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
     // env-policy: allow
     Some(identity) => identity,

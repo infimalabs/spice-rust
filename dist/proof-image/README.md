@@ -1,14 +1,25 @@
 # Sealed Linux proof image
 
-`cargo xtask proof-image build` assembles the `linux/amd64` proof environment
+Installed Spice `dev xtask -- proof-image build` assembles the `linux/amd64` proof environment
 from the immutable Rust base, pinned tooling, required Rust targets, vendored
 registry sources, and the `wasm-opt` build used by release proof. The resulting
 image can run with networking disabled and fresh Cargo home and target mounts.
 
+Bind the exact Git-common appliance before using any command in this document:
+
+```sh
+git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
+spice_rs="${git_common}/.spice-install/bin/spice"
+if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
+  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
+  exit 1
+fi
+```
+
 Build and export the image from the repository root:
 
 ```sh
-cargo xtask proof-image build
+"$spice_rs" dev xtask -- proof-image build
 ```
 
 The command writes an image archive, checksum, and OCI identity under
@@ -17,7 +28,7 @@ The command writes an image archive, checksum, and OCI identity under
 Import those files on another Docker host with:
 
 ```sh
-cargo xtask proof-image load target/proof-image/spice-proof-image.tar
+"$spice_rs" dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
 ```
 
 The loader verifies both the archive checksum and image identity. Linux proof
@@ -30,7 +41,7 @@ Exercise the complete build-and-restore path as one release verification
 action with:
 
 ```sh
-cargo xtask proof-image verify
+"$spice_rs" dev xtask -- proof-image verify
 ```
 
 ## Container invocation inventory
@@ -38,14 +49,14 @@ cargo xtask proof-image verify
 Container execution is a release-proof exception, not a development
 prerequisite. The tracked repository has three real execution surfaces:
 
-- `cargo xtask proof-image build` invokes Docker to `buildx build` the exact
+- `"$spice_rs" dev xtask -- proof-image build` invokes Docker to `buildx build` the exact
   `linux/amd64` image, inspect its immutable identity, run its pinned-tool
   self-check with networking disabled, and save the admitted image as a
   recovery archive. Native Darwin
   tools cannot replace this boundary: its product is the Linux appliance whose
   architecture, filesystem, tool closure, and OCI identity the proof contract
   records.
-- `cargo xtask proof-image load` invokes Docker only to load that archive and
+- `"$spice_rs" dev xtask -- proof-image load` invokes Docker only to load that archive and
   inspect the restored identity. This is recovery for the same distribution
   artifact, not a build or validation path; rebuilding when the archive exists
   is slower and creates a second opportunity for identity drift.
@@ -67,7 +78,7 @@ invocation requires adding its constraint or native replacement to this
 inventory.
 
 The native default is deliberately broader than the exceptions. The
-interactive app uses `cargo xtask app`; `npm run test:canvas` exercises it in a
+interactive app uses `"$spice_rs" dev xtask -- app`; `npm run test:canvas` exercises it in a
 real browser; package-scoped verification and staged selection run local
 validation; and ordinary workspace tests use host tooling. None loads, builds,
 or runs the proof image.
@@ -98,10 +109,10 @@ image itself is gone, restore it from the archive with the load action rather
 than rebuilding:
 
 ```sh
-cargo xtask proof-image load target/proof-image/spice-proof-image.tar
+"$spice_rs" dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
 ```
 
 This image does not build or own the interactive Canvas stage. Every lane
-builds that stage natively with `cargo xtask app` into ignored
+builds that stage natively with `"$spice_rs" dev xtask -- app` into ignored
 `dist/stage-app`; the command atomically publishes one complete immutable
 generation, and its resident serves only those worktree-local bytes.

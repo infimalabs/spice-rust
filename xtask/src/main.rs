@@ -12,7 +12,8 @@ use sill::Deadlines;
 const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <help|verify --package PACKAGE|",
+    "usage: \"$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir)",
+    "/.spice-install/bin/spice\" dev xtask -- <help|verify --package PACKAGE|",
     "gate [--report] ARM|app|",
     "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
@@ -155,7 +156,9 @@ fn run_gate(
         .into_iter()
         .find(|gate_id| gate_id.as_str() == arm)
     else {
-        eprintln!("unknown gate arm {arm:?}; run `cargo xtask help` for accepted gate arms");
+        eprintln!(
+            "unknown gate arm {arm:?}; run installed Spice `dev xtask -- help` for accepted gate arms"
+        );
         return Err(usage_error().into());
     };
     if gate::GateId::TEST_EVIDENCE.contains(&gate_id) {
@@ -212,7 +215,7 @@ struct UsageError;
 
 impl std::fmt::Display for UsageError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("invalid cargo xtask invocation")
+        formatter.write_str("invalid developer xtask invocation")
     }
 }
 
@@ -237,7 +240,7 @@ fn run_install(arguments: Vec<OsString>) -> ExitCode {
     }
 }
 
-/// Read one `cargo xtask install` invocation, or refuse the whole spelling.
+/// Read one installed-Spice `dev xtask -- install` invocation, or refuse it.
 fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
     let mut request = xtask::RefreshRequest {
         restart: true,

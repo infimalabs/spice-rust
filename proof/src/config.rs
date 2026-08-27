@@ -11,7 +11,7 @@ use wire::manifest::ProofImage;
 /// Proof image sealed into this build's compiled configuration defaults.
 ///
 /// This is the exact OCI identity of the `linux/amd64` appliance assembled by
-/// `cargo xtask proof-image build`, and `dist/proof-image/identity.txt` is the
+/// installed Spice `dev xtask -- proof-image build`, and `dist/proof-image/identity.txt` is the
 /// same digest in the one spelling a shell can read. The two are proven equal
 /// by `the_shell_readable_identity_names_the_compiled_image`, so the image a
 /// host loads and the image this build demands cannot drift apart silently.
@@ -136,7 +136,7 @@ impl Config {
 mod tests {
     use super::*;
 
-    /// The identity both `cargo xtask proof-image` actions compare against.
+    /// The identity both installed-Spice proof-image xtask actions compare against.
     const SHELL_READABLE_IDENTITY: &str =
         include_str!("../../dist/proof-image/identity.txt").trim_ascii();
 

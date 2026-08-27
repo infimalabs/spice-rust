@@ -158,7 +158,7 @@ agent into the Rust control plane. In the current hybrid operation,
 unqualified `spice session`, `spice task`, and `spice steering` commands remain
 owned by the ambient Python controls plane. Rust hooks keep their installed
 absolute launchers, and an operator or agent reaches the Rust-specific
-`dev cargo` surface only through the exact Git-common appliance:
+`dev cargo` and `dev xtask` surfaces only through the exact Git-common appliance:
 
 ```sh
 git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
@@ -168,6 +168,7 @@ if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
   exit 1
 fi
 "$spice_rs" dev cargo -- <cargo-arguments>
+"$spice_rs" dev xtask -- <xtask-arguments>
 ```
 
 The installed asset must be a non-symbolic executable regular file. Its

@@ -274,6 +274,12 @@ fn dispatch_native_policy_queries(contract: &cli::Contract, leaf: &clap::ArgMatc
                 deliver_with_code(&outcome, form, code)
             }
         },
+        ["dev", "xtask"] => match cargo_command::xtask(leaf) {
+            cargo_command::RunResult::Child(status) => terminate_child(status),
+            cargo_command::RunResult::Rejected { outcome, code } => {
+                deliver_with_code(&outcome, form, code)
+            }
+        },
         ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
         ["consent"] => deliver(&consent_command::read(contract), form),
         ["consent", "allow"] => deliver(

@@ -16,7 +16,7 @@ is not a compiler-authority resolver.
 This repository currently uses a hybrid command boundary. Unqualified
 `spice session`, `spice task`, and `spice steering` commands remain on the
 ambient Python controls plane. Rust-specific development surfaces such as
-`dev cargo` use only the exact Git-common Rust appliance; they do not establish
+`dev cargo` and `dev xtask` use only the exact Git-common Rust appliance; they do not establish
 or imply a Rust lane, session, or task claim. Bind that appliance before the
 first isolated Cargo command:
 
@@ -28,6 +28,7 @@ if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
   exit 1
 fi
 "$spice_rs" dev cargo -- <cargo-arguments>
+"$spice_rs" dev xtask -- <xtask-arguments>
 ```
 
 A missing, symbolic, non-regular, or non-executable appliance is a hard stop.
@@ -44,7 +45,10 @@ reports any permission or content drift without repairing it.
 
 Use `"$spice_rs" dev cargo -- <cargo arguments>` whenever a command may create
 or refresh `Cargo.lock`, or when a non-resident command needs the supported
-isolated boundary. Use `"$spice_rs" dev cargo-store` to inspect the owned schema
+isolated boundary. Use `"$spice_rs" dev xtask -- <xtask arguments>` for the
+repository's build, verification, staging, cache, and refresh orchestrator; it
+prepares the same private home before expanding to the locked `xtask` package.
+Use `"$spice_rs" dev cargo-store` to inspect the owned schema
 and `"$spice_rs" dev cargo-store --cleanup` to remove only recognized expired
 temporary state and valid unreferenced generations/packages. Cleanup has a
 seven-day grace, retains all generations if any home has uncertain liveness,

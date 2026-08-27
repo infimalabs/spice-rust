@@ -73,7 +73,39 @@ impl Drop for SignalRelay {
 
 /// Prepare the exact current lock generation and run native Cargo within it.
 pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
-    match run_inner(matches) {
+    let arguments = matches
+        .get_many::<OsString>("CARGO_ARGS")
+        .expect("the generated parser requires trailing Cargo arguments")
+        .cloned()
+        .collect::<Vec<_>>();
+    run_arguments(arguments)
+}
+
+/// Run the repository's task binary inside the same admitted Cargo boundary.
+pub(crate) fn xtask(matches: &clap::ArgMatches) -> RunResult {
+    let mut arguments = [
+        "run",
+        "--locked",
+        "--package",
+        "xtask",
+        "--bin",
+        "xtask",
+        "--",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect::<Vec<_>>();
+    arguments.extend(
+        matches
+            .get_many::<OsString>("XTASK_ARGS")
+            .expect("the generated parser requires trailing xtask arguments")
+            .cloned(),
+    );
+    run_arguments(arguments)
+}
+
+fn run_arguments(arguments: Vec<OsString>) -> RunResult {
+    match run_inner(arguments) {
         Ok(status) => RunResult::Child(status),
         Err((outcome, code)) => RunResult::Rejected { outcome, code },
     }
@@ -129,12 +161,7 @@ pub(crate) fn store(matches: &clap::ArgMatches) -> Outcome<StoreAnswer> {
     }
 }
 
-fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, (Outcome<()>, i32)> {
-    let arguments = matches
-        .get_many::<OsString>("CARGO_ARGS")
-        .expect("the generated parser requires trailing Cargo arguments")
-        .cloned()
-        .collect::<Vec<_>>();
+fn run_inner(arguments: Vec<OsString>) -> Result<ExitStatus, (Outcome<()>, i32)> {
     let working = std::env::current_dir().map_err(|error| {
         rejected(
             FaultClass::Environment,
