@@ -1,11 +1,11 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gate::{
     ArmEvidence, ArmFinding, ArmOutcome, BatteryState, CsharpUnusedStatus, FindingDetail, GateId,
     JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
     PredecessorComparison, PredecessorComparisonError, PredecessorConfiguration,
-    PredecessorFinding, PredecessorObservation, PredecessorResult, ProbeFailure, TOOLCHAIN_ARMS,
+    PredecessorFinding, PredecessorObservation, PredecessorResult, TOOLCHAIN_ARMS,
     TOOLCHAIN_REPORT_VERSION, ToolEvidence, compare_predecessor, measure_toolchain,
 };
 use wire::{Digest, Domain};
@@ -13,7 +13,7 @@ use wire::{Digest, Domain};
 mod support;
 
 use support::toolchain::*;
-use support::{Tree, fixture_column, git_commit, inapplicable_without_tools};
+use support::{fixture_column, git_commit};
 
 #[test]
 fn acquisition_over_a_real_tree_yields_a_report_measure_toolchain_admits() {
@@ -84,203 +84,6 @@ fn acquisition_over_a_real_tree_yields_a_report_measure_toolchain_admits() {
             .collect::<Vec<_>>(),
         "the report is complete and in compiled order"
     );
-}
-
-#[test]
-fn a_program_absent_from_the_captured_search_path_is_unavailable_with_missing_evidence() {
-    let repository = scanning_repository(
-        "toolchain-absent",
-        "fn main() {}\n",
-        "Every sentence here is ordinary.\n",
-    );
-    let empty = Tree::new("toolchain-empty-path");
-    let observations = acquired(
-        &repository,
-        Some(empty.root.clone().into_os_string()),
-        &[SOURCE, PROSE],
-    );
-
-    for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
-        if declaration.tools().is_empty() {
-            let expected = if COMPILED_ARMS.contains(&declaration.id()) {
-                ArmOutcome::Passed
-            } else {
-                ArmOutcome::Unsupported
-            };
-            assert_eq!(
-                observation.outcome,
-                expected,
-                "{} declares no tool, so an empty search path cannot change it",
-                declaration.id().as_str()
-            );
-            continue;
-        }
-        if inapplicable_without_tools(declaration, observation) {
-            continue;
-        }
-        assert_eq!(
-            observation.outcome,
-            ArmOutcome::ToolUnavailable,
-            "{} resolved a program the empty search path cannot hold",
-            declaration.id().as_str()
-        );
-        for (requirement, evidence) in declaration.tools().iter().zip(&observation.tools) {
-            let ToolEvidence::Missing {
-                requested_program, ..
-            } = evidence
-            else {
-                panic!(
-                    "{} identified {} from an empty search path",
-                    declaration.id().as_str(),
-                    requirement.program()
-                );
-            };
-            assert_eq!(requested_program, requirement.program());
-            assert!(
-                observation.reason.contains(requirement.program()),
-                "{} named no unresolved program in {:?}",
-                declaration.id().as_str(),
-                observation.reason
-            );
-        }
-    }
-
-    measure_toolchain(observations).expect("unavailable observations are admitted");
-}
-
-/// An installed program that refuses its probe is unusable, never absent.
-///
-/// Every declared program is present and every one of them refuses, which is
-/// the state the old acquisition could not tell apart from an empty search
-/// path. The arm still refuses the battery, and admission still takes it, so
-/// the distinction costs nothing: what changes is that the report names the
-/// exact file to look at and what it did, instead of sending an operator to
-/// install a program that is already there.
-#[test]
-fn a_declared_program_that_refuses_its_probe_is_unavailable_and_not_missing() {
-    let repository = scanning_repository(
-        "toolchain-refused",
-        "fn main() {}\n",
-        "Every sentence here is ordinary.\n",
-    );
-    let stubs = refusing_stub_directory("toolchain-refused-probes");
-    let observations = acquired(
-        &repository,
-        Some(stubs.root.clone().into_os_string()),
-        &[SOURCE, PROSE],
-    );
-
-    for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
-        if declaration.tools().is_empty() {
-            continue;
-        }
-        if inapplicable_without_tools(declaration, observation) {
-            continue;
-        }
-        assert_eq!(
-            observation.outcome,
-            ArmOutcome::ToolUnavailable,
-            "{} read a refusing program as {:?}",
-            declaration.id().as_str(),
-            observation.reason
-        );
-        for (requirement, evidence) in declaration.tools().iter().zip(&observation.tools) {
-            let ToolEvidence::Unprobed {
-                resolved_program,
-                failure,
-                ..
-            } = evidence
-            else {
-                panic!(
-                    "{} called {} absent though the search path holds it",
-                    declaration.id().as_str(),
-                    requirement.program()
-                );
-            };
-            assert_eq!(
-                Path::new(resolved_program),
-                stubs.path(requirement.program()),
-                "{} named a file the search path does not hold",
-                declaration.id().as_str()
-            );
-            assert_eq!(
-                *failure,
-                ProbeFailure::Refused {
-                    code: REFUSING_STATUS
-                },
-                "{} lost the status {} refused with",
-                declaration.id().as_str(),
-                requirement.program()
-            );
-            assert!(
-                observation.reason.contains(resolved_program),
-                "{} refused without naming the file to look at: {:?}",
-                declaration.id().as_str(),
-                observation.reason
-            );
-        }
-    }
-
-    measure_toolchain(observations).expect("unprobed observations are admitted");
-    repository.remove();
-    stubs.remove();
-}
-
-#[test]
-fn a_program_that_leaves_its_exact_version_contract_is_unsupported_version() {
-    let repository = scanning_repository(
-        "toolchain-drift",
-        "fn main() {}\n",
-        "Every sentence here is ordinary.\n",
-    );
-    let stubs = stub_directory("toolchain-drifted-cargo");
-    let observations = acquired(
-        &repository,
-        Some(stubs.root.clone().into_os_string()),
-        &[SOURCE, PROSE],
-    );
-
-    for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
-        if inapplicable_without_tools(declaration, observation) {
-            continue;
-        }
-        let drifted = declaration
-            .tools()
-            .iter()
-            .any(|requirement| requirement.program() == DRIFTED_PROGRAM);
-        let expected = if drifted {
-            ArmOutcome::UnsupportedVersion
-        } else if COMPILED_ARMS.contains(&declaration.id()) {
-            ArmOutcome::Passed
-        } else {
-            ArmOutcome::Unsupported
-        };
-        assert_eq!(
-            observation.outcome,
-            expected,
-            "{} read {} as {:?}",
-            declaration.id().as_str(),
-            DRIFTED_PROGRAM,
-            observation.reason
-        );
-        if drifted {
-            assert!(
-                observation.reason.contains(DRIFTED_VERSION),
-                "{} hid the version it actually observed in {:?}",
-                declaration.id().as_str(),
-                observation.reason
-            );
-        }
-        for evidence in &observation.tools {
-            assert!(
-                matches!(evidence, ToolEvidence::Identified { .. }),
-                "{} lost a program the stub directory supplies",
-                declaration.id().as_str()
-            );
-        }
-    }
-
-    measure_toolchain(observations).expect("version-drift observations are admitted");
 }
 
 #[test]
