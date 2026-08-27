@@ -6,7 +6,7 @@ use std::path::Path;
 
 use wire::manifest::{ProofEnvironment, ReleaseTarget};
 
-use crate::config::Config;
+use crate::config::{Config, ExecutablePath};
 use crate::container::{
     Container, ContainerBattery, ContainerError, Execution, Limits, OciRuntime,
 };
@@ -59,18 +59,15 @@ impl SealedEnvironment {
         workspace: &Path,
         limits: Limits,
     ) -> Result<Self, EnvironmentError> {
+        let binary = configured_binary(target, config)?;
         let kind = match target {
             ReleaseTarget::X86_64UnknownLinuxMusl => {
-                let binary = config
-                    .container()
-                    .ok_or(EnvironmentError::MissingContainerPath)?;
                 let runtime = OciRuntime::attest(binary, limits).map_err(EnvironmentError::Oci)?;
                 let container = Container::new(runtime, config.image().as_str(), workspace, limits)
                     .map_err(EnvironmentError::Oci)?;
                 EnvironmentKind::Oci(container)
             }
             ReleaseTarget::Aarch64AppleDarwin => {
-                let binary = config.runner().ok_or(EnvironmentError::MissingRunnerPath)?;
                 let runner = NativeRunner::attest(binary, workspace, limits)
                     .map_err(EnvironmentError::Native)?;
                 EnvironmentKind::Native(runner)
@@ -124,6 +121,20 @@ impl SealedEnvironment {
         Self {
             target: ReleaseTarget::Aarch64AppleDarwin,
             kind: EnvironmentKind::Native(runner),
+        }
+    }
+}
+
+fn configured_binary(
+    target: ReleaseTarget,
+    config: &Config,
+) -> Result<&ExecutablePath, EnvironmentError> {
+    match target {
+        ReleaseTarget::X86_64UnknownLinuxMusl => config
+            .container()
+            .ok_or(EnvironmentError::MissingContainerPath),
+        ReleaseTarget::Aarch64AppleDarwin => {
+            config.runner().ok_or(EnvironmentError::MissingRunnerPath)
         }
     }
 }
@@ -382,7 +393,8 @@ mod tests {
     use wire::manifest::ReleaseTarget;
 
     use super::{
-        EnvironmentError, Host, UnsupportedHost, select_host, validate_payload_environment,
+        EnvironmentError, Host, UnsupportedHost, configured_binary, select_host,
+        validate_payload_environment,
     };
     use crate::config::Config;
 
@@ -462,6 +474,21 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn each_target_requires_only_its_selected_configured_path() {
+        let runner_only = Config::fixture(None, Some("unselected-runner".into()));
+        assert!(matches!(
+            configured_binary(ReleaseTarget::X86_64UnknownLinuxMusl, &runner_only),
+            Err(EnvironmentError::MissingContainerPath)
+        ));
+
+        let container_only = Config::fixture(Some("unselected-container".into()), None);
+        assert!(matches!(
+            configured_binary(ReleaseTarget::Aarch64AppleDarwin, &container_only),
+            Err(EnvironmentError::MissingRunnerPath)
+        ));
     }
 
     #[test]
