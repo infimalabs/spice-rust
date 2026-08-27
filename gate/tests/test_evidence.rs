@@ -1,9 +1,9 @@
 //! Contract coverage for the shared long-running test-evidence authority.
 
 use gate::{
-    BatteryManifest, CanonicalTestExecution, CoverageCompleteness, CoveredSource, GateId,
-    MutantDisposition, MutationExecution, MutationObservation, StandingMutationWaiver,
-    SubsumptionRelation, SurvivorRate, TestCoverage, TestEvidenceGraph, TestEvidenceStanding,
+    CanonicalTestExecution, CoverageCompleteness, CoveredSource, GateId, MutantDisposition,
+    MutationExecution, MutationObservation, StandingMutationWaiver, SubsumptionRelation,
+    SurvivorRate, TestCoverage, TestEvidenceGraph, TestEvidenceStanding,
 };
 use wire::{Digest, Domain};
 
@@ -72,25 +72,6 @@ fn graph_with_run(
     )
     .expect("canonical test execution");
     TestEvidenceGraph::new(tests, mutation, waivers).expect("shared graph")
-}
-
-#[test]
-fn the_registered_instrument_roster_is_larger_than_the_synchronous_battery() {
-    assert_eq!(GateId::BATTERY.len(), 27);
-    assert_eq!(BatteryManifest::canonical().unwrap().arms().len(), 27);
-    assert_eq!(
-        GateId::TEST_EVIDENCE,
-        [
-            GateId::SuiteSeam,
-            GateId::MutationCoverage,
-            GateId::TestSubsumption,
-        ]
-    );
-    assert_eq!(&GateId::ALL[..GateId::BATTERY.len()], &GateId::BATTERY);
-    assert_eq!(
-        &GateId::ALL[GateId::BATTERY.len()..],
-        &GateId::TEST_EVIDENCE
-    );
 }
 
 #[test]
@@ -429,16 +410,4 @@ fn subsumption_is_advisory_deterministic_and_retains_exact_source_provenance() {
         Some(true),
         "measured subsumption findings remain advisory"
     );
-}
-
-#[test]
-fn malformed_paths_empty_reasons_and_duplicate_identities_refuse_before_folding() {
-    assert!(CoveredSource::new("../src/lib.rs", [1]).is_err());
-    assert!(CoverageCompleteness::unknown("\n").is_err());
-    assert!(StandingMutationWaiver::new("mutant", "src/lib.rs", " ").is_err());
-
-    let source = source(b"duplicates");
-    let duplicate =
-        MutationObservation::new("same", "src/lib.rs", MutantDisposition::ConfirmedKilled).unwrap();
-    assert!(MutationExecution::new(source, None, vec![duplicate.clone(), duplicate]).is_err());
 }

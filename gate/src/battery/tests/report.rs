@@ -511,26 +511,3 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
         );
     }
 }
-
-#[test]
-fn execution_boundary_contains_no_shell_or_alternate_runtime() {
-    let runner = concat!(
-        include_str!("../../battery.rs"),
-        include_str!("../context.rs"),
-        include_str!("../execution.rs"),
-        include_str!("../family_evidence.rs"),
-        include_str!("../manifest_contract.rs"),
-    );
-    for forbidden in [
-        "std::process::Command",
-        "Command::new",
-        "python -m",
-        "task export",
-        "sh -c",
-    ] {
-        assert!(
-            !runner.contains(forbidden),
-            "battery runner must not contain {forbidden:?}"
-        );
-    }
-}

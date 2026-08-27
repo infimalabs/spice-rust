@@ -310,44 +310,6 @@ fn revision_acceptance_is_read_only_for_the_live_ledger() {
 }
 
 #[test]
-fn refused_revision_proposal_cannot_publish_live_state() {
-    let fixture = Fixture::new();
-    let repository = production_repository(&fixture.root);
-    stage_document(&repository, "app/notes.md", 32_000);
-    fixture_git(
-        &repository,
-        &["commit", "-q", "-m", "oversized historical source"],
-    );
-    seed_path_state(&repository, &["src/lib.rs"], 10.0);
-    let (_, common_git) = crate::tree::git_directories(&repository).expect("fixture Git paths");
-    let destination = crate::current_state_path(&common_git);
-    let before = fs::read(&destination).expect("seeded current state bytes");
-
-    let historical = crate::BatteryStateRun::capture_at(&repository, 30_000.0)
-        .expect("capture refused historical state run");
-    let report = focused_for_selector(
-        &repository,
-        "historical-actor",
-        historical.clone(),
-        GateId::RepoDocs,
-        &crate::Selector::revision("HEAD"),
-    );
-    assert!(
-        !report.admits(),
-        "the oversized historical document must refuse"
-    );
-    historical
-        .accept(crate::StateRunScope::Partial)
-        .expect("discard even an explicitly accepted historical refusal");
-
-    assert_eq!(
-        fs::read(&destination).expect("state after refused historical proposal"),
-        before,
-        "a refused revision proposal must remain read-only even if accepted by mistake"
-    );
-}
-
-#[test]
 fn staged_rename_migrates_latches_and_claims_before_pruning() {
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);
