@@ -55,7 +55,7 @@ const RETIRED_REPOSITORY_ACTIONS: [&str; 13] = [
     "cargo clippy --locked --workspace --all-targets -- -D warnings",
     "cargo canvas-wasm-typecheck",
     "cargo check --locked --workspace --target wasm32-unknown-unknown",
-    "cargo xtask app (canvas compiler evidence)",
+    "installed Spice dev xtask -- app (canvas compiler evidence)",
     "npm run test:canvas (BROWSER-1kKSWhZk guard)",
     "deterministic sharded cargo test --locked --workspace --all-targets",
     "cargo doc --locked --workspace --lib --bins --no-deps",

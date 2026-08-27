@@ -37,7 +37,7 @@ const teamLaneIds = [
 export const nestedQuotePreview = "The author words belong in the composer band.";
 export const nestedQuoteMessage = [
   "> > The final review found no alternate execution path.", "> >",
-  "> > `cargo xtask verify --package spice` is green.",
+  "> > Installed Spice `dev xtask -- verify --package spice` is green.",
   ">",
   "> Why it matters: nested context remains visible.",
   "",

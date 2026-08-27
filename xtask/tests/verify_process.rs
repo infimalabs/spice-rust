@@ -232,7 +232,8 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains(concat!(
-            "cargo xtask <help|verify --package PACKAGE|",
+            "\"$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir)",
+            "/.spice-install/bin/spice\" dev xtask -- <help|verify --package PACKAGE|",
             "gate [--report] ARM|"
         )),
         "{}",
@@ -261,7 +262,7 @@ fn unknown_gate_arm_points_to_the_canonical_inventory() {
     assert_eq!(output.status.code(), Some(2), "{}", streams(&output));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("run `cargo xtask help` for accepted gate arms"),
+            .contains("run installed Spice `dev xtask -- help` for accepted gate arms"),
         "{}",
         streams(&output)
     );

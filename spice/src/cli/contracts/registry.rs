@@ -184,6 +184,17 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Stream,
         "cargo_isolation::dev_cargo"
     ),
+    row!(
+        ["dev", "xtask"],
+        "dev xtask -- XTASK_ARGS...",
+        Local,
+        None,
+        [],
+        [Daemonless, Toolful],
+        NATIVE_CARGO_TOOL,
+        Stream,
+        "cargo_isolation::dev_xtask"
+    ),
     local_direct!(
         ["dev", "cargo-store"],
         "dev cargo-store [--cleanup]",

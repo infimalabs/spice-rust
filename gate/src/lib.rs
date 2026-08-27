@@ -171,7 +171,7 @@ pub use test_evidence::{
     TestEvidenceReport, TestEvidenceStanding, TestSelectionEdge, TestSelectionReport,
     TestSubsumptionFinding, TestSubsumptionReport,
 };
-/// Retired private `cargo xtask app` argument retained for a named refusal.
+/// Retired private developer-app argument retained for a named refusal.
 pub const VERIFIER_APP_PUBLISH_FLAG: &str = "--spice-verifier-publish-root";
 /// Complete stdout record emitted after Trunk's Cargo process succeeds and
 /// before source validation and atomic app publication finish.

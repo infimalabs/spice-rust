@@ -128,6 +128,7 @@ fn tracked_guidance_routes_only_rust_cargo_through_the_git_common_appliance() {
             "[ -L \"$spice_rs\" ]",
             "[ ! -x \"$spice_rs\" ]",
             "\"$spice_rs\" dev cargo --",
+            "\"$spice_rs\" dev xtask --",
             "hard stop",
             "Do not search `PATH`",
             "shared mutable",
@@ -175,6 +176,20 @@ fn tracked_guidance_routes_only_rust_cargo_through_the_git_common_appliance() {
             }
         }
     }
+}
+
+#[test]
+fn repository_configuration_has_no_pre_isolation_xtask_shortcut() {
+    let configuration = include_str!("../../../.cargo/config.toml");
+    let configuration: toml::Value =
+        toml::from_str(configuration).expect("tracked Cargo configuration parses");
+    assert!(
+        configuration
+            .get("alias")
+            .and_then(toml::Value::as_table)
+            .is_none_or(|aliases| !aliases.contains_key("xtask")),
+        "developer xtasks must enter through exact installed Spice before Cargo",
+    );
 }
 
 #[test]

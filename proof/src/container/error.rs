@@ -153,8 +153,9 @@ impl ContainerError {
             Self::ImageNotResolved { image, observed } => write!(
                 formatter,
                 "proof runtime does not hold proof image {image}. Restore this lane with \
-                 `cargo xtask proof-image load target/proof-image/spice-proof-image.tar`, or \
-                 rebuild that archive with `cargo xtask proof-image build` when it is absent \
+                 the exact Git-common Spice appliance's `dev xtask -- proof-image load \
+                 target/proof-image/spice-proof-image.tar`, or rebuild that archive with \
+                 `dev xtask -- proof-image build` when it is absent \
                  too. A global docker prune takes this image from every lane at once, so \
                  an image that was present a moment ago usually means a prune, not a \
                  missing setup step: {observed}"

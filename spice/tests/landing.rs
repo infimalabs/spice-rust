@@ -59,6 +59,7 @@ const CASES: &[Case] = &[
     case("version", &["version"]),
     case("install", &["install"]),
     case("dev cargo", &["dev", "cargo", "--", "--version"]),
+    case("dev xtask", &["dev", "xtask", "--", "help"]),
     case("dev cargo-store", &["dev", "cargo-store"]),
     case("lock", &["lock"]),
     case(

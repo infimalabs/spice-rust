@@ -1,6 +1,8 @@
 //! Successful and status-preserving manual Cargo process boundaries.
 
+use std::ffi::OsString;
 use std::fs;
+use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::unix::fs::MetadataExt as _;
 
 use super::cargo_isolation_fixture::Fixture;
@@ -82,5 +84,56 @@ fn native_cargo_exit_status_is_preserved() {
         .command(&fixture.first, "exit-23")
         .output()
         .expect("run status fixture");
+    assert_eq!(output.status.code(), Some(23));
+}
+
+#[test]
+fn developer_xtask_expands_arguments_inside_the_private_cargo_home() {
+    let fixture = Fixture::new();
+    let opaque = OsString::from_vec(vec![b'o', 0x80, b'k']);
+    let output = fixture
+        .xtask_command(
+            &fixture.first,
+            [
+                OsString::from("argument with spaces"),
+                OsString::new(),
+                opaque.clone(),
+            ],
+        )
+        .output()
+        .expect("run isolated developer xtask");
+    assert_success(&output);
+    let home = spoken_home(&output);
+    assert_eq!(mode(&home), 0o700);
+    assert!(!home.join("registry").exists());
+    assert!(!home.join("git").exists());
+    let arguments = fs::read(&fixture.arguments).expect("read native Cargo arguments");
+    let arguments = arguments
+        .strip_suffix(&[0])
+        .expect("native Cargo argument record has its terminal delimiter");
+    assert_eq!(
+        arguments.split(|byte| *byte == 0).collect::<Vec<_>>(),
+        [
+            b"run".as_slice(),
+            b"--locked".as_slice(),
+            b"--package".as_slice(),
+            b"xtask".as_slice(),
+            b"--bin".as_slice(),
+            b"xtask".as_slice(),
+            b"--".as_slice(),
+            b"argument with spaces".as_slice(),
+            b"".as_slice(),
+            opaque.as_bytes(),
+        ]
+    );
+}
+
+#[test]
+fn developer_xtask_preserves_the_native_cargo_exit_status() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .xtask_command(&fixture.first, ["exit-23"])
+        .output()
+        .expect("run failing isolated developer xtask");
     assert_eq!(output.status.code(), Some(23));
 }

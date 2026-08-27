@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ pub(super) struct Fixture {
     pub(super) hostile: PathBuf,
     pub(super) hostile_marker: PathBuf,
     pub(super) counter: PathBuf,
+    pub(super) arguments: PathBuf,
 }
 
 impl Fixture {
@@ -38,6 +40,7 @@ impl Fixture {
         let hostile = root.join("hostile-bin");
         let hostile_marker = root.join("hostile-tool-invoked");
         let counter = root.join("seed-count");
+        let arguments = root.join("cargo-arguments");
         let fixture = Self {
             root,
             bootstrap,
@@ -49,6 +52,7 @@ impl Fixture {
             hostile,
             hostile_marker,
             counter,
+            arguments,
         };
         fixture.prepare(&package);
         fixture
@@ -139,6 +143,7 @@ impl Fixture {
                 "[source.vendored-sources]\\ndirectory = \"%s\"\\n' \"$destination\"\n",
                 "  exit 0\n",
                 "fi\n",
+                "printf '%s\\0' \"$@\" > {}\n",
                 "test \"$SPICE_RS_NATIVE_CARGO\" = {}\n",
                 "test \"$SPICE_RS_NATIVE_RUSTC\" = {}\n",
                 "test \"$SPICE_RS_NATIVE_RUSTDOC\" = {}\n",
@@ -152,10 +157,13 @@ impl Fixture {
                 "test ! -e \"$CARGO_HOME/git\"\n",
                 "printf 'private-db\\n' > \"$CARGO_HOME/.global-cache\"\n",
                 "printf '%s\\n' \"$CARGO_HOME\"\n",
-                "if [ \"${{1-}}\" = exit-23 ]; then exit 23; fi\n",
+                "for argument in \"$@\"; do\n",
+                "  if [ \"$argument\" = exit-23 ]; then exit 23; fi\n",
+                "done\n",
             ),
             shell_word(&self.counter),
             shell_word(package),
+            shell_word(&self.arguments),
             shell_word(&canonical_root.join("native-cargo")),
             shell_word(&canonical_root.join("native-rustc")),
             shell_word(&canonical_root.join("native-rustdoc")),
@@ -178,8 +186,22 @@ impl Fixture {
 
     pub(super) fn command(&self, worktree: &Path, argument: &str) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command.args(["dev", "cargo", "--", argument]);
+        self.configure(command, worktree)
+    }
+
+    pub(super) fn xtask_command<I, S>(&self, worktree: &Path, arguments: I) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command.args(["dev", "xtask", "--"]).args(arguments);
+        self.configure(command, worktree)
+    }
+
+    fn configure(&self, mut command: Command, worktree: &Path) -> Command {
         command
-            .args(["dev", "cargo", "--", argument])
             .current_dir(worktree)
             .env(
                 spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,

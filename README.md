@@ -34,14 +34,22 @@ generation without leaving runnable sidecars. The switch gives Rust the bare
 `spice` command and common hooks; predecessor process/state retirement remains a
 separate operator decision.
 
-Build this lane's Canvas app, then start Spice with:
+After the initial installation, bind the exact Git-common appliance once for
+all developer task commands. A missing, symbolic, non-file, or non-executable
+asset is a hard stop:
 
 ```sh
-cargo xtask app
-"$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice" up
+git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
+spice_rs="${git_common}/.spice-install/bin/spice"
+if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
+  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
+  exit 1
+fi
+"$spice_rs" dev xtask -- app
+"$spice_rs" up
 ```
 
-That command starts this exact executable, detached in its own process group.
+The `up` command starts this exact executable, detached in its own process group.
 It returns an endpoint-and-epoch reply after owner-only discovery and an
 authenticated `/bootstrap` agree on the resident generation. `--json` uses the
 typed envelope; `--open` opens the browser.
@@ -57,7 +65,7 @@ resident after withdrawing discovery and releasing its lock. Startup failures
 return directly; a second `up` names the unchanged holder.
 
 The resident serves the immutable HTML, JavaScript, CSS, and WASM generation
-that `cargo xtask app` publishes under ignored `dist/stage-app`; it refuses an
+that `"$spice_rs" dev xtask -- app` publishes under ignored `dist/stage-app`; it refuses an
 incomplete generation. `127.0.0.1:8767` is the no-fallback default. `--host` and
 `--port` override it, while `--port 0` takes a free port.
 
@@ -83,9 +91,9 @@ runs the ordinary staged selector: recognized paths execute only their affected
 Cargo targets and local policy arms. A selector/toolchain authority path, an
 unclassified path, or a Rust/manifest path outside the workspace refuses with
 that path before policy or tests run. There is no exhaustive fallback in the
-ordinary hook or allocator-owned merge resolution. Bare `cargo xtask verify`
-is retired and refuses before starting work; use staged selection or
-`cargo xtask verify --package PACKAGE` for bounded feedback.
+ordinary hook or allocator-owned merge resolution. Bare repository-wide
+verification is retired and refuses before starting work; use staged selection
+or `"$spice_rs" dev xtask -- verify --package PACKAGE` for bounded feedback.
 
 Legacy verifier bundles already stored by earlier releases remain exact to
 their producing worktree and selected-source identity. Only an open two-parent
@@ -103,16 +111,17 @@ current-branch update that would abandon commits already merged upstream.
 Run package-local Clippy, tests, and doctests while work is moving with:
 
 ```sh
-cargo xtask verify --package gate
+"$spice_rs" dev xtask -- verify --package gate
 ```
 
-Bare `cargo xtask verify` deliberately refuses before launching any compiler or
+The unscoped verifier deliberately refuses before launching any compiler or
 test process. Repository-wide verification is not a task-completion contract.
 When a changed public seam crosses packages, name each affected package or run
 the exact downstream target that exercises it.
 
-`cargo run --quiet --locked --package spice --bin spice -- gate selection` is
-the source-development delegate for the ordinary staged-change gate. It builds
+`"$spice_rs" dev cargo -- run --quiet --locked --package spice --bin spice --
+gate selection` is the source-development delegate for the ordinary
+staged-change gate. It builds
 and invokes one public Spice command, captures the index once, maps every changed
 path to canonical Cargo test targets and focused policy arms, and retains the
 path-to-check evidence in one typed report. Known backend, frontend,
@@ -138,9 +147,9 @@ to installed Spice; the authored source-development command above reaches
 The scoped package command identifies every repository-wide action and compiled
 gate arm it intentionally skips. Its three Cargo children run serially with a
 single build job so the feedback loop does not amplify peer compilation pressure.
-Formatting remains a workspace check; run
-`cargo fmt --all -- --check` at the package checkpoint. File unexpected failures
-outside the changed slice as separate work instead of widening the current run.
+Formatting remains a workspace check; run `"$spice_rs" dev cargo -- fmt --all
+-- --check` at the package checkpoint. File unexpected failures outside the
+changed slice as separate work instead of widening the current run.
 
 [DEVELOPMENT.md](DEVELOPMENT.md) maps the crate ownership seams, generated
 surfaces, complete test portfolio, validation tiers, measured concurrency
@@ -157,7 +166,7 @@ machine cache shaped as `CargoBuild/<bucket>/<workspace-hash>`. Inventory it
 without writes with:
 
 ```sh
-cargo xtask build-cache --dry-run --max-bytes 40GiB --retain-live-worktrees 2
+"$spice_rs" dev xtask -- build-cache --dry-run --max-bytes 40GiB --retain-live-worktrees 2
 ```
 
 Apply the same deterministic oldest-first plan with `--apply`, or drive by

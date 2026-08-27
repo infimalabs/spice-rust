@@ -58,7 +58,7 @@ Caller: Release operator, formerly documented by
 
 Disposition: Ported to Rust and deleted.
 
-Reason: `cargo xtask proof-image build` now assembles the context, invokes
+Reason: installed Spice `dev xtask -- proof-image build` now assembles the context, invokes
 Docker, admits `identity.txt`, exercises the image, and writes the archive
 sidecars.
 
@@ -68,7 +68,7 @@ Caller: Release operator and proof recovery diagnostics.
 
 Disposition: Ported to Rust and deleted.
 
-Reason: `cargo xtask proof-image load ARCHIVE` now verifies the archive
+Reason: installed Spice `dev xtask -- proof-image load ARCHIVE` now verifies the archive
 checksum and identity before loading and reinspecting it.
 
 ## `scripts/install-hooks.sh`

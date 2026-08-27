@@ -28,7 +28,7 @@ benchmarks from a different application.
 
 - Rust/WASM is available now with the current controls, reconnect behavior,
   composition queues, speech, mosaic layout, and browser coverage. A warm
-  `cargo xtask app` publication observed during the recovery took about 11
+  installed Spice `dev xtask -- app` publication observed during the recovery took about 11
   seconds.
 - A small TypeScript read-only shell would be quick, but it would not be the
   current Canvas. Useful parity requires rebuilding admission, reconnection,
@@ -97,7 +97,7 @@ The decision binds current work to these rules:
    or per-fact request fanout.
 4. Exactly one production client is published in a generation. Tests may
    compare candidates; the resident does not serve two product clients.
-5. `cargo xtask app` remains the atomic publication door, and the existing
+5. Installed Spice `dev xtask -- app` remains the atomic publication door, and the existing
    real-browser verifier remains the final production-edge proof.
 
 ## Conditional TypeScript migration
@@ -116,7 +116,7 @@ with the bounded Rust client.
    Port the smallest complete vertical slice—discovery, authentication,
    subscription, one read pane, one command, reconnect, and terminal frames—so
    the comparison exercises the whole boundary rather than a static mockup.
-4. Keep the existing `cargo xtask app` action, compiler-ready receipt, selected
+4. Keep the existing installed-Spice `dev xtask -- app` action, compiler-ready receipt, selected
    source identity, immutable generation directory, and browser action. Replace
    the compiler invoked inside that publication action and update its output
    validation; do not create a second verifier or a second publication path.

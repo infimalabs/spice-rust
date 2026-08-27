@@ -22,7 +22,7 @@
 /// boundary 5/5 times.
 ///
 /// Historical signature, verbatim: seen once in four full canvas runs on
-/// 2026-08-06 inside cargo xtask verify at load average 17.55, and not
+/// 2026-08-06 inside the developer xtask verifier at load average 17.55, and not
 /// reproduced in three further runs including one at load average 21-28.
 ///
 /// Usage: node app/browser/lineage-cycle.mjs [cycles] [frame-delay-ms]

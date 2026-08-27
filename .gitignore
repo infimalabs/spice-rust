@@ -4,12 +4,12 @@
 /test-results/
 /mutants.out/
 # Generated release payloads are content-addressed and reconstructed by
-# `cargo xtask stage-target`; they are not task-source work.
+# the installed Spice `dev xtask -- stage-target`; they are not task-source work.
 /dist/stage/objects/
 /dist/stage/targets/
 
 # The sole browser app generation store. Each lane publishes it with
-# `cargo xtask app`; no resident falls back when its current generation is absent.
+# installed Spice `dev xtask -- app`; no resident falls back when its current generation is absent.
 /dist/stage-app/
 
 # Snapshots, console logs and screenshots the Playwright MCP browser writes

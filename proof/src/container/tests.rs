@@ -428,9 +428,9 @@ exit 0
 
         let refusal = error.to_string();
         for named in [
-            "cargo xtask proof-image load",
+            "dev xtask -- proof-image load",
             "target/proof-image/spice-proof-image.tar",
-            "cargo xtask proof-image build",
+            "dev xtask -- proof-image build",
             "prune",
         ] {
             assert!(

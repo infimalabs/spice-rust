@@ -526,7 +526,7 @@ impl fmt::Display for AppSourceError {
                 directory, missing, ..
             } => write!(
                 formatter,
-                "the lane app stage {} is missing {}; build it with cargo xtask app",
+                "the lane app stage {} is missing {}; build it with the exact Git-common Spice appliance: dev xtask -- app",
                 directory.display(),
                 missing.join(", ")
             ),
@@ -746,7 +746,7 @@ mod tests {
 
         let message = error.to_string();
         assert!(message.contains(APP_STAGE));
-        assert!(message.contains("cargo xtask app"));
+        assert!(message.contains("dev xtask -- app"));
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
@@ -845,7 +845,7 @@ mod tests {
             "the refusal does not name what is missing: {message}"
         );
         assert!(
-            message.contains("cargo xtask app"),
+            message.contains("dev xtask -- app"),
             "the refusal does not say how to build the stage: {message}"
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
