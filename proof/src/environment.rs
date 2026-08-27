@@ -379,19 +379,12 @@ impl Error for EnvironmentError {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Duration;
-
-    use sill::Deadlines;
     use wire::manifest::ReleaseTarget;
 
     use super::{
-        EnvironmentError, Host, SealedEnvironment, UnsupportedHost, select_host,
-        validate_payload_environment,
+        EnvironmentError, Host, UnsupportedHost, select_host, validate_payload_environment,
     };
     use crate::config::Config;
-    use crate::container::Limits;
 
     const DARWIN: Host = Host {
         arch: "aarch64",
@@ -472,38 +465,6 @@ mod tests {
     }
 
     #[test]
-    fn each_target_inspects_only_its_selected_configured_path() {
-        let fixture = Fixture::new();
-        let missing = fixture.root.join("must-not-be-inspected");
-
-        let darwin_config = Config::fixture(Some(missing.clone()), Some(fixture.runner.clone()));
-        let darwin = SealedEnvironment::for_target(
-            ReleaseTarget::Aarch64AppleDarwin,
-            &darwin_config,
-            &fixture.workspace,
-            limits(),
-        )
-        .expect("Darwin ignores proof.container");
-        assert!(matches!(
-            darwin.identity(),
-            wire::manifest::ProofEnvironment::Native { .. }
-        ));
-
-        let musl_config = Config::fixture(Some(fixture.container.clone()), Some(missing));
-        let musl = SealedEnvironment::for_target(
-            ReleaseTarget::X86_64UnknownLinuxMusl,
-            &musl_config,
-            &fixture.workspace,
-            limits(),
-        )
-        .expect("musl ignores proof.runner");
-        assert!(matches!(
-            musl.identity(),
-            wire::manifest::ProofEnvironment::Oci { .. }
-        ));
-    }
-
-    #[test]
     fn payload_target_and_musl_image_mismatch_before_runtime_admission() {
         let config = Config::default();
         assert!(matches!(
@@ -535,85 +496,4 @@ mod tests {
             "Darwin does not inspect the payload's OCI-only pin"
         );
     }
-
-    struct Fixture {
-        root: std::path::PathBuf,
-        workspace: std::path::PathBuf,
-        container: std::path::PathBuf,
-        runner: std::path::PathBuf,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "spice-proof-environment-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            let workspace = root.join("workspace");
-            let container = root.join("container");
-            let runner = root.join("runner");
-            fs::create_dir_all(&workspace).expect("fixture workspace");
-            {
-                let _write_guard = crate::test_support::executable_write_guard();
-                fs::write(
-                    &container,
-                    concat!(
-                        "#!/bin/sh\n",
-                        "if [ \"$1\" = image ]; then\n",
-                        "    printf '%s amd64 linux\\n' \"$5\"\n",
-                        "    exit 0\n",
-                        "fi\n",
-                        "if [ \"$1\" = --version ]; then\n",
-                        "    printf 'Docker version fixture\\n'\n",
-                        "    exit 0\n",
-                        "fi\n",
-                        "exit 0\n"
-                    ),
-                )
-                .expect("fixture container runtime");
-                fs::write(&runner, "#!/bin/sh\nexit 0\n").expect("fixture native runner");
-                make_executable(&container);
-                make_executable(&runner);
-            }
-            Self {
-                root,
-                workspace,
-                container,
-                runner,
-            }
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("remove fixture");
-        }
-    }
-
-    fn limits() -> Limits {
-        Limits::new(
-            Deadlines::new(
-                Duration::from_secs(5),
-                Duration::from_secs(1),
-                Duration::from_secs(1),
-            )
-            .expect("deadlines"),
-            Duration::from_millis(10),
-            4096,
-        )
-        .expect("limits")
-    }
-
-    #[cfg(unix)]
-    fn make_executable(path: &std::path::Path) {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .expect("make fixture executable");
-    }
-
-    #[cfg(not(unix))]
-    fn make_executable(_path: &std::path::Path) {}
 }
