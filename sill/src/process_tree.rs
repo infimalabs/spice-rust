@@ -1,4 +1,4 @@
-//! Process-tree cleanup for verifier actions whose descendants create new groups.
+//! Identity-safe cleanup for owned descendants that create new process groups.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -40,15 +40,18 @@ fn process_identity(process: &Process) -> Option<ProcessIdentity> {
     })
 }
 
+/// A captured process tree whose non-root process groups remain bound to native
+/// process generations even after their original parent exits.
 #[derive(Debug)]
-pub(super) struct DescendantGroups {
+pub struct DescendantGroups {
     root: u32,
     groups: BTreeSet<u32>,
     members: BTreeSet<ProcessIdentity>,
 }
 
 impl DescendantGroups {
-    pub(super) fn discover(root: u32) -> io::Result<Self> {
+    /// Capture the process rooted at `root` and every descendant visible now.
+    pub fn discover(root: u32) -> io::Result<Self> {
         let processes = process_snapshot()?;
         Self::from_snapshot(root, &processes)
     }
@@ -71,11 +74,15 @@ impl DescendantGroups {
         Ok(descendants)
     }
 
-    pub(super) fn terminate(&mut self) -> io::Result<()> {
+    /// Send `SIGTERM` to every currently owned non-root process group.
+    pub fn terminate(&mut self) -> io::Result<()> {
         self.signal(libc::SIGTERM)
     }
 
-    pub(super) fn reap_while_root_terminates(
+    /// Reconcile groups created during shutdown, escalate live groups to
+    /// `SIGKILL` after `grace`, and require both the root and captured tree to
+    /// remain terminal inside the declared bounds.
+    pub fn reap_while_root_terminates(
         &mut self,
         grace: Duration,
         reap: Duration,

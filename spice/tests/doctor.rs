@@ -316,33 +316,34 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
     // accounts the ones its fixtures, Git shadow, and predecessor development
     // bridge use. The gate's name ledger is pinned separately in
     // wire/tests/environment_vocabulary.rs.
-    const UNOWNED: [&str; 26] = [
-        "GIT_CONFIG_COUNT",                     // env-policy: allow
-        "GIT_CONFIG_SYSTEM",                    // env-policy: allow
-        "GIT_DIR",                              // env-policy: allow
-        "GIT_EDITOR",                           // env-policy: allow
-        "GIT_INDEX_FILE",                       // env-policy: allow
-        "GIT_WORK_TREE",                        // env-policy: allow
-        "SPICE_CANVAS_BINARY",                  // env-policy: allow
-        "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",  // env-policy: allow
-        "SPICE_FIXTURE_RERUN",                  // env-policy: allow
-        "SPICE_HOOKS",                          // env-policy: allow
-        "SPICE_HOOK_ARGV_LOG",                  // env-policy: allow
-        "SPICE_HOOK_EXIT_CODE",                 // env-policy: allow
-        "SPICE_HOOK_STDIN_LOG",                 // env-policy: allow
-        "SPICE_INBOX",                          // env-policy: allow
-        "SPICE_LANE",                           // env-policy: allow
-        "SPICE_MOUNTED_COMMAND",                // env-policy: allow
-        "SPICE_NATIVE_SHELL",                   // env-policy: allow
-        "SPICE_PROOF",                          // env-policy: allow
-        "SPICE_RUNTIME_PYTHON",                 // env-policy: allow
-        "SPICE_SELFEXEC_ROOT",                  // env-policy: allow
-        "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE", // env-policy: allow
-        "SPICE_STAGED_PATHS",                   // env-policy: allow
-        "SPICE_VISIBLE_PROG",                   // env-policy: allow
-        "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",  // env-policy: allow
-        "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",   // env-policy: allow
-        "TMPDIR",                               // env-policy: allow
+    const UNOWNED: [&str; 27] = [
+        "GIT_CONFIG_COUNT",                             // env-policy: allow
+        "GIT_CONFIG_SYSTEM",                            // env-policy: allow
+        "GIT_DIR",                                      // env-policy: allow
+        "GIT_EDITOR",                                   // env-policy: allow
+        "GIT_INDEX_FILE",                               // env-policy: allow
+        "GIT_WORK_TREE",                                // env-policy: allow
+        "SPICE_CANVAS_BINARY",                          // env-policy: allow
+        "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",          // env-policy: allow
+        "SPICE_FIXTURE_RERUN",                          // env-policy: allow
+        "SPICE_HOOKS",                                  // env-policy: allow
+        "SPICE_HOOK_ARGV_LOG",                          // env-policy: allow
+        "SPICE_HOOK_EXIT_CODE",                         // env-policy: allow
+        "SPICE_HOOK_STDIN_LOG",                         // env-policy: allow
+        "SPICE_INBOX",                                  // env-policy: allow
+        "SPICE_LANE",                                   // env-policy: allow
+        "SPICE_MOUNTED_COMMAND",                        // env-policy: allow
+        "SPICE_NATIVE_SHELL",                           // env-policy: allow
+        "SPICE_PROOF",                                  // env-policy: allow
+        "SPICE_RUNTIME_PYTHON",                         // env-policy: allow
+        "SPICE_SELFEXEC_ROOT",                          // env-policy: allow
+        "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE",         // env-policy: allow
+        "SPICE_STAGED_PATHS",                           // env-policy: allow
+        "SPICE_VISIBLE_PROG",                           // env-policy: allow
+        "SPICE_WORKSPACE_TEST_DESCENDANT_FIXTURE_ROOT", // env-policy: allow
+        "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",          // env-policy: allow
+        "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",           // env-policy: allow
+        "TMPDIR",                                       // env-policy: allow
     ];
     assert!(
         UNOWNED.windows(2).all(|pair| pair[0] < pair[1]),

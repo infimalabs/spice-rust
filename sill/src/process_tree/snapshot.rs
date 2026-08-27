@@ -17,7 +17,7 @@ pub(super) fn process_snapshot() -> io::Result<Vec<Process>> {
         .output()?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
-            "ps exited {:?} while discovering verifier descendants",
+            "ps exited {:?} while discovering supervised descendants",
             output.status.code()
         )));
     }

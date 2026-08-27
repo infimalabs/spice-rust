@@ -6,6 +6,8 @@ compile_error!("sill supports the Linux and macOS release targets plus wasm cont
 pub mod config;
 mod lock;
 mod observe;
+#[cfg(unix)]
+mod process_tree;
 mod protected;
 mod spawn;
 mod spec;
@@ -19,6 +21,8 @@ pub use observe::{
     Observation, ObservationFailure, ObservationSpecError, ObserveError, ObservedRecord,
     OutputStream, RecordBoundary, RecordObserver,
 };
+#[cfg(unix)]
+pub use process_tree::DescendantGroups;
 pub use spawn::{
     CapturedOutput, Completion, ProcessUsage, Running, WaitError, WaitOutcome, WaitStep, spawn,
     spawn_observed,
