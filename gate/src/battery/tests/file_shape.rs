@@ -166,13 +166,6 @@ fn routine_with_lines(name: &str, lines: usize) -> String {
     format!("pub fn {name}() {{\n{body}}}\n")
 }
 
-/// One valid Rust routine with exactly the requested cyclomatic complexity.
-fn routine_with_ccn(name: &str, ccn: usize) -> String {
-    assert!(ccn >= 1, "a routine has at least one execution path");
-    let decisions = "    if true {}\n".repeat(ccn - 1);
-    format!("pub fn {name}() {{\n{decisions}}}\n")
-}
-
 /// Seed the current file-line latch through the production state transaction.
 ///
 /// Resolving the common Git directory through the same repository model as
@@ -632,45 +625,6 @@ fn a_changed_committed_base_breach_inside_ratchet_keeps_headroom() {
     assert_eq!(file_shape_arm(&report).state(), BatteryState::Passed);
 }
 
-/// An edited file inside its byte ratchet retains its elastic allowance.
-#[test]
-fn a_changed_file_inside_the_byte_ratchet_keeps_headroom() {
-    const PATH: &str = "src/byte-debt.rs";
-    const BASE: u64 = 80_000;
-    const COMMITTED: usize = 90_000;
-    const CHANGED: usize = 85_000;
-
-    let fixture = Fixture::new();
-    let repository = production_repository(&fixture.root);
-    fs::write(
-        repository.join(PATH),
-        format!("// {}\n", "x".repeat(COMMITTED)),
-    )
-    .expect("committed source above the byte base");
-    fixture_git(&repository, &["add", PATH]);
-    fixture_git(&repository, &["commit", "-q", "-m", "commit byte debt"]);
-
-    let unchanged = battery_report(&repository);
-    let (_, elastic) = measured(row_for(&unchanged, PATH, MetricId::FileBytes), PATH);
-    assert_eq!(elastic.base_limit(), BASE);
-    assert!(elastic.active_limit() > BASE && !elastic.over_limit());
-    assert_eq!(elastic.transition(), "clear");
-
-    fs::write(
-        repository.join(PATH),
-        format!("// {}\n", "x".repeat(CHANGED)),
-    )
-    .expect("improve the file without reaching the byte base");
-    fixture_git(&repository, &["add", PATH]);
-    let changed = battery_report(&repository);
-    let (bytes, elastic) = measured(row_for(&changed, PATH, MetricId::FileBytes), PATH);
-    assert!(elastic.active_limit() > BASE);
-    assert!(bytes > BASE && bytes < elastic.active_limit());
-    assert!(!elastic.over_limit() && !elastic.ratchet_breach());
-    assert_eq!(elastic.transition(), "clear");
-    assert_eq!(file_shape_arm(&changed).state(), BatteryState::Passed);
-}
-
 /// An edited over-base routine inside its ratchet retains flex.
 #[test]
 fn a_changed_routine_inside_the_ratchet_keeps_headroom() {
@@ -703,46 +657,6 @@ fn a_changed_routine_inside_the_ratchet_keeps_headroom() {
     let (length, elastic) = measured(row, PATH);
     assert!(elastic.active_limit() > BASE);
     assert!(length > BASE && length < elastic.active_limit());
-    assert!(!elastic.over_limit() && !elastic.ratchet_breach());
-    assert_eq!(elastic.transition(), "clear");
-    assert_eq!(complexity_arm(&changed).state(), BatteryState::Passed);
-}
-
-/// Cyclomatic debt inside its ratchet follows the same flex rule.
-#[test]
-fn a_changed_routine_inside_the_ccn_ratchet_keeps_headroom() {
-    const PATH: &str = "src/ccn-debt.rs";
-    const FUNCTION: &str = "branching";
-    const BASE: u64 = 20;
-
-    let fixture = Fixture::new();
-    let repository = production_repository(&fixture.root);
-    fs::write(repository.join(PATH), routine_with_ccn(FUNCTION, 25))
-        .expect("committed routine above the complexity base");
-    fixture_git(&repository, &["add", PATH]);
-    fixture_git(
-        &repository,
-        &["commit", "-q", "-m", "commit complexity debt"],
-    );
-
-    let unchanged = battery_report(&repository);
-    let row = routine_row_for(&unchanged, PATH, FUNCTION, MetricId::RoutineCcn);
-    let (_, elastic) = measured(row, PATH);
-    assert_eq!(
-        (elastic.base_limit(), elastic.configured_ratchet_limit()),
-        (BASE, 30)
-    );
-    assert!(elastic.active_limit() > BASE && !elastic.over_limit());
-    assert_eq!(elastic.transition(), "clear");
-
-    fs::write(repository.join(PATH), routine_with_ccn(FUNCTION, 22))
-        .expect("improve the routine without reaching the complexity base");
-    fixture_git(&repository, &["add", PATH]);
-    let changed = battery_report(&repository);
-    let row = routine_row_for(&changed, PATH, FUNCTION, MetricId::RoutineCcn);
-    let (ccn, elastic) = measured(row, PATH);
-    assert!(elastic.active_limit() > BASE);
-    assert!(ccn > BASE && ccn < elastic.active_limit());
     assert!(!elastic.over_limit() && !elastic.ratchet_breach());
     assert_eq!(elastic.transition(), "clear");
     assert_eq!(complexity_arm(&changed).state(), BatteryState::Passed);

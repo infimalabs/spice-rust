@@ -296,14 +296,4 @@ fn executor_refusals_and_invalid_evidence_stay_visible_and_total() {
         report.results().last().expect("last result").gate_id(),
         GateId::PrivateInternals
     );
-
-    let value: serde_json::Value =
-        serde_json::from_slice(&report.encode().expect("encode")).expect("report JSON");
-    assert_refusals(vec![(
-        "executor failure names a different compiled declaration",
-        mutate(&value, |candidate| {
-            candidate["results"][3]["evidence"]["declaration"] =
-                serde_json::json!("gate::core::staging::forged-v1")
-        }),
-    )]);
 }

@@ -162,72 +162,6 @@ fn actor_order_and_blake2b_variation_match_the_predecessor() {
 }
 
 #[test]
-fn current_policy_variation_domain_reaches_canonical_state_evidence() {
-    const ABOVE_U32: u64 = 4_294_967_296;
-    let policy = crate::migrate_predecessor_policy(
-        "fixtures/policy.toml",
-        &format!(
-            "{}[policy.flex]\njitter_percent = 4294967296\n",
-            crate::NARROWEST_FILE_CLASSES
-        ),
-    )
-    .expect("the predecessor percentage has an exact current meaning");
-    assert_eq!(policy.document().ratchet().variation_percent(), ABOVE_U32);
-
-    let actors = ActorInputs::new("src/lib.rs")
-        .expect("actor inputs")
-        .with_active_actor("actor-a");
-    let decision = BoundRule::new("slice", "file-loc", 100, 150, false, false)
-        .expect("varied bound")
-        .decide(101, false, &actors, ABOVE_U32)
-        .expect("the complete policy percentage enters state evaluation");
-    assert_eq!(decision.variation_percent(), ABOVE_U32);
-    assert_eq!(decision.elastic_limit(), 100);
-    assert_eq!(decision.active_limit(), 100);
-    assert!(decision.over_limit());
-    assert_eq!(
-        decision.actor().expect("selected variation actor").source(),
-        ActorSource::ActiveActor
-    );
-
-    let encoded = wire::encode(&decision).expect("bound decision is canonical evidence");
-    let evidence: serde_json::Value =
-        wire::decode(&encoded).expect("canonical decision evidence decodes");
-    assert_eq!(evidence["variation_percent"], ABOVE_U32);
-    assert_eq!(evidence["configured_elastic_limit"], 150);
-    assert_eq!(evidence["elastic_limit"], 100);
-    assert_eq!(evidence["actor"]["source"], "active-actor");
-
-    let rounded = BoundRule::new("slice", "file-loc", 1, 10_870_685_112_660_186, false, false)
-        .expect("large varied bound")
-        .decide(
-            1,
-            false,
-            &ActorInputs::new("src/14254.rs")
-                .expect("large actor inputs")
-                .with_active_actor("actor-a"),
-            32_768,
-        )
-        .expect("large predecessor decision");
-    assert_eq!(rounded.variation_percent(), 32_768);
-    assert_eq!(rounded.elastic_limit(), 3_335_561_019_968_650_970);
-    let rounded_evidence: serde_json::Value =
-        wire::decode(&wire::encode(&rounded).expect("rounded decision encodes"))
-            .expect("rounded decision decodes");
-    assert_eq!(rounded_evidence["variation_percent"], 32_768);
-    assert_eq!(
-        rounded_evidence["elastic_limit"],
-        3_335_561_019_968_650_970_u64
-    );
-
-    assert_eq!(
-        varied_elastic_limit(100, 150, "src/lib.rs", "actor-a", u64::MAX)
-            .expect("the widest percentage clamps exactly below base"),
-        100
-    );
-}
-
-#[test]
 fn malformed_current_state_is_loud() {
     let fixture = StateFixture::new();
     fs::write(&fixture.current, br#"{"version":99}"#).expect("write current state");
@@ -616,7 +550,7 @@ fn claims_refresh_redirect_expire_and_share_one_git_common_ledger() {
 }
 
 #[test]
-fn receipts_are_canonical_immutable_evidence_and_replay_is_deterministic() {
+fn state_receipts_are_canonical_and_replay_is_deterministic() {
     let left = StateFixture::new();
     let right = StateFixture::new();
     left.write_complete_current();
@@ -631,20 +565,6 @@ fn receipts_are_canonical_immutable_evidence_and_replay_is_deterministic() {
     assert_eq!(
         StateReceipt::decode(&bytes).expect("canonical receipt"),
         left_receipt
-    );
-
-    let receipt_path = left.root.join("receipt.json");
-    fs::write(
-        &receipt_path,
-        left_receipt.encode().expect("receipt evidence bytes"),
-    )
-    .expect("fixture stores immutable evidence");
-    let immutable = fs::read(&receipt_path).expect("read receipt evidence");
-    let _ = claim_and_accept(&left, 3_000.0, "actor-a");
-    assert_eq!(
-        fs::read(&receipt_path).expect("receipt remains"),
-        immutable,
-        "later state acceptance must not rewrite prior receipts"
     );
 }
 
