@@ -252,6 +252,7 @@ export async function configureFixture(
     'version = "0.0.0"',
     "",
   ].join("\n"));
+  await cp(join(root, "rust-toolchain.toml"), join(fixture, "rust-toolchain.toml"));
   await mkdir(join(fixture, "dist"), { recursive: true });
   await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
@@ -316,7 +317,15 @@ export async function configureFixture(
   );
   await execute(
     "git",
-    ["add", ".gitignore", "Cargo.lock", "Cargo.toml", "fake-claude", "spice-rust.toml"],
+    [
+      "add",
+      ".gitignore",
+      "Cargo.lock",
+      "Cargo.toml",
+      "fake-claude",
+      "rust-toolchain.toml",
+      "spice-rust.toml",
+    ],
     { cwd: fixture },
   );
   await execute("git", [
