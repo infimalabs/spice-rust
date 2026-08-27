@@ -30,8 +30,8 @@ async function installedSpice() {
 
 export async function buildResident({ app = true } = {}) {
   try {
+    const installed = !prebuiltBinary || app ? await installedSpice() : undefined;
     if (!prebuiltBinary) {
-      const installed = await installedSpice();
       await execute(installed, [
         "dev", "cargo", "--", "build", "--locked", "-p", "spice", "--bin", "spice",
       ], {
@@ -40,7 +40,7 @@ export async function buildResident({ app = true } = {}) {
       });
     }
     if (app) {
-      await execute(binary, ["dev", "xtask", "--", "app"], {
+      await execute(installed, ["dev", "xtask", "--", "app"], {
         cwd: root,
         maxBuffer: 32 * 1024 * 1024,
       });
