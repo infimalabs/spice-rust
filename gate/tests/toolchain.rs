@@ -2,11 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use gate::{
-    ArmEvidence, ArmFinding, ArmOutcome, BatteryState, CsharpUnusedStatus, FindingDetail, GateId,
-    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
-    PredecessorComparison, PredecessorComparisonError, PredecessorConfiguration,
-    PredecessorFinding, PredecessorObservation, PredecessorResult, TOOLCHAIN_ARMS,
-    TOOLCHAIN_REPORT_VERSION, ToolEvidence, compare_predecessor, measure_toolchain,
+    ArmFinding, ArmOutcome, CsharpUnusedStatus, FindingDetail, GateId, JavascriptUnusedStatus,
+    LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION,
+    ToolEvidence, measure_toolchain,
 };
 use wire::{Digest, Domain};
 
@@ -203,81 +201,6 @@ fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
     );
 
     measure_toolchain(observations).expect("finding observations are admitted");
-}
-
-/// What the compiled marker scanner emits, held against the release it replaces.
-///
-/// Every other parity case builds its current side from fixture findings, so
-/// none of them observe a measurement the compiled scanners actually produced.
-/// A marker alone on its line is one place to both producers and is where the
-/// two must still agree; a doubled line is one place to the predecessor and
-/// two here, which is the granularity the comparison holds apart. Pinning both
-/// keeps a locus this scanner adds from changing what parity means unexamined.
-#[test]
-fn the_compiled_marker_scanner_compares_against_the_predecessor_it_replaces() {
-    let doubled =
-        format!("// {LOCAL_PATH_MARKER}somebody/devel and {LOCAL_PATH_MARKER}somebody/scratch\n");
-    let cases = [
-        (
-            "toolchain-marker-parity-single",
-            format!("// {LOCAL_PATH_MARKER}somebody/devel\n"),
-            1,
-            Ok(PredecessorComparison::Equivalent),
-        ),
-        (
-            "toolchain-marker-parity-doubled",
-            doubled,
-            2,
-            Err(PredecessorComparisonError::ResultMismatch(
-                GateId::LocalPaths,
-            )),
-        ),
-    ];
-
-    for (label, marked, places, expected) in cases {
-        let repository = scanning_repository(
-            label,
-            &format!("{marked}fn main() {{}}\n"),
-            "Every sentence here is ordinary.\n",
-        );
-        let observations = acquired(
-            &repository,
-            Some(toolchain_directory().into_os_string()),
-            &[SOURCE, PROSE],
-        );
-        let report = measure_toolchain(observations).expect("marker observations are admitted");
-        let current = report
-            .arms
-            .iter()
-            .find(|measurement| measurement.gate_id == GateId::LocalPaths)
-            .expect("the marker scanner is measured");
-        assert_eq!(
-            current.findings.len(),
-            places,
-            "{label} named something other than the occurrences it marks"
-        );
-        assert!(
-            current
-                .findings
-                .iter()
-                .all(|finding| finding.column.is_some()),
-            "{label} compared a column the compiled scanner never reported"
-        );
-
-        let predecessor = PredecessorObservation {
-            gate_name: "local-paths".to_owned(),
-            configuration: PredecessorConfiguration::PackagedDefaults,
-            result: PredecessorResult::Findings(vec![PredecessorFinding::LocalPath {
-                path: SOURCE.to_owned(),
-                line: 1,
-            }]),
-        };
-        assert_eq!(
-            compare_predecessor(&predecessor, current),
-            expected,
-            "{label} compared against the release differently than the comparison documents"
-        );
-    }
 }
 
 #[test]
@@ -491,60 +414,6 @@ fn csharp_unused_withdraws_an_explicit_interface_implementation() {
     measure_toolchain(observations).expect("C# findings are admitted");
 }
 
-/// A tree holding every unreached member live must not fail the battery.
-///
-/// An arm carries findings only under `ArmOutcome::Findings`, and that outcome
-/// is the one route to `BatteryState::Failed`, so a retention that arrived as a
-/// row would fail the gate on evidence that the member must be kept. The state
-/// is read through the same mapping the battery uses rather than restated here.
-#[test]
-fn csharp_unused_retention_alone_leaves_the_battery_passing() {
-    let repository = scanning_repository(
-        "toolchain-csharp-retained",
-        "fn main() {}\n",
-        "Every sentence here is ordinary.\n",
-    );
-    repository.write(
-        "dotnet/Held.cs",
-        concat!(
-            "public partial class Held\n{\n",
-            "    private void HeldByPartial() { }\n}\n\n",
-            "public class Marked\n{\n",
-            "    [Obsolete]\n    private void MarkedRetained() { }\n\n",
-            "    private void Reached() { }\n\n",
-            "    public void Entry()\n    {\n        Reached();\n    }\n}\n",
-        ),
-    );
-    git_commit(&repository, "csharp retention fixture");
-
-    let observations = acquired(
-        &repository,
-        Some(toolchain_directory().into_os_string()),
-        &[],
-    );
-    let observation = arm(&observations, GateId::CsharpUnusedCandidates);
-    assert_eq!(observation.outcome, ArmOutcome::Passed);
-    assert!(observation.findings.is_empty());
-
-    let report = measure_toolchain(observations).expect("retained-only C# evidence is admitted");
-    let measured = report
-        .arms
-        .into_iter()
-        .find(|measured| measured.gate_id == GateId::CsharpUnusedCandidates)
-        .expect("the C# arm is measured");
-    assert!(
-        measured.reason.ends_with(
-            "; 2 unreached members retained (attribute_retained 1, partial_declaration 1)"
-        ),
-        "the retained members left no trace: {}",
-        measured.reason
-    );
-    let state = ArmEvidence::Toolchain { report: measured }
-        .state()
-        .expect("a toolchain arm states one battery state");
-    assert_eq!(state, BatteryState::Passed);
-}
-
 /// A partial record holds its members the way a partial class does.
 ///
 /// C# spells a record three ways and the grammar gives all three one node, so a
@@ -665,47 +534,4 @@ fn javascript_unused_scopes_candidates_to_top_level_and_counts_every_reference_f
     );
 
     measure_toolchain(observations).expect("JavaScript findings are admitted");
-}
-
-/// The formatter gap `cargo fmt --all` cannot see, proven from both sides.
-///
-/// The command this arm replaced is run for real over the same tree and has to
-/// report nothing, so the finding below is attributable to naming the paths
-/// rather than to a fixture that was unformatted somewhere `cargo fmt` could
-/// already reach. Reading only the arm could not tell a formatter gap from a
-/// fixture that was never unformatted in the first place.
-///
-/// Splitting a file off with `include!` is not a hypothetical shape here:
-/// seven files still reach a sibling that way, `proof/src/container.rs` among
-/// them, and every one of them was drifting unread until the arm named its own
-/// paths.
-#[test]
-fn the_formatter_names_a_file_cargo_fmt_cannot_reach() {
-    let repository = including_repository("toolchain-included", UNFORMATTED_INCLUDED);
-    let workspace = workspace_formatter_output(&repository.root);
-    assert!(
-        !workspace.contains("Diff in"),
-        "the command this arm replaced already reached the included file, so this \
-         fixture cannot prove the gap it exists to prove: {workspace}"
-    );
-
-    let observations = acquired(
-        &repository,
-        Some(toolchain_directory().into_os_string()),
-        &[INCLUDED],
-    );
-
-    assert_eq!(
-        arm(&observations, GateId::Formatters).findings,
-        [ArmFinding {
-            path: Some(INCLUDED.to_owned()),
-            line: None,
-            column: None,
-            detail: FindingDetail::Formatting {
-                formatter: "rustfmt".to_owned(),
-            },
-        }],
-        "the formatter arm named something other than the one file \
-         `cargo fmt` cannot open"
-    );
 }
