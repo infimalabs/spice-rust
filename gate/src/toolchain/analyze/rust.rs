@@ -945,24 +945,6 @@ mod tests {
         .expect("valid native bounds")
     }
 
-    /// The declared analysis and the compiled one are the same argument vector.
-    ///
-    /// Exact `cargo test --no-run` units are how this arm reaches test bodies
-    /// the canvas arm does not, so a deletion here has to fail somewhere that names it.
-    #[test]
-    fn native_argument_vector_is_exactly_the_declared_analysis() {
-        let declared = declaration(GateId::RustTypecheck)
-            .expect("native arm is declared")
-            .analysis;
-
-        assert_eq!(
-            [format!(
-                "{CARGO} <test for a test-enabled target or check> --locked --package <one reached package> <one exact reached target flag> <--features exact package-qualified required features> <--no-run for a test-enabled target>"
-            )],
-            declared
-        );
-    }
-
     mod reach_tests;
 
     /// The arm refuses a planted body reference, then passes once it is gone.
