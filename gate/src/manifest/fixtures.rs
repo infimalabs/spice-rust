@@ -213,6 +213,28 @@ fn repository_root_false_disables_only_predecessor_builtins() {
 }
 
 #[test]
+fn noncanonical_name_normalizes_to_an_undeclared_arm_refusal_with_provenance() {
+    let refusal = migrate_predecessor(inputs().repository(
+        "/repo/spice-rust.toml",
+        "[policy.pre_commit_builtins]\nrust_typecheck = false\n",
+    ))
+    .expect_err("a post-release gate name must refuse after normalization");
+
+    assert_eq!(refusal.kind(), MigrationErrorKind::UndeclaredArm);
+    assert_eq!(refusal.layer(), OriginLayer::Repository);
+    assert_eq!(refusal.document(), "/repo/spice-rust.toml");
+    assert_eq!(
+        refusal.field(),
+        ["policy", "pre_commit_builtins", "rust_typecheck"]
+    );
+    assert_eq!(
+        refusal.recovery(),
+        "remove the entry and let the compiled instrument registry declare rust-typecheck"
+    );
+    assert!(refusal.to_string().contains("release=0.31.0"));
+}
+
+#[test]
 fn boolean_enabled_label_and_recursive_layer_resets_preserve_winning_fields() {
     let manifest = migrate(REPOSITORY, WORKTREE);
 
