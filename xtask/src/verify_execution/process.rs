@@ -1,8 +1,5 @@
 use super::*;
 
-#[cfg(unix)]
-mod descendants;
-
 pub(crate) fn run_process<I, S, P>(
     label: &str,
     program: P,
@@ -117,7 +114,7 @@ fn wait_after_stop_request(
     #[cfg(unix)]
     let mut faults = Vec::new();
     #[cfg(unix)]
-    let descendants = match descendants::DescendantGroups::discover(running.id()) {
+    let descendants = match sill::DescendantGroups::discover(running.id()) {
         Ok(mut descendants) => {
             if let Err(error) = descendants.terminate() {
                 faults.push(format!(

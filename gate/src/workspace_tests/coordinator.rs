@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const TEMP_ROOT_ATTEMPTS: usize = 100;
+const SHARD_PROCESS_POLL: Duration = Duration::from_millis(50);
 const TEMP_ENVIRONMENT: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
 /// Each Cargo shard starts test binaries that would otherwise each claim every
 /// host CPU. Retain modest intra-binary overlap while bounding the multiplier
@@ -631,7 +632,7 @@ fn run_shard(
             &shard,
             &root,
             environment,
-            cancellation,
+            cancellation.clone(),
             policy,
             &owner,
         )?;
@@ -644,9 +645,7 @@ fn run_shard(
         .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
         let running = sill::spawn_observed(spec, observation)
             .map_err(|error| WorkspaceTestError::new(format!("shard launch failed: {error}")))?;
-        running
-            .wait()
-            .map_err(|error| WorkspaceTestError::new(format!("shard wait failed: {error}")))
+        wait_for_shard_process(running, &cancellation, policy)
     })();
     shard_result(
         index,
@@ -656,6 +655,90 @@ fn run_shard(
         observer.last(),
         outcome,
     )
+}
+
+fn wait_for_shard_process(
+    mut running: sill::Running,
+    cancellation: &CancellationToken,
+    policy: RunPolicy,
+) -> Result<WaitOutcome, WorkspaceTestError> {
+    loop {
+        if cancellation.is_cancelled() || running.runtime_remaining().is_zero() {
+            return wait_after_shard_stop(running, policy);
+        }
+        let interval = SHARD_PROCESS_POLL.min(running.runtime_remaining());
+        match running.wait_for(interval).map_err(shard_wait_error)? {
+            WaitStep::Exited(outcome) => return Ok(outcome),
+            WaitStep::Running(next) => running = *next,
+        }
+    }
+}
+
+fn wait_after_shard_stop(
+    running: sill::Running,
+    policy: RunPolicy,
+) -> Result<WaitOutcome, WorkspaceTestError> {
+    #[cfg(not(unix))]
+    {
+        return running.wait().map_err(shard_wait_error);
+    }
+
+    #[cfg(unix)]
+    {
+        let mut faults = Vec::new();
+        let descendants = match sill::DescendantGroups::discover(running.id()) {
+            Ok(mut descendants) => {
+                if let Err(error) = descendants.terminate() {
+                    faults.push(format!(
+                        "discoverable shard descendant termination failed: {error}"
+                    ));
+                }
+                Some(descendants)
+            }
+            Err(error) => {
+                faults.push(format!("shard descendant discovery failed: {error}"));
+                None
+            }
+        };
+        let outcome = match descendants {
+            Some(mut descendants) => {
+                let root_terminal = AtomicBool::new(false);
+                let (outcome, descendant_reap) = thread::scope(|scope| {
+                    let reaper = scope.spawn(|| {
+                        descendants.reap_while_root_terminates(
+                            policy.grace,
+                            policy.reap,
+                            policy.output_drain,
+                            &root_terminal,
+                        )
+                    });
+                    let outcome = running.wait();
+                    root_terminal.store(true, AtomicOrdering::Release);
+                    (outcome, reaper.join())
+                });
+                match descendant_reap {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        faults.push(format!("shard descendant reap failed: {error}"));
+                    }
+                    Err(_) => faults.push("shard descendant reap worker panicked".to_owned()),
+                }
+                outcome
+            }
+            None => running.wait(),
+        };
+        if !faults.is_empty() {
+            if let Err(error) = outcome {
+                faults.push(format!("shard process-group reap failed: {error}"));
+            }
+            return Err(WorkspaceTestError::new(faults.join("; ")));
+        }
+        outcome.map_err(shard_wait_error)
+    }
+}
+
+fn shard_wait_error(error: sill::WaitError) -> WorkspaceTestError {
+    WorkspaceTestError::new(format!("shard wait failed: {error}"))
 }
 
 trait PrivateTemporaryEnvironment {
@@ -1036,4 +1119,189 @@ fn exit_name(status: std::process::ExitStatus) -> String {
     status
         .code()
         .map_or_else(|| "signal".to_owned(), |code| format!("exit code={code}"))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::process::CommandExt as _;
+    use std::process::Command;
+
+    const DESCENDANT_FIXTURE_ROOT: &str = "SPICE_WORKSPACE_TEST_DESCENDANT_FIXTURE_ROOT"; // env-policy: allow
+    const REEXEC_TEST: &str = concat!(
+        "workspace_tests::coordinator::tests::",
+        "cancelled_shard_reaps_nested_fixture_group_before_root_removal"
+    );
+
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the re-executed test receives and forwards only its explicit swt fixture path"
+    )]
+    fn cancelled_shard_reaps_nested_fixture_group_before_root_removal() {
+        if let Some(root) = std::env::var_os(DESCENDANT_FIXTURE_ROOT) {
+            run_nested_group_owner(Path::new(&root));
+            return;
+        }
+
+        let temporary = ShardTemporaryRoot::create().expect("create swt fixture root");
+        let root = temporary.path().to_path_buf();
+        let pid_file = root.join("nested.pid");
+        let term_file = root.join("nested.term");
+        let mut cleanup = FixtureGroupCleanup::new(pid_file.clone());
+        let executable = std::env::current_exe().expect("current gate test executable");
+        let mut environment = std::env::vars_os().collect::<BTreeMap<_, _>>();
+        environment.insert(
+            OsString::from(DESCENDANT_FIXTURE_ROOT),
+            root.as_os_str().to_owned(),
+        );
+        let environment = Environment::new(environment).expect("fixture environment is valid");
+        let cancellation = CancellationToken::new();
+        let policy = fixture_policy();
+        let spec = process_spec(
+            executable.as_os_str(),
+            [
+                OsStr::new(REEXEC_TEST),
+                OsStr::new("--exact"),
+                OsStr::new("--nocapture"),
+            ],
+            &std::env::current_dir().expect("current test directory"),
+            environment,
+            policy.shard_deadline,
+            Cancellation::Token(cancellation.clone()),
+            "nested workspace-test fixture",
+        )
+        .expect("fixture process specification");
+        let running = sill::spawn(spec).expect("spawn fixture test owner");
+        let group = wait_for_group(&pid_file);
+
+        cancellation.cancel();
+        let outcome = wait_for_shard_process(running, &cancellation, policy)
+            .expect("cancelled fixture tree is cleaned");
+
+        assert!(
+            matches!(outcome.completion(), Completion::Cancelled(_)),
+            "fixture owner reports cancellation: {:?}",
+            outcome.completion()
+        );
+        assert!(term_file.is_file(), "nested fixture observed SIGTERM");
+        assert_group_absent(group);
+        cleanup.disarm();
+        drop(temporary);
+        assert!(
+            !root.exists(),
+            "swt fixture root survives owner cancellation"
+        );
+    }
+
+    fn run_nested_group_owner(root: &Path) {
+        let script = concat!(
+            "trap 'printf term > \"$2\"; exit 0' TERM INT\n",
+            "printf '%s\\n' \"$$\" > \"$1\"\n",
+            "while :; do :; done\n",
+        );
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                OsStr::new("-c"),
+                OsStr::new(script),
+                OsStr::new("nested-fixture"),
+                root.join("nested.pid").as_os_str(),
+                root.join("nested.term").as_os_str(),
+            ])
+            .process_group(0);
+        let mut nested = command.spawn().expect("spawn nested fixture group");
+        let _completion = nested.wait().expect("wait for nested fixture group");
+        loop {
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+
+    const fn fixture_policy() -> RunPolicy {
+        RunPolicy {
+            concurrency: 1,
+            shared_outputs: true,
+            cargo_jobs: None,
+            test_threads: Some(1),
+            shard_deadline: Duration::from_secs(10),
+            coordinator_deadline: Duration::from_secs(10),
+            progress_interval: Duration::from_secs(1),
+            output_drain: Duration::from_secs(2),
+            reap: Duration::from_secs(2),
+            grace: Duration::from_secs(1),
+        }
+    }
+
+    fn wait_for_group(path: &Path) -> u32 {
+        let started = Instant::now();
+        loop {
+            if let Ok(text) = fs::read_to_string(path)
+                && let Ok(group) = text.trim().parse::<u32>()
+            {
+                return group;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "nested fixture did not publish its process group at {}",
+                path.display()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn assert_group_absent(group: u32) {
+        let started = Instant::now();
+        loop {
+            if !group_exists(group) {
+                return;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "nested fixture process group {group} survived cleanup"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn group_exists(group: u32) -> bool {
+        Command::new("/bin/kill")
+            .args(["-0", "--", &format!("-{group}")])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
+    struct FixtureGroupCleanup {
+        pid_file: PathBuf,
+        armed: bool,
+    }
+
+    impl FixtureGroupCleanup {
+        fn new(pid_file: PathBuf) -> Self {
+            Self {
+                pid_file,
+                armed: true,
+            }
+        }
+
+        fn disarm(&mut self) {
+            self.armed = false;
+        }
+    }
+
+    impl Drop for FixtureGroupCleanup {
+        fn drop(&mut self) {
+            if !self.armed {
+                return;
+            }
+            let Ok(text) = fs::read_to_string(&self.pid_file) else {
+                return;
+            };
+            let Ok(group) = text.trim().parse::<u32>() else {
+                return;
+            };
+            let _ = Command::new("/bin/kill")
+                .args(["-KILL", "--", &format!("-{group}")])
+                .output();
+        }
+    }
 }

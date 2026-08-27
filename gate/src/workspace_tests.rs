@@ -18,7 +18,7 @@ use serde::Deserialize;
 use sill::{
     Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Observation,
     ObserveError, ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
-    RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
+    RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy, WaitStep,
 };
 use syn::{Expr, Item, Lit, LitStr, Meta};
 

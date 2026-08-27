@@ -181,6 +181,7 @@ env_names = [
     "SPICE_STAGED_PATHS",
     "SPICE_VISIBLE_PROG",
     # Selected-tree tests receive these workspace-test fixture authorities.
+    "SPICE_WORKSPACE_TEST_DESCENDANT_FIXTURE_ROOT",
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",
     "TMPDIR",
