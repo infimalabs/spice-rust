@@ -173,7 +173,7 @@ impl Fixture {
             .expect("make fake Cargo executable");
         write_executable(&self.rustc, "#!/bin/sh\nprintf 'exact-rustc\\n'\n");
         write_executable(&self.rustdoc, "#!/bin/sh\nprintf 'exact-rustdoc\\n'\n");
-        for name in ["cargo", "rustc", "rustdoc"] {
+        for name in ["cargo", "rustc", "rustdoc", "spice"] {
             write_executable(
                 &self.hostile.join(name),
                 &format!(
@@ -197,6 +197,16 @@ impl Fixture {
     {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
         command.args(["dev", "xtask", "--"]).args(arguments);
+        self.configure(command, worktree)
+    }
+
+    pub(super) fn git_command<I, S>(&self, worktree: &Path, arguments: I) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new("/usr/bin/git");
+        command.args(arguments);
         self.configure(command, worktree)
     }
 

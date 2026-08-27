@@ -66,12 +66,13 @@ project_max_depth = 3
 enabled = true
 
 [policy]
-# The installed Rust hook must execute this source tree's current gate rather
-# than its packaged build. The configured-command trust boundary keeps this
-# exact argv inert until an operator grants the digest of these tracked bytes.
+# The installed Rust hook reaches this source tree's current gate through the
+# exact Git-common appliance and its private dev-Cargo lifecycle rather than
+# ambient Cargo. The configured-command trust boundary keeps this exact argv
+# inert until an operator grants the digest of these tracked bytes.
 pre_commit_builtins = false
 pre_commit = [
-    { label = "Spice source gate", run = ["cargo", "run", "--quiet", "--locked", "--package", "spice", "--bin", "spice", "--", "gate", "selection"] },
+    { label = "Spice source gate", run = ["spice", "dev", "cargo", "--", "run", "--quiet", "--locked", "--package", "spice", "--bin", "spice", "--", "gate", "selection"] },
 ]
 
 # The native Git publisher runs this cheap repository load over every

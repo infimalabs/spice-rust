@@ -2,11 +2,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use spice::config::{Document, Inputs, resolve};
+use steer::WrapperReference;
 
 #[test]
 fn source_policy_suppresses_install_guidance_without_disabling_its_commit_gate() {
     let rust = resolve_document("spice-rust.toml");
 
+    assert_eq!(
+        rust.root().wrappers().spice(),
+        Some(WrapperReference::Appliance)
+    );
     assert!(!rust.root().policy().pre_commit_builtins());
     let [command] = rust.root().policy().pre_commit() else {
         panic!("the Rust-owned document retains its one current-source command");
@@ -15,7 +20,10 @@ fn source_policy_suppresses_install_guidance_without_disabling_its_commit_gate()
     assert_eq!(
         command.run(),
         [
+            "spice",
+            "dev",
             "cargo",
+            "--",
             "run",
             "--quiet",
             "--locked",

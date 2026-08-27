@@ -3,6 +3,8 @@
 use super::*;
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -84,12 +86,191 @@ fn test_bounds(runtime: Duration) -> ExecutionBounds {
     }
 }
 
+fn initialize_repository(root: &Path) -> Repository {
+    Command::new("/usr/bin/git")
+        .args(["init", "-q", "-b", "main"])
+        .current_dir(root)
+        .status()
+        .expect("launch fixture Git")
+        .success()
+        .then_some(())
+        .expect("initialize fixture repository");
+    Repository::discover(root).expect("discover configured-command fixture")
+}
+
+#[cfg(unix)]
+fn publish_executable(path: &Path, body: &[u8]) {
+    fs::create_dir_all(path.parent().expect("executable has a parent"))
+        .expect("create executable parent");
+    fs::write(path, body).expect("write executable fixture");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .expect("make executable fixture executable");
+}
+
+#[test]
+fn authored_spice_program_requires_and_uses_one_exact_executable_path() {
+    let authored = vec![
+        "spice".to_owned(),
+        "dev".to_owned(),
+        "cargo".to_owned(),
+        "--".to_owned(),
+        "run".to_owned(),
+    ];
+    let executable = Path::new("/git common/.spice-install/bin/spice");
+    let resolved = process_argv(&authored, Some(executable)).expect("resolve exact appliance");
+    assert_eq!(resolved[0], executable.as_os_str());
+    assert_eq!(
+        resolved[1..],
+        authored[1..].iter().map(OsString::from).collect::<Vec<_>>()
+    );
+
+    let refusal = process_argv(&authored, None).expect_err("missing wrapper authority refuses");
+    assert_eq!(refusal.reason(), "gate::pre-commit-wrapper-missing");
+    assert!(refusal.detail().contains("wrappers.spice"));
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_spawn_bypasses_path_and_reports_the_authored_spice_argv() {
+    let scratch = Scratch::new("exact-spice-route");
+    let exact = scratch.root.join("exact appliance/spice");
+    let hostile = scratch.root.join("hostile-path/spice");
+    let log = scratch.root.join("spawn.log");
+    publish_executable(
+        &exact,
+        b"#!/bin/sh\nprintf '%s\\t%s\\n' \"$0\" \"$1\" > \"$2\"\n",
+    );
+    publish_executable(&hostile, b"#!/bin/sh\nexit 91\n");
+    let log_text = log.to_str().expect("fixture log path is UTF-8");
+    let commands = parsed_commands(&[row(
+        "exact route",
+        &["spice", "expected-argument", log_text],
+        &[],
+    )]);
+    let mut environment = base_environment();
+    environment.retain(|(name, _)| name != OsStr::new("PATH"));
+    environment.push((
+        OsString::from("PATH"),
+        hostile
+            .parent()
+            .expect("hostile command has a parent")
+            .as_os_str()
+            .to_owned(),
+    ));
+
+    let report = execute_steps(
+        &commands,
+        &source(),
+        &[],
+        &scratch.root,
+        &environment,
+        Some(&exact),
+        test_bounds(Duration::from_secs(2)),
+        Cancellation::Never,
+        ExecutionMode::Ordinary,
+        &mut || Ok(()),
+    )
+    .expect("exact configured route executes");
+
+    assert!(report.admits(), "{}", report.refusal_evidence());
+    assert_eq!(report.steps()[0].argv(), commands[0].run());
+    let observed = fs::read_to_string(log).expect("read exact route log");
+    assert_eq!(
+        observed,
+        format!("{}\texpected-argument\n", exact.display())
+    );
+}
+
+#[test]
+fn configured_spice_route_refuses_missing_installed_authority() {
+    let scratch = Scratch::new("missing-spice-route");
+    let repository = initialize_repository(&scratch.root);
+    fs::write(
+        scratch.root.join("spice-rust.toml"),
+        concat!(
+            "[wrappers]\nspice = 'appliance'\n",
+            "[policy]\npre_commit = [{ label = 'source', run = ['spice', 'dev', 'cargo', '--', 'check'] }]\n",
+        ),
+    )
+    .expect("write missing-wrapper policy");
+
+    let refusal = DispatchPolicy::load(&repository)
+        .err()
+        .expect("missing installed authority must refuse");
+    assert_eq!(refusal.reason(), "gate::pre-commit-wrapper-refused");
+    assert!(
+        refusal
+            .detail()
+            .contains("lane::wrapper-command-unavailable"),
+        "{}",
+        refusal.detail(),
+    );
+}
+
+#[test]
+fn unrelated_wrapper_declaration_does_not_change_non_spice_commands() {
+    let scratch = Scratch::new("unused-spice-route");
+    let repository = initialize_repository(&scratch.root);
+    fs::write(
+        scratch.root.join("spice-rust.toml"),
+        concat!(
+            "[wrappers]\nspice = 'appliance'\n",
+            "[policy]\npre_commit = [{ label = 'other', run = ['/bin/true'] }]\n",
+        ),
+    )
+    .expect("write unrelated-wrapper policy");
+
+    let policy = DispatchPolicy::load(&repository)
+        .expect("an unused wrapper does not enter configured execution");
+    assert!(policy.spice.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_spice_route_refuses_redirected_authority_after_capture() {
+    let scratch = Scratch::new("redirected-spice-route");
+    let repository = initialize_repository(&scratch.root);
+    fs::write(
+        scratch.root.join("spice-rust.toml"),
+        concat!(
+            "[wrappers]\nspice = 'appliance'\n",
+            "[policy]\npre_commit = [{ label = 'source', run = ['spice', 'dev', 'cargo', '--', 'check'] }]\n",
+        ),
+    )
+    .expect("write admitted-wrapper policy");
+    let installed = spice::install::installed_binary(&repository);
+    let wrapper = spice::install::installed_spice_wrapper(&repository);
+    publish_executable(&installed, b"#!/bin/sh\nexit 0\n");
+    publish_executable(&wrapper, b"#!/bin/sh\nexit 0\n");
+    let policy = DispatchPolicy::load(&repository).expect("capture admitted exact route");
+
+    fs::remove_file(&installed).expect("remove captured appliance");
+    let redirect = scratch.root.join("redirect-target");
+    publish_executable(&redirect, b"#!/bin/sh\nexit 0\n");
+    symlink(&redirect, &installed).expect("redirect captured appliance");
+
+    let refusal = policy
+        .verify_current(&repository)
+        .expect_err("redirected authority must refuse");
+    assert_eq!(refusal.reason(), "gate::pre-commit-wrapper-refused");
+    assert!(
+        refusal
+            .detail()
+            .contains("lane::wrapper-command-redirected"),
+        "{}",
+        refusal.detail(),
+    );
+}
+
 #[test]
 fn only_unscoped_resolution_source_gate_argv_selects_the_private_selected_leaf() {
     let current = parsed_commands(&[row(
         "Spice source gate",
         &[
+            "spice",
+            "dev",
             "cargo",
+            "--",
             "run",
             "--quiet",
             "--locked",
@@ -109,7 +290,10 @@ fn only_unscoped_resolution_source_gate_argv_selects_the_private_selected_leaf()
     assert_eq!(
         resolution,
         [
+            "spice",
+            "dev",
             "cargo",
+            "--",
             "run",
             "--quiet",
             "--locked",
@@ -139,7 +323,10 @@ fn live_progress_selects_only_the_exact_unscoped_source_gate_contract() {
         row(
             "label is not authority",
             &[
+                "spice",
+                "dev",
                 "cargo",
+                "--",
                 "run",
                 "--quiet",
                 "--locked",
@@ -156,7 +343,10 @@ fn live_progress_selects_only_the_exact_unscoped_source_gate_contract() {
         row(
             "different selector",
             &[
+                "spice",
+                "dev",
                 "cargo",
+                "--",
                 "run",
                 "--quiet",
                 "--locked",
@@ -173,7 +363,10 @@ fn live_progress_selects_only_the_exact_unscoped_source_gate_contract() {
         row(
             "scoped source gate",
             &[
+                "spice",
+                "dev",
                 "cargo",
+                "--",
                 "run",
                 "--quiet",
                 "--locked",
@@ -262,6 +455,7 @@ fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_envi
         &staged,
         &scratch.root,
         &base_environment(),
+        None,
         test_bounds(Duration::from_secs(2)),
         Cancellation::Never,
         ExecutionMode::Ordinary,
@@ -344,6 +538,7 @@ fn independent_child_failures_are_aggregated_in_authored_order() {
         &["src/lib.rs".to_owned()],
         &scratch.root,
         &base_environment(),
+        None,
         bounds,
         Cancellation::Never,
         ExecutionMode::Ordinary,
@@ -405,6 +600,7 @@ fn large_successful_output_is_drained_without_a_finding() {
         &["src/lib.rs".to_owned()],
         &scratch.root,
         &base_environment(),
+        None,
         bounds,
         Cancellation::Never,
         ExecutionMode::Ordinary,
@@ -445,6 +641,7 @@ fn truncated_failure_reports_exit_with_a_retention_marker() {
         &["src/lib.rs".to_owned()],
         &scratch.root,
         &base_environment(),
+        None,
         bounds,
         Cancellation::Never,
         ExecutionMode::Ordinary,
@@ -494,6 +691,7 @@ fn one_shared_deadline_terminates_and_reaps_a_late_step_process_tree() {
         &["src/lib.rs".to_owned()],
         &scratch.root,
         &base_environment(),
+        None,
         test_bounds(Duration::from_millis(750)),
         Cancellation::Never,
         ExecutionMode::Ordinary,
@@ -561,6 +759,7 @@ fn cancellation_terminates_and_reaps_the_configured_process_tree() {
         &["src/lib.rs".to_owned()],
         &scratch.root,
         &base_environment(),
+        None,
         test_bounds(Duration::from_secs(2)),
         Cancellation::Token(token),
         ExecutionMode::Ordinary,
@@ -616,6 +815,7 @@ fn authority_movement_between_steps_stops_before_the_next_spawn() {
         &["src/lib.rs".to_owned()],
         &scratch.root,
         &base_environment(),
+        None,
         test_bounds(Duration::from_secs(2)),
         Cancellation::Never,
         ExecutionMode::Ordinary,
