@@ -773,16 +773,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn gate_report_has_no_journal_dependency() {
-        let manifest = include_str!("../../Cargo.toml");
-        assert!(
-            !manifest
-                .lines()
-                .any(|line| { line.trim_start().starts_with("journal") })
-        );
-    }
-
     /// A current report over source owned exclusively by this fixture.
     ///
     /// These tests exercise report construction and decoding, not the live

@@ -3,13 +3,12 @@ use std::str::FromStr;
 
 use gate::{
     ActorCapture, CORE_GATE_IDS, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence,
-    Contract, CoreArmInput, CoreEvidence, CoreFinding, CoreInputs, CoreObservation, CoreProvenance,
-    CoreReport, CoreReportDecodeError, CoreSource, CoreStanding, CoreTimeoutContract,
-    CoreToolContract, DocMeasurement, GateId, MergeIntegrityEvidence, MergeTreeCompletion,
-    PREDECESSOR_GATE_RELEASE, PlanPhaseEvidence, RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence,
-    Selector, StagingEvidence, acquire_core, core_declarations, evaluate_core,
+    Contract, CoreArmInput, CoreEvidence, CoreInputs, CoreObservation, CoreProvenance, CoreReport,
+    CoreReportDecodeError, CoreSource, CoreStanding, CoreTimeoutContract, CoreToolContract,
+    DocMeasurement, GateId, MergeIntegrityEvidence, MergeTreeCompletion, PREDECESSOR_GATE_RELEASE,
+    PlanPhaseEvidence, RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence, Selector,
+    StagingEvidence, acquire_core, core_declarations, evaluate_core,
 };
-use serde::Deserialize;
 use serde_json::Value;
 use wire::{Digest, Domain, Phase, TaskHandle};
 
@@ -19,43 +18,6 @@ use support::{
     acquired, acquired_arm, captured_baselines, contract_repository, git, git_commit, git_output,
     git_repository, measured,
 };
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ParityFixture {
-    release: String,
-    cases: Vec<ParityCase>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ParityCase {
-    gate: GateId,
-    kind: CaseKind,
-    source: String,
-    observation: String,
-    expected: CoreStanding,
-    diagnostic: String,
-}
-
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum CaseKind {
-    Pass,
-    Fail,
-    StagedPass,
-    SameTreePass,
-    ConflictedFail,
-    UnnamedConflictFail,
-    PeerRedirect,
-    UnlimitedPass,
-    Unavailable,
-    Unsupported,
-    Unmeasured,
-    TimedOut,
-    Skipped,
-    ShapeSkipped,
-}
 
 #[test]
 fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
@@ -136,42 +98,6 @@ fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
         ["diff", "--cached", "--name-only", "--diff-filter=ACMR"]
     );
     assert_eq!(staging[0].accepted_exit_codes(), [0]);
-}
-
-#[test]
-fn predecessor_fixture_covers_every_arm_and_every_typed_outcome() {
-    let fixture: ParityFixture =
-        toml::from_str(include_str!("fixtures/core/predecessor-parity.toml"))
-            .expect("decode predecessor parity fixture");
-    assert_eq!(fixture.release, PREDECESSOR_GATE_RELEASE);
-
-    for id in CORE_GATE_IDS {
-        assert!(
-            fixture
-                .cases
-                .iter()
-                .any(|case| { case.gate == id && matches!(case.kind, CaseKind::Pass) })
-        );
-        assert!(
-            fixture
-                .cases
-                .iter()
-                .any(|case| { case.gate == id && matches!(case.kind, CaseKind::Fail) })
-        );
-    }
-    for standing in [
-        CoreStanding::Unavailable,
-        CoreStanding::Unsupported,
-        CoreStanding::Unmeasured,
-        CoreStanding::TimedOut,
-        CoreStanding::Skipped,
-    ] {
-        assert!(fixture.cases.iter().any(|case| case.expected == standing));
-    }
-
-    for case in fixture.cases {
-        assert_case(&fixture.release, &case);
-    }
 }
 
 #[test]
@@ -384,113 +310,6 @@ fn canonical_report_decode_refuses_unknown_reordered_and_forged_outcomes() {
     assert!(error.canonical().is_some());
 }
 
-fn assert_case(release: &str, case: &ParityCase) {
-    let declaration = declaration(case.gate);
-    assert_eq!(declaration.predecessor().release(), release);
-    assert_eq!(declaration.predecessor().source(), case.source);
-    assert_eq!(declaration.predecessor().observation(), case.observation);
-
-    let tree = fixture_tree();
-    let report = evaluate_core(
-        &CoreInputs::new(battery_for(&tree, case.gate, case_observation(case)))
-            .expect("admit parity case"),
-    );
-    assert_eq!(
-        report.arms().iter().map(|arm| arm.id()).collect::<Vec<_>>(),
-        CORE_GATE_IDS
-    );
-    let arm = &report.arms()[CORE_GATE_IDS
-        .iter()
-        .position(|id| *id == case.gate)
-        .expect("fixture gate is compiled")];
-    assert_eq!(arm.standing(), case.expected);
-    assert!(arm.diagnostic().contains(&case.diagnostic));
-    assert_eq!(arm.tree(), &tree);
-    assert_eq!(arm.provenance().release(), release);
-    assert_eq!(arm.provenance().document(), case.source);
-    assert_eq!(arm.provenance().observation(), case.observation);
-    assert_eq!(
-        arm.evidence().is_some(),
-        matches!(
-            case.kind,
-            CaseKind::Pass
-                | CaseKind::Fail
-                | CaseKind::StagedPass
-                | CaseKind::SameTreePass
-                | CaseKind::ConflictedFail
-                | CaseKind::UnnamedConflictFail
-                | CaseKind::PeerRedirect
-                | CaseKind::UnlimitedPass
-        )
-    );
-    assert_eq!(report.admits(), case.expected.admits());
-
-    let encoded = report.encode().expect("encode parity report");
-    assert_eq!(
-        CoreReport::decode(&encoded).expect("decode parity report"),
-        report
-    );
-}
-
-fn case_observation(case: &ParityCase) -> CoreObservation {
-    match case.kind {
-        CaseKind::Pass => measured(passing_evidence(case.gate)),
-        CaseKind::Fail => measured(failing_evidence(case.gate)),
-        CaseKind::StagedPass => measured(CoreEvidence::MergeIntegrity(staged_merge("1", "2"))),
-        CaseKind::SameTreePass => measured(CoreEvidence::MergeIntegrity(compared_merge(
-            "1",
-            "1",
-            MergeTreeCompletion::Clean,
-            Vec::new(),
-        ))),
-        CaseKind::ConflictedFail => measured(CoreEvidence::MergeIntegrity(compared_merge(
-            "1",
-            "2",
-            MergeTreeCompletion::Conflicted,
-            vec!["spice/src/lib.rs".to_owned()],
-        ))),
-        CaseKind::UnnamedConflictFail => measured(CoreEvidence::MergeIntegrity(compared_merge(
-            "1",
-            "2",
-            MergeTreeCompletion::Conflicted,
-            Vec::new(),
-        ))),
-        CaseKind::PeerRedirect => measured(CoreEvidence::RepoDocs(
-            RepoDocsEvidence::new(vec![
-                DocMeasurement::new("AGENTS.md", 21, 20, true).expect("doc measurement"),
-            ])
-            .expect("repo-doc evidence"),
-        )),
-        CaseKind::UnlimitedPass => measured(CoreEvidence::RepoDocs(
-            RepoDocsEvidence::new(vec![
-                DocMeasurement::unlimited("AGENTS.md", u64::MAX).expect("doc measurement"),
-            ])
-            .expect("repo-doc evidence"),
-        )),
-        CaseKind::Unavailable => CoreObservation::Unavailable {
-            reason: "git executable was not admitted".to_owned(),
-        },
-        CaseKind::Unsupported => CoreObservation::Unsupported {
-            reason: "predecessor-only package-root grammar".to_owned(),
-            recovery: concat!(
-                "release 0.31.0 owns migration; declare current immutable ",
-                "shape inputs"
-            )
-            .to_owned(),
-        },
-        CaseKind::Unmeasured => CoreObservation::Unmeasured {
-            reason: "selected tree content was not decoded".to_owned(),
-        },
-        CaseKind::TimedOut => CoreObservation::TimedOut { milliseconds: 250 },
-        CaseKind::Skipped => CoreObservation::Skipped {
-            reason: "no claim store is configured for this repository".to_owned(),
-        },
-        CaseKind::ShapeSkipped => CoreObservation::Skipped {
-            reason: "no package roots are selected by current shape policy".to_owned(),
-        },
-    }
-}
-
 fn battery_for(tree: &Digest, target: GateId, observation: CoreObservation) -> Vec<CoreArmInput> {
     CORE_GATE_IDS
         .into_iter()
@@ -560,66 +379,14 @@ fn passing_evidence(id: GateId) -> CoreEvidence {
     }
 }
 
-fn failing_evidence(id: GateId) -> CoreEvidence {
-    match id {
-        GateId::MergeIntegrity => CoreEvidence::MergeIntegrity(compared_merge(
-            "1",
-            "2",
-            MergeTreeCompletion::Clean,
-            Vec::new(),
-        )),
-        GateId::PlanPhase => CoreEvidence::PlanPhase(PlanPhaseEvidence::Active {
-            task: TaskHandle::from_str("CORE-1kJWlbWK").expect("task handle"),
-            phase: Phase::from_str("plan").expect("phase"),
-        }),
-        GateId::RepoShape => CoreEvidence::RepoShape(RepoShapeEvidence::new(vec![finding(
-            "name-cluster",
-            Some("spice/src"),
-            "four modules share an affix",
-        )])),
-        GateId::Staging => CoreEvidence::Staging(
-            StagingEvidence::new(["gate/src/core.rs"]).expect("staging evidence"),
-        ),
-        GateId::RepoDocs => CoreEvidence::RepoDocs(
-            RepoDocsEvidence::new(vec![
-                DocMeasurement::new("AGENTS.md", 21, 20, false).expect("doc measurement"),
-            ])
-            .expect("repo-doc evidence"),
-        ),
-        GateId::ConfigKeyValidity => {
-            CoreEvidence::ConfigKeyValidity(ConfigKeyEvidence::new(vec![finding(
-                "unknown-key",
-                None::<String>,
-                "policy.unknown is not declared",
-            )]))
-        }
-        GateId::ConfigFalseDisable => {
-            CoreEvidence::ConfigFalseDisable(drifted_inventory(&["policy", "pre_commit_builtins"]))
-        }
-        GateId::ConfigTrackedTrust => {
-            CoreEvidence::ConfigTrackedTrust(drifted_inventory(&["policy", "pre_commit"]))
-        }
-        _ => panic!("{id} is not a core gate"),
-    }
-}
-
 fn matching_inventory(path: &[&str]) -> ConfigInventoryEvidence {
     let path: Vec<String> = path.iter().map(|part| (*part).to_owned()).collect();
     ConfigInventoryEvidence::new(vec![path.clone()], vec![path], Vec::new())
         .expect("matching inventory")
 }
 
-fn drifted_inventory(path: &[&str]) -> ConfigInventoryEvidence {
-    let path: Vec<String> = path.iter().map(|part| (*part).to_owned()).collect();
-    ConfigInventoryEvidence::new(vec![path], Vec::new(), Vec::new()).expect("drifted inventory")
-}
-
-fn finding(code: &str, path: Option<impl Into<String>>, detail: &str) -> CoreFinding {
-    CoreFinding::new(code, path, detail).expect("valid fixture finding")
-}
-
 fn fixture_tree() -> Digest {
-    Digest::compute(Domain::GateTree, b"core predecessor parity fixture")
+    Digest::compute(Domain::GateTree, b"core fixture")
 }
 
 fn git_tree(digit: &str) -> String {

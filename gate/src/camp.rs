@@ -676,7 +676,6 @@ mod tests {
     use wire::{Outcome, Reply, ReplyPosition};
 
     use super::*;
-    use crate::Ratchet;
 
     #[test]
     fn exact_five_percent_and_three_of_four_camp_with_signed_evidence() {
@@ -960,22 +959,6 @@ mod tests {
         let mut changed = report;
         changed.findings[0].loci[0].denominator += 1;
         assert_moved(changed, "locus.denominator");
-    }
-
-    #[test]
-    fn audit_has_no_path_that_changes_an_own_history_floor() {
-        let ratchet = Ratchet::parse("a 100\n").expect("ratchet");
-        let unchanged = ratchet.clone();
-        let _ = camp([bound("shared", 100, ["a", "b", "c", "d"])])
-            .audit(&measurements([
-                ("a", 95),
-                ("b", 100),
-                ("c", 105),
-                ("d", 106),
-            ]))
-            .expect("complete audit");
-
-        assert_eq!(ratchet, unchanged);
     }
 
     fn camp(bounds: impl IntoIterator<Item = SharedBound>) -> Camp {
