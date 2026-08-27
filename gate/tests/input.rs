@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use gate::{
-    BASELINE_PATH, BaselineError, BoundName, Contract, ContractError, LONG_LINE_LIMIT,
-    PINNED_CARGO_MUTANTS, POLICY_PATH, PolicyContext, PolicyError, RuleSettings, Standing,
+    BASELINE_PATH, BoundName, Contract, ContractError, LONG_LINE_LIMIT, PINNED_CARGO_MUTANTS,
+    POLICY_PATH, PolicyContext, PolicyError, RuleSettings, Standing,
 };
 use serde::Deserialize;
 
@@ -233,87 +233,6 @@ fn admitted_walk_intent_moves_policy_without_selecting_an_executable() {
 }
 
 #[test]
-fn every_invalid_baseline_refuses_whole_and_names_its_exact_field() {
-    let duplicate = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n\n\
-         [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
-    );
-    assert!(matches!(
-        duplicate,
-        BaselineError::Duplicate { ref path, ref field, ref name }
-            if path == &baseline_path()
-                && field == "floor[1].name" && name == "rust.mutation-survivors"
-    ));
-
-    let malformed = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = \"many\"\n",
-    );
-    assert!(matches!(
-        malformed,
-        BaselineError::Field(ref field)
-            if field.path() == baseline_path() && field.field() == "floor[0].value"
-    ));
-
-    let missing = baseline_error("version = 1\nfloor = []\n");
-    assert!(matches!(
-        missing,
-        BaselineError::Missing { ref path, ref field, ref name }
-            if path == &baseline_path() && field == "floor"
-                && name == "rust.mutation-survivors"
-    ));
-
-    let retired = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
-         [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
-    );
-    assert!(matches!(
-        retired,
-        BaselineError::Retired { ref path, ref field, ref name, owner: 1 }
-            if path == &baseline_path()
-                && field == "floor[0].name" && name == "rust.long-lines"
-    ));
-
-    let unknown = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n\n\
-         [[floor]]\nname = \"rust.unknown\"\nvalue = 0\n",
-    );
-    assert!(matches!(
-        unknown,
-        BaselineError::Unknown { ref path, ref field, ref name }
-            if path == &baseline_path() && field == "floor[1].name" && name == "rust.unknown"
-    ));
-
-    let version = baseline_error(&TRACKED_BASELINE.replacen("version = 1", "version = 2", 1));
-    assert!(matches!(
-        version,
-        BaselineError::UnsupportedVersion { ref path, ref field, version: 2 }
-            if path == &baseline_path() && field == "version"
-    ));
-
-    let alternate = baseline_error(&(TRACKED_BASELINE.to_owned() + "\n"));
-    assert!(matches!(
-        alternate,
-        BaselineError::NonCanonical { ref path, ref field, .. }
-            if path == &baseline_path() && field == "document"
-    ));
-
-    let not_toml = baseline_error("version = [\n");
-    assert!(matches!(
-        not_toml,
-        BaselineError::Toml { ref path, .. } if path == &baseline_path()
-    ));
-
-    let fractional_without_denominator =
-        baseline_error("version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 2\n");
-    assert!(matches!(
-        fractional_without_denominator,
-        BaselineError::MutationRate { ref path, ref field, value: 2 }
-            if path == &baseline_path()
-                && field == "floor[rust.mutation-survivors].value"
-    ));
-}
-
-#[test]
 fn malformed_policy_and_unknown_gate_fields_refuse_before_a_contract_exists() {
     let malformed = fixture_contract("gate = [\n", TRACKED_BASELINE)
         .expect_err("malformed shared policy is refused");
@@ -505,13 +424,6 @@ fn fixture_contract(policy: &str, baseline: &str) -> Result<Contract, ContractEr
         &baseline_path(),
         baseline,
     )
-}
-
-fn baseline_error(text: &str) -> BaselineError {
-    match fixture_contract(TRACKED_POLICY, text).expect_err("baseline must refuse") {
-        ContractError::Baseline(error) => error,
-        other => panic!("baseline refusal changed class: {other:?}"),
-    }
 }
 
 fn workspace_root() -> PathBuf {

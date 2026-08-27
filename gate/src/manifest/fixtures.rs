@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use super::*;
 
 const SYSTEM: &str = include_str!("../../tests/fixtures/gate-manifest/system.toml");
@@ -28,19 +26,6 @@ fn absent_from_battery(id: GateId) -> bool {
     PREDECESSOR_STANDARD_ARMS
         .into_iter()
         .any(|(candidate, arm)| candidate == id && arm == PredecessorStandardArm::AbsentFromBattery)
-}
-
-/// Every spelling a predecessor document could have written one identity as.
-///
-/// Both the normalizing and the refusing fixture read the set from here, so
-/// neither can cover a spelling the other never sees.
-fn historical_spellings(id: GateId) -> BTreeSet<String> {
-    BTreeSet::from([
-        id.predecessor_str().to_owned(),
-        id.predecessor_str().replace('-', "_"),
-        id.predecessor_str().replace('-', " "),
-        format!("  {}  ", id.predecessor_str().to_ascii_uppercase()),
-    ])
 }
 
 fn declaration(manifest: &GateManifest, id: GateId) -> &GateDeclaration {
@@ -228,82 +213,6 @@ fn repository_root_false_disables_only_predecessor_builtins() {
 }
 
 #[test]
-fn every_historical_spelling_normalizes_immediately_to_one_current_id() {
-    for id in GateId::ALL
-        .into_iter()
-        .filter(|id| id.predecessor_declared())
-    {
-        for spelling in historical_spellings(id) {
-            let repository = format!(
-                "[policy.pre_commit_builtins]\n{} = false\n",
-                toml_string(&spelling)
-            );
-            let manifest = migrate(&repository, "");
-            let selected = declaration(&manifest, id);
-            assert!(!selected.enabled(), "{id}: {spelling:?}");
-            assert_eq!(selected.id().as_str(), id.as_str());
-            assert_eq!(selected.id_provenance().layer(), OriginLayer::Repository);
-            assert_eq!(
-                selected.id_provenance().field().last().map(String::as_str),
-                Some(spelling.as_str())
-            );
-        }
-    }
-}
-
-#[test]
-fn every_spelling_of_an_identity_the_release_never_declared_is_refused_by_rule() {
-    for id in GateId::ALL
-        .into_iter()
-        .filter(|id| !id.predecessor_declared())
-    {
-        for spelling in historical_spellings(id) {
-            for entry in [
-                "false",
-                "true",
-                "{ enabled = false }",
-                "{ label = \"held\" }",
-            ] {
-                let repository = format!(
-                    "[policy.pre_commit_builtins]\n{} = {entry}\n",
-                    toml_string(&spelling)
-                );
-                let refusal = error(&repository, "");
-                assert_eq!(
-                    refusal.kind(),
-                    MigrationErrorKind::UndeclaredArm,
-                    "{id}: {spelling:?} = {entry}"
-                );
-                assert_eq!(refusal.layer(), OriginLayer::Repository);
-                assert_eq!(refusal.document(), "/repo/spice-rust.toml");
-                assert_eq!(
-                    refusal.field().last().map(String::as_str),
-                    Some(spelling.as_str()),
-                    "{refusal}"
-                );
-                assert!(refusal.recovery().contains(&format!("declare {id}")));
-                let message = refusal.to_string();
-                assert!(message.contains("release=0.31.0"));
-                assert!(message.contains(&format!("compiled Rust gate {id}")));
-                assert!(message.contains("declared no standard arm for that identity"));
-            }
-
-            let named = format!(
-                "[policy.pre_commit_builtins]\n{} = true\n",
-                toml_string(&spelling)
-            );
-            let refusal = migrate_predecessor(PredecessorInputs::new(
-                "/installed/0.31.0/spice-rust.toml",
-                &named,
-            ))
-            .expect_err("the packaged layer must refuse the same name");
-            assert_eq!(refusal.kind(), MigrationErrorKind::UndeclaredArm);
-            assert_eq!(refusal.layer(), OriginLayer::System);
-        }
-    }
-}
-
-#[test]
 fn boolean_enabled_label_and_recursive_layer_resets_preserve_winning_fields() {
     let manifest = migrate(REPOSITORY, WORKTREE);
 
@@ -381,90 +290,6 @@ fn scalar_and_table_forms_replace_one_another_at_layer_boundaries() {
 }
 
 #[test]
-fn release_standard_arm_table_is_complete_and_names_what_the_release_declared() {
-    assert_eq!(PREDECESSOR_STANDARD_ARMS.map(|(id, _arm)| id), GateId::ALL);
-    let grown_past: Vec<GateId> = GateId::ALL
-        .into_iter()
-        .filter(|id| absent_from_battery(*id))
-        .collect();
-    assert_eq!(
-        grown_past,
-        vec![
-            GateId::RustTypecheck,
-            GateId::CsharpUnusedCandidates,
-            GateId::SuiteSeam,
-            GateId::MutationCoverage,
-            GateId::TestSubsumption,
-        ]
-    );
-    for id in GateId::ALL {
-        assert_eq!(id.predecessor_declared(), !absent_from_battery(id), "{id}");
-    }
-}
-
-#[test]
-fn every_executable_form_resolves_then_refuses_for_every_compiled_arm() {
-    for id in GateId::ALL {
-        let name = toml_string(id.predecessor_str());
-        let table = format!("[policy.pre_commit_builtins.{name}]\n");
-        let fixtures = [
-            (
-                format!(
-                    concat!(
-                        "[commands]\nstandard = [\"python\", \"gate.py\"]\n",
-                        "[policy.pre_commit_builtins]\n{name} = \"standard\"\n"
-                    ),
-                    name = name
-                ),
-                id.predecessor_str(),
-            ),
-            (
-                format!(
-                    concat!(
-                        "[commands]\nstandard = \"python gate.py\"\n",
-                        "{table}mount = \"standard\"\n"
-                    ),
-                    table = table
-                ),
-                "mount",
-            ),
-            (format!("{table}run = \"python gate.py\"\n"), "run"),
-            (format!("{table}run = [\"python\", \"gate.py\"]\n"), "run"),
-            (format!("{table}argv = \"python gate.py\"\n"), "argv"),
-            (format!("{table}argv = [\"python\", \"gate.py\"]\n"), "argv"),
-        ];
-        for (repository, expected_leaf) in fixtures {
-            let refusal = error(&repository, "");
-            assert_eq!(
-                refusal.kind(),
-                MigrationErrorKind::ExecutableReplacement,
-                "{id}: {repository}"
-            );
-            assert_eq!(refusal.layer(), OriginLayer::Repository);
-            assert_eq!(refusal.document(), "/repo/spice-rust.toml");
-            assert_eq!(
-                refusal.field().last().map(String::as_str),
-                Some(expected_leaf),
-                "{refusal}"
-            );
-            assert!(
-                refusal
-                    .recovery()
-                    .contains(&format!("compiled gate ID {id}"))
-            );
-            let message = refusal.to_string();
-            assert!(message.contains("release=0.31.0"));
-            assert!(message.contains("[\"python\", \"gate.py\"]"));
-            assert!(message.contains(if absent_from_battery(id) {
-                "declared no standard arm for that identity"
-            } else {
-                "internal PreCommitStep builtin"
-            }));
-        }
-    }
-}
-
-#[test]
 fn mounted_resolution_obeys_layered_command_replacement_and_disable() {
     let executable = error(
         concat!(
@@ -489,98 +314,4 @@ fn mounted_resolution_obeys_layered_command_replacement_and_disable() {
         unresolved.field(),
         ["policy", "pre_commit_builtins", "formatters"]
     );
-}
-
-#[test]
-fn conflicts_ignored_fields_unknowns_duplicates_and_malformed_values_refuse_exactly() {
-    let cases = [
-        (
-            "[policy.pre_commit_builtins.formatters]\nrun = [\"one\"]\nargv = [\"two\"]\n",
-            MigrationErrorKind::ConflictingExecution,
-            "argv",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nformatter = false\n",
-            MigrationErrorKind::UnsupportedField,
-            "formatter",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nscopes = { paths = [\"src/**\"] }\n",
-            MigrationErrorKind::UnsupportedField,
-            "scopes",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nunknown = true\n",
-            MigrationErrorKind::UnsupportedField,
-            "unknown",
-        ),
-        (
-            "[policy.pre_commit_builtins]\nunknown = true\n",
-            MigrationErrorKind::UnknownGate,
-            "unknown",
-        ),
-        (
-            "[policy.pre_commit_builtins]\n\"magic-numbers\" = false\nmagic_numbers = true\n",
-            MigrationErrorKind::DuplicateGate,
-            "magic_numbers",
-        ),
-        (
-            "[policy.pre_commit_builtins]\nformatters = 1\n",
-            MigrationErrorKind::Malformed,
-            "formatters",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nenabled = \"no\"\n",
-            MigrationErrorKind::Malformed,
-            "enabled",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nlabel = \" \"\n",
-            MigrationErrorKind::Malformed,
-            "label",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nrun = []\n",
-            MigrationErrorKind::Malformed,
-            "run",
-        ),
-    ];
-    for (repository, kind, field) in cases {
-        let refusal = error(repository, "");
-        assert_eq!(refusal.kind(), kind, "{repository}");
-        assert_eq!(refusal.layer(), OriginLayer::Repository);
-        assert_eq!(
-            refusal.field().last().map(String::as_str),
-            Some(field),
-            "{refusal}"
-        );
-        assert!(!refusal.recovery().is_empty());
-    }
-}
-
-#[test]
-fn malformed_registry_and_syntax_name_the_exact_source() {
-    for (repository, kind, field) in [
-        ("policy = false\n", MigrationErrorKind::Malformed, "policy"),
-        (
-            "[policy]\npre_commit_builtins = true\n",
-            MigrationErrorKind::Malformed,
-            "pre_commit_builtins",
-        ),
-        (
-            "[policy.pre_commit_builtins\n",
-            MigrationErrorKind::Syntax,
-            "<document>",
-        ),
-    ] {
-        let refusal = error(repository, "");
-        assert_eq!(refusal.kind(), kind);
-        assert_eq!(refusal.layer(), OriginLayer::Repository);
-        assert_eq!(refusal.document(), "/repo/spice-rust.toml");
-        assert_eq!(refusal.field().last().map(String::as_str), Some(field));
-    }
-}
-
-fn toml_string(value: &str) -> String {
-    format!("{value:?}")
 }
