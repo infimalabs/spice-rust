@@ -890,11 +890,11 @@ fn run_focused_policy(
     let mut reaches = selection.reach().iter().peekable();
     while let Some(reach) = reaches.next() {
         let gate_id = reach.gate_id();
-        if gate_id == GateId::RustTypecheck {
-            if let Some(report) = preexecuted_rust.take() {
-                record_policy_report(&mut policy, report, source)?;
-                continue;
-            }
+        if gate_id == GateId::RustTypecheck
+            && let Some(report) = preexecuted_rust.take()
+        {
+            record_policy_report(&mut policy, report, source)?;
+            continue;
         }
         publish_policy_start(progress, gate_id)?;
         let started = Instant::now();
