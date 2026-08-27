@@ -12,7 +12,7 @@ use wire::{
 
 use super::{
     commit, read_materializations::CurrentReads, seq, typed_outcome, typed_protocol_fault,
-    typed_store_fault, write, write_at_origin,
+    typed_store_fault, write_at_origin,
 };
 
 type SurfaceResult<T> = Result<T, Outcome<CommandAnswer>>;
@@ -111,7 +111,11 @@ where
         Ok(admission) => admission,
         Err(outcome) => return outcome,
     };
-    let mut proposal = match write(command.actor().clone(), epoch, Producer::CommandDoor) {
+    let mut proposal = match write_at_origin(
+        command.actor().clone(),
+        admission.origin,
+        Producer::CommandDoor,
+    ) {
         Ok(proposal) => proposal,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -227,6 +231,7 @@ struct TrustAdmission {
     to: TrustState,
     surface: crate::trust_command::Surface,
     head: JournalHead<TrustHead>,
+    origin: wire::Origin,
 }
 
 fn admit_trust(
@@ -240,13 +245,39 @@ fn admit_trust(
     let surface = crate::trust_command::Surface::load(repository)
         .map_err(|error| crate::trust_command::load_failure(&error))?;
     let head = admit_trust_head(bus, command, reference, &surface, from)?;
+    let origin = trust_head_origin(bus, &head)?;
     admit_epoch(bus, command, epoch)?;
     Ok(TrustAdmission {
         from,
         to,
         surface,
         head,
+        origin,
     })
+}
+
+fn trust_head_origin(bus: &Bus, head: &JournalHead<TrustHead>) -> SurfaceResult<wire::Origin> {
+    let page = bus
+        .canvas_facts(
+            journal::FactPageStart::At(head.position()),
+            head.position(),
+            1,
+        )
+        .map_err(|error| typed_store_fault("trust::journal-unreadable", &error.to_string()))?;
+    page.rows
+        .into_iter()
+        .next()
+        .filter(|fact| fact.seq == head.position())
+        .map(|fact| fact.origin.clone())
+        .ok_or_else(|| {
+            typed_store_fault(
+                "trust::head-fact-missing",
+                &format!(
+                    "trust head position {} is absent from its exact bounded fact page",
+                    head.position()
+                ),
+            )
+        })
 }
 
 fn admit_trust_head(
