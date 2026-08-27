@@ -265,6 +265,11 @@ mod tests {
 
     use super::*;
 
+    /// A success fixture must remain supervised without turning scheduler load
+    /// into timeout coverage. The canonical shard has its own three-minute
+    /// ceiling, while dedicated timeout tests use deliberately expiring bounds.
+    const PYRIGHT_SUCCESS_FIXTURE_RUNTIME: Duration = Duration::from_secs(30);
+
     #[test]
     fn bounded_pyright_process_reports_the_reached_component_diagnostic() {
         let root = exclusive_scratch_root("gate-pyright-process");
@@ -297,7 +302,7 @@ mod tests {
         let bounds = Bounds::new(
             "Pyright process fixture",
             Deadlines::new(
-                Duration::from_secs(5),
+                PYRIGHT_SUCCESS_FIXTURE_RUNTIME,
                 Duration::from_secs(1),
                 Duration::from_secs(1),
             )
