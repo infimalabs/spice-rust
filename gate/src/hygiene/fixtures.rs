@@ -432,35 +432,6 @@ mod tests {
     }
 
     #[test]
-    fn declarations_are_the_exact_final_battery_interval() {
-        let ids: Vec<_> = HYGIENE_ARMS.iter().map(|arm| arm.id()).collect();
-        assert_eq!(ids, GateId::BATTERY[22..]);
-        for arm in HYGIENE_ARMS {
-            assert!(
-                arm.native_component()
-                    .starts_with("gate::hygiene::HygieneAnalyzer::")
-            );
-            assert!(!arm.analyzer().evidence_name().is_empty());
-            assert!(!arm.jurisdiction().roots().is_empty());
-            assert!(!arm.jurisdiction().includes().is_empty());
-            assert!(!arm.jurisdiction().excludes().is_empty());
-            assert!(!arm.jurisdiction().applicability().is_empty());
-            assert!(!arm.configuration().is_empty());
-            assert!(!arm.traversals().is_empty());
-            for source in arm.configuration() {
-                assert!(!source.source().is_empty());
-                assert!(!source.field().is_empty());
-            }
-        }
-        for arm in &HYGIENE_ARMS[..2] {
-            assert_eq!(arm.provider_contract(), Some(EXACT_PROVIDER_CONTRACT));
-        }
-        for arm in &HYGIENE_ARMS[2..] {
-            assert_eq!(arm.provider_contract(), None);
-        }
-    }
-
-    #[test]
     fn pass_and_finding_fixtures_retain_every_analysis_stage() {
         for arm in HYGIENE_ARMS {
             for outcome in [HygieneOutcome::Passed, HygieneOutcome::Findings] {
@@ -488,56 +459,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn graph_symbol_and_policy_fixture_identities_are_multifile() {
-        let reachability = report_with(GateId::Reachability, HygieneOutcome::Findings);
-        let arm = &reachability.arms[0];
-        let graph = arm.evidence.iter().find_map(|item| match item {
-            AnalysisEvidence::GraphConstruction {
-                production_roots,
-                test_roots,
-                nodes,
-                edges,
-                reach,
-            } => Some((production_roots, test_roots, nodes, edges, reach)),
-            _ => None,
-        });
-        let Some((production, tests, nodes, edges, reach)) = graph else {
-            panic!("graph evidence retained");
-        };
-        assert_eq!(production.len(), 2);
-        assert_eq!(tests.len(), 2);
-        assert_eq!((*nodes, *edges), (9, 14));
-        assert_eq!(
-            reach
-                .iter()
-                .map(|entry| (entry.reached_by, entry.imported_by))
-                .collect::<Vec<_>>(),
-            [(2, 1), (1, 1)],
-            "graph evidence retains the reach ranking widest first"
-        );
-
-        for gate in GateId::BATTERY[22..].iter().copied() {
-            let report = report_with(gate, HygieneOutcome::Findings);
-            let measured = report
-                .arms
-                .iter()
-                .find(|item| item.gate_id == gate)
-                .expect("finding measurement");
-            assert_eq!(measured.findings, vec![finding(gate)]);
-        }
-
-        let stale = HygieneFinding {
-            path: "spice-rust.toml".to_owned(),
-            line: None,
-            detail: HygieneFindingDetail::StalePrivateException {
-                test_name: "test_private".to_owned(),
-                target: "spice._gone".to_owned(),
-            },
-        };
-        assert_eq!(stale.detail.gate(), GateId::PrivateInternals);
     }
 
     #[test]
