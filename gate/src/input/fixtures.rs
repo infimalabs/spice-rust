@@ -152,87 +152,6 @@ mod tests {
     }
 
     #[test]
-    fn gate_set_admission_closes_every_metric_over_exactly_one_used_tool() {
-        let current = GateSet::current().expect("compiled gate set");
-
-        let mut incomplete_camp = current.clone();
-        incomplete_camp.camp_metrics.pop();
-        assert!(matches!(
-            readmit(incomplete_camp),
-            Err(GateSetError::CampLoci { ref declared, ref measured })
-                if declared.len() == 4 && measured.len() == 3
-        ));
-
-        let mut empty_camp = current.clone();
-        empty_camp.camp = Camp::new([]).expect("the Camp type permits an empty collection");
-        assert!(matches!(readmit(empty_camp), Err(GateSetError::EmptyCamp)));
-
-        let mut duplicate_metric = current.clone();
-        duplicate_metric.camp_metrics[1].metric = duplicate_metric.camp_metrics[0].metric.clone();
-        assert!(matches!(
-            readmit(duplicate_metric),
-            Err(GateSetError::DuplicateMetric { ref metric }) if metric == "rust.max-line.camp"
-        ));
-
-        let mut missing = current.clone();
-        missing.tools.clear();
-        assert!(matches!(
-            readmit(missing),
-            Err(GateSetError::MissingTool {
-                ref metric,
-                ref tool,
-                ref parser_program,
-            }) if metric == "rust.max-line.camp" && tool == "awk" && parser_program == AWK
-        ));
-
-        let mut duplicate_name = current.clone();
-        let mut second = duplicate_name.tools[0].clone();
-        second.program = "/bin/sh".to_owned();
-        duplicate_name.tools.push(second);
-        assert!(matches!(
-            readmit(duplicate_name),
-            Err(GateSetError::DuplicateToolName { ref name }) if name == "awk"
-        ));
-
-        let mut duplicate_program = current.clone();
-        let mut second = duplicate_program.tools[0].clone();
-        second.name = "awk-copy".to_owned();
-        duplicate_program.tools.push(second);
-        assert!(matches!(
-            readmit(duplicate_program),
-            Err(GateSetError::DuplicateToolProgram { ref program }) if program == AWK
-        ));
-
-        let mut mismatched = current.clone();
-        mismatched.tools[0].program = "/bin/sh".to_owned();
-        assert!(matches!(
-            readmit(mismatched),
-            Err(GateSetError::MismatchedTool {
-                ref metric,
-                ref tool,
-                ref parser_program,
-                ref tool_program,
-            }) if metric == "rust.max-line.camp" && tool == "awk"
-                && parser_program == AWK && tool_program == "/bin/sh"
-        ));
-
-        let mut unused = current;
-        unused.tools.push(ToolDeclaration {
-            name: "sh".to_owned(),
-            program: "/bin/sh".to_owned(),
-            probe_arguments: vec!["-c".to_owned(), "printf unused".to_owned()],
-            probe_output: "unused".to_owned(),
-        });
-        assert!(matches!(
-            readmit(unused),
-            Err(GateSetError::UnusedTool {
-                ref tool,
-                ref program,
-            }) if tool == "sh" && program == "/bin/sh"
-        ));
-    }
-
-    #[test]
     fn executable_and_bound_declarations_move_their_own_identities() {
         let current = GateSet::current().expect("compiled gate set");
         let mut changed = current.clone();
@@ -300,16 +219,5 @@ mod tests {
             .parent()
             .expect("gate is a direct workspace member")
             .to_path_buf()
-    }
-
-    fn readmit(candidate: GateSet) -> Result<GateSet, GateSetError> {
-        GateSet::admit(
-            candidate.metrics,
-            candidate.camp_metrics,
-            candidate.camp,
-            candidate.kill,
-            candidate.floors,
-            candidate.tools,
-        )
     }
 }

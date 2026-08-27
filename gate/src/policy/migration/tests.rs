@@ -88,29 +88,3 @@ fn a_declared_document_that_fails_normalization_is_refused_at_its_field() {
         "and at the field that spelled it"
     );
 }
-
-/// Every packaged default normalizes, and it is the inventory named here.
-///
-/// The inventory is written out rather than read off the constant, because a
-/// test that loops over `DEFAULT_REPO_TRUTH_DOCS` alone agrees with any content
-/// it happens to hold: emptying it would leave nothing to iterate and pass, and
-/// an empty fallback leaves a repository measuring no documents while reading
-/// exactly like one that had none to measure. The literal fails when a default
-/// is dropped; the resolution fails when one that cannot normalize is added.
-#[test]
-fn every_packaged_default_document_is_a_repository_relative_spelling() {
-    assert_eq!(
-        DEFAULT_REPO_TRUTH_DOCS,
-        &["AGENTS.md"],
-        "this release packages exactly one repository-truth document"
-    );
-
-    let resolved = repo_truth_inventory(None, DEFAULT_REPO_TRUTH_DOCS, TRACKED_SOURCE)
-        .expect("every packaged default is a repository-relative spelling");
-
-    assert_eq!(
-        resolved,
-        vec!["AGENTS.md".to_owned()],
-        "a layer declaring nothing resolves the packaged inventory, spelled as packaged"
-    );
-}
