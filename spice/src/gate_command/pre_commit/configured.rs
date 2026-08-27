@@ -36,8 +36,11 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 const PROGRESS_FRAME_LIMIT: usize = 16 * 1024;
 const PROGRESS_QUEUE_CAPACITY: usize = 128;
 
-const SOURCE_GATE_ARGV: [&str; 11] = [
+const SOURCE_GATE_ARGV: [&str; 14] = [
+    "spice",
+    "dev",
     "cargo",
+    "--",
     "run",
     "--quiet",
     "--locked",
@@ -116,6 +119,10 @@ impl StepReport {
 
     pub(super) fn selected_paths(&self) -> &[String] {
         &self.selected_paths
+    }
+
+    pub(super) fn argv(&self) -> &[String] {
+        &self.argv
     }
 
     pub(super) const fn enabled(&self) -> bool {
@@ -233,10 +240,59 @@ impl ExecutionBounds {
 struct DispatchPolicy {
     builtins: bool,
     surface: Surface,
+    spice: Option<SpiceRoute>,
     configuration: PathBuf,
     source: ConfigSource,
     tracked: Option<String>,
     commands: Vec<PreCommitStep>,
+}
+
+#[derive(Clone)]
+struct SpiceRoute {
+    reference: steer::WrapperReference,
+    resolved: spice::agent_wrapper::Resolved,
+}
+
+impl SpiceRoute {
+    fn capture(
+        reference: steer::WrapperReference,
+        repository: &Repository,
+    ) -> Result<Self, ConfiguredFailure> {
+        let resolved =
+            spice::agent_wrapper::resolve(reference, repository).map_err(wrapper_refusal)?;
+        Ok(Self {
+            reference,
+            resolved,
+        })
+    }
+
+    fn verify(&self, repository: &Repository) -> Result<(), ConfiguredFailure> {
+        let observed =
+            spice::agent_wrapper::resolve(self.reference, repository).map_err(wrapper_refusal)?;
+        if observed == self.resolved {
+            return Ok(());
+        }
+        Err(ConfiguredFailure::refusal(
+            "gate::pre-commit-wrapper-moved",
+            format!(
+                "expected={} observed={}",
+                json(&self.resolved.executable().display().to_string()),
+                json(&observed.executable().display().to_string()),
+            ),
+        ))
+    }
+}
+
+fn wrapper_refusal(error: spice::agent_wrapper::ResolveError) -> ConfiguredFailure {
+    ConfiguredFailure::refusal(
+        "gate::pre-commit-wrapper-refused",
+        format!(
+            "reason={} path={} detail={}",
+            error.reason(),
+            json(&error.path().display().to_string()),
+            json(&error.to_string()),
+        ),
+    )
 }
 
 impl DispatchPolicy {
@@ -247,6 +303,22 @@ impl DispatchPolicy {
         let policy = loaded.resolved().root().policy();
         let builtins = policy.pre_commit_builtins();
         let commands = policy.pre_commit().to_vec();
+        let spice = if commands.iter().any(|command| {
+            command
+                .run()
+                .first()
+                .is_some_and(|program| program == "spice")
+        }) {
+            loaded
+                .resolved()
+                .root()
+                .wrappers()
+                .spice()
+                .map(|reference| SpiceRoute::capture(reference, repository))
+                .transpose()?
+        } else {
+            None
+        };
         let (configuration, source) = pre_commit_declarations(&loaded).map_or_else(
             || {
                 (
@@ -264,6 +336,7 @@ impl DispatchPolicy {
         Ok(Self {
             builtins,
             surface: Surface::from_loaded(&loaded),
+            spice,
             configuration,
             source,
             tracked: loaded.tracked().map(ToOwned::to_owned),
@@ -298,27 +371,35 @@ impl DispatchPolicy {
 
     fn verify_current(&self, repository: &Repository) -> Result<(), ConfiguredFailure> {
         match self.surface.is_current(repository) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(ConfiguredFailure::refusal(
-                "gate::pre-commit-policy-moved",
-                format!(
-                    "configuration={} source={} digest={}",
-                    json(&self.configuration.display().to_string()),
-                    self.source.as_str(),
-                    self.surface.digest(),
-                ),
-            )),
-            Err(error) => Err(ConfiguredFailure::refusal(
-                "gate::pre-commit-policy-moved",
-                format!(
-                    "configuration={} source={} digest={}; reacquisition={}",
-                    json(&self.configuration.display().to_string()),
-                    self.source.as_str(),
-                    self.surface.digest(),
-                    json(&error.to_string()),
-                ),
-            )),
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(ConfiguredFailure::refusal(
+                    "gate::pre-commit-policy-moved",
+                    format!(
+                        "configuration={} source={} digest={}",
+                        json(&self.configuration.display().to_string()),
+                        self.source.as_str(),
+                        self.surface.digest(),
+                    ),
+                ));
+            }
+            Err(error) => {
+                return Err(ConfiguredFailure::refusal(
+                    "gate::pre-commit-policy-moved",
+                    format!(
+                        "configuration={} source={} digest={}; reacquisition={}",
+                        json(&self.configuration.display().to_string()),
+                        self.source.as_str(),
+                        self.surface.digest(),
+                        json(&error.to_string()),
+                    ),
+                ));
+            }
         }
+        if let Some(spice) = &self.spice {
+            spice.verify(repository)?;
+        }
+        Ok(())
     }
 
     fn require_approved(&self, repository: &Repository) -> Result<(), ConfiguredFailure> {
@@ -592,6 +673,11 @@ impl Dispatch {
         let paths = self.authority.selected_paths.clone();
         let root = self.repository.worktree_root().to_path_buf();
         let commands = self.policy.commands.clone();
+        let spice = self
+            .policy
+            .spice
+            .as_ref()
+            .map(|route| route.resolved.executable().to_path_buf());
         let mut verify = || {
             self.verify()?;
             self.policy.require_approved(&self.repository)
@@ -603,6 +689,7 @@ impl Dispatch {
             &paths,
             &root,
             &base,
+            spice.as_deref(),
             ExecutionBounds::production(runtime),
             cancellation,
             mode,
@@ -629,6 +716,7 @@ fn execute_steps_with_progress(
     staged_paths: &[String],
     root: &Path,
     base_environment: &[(OsString, OsString)],
+    spice: Option<&Path>,
     bounds: ExecutionBounds,
     cancellation: Cancellation,
     mode: ExecutionMode,
@@ -655,6 +743,7 @@ fn execute_steps_with_progress(
             continue;
         }
         let argv = effective_argv(command, mode);
+        let process_argv = process_argv(&argv, spice)?;
         let remaining = bounds.runtime.saturating_sub(started.elapsed());
         if remaining.is_zero() {
             reports.push(step_report(
@@ -672,7 +761,7 @@ fn execute_steps_with_progress(
         let environment = command_environment(base_environment, source, &selected_paths)?;
         let spec = command_spec(
             command.label(),
-            &argv,
+            &process_argv,
             root,
             environment,
             remaining,
@@ -716,6 +805,7 @@ fn execute_steps(
     staged_paths: &[String],
     root: &Path,
     base_environment: &[(OsString, OsString)],
+    spice: Option<&Path>,
     bounds: ExecutionBounds,
     cancellation: Cancellation,
     mode: ExecutionMode,
@@ -727,6 +817,7 @@ fn execute_steps(
         staged_paths,
         root,
         base_environment,
+        spice,
         bounds,
         cancellation,
         mode,
@@ -806,6 +897,25 @@ fn effective_argv(command: &PreCommitStep, mode: ExecutionMode) -> Vec<String> {
     effective
 }
 
+fn process_argv(argv: &[String], spice: Option<&Path>) -> Result<Vec<OsString>, ConfiguredFailure> {
+    let Some((program, arguments)) = argv.split_first() else {
+        unreachable!("typed pre-commit argv is nonempty");
+    };
+    if program != "spice" {
+        return Ok(argv.iter().map(OsString::from).collect());
+    }
+    let executable = spice.ok_or_else(|| {
+        ConfiguredFailure::refusal(
+            "gate::pre-commit-wrapper-missing",
+            "configured command names spice but wrappers.spice is absent",
+        )
+    })?;
+    let mut resolved = Vec::with_capacity(argv.len());
+    resolved.push(executable.as_os_str().to_owned());
+    resolved.extend(arguments.iter().map(OsString::from));
+    Ok(resolved)
+}
+
 fn scoped_paths(
     command: &PreCommitStep,
     staged_paths: &[String],
@@ -831,7 +941,7 @@ fn scoped_paths(
 
 fn command_spec(
     label: &str,
-    argv: &[String],
+    argv: &[OsString],
     root: &Path,
     environment: Environment,
     runtime: Duration,
@@ -845,7 +955,7 @@ fn command_spec(
         limit: bounds.output_limit,
     };
     Ok(Spec {
-        argv: Argv::new(program, arguments.iter()).map_err(|error| {
+        argv: Argv::new(program.clone(), arguments.iter().cloned()).map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-command-invalid", error.to_string())
         })?,
         cwd: root.to_path_buf(),
