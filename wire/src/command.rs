@@ -357,6 +357,17 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
+    /// Exact claim head, lease head, bound lane and occupant, resident epoch,
+    /// and optionally the workflow head when freeing also unassigns review.
+    pub const FREE: Self = Self {
+        required: &[
+            WitnessKind::Claim,
+            WitnessKind::Lease,
+            WitnessKind::Residency,
+        ],
+        optional: &[WitnessKind::Workflow],
+        authority: Authority::Connected,
+    };
     /// Exact normalized preview digest and one named board barrier containing
     /// the task and workflow heads the preview read.
     pub const APPLY: Self = Self {
@@ -734,9 +745,8 @@ impl CommandKind {
             Self::TaskReview => Law::REVIEW,
             Self::TaskAssign => Law::ASSIGN,
             Self::ClaimWin => Law::WIN,
-            Self::ClaimCarry | Self::ClaimRenew | Self::ClaimFree | Self::ClaimLapse => {
-                Law::POSSESSION
-            }
+            Self::ClaimFree => Law::FREE,
+            Self::ClaimCarry | Self::ClaimRenew | Self::ClaimLapse => Law::POSSESSION,
             _ => self.non_task_law(),
         }
     }
