@@ -103,6 +103,13 @@ fn row(fixture: &Fixture) -> wire::LaneResidency {
     }
 }
 
+fn never_started(row: &mut wire::LaneResidency) {
+    row.occupant = None;
+    row.lineage.clear();
+    row.session = None;
+    row.disposition = VACANT.into();
+}
+
 fn head(row: &mut wire::LaneResidency) -> &mut wire::LaneSession {
     row.session
         .as_mut()
@@ -182,6 +189,20 @@ fn resume_returns_the_identity_the_durable_tape_still_declares() {
     match resume_session(&paths(&fixture), &row).expect("a confirmed head resumes") {
         vendor::Resume::Session(identity) => assert_eq!(identity.as_str(), IDENTITY),
         vendor::Resume::Fresh => panic!("a confirmed session head resumed as a fresh occupant"),
+    }
+    finish(fixture);
+}
+
+#[test]
+fn launch_resume_starts_fresh_for_a_never_started_vacant_lane() {
+    let fixture = fixture();
+    let mut row = row(&fixture);
+    never_started(&mut row);
+    match launch_resume(&paths(&fixture), &row).expect("never-started lane starts fresh") {
+        vendor::Resume::Fresh => {}
+        vendor::Resume::Session(identity) => {
+            panic!("never-started lane unexpectedly resumed {identity:?}")
+        }
     }
     finish(fixture);
 }

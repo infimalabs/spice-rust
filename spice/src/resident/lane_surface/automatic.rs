@@ -43,7 +43,7 @@ pub(super) fn wake(
     if let Err(outcome) = super::super::steering::lane_capability(row) {
         return typed_outcome(outcome);
     }
-    let resume = match resume_session(paths, row) {
+    let resume = match launch_resume(paths, row) {
         Ok(resume) => resume,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -197,7 +197,7 @@ pub(in crate::resident) fn wake_automatic(
             "the exact pre-launch claim is no longer active",
         ));
     }
-    let resume = resume_session(paths, &row)?;
+    let resume = launch_resume(paths, &row)?;
     let launch = match occupant_launch(
         paths,
         OccupantLaunchRequest {

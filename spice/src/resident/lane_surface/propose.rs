@@ -8,13 +8,9 @@ pub(super) fn propose_seat(
     request: &LaneSeat,
     observed: &journal::JournalHead<wire::ResidencyHead>,
     epoch: CanonicalUuid,
-    prepared: &PreparedSeat,
+    capability: CanonicalUuid,
     answer: LaneChangeAnswer,
 ) -> CommandResult<JournalWrite> {
-    let capability = prepared.capability;
-    let occupant = prepared.proven.occupant;
-    let group = prepared.proven.group;
-    let session = &prepared.proven.session;
     let mut next = observed.body().clone();
     next.topology_revision = answer.topology_revision;
     if subscription_policy(observed.body(), request.lineage_id)?.is_none() {
@@ -51,11 +47,11 @@ pub(super) fn propose_seat(
         worktree: request.worktree.clone(),
         life: request.life.clone(),
         vendor: request.vendor.clone(),
-        occupant: Some(occupant),
-        lineage: vec![occupant],
+        occupant: None,
+        lineage: Vec::new(),
         capabilities: vec![capability],
-        session: Some(session.clone()),
-        disposition: OCCUPIED.to_owned(),
+        session: None,
+        disposition: VACANT.to_owned(),
     });
     next.lanes.sort_by_key(|row| row.lane);
     let mut write = write(
@@ -78,21 +74,7 @@ pub(super) fn propose_seat(
             FactCause::Existing(observed.position()),
         )
         .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
-    let declared = write
-        .fact(session_fact(session), FactCause::Pending(seated))
-        .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
-    let started = write
-        .fact(
-            wire::body::LaneStarted {
-                lane: request.lane,
-                occupant,
-                epoch,
-                group,
-            },
-            FactCause::Pending(declared),
-        )
-        .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
-    write.residency_head(started, move |_| next);
+    write.residency_head(seated, move |_| next);
     command_result(&mut write, command, request.clone(), epoch, answer)?;
     Ok(write)
 }
