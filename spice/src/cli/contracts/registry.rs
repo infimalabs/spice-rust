@@ -671,7 +671,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
          [--life Steer|Drive|Drain] [--vendor NAME] [--resume SESSION]",
         Operator,
         Command,
-        [LaneSeated, LaneSessionDeclared, LaneStarted],
+        [LaneSeated],
         [Resident, OperatorCapability],
         Reply,
         "lane::add"

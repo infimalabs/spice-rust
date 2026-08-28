@@ -38,6 +38,41 @@ fn access_refusal_for(argv: &[&str]) -> String {
     access_refusal(argv).reason().to_owned()
 }
 
+struct NoopCaptureReporter;
+
+impl lane::capture::CaptureReporter for NoopCaptureReporter {
+    fn record(
+        &self,
+        _record: lane::capture::CaptureRecord,
+    ) -> Result<(), lane::capture::CaptureReportError> {
+        Ok(())
+    }
+
+    fn failed(&self, _failure: lane::capture::CaptureFailure) {}
+
+    fn exited(&self, _exit: lane::capture::CaptureExit) {}
+}
+
+fn admitted_lane_seat(
+    epoch: CanonicalUuid,
+    body: &wire::intent::LaneSeat,
+) -> wire::AdmittedCommand {
+    Command {
+        v: wire::WireVersion::CURRENT,
+        id: test_uuid(70),
+        epoch,
+        kind: CommandKind::LaneSeat,
+        expected: Vec::new(),
+        body: serde_json::to_value(body).expect("lane seat command body encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("operator lane seat command admits")
+}
+
 /// The surface listens exactly where the operator requested or at one stable default.
 ///
 /// Both halves are load-bearing. An operator reaching this surface from another
@@ -372,5 +407,91 @@ fn startup_surface_captures_configured_hidden_project_policy_once() {
             .hidden_stem(),
         Some("sandbox")
     );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
+    let (root, paths) = resident_fixture("lane-add-vacant");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(71);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let capabilities = canvas::axum::Capabilities::default();
+    let discovery = canvas::Discovery {
+        endpoint: "http://127.0.0.1:8767".to_owned(),
+        capability: test_uuid(72),
+        epoch,
+    };
+    let runtime =
+        lane_surface::Runtime::new(&capabilities, &discovery, Arc::new(NoopCaptureReporter));
+    let mut seats = Seats::new();
+    let lane = test_uuid(73);
+    let body = wire::intent::LaneSeat {
+        topology_revision: 0,
+        lane,
+        lineage_id: lane,
+        name: Some("new lane".to_owned()),
+        worktree: repository.worktree_root().display().to_string(),
+        life: "drive".to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        resume: None,
+    };
+    let command = admitted_lane_seat(epoch, &body);
+
+    let answer = lane_surface::seat(&bus, &paths, epoch, &mut seats, &runtime, &command, &body);
+
+    let Outcome::Reply(reply) = answer else {
+        panic!("lane add must commit: {answer:?}");
+    };
+    let CommandAnswer::LaneChange(change) = reply.body else {
+        panic!("lane add returned a non-lane-change answer");
+    };
+    assert_eq!(
+        (change.from.as_str(), change.to.as_str()),
+        ("absent", "vacant")
+    );
+    assert_eq!(change.git, None);
+    assert!(seats.is_empty(), "lane add must not supervise a process");
+    let snapshot = bus.fact_snapshot().expect("facts read");
+    assert!(
+        snapshot
+            .facts()
+            .iter()
+            .any(|fact| fact.fact.kind() == wire::FactKind::LaneSeated),
+        "lane add still records the durable lane seat"
+    );
+    assert!(
+        !snapshot
+            .facts()
+            .iter()
+            .any(|fact| fact.fact.kind() == wire::FactKind::LaneSessionDeclared),
+        "lane add must not declare a vendor session"
+    );
+    assert!(
+        !snapshot
+            .facts()
+            .iter()
+            .any(|fact| fact.fact.kind() == wire::FactKind::LaneStarted),
+        "lane add must not start an occupant"
+    );
+    let row = bus
+        .residency_head()
+        .expect("residency reads")
+        .expect("residency exists")
+        .into_body()
+        .lanes
+        .into_iter()
+        .find(|row| row.lane == lane)
+        .expect("lane add publishes one row");
+    assert_eq!(row.occupant, None);
+    assert_eq!(row.session, None);
+    assert_eq!(row.lineage, Vec::<CanonicalUuid>::new());
+    assert_eq!(row.disposition, "vacant");
+    assert_eq!(row.capabilities.len(), 1);
+    bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }

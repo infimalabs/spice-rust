@@ -42,13 +42,13 @@ use reply::{
 };
 pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, await_session,
-    record_stream, resume_session, session_fact,
+    launch_resume, record_stream, resume_session, session_fact,
 };
 
 use super::shutdown::{current_residency, guard_residency};
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome,
-    typed_protocol_fault, typed_store_fault, write,
+    typed_store_fault, write,
 };
 
 const OCCUPIED: &str = "occupied";
@@ -236,12 +236,12 @@ pub(super) fn read(
     })
 }
 
-/// Seat one new lane, capability, and first supervised occupant.
+/// Seat one new vacant lane and publish its command surface.
 pub(super) fn seat(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    seats: &mut Seats,
+    _seats: &mut Seats,
     runtime: &Runtime<'_>,
     command: &wire::AdmittedCommand,
     request: &LaneSeat,
@@ -250,7 +250,7 @@ pub(super) fn seat(
         Ok(observed) => observed,
         Err(outcome) => return outcome,
     };
-    let prepared = match prepare_seat(paths, epoch, seats, runtime, request) {
+    let capability = match prepare_seat_surface(paths, runtime, request) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
@@ -258,42 +258,28 @@ pub(super) fn seat(
         lane: request.lane,
         topology_revision,
         from: "absent".to_owned(),
-        to: OCCUPIED.to_owned(),
-        git: Some(prepared.proven.git.clone().into_boxed_str()),
+        to: VACANT.to_owned(),
+        git: None,
     };
     let proposal = propose_seat(
         command,
         request,
         &observed,
         epoch,
-        &prepared,
+        capability,
         answer.clone(),
     );
     let proposal = match proposal {
         Ok(proposal) => proposal,
         Err(outcome) => {
-            compensate_seat(
-                paths,
-                seats,
-                runtime,
-                &request.worktree,
-                request.lane,
-                prepared.capability,
-            );
+            remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
             return typed_outcome(outcome);
         }
     };
     match commit(bus, proposal) {
         Ok(committed) => committed_lane_reply(committed, answer),
         Err(outcome) => {
-            compensate_seat(
-                paths,
-                seats,
-                runtime,
-                &request.worktree,
-                request.lane,
-                prepared.capability,
-            );
+            remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
             typed_outcome(outcome)
         }
     }
@@ -484,6 +470,14 @@ fn admit_seat(
             "select one closed lane life",
         ));
     }
+    if request.resume.is_some() {
+        return Err(lane_refusal(
+            "lane::resume-requires-wake",
+            Some("lane add without resume".to_owned()),
+            request.resume.clone(),
+            "add the lane without launching it, then wake an established lane explicitly",
+        ));
+    }
     let observed = current_residency(bus, epoch).map_err(typed_outcome)?;
     let topology_revision = next_topology_revision(observed.body(), request.topology_revision)?;
     if observed.body().state != ResidentState::Seated {
@@ -524,11 +518,6 @@ fn admit_seat(
     Ok((observed, topology_revision))
 }
 
-struct PreparedSeat {
-    capability: CanonicalUuid,
-    proven: ProvenOccupant,
-}
-
 struct ProvenOccupant {
     occupant: CanonicalUuid,
     group: u32,
@@ -536,21 +525,11 @@ struct ProvenOccupant {
     git: String,
 }
 
-fn prepare_seat(
+fn prepare_seat_surface(
     paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
     runtime: &Runtime<'_>,
     request: &LaneSeat,
-) -> Result<PreparedSeat, Outcome<CommandAnswer>> {
-    let resume = request.resume.as_ref().map_or_else(
-        || Ok(vendor::Resume::Fresh),
-        |session| {
-            vendor::SessionId::new(session.clone())
-                .map(vendor::Resume::Session)
-                .map_err(|error| typed_protocol_fault("lane::resume-invalid", &error.to_string()))
-        },
-    )?;
+) -> Result<CanonicalUuid, Outcome<CommandAnswer>> {
     let capability = new_uuid();
     let actor = Actor::Lane(request.lane);
     runtime
@@ -569,58 +548,7 @@ fn prepare_seat(
         runtime.capabilities.remove(capability, &actor);
         return Err(typed_outcome(outcome));
     }
-    let occupant = new_uuid();
-    let launch = occupant_launch(
-        paths,
-        OccupantLaunchRequest {
-            worktree: &request.worktree,
-            vendor: &request.vendor,
-            epoch,
-            lane: request.lane,
-            occupant,
-            resume,
-        },
-        Arc::clone(&runtime.capture),
-    )
-    .map_err(|outcome| {
-        remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
-        typed_outcome(outcome)
-    })?;
-    let git = launch.git;
-    let session_proof = launch.session;
-    let group = seats
-        .seat_observed(request.lane, occupant, launch.spec, launch.observation)
-        .map(lane::occupant::Occupant::group)
-        .map_err(|error| {
-            remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
-            typed_environment_fault("lane::launch-failed", &error.to_string())
-        })?;
-    let session = await_session(session_proof).map_err(|error| {
-        stop_lane(seats, request.lane);
-        remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
-        error.outcome()
-    })?;
-    Ok(PreparedSeat {
-        capability,
-        proven: ProvenOccupant {
-            occupant,
-            group,
-            session,
-            git,
-        },
-    })
-}
-
-fn compensate_seat(
-    paths: &RuntimePaths,
-    seats: &mut Seats,
-    runtime: &Runtime<'_>,
-    worktree: &str,
-    lane: CanonicalUuid,
-    capability: CanonicalUuid,
-) {
-    stop_lane(seats, lane);
-    remove_seat_surface(paths, runtime, worktree, lane, capability);
+    Ok(capability)
 }
 
 fn remove_seat_surface(

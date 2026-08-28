@@ -191,6 +191,18 @@ pub(in crate::resident) struct SessionProof {
     pub(in crate::resident) horizon: Duration,
 }
 
+/// Select fresh launch for never-started lanes and proven resume otherwise.
+pub(in crate::resident) fn launch_resume(
+    paths: &RuntimePaths,
+    row: &wire::LaneResidency,
+) -> CommandResult<vendor::Resume> {
+    if row.session.is_none() && row.lineage.is_empty() {
+        Ok(vendor::Resume::Fresh)
+    } else {
+        resume_session(paths, row)
+    }
+}
+
 impl DeclarationReporter {
     fn reject(&self, state: &mut DeclarationState, error: SessionProofError) -> CaptureReportError {
         let _sent = state.reply.try_send(Err(error.clone()));
