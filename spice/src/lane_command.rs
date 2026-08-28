@@ -117,7 +117,28 @@ fn add(
         Ok(revision) => revision,
         Err(outcome) => return outcome,
     };
-    let body = LaneSeat {
+    let body = lane_seat_body(
+        matches,
+        topology_revision,
+        lane,
+        lineage_id,
+        worktree.worktree_root().display().to_string(),
+        life,
+        vendor,
+    );
+    command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
+}
+
+fn lane_seat_body(
+    matches: &ArgMatches,
+    topology_revision: u64,
+    lane: CanonicalUuid,
+    lineage_id: CanonicalUuid,
+    worktree: String,
+    life: String,
+    vendor: wire::Name,
+) -> LaneSeat {
+    LaneSeat {
         topology_revision,
         lane,
         lineage_id,
@@ -125,12 +146,11 @@ fn add(
             .get_one::<String>("name")
             .map(|name| name.trim().to_owned())
             .filter(|name| !name.is_empty()),
-        worktree: worktree.worktree_root().display().to_string(),
+        worktree,
         life,
         vendor,
-        resume: matches.get_one::<String>("resume").cloned(),
-    };
-    command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
+        resume: None,
+    }
 }
 
 fn observe_topology(canvas: &Path) -> Result<u64, Outcome<CommandAnswer>> {
@@ -330,6 +350,37 @@ fn new_uuid() -> CanonicalUuid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lane_add_body_does_not_read_removed_resume_argument() {
+        let matches = crate::cli::command()
+            .try_get_matches_from(["spice", "lane", "add", "--name", " reviewer "])
+            .expect("lane add parses without resume");
+        let (_, lane_matches) = matches.subcommand().expect("lane subcommand exists");
+        let (_, add_matches) = lane_matches
+            .subcommand()
+            .expect("lane add subcommand exists");
+        let lane = CanonicalUuid::new(uuid::Uuid::from_u128(1));
+        let lineage = CanonicalUuid::new(uuid::Uuid::from_u128(2));
+        let body = lane_seat_body(
+            add_matches,
+            7,
+            lane,
+            lineage,
+            "/tmp/spice-lane".to_owned(),
+            "drive".to_owned(),
+            "codex".parse().expect("fixture vendor parses"),
+        );
+
+        assert_eq!(body.topology_revision, 7);
+        assert_eq!(body.lane, lane);
+        assert_eq!(body.lineage_id, lineage);
+        assert_eq!(body.name.as_deref(), Some("reviewer"));
+        assert_eq!(body.worktree, "/tmp/spice-lane");
+        assert_eq!(body.life, "drive");
+        assert_eq!(body.vendor.as_str(), "codex");
+        assert_eq!(body.resume, None);
+    }
 
     #[test]
     fn vendor_resolution_is_explicit_then_environment_then_configured_default() {
