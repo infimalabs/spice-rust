@@ -17,7 +17,7 @@ pub(super) fn renew_and_assert(
         expected.clone(),
         &ClaimRenew {
             task: held_task.clone(),
-            lease_seconds: 30 * 60,
+            lease_seconds: 90 * 60,
         },
     ));
 
@@ -40,7 +40,7 @@ pub(super) fn renew_and_assert(
             expected,
             &ClaimRenew {
                 task: held_task.clone(),
-                lease_seconds: 30 * 60,
+                lease_seconds: 90 * 60,
             },
         ),
         Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"
