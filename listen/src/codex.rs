@@ -276,7 +276,8 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
         | "thread_settings_applied"
         | "patch_apply_end"
         | "web_search_end"
-        | "context_compacted" => Ok(Vec::new()),
+        | "context_compacted"
+        | "turn_aborted" => Ok(Vec::new()),
         other => Err(drift(&format!("event_msg:{other}"))),
     }
 }

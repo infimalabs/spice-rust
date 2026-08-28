@@ -336,9 +336,35 @@ fn codex_second_turn_rows() -> Vec<Value> {
     ]
 }
 
+fn codex_aborted_turn_rows() -> Vec<Value> {
+    vec![
+        codex_event(
+            "2026-01-01T00:00:19Z",
+            "event_msg",
+            json!({"type": "task_started", "turn_id": "turn-three"}),
+        ),
+        codex_message(
+            "2026-01-01T00:00:20Z",
+            "user",
+            None,
+            "Interrupt this turn cleanly.",
+        ),
+        codex_event(
+            "2026-01-01T00:00:21Z",
+            "event_msg",
+            json!({
+                "type": "turn_aborted",
+                "turn_id": "turn-three",
+                "reason": "interrupted",
+            }),
+        ),
+    ]
+}
+
 fn codex_rows() -> Vec<Value> {
     let mut rows = codex_first_turn_rows();
     rows.extend(codex_second_turn_rows());
+    rows.extend(codex_aborted_turn_rows());
     rows
 }
 
@@ -617,7 +643,7 @@ fn assert_phases_slices_and_summary(file: &str, start: &str, end: &str) {
         &[],
         "summary",
     );
-    assert_eq!(summary["turns"], 2);
+    assert_eq!(summary["turns"], 3);
     assert_eq!(summary["recent_prompts"].as_array().map(Vec::len), Some(1));
 }
 
@@ -790,7 +816,7 @@ fn assert_codex_turn_and_recall_rows(codex: &str) {
     let codex_turns = codex_turns["rows"]
         .as_array()
         .expect("Codex turns are typed");
-    assert_eq!(codex_turns.len(), 2);
+    assert_eq!(codex_turns.len(), 3);
     let first_final_count = codex_turns[0]["dialogue"]
         .as_array()
         .expect("turn dialogue is typed")
@@ -815,6 +841,8 @@ fn assert_codex_turn_and_recall_rows(codex: &str) {
             "Commit 1234abc remains visible in a distinct task-complete final.",
         ]
     );
+    assert_eq!(codex_turns[2]["turn_id"], "turn-three");
+    assert_eq!(codex_turns[2]["completed"], true);
 
     let codex_recall = reply_forms(
         &strings(&[

@@ -140,7 +140,7 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
     );
     assert_eq!(deduped["sources"].as_array().map(Vec::len), Some(1));
     assert_eq!(deduped["sources"][0]["compressed"], true);
-    assert_eq!(deduped["turns"], 2);
+    assert_eq!(deduped["turns"], 3);
 
     scratch.remove();
 }

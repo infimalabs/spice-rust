@@ -458,6 +458,18 @@ fn persisted_records_publish_vendor_neutral_context_and_facts() {
                 && events.is_empty()
     ));
 
+    let codex_aborted = br#"{"timestamp":"2026-08-09T01:00:02Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}"#;
+    let detected = decode_record(None, codex_aborted, locus(codex_aborted))
+        .expect("a Codex interrupted-turn record stays typed");
+    assert!(matches!(
+        detected.decoded,
+        Decoded::Events { context, events }
+            if context.timestamp.as_deref() == Some("2026-08-09T01:00:02Z")
+                && context.turn_id.as_deref() == Some("turn-1")
+                && context.turn == Some(TurnMoment::Completed)
+                && events.is_empty()
+    ));
+
     let codex_result = br#"{"timestamp":"2026-08-09T01:00:01Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"Process exited with code 7"}}"#;
     let detected = decode_record(None, codex_result, locus(codex_result))
         .expect("the Codex tool outcome stays typed");
