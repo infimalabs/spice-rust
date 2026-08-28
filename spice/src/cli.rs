@@ -122,7 +122,7 @@ impl ExitOutcome {
 }
 
 /// Bound for an answer the resident composes from state it already holds.
-const HELD_STATE_ANSWER: Duration = Duration::from_secs(3);
+const HELD_STATE_ANSWER: Duration = Duration::from_secs(20);
 
 /// Bound for an answer that first launches a process or publishes durable
 /// objects, or waits for resident quiescence, all of which contend with every
