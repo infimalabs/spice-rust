@@ -1363,6 +1363,108 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
 }
 
 #[test]
+fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
+    let (root, bus, epoch, seats) = fixture("steal-assigned-review", 2);
+    let author = Actor::Lane(seats[0].lane);
+    let reviewer = Actor::Lane(seats[1].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "STEAL-review01",
+        "Review assigned to a freed holder",
+        Some("todo,review"),
+    );
+    advance_task_to_review(&bus, epoch, &seats[0], &author, &task);
+
+    let operator_board = board(&bus, epoch, Actor::Operator);
+    let operator_heads = at(&operator_board, &task);
+    let capture: Name = "capture".parse().expect("capture rule");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(operator_heads),
+            workflow_witness(operator_heads),
+            claim_witness(operator_heads),
+            Witness::Eligibility {
+                rule: capture.clone(),
+            },
+            residency(&operator_board, &seats[0]),
+        ],
+        &ClaimWin {
+            rule: capture,
+            recovery: None,
+        },
+    ));
+
+    let assigned = board(&bus, epoch, Actor::Operator);
+    let assigned_heads = at(&assigned, &task);
+    assert_eq!(
+        assigned_heads.workflow.body.assignment,
+        Some(Actor::Operator)
+    );
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::ClaimFree,
+        vec![
+            claim_witness(assigned_heads),
+            Witness::Lease {
+                task: assigned_heads.statement.body.born.clone(),
+                head: assigned_heads.lease.as_ref().expect("lease head").position,
+            },
+            residency(&assigned, &seats[0]),
+        ],
+        &TaskRef { task: task.clone() },
+    ));
+
+    let steal_board = board(&bus, epoch, reviewer.clone());
+    let steal_heads = at(&steal_board, &task);
+    assert_eq!(steal_heads.workflow.body.assignment, Some(Actor::Operator));
+    assert_eq!(
+        steal_heads
+            .claim
+            .as_ref()
+            .expect("freed claim")
+            .body
+            .disposition,
+        ClaimDisposition::Freed
+    );
+    let steal: Name = "steal".parse().expect("steal rule");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        reviewer.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(steal_heads),
+            workflow_witness(steal_heads),
+            claim_witness(steal_heads),
+            Witness::Eligibility {
+                rule: steal.clone(),
+            },
+            residency(&steal_board, &seats[1]),
+        ],
+        &ClaimWin {
+            rule: steal,
+            recovery: None,
+        },
+    ));
+
+    let after = board(&bus, epoch, reviewer.clone());
+    let stolen = at(&after, &task);
+    assert_eq!(stolen.workflow.body.assignment, Some(reviewer.clone()));
+    let claim = stolen.claim.as_ref().expect("stolen review claim");
+    assert_eq!(claim.body.actor, reviewer);
+    assert_eq!(claim.body.disposition, ClaimDisposition::Active);
+    clean(&root, bus);
+}
+
+#[test]
 fn reclaim_renews_only_the_lane_owned_claim_and_survives_restart() {
     let (root, bus, epoch, seats) = fixture("reclaim", 1);
     let lane = Actor::Lane(seats[0].lane);

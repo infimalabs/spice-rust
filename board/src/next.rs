@@ -391,6 +391,18 @@ fn operational(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) ->
             .all(|dependency| completed.contains(dependency))
 }
 
+fn operational_without_assignment(entry: &Entry, completed: &BTreeSet<TaskStamp>) -> bool {
+    let workflow = entry.workflow();
+    workflow.status == "pending"
+        && workflow.completion.is_none()
+        && workflow.deferral.is_none()
+        && entry
+            .statement()
+            .dependencies
+            .iter()
+            .all(|dependency| completed.contains(dependency))
+}
+
 /// Whether no claim currently possesses the entry.
 fn unheld(entry: &Entry) -> bool {
     !entry
@@ -440,8 +452,9 @@ pub fn selectable_entry(
 /// Every other clause still applies, so a steal can no more take a hidden,
 /// completed, deferred or dependency-blocked task than an allocation can.
 #[must_use]
-pub fn stealable_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
-    workable(entry, actor, &satisfied_tasks(entries))
+pub fn stealable_entry(entries: &[Entry], entry: &Entry, _actor: &Actor) -> bool {
+    !entry.project().visibility().is_hidden()
+        && operational_without_assignment(entry, &satisfied_tasks(entries))
 }
 
 /// Inception stamps that no longer block a dependent, stated once for every caller.
