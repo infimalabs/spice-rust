@@ -805,6 +805,15 @@ fn fixture_instant(context: &str) -> Instant {
         .unwrap_or_else(|error| panic!("{context}: {error}"))
 }
 
+fn fixture_instant_after(at: Instant, seconds: i64) -> Instant {
+    Instant::new(
+        at.get()
+            .checked_add(jiff::SignedDuration::from_secs(seconds))
+            .expect("fixture instant remains in range"),
+    )
+    .expect("fixture instant is canonical")
+}
+
 /// A held task is named on the claim line and counted as active.
 ///
 /// The snapshot above reports every claim field at rest, where a wrong
@@ -838,7 +847,23 @@ fn task_status_names_the_claim_the_asking_principal_holds() {
         },
     ));
 
-    let holder = task_status(&board(&bus, epoch, lane)).expect("holder reads status");
+    let claimed = board(&bus, epoch, lane);
+    let lease = at(&claimed, &held)
+        .lease
+        .as_ref()
+        .expect("manual claim writes a lease");
+    assert_eq!(
+        lease.body.expiry,
+        fixture_instant_after(lease.body.start, 60 * 60),
+        "manual task claims keep the predecessor one-hour lease",
+    );
+    assert_eq!(
+        lease.body.maximum,
+        fixture_instant_after(lease.body.start, 2 * 60 * 60),
+        "manual task claims keep a later renewal cap for task reclaim",
+    );
+
+    let holder = task_status(&claimed).expect("holder reads status");
     assert!(
         holder.lines().any(|line| line == format!("claim {held}")),
         "{holder}"

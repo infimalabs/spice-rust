@@ -83,6 +83,30 @@ fn vacant_lane_claims_once_and_exact_launch_cleanup_frees_it() {
     assert_eq!(active.disposition, ClaimDisposition::Active);
     assert_eq!(active.lane, seat.lane);
     assert_eq!(active.occupant, future);
+    let lease = bus
+        .task_snapshot()
+        .expect("automatic lease snapshot reads")
+        .tasks()
+        .iter()
+        .find(|heads| heads.statement().body().born == claimed.task)
+        .and_then(journal::TaskHeads::lease)
+        .expect("automatic claim lease exists")
+        .body()
+        .clone();
+    assert_eq!(
+        lease.expiry,
+        fixture_instant_after(lease.start, 15 * 60),
+        "automatic lifecycle claims keep the shortened launch lease",
+    );
+    assert_eq!(
+        lease.maximum,
+        fixture_instant_after(lease.start, 60 * 60),
+        "automatic lifecycle claims still cap renewal at one hour",
+    );
+    assert!(
+        lease.expiry < lease.maximum,
+        "automatic lifecycle claims must remain shorter than manual claims",
+    );
 
     release_automatic(&bus, &claimed).expect("exact launch compensation frees claim");
     let freed = bus

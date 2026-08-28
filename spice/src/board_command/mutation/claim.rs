@@ -457,8 +457,8 @@ fn claim_residency(
 
 fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswer>> {
     let at = current_instant()?;
-    let expiry = instant_after(at, 15 * 60)?;
-    let maximum = instant_after(at, 60 * 60)?;
+    let expiry = instant_after(at, 60 * 60)?;
+    let maximum = instant_after(at, 2 * 60 * 60)?;
     Ok((at, expiry, maximum))
 }
 
