@@ -284,7 +284,7 @@ pub(super) fn recovered_lane_head(
     };
     let candidate = candidate.to_string();
     let matches = fields.get("Spice-Task-Boundary") == Some(&"1")
-        && fields.get("Task-Handle") == Some(&meta.label)
+        && fields.get("Task-Key") == Some(&meta.label)
         && fields.get("Task-Phase") == Some(&meta.phase);
     if !matches {
         return Ok(None);
@@ -311,7 +311,7 @@ pub(super) fn compose_message(meta: Metadata<'_>, agent_head: &str) -> String {
     };
     let mut trailers = vec![
         ("Spice-Task-Boundary", "1"),
-        ("Task-Handle", meta.label),
+        ("Task-Key", meta.label),
         ("Task-Lane-Head", agent_head),
         ("Task-Phase", meta.phase),
         ("Task-Project", meta.project),
@@ -565,4 +565,26 @@ fn filesystem_fault(action: &str, path: &Path, error: std::io::Error) -> Error {
         "git::transaction-filesystem",
         format!("could not {action} at {}: {error}", path.display()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_landing_message_uses_task_key_without_task_handle() {
+        let message = compose_message(
+            Metadata {
+                label: "GIT-123",
+                title: "Remove redundant task landing trailers",
+                project: "task.git",
+                phase: "todo",
+                actor: "actor-123",
+            },
+            "agent-head",
+        );
+
+        assert!(message.contains("\nTask-Key: GIT-123\n"));
+        assert!(!message.contains("Task-Handle:"));
+    }
 }

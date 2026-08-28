@@ -101,8 +101,7 @@ fn landings(
 ) -> Result<Vec<Landing>, Error> {
     let format = concat!(
         "--format=%H%x1f%P%x1f%s%x1f%(trailers:key=Task-Project,valueonly)",
-        "%x1f%(trailers:key=Task-Key,valueonly)",
-        "%x1f%(trailers:key=Task-Handle,valueonly)%x1f%b%x1e",
+        "%x1f%(trailers:key=Task-Key,valueonly)%x1f%b%x1e",
     );
     let mut arguments = vec![
         "log".to_owned(),
@@ -124,22 +123,16 @@ fn landings(
         if raw_record.is_empty() {
             continue;
         }
-        let mut fields = raw_record.splitn(7, '\x1f');
+        let mut fields = raw_record.splitn(6, '\x1f');
         let commit = fields.next().unwrap_or_default().trim();
         let parents = fields.next().unwrap_or_default().trim();
         let subject = fields.next().unwrap_or_default().trim();
         let project = fields.next().unwrap_or_default().trim();
-        let task_key = fields.next().unwrap_or_default().trim();
-        let task_handle = fields.next().unwrap_or_default().trim();
+        let task = fields.next().unwrap_or_default().trim();
         let body = fields.next().unwrap_or_default().trim_matches('\n');
         if commit.is_empty() || subject.starts_with("release: bump to ") {
             continue;
         }
-        let task = if task_key.is_empty() {
-            task_handle
-        } else {
-            task_key
-        };
         landings.push(Landing {
             commit: commit.to_owned(),
             first_parent: parents.split_whitespace().next().map(str::to_owned),
