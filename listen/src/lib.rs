@@ -276,9 +276,8 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
     let turn = match dialect {
         Dialect::Codex => match (top, nested) {
             ("event_msg", "task_started") => Some(TurnMoment::Started),
-            ("event_msg", "task_complete") | ("turn.completed" | "turn.failed", _) => {
-                Some(TurnMoment::Completed)
-            }
+            ("event_msg", "task_complete" | "turn_aborted")
+            | ("turn.completed" | "turn.failed", _) => Some(TurnMoment::Completed),
             _ if turn_id.is_some() => Some(TurnMoment::Observed),
             _ => None,
         },
