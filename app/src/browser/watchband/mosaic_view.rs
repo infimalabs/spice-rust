@@ -2,6 +2,8 @@
 
 use super::*;
 
+use yew::functional::UseReducerDispatcher;
+
 use gloo_timers::callback::Timeout;
 
 const MIN_MEASURABLE_WIDTH_PX: i32 = 24;
@@ -203,8 +205,8 @@ pub(super) struct MosaicPlaneProps {
     pub(super) life: LineageLife,
     pub(super) members: usize,
     pub(super) cards: Vec<ActivityCard>,
-    pub(super) drafts: UseReducerHandle<ComposerDrafts>,
-    pub(super) speak: Callback<String>,
+    pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
+    pub(super) speak: Callback<SpeechRequest>,
     pub(super) narrate: Callback<NarrationBatch>,
     pub(super) speech: LineageSpeech,
 }
@@ -845,6 +847,15 @@ fn render_activity_cards(
         .into_iter()
         .enumerate()
         .map(|(order, activity)| {
+            let speak = if properties.speech == LineageSpeech::Quiet {
+                Callback::from(|_: String| {})
+            } else {
+                let lane = properties.lane.to_string();
+                let speech_queue = properties.speak.clone();
+                Callback::from(move |text: String| {
+                    speech_queue.emit(SpeechRequest::manual(Some(lane.clone()), text));
+                })
+            };
             let key = activity.key();
             let image_revision = image_revisions.get(&key);
             let placement = plane.and_then(|plane| {
@@ -881,8 +892,8 @@ fn render_activity_cards(
                     member,
                     *quote_lane,
                     message,
-                    &properties.drafts,
-                    &properties.speak,
+                    &properties.quote_dispatcher,
+                    &speak,
                     quote_order,
                     &layout,
                 ),
@@ -890,8 +901,8 @@ fn render_activity_cards(
                     *lane,
                     directive,
                     &lane.to_string(),
-                    &properties.drafts,
-                    &properties.speak,
+                    &properties.quote_dispatcher,
+                    &speak,
                     quote_order,
                     &layout,
                 ),

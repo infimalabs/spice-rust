@@ -258,15 +258,6 @@ fn render_activity(
     life: LineageLife,
 ) -> Html {
     let empty = cards.is_empty();
-    let speak = if speech == LineageSpeech::Quiet {
-        Callback::from(|_: String| {})
-    } else {
-        let lane = lineage.lane.to_string();
-        let speech_queue = controls.speak.clone();
-        Callback::from(move |text: String| {
-            speech_queue.emit(SpeechRequest::manual(Some(lane.clone()), text));
-        })
-    };
     let narrate = controls.narrate.clone();
     html! {
         <div
@@ -285,8 +276,8 @@ fn render_activity(
                 {life}
                 members={lineage.members.len()}
                 cards={cards.to_vec()}
-                drafts={drafts.clone()}
-                {speak}
+                quote_dispatcher={drafts.dispatcher()}
+                speak={controls.speak.clone()}
                 {narrate}
                 {speech}
             />

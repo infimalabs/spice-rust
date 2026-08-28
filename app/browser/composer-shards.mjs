@@ -101,6 +101,67 @@ export async function assertNoDraftPreview(scope, expectedShards) {
   }
 }
 
+export async function assertComposerTypingDoesNotRemeasureActivity(page, lane, composers) {
+  const before = await activityMeasurementSnapshot(page, lane, "before typing");
+  for (const [index, composer] of composers.entries()) {
+    await composer
+      .getByRole("textbox")
+      .fill(`composer cold-plane witness ${index} ${crypto.randomUUID()}`);
+  }
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  const typed = await activityMeasurementSnapshot(page, lane, "after typing");
+  assert.deepEqual(
+    typed,
+    before,
+    "typing in draft composers does not rerender or remeasure the Mosaic activity plane",
+  );
+  for (const composer of composers) {
+    await composer.getByRole("textbox").fill("");
+  }
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  const cleared = await activityMeasurementSnapshot(page, lane, "after clearing");
+  assert.deepEqual(
+    cleared,
+    before,
+    "clearing draft composers also leaves the Mosaic activity plane cold",
+  );
+}
+
+async function activityMeasurementSnapshot(page, lane, label) {
+  await page.waitForFunction(
+    (target) => {
+      const member = document.querySelector(`.team-agent[data-agent-lane="${target}"]`);
+      const plane = member?.closest(".team-surface")?.querySelector(".lane-mosaic-plane");
+      return plane?.dataset.measurementPhase === "ready";
+    },
+    await lane.getAttribute("data-agent-lane"),
+  );
+  const snapshot = await lane.evaluate((node) => {
+    const surface = node.closest(".team-surface");
+    const plane = surface?.querySelector(".lane-mosaic-plane");
+    if (!plane) return null;
+    return {
+      phase: plane.dataset.measurementPhase,
+      pending: plane.dataset.measurementPending,
+      commits: plane.dataset.planeCommits,
+      cards: [...plane.querySelectorAll(".mosaic-message-card")].map((card) => ({
+        key: card.dataset.mosaicCardKey,
+        phase: card.dataset.layoutPhase,
+        reads: card.dataset.measurementReads,
+        heights: card.dataset.measuredHeights,
+        spans: card.dataset.candidateSpans,
+      })),
+    };
+  });
+  assert.ok(snapshot, `${label}: activity plane is present`);
+  assert.ok(snapshot.cards.length > 0, `${label}: activity plane carries cards`);
+  return snapshot;
+}
+
 async function assertHorizontalComposerStrip(page, team) {
   const viewport = page.viewportSize();
   assert.ok(viewport, "the composer-strip fixture has a viewport to restore");

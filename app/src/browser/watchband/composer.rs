@@ -2,6 +2,7 @@
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag};
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader};
+use yew::functional::UseReducerDispatcher;
 
 use super::*;
 
@@ -94,20 +95,19 @@ pub(super) fn render_agent_message_card(
     member: &crate::runtime::LaneMember,
     quote_lane: CanonicalUuid,
     message: &wire::AgentMessage,
-    drafts: &UseReducerHandle<ComposerDrafts>,
+    quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
     speak: &Callback<String>,
     order: u64,
     layout: &CardLayout,
 ) -> Html {
     let lane_key = quote_lane.to_string();
-    let quote_key = lane_key.clone();
-    let quote_drafts = drafts.clone();
     let quote_text = message.text.clone();
     let quote_preview = watchband::first_nonquoted_prose(&message.text);
     let quote_identity = agent_message_quote_identity(message);
     let source_id = agent_message_source_id(message);
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.clone();
+    let quote_dispatcher = quote_dispatcher.clone();
     let producer = format!(
         "{} · {}",
         watchband::leaf(&member.worktree),
@@ -118,8 +118,8 @@ pub(super) fn render_agent_message_card(
         accent: watchband::accent(member.lane),
         speak: speak.clone(),
         quote: Callback::from(move |()| {
-            quote_drafts.dispatch(ComposerAction::AddQuote {
-                lane: quote_key.clone(),
+            quote_dispatcher.dispatch(ComposerAction::AddQuote {
+                lane: lane_key.clone(),
                 identity: quote_identity.clone(),
                 order,
                 quote: quote_text.clone(),
@@ -208,26 +208,26 @@ pub(super) fn render_directive_card(
     lane: CanonicalUuid,
     directive: &wire::intent::PendingDirective,
     lane_key: &str,
-    drafts: &UseReducerHandle<ComposerDrafts>,
+    quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
     speak: &Callback<String>,
     order: u64,
     layout: &CardLayout,
 ) -> Html {
-    let quote_key = lane_key.to_owned();
-    let quote_drafts = drafts.clone();
     let quote_preview = directive.preview.clone();
     let quote_text = directive.text.clone();
     let quote_identity = format!("directive-{}", directive.directive);
     let source_id = directive_source_id(directive);
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.to_owned();
+    let quote_lane = lane_key.to_owned();
+    let quote_dispatcher = quote_dispatcher.clone();
     let correspondent = view::chrome::Correspondent {
         name: watchband::short(lane),
         accent: watchband::accent(lane),
         speak: speak.clone(),
         quote: Callback::from(move |()| {
-            quote_drafts.dispatch(ComposerAction::AddQuote {
-                lane: quote_key.clone(),
+            quote_dispatcher.dispatch(ComposerAction::AddQuote {
+                lane: quote_lane.clone(),
                 identity: quote_identity.clone(),
                 order,
                 quote: quote_text.clone(),

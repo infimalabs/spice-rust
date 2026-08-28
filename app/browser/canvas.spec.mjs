@@ -11,7 +11,10 @@ import {
   nestedQuoteMessage, nestedQuotePreview, seatAgentTeam,
 } from "./agent-conversation.mjs";
 import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
-import { assertComposerShards } from "./composer-shards.mjs";
+import {
+  assertComposerShards,
+  assertComposerTypingDoesNotRemeasureActivity,
+} from "./composer-shards.mjs";
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertVacantWakeSubmission } from "./vacant-wake-submission.mjs";
@@ -514,6 +517,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     "browser direction survives streaming",
     "the quoted message stays reachable from the shard it minted",
   );
+  await assertComposerTypingDoesNotRemeasureActivity(page, lane, [composer, quotedComposer]);
   await assertCompleteComposerSubmission({
     page,
     fixture,
