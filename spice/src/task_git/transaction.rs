@@ -267,6 +267,16 @@ pub(super) fn merge_first_parent(root: &Path, commit: &str) -> Result<Option<Str
     Ok((parents.len() >= 2).then(|| parents[0].to_owned()))
 }
 
+pub(super) fn merge_second_parent(root: &Path, commit: &str) -> Result<Option<String>, Error> {
+    let line = required_read(
+        root,
+        &["rev-list", "--parents", "-n", "1", commit],
+        "read merge parents",
+    )?;
+    let parents = line.split_whitespace().skip(1).collect::<Vec<_>>();
+    Ok((parents.len() >= 2).then(|| parents[1].to_owned()))
+}
+
 pub(super) fn recovered_lane_head(
     root: &Path,
     head: &str,
@@ -279,20 +289,39 @@ pub(super) fn recovered_lane_head(
         .lines()
         .filter_map(|line| line.split_once(": "))
         .collect::<BTreeMap<_, _>>();
-    let Some(candidate) = fields.get("Task-Lane-Head") else {
+    if !current_landing_fields_match(&fields, meta) {
         return Ok(None);
     };
-    let candidate = candidate.to_string();
-    let matches = fields.get("Spice-Task-Boundary") == Some(&"1")
-        && fields.get("Task-Key") == Some(&meta.label)
-        && fields.get("Task-Phase") == Some(&meta.phase);
-    if !matches {
+    let Some(candidate) = merge_second_parent(root, head)? else {
         return Ok(None);
-    }
+    };
     Ok(is_ancestor(root, &candidate, head)?.then_some(candidate))
 }
 
-pub(super) fn compose_message(meta: Metadata<'_>, agent_head: &str) -> String {
+fn current_landing_fields_match(fields: &BTreeMap<&str, &str>, meta: Metadata<'_>) -> bool {
+    trailer_matches(fields, "Task-Key", task_key(meta.label))
+        && trailer_matches(fields, "Task-Phase", meta.phase)
+        && trailer_matches(fields, "Task-Project", meta.project)
+        && trailer_matches(fields, "Task-Session", task_session(meta.actor))
+}
+
+fn trailer_matches(fields: &BTreeMap<&str, &str>, name: &str, expected: &str) -> bool {
+    if expected.is_empty() {
+        !fields.contains_key(name)
+    } else {
+        fields.get(name) == Some(&expected)
+    }
+}
+
+fn task_key(label: &str) -> &str {
+    label.rsplit_once('-').map_or(label, |(_, key)| key)
+}
+
+fn task_session(actor: &str) -> &str {
+    actor.strip_prefix("lane:").unwrap_or(actor)
+}
+
+pub(super) fn compose_message(meta: Metadata<'_>) -> String {
     let stem = meta.project.split('.').next().unwrap_or(meta.project);
     let prefix = if stem.is_empty() {
         String::new()
@@ -310,12 +339,10 @@ pub(super) fn compose_message(meta: Metadata<'_>, agent_head: &str) -> String {
         meta.title.trim()
     };
     let mut trailers = vec![
-        ("Spice-Task-Boundary", "1"),
-        ("Task-Key", meta.label),
-        ("Task-Lane-Head", agent_head),
+        ("Task-Key", task_key(meta.label)),
         ("Task-Phase", meta.phase),
         ("Task-Project", meta.project),
-        ("Task-Session", meta.actor),
+        ("Task-Session", task_session(meta.actor)),
     ];
     trailers.retain(|(_, value)| !value.is_empty());
     trailers.sort_unstable_by_key(|(name, _)| *name);
@@ -572,19 +599,96 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_landing_message_uses_task_key_without_task_handle() {
-        let message = compose_message(
-            Metadata {
-                label: "GIT-123",
-                title: "Remove redundant task landing trailers",
-                project: "task.git",
-                phase: "todo",
-                actor: "actor-123",
-            },
-            "agent-head",
-        );
+    fn task_landing_message_uses_current_trailers_only() {
+        let message = compose_message(Metadata {
+            label: "GIT-123",
+            title: "Remove redundant task landing trailers",
+            project: "task.git",
+            phase: "todo",
+            actor: "lane:00000000-0000-4000-8000-000000000123",
+        });
 
-        assert!(message.contains("\nTask-Key: GIT-123\n"));
+        assert!(message.contains("\nTask-Key: 123\n"));
+        assert!(
+            message
+                .lines()
+                .any(|line| line == "Task-Session: 00000000-0000-4000-8000-000000000123")
+        );
+        assert!(!message.contains("Spice-Task-Boundary:"));
+        assert!(!message.contains("Task-Lane-Head:"));
         assert!(!message.contains("Task-Handle:"));
+    }
+
+    #[test]
+    fn recovered_lane_head_uses_merge_second_parent_for_current_landing() {
+        let fixture = Fixture::new("recovered-lane-head");
+        fixture.git(&["init", "--initial-branch=main"]);
+        fixture.git(&["config", "user.name", "Spice Test"]);
+        fixture.git(&["config", "user.email", "spice@example.test"]);
+        fs::write(fixture.root.join("root.txt"), "root\n").expect("root fixture writes");
+        fixture.git(&["add", "."]);
+        fixture.git(&["commit", "-m", "root"]);
+        let base = fixture.head();
+        fixture.git(&["checkout", "-b", "task"]);
+        fs::write(fixture.root.join("task.txt"), "task\n").expect("task fixture writes");
+        fixture.git(&["add", "."]);
+        fixture.git(&["commit", "-m", "agent work"]);
+        let agent = fixture.head();
+        let tree = fixture.git(&["rev-parse", "HEAD^{tree}"]);
+        fixture.git(&["checkout", "main"]);
+
+        let meta = Metadata {
+            label: "GIT-1kQb17Yt",
+            title: "Finish task landing trailer cleanup",
+            project: "task.git",
+            phase: "todo",
+            actor: "lane:00000000-0000-4000-8000-000000000123",
+        };
+        let message = compose_message(meta);
+        let merge = fixture.git(&[
+            "commit-tree",
+            &tree,
+            "-p",
+            &base,
+            "-p",
+            &agent,
+            "-m",
+            &message,
+        ]);
+
+        assert_eq!(
+            recovered_lane_head(&fixture.root, &merge, meta).expect("landing recovery succeeds"),
+            Some(agent)
+        );
+    }
+
+    struct Fixture {
+        root: PathBuf,
+    }
+
+    impl Fixture {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("spice-task-git-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(&root).expect("fixture directory is created");
+            Self { root }
+        }
+
+        fn git(&self, arguments: &[&str]) -> String {
+            let output = run(&self.root, arguments).expect("Git launches");
+            assert!(output.success(), "{}", output.detail("run fixture Git"));
+            output.stdout.trim_end_matches('\n').to_owned()
+        }
+
+        fn head(&self) -> String {
+            self.git(&["rev-parse", "HEAD"])
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("fixture cleanup");
+        }
     }
 }
