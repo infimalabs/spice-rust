@@ -697,6 +697,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "lane::wake"
     ),
     row!(
+        ["lane", "remove"],
+        "lane remove ID",
+        Operator,
+        Command,
+        [LaneRemoved],
+        [Resident, OperatorCapability],
+        Reply,
+        "lane::remove"
+    ),
+    row!(
         ["lane", "import"],
         "lane import ID WORKTREE",
         Operator,

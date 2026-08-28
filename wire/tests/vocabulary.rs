@@ -118,6 +118,13 @@ const LANE_KILLED: &str = r#"{
   "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c4"
 }"#;
 
+const LANE_REMOVED: &str = r#"{
+  "kind": "lane::removed",
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "worktree": "/worktrees/spice-rust-l"
+}"#;
+
 const PROOF_SEALED: &str = r#"{
   "kind": "proof::sealed",
   "commit": "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a2",
@@ -223,6 +230,15 @@ fn a_kill_and_an_exit_are_separate_records_that_cannot_be_read_as_each_other() {
         detail.contains("lane::exited") && detail.contains("lane::killed"),
         "the refusal names the kind it read and the kind it expected: {detail}"
     );
+}
+
+#[test]
+fn a_removed_lane_records_the_topology_member_it_deleted() {
+    let fact: Fact<body::LaneRemoved> = round_trip(LANE_REMOVED);
+
+    assert_eq!(fact.kind(), FactKind::LaneRemoved);
+    assert_eq!(fact.producer(), Producer::ResidentRecognition);
+    assert_eq!(fact.body.worktree, "/worktrees/spice-rust-l");
 }
 
 #[test]

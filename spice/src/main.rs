@@ -355,6 +355,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["lane", "add"]
         | ["lane", "drain"]
         | ["lane", "wake"]
+        | ["lane", "remove"]
         | ["lane", "import"]
         | ["recall"] => deliver(&lane_command::run(leaf, contract), form),
         ["release", "publish"] => match release_command::run(leaf, contract) {

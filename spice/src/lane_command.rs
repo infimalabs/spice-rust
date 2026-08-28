@@ -32,6 +32,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandA
         ["lane", "add"] => add(&repository, canvas, &current, matches, contract),
         ["lane", "drain"] => state(canvas, matches, contract, LaneAction::Drain),
         ["lane", "wake"] => state(canvas, matches, contract, LaneAction::Wake),
+        ["lane", "remove"] => state(canvas, matches, contract, LaneAction::Remove),
         ["lane", "import"] => import(&repository, canvas, &current, matches, contract),
         ["recall"] => recall(canvas, matches, contract),
         _ => protocol_fault(

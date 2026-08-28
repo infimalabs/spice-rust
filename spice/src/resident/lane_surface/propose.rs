@@ -1,4 +1,4 @@
-//! Intent proposals for seating, drain, wake, and restart commitment.
+//! Intent proposals for seating, drain, wake, removal, and restart commitment.
 
 use super::*;
 
@@ -180,6 +180,53 @@ pub(super) fn propose_wake(
         .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
     write.residency_head(started, move |_| next);
     command_result(&mut write, command, request.clone(), epoch, answer)?;
+    Ok(write)
+}
+
+/// Propose removing one vacant lane from the resident topology.
+pub(super) fn propose_remove(
+    command: &wire::AdmittedCommand,
+    request: &LaneState,
+    observed: &journal::JournalHead<wire::ResidencyHead>,
+    row: &wire::LaneResidency,
+    answer: LaneChangeAnswer,
+) -> CommandResult<JournalWrite> {
+    let mut next = observed.body().clone();
+    next.topology_revision = answer.topology_revision;
+    let removed_lineage = row.lineage_id;
+    next.lanes.retain(|lane| lane.lane != request.lane);
+    if !next
+        .lanes
+        .iter()
+        .any(|lane| lane.lineage_id == removed_lineage)
+    {
+        next.subscriptions
+            .retain(|subscription| subscription.lineage_id != removed_lineage);
+    }
+    let mut write = write(
+        command.actor().clone(),
+        observed.body().epoch,
+        Producer::ResidentRecognition,
+    )?;
+    guard_residency(&mut write, observed);
+    let fact = write
+        .fact(
+            wire::body::LaneRemoved {
+                lane: row.lane,
+                lineage_id: row.lineage_id,
+                worktree: row.worktree.clone(),
+            },
+            FactCause::Existing(observed.position()),
+        )
+        .map_err(|error| store_fault("lane::remove-fact-invalid", &error.to_string()))?;
+    write.residency_head(fact, move |_| next);
+    command_result(
+        &mut write,
+        command,
+        request.clone(),
+        observed.body().epoch,
+        answer,
+    )?;
     Ok(write)
 }
 

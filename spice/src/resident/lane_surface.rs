@@ -35,7 +35,7 @@ pub(super) use automatic::{AutomaticWake, wake_automatic};
 use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
 pub(super) use lineage::{arrange as arrange_lineages, configure};
-use propose::{commit_restored, propose_drain, propose_seat, propose_wake};
+use propose::{commit_restored, propose_drain, propose_remove, propose_seat, propose_wake};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
     missing_lane, next_topology_revision, recall_provenance, relevant, typed_environment_fault,
@@ -634,7 +634,7 @@ fn remove_seat_surface(
     super::steering::remove_lane_surface(paths, worktree, lane);
 }
 
-/// Drain or wake one current lane.
+/// Drain, wake, or remove one current lane.
 pub(super) fn state(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -647,7 +647,106 @@ pub(super) fn state(
     match request.action {
         LaneAction::Drain => drain(bus, epoch, seats, command, request),
         LaneAction::Wake => wake(bus, paths, epoch, seats, runtime, command, request),
+        LaneAction::Remove => remove(bus, paths, epoch, seats, runtime, command, request),
     }
+}
+
+/// Remove one vacant lane seat from the durable topology.
+pub(super) fn remove(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    runtime: &Runtime<'_>,
+    command: &wire::AdmittedCommand,
+    request: &LaneState,
+) -> Outcome<CommandAnswer> {
+    if matches!(command.actor(), Actor::Lane(lane) if *lane == request.lane) {
+        return lane_refusal(
+            "lane::remove-self",
+            Some("a different lane or the operator".to_owned()),
+            Some(request.lane.to_string()),
+            "ask the operator to remove this lane after it drains",
+        );
+    }
+    let observed = match current_residency(bus, epoch) {
+        Ok(head) => head,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let Some(row) = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == request.lane)
+        .cloned()
+    else {
+        return missing_lane(request.lane);
+    };
+    if row.occupant.is_some() || seats.occupied(row.lane) {
+        return lane_refusal(
+            "lane::remove-occupied",
+            Some(VACANT.to_owned()),
+            Some(row.disposition.clone()),
+            "drain the lane before removing it",
+        );
+    }
+    let active_claim = match active_claim_for_lane(bus, row.lane) {
+        Ok(active_claim) => active_claim,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    if let Some(claim) = active_claim {
+        return lane_refusal(
+            "lane::remove-claimed",
+            Some("no active claim owned by the lane".to_owned()),
+            Some(claim.to_string()),
+            "finish, review, or free the claimed task before removing the lane",
+        );
+    }
+    let capability = match super::steering::lane_capability(&row) {
+        Ok(capability) => capability,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let topology_revision = match observed.body().topology_revision.checked_add(1) {
+        Some(revision) => revision,
+        None => {
+            return typed_store_fault(
+                "lane::topology-revision-exhausted",
+                "the durable topology revision cannot advance",
+            );
+        }
+    };
+    let answer = LaneChangeAnswer {
+        lane: row.lane,
+        topology_revision,
+        from: row.disposition.clone(),
+        to: "removed".to_owned(),
+        git: None,
+    };
+    let proposal = match propose_remove(command, request, &observed, &row, answer.clone()) {
+        Ok(proposal) => proposal,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    match commit(bus, proposal) {
+        Ok(committed) => {
+            runtime
+                .capabilities
+                .remove(capability, &Actor::Lane(row.lane));
+            super::steering::remove_lane_surface(paths, &row.worktree, row.lane);
+            committed_lane_reply(committed, answer)
+        }
+        Err(outcome) => typed_outcome(outcome),
+    }
+}
+
+fn active_claim_for_lane(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option<wire::TaskStamp>> {
+    let snapshot = bus
+        .task_snapshot()
+        .map_err(|error| store_fault("lane::claim-heads-unreadable", &error.to_string()))?;
+    Ok(snapshot.tasks().iter().find_map(|task| {
+        let claim = task.claim()?.body();
+        (claim.lane == lane && claim.disposition == wire::ClaimDisposition::Active)
+            .then(|| task.statement().body().born.clone())
+    }))
 }
 
 /// Admit one already-durable capture report from the current occupant.

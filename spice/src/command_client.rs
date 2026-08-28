@@ -65,7 +65,7 @@ pub(crate) enum SelectedCommand<'a> {
     LaneRead,
     /// Seat one new lane and launch its first occupant.
     LaneSeat { body: &'a wire::intent::LaneSeat },
-    /// Drive one existing lane toward drain or wake.
+    /// Drive one existing lane toward drain, wake, or removal.
     LaneState { body: &'a wire::intent::LaneState },
     /// Read one bounded continuity account.
     LaneRecall { body: &'a wire::intent::LaneRecall },
