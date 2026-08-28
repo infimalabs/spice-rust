@@ -44,6 +44,19 @@ impl Fixture {
         self.head()
     }
 
+    fn legacy_commit(&mut self, subject: &str, project: &str, handle: &str) -> String {
+        self.serial += 1;
+        fs::write(
+            self.root.join(format!("legacy-{}.txt", self.serial)),
+            format!("legacy {}\n", self.serial),
+        )
+        .expect("legacy fixture writes");
+        git(&self.root, &["add", "."]);
+        let message = format!("{subject}\n\nTask-Project: {project}\nTask-Handle: {handle}\n");
+        git(&self.root, &["commit", "-m", &message]);
+        self.head()
+    }
+
     fn merge(&mut self, branch: &str, subject: &str, project: &str, task: &str) -> String {
         let message = format!("{subject}\n\nTask-Project: {project}\nTask-Key: {task}\n");
         git(&self.root, &["merge", "--no-ff", branch, "-m", &message]);
@@ -179,6 +192,37 @@ fn an_explicit_release_commit_and_no_tag_fallback_are_both_visible() {
             .document
             .contains("bounded latest first-parent commits")
     );
+}
+
+#[test]
+fn legacy_task_handle_landings_are_normalized_to_task_key() {
+    let mut fixture = Fixture::new("legacy-task-handle");
+    fixture.commit("repository root", None, None);
+    git(&fixture.root, &["tag", "v1.0.0"]);
+    let landing = fixture.legacy_commit(
+        "core: Add legacy trailer cleanup CORE-legacy",
+        "core.git",
+        "CORE-legacy",
+    );
+
+    let output = fixture.invoke(&["--json", "release", "notes"]);
+    assert!(output.status.success(), "{}", spoken(&output));
+    let Outcome::Reply(reply) =
+        wire::decode::<Outcome<ReleaseNotes>>(&output.stdout).expect("JSON draft is typed")
+    else {
+        panic!("release notes did not reply")
+    };
+
+    assert_eq!(reply.body.entries.len(), 1);
+    assert_eq!(reply.body.entries[0].task.as_deref(), Some("legacy"));
+    assert_eq!(reply.body.entries[0].references, [landing]);
+    assert!(
+        reply
+            .body
+            .document
+            .contains("Added legacy trailer cleanup.")
+    );
+    assert!(!reply.body.document.contains("CORE-legacy"));
 }
 
 #[test]

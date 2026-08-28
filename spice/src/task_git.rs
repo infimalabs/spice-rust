@@ -457,7 +457,7 @@ fn publish_inner<'a>(
     let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
     if let Some((active, evidence)) = resolution.filter(|_| resolution_state) {
         let local_commits = ahead_count(root, &target.baseline)?;
-        let message = compose_message(meta, &observed_head);
+        let message = compose_message(meta);
         let integrated = resolution::complete(
             root,
             &target,
@@ -498,7 +498,7 @@ fn publish_inner<'a>(
         observed_head
     };
     let local_commits = ahead_count(root, &target.baseline)?;
-    let message = compose_message(meta, &agent_head);
+    let message = compose_message(meta);
     // Bind the authored tree and any non-empty lane command before the merge.
     // An empty lane declaration deliberately defers to each integrated tree.
     let admission = Admission::resolve(repository, &agent_head)?;
