@@ -328,6 +328,17 @@ pub struct LaneImported {
     pub epoch: CanonicalUuid,
 }
 
+/// A vacant lane seat was removed from the topology.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneRemoved {
+    /// Lane removed from the resident topology.
+    pub lane: CanonicalUuid,
+    /// Lineage the removed member occupied.
+    pub lineage_id: CanonicalUuid,
+    /// Worktree the lane had been bound to.
+    pub worktree: String,
+}
+
 /// The resident observed the occupant end.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneExited {

@@ -236,6 +236,8 @@ vocabulary! {
     LaneStarted = "lane::started" by ResidentRecognition;
     /// A vacant lane seat moved to another linked worktree.
     LaneImported = "lane::imported" by ResidentRecognition;
+    /// A vacant lane seat was removed from the topology.
+    LaneRemoved = "lane::removed" by ResidentRecognition;
     /// The resident observed the occupant end.
     LaneExited = "lane::exited" by ResidentRecognition;
     /// The occupant crossed a context compaction boundary.

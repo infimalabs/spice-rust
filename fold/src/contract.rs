@@ -83,6 +83,7 @@ const fn is_lane(kind: wire::FactKind) -> bool {
         wire::FactKind::LaneSeated
             | wire::FactKind::LaneArranged
             | wire::FactKind::LaneImported
+            | wire::FactKind::LaneRemoved
             | wire::FactKind::LaneSessionDeclared
             | wire::FactKind::LaneStarted
             | wire::FactKind::LaneExited

@@ -22,6 +22,7 @@ mod concurrency;
 /// Supervised lanes standing in two teams, the shape an arrangement starts from.
 struct Arranged {
     root: PathBuf,
+    paths: RuntimePaths,
     bus: Bus,
     epoch: CanonicalUuid,
     seats: Seats,
@@ -62,6 +63,7 @@ impl Arranged {
         }
         Self {
             root,
+            paths,
             bus,
             epoch,
             seats,
@@ -69,6 +71,45 @@ impl Arranged {
             lanes,
             occupants,
         }
+    }
+
+    fn state(
+        &mut self,
+        id: u8,
+        lane: CanonicalUuid,
+        action: wire::intent::LaneAction,
+    ) -> Outcome<CommandAnswer> {
+        let request = wire::intent::LaneState {
+            lane,
+            action,
+            worktree: None,
+        };
+        let command = state_command(self.epoch, test_uuid(id), &request);
+        let capabilities = canvas::axum::Capabilities::default();
+        let discovery = canvas::Discovery {
+            endpoint: "http://127.0.0.1:1".to_owned(),
+            capability: test_uuid(98),
+            epoch: self.epoch,
+        };
+        let runtime =
+            lane_surface::Runtime::new(&capabilities, &discovery, Arc::new(SilentRemovalReporter));
+        lane_surface::state(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &mut self.seats,
+            &runtime,
+            &command,
+            &request,
+        )
+    }
+
+    fn drain(&mut self, id: u8, lane: CanonicalUuid) -> Outcome<CommandAnswer> {
+        self.state(id, lane, wire::intent::LaneAction::Drain)
+    }
+
+    fn remove(&mut self, id: u8, lane: CanonicalUuid) -> Outcome<CommandAnswer> {
+        self.state(id, lane, wire::intent::LaneAction::Remove)
     }
 
     /// State a whole arrangement the way one drag states it.
@@ -130,16 +171,135 @@ impl Arranged {
 
     fn retire(mut self) {
         for lane in &self.lanes {
-            self.seats
-                .vacate(*lane)
-                .expect("arranged occupant remains supervised")
-                .wait()
-                .expect("fixture occupant exits");
+            if let Some(occupant) = self.seats.vacate(*lane) {
+                occupant.wait().expect("fixture occupant exits");
+            }
         }
         self.bus.verify().expect("arranged authority verifies");
         self.bus.shutdown().expect("fixture bus stops");
         fs::remove_dir_all(self.root).expect("fixture cleanup");
     }
+
+    fn seed_active_claim(&self, lane: CanonicalUuid) -> wire::TaskStamp {
+        let task: wire::TaskStamp = "1kRmV001".parse().expect("fixture task");
+        let epoch = self.epoch;
+        let at: wire::Instant = "2030-04-12T18:45:00.271Z".parse().expect("fixture instant");
+        let expiry: wire::Instant = "2030-04-12T19:45:00.271Z".parse().expect("fixture expiry");
+        let maximum: wire::Instant = "2030-04-12T20:45:00.271Z".parse().expect("fixture maximum");
+        let mut write = JournalWrite::new(
+            Actor::Operator,
+            format!("resident:{}", self.epoch)
+                .parse()
+                .expect("fixture origin"),
+            at,
+            Producer::CommandDoor,
+        );
+        let added = write
+            .fact(
+                wire::body::TaskAdded {
+                    task: task.clone(),
+                    title: "Remove claimed lane fixture".into(),
+                    description: None,
+                    acceptance: Vec::new(),
+                    project: "task.cli".into(),
+                    tags: Vec::new(),
+                    depends: Vec::new(),
+                    flow: vec!["todo".parse().expect("fixture phase")],
+                    phase: "todo".parse().expect("fixture phase"),
+                    revision: 1,
+                },
+                FactCause::Root,
+            )
+            .expect("task fact builds");
+        let task_for_head = task.clone();
+        write.task_head(added, move |position| wire::TaskHead {
+            born: task_for_head,
+            queue_origin: position,
+            title: "Remove claimed lane fixture".into(),
+            description: None,
+            acceptance: Vec::new(),
+            project: "task.cli".into(),
+            tags: Vec::new(),
+            dependencies: Vec::new(),
+            provenance: "operator:fixture".parse().expect("fixture origin"),
+            revision: position,
+        });
+        let task_for_workflow = task.clone();
+        write.workflow_head(task_for_workflow, added, move |_| wire::WorkflowHead {
+            flow: vec!["todo".parse().expect("fixture phase")],
+            phase: "todo".parse().expect("fixture phase"),
+            status: "pending".into(),
+            review: "unassigned".into(),
+            assignment: None,
+            deferral: None,
+            completion: None,
+        });
+        let occupant = self
+            .head()
+            .lanes
+            .iter()
+            .find(|row| row.lane == lane)
+            .and_then(|row| row.occupant)
+            .expect("fixture lane is occupied before claiming");
+        let won = write
+            .fact(
+                wire::body::ClaimWon {
+                    task: task.clone(),
+                    actor: Actor::Operator,
+                    lane,
+                    occupant,
+                    epoch,
+                    cell: Some(wire::ClaimCell {
+                        project: "task.cli".into(),
+                        phase: "todo".parse().expect("fixture phase"),
+                    }),
+                    until: expiry,
+                    git: None,
+                    recovery: None,
+                    source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
+                },
+                FactCause::Pending(added),
+            )
+            .expect("claim fact builds");
+        let task_for_claim = task.clone();
+        write.claim_head(task_for_claim, won, move |position| wire::ClaimHead {
+            actor: Actor::Operator,
+            fact: position,
+            claimed: position,
+            cell: wire::ClaimCell {
+                project: "task.cli".into(),
+                phase: "todo".parse().expect("fixture phase"),
+            },
+            lane,
+            occupant,
+            epoch,
+            recovery: None,
+            disposition: wire::ClaimDisposition::Active,
+        });
+        let task_for_lease = task.clone();
+        write.lease_head(task_for_lease, won, move |_| wire::LeaseHead {
+            start: at,
+            renewal: at,
+            maximum,
+            expiry,
+            epoch,
+        });
+        commit(&self.bus, write).expect("claim seed commits");
+        task
+    }
+}
+
+struct SilentRemovalReporter;
+
+impl lane::capture::CaptureReporter for SilentRemovalReporter {
+    fn record(
+        &self,
+        _record: lane::capture::CaptureRecord,
+    ) -> Result<(), lane::capture::CaptureReportError> {
+        Ok(())
+    }
+
+    fn failed(&self, _failure: lane::capture::CaptureFailure) {}
 }
 
 fn committed_lane_answer(outcome: Outcome<CommandAnswer>) -> Box<wire::intent::LaneAnswer> {
@@ -149,6 +309,17 @@ fn committed_lane_answer(outcome: Outcome<CommandAnswer>) -> Box<wire::intent::L
     assert!(matches!(reply.position, ReplyPosition::Committed(_)));
     let CommandAnswer::Lane(answer) = reply.body else {
         panic!("topology mutation returns the authoritative lane table");
+    };
+    answer
+}
+
+fn committed_lane_change(outcome: Outcome<CommandAnswer>) -> Box<wire::intent::LaneChangeAnswer> {
+    let Outcome::Reply(reply) = outcome else {
+        panic!("lane mutation replies: {outcome:?}");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    let CommandAnswer::LaneChange(answer) = reply.body else {
+        panic!("lane mutation returns a change answer");
     };
     answer
 }
@@ -183,6 +354,34 @@ fn arrange_command(
         epoch,
     })
     .expect("operator lineage arrangement admits")
+}
+
+fn state_command(
+    epoch: CanonicalUuid,
+    id: CanonicalUuid,
+    request: &wire::intent::LaneState,
+) -> wire::AdmittedCommand {
+    Command {
+        v: wire::WireVersion::CURRENT,
+        id,
+        epoch,
+        kind: CommandKind::LaneState,
+        expected: Vec::new(),
+        body: serde_json::to_value(request).expect("lane state encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("operator lane state admits")
+}
+
+fn refusal_reason(outcome: Outcome<CommandAnswer>) -> String {
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("lane state must refuse: {outcome:?}");
+    };
+    refusal.reason().to_owned()
 }
 
 /// The arranged standings a fact recorded, read back off the journal.
@@ -326,6 +525,83 @@ fn emptying_a_lineage_retires_the_task_subscription_it_left_behind() {
         fixture.durable_subscriptions(),
         vec![second_team],
         "an emptied team keeps no durable task subscription",
+    );
+
+    fixture.retire();
+}
+
+#[test]
+fn removing_a_lane_requires_a_vacant_claim_free_seat() {
+    let mut fixture = Arranged::seat("lane-removal", &[0, 1]);
+    let removed = fixture.lanes[0];
+    let survivor = fixture.lanes[1];
+
+    assert_eq!(
+        refusal_reason(fixture.remove(40, removed)),
+        "lane::remove-occupied",
+    );
+    committed_lane_change(fixture.drain(41, removed));
+    let answer = committed_lane_change(fixture.remove(42, removed));
+
+    assert_eq!(answer.lane, removed);
+    assert_eq!(answer.from, "vacant");
+    assert_eq!(answer.to, "removed");
+    assert_eq!(
+        fixture
+            .head()
+            .lanes
+            .iter()
+            .map(|row| row.lane)
+            .collect::<Vec<_>>(),
+        vec![survivor],
+        "the removed lane leaves durable residency",
+    );
+    assert_eq!(
+        fixture.durable_subscriptions(),
+        vec![fixture.teams[1]],
+        "the emptied lineage subscription is removed with its last lane",
+    );
+    let facts = fixture.bus.fact_snapshot().expect("removal facts read");
+    let removed_fact = facts
+        .facts()
+        .iter()
+        .rfind(|fact| fact.fact.kind() == wire::FactKind::LaneRemoved)
+        .expect("removal is recorded as its own fact");
+    let removed_text = removed.to_string();
+    assert_eq!(
+        removed_fact
+            .fact
+            .body()
+            .get("lane")
+            .and_then(|lane| lane.as_str()),
+        Some(removed_text.as_str()),
+    );
+
+    fixture.retire();
+}
+
+#[test]
+fn removing_a_vacant_lane_with_an_active_claim_is_refused() {
+    let mut fixture = Arranged::seat("lane-removal-claimed", &[0]);
+    let lane = fixture.lanes[0];
+    let task = fixture.seed_active_claim(lane);
+
+    committed_lane_change(fixture.drain(43, lane));
+
+    assert_eq!(
+        refusal_reason(fixture.remove(44, lane)),
+        "lane::remove-claimed",
+    );
+    assert_eq!(fixture.head().lanes[0].lane, lane);
+    let snapshot = fixture.bus.task_snapshot().expect("claim remains readable");
+    assert!(
+        snapshot.tasks().iter().any(|heads| {
+            heads.statement().body().born == task
+                && heads
+                    .claim()
+                    .is_some_and(|claim| claim.body().disposition == wire::ClaimDisposition::Active)
+        }),
+        "the active claim remains untouched by refused lane removal",
     );
 
     fixture.retire();

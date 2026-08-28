@@ -307,6 +307,8 @@ pub enum LaneAction {
     Drain,
     /// Launch a new occupant into a vacant seat.
     Wake,
+    /// Remove a vacant, claim-free lane from the topology.
+    Remove,
 }
 
 /// Change a seated lane's lifecycle state.

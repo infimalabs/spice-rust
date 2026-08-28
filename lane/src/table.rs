@@ -19,7 +19,7 @@ use std::error::Error;
 use std::fmt;
 
 use journal::crossing::body::{
-    LaneDrained, LaneExited, LaneImported, LaneKilled, LaneRenewed, LaneSeated,
+    LaneDrained, LaneExited, LaneImported, LaneKilled, LaneRemoved, LaneRenewed, LaneSeated,
     LaneSessionDeclared, LaneStarted,
 };
 use journal::crossing::{
@@ -144,6 +144,8 @@ pub enum Seating<'a> {
     Started(&'a LaneStarted),
     /// A vacant lineage seat moved to another linked worktree.
     Imported(&'a LaneImported),
+    /// A vacant lane seat was removed from the topology.
+    Removed(&'a LaneRemoved),
     /// The occupant ended.
     Exited(&'a LaneExited),
     /// A successor occupant was seated with its ancestor named.
@@ -393,6 +395,7 @@ impl Table {
             Seating::Session(fact) => self.session(fact),
             Seating::Started(fact) => self.start(fact),
             Seating::Imported(fact) => self.import(fact),
+            Seating::Removed(fact) => self.remove(fact),
             Seating::Renewed(fact) => self.renew(fact),
             Seating::Exited(fact) => self.end(fact.lane, fact.occupant),
             Seating::Drained(fact) => self.end(fact.lane, fact.occupant),
@@ -598,6 +601,31 @@ impl Table {
         Ok(())
     }
 
+    /// Remove a vacant seat from the table.
+    fn remove(&mut self, fact: &LaneRemoved) -> Result<(), Refusal> {
+        let lane = fact.lane;
+        let seat = self.seats.get(&lane).ok_or(Refusal::Unseated { lane })?;
+        if let Some(sitting) = seat.occupant {
+            return Err(Refusal::Occupied { lane, sitting });
+        }
+        if seat.lineage_id != fact.lineage_id {
+            return Err(Refusal::Lineage {
+                lane,
+                expected: seat.lineage_id,
+                observed: fact.lineage_id,
+            });
+        }
+        if seat.worktree != fact.worktree {
+            return Err(Refusal::WrongWorktree {
+                lane,
+                expected: seat.worktree.clone(),
+                observed: fact.worktree.clone(),
+            });
+        }
+        self.seats.remove(&lane);
+        Ok(())
+    }
+
     /// Succeeds one occupant with another, naming the ancestor it descends
     /// from, which must be the occupant the seat is actually holding.
     fn renew(&mut self, fact: &LaneRenewed) -> Result<(), Refusal> {
@@ -659,8 +687,8 @@ impl Table {
 mod tests {
     use super::{Refusal, Seating, Table};
     use journal::crossing::body::{
-        LaneDrained, LaneExited, LaneImported, LaneKilled, LaneLaunchIdentity, LaneRenewed,
-        LaneSeated, LaneSessionDeclared, LaneStarted,
+        LaneDrained, LaneExited, LaneImported, LaneKilled, LaneLaunchIdentity, LaneRemoved,
+        LaneRenewed, LaneSeated, LaneSessionDeclared, LaneStarted,
     };
     use journal::crossing::{CanonicalUuid, ResidentState};
 
@@ -822,6 +850,41 @@ mod tests {
             table.absorb(Seating::Imported(&stale)),
             Err(Refusal::Occupied { .. })
         ));
+    }
+
+    #[test]
+    fn removal_deletes_only_a_vacant_matching_seat() {
+        let mut table = table();
+        start(&mut table, uuid(3));
+        let removed = LaneRemoved {
+            lane: uuid(1),
+            lineage_id: uuid(1),
+            worktree: "/worktrees/lane-a".to_owned(),
+        };
+
+        assert_eq!(
+            table.absorb(Seating::Removed(&removed)),
+            Err(Refusal::Occupied {
+                lane: uuid(1),
+                sitting: uuid(3),
+            })
+        );
+        table
+            .absorb(Seating::Drained(&LaneDrained {
+                lane: uuid(1),
+                occupant: uuid(3),
+            }))
+            .expect("the lane becomes vacant");
+
+        table
+            .absorb(Seating::Removed(&removed))
+            .expect("vacant matching seat removes");
+
+        assert!(table.seat(uuid(1)).is_none());
+        assert_eq!(
+            table.absorb(Seating::Removed(&removed)),
+            Err(Refusal::Unseated { lane: uuid(1) })
+        );
     }
 
     /// One occupant per seat: a second start is refused and changes nothing.
