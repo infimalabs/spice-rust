@@ -811,13 +811,6 @@ fn contract_syntax_drives_argument_registration() {
             "--lineage",
             "018f82d4-6f59-7d06-92e3-bce913116302",
         ],
-        &[
-            "spice",
-            "lane",
-            "add",
-            "--resume",
-            "019fe3e7-c53f-7422-a6eb-a73a51879e40",
-        ],
         &["spice", "install", "--apply=digest"],
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],
@@ -830,6 +823,19 @@ fn contract_syntax_drives_argument_registration() {
             .try_get_matches_from(argv)
             .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
     }
+    assert!(
+        parser
+            .clone()
+            .try_get_matches_from([
+                "spice",
+                "lane",
+                "add",
+                "--resume",
+                "019fe3e7-c53f-7422-a6eb-a73a51879e40",
+            ])
+            .is_err(),
+        "lane add --resume must not parse after lane add became vacant-only"
+    );
 
     // Adoption is a bare switch: task capture reads it with get_flag, which
     // panics outright on an option carrying a value.
