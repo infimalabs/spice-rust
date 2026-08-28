@@ -53,6 +53,27 @@ impl lane::capture::CaptureReporter for NoopCaptureReporter {
     fn exited(&self, _exit: lane::capture::CaptureExit) {}
 }
 
+fn stage_canvas_app(root: &std::path::Path) {
+    let identity = wire::Digest::compute(wire::Domain::DistArtifact, b"resident-startup-app");
+    let stage = root.join(canvas::APP_STAGE);
+    let generation = stage
+        .join(canvas::APP_STAGE_GENERATIONS)
+        .join(identity.as_str());
+    fs::create_dir_all(&generation).expect("Canvas generation directory");
+    for asset in canvas::APP.assets() {
+        fs::write(
+            generation.join(asset.file()),
+            format!("fixture {}", asset.file()),
+        )
+        .expect("Canvas fixture asset writes");
+    }
+    fs::write(
+        stage.join(canvas::APP_STAGE_CURRENT),
+        format!("{identity}\n"),
+    )
+    .expect("Canvas generation publishes");
+}
+
 fn admitted_lane_seat(
     epoch: CanonicalUuid,
     body: &wire::intent::LaneSeat,
@@ -71,6 +92,78 @@ fn admitted_lane_seat(
         epoch,
     })
     .expect("operator lane seat command admits")
+}
+
+fn send_socket<T: serde::Serialize>(
+    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
+    value: &T,
+) {
+    socket
+        .send(tungstenite::Message::Binary(
+            wire::encode(value).expect("fixture frame encodes").into(),
+        ))
+        .expect("fixture frame sends");
+}
+
+fn connect_operator_socket(
+    address: SocketAddr,
+    operator: CanonicalUuid,
+    epoch: CanonicalUuid,
+) -> tungstenite::WebSocket<std::net::TcpStream> {
+    use tungstenite::client::IntoClientRequest;
+    use tungstenite::http::header::ORIGIN;
+
+    let stream = std::net::TcpStream::connect(address).expect("client connects");
+    let mut request = format!("ws://{address}/socket")
+        .into_client_request()
+        .expect("socket request builds");
+    request.headers_mut().insert(
+        ORIGIN,
+        format!("http://{address}").parse().expect("origin builds"),
+    );
+    let (mut socket, _) = tungstenite::client(request, stream).expect("socket opens");
+    send_socket(
+        &mut socket,
+        &wire::Hello {
+            wire: wire::WireVersion::CURRENT,
+            capability: operator,
+            epoch,
+        },
+    );
+    let accepted = socket.read().expect("accepted frame").into_data();
+    let accepted: wire::Accepted = wire::decode(&accepted).expect("accepted decodes");
+    assert_eq!(accepted.actor, Actor::Operator);
+    socket
+}
+
+fn send_lane_read(
+    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
+    command_id: CanonicalUuid,
+    epoch: CanonicalUuid,
+) {
+    send_socket(
+        socket,
+        &Command {
+            v: wire::WireVersion::CURRENT,
+            id: command_id,
+            epoch,
+            kind: CommandKind::LaneRead,
+            expected: Vec::new(),
+            body: serde_json::to_value(wire::intent::LaneRead {})
+                .expect("lane read command encodes"),
+        },
+    );
+}
+
+fn assert_lane_read_response(
+    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
+    command_id: CanonicalUuid,
+) {
+    let response = socket.read().expect("response frame").into_data();
+    let response: wire::Response<serde_json::Value> =
+        wire::decode(&response).expect("response decodes");
+    assert_eq!(response.id, command_id);
+    assert!(matches!(response.outcome, Outcome::Reply(_)));
 }
 
 /// The surface listens exactly where the operator requested or at one stable default.
@@ -219,6 +312,107 @@ fn runtime_paths_follow_the_repository_common_directory() {
         paths.journal,
         common.join(".spice-rs/data/spicejournal.sqlite3")
     );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn control_dispatch_waits_until_the_socket_response_is_attempted() {
+    let (root, paths) = resident_fixture("control-response-receipt");
+    stage_canvas_app(&root);
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let StartupSurface { config, trust } =
+        load_startup_surface(&repository).expect("startup surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(81);
+    commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
+    let operator = test_uuid(82);
+    let capabilities = canvas::axum::Capabilities::default();
+    capabilities
+        .insert(operator, Actor::Operator)
+        .expect("operator capability registers");
+    let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
+    let (server, mut control) = canvas::axum::Server::bind(
+        epoch,
+        capabilities.clone(),
+        app,
+        canvas::SpeechConfig::default(),
+    )
+    .await
+    .expect("Canvas server binds");
+    let address = server.local_addr().expect("server publishes address");
+    let discovery = server
+        .discovery(operator)
+        .expect("server discovery describes operator access");
+    let (shutdown, stopped) = tokio::sync::oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (sent_command, command_sent) = tokio::sync::oneshot::channel();
+    let (read_requested, read_response) = std::sync::mpsc::sync_channel(0);
+    let (answered, response_read) = tokio::sync::oneshot::channel();
+    let command_id = test_uuid(83);
+    let client = tokio::task::spawn_blocking(move || {
+        let mut socket = connect_operator_socket(address, operator, epoch);
+        send_lane_read(&mut socket, command_id, epoch);
+        let _ = sent_command.send(());
+        read_response.recv().expect("test releases response read");
+        assert_lane_read_response(&mut socket, command_id);
+        let _ = answered.send(());
+    });
+    command_sent.await.expect("client submits command");
+    let request = control.recv().await.expect("control receives command");
+    assert_eq!(request.command().id(), command_id);
+    {
+        let reads = read_materializations::CurrentReads::start(&bus, &paths, &config.consent)
+            .expect("read materializations start");
+        let reporter = Arc::new(NoopCaptureReporter);
+        let command_surface = command_surface::Surface::new(
+            &bus,
+            &repository,
+            &paths,
+            epoch,
+            command_surface::Runtimes::new(
+                lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
+                lane_recovery::Runtime::new(reporter),
+            ),
+            &config,
+            &reads,
+        );
+        let mut seats = Seats::new();
+        let mut lifecycle = lifecycle::Runtime::new(&config.lane);
+        let mut dispatch = std::pin::pin!(runtime::dispatch_control(
+            &command_surface,
+            &mut seats,
+            &mut lifecycle,
+            &mut control,
+            Some(request),
+        ));
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        assert!(
+            matches!(
+                std::future::Future::poll(dispatch.as_mut(), &mut context),
+                std::task::Poll::Pending
+            ),
+            "dispatch must wait for the socket response receipt before returning"
+        );
+        read_requested
+            .send(())
+            .expect("client response read is released");
+        assert!(
+            !dispatch.await.expect("lane read keeps resident seated"),
+            "lane read must not request resident shutdown"
+        );
+    }
+    response_read.await.expect("client observed response");
+    shutdown.send(()).expect("shutdown signals");
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    client.await.expect("client thread joins");
+    bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 

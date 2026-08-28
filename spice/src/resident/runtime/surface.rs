@@ -570,7 +570,7 @@ fn reconcile_wakes(
     let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
     timers.synchronize_wake(wake)
 }
-async fn dispatch_control(
+pub(in crate::resident) async fn dispatch_control(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
@@ -585,10 +585,10 @@ async fn dispatch_control(
     let outcome = command_surface.dispatch(seats, request.command());
     let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
     let response = request.respond(outcome);
+    if let Ok(response) = response {
+        response.wait().await;
+    }
     if reached_dark {
-        if let Ok(response) = response {
-            response.wait().await;
-        }
         control.close();
     }
     Ok(reached_dark)

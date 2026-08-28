@@ -900,6 +900,8 @@ fn latest_surface_digest(snapshot: &journal::FactSnapshot) -> CommandResult<Opti
 mod surface;
 #[cfg(test)]
 pub(super) use surface::announce_canvas;
+#[cfg(test)]
+pub(in crate::resident) use surface::dispatch_control;
 use surface::run_surface;
 #[cfg(test)]
 use surface::{StartedSurface, drive_surface, start_surface};
