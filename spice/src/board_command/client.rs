@@ -495,16 +495,20 @@ fn client_free(
         if let Err(error) = spice::task_git::prepare_free(repository, &task.to_string()) {
             return Err(task_git_outcome(error));
         }
+        let mut expected = vec![claim_witness(heads)];
+        if heads.workflow.body.phase.as_str() == "review"
+            && heads.workflow.body.assignment.as_ref() == Some(&board.principal)
+        {
+            expected.push(workflow_witness(heads));
+        }
+        expected.push(Witness::Lease {
+            task: heads.statement.body.born.clone(),
+            head: lease.position,
+        });
+        expected.push(residency_witness(board, lane, occupant));
         Ok((
             CommandKind::ClaimFree,
-            vec![
-                claim_witness(heads),
-                Witness::Lease {
-                    task: heads.statement.body.born.clone(),
-                    head: lease.position,
-                },
-                residency_witness(board, lane, occupant),
-            ],
+            expected,
             serde_json::to_value(TaskRef { task }).expect("typed intent encodes"),
         ))
     })

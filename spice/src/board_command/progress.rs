@@ -62,6 +62,14 @@ pub(super) fn claim_free(
         fact,
         ..next
     });
+    if entry.workflow().phase.as_str() == "review"
+        && entry.workflow().assignment.as_ref() == Some(command.actor())
+    {
+        let mut workflow = entry.workflow().clone();
+        workflow.assignment = None;
+        workflow.review = "unassigned".to_owned();
+        write.workflow_head(entry.born().clone(), freed, move |_| workflow);
+    }
     let answer = wire::intent::ClaimAnswer {
         task: task.task.clone(),
         holder: command.actor().clone(),

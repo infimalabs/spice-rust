@@ -474,15 +474,20 @@ pub(in crate::board_command) fn claim_git_boundary(
     };
     let lane = task_repository(snapshot, command, resident)?;
     let result = match possession {
-        Possession::Capture | Possession::Steal => {
-            spice::task_git::capture(&lane).map(|capture| capture.boundary)
+        Possession::Capture => {
+            spice::task_git::capture(&lane).map(|capture| Some(capture.boundary))
         }
-        Possession::Next => spice::task_git::prepare_claim(&lane),
+        Possession::Steal => match spice::task_git::capture(&lane) {
+            Ok(capture) => Ok(Some(capture.boundary)),
+            Err(error) if error.reason() == "git::nothing-to-capture" => Ok(None),
+            Err(error) => Err(error),
+        },
+        Possession::Next => spice::task_git::prepare_claim(&lane).map(Some),
         Possession::Recover => {
             return recovery_git_boundary(&lane, command, selected).map(Some);
         }
     };
-    result.map(Some).map_err(task_git_outcome)
+    result.map_err(task_git_outcome)
 }
 
 fn recovery_git_boundary(
