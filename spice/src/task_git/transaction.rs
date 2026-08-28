@@ -289,7 +289,7 @@ pub(super) fn recovered_lane_head(
         .lines()
         .filter_map(|line| line.split_once(": "))
         .collect::<BTreeMap<_, _>>();
-    if !current_landing_fields_match(&fields, meta) {
+    if !landing_fields_match(&fields, meta) {
         return Ok(None);
     };
     let Some(candidate) = merge_second_parent(root, head)? else {
@@ -298,11 +298,22 @@ pub(super) fn recovered_lane_head(
     Ok(is_ancestor(root, &candidate, head)?.then_some(candidate))
 }
 
-fn current_landing_fields_match(fields: &BTreeMap<&str, &str>, meta: Metadata<'_>) -> bool {
-    trailer_matches(fields, "Task-Key", task_key(meta.label))
+fn landing_fields_match(fields: &BTreeMap<&str, &str>, meta: Metadata<'_>) -> bool {
+    landing_task_key(fields) == Some(task_key(meta.label))
         && trailer_matches(fields, "Task-Phase", meta.phase)
         && trailer_matches(fields, "Task-Project", meta.project)
-        && trailer_matches(fields, "Task-Session", task_session(meta.actor))
+        && landing_session(fields) == Some(task_session(meta.actor))
+}
+
+fn landing_task_key<'a>(fields: &BTreeMap<&str, &'a str>) -> Option<&'a str> {
+    fields
+        .get("Task-Key")
+        .or_else(|| fields.get("Task-Handle"))
+        .map(|value| task_key(value))
+}
+
+fn landing_session<'a>(fields: &BTreeMap<&str, &'a str>) -> Option<&'a str> {
+    fields.get("Task-Session").map(|value| task_session(value))
 }
 
 fn trailer_matches(fields: &BTreeMap<&str, &str>, name: &str, expected: &str) -> bool {
@@ -654,6 +665,57 @@ mod tests {
             &agent,
             "-m",
             &message,
+        ]);
+
+        assert_eq!(
+            recovered_lane_head(&fixture.root, &merge, meta).expect("landing recovery succeeds"),
+            Some(agent)
+        );
+    }
+
+    #[test]
+    fn recovered_lane_head_normalizes_legacy_evidence_before_recovery() {
+        let fixture = Fixture::new("legacy-recovered-lane-head");
+        fixture.git(&["init", "--initial-branch=main"]);
+        fixture.git(&["config", "user.name", "Spice Test"]);
+        fixture.git(&["config", "user.email", "spice@example.test"]);
+        fs::write(fixture.root.join("root.txt"), "root\n").expect("root fixture writes");
+        fixture.git(&["add", "."]);
+        fixture.git(&["commit", "-m", "root"]);
+        let base = fixture.head();
+        fixture.git(&["checkout", "-b", "task"]);
+        fs::write(fixture.root.join("task.txt"), "task\n").expect("task fixture writes");
+        fixture.git(&["add", "."]);
+        fixture.git(&["commit", "-m", "agent work"]);
+        let agent = fixture.head();
+        let tree = fixture.git(&["rev-parse", "HEAD^{tree}"]);
+        fixture.git(&["checkout", "main"]);
+
+        let meta = Metadata {
+            label: "GIT-1kQb9T0w",
+            title: "Normalize legacy task landing evidence during recovery",
+            project: "task.git",
+            phase: "todo",
+            actor: "lane:00000000-0000-4000-8000-000000000123",
+        };
+        let message = concat!(
+            "task: legacy landing GIT-1kQb9T0w\n\n",
+            "Spice-Task-Boundary: 1\n",
+            "Task-Handle: GIT-1kQb9T0w\n",
+            "Task-Lane-Head: 1111111111111111111111111111111111111111\n",
+            "Task-Phase: todo\n",
+            "Task-Project: task.git\n",
+            "Task-Session: lane:00000000-0000-4000-8000-000000000123\n",
+        );
+        let merge = fixture.git(&[
+            "commit-tree",
+            &tree,
+            "-p",
+            &base,
+            "-p",
+            &agent,
+            "-m",
+            message,
         ]);
 
         assert_eq!(
