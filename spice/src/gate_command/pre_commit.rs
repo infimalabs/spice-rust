@@ -32,10 +32,10 @@ const RESOLUTION_WORKER_ARGUMENT: &str = "__gate-resolution-worker";
 const RESOLUTION_SELECTION_WORKER_ARGUMENT: &str = "__gate-resolution-selection-worker";
 const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
-const HARD_DEADLINE: Duration = Duration::from_secs(180);
+const HARD_DEADLINE: Duration = Duration::from_secs(600);
 // Preserve every five-second cleanup phase and one second of outer envelope
 // slack around the bounded selected and configured work.
-const WORK_RUNTIME: Duration = Duration::from_secs(164);
+const WORK_RUNTIME: Duration = Duration::from_secs(584);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);
