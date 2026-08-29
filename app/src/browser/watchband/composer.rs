@@ -157,17 +157,46 @@ pub(super) fn render_agent_message_card(
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
         >
-            <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
-            {render_agent_message_media(unlinked_media)}
-            {render_agent_message_footer(
-                message,
-                &correspondent,
-                reported_tasks,
-                source_authored_millis(message),
-                is_compaction,
-                producer,
-            )}
+            if is_compaction {
+                {render_compaction_boundary(member, message)}
+            } else {
+                <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
+                {render_agent_message_media(unlinked_media)}
+                {render_agent_message_footer(
+                    message,
+                    &correspondent,
+                    reported_tasks,
+                    source_authored_millis(message),
+                    false,
+                    producer,
+                )}
+            }
         </article>
+    }
+}
+
+fn render_compaction_boundary(
+    member: &crate::runtime::LaneMember,
+    message: &wire::AgentMessage,
+) -> Html {
+    let agent = member
+        .name
+        .clone()
+        .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
+    let label = format!("{agent} compacted context");
+    let authored = source_authored_millis(message);
+    html! {
+        <>
+            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
+            <span class="mosaic-compaction-label">
+                if let Some(authored) = authored {
+                    <Age {authored} class="mosaic-compaction-age" />
+                    <span aria-hidden="true">{"\u{b7}"}</span>
+                }
+                <span class="message-key" title={label.clone()}>{label}</span>
+            </span>
+            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
+        </>
     }
 }
 

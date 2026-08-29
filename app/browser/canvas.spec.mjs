@@ -10,6 +10,7 @@ import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
   nestedQuoteMessage, nestedQuotePreview, seatAgentTeam,
 } from "./agent-conversation.mjs";
+import { assertCompactionBoundary } from "./agent-conversation-mosaic.mjs";
 import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
 import {
   assertComposerShards,
@@ -501,26 +502,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     latestPrimaryProse: seeded.quoteProse,
   });
 
-  await writeFile(join(seeded.teamWorktrees[0], ".spice-compaction-trigger"), "");
-  const divider = team.locator(
-    `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
-  ).filter({ hasText: "Context compacted" });
-  await divider.waitFor({ timeout: 10_000 });
-  await waitForPage(
-    page,
-    "compaction divider commits as one full-width message-stream card",
-    TRANSITION_MS,
-    (lane) => {
-      const cards = document.querySelectorAll(
-        `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${lane}"]`,
-      );
-      return [...cards].some((card) => card.dataset.layoutPhase === "committed"
-        && card.dataset.span === "12"
-        && card.querySelector(".message-key")?.textContent?.trim() === "compaction"
-        && card.querySelectorAll(".message-actions button").length === 0);
-    },
-    seeded.lane,
-  );
+  await assertCompactionBoundary(page, fixture, team, seeded, artifacts);
 
   await activity
     .filter({ hasText: "browser direction survives streaming" })

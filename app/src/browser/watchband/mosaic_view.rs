@@ -53,6 +53,14 @@ impl ActivityCard {
             Self::Agent { .. } | Self::Directive { .. } => geometry.base_span,
         }
     }
+
+    fn is_boundary(&self) -> bool {
+        matches!(
+            self,
+            Self::Agent { message, .. }
+                if message.activity == wire::AgentActivityKind::Compaction
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -102,14 +110,15 @@ impl CardLayout {
     fn placed(
         measurement_index: usize,
         card: &crate::mosaic::Card,
+        display_base: i32,
         measurement: &ActivityMeasurement,
     ) -> Self {
         Self {
             committed: true,
             track: card.track,
             span: card.span,
-            base: card.base,
-            row: card.base,
+            base: display_base,
+            row: display_base,
             rows: card.rows,
             lifecycle: card.lifecycle,
             measurement_index,
@@ -803,6 +812,7 @@ fn measured_activity_at_revisions(
                         candidates: measurement.candidates.clone(),
                         latched: measurement.latched,
                         content_revision: measurement.image_revision,
+                        boundary: activity.is_boundary(),
                     })
                 })
                 .collect::<Option<Vec<_>>>()
@@ -896,9 +906,12 @@ fn render_activity_cards(
                     })
                 });
             let layout = match (placement, measurement) {
-                (Some((_plane, entry)), Some(measurement)) => {
-                    CardLayout::placed(entry.card.creation_index, &entry.card, measurement)
-                }
+                (Some((_plane, entry)), Some(measurement)) => CardLayout::placed(
+                    entry.card.creation_index,
+                    &entry.card,
+                    entry.display_base,
+                    measurement,
+                ),
                 _ => CardLayout::measuring(order, activity.base_span(geometry)),
             };
             let quote_order = u64::try_from(layout.measurement_index)
