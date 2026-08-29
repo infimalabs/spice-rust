@@ -125,6 +125,7 @@ fn message_frame(
         "lane": lane,
         "author": author,
         "locus": {"member": 1, "offset": offset, "length": 20, "event": event},
+        "authored": "2030-04-12T18:44:09.271Z",
         "text": text,
     });
     if let Some(activity) = activity {
@@ -466,12 +467,14 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
         "lane": LANE,
         "author": LANE_CAPABILITY,
         "locus": {"member": 1, "offset": 10, "length": 20, "event": 0},
+        "authored": "2030-04-12T18:44:09.271Z",
         "text": "first author",
     });
     let second = serde_json::json!({
         "lane": SECOND_LANE,
         "author": SECRET_LANE_CAPABILITY,
         "locus": {"member": 1, "offset": 10, "length": 20, "event": 0},
+        "authored": "2030-04-12T18:44:10.271Z",
         "text": "second author",
     });
     let snapshot = serde_json::to_vec(&serde_json::json!({
@@ -543,6 +546,7 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
             "lane": LANE,
             "author": THIRD_LANE,
             "locus": {"member": 1, "offset": 50, "length": 20, "event": 0},
+            "authored": "2030-04-12T18:44:11.271Z",
             "text": "third author",
         },
     }))
@@ -607,6 +611,7 @@ fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_di
             "lane": LANE,
             "author": LANE_CAPABILITY,
             "locus": {"member": 1, "offset": 80, "length": 20, "event": 1},
+            "authored": "2030-04-12T18:44:09.271Z",
             "activity": "tool",
             "text": "view_image: capture.png succeeded",
             "media": [media.clone()],
@@ -627,6 +632,7 @@ fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_di
             "lane": LANE,
             "author": LANE_CAPABILITY,
             "locus": {"member": 1, "offset": 120, "length": 20, "event": 1},
+            "authored": "2030-04-12T18:44:10.271Z",
             "activity": "tool",
             "text": "view_image: capture.png succeeded",
             "media": [media],
@@ -665,6 +671,7 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
             "lane": LANE,
             "author": LANE_CAPABILITY,
             "locus": {"member": 1, "offset": 60, "length": 20, "event": 0},
+            "authored": "2030-04-12T18:44:09.271Z",
             "activity": "tool",
             "text": "Bash",
         },
@@ -676,6 +683,14 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
         .newest_lineage_activity(lineage)
         .expect("transcript tool becomes activity");
     assert_eq!(activity.lane(), uuid(LANE));
+    assert_eq!(
+        activity.authored(),
+        "2030-04-12T18:44:09.271Z"
+            .parse::<wire::Instant>()
+            .expect("fixture instant")
+            .get()
+            .as_millisecond()
+    );
     assert_eq!(activity.class(), "tool");
     assert_eq!(activity.title(), "tool");
     assert_eq!(activity.detail(), "Bash");
@@ -693,6 +708,7 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
             "lane": SECOND_LANE,
             "author": SECRET_LANE_CAPABILITY,
             "locus": {"member": 1, "offset": 70, "length": 20, "event": 0},
+            "authored": "2030-04-12T18:44:10.271Z",
             "text": "newer teammate prose",
         },
     }))
@@ -708,6 +724,7 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
             "lane": THIRD_LANE,
             "author": THIRD_LANE,
             "locus": {"member": 1, "offset": 80, "length": 20, "event": 0},
+            "authored": "2030-04-12T18:44:11.271Z",
             "activity": "tool",
             "text": "Read",
         },
@@ -741,6 +758,17 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
         .newest_lineage_activity(&lanes.lanes[0])
         .expect("team activity survives receipts");
     assert_eq!(team.lane(), uuid(SECOND_LANE));
+    assert_eq!(
+        runtime
+            .newest_lane_activity(uuid(SECOND_LANE))
+            .expect("the member lane retains its own newest activity")
+            .authored(),
+        "2030-04-12T18:44:10.271Z"
+            .parse::<wire::Instant>()
+            .expect("fixture instant")
+            .get()
+            .as_millisecond()
+    );
     assert_eq!(team.class(), "prose");
     assert_eq!(team.title(), "assistant");
     assert_eq!(team.detail(), "newer teammate prose");

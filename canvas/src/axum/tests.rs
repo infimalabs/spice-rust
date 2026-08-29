@@ -90,6 +90,7 @@ fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
             length: 24,
             event: 0,
         },
+        authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         activity: wire::AgentActivityKind::Prose,
         text: text.to_owned(),
         media: Vec::new(),

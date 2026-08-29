@@ -612,7 +612,13 @@
   text-underline-offset: 2px;
 }
 .composer-shard-age {
-  color: var(--accent-slot, var(--accent));
+  color: var(--accent);
+}
+.composer-shard-age.queued { color: var(--warning); }
+.composer-shard-age.bound,
+.composer-shard-age.unbound {
+  color: var(--muted);
+  opacity: .7;
 }
 
 /* A third of the message-card thumbnail, keeping its border, radius, and crop

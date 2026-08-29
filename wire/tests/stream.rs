@@ -154,6 +154,7 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
             length: 3,
             event: 4,
         },
+        authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         activity: AgentActivityKind::Prose,
         text: "settled".to_owned(),
         media: Vec::new(),

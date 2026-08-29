@@ -79,6 +79,8 @@ pub struct AgentMessage {
     pub author: CanonicalUuid,
     /// Durable transcript event supplying this activity.
     pub locus: MessageLocus,
+    /// Vendor record instant that authored this visible activity.
+    pub authored: Instant,
     /// Visible activity kind. Its absent wire spelling means prose.
     #[serde(default, skip_serializing_if = "AgentActivityKind::is_prose")]
     pub activity: AgentActivityKind,

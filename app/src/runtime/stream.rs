@@ -377,6 +377,7 @@ impl CanvasRuntime {
         };
         let activity_changed = self.push_activity(LaneActivity {
             lane: message.lane,
+            authored: message.authored.get().as_millisecond(),
             class,
             title: title.to_owned(),
             detail: message.text.clone(),
