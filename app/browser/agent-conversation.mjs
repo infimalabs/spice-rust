@@ -5,6 +5,7 @@ import {
   assertInitiallyDeferredMosaicIsReadable,
   assertMosaicAnchorPreserved,
   assertMosaicLattice,
+  assertMosaicLifecycleAdvanced,
   assertMosaicScrollInputs,
   assertPersistentMosaic,
   mosaicScrollSnapshot,
@@ -452,6 +453,11 @@ export async function assertAgentConversation(
   }, beforeCompensation);
   const afterCompensation = await mosaicScrollSnapshot(scroller);
   assertMosaicAnchorPreserved(
+    beforeCompensation,
+    afterCompensation,
+    "desktop incoming activity while scrolled",
+  );
+  assertMosaicLifecycleAdvanced(
     beforeCompensation,
     afterCompensation,
     "desktop incoming activity while scrolled",

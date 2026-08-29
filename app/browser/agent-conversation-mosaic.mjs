@@ -34,22 +34,23 @@ function placementGeometry(placement) {
 export async function mosaicScrollSnapshot(plane) {
   const snapshot = await plane.evaluate((element) => {
     const viewport = element.getBoundingClientRect();
-    const visible = [...element.querySelectorAll(
+    const cards = [...element.querySelectorAll(
       '.mosaic-message-card[data-layout-phase="committed"]',
-    )]
-      .map((card) => {
-        const box = card.getBoundingClientRect();
-        return {
-          key: card.dataset.mosaicCardKey,
-          offset: box.top - viewport.top,
-          visible: box.bottom > viewport.top && box.top < viewport.bottom,
-          lifecycle: card.classList.contains("frozen") ? "frozen" : "liquid",
-        };
-      })
+    )].map((card) => {
+      const box = card.getBoundingClientRect();
+      return {
+        key: card.dataset.mosaicCardKey,
+        offset: box.top - viewport.top,
+        visible: box.bottom > viewport.top && box.top < viewport.bottom,
+        lifecycle: card.classList.contains("frozen") ? "frozen" : "liquid",
+      };
+    });
+    const visible = cards
       .filter((card) => card.visible)
       .sort((left, right) => Math.abs(left.offset) - Math.abs(right.offset));
     return {
       anchor: visible[0] ?? null,
+      cards,
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
@@ -79,17 +80,59 @@ export async function scrollMosaicAwayFromTop(page, plane) {
 export async function assertMosaicScrollInputs(page, plane) {
   await plane.evaluate((element) => element.scrollTo(0, 0));
   await plane.focus();
+  await plane.evaluate((element) => {
+    window.__mosaicKeyboardProbe = null;
+    element.addEventListener("keydown", (event) => {
+      if (event.key !== "PageDown") return;
+      event.preventDefault();
+      element.scrollBy(0, element.clientHeight);
+      window.__mosaicKeyboardProbe = {
+        defaultPrevented: event.defaultPrevented,
+        key: event.key,
+      };
+    }, { once: true });
+  });
   await page.keyboard.press("PageDown");
+  await waitForPage(page, "PageDown reaches the Mosaic", TRANSITION_MS,
+    () => window.__mosaicKeyboardProbe !== null);
+  assert.deepEqual(
+    await page.evaluate(() => window.__mosaicKeyboardProbe),
+    { defaultPrevented: true, key: "PageDown" },
+    "the PageDown packet targets and scrolls the Mosaic exactly once",
+  );
   await waitForPage(page, "keyboard scrolling crosses the Mosaic top threshold", TRANSITION_MS,
     () => document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')?.scrollTop > 80);
 
   await plane.evaluate((element) => element.scrollTo(0, 0));
   await plane.hover();
+  await plane.evaluate((element) => {
+    window.__mosaicWheelProbe = null;
+    element.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      element.scrollBy(0, event.deltaY);
+      window.__mosaicWheelProbe = {
+        deltaY: event.deltaY,
+        defaultPrevented: event.defaultPrevented,
+        targetsMosaic: event.target.closest(".lane-mosaic-plane") === element,
+      };
+    }, { once: true, passive: false });
+  });
   await page.mouse.wheel(0, 240);
+  await waitForPage(page, "wheel input reaches the Mosaic", TRANSITION_MS,
+    () => window.__mosaicWheelProbe !== null);
+  const wheel = await page.evaluate(() => window.__mosaicWheelProbe);
+  assert.deepEqual(
+    wheel,
+    { deltaY: 240, defaultPrevented: true, targetsMosaic: true },
+    `the wheel packet targets and scrolls the Mosaic exactly once: ${JSON.stringify(wheel)}`,
+  );
   await waitForPage(page, "wheel and trackpad scrolling cross the Mosaic top threshold", TRANSITION_MS,
     () => document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')?.scrollTop > 80);
 
   await plane.evaluate((element) => element.scrollTo(0, 0));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
   await waitForPage(page, "programmatic scrolling returns to the Mosaic top threshold", TRANSITION_MS,
     () => document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')?.scrollTop <= 80);
 }
@@ -99,6 +142,17 @@ export function assertMosaicAnchorPreserved(before, after, label) {
   assert.ok(
     Math.abs(after.anchor.offset - before.anchor.offset) <= 1,
     `${label} retains the anchor viewport offset: ${JSON.stringify({ before, after })}`,
+  );
+}
+
+export function assertMosaicLifecycleAdvanced(before, after, label) {
+  const earlier = new Map(before.cards.map((card) => [card.key, card.lifecycle]));
+  const advanced = after.cards.filter(
+    (card) => earlier.get(card.key) === "liquid" && card.lifecycle === "frozen",
+  );
+  assert.ok(
+    advanced.length > 0,
+    `${label} freezes at least one existing liquid card: ${JSON.stringify({ before, after })}`,
   );
 }
 
