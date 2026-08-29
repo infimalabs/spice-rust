@@ -9,4 +9,4 @@ pub use model::{
     Artifact, ArtifactAnswer, ArtifactContent, BackupFile, BackupImage, MediaType, PruneOperation,
     PrunePlan, PruneSkip, Retention, VocabularyError,
 };
-pub use store::{AddRequest, Error, ErrorClass, Replacement, Store};
+pub use store::{AddBytesRequest, AddRequest, Error, ErrorClass, Replacement, Store};

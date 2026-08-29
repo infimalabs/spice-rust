@@ -3,9 +3,12 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 
 use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, Retention, Store};
+use journal::{FactCause, JournalWrite};
 use serde::de::DeserializeOwned;
 use wire::intent::TaskAnswer;
-use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle, TaskStamp};
+use wire::{
+    Actor, CanonicalUuid, JournalBackup, JournalRestore, Outcome, Producer, TaskHandle, TaskStamp,
+};
 
 #[path = "support/fixture_root.rs"]
 mod fixture_root;
@@ -188,6 +191,64 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
 }
 
 #[test]
+fn task_add_from_ack_origin_publishes_steering_attachments_as_artifacts() {
+    const KEY: &str = "1kJK6N3R";
+    let fixture = Fixture::new();
+    let media = seed_steering_attachment(&fixture, KEY);
+    let resident = Resident::start(&fixture);
+    let task = fixture
+        .reply::<TaskAnswer>(&[
+            "task".to_owned(),
+            "add".to_owned(),
+            "Inspect captured steering evidence".to_owned(),
+            "--project".to_owned(),
+            "rim.artifact".to_owned(),
+            "--origin".to_owned(),
+            format!("ack:{KEY}"),
+        ])
+        .body
+        .task;
+
+    let ArtifactAnswer::Listed { artifacts, .. } = fixture
+        .reply::<ArtifactAnswer>(&[
+            "task".to_owned(),
+            "artifact".to_owned(),
+            "list".to_owned(),
+            task.to_string(),
+        ])
+        .body
+    else {
+        panic!("artifact list returned another answer")
+    };
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0].id, "A1");
+    assert_eq!(artifacts[0].name, media.name);
+    assert_eq!(artifacts[0].media_type.as_str(), media.content_type);
+
+    let ArtifactAnswer::Shown { content, .. } = fixture
+        .reply::<ArtifactAnswer>(&[
+            "task".to_owned(),
+            "artifact".to_owned(),
+            "show".to_owned(),
+            task.to_string(),
+            "A1".to_owned(),
+        ])
+        .body
+    else {
+        panic!("artifact show returned another answer")
+    };
+    let ArtifactContent::Binary { path } = content else {
+        panic!("steering image returned text content")
+    };
+    assert_eq!(
+        fs::read(path).expect("read attached steering artifact"),
+        b"\x89PNG\r\n\x1a\n"
+    );
+
+    resident.stop(&fixture);
+}
+
+#[test]
 fn task_artifact_refuses_malformed_mount_registry_before_state_access() {
     let fixture = Fixture::new();
     fs::write(
@@ -334,6 +395,51 @@ fn restore_refuses_an_internally_valid_artifact_for_an_unknown_task_inertly() {
         artifacts_before,
         "unknown artifact task refusal changed artifact authority"
     );
+}
+
+fn seed_steering_attachment(fixture: &Fixture, key: &str) -> wire::Media {
+    let data = "iVBORw0KGgo=";
+    let media =
+        wire::Media::from_base64("operator-capture.png", "image/png", data).expect("media admits");
+    let runtime = fixture.root.join(".git/.spice-rs");
+    let journal_path = runtime.join("data/spicejournal.sqlite3");
+    fs::create_dir_all(journal_path.parent().expect("journal path has parent"))
+        .expect("create journal parent");
+    let mut journal = journal::Journal::open(&journal_path).expect("fixture journal opens");
+    let origin: wire::Origin = "fixture:steering-attachment"
+        .parse()
+        .expect("fixture origin");
+    let at: wire::Instant = "2030-01-01T00:00:00.000Z"
+        .parse()
+        .expect("fixture publication instant");
+    let expires: wire::Instant = "2030-01-02T00:00:00.000Z"
+        .parse()
+        .expect("fixture expiry instant");
+    let body = wire::body::SteerSent {
+        directive: uuid(1),
+        fanout: None,
+        key: key.to_owned(),
+        lane: uuid(2),
+        text: "inspect this operator capture".to_owned(),
+        control: None,
+        attachments: vec![media.clone()],
+        expires,
+    };
+    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let pending = write
+        .fact(body.clone(), FactCause::Root)
+        .expect("steering fact builds");
+    write.steering_head(pending, move |seq| {
+        steer::Ledger::sent_head(&body, origin, at, seq).expect("steering head builds")
+    });
+    journal.apply(write).expect("steering attachment commits");
+    media
+}
+
+fn uuid(tail: u8) -> CanonicalUuid {
+    format!("018f82d4-6f59-7d06-92e3-bce9131163{tail:02x}")
+        .parse()
+        .expect("fixture UUID")
 }
 
 fn assert_artifact_surface(
