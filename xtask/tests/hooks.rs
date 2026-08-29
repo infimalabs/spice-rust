@@ -73,7 +73,10 @@ fn source_development_delegate_builds_one_public_spice_leaf() {
     assert_eq!(
         command.run(),
         [
+            "spice",
+            "dev",
             "cargo",
+            "--",
             "run",
             "--quiet",
             "--locked",
