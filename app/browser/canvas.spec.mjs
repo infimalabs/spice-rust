@@ -520,7 +520,6 @@ async function assertMosaicComposer(page, fixture, seeded) {
     "browser direction survives streaming",
     "the quoted message stays reachable from the shard it minted",
   );
-  await assertComposerPointerSelection(page, lane, composer);
   await assertComposerTypingDoesNotRemeasureActivity(page, lane, [composer, quotedComposer]);
   await assertCompleteComposerSubmission({
     page,
@@ -837,6 +836,14 @@ try {
         Object.assign(seeded, await assertAgentConversation(
           lightPage, fixture, worktrees, activityReplay, artifacts,
         ));
+        const pointerLane = lightPage.locator(
+          `.team-agent[data-agent-lane="${seeded.lane}"]`,
+        );
+        await assertComposerPointerSelection(
+          lightPage,
+          pointerLane,
+          pointerLane.locator(".composer-shard--primary"),
+        );
         await assertTeamMenu(lightPage, fixture);
       });
       await run.scenario("firefox-restored-mosaic", async () => {
