@@ -9,7 +9,7 @@ use crate::Effort;
 /// Claude's compiled model selection.
 pub const DEFAULT_CLAUDE_MODEL: &str = "sonnet";
 /// Codex's compiled model selection.
-pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.5";
+pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.6";
 /// Claude's compiled auto-compaction window.
 pub const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS: u64 = 200_000;
 
