@@ -46,7 +46,10 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
             locus,
             declaration: None,
             decoded: listen::Decoded::Events {
-                context: Default::default(),
+                context: listen::RecordContext {
+                    timestamp: Some("2030-04-12T18:44:09.271Z".to_owned()),
+                    ..Default::default()
+                },
                 events: vec![listen::Event::Prose(listen::Prose {
                     role: listen::ProseRole::Assistant,
                     text: text.to_owned(),

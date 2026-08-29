@@ -181,6 +181,10 @@ pub(super) fn publish_agent_messages(
     previews: &mut CallPreviews,
     steering: Option<&steer::Ledger>,
 ) -> CommandResult<()> {
+    let authored = record
+        .decoded
+        .context()
+        .and_then(|context| context.timestamp.as_deref());
     for (event, decoded) in record.decoded.events().iter().enumerate() {
         let event = u32::try_from(event)
             .map_err(|error| store_fault("canvas::message-locus-invalid", &error.to_string()))?;
@@ -190,6 +194,7 @@ pub(super) fn publish_agent_messages(
             record.occupant,
             event,
             decoded,
+            authored,
             previews,
             steering,
         )?;
@@ -204,6 +209,7 @@ pub(super) fn publish_agent_event(
     author: CanonicalUuid,
     event: u32,
     decoded: &listen::Event,
+    authored: Option<&str>,
     previews: &mut CallPreviews,
     steering: Option<&steer::Ledger>,
 ) -> CommandResult<()> {
@@ -235,6 +241,7 @@ pub(super) fn publish_agent_event(
         ),
         _ => return Ok(()),
     };
+    let authored = parse_agent_message_authored(authored)?;
     wire::media::admit_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
     publisher
@@ -247,12 +254,25 @@ pub(super) fn publish_agent_event(
                 length: locus.length,
                 event,
             },
+            authored,
             activity,
             text,
             media,
         })
         .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     Ok(())
+}
+
+fn parse_agent_message_authored(timestamp: Option<&str>) -> CommandResult<wire::Instant> {
+    let timestamp = timestamp.ok_or_else(|| {
+        store_fault(
+            "canvas::message-authored-missing",
+            "agent message record has no timestamp",
+        )
+    })?;
+    timestamp
+        .parse::<wire::Instant>()
+        .map_err(|error| store_fault("canvas::message-authored-invalid", &error.to_string()))
 }
 
 fn steering_ledger(bus: &Bus, record: &lane::capture::CaptureRecord) -> Option<steer::Ledger> {

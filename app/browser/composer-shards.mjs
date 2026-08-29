@@ -330,9 +330,16 @@ export async function assertComposerShards({
     "the complete prose remains available when the one-line header truncates it",
   );
   assert.notEqual(await quoteProse.innerText(), "Dee", "the header is prose-led, not agent-named");
+  const headingChildren = await quoteHeading.locator(":scope > *").evaluateAll((children) =>
+    children.map((child) => ({
+      className: child.className,
+      hasAge: child.classList.contains("composer-shard-age"),
+      hasLink: child.classList.contains("composer-shard-link"),
+    })),
+  );
   assert.deepEqual(
-    await quoteHeading.locator(":scope > *").evaluateAll((children) =>
-      children.map((child) => child.className),
+    headingChildren.map((child) =>
+      child.className.replace(/ (?:queued|running|running-stale|bound|unbound)$/, "")
     ),
     [
       "composer-shard-link composer-shard-age",
@@ -342,26 +349,74 @@ export async function assertComposerShards({
     ],
     "the primary header orders age, prose, image indicators, then its hamburger",
   );
+  assert.ok(
+    headingChildren[0].hasAge && headingChildren[0].hasLink,
+    `the primary header age keeps its required link and age classes: ${
+      JSON.stringify(headingChildren)
+    }`,
+  );
 
   const activityChrome = await team
     .locator(".team-agent .composer-shard--primary .composer-shard-age")
-    .evaluateAll((ages) => ages.map((age) => ({
-      accent: age.closest(".team-agent")?.dataset.accent,
-      color: getComputedStyle(age).color,
-      label: age.textContent?.trim(),
-    })));
+    .evaluateAll((ages) => ages.map((age) => {
+      const lane = age.closest(".team-agent")?.dataset.agentLane;
+      const pip = document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`);
+      return {
+        label: age.textContent?.trim(),
+        status: age.getAttribute("data-lane-status"),
+        color: getComputedStyle(age).color,
+        pipMissing: !pip,
+        pipColor: pip ? getComputedStyle(pip).backgroundColor : null,
+        pipStatus: pip?.getAttribute("data-lane-status"),
+        authored: age.querySelector(".composer-shard-age-label")?.dataset.ageAuthored,
+      };
+    }));
   assert.ok(activityChrome.length >= 2, "multiple composer activity ages are visible");
   assert.ok(
-    activityChrome.every((age) => /^(?:now|\d+[smhd])$/.test(age.label)),
-    `every composer activity age is relative: ${JSON.stringify(activityChrome)}`,
+    activityChrome.every((age) => /^(?:—|\d+[smhd])$/.test(age.label)),
+    `every composer activity age is source-authored or explicitly absent: ${
+      JSON.stringify(activityChrome)
+    }`,
   );
   assert.ok(
-    new Set(activityChrome.map((age) => age.accent)).size >= 2,
-    "the fixture exposes multiple composer identity accent slots",
+    activityChrome.some((age) => age.label !== "—" && Number.isFinite(Number(age.authored))),
+    `at least one composer activity age carries an authored instant: ${
+      JSON.stringify(activityChrome)
+    }`,
+  );
+  const linkedHeaderAges = await team
+    .locator(".team-agent .composer-shard--primary .composer-shard-age")
+    .evaluateAll((ages) => ages.map((age) => {
+      const href = age.getAttribute("href");
+      const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+      return {
+        href,
+        headerAuthored: age.querySelector(".composer-shard-age-label")?.dataset.ageAuthored,
+        cardAuthored: card?.querySelector(".message-age")?.dataset.ageAuthored,
+        cardKind: card?.getAttribute("data-card-kind"),
+      };
+    }).filter((age) => age.cardKind === "agent-message"));
+  assert.ok(
+    linkedHeaderAges.length > 0,
+    `at least one composer heading links to an agent message: ${JSON.stringify(linkedHeaderAges)}`,
   );
   assert.ok(
-    new Set(activityChrome.map((age) => age.color)).size >= 2,
-    "composer activity ages visibly retain their agents' identity colors",
+    linkedHeaderAges.every((age) => age.headerAuthored === age.cardAuthored),
+    `composer heading timestamps come from their linked latest message card: ${
+      JSON.stringify(linkedHeaderAges)
+    }`,
+  );
+  assert.ok(
+    activityChrome.every((age) => !age.pipMissing),
+    `each composer activity age has a matching pip: ${JSON.stringify(activityChrome)}`,
+  );
+  assert.ok(
+    activityChrome.every((age) => age.status === age.pipStatus),
+    `composer activity ages expose the same status as their pip: ${JSON.stringify(activityChrome)}`,
+  );
+  assert.ok(
+    activityChrome.every((age) => age.color === age.pipColor),
+    `composer activity age color follows the corresponding pip: ${JSON.stringify(activityChrome)}`,
   );
 
   const primarySources = [];

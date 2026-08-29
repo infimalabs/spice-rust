@@ -2,11 +2,11 @@
 
 use super::*;
 
-const CODEX_PROSE: &[u8] = br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
+const CODEX_PROSE: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
 "#;
-const CODEX_COMPACTION: &[u8] = br#"{"type":"compacted"}
+const CODEX_COMPACTION: &[u8] = br#"{"timestamp":"2030-04-12T18:44:39.271Z","type":"compacted"}
 "#;
-const CODEX_APPEND: &[u8] = br#"{"type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
+const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
 "#;
 
 #[test]

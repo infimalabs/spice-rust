@@ -34,6 +34,13 @@ pub(super) fn process_spec(command: &str, runtime: Duration) -> Spec {
     }
 }
 
+fn authored_context() -> listen::RecordContext {
+    listen::RecordContext {
+        timestamp: Some("2030-04-12T18:44:09.271Z".to_owned()),
+        ..Default::default()
+    }
+}
+
 pub(super) fn seed_lane(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -381,7 +388,7 @@ fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result()
         locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: Default::default(),
+            context: authored_context(),
             events: vec![
                 listen::Event::Reasoning(listen::Reasoning {
                     content: listen::ReasoningContent::Opaque,
@@ -582,7 +589,7 @@ fn taste_record(
         locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: Default::default(),
+            context: authored_context(),
             events: vec![listen::Event::Prose(listen::Prose {
                 role: listen::ProseRole::Assistant,
                 text: text.to_owned(),
@@ -689,9 +696,13 @@ fn assert_tool_media_prose_and_compaction_activity(
     record: &lane::capture::CaptureRecord,
     media: &wire::Media,
 ) {
+    let authored = "2030-04-12T18:44:09.271Z"
+        .parse::<wire::Instant>()
+        .expect("fixture instant");
     let tool = updates.try_recv().expect("tool activity publishes once");
     assert_eq!(tool.lane, record.lane);
     assert_eq!(tool.author, record.occupant);
+    assert_eq!(tool.authored, authored);
     assert_eq!(tool.activity, wire::AgentActivityKind::Tool);
     assert_eq!(tool.text, "Bash: git status --short");
     assert!(
@@ -709,6 +720,7 @@ fn assert_tool_media_prose_and_compaction_activity(
     );
 
     let result = updates.try_recv().expect("tool result publishes once");
+    assert_eq!(result.authored, authored);
     assert_eq!(result.activity, wire::AgentActivityKind::Tool);
     assert_eq!(result.text, "Bash: git status --short succeeded");
     assert_eq!(result.media.as_slice(), std::slice::from_ref(media));
@@ -725,6 +737,7 @@ fn assert_tool_media_prose_and_compaction_activity(
     let prose = updates.try_recv().expect("prose publishes once");
     assert_eq!(prose.lane, record.lane);
     assert_eq!(prose.author, record.occupant);
+    assert_eq!(prose.authored, authored);
     assert_eq!(prose.activity, wire::AgentActivityKind::Prose);
     assert_eq!(prose.text, "agent-authored answer");
     assert_eq!(
@@ -789,7 +802,7 @@ fn assert_stale_capture_ignored<P: AgentMessagePublisher>(
         locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: Default::default(),
+            context: authored_context(),
             events: vec![listen::Event::Prose(listen::Prose {
                 role: listen::ProseRole::Assistant,
                 text: "stale prior-occupant answer".to_owned(),
@@ -896,7 +909,7 @@ fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
         locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: Default::default(),
+            context: authored_context(),
             events: vec![listen::Event::Prose(listen::Prose {
                 role: listen::ProseRole::Assistant,
                 text: "agent-authored answer".to_owned(),

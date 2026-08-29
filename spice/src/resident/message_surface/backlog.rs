@@ -140,6 +140,7 @@ fn publish_scan(
                 author,
                 event,
                 &sourced.event,
+                sourced.context.timestamp.as_deref(),
                 &mut reader.previews,
                 steering,
             ) {

@@ -477,7 +477,10 @@ fn taste_record(
         locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: Default::default(),
+            context: listen::RecordContext {
+                timestamp: Some("2030-04-12T18:44:09.271Z".to_owned()),
+                ..Default::default()
+            },
             events,
         },
     }

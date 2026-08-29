@@ -384,6 +384,7 @@ pub fn effort_is_zero(usage: &EffortUsage, wall_ms: u64) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneActivity {
     lane: CanonicalUuid,
+    authored: i64,
     class: &'static str,
     title: String,
     detail: String,
@@ -395,6 +396,11 @@ impl LaneActivity {
     #[must_use]
     pub const fn lane(&self) -> CanonicalUuid {
         self.lane
+    }
+
+    #[must_use]
+    pub const fn authored(&self) -> i64 {
+        self.authored
     }
 
     #[must_use]
@@ -611,6 +617,14 @@ impl CanvasRuntime {
         self.activities
             .iter()
             .find(|activity| lineage.member(activity.lane).is_some())
+    }
+
+    /// Newest retained activity produced by one independently steerable lane.
+    #[must_use]
+    pub fn newest_lane_activity(&self, lane: CanonicalUuid) -> Option<&LaneActivity> {
+        self.activities
+            .iter()
+            .find(|activity| activity.lane == lane)
     }
 
     /// Retained lane activity, newest first.
