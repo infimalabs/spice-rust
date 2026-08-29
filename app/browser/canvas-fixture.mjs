@@ -57,6 +57,13 @@ const CANVAS_SEED_STEERING_ORIGIN = "ack:1kLMtWnl";
 /// Durable parent origin learned independently for each isolated fixture.
 const taskOrigins = new Map();
 
+export function fixtureCommandEnv(lane) {
+  const env = { ...process.env };
+  if (lane) env.SPICE_RS_LANE = lane;
+  else delete env.SPICE_RS_LANE;
+  return env;
+}
+
 function waitForDiscovery(child, canvas, timeout = 30_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
@@ -108,6 +115,7 @@ export async function startResident(fixture) {
   await mkdir(dirname(canvas), { recursive: true });
   const child = spawn(binary, ["--json", "up", "--foreground", "--port", "0"], {
     cwd: fixture,
+    env: fixtureCommandEnv(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -180,7 +188,7 @@ async function invoke(fixture, args, lane) {
     const result = await execute(binary, ["--json", ...args], {
       cwd: fixture,
       timeout: 20_000,
-      ...(lane ? { env: { ...process.env, SPICE_RS_LANE: lane } } : {}),
+      env: fixtureCommandEnv(lane),
     });
     return decodeOutcome(result.stdout, result.stderr);
   } catch (error) {
@@ -569,7 +577,11 @@ export async function stopResident(fixture, resident) {
   const exited = !childExited(resident.child)
     ? once(resident.child, "exit")
     : Promise.resolve();
-  await execute(binary, ["--json", "down"], { cwd: fixture, timeout: SHUTDOWN_COMMAND_MS });
+  await execute(binary, ["--json", "down"], {
+    cwd: fixture,
+    env: fixtureCommandEnv(),
+    timeout: SHUTDOWN_COMMAND_MS,
+  });
   await exited;
 }
 

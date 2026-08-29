@@ -2,7 +2,7 @@
   "name": "spice-browser-tests",
   "private": true,
   "scripts": {
-    "test:canvas": "node --test app/browser/canvas-build.test.mjs app/browser/canvas-process-ownership.test.mjs && node app/browser/canvas-coordinator.mjs"
+    "test:canvas": "node --test app/browser/canvas-build.test.mjs app/browser/canvas-fixture.test.mjs app/browser/canvas-process-ownership.test.mjs && node app/browser/canvas-coordinator.mjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"
