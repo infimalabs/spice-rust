@@ -49,18 +49,7 @@ pub(in crate::board_command) fn claim_plan(
     let selected = claim_selection(&snapshot, command, possession)?.clone();
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
     let grant = claim_grant(bus, command, repository, &snapshot, &selected, possession)?;
-    let next = projected_claim_next_action(
-        &snapshot,
-        &selected,
-        command,
-        grant.lane,
-        grant.occupant,
-        grant.at,
-        grant.expiry,
-        grant.maximum,
-        win.recovery.clone(),
-        projects,
-    );
+    let next = Some(claim_activation_next_action(&selected));
     Ok(ClaimPlan {
         snapshot,
         selected,
@@ -219,55 +208,8 @@ pub(in crate::board_command) fn commit_claim(
     committed(bus, write, CommandAnswer::Claim(answer))
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the projected claim is the exact pair of heads the transaction appends"
-)]
-fn projected_claim_next_action(
-    snapshot: &ValidatedSnapshot,
-    selected: &Entry,
-    command: &wire::AdmittedCommand,
-    lane: wire::CanonicalUuid,
-    occupant: wire::CanonicalUuid,
-    at: Instant,
-    expiry: Instant,
-    maximum: Instant,
-    recovery: Option<String>,
-    projects: &ProjectPolicy,
-) -> Option<Box<str>> {
-    let mut workflow = selected.workflow().clone();
-    if workflow.phase.as_str() == "review" {
-        workflow.assignment = Some(command.actor().clone());
-        workflow.review = "assigned".to_owned();
-    }
-    let post = Entry::new(
-        selected.statement().clone(),
-        workflow,
-        Some(ClaimHead {
-            actor: command.actor().clone(),
-            fact: snapshot.cursor,
-            claimed: snapshot.cursor,
-            cell: wire::ClaimCell {
-                project: selected.project().as_str().to_owned(),
-                phase: selected.workflow().phase.clone(),
-            },
-            lane,
-            occupant,
-            epoch: command.epoch(),
-            recovery,
-            disposition: ClaimDisposition::Active,
-        }),
-        Some(LeaseHead {
-            start: at,
-            renewal: at,
-            expiry,
-            maximum,
-            epoch: command.epoch(),
-        }),
-        projects,
-    )
-    .expect("a validated selected entry accepts the transaction's claim heads");
-    next_action(snapshot, &post, false)
+fn claim_activation_next_action(selected: &Entry) -> Box<str> {
+    format!("spice task show {}", selected.handle()).into_boxed_str()
 }
 
 /// Which possession law one claim win asks the board to apply.

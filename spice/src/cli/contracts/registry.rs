@@ -428,6 +428,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "board::status"
     ),
     row!(
+        ["task", "show"],
+        "task show HANDLE",
+        OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "board::task_show"
+    ),
+    row!(
         ["task", "effort"],
         "task effort [HANDLE]",
         OperatorOrLane,

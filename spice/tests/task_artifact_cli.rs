@@ -5,7 +5,7 @@ use std::process::{Child, Command, Output, Stdio};
 use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, Retention, Store};
 use journal::{FactCause, JournalWrite};
 use serde::de::DeserializeOwned;
-use wire::intent::TaskAnswer;
+use wire::intent::{TaskAnswer, TextAnswer};
 use wire::{
     Actor, CanonicalUuid, JournalBackup, JournalRestore, Outcome, Producer, TaskHandle, TaskStamp,
 };
@@ -244,6 +244,65 @@ fn task_add_from_ack_origin_publishes_steering_attachments_as_artifacts() {
         fs::read(path).expect("read attached steering artifact"),
         b"\x89PNG\r\n\x1a\n"
     );
+
+    resident.stop(&fixture);
+}
+
+#[test]
+fn task_show_renders_current_details_and_artifact_context() {
+    let fixture = Fixture::new();
+    let resident = Resident::start(&fixture);
+    let task = fixture
+        .reply::<TaskAnswer>(&[
+            "task".to_owned(),
+            "add".to_owned(),
+            "Restore task packets".to_owned(),
+            "--project".to_owned(),
+            "rim.artifact".to_owned(),
+            "--description".to_owned(),
+            "Agents need a detail packet without journal spelunking.".to_owned(),
+            "--acceptance".to_owned(),
+            "show renders the authored acceptance".to_owned(),
+            "--acceptance".to_owned(),
+            "show renders artifact lookup commands".to_owned(),
+            "--origin".to_owned(),
+            "fixture:task-show".to_owned(),
+        ])
+        .body
+        .task;
+    let source = fixture.source("research-notes.md", b"raw notes\n");
+    let ArtifactAnswer::Added { artifact, .. } = fixture
+        .reply::<ArtifactAnswer>(&[
+            "task".to_owned(),
+            "artifact".to_owned(),
+            "add".to_owned(),
+            task.to_string(),
+            source.display().to_string(),
+            "--retention".to_owned(),
+            "prunable".to_owned(),
+        ])
+        .body
+    else {
+        panic!("artifact add returned another answer")
+    };
+    assert_eq!(artifact.id, "A1");
+
+    let shown = fixture
+        .reply::<TextAnswer>(&["task".to_owned(), "show".to_owned(), task.to_string()])
+        .body
+        .text;
+    assert!(shown.contains(&format!("handle {task}")));
+    assert!(shown.contains("title Restore task packets"));
+    assert!(shown.contains("description Agents need a detail packet without journal spelunking."));
+    assert!(shown.contains("origin fixture:task-show"));
+    assert!(shown.contains("project rim.artifact"));
+    assert!(shown.contains("phase todo"));
+    assert!(shown.contains("status pending"));
+    assert!(shown.contains("acceptance:\n  - show renders the authored acceptance"));
+    assert!(shown.contains("  - show renders artifact lookup commands"));
+    assert!(shown.contains("artifacts:\n  A1 research-notes.md text/markdown 10 B prunable"));
+    assert!(shown.contains(&format!("spice task artifact show {task} A1")));
+    assert!(shown.contains("next: spice task next"));
 
     resident.stop(&fixture);
 }
