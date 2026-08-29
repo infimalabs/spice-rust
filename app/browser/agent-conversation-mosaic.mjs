@@ -31,8 +31,88 @@ function placementGeometry(placement) {
   };
 }
 
+export async function mosaicScrollSnapshot(plane) {
+  const snapshot = await plane.evaluate((element) => {
+    const viewport = element.getBoundingClientRect();
+    const visible = [...element.querySelectorAll(
+      '.mosaic-message-card[data-layout-phase="committed"]',
+    )]
+      .map((card) => {
+        const box = card.getBoundingClientRect();
+        return {
+          key: card.dataset.mosaicCardKey,
+          offset: box.top - viewport.top,
+          visible: box.bottom > viewport.top && box.top < viewport.bottom,
+          lifecycle: card.classList.contains("frozen") ? "frozen" : "liquid",
+        };
+      })
+      .filter((card) => card.visible)
+      .sort((left, right) => Math.abs(left.offset) - Math.abs(right.offset));
+    return {
+      anchor: visible[0] ?? null,
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+      committedWidth: Number(element.dataset.committedWidth),
+      commits: Number(element.dataset.planeCommits),
+      maxRow: Number(element.dataset.maxRow),
+      module: Number(element.dataset.module),
+    };
+  });
+  assert.ok(snapshot.anchor, `the scrolled Mosaic has a visible anchor: ${JSON.stringify(snapshot)}`);
+  return snapshot;
+}
+
+export async function scrollMosaicAwayFromTop(page, plane) {
+  await plane.evaluate((element) => {
+    const maximum = element.scrollHeight - element.clientHeight;
+    element.scrollTo(0, Math.min(maximum, Math.max(100, Math.round(maximum * 0.6))));
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  const snapshot = await mosaicScrollSnapshot(plane);
+  assert.ok(snapshot.scrollTop > 80, `the Mosaic probe is beyond the top threshold: ${JSON.stringify(snapshot)}`);
+  return snapshot;
+}
+
+export async function assertMosaicScrollInputs(page, plane) {
+  await plane.evaluate((element) => element.scrollTo(0, 0));
+  await plane.focus();
+  await page.keyboard.press("PageDown");
+  await waitForPage(page, "keyboard scrolling crosses the Mosaic top threshold", TRANSITION_MS,
+    () => document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')?.scrollTop > 80);
+
+  await plane.evaluate((element) => element.scrollTo(0, 0));
+  await plane.hover();
+  await page.mouse.wheel(0, 240);
+  await waitForPage(page, "wheel and trackpad scrolling cross the Mosaic top threshold", TRANSITION_MS,
+    () => document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')?.scrollTop > 80);
+
+  await plane.evaluate((element) => element.scrollTo(0, 0));
+  await waitForPage(page, "programmatic scrolling returns to the Mosaic top threshold", TRANSITION_MS,
+    () => document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')?.scrollTop <= 80);
+}
+
+export function assertMosaicAnchorPreserved(before, after, label) {
+  assert.equal(after.anchor.key, before.anchor.key, `${label} retains the visible anchor identity`);
+  assert.ok(
+    Math.abs(after.anchor.offset - before.anchor.offset) <= 1,
+    `${label} retains the anchor viewport offset: ${JSON.stringify({ before, after })}`,
+  );
+}
+
 export async function assertCompactionBoundary(page, fixture, team, seeded, artifacts) {
   const before = await committedPlacementSnapshot(team);
+  const plane = team.locator(".lane-mosaic-plane");
+  const viewport = page.viewportSize();
+  if (viewport && viewport.height > 360) {
+    await page.setViewportSize({ width: viewport.width, height: 360 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+      () => requestAnimationFrame(resolve),
+    )));
+  }
+  const scrolled = await scrollMosaicAwayFromTop(page, plane);
   await writeFile(join(seeded.teamWorktrees[0], ".spice-compaction-trigger"), "");
   const divider = team.locator(
     `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
@@ -87,6 +167,11 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
       `the compaction boundary preserves committed geometry for ${placement.key}`,
     );
   }
+  assertMosaicAnchorPreserved(
+    scrolled,
+    await mosaicScrollSnapshot(plane),
+    "a compaction epoch while scrolled",
+  );
 
   const text = `post-compaction floor witness ${crypto.randomUUID()}`;
   await reply(fixture, ["steer", seeded.lane, text]);
@@ -121,7 +206,13 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
     afterBox.y >= boundaryBox.y + boundaryBox.height - 1,
     `post-compaction activity stays below its boundary: ${JSON.stringify({ boundaryBox, afterBox })}`,
   );
+  assertMosaicAnchorPreserved(
+    scrolled,
+    await mosaicScrollSnapshot(plane),
+    "post-compaction activity while scrolled",
+  );
   await divider.scrollIntoViewIfNeeded();
+  if (viewport && viewport.height > 360) await page.setViewportSize(viewport);
   await page.screenshot({
     path: join(artifacts, "canvas-compaction-boundary.png"),
     fullPage: true,
