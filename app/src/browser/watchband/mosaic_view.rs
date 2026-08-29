@@ -298,6 +298,7 @@ impl MosaicPlaneView<'_> {
                 data-plane-transition={transition}
                 data-observed-width={self.measurement_width.to_string()}
                 data-committed-width={committed_width.to_string()}
+                tabindex="0"
                 aria-label={format!(
                     "Packed lineage plane: {} policy, {} {}",
                     self.properties.life.label(),
@@ -380,12 +381,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     );
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(geometry_width));
     let max_row = committed_plane.map(crate::mosaic_plane::PersistentLanePlane::max_row);
-    use_plane_scroll(
-        host.clone(),
-        max_row,
-        geometry.module,
-        committed_plane.map_or(0, |plane| plane.cards().len()),
-    );
+    use_plane_scroll(host.clone(), (*committed).clone());
     MosaicPlaneView {
         properties,
         measurement_width,
@@ -404,33 +400,102 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
 /// A temporary `None` during incremental measurement deliberately retains the
 /// prior ready-plane state, so the eventual row delta has one authoritative
 /// baseline and one scroll owner.
-fn use_plane_scroll(host: NodeRef, max_row: Option<i32>, module: i32, card_count: usize) {
-    let scroll_state = use_mut_ref(|| None::<(i32, i32, usize)>);
-    use_effect_with(
-        (host, max_row, module, card_count),
-        move |(host, max_row, module, card_count)| {
-            let Some(max_row) = *max_row else {
-                return;
-            };
-            let previous = *scroll_state.borrow();
-            if let Some((previous_max_row, previous_module, previous_card_count)) = previous
-                && let Some(scroller) = host.cast::<web_sys::Element>()
-            {
-                let scroll_top = f64::from(scroller.scroll_top());
-                let replaying = *module != previous_module || *card_count <= previous_card_count;
-                if let Some(delta) = crate::mosaic::scroll_compensation(
-                    previous_max_row,
-                    max_row,
-                    *module,
-                    crate::mosaic::pane_is_scrolled(scroll_top, None),
-                    replaying,
-                ) {
-                    scroller.set_scroll_top((scroll_top + delta).round() as i32);
+fn use_plane_scroll(
+    host: NodeRef,
+    plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
+) {
+    let anchor = use_mut_ref(|| None::<ScrollAnchor>);
+    {
+        let anchor = anchor.clone();
+        use_effect_with(host.clone(), move |host| {
+            let registration = host.cast::<web_sys::Element>().and_then(|scroller| {
+                let live_scroller = scroller.clone();
+                let live_anchor = anchor.clone();
+                let listener = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                    *live_anchor.borrow_mut() = visible_scroll_anchor(&live_scroller);
+                });
+                scroller
+                    .add_event_listener_with_callback("scroll", listener.as_ref().unchecked_ref())
+                    .ok()?;
+                *anchor.borrow_mut() = visible_scroll_anchor(&scroller);
+                Some((scroller, listener))
+            });
+            move || {
+                if let Some((scroller, listener)) = registration {
+                    let _ = scroller.remove_event_listener_with_callback(
+                        "scroll",
+                        listener.as_ref().unchecked_ref(),
+                    );
                 }
             }
-            *scroll_state.borrow_mut() = Some((max_row, *module, *card_count));
-        },
-    );
+        });
+    }
+    use_effect_with((host, plane), move |(host, plane)| {
+        let Some(scroller) = host.cast::<web_sys::Element>() else {
+            return;
+        };
+        if plane.is_none()
+            || !crate::mosaic::pane_is_scrolled(f64::from(scroller.scroll_top()), None)
+        {
+            *anchor.borrow_mut() = None;
+            return;
+        }
+        if let Some(previous) = anchor.borrow().clone()
+            && let Some(current_offset) = scroll_anchor_offset(&scroller, &previous.key)
+        {
+            let delta = current_offset - previous.offset;
+            if delta.abs() >= 0.5 {
+                scroller.set_scroll_top((f64::from(scroller.scroll_top()) + delta).round() as i32);
+            }
+        }
+        *anchor.borrow_mut() = visible_scroll_anchor(&scroller);
+    });
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ScrollAnchor {
+    key: String,
+    offset: f64,
+}
+
+fn committed_scroll_cards(scroller: &web_sys::Element) -> Vec<web_sys::Element> {
+    let cards = scroller
+        .query_selector_all(".mosaic-message-card[data-layout-phase=\"committed\"]")
+        .expect("the fixed committed Mosaic selector is valid");
+    (0..cards.length())
+        .filter_map(|index| cards.item(index))
+        .filter_map(|card| card.dyn_into::<web_sys::Element>().ok())
+        .collect()
+}
+
+fn visible_scroll_anchor(scroller: &web_sys::Element) -> Option<ScrollAnchor> {
+    if !crate::mosaic::pane_is_scrolled(f64::from(scroller.scroll_top()), None) {
+        return None;
+    }
+    let viewport = scroller.get_bounding_client_rect();
+    committed_scroll_cards(scroller)
+        .into_iter()
+        .filter_map(|card| {
+            let rect = card.get_bounding_client_rect();
+            (rect.bottom() > viewport.top() && rect.top() < viewport.bottom()).then(|| {
+                let offset = rect.top() - viewport.top();
+                let distance = offset.abs();
+                let key = card
+                    .get_attribute("data-mosaic-card-key")
+                    .expect("a committed Mosaic card has a stable key");
+                (distance, ScrollAnchor { key, offset })
+            })
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, anchor)| anchor)
+}
+
+fn scroll_anchor_offset(scroller: &web_sys::Element, key: &str) -> Option<f64> {
+    let viewport_top = scroller.get_bounding_client_rect().top();
+    committed_scroll_cards(scroller)
+        .into_iter()
+        .find(|card| card.get_attribute("data-mosaic-card-key").as_deref() == Some(key))
+        .map(|card| card.get_bounding_client_rect().top() - viewport_top)
 }
 
 #[hook]

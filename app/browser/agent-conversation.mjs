@@ -3,8 +3,12 @@ import { basename, join } from "node:path";
 
 import {
   assertInitiallyDeferredMosaicIsReadable,
+  assertMosaicAnchorPreserved,
   assertMosaicLattice,
+  assertMosaicScrollInputs,
   assertPersistentMosaic,
+  mosaicScrollSnapshot,
+  scrollMosaicAwayFromTop,
   waitForMosaicReady,
 } from "./agent-conversation-mosaic.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
@@ -391,23 +395,50 @@ export async function assertAgentConversation(
   }
 
   const scroller = plane;
+  const compensationLane = console.locator(
+    `.team-agent[data-agent-lane="${seated[0].lane}"]`,
+  );
   const compensationViewport = page.viewportSize();
   await page.setViewportSize({ width: compensationViewport.width, height: 360 });
-  await scroller.evaluate((element) => element.scrollTo(0, element.scrollHeight));
-  const beforeCompensation = await scroller.evaluate((element) => {
+  await scroller.evaluate((element) => element.scrollTo(0, 0));
+
+  const topText = `mosaic at-top follow probe ${crypto.randomUUID()}`;
+  await compensationLane.getByRole("textbox").fill(topText);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  const topCard = console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
+    .filter({ hasText: topText });
+  await topCard.waitFor({ timeout: 10_000 });
+  await waitForPage(page, "at-top Mosaic activity commits", TRANSITION_MS, (text) => {
+    const card = [...document.querySelectorAll(".mosaic-message-card")]
+      .find((candidate) => candidate.textContent?.includes(text));
+    return card?.dataset.layoutPhase === "committed";
+  }, topText);
+  const topFollow = await scroller.evaluate((element, key) => {
+    const card = [...element.querySelectorAll(".mosaic-message-card")]
+      .find((candidate) => candidate.dataset.mosaicCardKey === key);
+    const viewport = element.getBoundingClientRect();
+    const box = card?.getBoundingClientRect();
     return {
       scrollTop: element.scrollTop,
-      maxRow: Number(element.dataset.maxRow),
+      visible: Boolean(box && box.bottom > viewport.top && box.top < viewport.bottom),
     };
-  });
-  assert.ok(beforeCompensation.scrollTop > 80, "the compensation probe begins in a scrolled pane");
+  }, await topCard.getAttribute("data-mosaic-card-key"));
+  assert.deepEqual(topFollow, { scrollTop: 0, visible: true }, "at-top activity follows visibly");
+  const topInbox = await reply(fixture, ["inbox", seated[0].lane]);
+  const topDirective = topInbox.body.lanes[0].pending.find(
+    (directive) => directive.text === topText,
+  );
+  assert.ok(topDirective, "the at-top follow probe reached the real inbox");
+  await reply(fixture, ["steer", "cancel", topDirective.directive]);
+  await topCard.waitFor({ state: "detached", timeout: 10_000 });
+
+  await assertMosaicScrollInputs(page, scroller);
+  const beforeCompensation = await scrollMosaicAwayFromTop(page, scroller);
   const compensationMessage = [
     "mosaic scroll compensation probe",
     ...Array.from({ length: 72 }, (_, index) => `- exact row delta ${index + 1}`),
   ].join("\n");
-  const compensationLane = console.locator(
-    `.team-agent[data-agent-lane="${seated[0].lane}"]`,
-  );
   await compensationLane.getByRole("textbox").fill(compensationMessage);
   await console.getByRole("button", { name: "Steer", exact: true }).click();
   const compensationCard = console
@@ -419,13 +450,12 @@ export async function assertAgentConversation(
     const maxRow = Number(element?.dataset.maxRow);
     return maxRow > before.maxRow;
   }, beforeCompensation);
-  const afterCompensation = await scroller.evaluate((element) => {
-    return {
-      scrollTop: element.scrollTop,
-      maxRow: Number(element.dataset.maxRow),
-      module: Number(element.dataset.module),
-    };
-  });
+  const afterCompensation = await mosaicScrollSnapshot(scroller);
+  assertMosaicAnchorPreserved(
+    beforeCompensation,
+    afterCompensation,
+    "desktop incoming activity while scrolled",
+  );
   assert.ok(afterCompensation.maxRow > beforeCompensation.maxRow);
   assert.equal(
     afterCompensation.scrollTop,
@@ -436,7 +466,26 @@ export async function assertAgentConversation(
       afterCompensation,
     })}`,
   );
+
+  await page.setViewportSize({ width: 520, height: 360 });
+  await waitForPage(page, "narrow Mosaic commits its responsive width", TRANSITION_MS,
+    (desktopWidth) => {
+      const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+      return plane?.dataset.measurementPhase === "ready"
+        && Number(plane.dataset.committedWidth) < desktopWidth;
+    }, afterCompensation.committedWidth);
+  const narrow = await mosaicScrollSnapshot(scroller);
+  assertMosaicAnchorPreserved(
+    afterCompensation,
+    narrow,
+    "narrow responsive reflow while scrolled",
+  );
   await page.setViewportSize(compensationViewport);
+  await waitForPage(page, "desktop Mosaic width is restored", TRANSITION_MS,
+    (narrowWidth) => Number(document.querySelector(
+      '[data-pane="agent-console"] .lane-mosaic-plane',
+    )?.dataset.committedWidth) > narrowWidth,
+    narrow.committedWidth);
   const compensationInbox = await reply(fixture, ["inbox", seated[0].lane]);
   const compensationDirective = compensationInbox.body.lanes[0].pending.find(
     (directive) => directive.text === compensationMessage,
