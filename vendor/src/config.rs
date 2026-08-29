@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::Effort;
 
 /// Claude's compiled model selection.
-pub const DEFAULT_CLAUDE_MODEL: &str = "sonnet";
+pub const DEFAULT_CLAUDE_MODEL: &str = "claude-opus-5";
 /// Codex's compiled model selection.
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.5";
 /// Claude's compiled auto-compaction window.

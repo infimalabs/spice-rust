@@ -134,6 +134,14 @@ fn inherited_claude_compact_window_is_preserved_exactly_once() {
     let plan = compose(&Root::default(), inputs("claude", inherited, Resume::Fresh))
         .expect("Claude plan composes");
 
+    assert_eq!(plan.launch().model, "claude-opus-5");
+    assert_eq!(
+        arguments(&plan.record().expect("Claude default plan renders"))
+            .windows(2)
+            .filter(|pair| pair == &["--model", "claude-opus-5"])
+            .count(),
+        1
+    );
     assert_eq!(
         environment_value(plan.environment(), CLAUDE_AUTO_COMPACT_WINDOW),
         Some("777")

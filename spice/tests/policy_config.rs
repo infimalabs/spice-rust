@@ -169,6 +169,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
         ["15s", "60s", "300s"]
     );
     assert_eq!(root.vendor().claude().binary().as_str(), "claude");
+    assert_eq!(vendor::DEFAULT_CLAUDE_MODEL, "claude-opus-5");
     assert_eq!(root.vendor().claude().model(), vendor::DEFAULT_CLAUDE_MODEL);
     assert_eq!(root.vendor().claude().effort(), vendor::Effort::High);
     assert_eq!(root.vendor().codex().binary().as_str(), "codex");

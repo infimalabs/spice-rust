@@ -500,6 +500,15 @@ fn registry_builtins_are_the_typed_root_defaults() {
             .and_then(|entry| entry.builtin()),
         Some(Builtin::String(proof::DEFAULT_IMAGE))
     );
+    assert_eq!(
+        descriptor(&[
+            PathSegment::Key("vendor"),
+            PathSegment::Key("claude"),
+            PathSegment::Key("model"),
+        ])
+        .and_then(|entry| entry.builtin()),
+        Some(Builtin::String("claude-opus-5"))
+    );
     for leaf in ["container", "runner"] {
         assert_eq!(
             descriptor(&[PathSegment::Key("proof"), PathSegment::Key(leaf)])
