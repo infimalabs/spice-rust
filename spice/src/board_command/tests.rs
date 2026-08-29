@@ -1400,15 +1400,15 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
 
 #[test]
 fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
-    let (root, bus, epoch, seats) = fixture("steal-assigned-review", 2);
+    let (root, bus, epoch, seats) = fixture("steal-review", 2);
     let author = Actor::Lane(seats[0].lane);
-    let reviewer = Actor::Lane(seats[1].lane);
+    let reviewer = Actor::Operator;
     let task = add(
         &bus,
         epoch,
         Actor::Operator,
-        "STEAL-review01",
-        "Review assigned to a freed holder",
+        "STEAL-r01",
+        "Freed holder review",
         Some("todo,review"),
     );
     advance_task_to_review(&bus, epoch, &seats[0], &author, &task);
@@ -1435,7 +1435,6 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
             recovery: None,
         },
     ));
-
     let assigned = board(&bus, epoch, Actor::Operator);
     let assigned_heads = at(&assigned, &task);
     assert_eq!(
@@ -1451,7 +1450,7 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
             claim_witness(assigned_heads),
             Witness::Lease {
                 task: assigned_heads.statement.body.born.clone(),
-                head: assigned_heads.lease.as_ref().expect("lease head").position,
+                head: assigned_heads.lease.as_ref().expect("lease").position,
             },
             residency(&assigned, &seats[0]),
         ],
@@ -1462,12 +1461,7 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
     let steal_heads = at(&steal_board, &task);
     assert_eq!(steal_heads.workflow.body.assignment, None);
     assert_eq!(
-        steal_heads
-            .claim
-            .as_ref()
-            .expect("freed claim")
-            .body
-            .disposition,
+        steal_heads.claim.as_ref().expect("claim").body.disposition,
         ClaimDisposition::Freed
     );
     let steal: Name = "steal".parse().expect("steal rule");
@@ -1494,9 +1488,10 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
     let after = board(&bus, epoch, reviewer.clone());
     let stolen = at(&after, &task);
     assert_eq!(stolen.workflow.body.assignment, Some(reviewer.clone()));
-    let claim = stolen.claim.as_ref().expect("stolen review claim");
+    let claim = stolen.claim.as_ref().expect("claim");
     assert_eq!(claim.body.actor, reviewer);
     assert_eq!(claim.body.disposition, ClaimDisposition::Active);
+    assert_review_assignment_fact(&bus, &after, &task, &reviewer);
     clean(&root, bus);
 }
 
