@@ -477,6 +477,92 @@ fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result()
 }
 
 #[test]
+fn captured_activity_without_a_vendor_timestamp_still_reaches_canvas() {
+    let (root, paths) = resident_fixture("capture-without-timestamp");
+    let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
+        .expect("message bus starts");
+    let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
+    let publisher = source.message_publisher();
+    let mut updates = source.subscribe_messages();
+    let lane = test_uuid(5);
+    let occupant = test_uuid(6);
+    let locus = listen::Locus::new(4, 120, 48);
+    let record = lane::capture::CaptureRecord {
+        lane,
+        occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events {
+            context: listen::RecordContext::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: "timestamp-free answer".to_owned(),
+                phase: None,
+                media: Vec::new(),
+                locus,
+            })],
+        },
+    };
+    seed_capture_residency(&bus, test_uuid(4), lane, occupant, &root);
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            lane,
+            occupant,
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("capture fixture occupant starts");
+    let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
+    let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
+    let steering = steer::Config::default();
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
+
+    accept_capture_record(
+        &bus,
+        test_uuid(4),
+        &mut seats,
+        &surfaces,
+        None,
+        &record,
+        CaptureViews::new(&mut previews, &mut diagnostics),
+    )
+    .expect("timestamp-free capture projects");
+
+    let message = updates
+        .try_recv()
+        .expect("timestamp-free prose still publishes");
+    assert_eq!(message.lane, lane);
+    assert_eq!(message.author, occupant);
+    assert_eq!(message.activity, wire::AgentActivityKind::Prose);
+    assert_eq!(message.text, "timestamp-free answer");
+    assert_eq!(
+        message.authored,
+        "2000-01-04T00:00:00.120Z"
+            .parse::<wire::Instant>()
+            .expect("synthetic authored instant parses")
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "missing timestamp is not a Canvas publication diagnostic: {}",
+        String::from_utf8_lossy(&diagnostics),
+    );
+    seats
+        .vacate(lane)
+        .expect("capture fixture remains supervised")
+        .wait()
+        .expect("capture fixture stops");
+    drop(source);
+    bus.shutdown().expect("message bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
 fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     let (root, paths) = resident_fixture("capture-taste");
     let repository = Repository::discover(&root).expect("fixture repository");

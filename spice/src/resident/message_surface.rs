@@ -241,7 +241,7 @@ pub(super) fn publish_agent_event(
         ),
         _ => return Ok(()),
     };
-    let authored = parse_agent_message_authored(authored)?;
+    let authored = parse_agent_message_authored(authored, locus, event)?;
     wire::media::admit_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
     publisher
@@ -263,16 +263,68 @@ pub(super) fn publish_agent_event(
     Ok(())
 }
 
-fn parse_agent_message_authored(timestamp: Option<&str>) -> CommandResult<wire::Instant> {
-    let timestamp = timestamp.ok_or_else(|| {
+fn parse_agent_message_authored(
+    timestamp: Option<&str>,
+    locus: listen::Locus,
+    event: u32,
+) -> CommandResult<wire::Instant> {
+    match timestamp {
+        Some(timestamp) => timestamp
+            .parse::<wire::Instant>()
+            .map_err(|error| store_fault("canvas::message-authored-invalid", &error.to_string())),
+        None => synthetic_agent_message_authored(locus, event),
+    }
+}
+
+fn synthetic_agent_message_authored(
+    locus: listen::Locus,
+    event: u32,
+) -> CommandResult<wire::Instant> {
+    // Some current Codex records omit vendor time; Canvas still needs a stable
+    // authored field, so use the durable tape coordinates instead.
+    const BASE_MILLIS: i64 = 946_684_800_000;
+    const MEMBER_MILLIS: i64 = 86_400_000;
+
+    let member = i64::try_from(locus.member.saturating_sub(1)).map_err(|error| {
         store_fault(
-            "canvas::message-authored-missing",
-            "agent message record has no timestamp",
+            "canvas::message-authored-unrepresentable",
+            &error.to_string(),
         )
     })?;
-    timestamp
-        .parse::<wire::Instant>()
-        .map_err(|error| store_fault("canvas::message-authored-invalid", &error.to_string()))
+    let offset = i64::try_from(locus.offset).map_err(|error| {
+        store_fault(
+            "canvas::message-authored-unrepresentable",
+            &error.to_string(),
+        )
+    })?;
+    let delta = member
+        .checked_mul(MEMBER_MILLIS)
+        .and_then(|millis| millis.checked_add(offset))
+        .and_then(|millis| millis.checked_add(i64::from(event)))
+        .ok_or_else(|| {
+            store_fault(
+                "canvas::message-authored-unrepresentable",
+                "transcript locus cannot fit a synthetic authored instant",
+            )
+        })?;
+    let millis = BASE_MILLIS.checked_add(delta).ok_or_else(|| {
+        store_fault(
+            "canvas::message-authored-unrepresentable",
+            "transcript locus cannot fit a synthetic authored instant",
+        )
+    })?;
+    let authored = jiff::Timestamp::from_millisecond(millis).map_err(|error| {
+        store_fault(
+            "canvas::message-authored-unrepresentable",
+            &error.to_string(),
+        )
+    })?;
+    wire::Instant::new(authored).map_err(|error| {
+        store_fault(
+            "canvas::message-authored-unrepresentable",
+            &error.to_string(),
+        )
+    })
 }
 
 fn steering_ledger(bus: &Bus, record: &lane::capture::CaptureRecord) -> Option<steer::Ledger> {
