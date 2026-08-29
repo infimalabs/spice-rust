@@ -51,6 +51,14 @@ fn measured(key: &'static str, candidates: Vec<Candidate>) -> MeasuredCard<&'sta
         candidates,
         latched: None,
         content_revision: 0,
+        boundary: false,
+    }
+}
+
+fn boundary(key: &'static str, rows: i32) -> MeasuredCard<&'static str> {
+    MeasuredCard {
+        boundary: true,
+        ..measured(key, candidates(12, rows))
     }
 }
 
@@ -152,6 +160,7 @@ fn content_resize_latches_horizontal_placement_and_uses_fresh_rows() {
                 ],
                 latched: None,
                 content_revision: 0,
+                boundary: false,
             },
             measured("b", candidates(3, 3)),
         ],
@@ -177,6 +186,7 @@ fn a_latched_span_measurement_is_part_of_content_identity() {
             candidates,
             latched: Some(Candidate { span: 6, rows: 5 }),
             content_revision: 0,
+            boundary: false,
         }],
     );
     assert_eq!(resized.cards()[0].card.rows, 5);
@@ -197,6 +207,93 @@ fn a_content_revision_commits_even_when_the_lattice_rows_are_unchanged() {
     assert_eq!(resolved.cards()[0].card, plane.cards()[0].card);
     assert_eq!(resolved.commits(), plane.commits() + 1);
     assert_eq!(resolved.transition(), Transition::ContentResize);
+}
+
+#[test]
+fn compaction_boundary_resets_the_incremental_plane_floor() {
+    let initial = [
+        measured("a", candidates(12, 2)),
+        measured("b", candidates(12, 2)),
+        measured("c", candidates(12, 2)),
+        measured("d", candidates(12, 2)),
+    ];
+    let plane = PersistentLanePlane::new(900, &initial);
+    assert_eq!(plane.cards()[0].card.lifecycle, Lifecycle::Frozen);
+    let frozen = plane.cards()[..2].to_vec();
+    let committed_geometry = plane
+        .cards()
+        .iter()
+        .map(|entry| {
+            (
+                entry.card.track,
+                entry.card.span,
+                entry.card.base,
+                entry.card.rows,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let with_boundary = plane.reconcile(
+        900,
+        &[
+            initial[0].clone(),
+            initial[1].clone(),
+            initial[2].clone(),
+            initial[3].clone(),
+            boundary("compact", 1),
+        ],
+    );
+    assert_eq!(&with_boundary.cards()[..frozen.len()], frozen);
+    assert_eq!(
+        with_boundary.cards()[..initial.len()]
+            .iter()
+            .map(|entry| {
+                (
+                    entry.card.track,
+                    entry.card.span,
+                    entry.card.base,
+                    entry.card.rows,
+                )
+            })
+            .collect::<Vec<_>>(),
+        committed_geometry
+    );
+    let divider = &with_boundary.cards()[4].card;
+    assert!(with_boundary.cards()[4].boundary);
+    assert_eq!((divider.track, divider.span), (0, 12));
+    assert_eq!(divider.base, 8);
+    assert_eq!(with_boundary.cards()[4].display_base, -1);
+
+    let after = with_boundary.reconcile(
+        900,
+        &[
+            initial[0].clone(),
+            initial[1].clone(),
+            initial[2].clone(),
+            initial[3].clone(),
+            boundary("compact", 1),
+            measured("after", candidates(3, 3)),
+        ],
+    );
+    assert_eq!(&after.cards()[..frozen.len()], frozen);
+    assert_eq!(&after.cards()[4].card, divider);
+    assert!(after.cards()[5].card.base >= divider.base + divider.rows);
+    assert!(after.cards()[5].display_base < after.cards()[4].display_base);
+    assert_eq!(after.transition(), Transition::Append);
+
+    let replayed = after.reconcile(
+        720,
+        &[
+            initial[0].clone(),
+            initial[1].clone(),
+            initial[2].clone(),
+            initial[3].clone(),
+            boundary("compact", 1),
+            measured("after", candidates(3, 3)),
+        ],
+    );
+    assert_eq!(replayed.transition(), Transition::FullReplay);
+    assert!(replayed.cards()[5].display_base < replayed.cards()[4].display_base);
 }
 
 #[test]

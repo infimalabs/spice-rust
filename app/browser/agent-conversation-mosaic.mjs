@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   reply,
@@ -7,6 +9,124 @@ import {
 } from "./canvas-fixture.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+async function committedPlacementSnapshot(team) {
+  return team.locator('.mosaic-message-card[data-layout-phase="committed"]').evaluateAll(
+    (cards) => cards.map((card) => ({
+      key: card.dataset.mosaicCardKey,
+      track: card.dataset.track,
+      span: card.dataset.span,
+      base: card.dataset.base,
+      rows: card.dataset.rows,
+    })),
+  );
+}
+
+function placementGeometry(placement) {
+  return {
+    track: placement.track,
+    span: placement.span,
+    base: placement.base,
+    rows: placement.rows,
+  };
+}
+
+export async function assertCompactionBoundary(page, fixture, team, seeded, artifacts) {
+  const before = await committedPlacementSnapshot(team);
+  await writeFile(join(seeded.teamWorktrees[0], ".spice-compaction-trigger"), "");
+  const divider = team.locator(
+    `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
+  );
+  await divider.waitFor({ timeout: 10_000 });
+  await waitForPage(
+    page,
+    "compaction commits as one visible full-width boundary",
+    TRANSITION_MS,
+    (lane) => {
+      const card = document.querySelector(
+        `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${lane}"]`,
+      );
+      return card?.dataset.layoutPhase === "committed"
+        && card.dataset.track === "0"
+        && card.dataset.span === "12"
+        && card.querySelectorAll(".mosaic-compaction-rule").length === 2
+        && card.querySelector(".message-key")?.textContent?.trim().endsWith("compacted context")
+        && card.querySelectorAll(".message-actions button").length === 0;
+    },
+    seeded.lane,
+  );
+
+  const laneAccent = await team
+    .locator(`.team-agent[data-agent-lane="${seeded.lane}"]`)
+    .getAttribute("data-accent");
+  const boundaryChrome = await divider.evaluate((card) => ({
+    accent: card.dataset.accent,
+    aria: card.getAttribute("aria-label"),
+    label: card.querySelector(".message-key")?.textContent?.trim(),
+    lineColors: [...card.querySelectorAll(".mosaic-compaction-rule")]
+      .map((line) => getComputedStyle(line).backgroundColor),
+  }));
+  assert.equal(boundaryChrome.accent, laneAccent, "the boundary keeps the compacting lane accent");
+  assert.equal(boundaryChrome.label, `${seeded.agentName} compacted context`);
+  assert.match(boundaryChrome.aria, /Compaction divider from/);
+  assert.equal(new Set(boundaryChrome.lineColors).size, 1, "both boundary rules share one accent");
+  assert.ok(
+    boundaryChrome.lineColors.every((color) => color !== "rgba(0, 0, 0, 0)"),
+    `the boundary accent is visible: ${JSON.stringify(boundaryChrome)}`,
+  );
+
+  const afterBoundary = new Map(
+    (await committedPlacementSnapshot(team)).map((placement) => [placement.key, placement]),
+  );
+  for (const placement of before) {
+    const retained = afterBoundary.get(placement.key);
+    assert.ok(retained, `the compaction boundary retains ${placement.key}`);
+    assert.deepEqual(
+      placementGeometry(retained),
+      placementGeometry(placement),
+      `the compaction boundary preserves committed geometry for ${placement.key}`,
+    );
+  }
+
+  const text = `post-compaction floor witness ${crypto.randomUUID()}`;
+  await reply(fixture, ["steer", seeded.lane, text]);
+  const inbox = await reply(fixture, ["inbox", seeded.lane]);
+  const pending = inbox.body.lanes[0].pending.find((directive) => directive.text === text);
+  assert.ok(pending, "the post-compaction direction reached the compacting lane");
+  const afterCard = team.locator(
+    `.mosaic-message-card[data-card-kind="directive"][data-directive="${pending.directive}"]`,
+  );
+  await afterCard.waitFor({ timeout: TRANSITION_MS });
+  await waitForPage(
+    page,
+    "post-compaction activity commits beyond the boundary floor",
+    TRANSITION_MS,
+    ({ boundaryKey, directive }) => {
+      const boundary = document.querySelector(`[data-mosaic-card-key="${boundaryKey}"]`);
+      const card = document.querySelector(`[data-directive="${directive}"]`);
+      if (boundary?.dataset.layoutPhase !== "committed"
+        || card?.dataset.layoutPhase !== "committed") return false;
+      return Number(card.dataset.base) + Number(card.dataset.rows)
+        <= Number(boundary.dataset.base);
+    },
+    {
+      boundaryKey: await divider.getAttribute("data-mosaic-card-key"),
+      directive: pending.directive,
+    },
+  );
+  const boundaryBox = await divider.boundingBox();
+  const afterBox = await afterCard.boundingBox();
+  assert.ok(boundaryBox && afterBox, "the boundary and post-compaction card have visible geometry");
+  assert.ok(
+    afterBox.y >= boundaryBox.y + boundaryBox.height - 1,
+    `post-compaction activity stays below its boundary: ${JSON.stringify({ boundaryBox, afterBox })}`,
+  );
+  await divider.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: join(artifacts, "canvas-compaction-boundary.png"),
+    fullPage: true,
+  });
+}
 
 export async function assertInitiallyDeferredMosaicIsReadable(page, console) {
   await console.getByRole("tab", { name: /^Info/ }).click();
