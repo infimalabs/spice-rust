@@ -217,6 +217,19 @@ async function armPlacementProbe(plane, excluded = []) {
       token,
       commits: Number(element.dataset.planeCommits),
       committedWidth: Number(element.dataset.committedWidth),
+      cards: cards.map((card) => {
+        const box = card.getBoundingClientRect();
+        return {
+          key: card.dataset.mosaicCardKey,
+          order: [...element.querySelectorAll(".mosaic-message-card")].indexOf(card),
+          track: card.dataset.track,
+          span: card.dataset.span,
+          base: card.dataset.base,
+          row: card.dataset.row,
+          rows: card.dataset.rows,
+          box: { x: box.x, y: box.y, width: box.width, height: box.height },
+        };
+      }),
     };
   }, excluded);
 }
@@ -239,8 +252,33 @@ async function finishPlacementProbe(plane, armed) {
       transition: element.dataset.planeTransition,
       observedWidth: Number(element.dataset.observedWidth),
       committedWidth: Number(element.dataset.committedWidth),
+      cards: cards
+        .filter((card) => probe.keys.includes(card.dataset.mosaicCardKey))
+        .map((card) => {
+          const box = card.getBoundingClientRect();
+          return {
+            key: card.dataset.mosaicCardKey,
+            order: cards.indexOf(card),
+            track: card.dataset.track,
+            span: card.dataset.span,
+            base: card.dataset.base,
+            row: card.dataset.row,
+            rows: card.dataset.rows,
+            box: { x: box.x, y: box.y, width: box.width, height: box.height },
+          };
+        }),
     };
   }, armed);
+}
+
+function assertUnmoved(armed, finished, label) {
+  assert.ok(finished.retained, `${label} retains every committed card node`);
+  assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
+  assert.deepEqual(
+    finished.cards,
+    armed.cards,
+    `${label} preserves DOM order, committed placement, and bounding geometry`,
+  );
 }
 
 async function cancelDirection(fixture, lane, text) {
@@ -265,8 +303,7 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
   await life.fill("1");
   await console.getByRole("button", { name: "Drive", exact: true }).waitFor();
   const presentation = await finishPlacementProbe(plane, presentationProbe);
-  assert.ok(presentation.retained, "a presentation-only update retains every card node");
-  assert.deepEqual(presentation.writes, [], "a presentation-only update writes no card placement");
+  assertUnmoved(presentationProbe, presentation, "a presentation-only update");
   assert.equal(presentation.commits, presentationProbe.commits, "chrome never commits the lattice");
   await life.fill("0");
   await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
@@ -302,9 +339,27 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
     document.querySelector(".bar-meta")?.textContent === expected
   ), `cursor ${refresh.seq.last}`);
   const refreshed = await finishPlacementProbe(plane, refreshProbe);
-  assert.ok(refreshed.retained, "a no-op refresh retains every committed card node");
-  assert.deepEqual(refreshed.writes, [], "a no-op refresh writes no card placement");
+  assertUnmoved(refreshProbe, refreshed, "a no-op refresh");
   assert.equal(refreshed.commits, refreshProbe.commits, "a no-op refresh commits no plane");
+
+  const tickingAge = console.locator('.mosaic-message-card .message-age[data-age-clock="shared"]')
+    .filter({ hasText: /^(?:now|\d+s)$/ })
+    .last();
+  await tickingAge.waitFor();
+  const ageProbe = await armPlacementProbe(plane);
+  const ageBefore = await tickingAge.innerText();
+  await waitForPage(page, "a card age advances on the shared clock", TRANSITION_MS,
+    ({ authored, before }) => {
+      const age = [...document.querySelectorAll('.message-age[data-age-clock="shared"]')]
+        .find((candidate) => candidate.dataset.ageAuthored === authored);
+      return age?.textContent !== before;
+    }, {
+      authored: await tickingAge.getAttribute("data-age-authored"),
+      before: ageBefore,
+    });
+  const aged = await finishPlacementProbe(plane, ageProbe);
+  assertUnmoved(ageProbe, aged, "a shared-clock age tick");
+  assert.equal(aged.commits, ageProbe.commits, "an age tick commits no plane");
 
   const originalWidth = Number(await plane.getAttribute("data-committed-width"));
   const widthRules = await plane.evaluate((element) => {

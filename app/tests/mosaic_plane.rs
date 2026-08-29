@@ -89,6 +89,87 @@ fn persistent_noop_and_append_never_repack_committed_cards() {
     assert_eq!(appended.transition(), Transition::Append);
 }
 
+#[test]
+fn incremental_frames_preserve_order_and_freeze_without_repacking() {
+    let initial = [
+        measured("a", candidates(12, 2)),
+        measured("b", candidates(12, 2)),
+        measured("c", candidates(12, 2)),
+    ];
+    let plane = PersistentLanePlane::new(900, &initial);
+    let reordered_frame = plane.reconcile(
+        900,
+        &[initial[2].clone(), initial[0].clone(), initial[1].clone()],
+    );
+    assert_eq!(reordered_frame, plane, "source-vector churn is a no-op");
+    assert_eq!(
+        reordered_frame
+            .cards()
+            .iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>(),
+        vec!["a", "b", "c"],
+        "the committed creation order owns rendering order",
+    );
+
+    let committed_geometry = plane
+        .cards()
+        .iter()
+        .map(|entry| {
+            (
+                entry.card.track,
+                entry.card.span,
+                entry.card.base,
+                entry.card.rows,
+            )
+        })
+        .collect::<Vec<_>>();
+    let appended = plane.reconcile(
+        900,
+        &[
+            initial[0].clone(),
+            initial[1].clone(),
+            initial[2].clone(),
+            measured("d", candidates(12, 2)),
+        ],
+    );
+    assert_eq!(
+        appended.cards()[..initial.len()]
+            .iter()
+            .map(|entry| {
+                (
+                    entry.card.track,
+                    entry.card.span,
+                    entry.card.base,
+                    entry.card.rows,
+                )
+            })
+            .collect::<Vec<_>>(),
+        committed_geometry,
+        "a later lane update cannot move committed geometry",
+    );
+    assert!(
+        appended.cards()[..initial.len()]
+            .iter()
+            .zip(plane.cards())
+            .all(|(next, prior)| {
+                prior.card.lifecycle != Lifecycle::Frozen
+                    || next.card.lifecycle == Lifecycle::Frozen
+            }),
+        "a frozen card never returns to liquid",
+    );
+    assert!(
+        appended.cards()[..initial.len()]
+            .iter()
+            .zip(plane.cards())
+            .any(|(next, prior)| {
+                prior.card.lifecycle == Lifecycle::Liquid
+                    && next.card.lifecycle == Lifecycle::Frozen
+            }),
+        "the append deterministically advances one buried liquid card",
+    );
+}
+
 /// The plane renders arrival order, not the order `activity_cards` chains.
 ///
 /// `activity_cards` builds its vector as every agent message and then every

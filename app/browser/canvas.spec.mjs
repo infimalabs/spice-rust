@@ -512,6 +512,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     .click();
   const composer = lane.locator(".composer-shard--primary");
   const quotedComposer = lane.locator(".composer-shard--quote");
+  const siblingComposer = quoteLane.locator(".composer-shard--primary");
   await quotedComposer.waitFor();
   // Quoting still carries its context, but on the shard that owns it rather
   // than inside a rendered copy of the draft.
@@ -520,7 +521,11 @@ async function assertMosaicComposer(page, fixture, seeded) {
     "browser direction survives streaming",
     "the quoted message stays reachable from the shard it minted",
   );
-  await assertComposerTypingDoesNotRemeasureActivity(page, lane, [composer, quotedComposer]);
+  await assertComposerTypingDoesNotRemeasureActivity(
+    page,
+    lane,
+    [composer, quotedComposer, siblingComposer],
+  );
   await assertCompleteComposerSubmission({
     page,
     fixture,
