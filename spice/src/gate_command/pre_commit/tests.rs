@@ -7,10 +7,10 @@ use std::thread;
 use std::time::Instant;
 
 #[test]
-fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
+fn fixed_envelope_reserves_cleanup_inside_ten_minutes() {
     let bounds = ProcessBounds::production();
     let envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
-    assert_eq!(envelope, Duration::from_secs(179));
+    assert_eq!(envelope, Duration::from_secs(599));
     assert_eq!(HARD_DEADLINE - envelope, Duration::from_secs(1));
     assert!(envelope < HARD_DEADLINE);
 }
@@ -350,7 +350,7 @@ fn resolution_supervision_uses_private_artifacts_and_the_same_fixed_envelope() {
     let bounds = ProcessBounds::production();
     assert_eq!(
         bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain,
-        Duration::from_secs(179),
+        Duration::from_secs(599),
     );
 }
 
