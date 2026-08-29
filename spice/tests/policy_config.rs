@@ -155,7 +155,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     assert_eq!(root.board().next().band(), 2);
     assert_eq!(root.lane().life(), Life::Drive);
     assert_eq!(root.lane().lease().to_string(), "15m");
-    assert_eq!(root.lane().vendor().as_str(), "claude");
+    assert_eq!(root.lane().vendor().as_str(), "codex");
     assert_eq!(root.lane().deaths(), 3);
     assert_eq!(root.lane().young().to_string(), "30s");
     assert_eq!(root.lane().hold().to_string(), "30m");

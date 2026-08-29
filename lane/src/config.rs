@@ -62,7 +62,7 @@ impl Default for Config {
         Self {
             life: Life::Drive,
             lease: "15m".parse().expect("the compiled lane lease is valid"),
-            vendor: "claude"
+            vendor: "codex"
                 .parse()
                 .expect("the compiled lane vendor is a valid name"),
             deaths: 3,

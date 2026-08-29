@@ -339,7 +339,7 @@ fn every_two_layer_precedence_pair_is_deterministic() {
     assert_eq!(path_source(&tracked, "lane.vendor"), ConfigSource::Tracked);
     assert_eq!(
         path_builtin(&tracked, "lane.vendor"),
-        Some(Builtin::String("claude"))
+        Some(Builtin::String("codex"))
     );
 
     let local = resolve(documents(None, Some("[listen]\nwindow = \"2m\"\n")))
@@ -357,7 +357,7 @@ fn every_two_layer_precedence_pair_is_deterministic() {
     assert_eq!(path_source(&only_flag, "lane.vendor"), ConfigSource::Flag);
     assert_eq!(
         path_builtin(&only_flag, "lane.vendor"),
-        Some(Builtin::String("claude"))
+        Some(Builtin::String("codex"))
     );
 
     let tracked_local = resolve(documents(

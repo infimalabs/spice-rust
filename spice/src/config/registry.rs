@@ -564,7 +564,7 @@ configuration_registry! {
     }
     fixed "lane.vendor" {
         kind: String,
-        builtin: Some(Builtin::String("claude")),
+        builtin: Some(Builtin::String("codex")),
         layers: TRACKED_FLAG,
         class: Policy,
         flag: Some(FlagMapping::new(&["lane", "add"], "--vendor")),
