@@ -59,10 +59,13 @@ impl Fixture {
         self.root.join(".git/.spice-rs/config.toml")
     }
 
+    fn worktree_config(&self) -> PathBuf {
+        self.root.join(".spice-rs/config.toml")
+    }
+
     fn worktree(&self, text: &str) {
         fs::create_dir(self.root.join(".spice-rs")).expect("create worktree configuration parent");
-        fs::write(self.root.join(".spice-rs/config.toml"), text)
-            .expect("write worktree configuration");
+        fs::write(self.worktree_config(), text).expect("write worktree configuration");
     }
 
     fn assert_tracked_unchanged(&self) {
@@ -222,6 +225,98 @@ fn machine_local_sets_preview_then_apply_one_exact_digest() {
     let duration = reply_body(fixture.invoke(&["config", "listen.window", "2m", "--json"]));
     assert_eq!(duration["selected"]["value"], "2m");
     assert!(duration.get("mutation").is_none());
+    fixture.assert_tracked_unchanged();
+}
+
+#[test]
+fn worktree_local_vendor_models_preview_apply_and_read_back() {
+    let fixture = Fixture::new("set-worktree-model");
+
+    let codex = reply_body(fixture.invoke(&[
+        "--json",
+        "config",
+        "vendor.codex.model",
+        "gpt-5.1-codex-max",
+    ]));
+    assert_eq!(codex["selected"]["value"], "gpt-5.1-codex-max");
+    assert_eq!(codex["selected"]["source"], "worktree");
+    assert_eq!(codex["plan"]["path"], "vendor.codex.model");
+    assert_eq!(
+        codex["plan"]["destination"],
+        fixture.worktree_config().display().to_string()
+    );
+    assert!(codex.get("mutation").is_none());
+    assert!(
+        !fixture.worktree_config().exists(),
+        "preview must not create worktree intent"
+    );
+    assert!(!fixture.local().exists());
+
+    let codex_digest = plan_digest(&codex);
+    let applied_codex = reply_body(fixture.invoke(&[
+        "--json",
+        "config",
+        "vendor.codex.model",
+        "gpt-5.1-codex-max",
+        &format!("--apply={codex_digest}"),
+    ]));
+    assert_eq!(applied_codex["mutation"]["changed"], true);
+    assert_eq!(applied_codex["mutation"]["path"], "vendor.codex.model");
+
+    let claude =
+        reply_body(fixture.invoke(&["--json", "config", "vendor.claude.model", "opus-4.1"]));
+    assert_eq!(claude["selected"]["value"], "opus-4.1");
+    assert_eq!(claude["selected"]["source"], "worktree");
+    assert_eq!(claude["plan"]["path"], "vendor.claude.model");
+    assert_eq!(
+        claude["plan"]["destination"],
+        fixture.worktree_config().display().to_string()
+    );
+
+    let claude_digest = plan_digest(&claude);
+    let applied_claude = reply_body(fixture.invoke(&[
+        "--json",
+        "config",
+        "vendor.claude.model",
+        "opus-4.1",
+        &format!("--apply={claude_digest}"),
+    ]));
+    assert_eq!(applied_claude["mutation"]["changed"], true);
+    assert_eq!(applied_claude["mutation"]["path"], "vendor.claude.model");
+
+    let worktree = fs::read(fixture.worktree_config()).expect("worktree config was published");
+    let parsed: toml::Value =
+        toml::from_str(std::str::from_utf8(&worktree).expect("worktree config is UTF-8"))
+            .expect("worktree config is valid TOML");
+    assert_eq!(
+        parsed["vendor"]["codex"]["model"].as_str(),
+        Some("gpt-5.1-codex-max")
+    );
+    assert_eq!(
+        parsed["vendor"]["claude"]["model"].as_str(),
+        Some("opus-4.1")
+    );
+
+    let read_codex = reply_body(fixture.invoke(&["--json", "config", "vendor.codex.model"]));
+    assert_eq!(read_codex["selected"]["value"], "gpt-5.1-codex-max");
+    assert_eq!(read_codex["selected"]["source"], "worktree");
+    let read_claude = reply_body(fixture.invoke(&["--json", "config", "vendor.claude.model"]));
+    assert_eq!(read_claude["selected"]["value"], "opus-4.1");
+    assert_eq!(read_claude["selected"]["source"], "worktree");
+
+    assert!(!fixture.local().exists());
+    fixture.assert_tracked_unchanged();
+}
+
+#[test]
+fn vendor_model_setter_uses_vendor_launch_value_admission() {
+    let fixture = Fixture::new("set-worktree-model-empty");
+    refusal(
+        fixture.invoke(&["--json", "config", "vendor.codex.model", ""]),
+        "config::candidate-refused",
+    );
+    assert!(!fixture.worktree_config().exists());
+    assert!(!fixture.local().exists());
     fixture.assert_tracked_unchanged();
 }
 
