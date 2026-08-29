@@ -1424,7 +1424,7 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
 
     let steal_board = board(&bus, epoch, reviewer.clone());
     let steal_heads = at(&steal_board, &task);
-    assert_eq!(steal_heads.workflow.body.assignment, Some(Actor::Operator));
+    assert_eq!(steal_heads.workflow.body.assignment, None);
     assert_eq!(
         steal_heads
             .claim
