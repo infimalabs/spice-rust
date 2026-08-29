@@ -170,11 +170,10 @@ fn render_compose(
                 <div class="team-agents">
                     {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
                         let stream = primary_stream_link(&cards, lineage, member.lane, standing);
-                        let latest = latest_agent_prose(&cards, member.lane);
+                        let prose = latest_agent_prose(&cards, member.lane);
                         render_agent_composer(
                             member,
                             standing,
-                            latest.authored,
                             epoch,
                             topology_revision,
                             standing.pending,
@@ -185,7 +184,7 @@ fn render_compose(
                             drafts,
                             submissions,
                             stream,
-                            latest.prose,
+                            prose,
                         )
                     })}
                 </div>
@@ -417,6 +416,7 @@ fn render_agent_details(
 struct ComposerStreamLink {
     target: String,
     label: String,
+    authored: Option<i64>,
 }
 
 fn primary_stream_link(
@@ -428,46 +428,41 @@ fn primary_stream_link(
     let source = cards.iter().rev().find_map(|card| match card {
         ActivityCard::Agent {
             member, message, ..
-        } if member.lane == lane => Some(agent_message_source_id(message)),
+        } if member.lane == lane => Some((
+            agent_message_source_id(message),
+            source_authored_millis(message),
+        )),
         ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
     });
     source.map_or_else(
         || ComposerStreamLink {
             target: format!("lineage-stream-{}", lineage.lane),
             label: "Jump to lineage activity".to_owned(),
+            authored: None,
         },
-        |target| ComposerStreamLink {
+        |(target, authored)| ComposerStreamLink {
             target,
             label: format!("Jump to latest {} activity", standing.label),
+            authored,
         },
     )
 }
 
-struct LatestAgentProse {
-    prose: String,
-    authored: Option<i64>,
+fn source_authored_millis(message: &wire::AgentMessage) -> Option<i64> {
+    (!message.authored_synthetic).then(|| message.authored.get().as_millisecond())
 }
 
-fn latest_agent_prose(cards: &[ActivityCard], lane: CanonicalUuid) -> LatestAgentProse {
+fn latest_agent_prose(cards: &[ActivityCard], lane: CanonicalUuid) -> String {
     cards
         .iter()
         .rev()
         .find_map(|card| match card {
             ActivityCard::Agent {
                 member, message, ..
-            } if member.lane == lane => {
-                watchband::first_nonquoted_prose(&message.text).map(|prose| LatestAgentProse {
-                    prose,
-                    authored: (!message.authored_synthetic)
-                        .then(|| message.authored.get().as_millisecond()),
-                })
-            }
+            } if member.lane == lane => watchband::first_nonquoted_prose(&message.text),
             ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
         })
-        .unwrap_or_else(|| LatestAgentProse {
-            prose: "No agent prose yet".to_owned(),
-            authored: None,
-        })
+        .unwrap_or_else(|| "No agent prose yet".to_owned())
 }
 
 fn renewal_callback(
@@ -597,7 +592,6 @@ fn primary_composer_dragging(
 fn render_agent_composer(
     member: &crate::runtime::LaneMember,
     standing: &Standing,
-    activity_authored: Option<i64>,
     epoch: CanonicalUuid,
     topology_revision: u64,
     pending: usize,
@@ -664,7 +658,6 @@ fn render_agent_composer(
                     &draft,
                     standing,
                     member.status(standing.pending),
-                    activity_authored,
                     pending,
                     drafts,
                     onkeydown.clone(),
@@ -690,7 +683,6 @@ fn render_composer_body(
     draft: &ComposerDraft,
     standing: &Standing,
     status: crate::runtime::LaneStatus,
-    activity_authored: Option<i64>,
     pending: usize,
     drafts: &UseReducerHandle<ComposerDrafts>,
     onkeydown: Callback<KeyboardEvent>,
@@ -723,7 +715,6 @@ fn render_composer_body(
                 lane_key,
                 standing,
                 status,
-                activity_authored,
                 renew_enabled,
                 renew,
                 stream,
@@ -761,7 +752,6 @@ fn render_composer_heading(
     lane_key: &str,
     standing: &Standing,
     status: crate::runtime::LaneStatus,
-    activity_authored: Option<i64>,
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
@@ -777,7 +767,11 @@ fn render_composer_heading(
         close_agent_action_menu(&event);
         renew.emit(event);
     });
-    let age_authored = watchband::composer_activity_age(status, activity_authored, standing);
+    let ComposerStreamLink {
+        target,
+        label,
+        authored,
+    } = stream;
     html! {
         <header class="composer-shard-heading">
             <a
@@ -786,10 +780,10 @@ fn render_composer_heading(
                     "composer-shard-age",
                     status.key(),
                 )}
-                href={format!("#{}", stream.target)}
-                aria-label={stream.label}
+                href={format!("#{target}")}
+                aria-label={label}
                 data-lane-status={status.key()}
-            >{lease_age(age_authored, "composer-shard-age-label", "—")}</a>
+            >{lease_age(authored, "composer-shard-age-label", "—")}</a>
             <strong class="composer-shard-prose" title={prose.clone()}>{prose}</strong>
             {indicators}
             <details class="agent-action-menu">

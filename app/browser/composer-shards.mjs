@@ -369,6 +369,7 @@ export async function assertComposerShards({
         pipColor: pip ? getComputedStyle(pip).backgroundColor : null,
         pipStatus: pip?.getAttribute("data-lane-status"),
         authored: age.querySelector(".composer-shard-age-label")?.dataset.ageAuthored,
+        clock: age.querySelector(".composer-shard-age-label")?.dataset.ageClock,
       };
     }));
   assert.ok(activityChrome.length >= 2, "multiple composer activity ages are visible");
@@ -384,6 +385,12 @@ export async function assertComposerShards({
       JSON.stringify(activityChrome)
     }`,
   );
+  assert.ok(
+    activityChrome.every((age) => age.authored === undefined || age.clock === "shared"),
+    `every source-authored composer age advances on the shared browser clock: ${
+      JSON.stringify(activityChrome)
+    }`,
+  );
   const linkedHeaderAges = await team
     .locator(".team-agent .composer-shard--primary .composer-shard-age")
     .evaluateAll((ages) => ages.map((age) => {
@@ -391,42 +398,23 @@ export async function assertComposerShards({
       const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
       return {
         href,
-        status: age.getAttribute("data-lane-status"),
-        label: age.textContent?.trim(),
         headerAuthored: age.querySelector(".composer-shard-age-label")?.dataset.ageAuthored,
         cardAuthored: card?.querySelector(".message-age")?.dataset.ageAuthored,
         cardKind: card?.getAttribute("data-card-kind"),
       };
-    }).filter((age) => age.cardKind === "agent-message"));
+    }).filter((age) => ["agent-message", "compaction"].includes(age.cardKind)));
   assert.ok(
     linkedHeaderAges.length > 0,
-    `at least one composer heading links to an agent message: ${JSON.stringify(linkedHeaderAges)}`,
-  );
-  assert.ok(
-    linkedHeaderAges
-      .filter((age) => age.status !== "running")
-      .every((age) => age.headerAuthored === age.cardAuthored),
-    `idle composer heading timestamps come from their linked latest message card: ${
+    `at least one composer heading links to a user-facing agent card: ${
       JSON.stringify(linkedHeaderAges)
     }`,
   );
-  const runningHeaderAges = linkedHeaderAges.filter((age) => age.status === "running");
-  if (runningHeaderAges.length > 0) {
-    assert.ok(
-      runningHeaderAges.every((age) =>
-        Number.isFinite(Number(age.headerAuthored)) && age.headerAuthored !== age.cardAuthored
-      ),
-      `running composer heading ages come from live standing, not the stale linked card: ${
-        JSON.stringify(runningHeaderAges)
-      }`,
-    );
-    assert.ok(
-      runningHeaderAges.every((age) => age.label !== "1h"),
-      `running composer heading age must not retain the one-hour stale card label: ${
-        JSON.stringify(runningHeaderAges)
-      }`,
-    );
-  }
+  assert.ok(
+    linkedHeaderAges.every((age) => age.headerAuthored === age.cardAuthored),
+    `composer heading timestamps come from their linked latest message card in every lane state: ${
+      JSON.stringify(linkedHeaderAges)
+    }`,
+  );
   assert.ok(
     activityChrome.every((age) => !age.pipMissing),
     `each composer activity age has a matching pip: ${JSON.stringify(activityChrome)}`,

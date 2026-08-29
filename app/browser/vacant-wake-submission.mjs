@@ -72,6 +72,37 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     },
   );
 
+  const vacantChronology = await lane.locator(".composer-shard-age").evaluate((age) => {
+    const href = age.getAttribute("href");
+    const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+    const headingAge = age.querySelector(".composer-shard-age-label");
+    return {
+      status: age.getAttribute("data-lane-status"),
+      headerAuthored: headingAge?.dataset.ageAuthored,
+      cardAuthored: card?.querySelector(".message-age")?.dataset.ageAuthored,
+      cardKind: card?.dataset.cardKind,
+      clock: headingAge?.dataset.ageClock,
+    };
+  });
+  assert.equal(vacantChronology.status, "bound", "the retained chronology is read while vacant");
+  assert.ok(
+    ["agent-message", "compaction"].includes(vacantChronology.cardKind),
+    `the vacant composer still links to its latest user-facing agent card: ${
+      JSON.stringify(vacantChronology)
+    }`,
+  );
+  assert.equal(
+    vacantChronology.headerAuthored,
+    vacantChronology.cardAuthored,
+    `vacancy does not replace the linked message timestamp: ${JSON.stringify(vacantChronology)}`,
+  );
+  assert.ok(
+    vacantChronology.headerAuthored === undefined || vacantChronology.clock === "shared",
+    `a source-authored vacant heading keeps the shared ticking clock: ${
+      JSON.stringify(vacantChronology)
+    }`,
+  );
+
   const exactDraft = `wake and steer exact draft ${crypto.randomUUID()}`;
   await textbox.fill(exactDraft);
   const wakeAndSteer = form.getByRole("button", { name: "Wake & Steer", exact: true });
