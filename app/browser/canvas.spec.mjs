@@ -13,6 +13,7 @@ import {
 import { assertCompactionBoundary } from "./agent-conversation-mosaic.mjs";
 import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
 import {
+  assertComposerPointerSelection,
   assertComposerShards,
   assertComposerTypingDoesNotRemeasureActivity,
 } from "./composer-shards.mjs";
@@ -519,6 +520,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     "browser direction survives streaming",
     "the quoted message stays reachable from the shard it minted",
   );
+  await assertComposerPointerSelection(page, lane, composer);
   await assertComposerTypingDoesNotRemeasureActivity(page, lane, [composer, quotedComposer]);
   await assertCompleteComposerSubmission({
     page,

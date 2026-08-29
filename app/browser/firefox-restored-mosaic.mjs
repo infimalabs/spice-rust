@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { assertMosaicLattice } from "./agent-conversation.mjs";
 import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
 import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
+import { assertComposerPointerSelection } from "./composer-shards.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 
 /// A ready lattice settles layout, not delivery: under verifier load the
@@ -56,6 +57,12 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
     await console.getByRole("tab", { name: /^Compose/ }).click();
     const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
+    const lane = console.locator(".team-agent").first();
+    await assertComposerPointerSelection(
+      page,
+      lane,
+      lane.locator(".composer-shard--primary"),
+    );
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Agents");
