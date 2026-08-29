@@ -111,7 +111,7 @@ export async function assertComposerTypingDoesNotRemeasureActivity(page, lane, c
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),
   )));
-  const typed = await activityMeasurementSnapshot(page, lane, "after typing");
+  const typed = await activityMeasurementSnapshot(page, lane, "after typing", before.token);
   assert.deepEqual(
     typed,
     before,
@@ -123,7 +123,7 @@ export async function assertComposerTypingDoesNotRemeasureActivity(page, lane, c
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),
   )));
-  const cleared = await activityMeasurementSnapshot(page, lane, "after clearing");
+  const cleared = await activityMeasurementSnapshot(page, lane, "after clearing", before.token);
   assert.deepEqual(
     cleared,
     before,
@@ -250,7 +250,12 @@ export async function assertComposerPointerSelection(page, lane, composer) {
   );
 
   assert.deepEqual(
-    await activityMeasurementSnapshot(page, lane, "after pointer selection"),
+    await activityMeasurementSnapshot(
+      page,
+      lane,
+      "after pointer selection",
+      before.token,
+    ),
     before,
     "composer selection gestures leave the Mosaic activity plane cold",
   );
@@ -261,7 +266,7 @@ export async function assertComposerPointerSelection(page, lane, composer) {
   await textarea.fill("");
 }
 
-async function activityMeasurementSnapshot(page, lane, label) {
+async function activityMeasurementSnapshot(page, lane, label, expectedToken = null) {
   await page.waitForFunction(
     (target) => {
       const member = document.querySelector(`.team-agent[data-agent-lane="${target}"]`);
@@ -270,25 +275,46 @@ async function activityMeasurementSnapshot(page, lane, label) {
     },
     await lane.getAttribute("data-agent-lane"),
   );
-  const snapshot = await lane.evaluate((node) => {
+  const snapshot = await lane.evaluate((node, expected) => {
     const surface = node.closest(".team-surface");
     const plane = surface?.querySelector(".lane-mosaic-plane");
     if (!plane) return null;
+    const token = expected ?? crypto.randomUUID();
+    const cards = [...plane.querySelectorAll(".mosaic-message-card")];
+    let retained = true;
+    for (const card of cards) {
+      if (expected && card.__mosaicTypingProbe !== token) retained = false;
+      card.__mosaicTypingProbe = token;
+    }
     return {
+      token,
+      retained,
       phase: plane.dataset.measurementPhase,
       pending: plane.dataset.measurementPending,
       commits: plane.dataset.planeCommits,
-      cards: [...plane.querySelectorAll(".mosaic-message-card")].map((card) => ({
-        key: card.dataset.mosaicCardKey,
-        phase: card.dataset.layoutPhase,
-        reads: card.dataset.measurementReads,
-        heights: card.dataset.measuredHeights,
-        spans: card.dataset.candidateSpans,
-      })),
+      cards: cards.map((card, order) => {
+        const box = card.getBoundingClientRect();
+        return {
+          key: card.dataset.mosaicCardKey,
+          order,
+          phase: card.dataset.layoutPhase,
+          lifecycle: card.classList.contains("frozen") ? "frozen" : "liquid",
+          track: card.dataset.track,
+          span: card.dataset.span,
+          base: card.dataset.base,
+          row: card.dataset.row,
+          rows: card.dataset.rows,
+          reads: card.dataset.measurementReads,
+          heights: card.dataset.measuredHeights,
+          spans: card.dataset.candidateSpans,
+          box: { x: box.x, y: box.y, width: box.width, height: box.height },
+        };
+      }),
     };
-  });
+  }, expectedToken);
   assert.ok(snapshot, `${label}: activity plane is present`);
   assert.ok(snapshot.cards.length > 0, `${label}: activity plane carries cards`);
+  assert.ok(snapshot.retained, `${label}: every keyed activity keeps its DOM node`);
   return snapshot;
 }
 
