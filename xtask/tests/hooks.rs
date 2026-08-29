@@ -14,6 +14,23 @@ const RETIRED_COMMANDS: &[&[&str]] = &[
     &["reference-transaction", "prepared"],
 ];
 
+const SOURCE_DEVELOPMENT_DELEGATE: &[&str] = &[
+    "spice",
+    "dev",
+    "cargo",
+    "--",
+    "run",
+    "--quiet",
+    "--locked",
+    "--package",
+    "spice",
+    "--bin",
+    "spice",
+    "--",
+    "gate",
+    "selection",
+];
+
 #[test]
 fn tracked_hooks_dispatch_only_to_installed_spice() {
     let hooks = workspace().join(".githooks");
@@ -70,22 +87,7 @@ fn source_development_delegate_builds_one_public_spice_leaf() {
         panic!("Rust policy must carry one source-development delegate");
     };
     assert_eq!(command.label(), "Spice source gate");
-    assert_eq!(
-        command.run(),
-        [
-            "cargo",
-            "run",
-            "--quiet",
-            "--locked",
-            "--package",
-            "spice",
-            "--bin",
-            "spice",
-            "--",
-            "gate",
-            "selection",
-        ]
-    );
+    assert_eq!(command.run(), SOURCE_DEVELOPMENT_DELEGATE);
     assert!(!command.run().iter().any(|argument| argument == "xtask"));
 }
 

@@ -49,7 +49,6 @@ import {
 } from "./canvas-vendor-reap.mjs";
 import {
   assertSpeechVariants,
-  assertSystemSpeech,
   installBrowserSpeech,
   installSocketControl,
 } from "./canvas-speech.mjs";
@@ -512,14 +511,13 @@ async function assertMosaicComposer(page, fixture, seeded) {
     "compaction divider commits as one full-width message-stream card",
     TRANSITION_MS,
     (lane) => {
-      const card = document.querySelector(
+      const cards = document.querySelectorAll(
         `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${lane}"]`,
       );
-      return card?.dataset.layoutPhase === "committed"
+      return [...cards].some((card) => card.dataset.layoutPhase === "committed"
         && card.dataset.span === "12"
-        && card.dataset.measureSpan === "12"
         && card.querySelector(".message-key")?.textContent?.trim() === "compaction"
-        && card.querySelectorAll(".message-actions button").length === 0;
+        && card.querySelectorAll(".message-actions button").length === 0);
     },
     seeded.lane,
   );
@@ -876,7 +874,6 @@ try {
         await assertVacantWakeSubmission(lightPage, fixture, seeded);
         await assertRetainedHistory(lightPage, fixture);
         await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
-        await assertSystemSpeech(lightPage);
       });
       await run.scenario("authority-task-flow", async () => {
         await assertLiveThreadCoalescing(

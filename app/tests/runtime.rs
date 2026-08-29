@@ -32,6 +32,13 @@ fn uuid(text: &str) -> CanonicalUuid {
     text.parse().expect("fixture uuid is canonical")
 }
 
+fn instant_ms(text: &str) -> i64 {
+    text.parse::<wire::Instant>()
+        .expect("fixture instant")
+        .get()
+        .as_millisecond()
+}
+
 fn seq(value: u64) -> Seq {
     Seq::new(value).expect("fixture sequence is non-zero")
 }
@@ -121,11 +128,31 @@ fn message_frame(
     activity: Option<&str>,
     text: &str,
 ) -> Vec<u8> {
+    message_frame_at(
+        lane,
+        author,
+        offset,
+        event,
+        "2030-04-12T18:44:09.271Z",
+        activity,
+        text,
+    )
+}
+
+fn message_frame_at(
+    lane: &str,
+    author: &str,
+    offset: u64,
+    event: u64,
+    authored: &str,
+    activity: Option<&str>,
+    text: &str,
+) -> Vec<u8> {
     let mut message = serde_json::json!({
         "lane": lane,
         "author": author,
         "locus": {"member": 1, "offset": offset, "length": 20, "event": event},
-        "authored": "2030-04-12T18:44:09.271Z",
+        "authored": authored,
         "text": text,
     });
     if let Some(activity) = activity {
@@ -649,6 +676,35 @@ fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_di
 
 #[test]
 fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() {
+    let runtime = lineage_runtime_with_activity_and_receipts();
+    let lanes = runtime.lanes().expect("refreshed lane snapshot");
+    let team = runtime
+        .newest_lineage_activity(&lanes.lanes[0])
+        .expect("team activity survives receipts");
+    assert_eq!(team.lane(), uuid(SECOND_LANE));
+    assert_eq!(
+        runtime
+            .newest_lane_activity(uuid(SECOND_LANE))
+            .expect("the member lane retains its own newest activity")
+            .authored(),
+        Some(instant_ms("2030-04-12T18:44:10.271Z"))
+    );
+    assert_eq!(team.class(), "prose");
+    assert_eq!(team.title(), "assistant");
+    assert_eq!(team.detail(), "newer teammate prose");
+    let other = runtime
+        .newest_lineage_activity(&lanes.lanes[1])
+        .expect("other lineage keeps its own activity");
+    assert_eq!(other.lane(), uuid(THIRD_LANE));
+    assert_eq!(other.class(), "tool");
+    assert_eq!(other.detail(), "Read");
+    assert_eq!(
+        runtime.newest_event().expect("receipt chronology").title(),
+        "Steering inbox"
+    );
+}
+
+fn lineage_runtime_with_activity_and_receipts() -> CanvasRuntime {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -662,21 +718,15 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
         .expect("lane response is admitted");
     runtime.apply_lanes(&admitted_lanes);
 
-    let tool = serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "message": {
-            "lane": LANE,
-            "author": LANE_CAPABILITY,
-            "locus": {"member": 1, "offset": 60, "length": 20, "event": 0},
-            "authored": "2030-04-12T18:44:09.271Z",
-            "activity": "tool",
-            "text": "Bash",
-        },
-    }))
-    .expect("tool activity fixture serializes");
+    let tool = message_frame_at(
+        LANE,
+        LANE_CAPABILITY,
+        60,
+        0,
+        "2030-04-12T18:44:09.271Z",
+        Some("tool"),
+        "Bash",
+    );
     runtime.apply_stream(&admitted_stream(&session, &tool));
     let lineage = &runtime.lanes().expect("lane snapshot").lanes[0];
     let activity = runtime
@@ -685,11 +735,7 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
     assert_eq!(activity.lane(), uuid(LANE));
     assert_eq!(
         activity.authored(),
-        "2030-04-12T18:44:09.271Z"
-            .parse::<wire::Instant>()
-            .expect("fixture instant")
-            .get()
-            .as_millisecond()
+        Some(instant_ms("2030-04-12T18:44:09.271Z"))
     );
     assert_eq!(activity.class(), "tool");
     assert_eq!(activity.title(), "tool");
@@ -699,43 +745,41 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
         "tool activity does not become a prose card"
     );
 
-    let prose = serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "message": {
-            "lane": SECOND_LANE,
-            "author": SECRET_LANE_CAPABILITY,
-            "locus": {"member": 1, "offset": 70, "length": 20, "event": 0},
-            "authored": "2030-04-12T18:44:10.271Z",
-            "text": "newer teammate prose",
-        },
-    }))
-    .expect("message fixture serializes");
+    let prose = message_frame_at(
+        SECOND_LANE,
+        SECRET_LANE_CAPABILITY,
+        70,
+        0,
+        "2030-04-12T18:44:10.271Z",
+        None,
+        "newer teammate prose",
+    );
     runtime.apply_stream(&admitted_stream(&session, &prose));
 
-    let other_tool = serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "message": {
-            "lane": THIRD_LANE,
-            "author": THIRD_LANE,
-            "locus": {"member": 1, "offset": 80, "length": 20, "event": 0},
-            "authored": "2030-04-12T18:44:11.271Z",
-            "activity": "tool",
-            "text": "Read",
-        },
-    }))
-    .expect("other lineage tool fixture serializes");
+    let other_tool = message_frame_at(
+        THIRD_LANE,
+        THIRD_LANE,
+        80,
+        0,
+        "2030-04-12T18:44:11.271Z",
+        Some("tool"),
+        "Read",
+    );
     runtime.apply_stream(&admitted_stream(&session, &other_tool));
 
+    apply_receipt_noise(&session, &mut runtime, &admitted_lanes);
+    runtime
+}
+
+fn apply_receipt_noise(
+    session: &Session,
+    runtime: &mut CanvasRuntime,
+    admitted_lanes: &app::Admitted<Response<wire::intent::LaneAnswer>>,
+) {
     // Snapshot receipts still belong to the command-outcome chronology, but
     // none can enter the lineage activity chronology or displace its prose.
-    runtime.apply_lanes(&admitted_lanes);
-    runtime.apply_board(&board_response(&session, "hidden receipt witness"));
+    runtime.apply_lanes(admitted_lanes);
+    runtime.apply_board(&board_response(session, "hidden receipt witness"));
     let inbox = support::response(
         WireVersion::CURRENT,
         uuid(REQUEST),
@@ -752,35 +796,52 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
         .admit_frame(&inbox)
         .expect("inbox response is admitted");
     runtime.apply_inbox(&admitted_inbox);
+}
 
-    let lanes = runtime.lanes().expect("refreshed lane snapshot");
-    let team = runtime
-        .newest_lineage_activity(&lanes.lanes[0])
-        .expect("team activity survives receipts");
-    assert_eq!(team.lane(), uuid(SECOND_LANE));
+#[test]
+fn synthetic_agent_activity_retains_prose_without_a_visible_age() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let lanes = lane_response(&[(LANE, LANE, Some(LANE_CAPABILITY), true)]);
+    let admitted_lanes: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(&lanes)
+        .expect("lane response is admitted");
+    runtime.apply_lanes(&admitted_lanes);
+
+    let synthetic = serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": {
+            "lane": LANE,
+            "author": LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 60, "length": 20, "event": 0},
+            "authored": "2000-01-01T00:00:00.087Z",
+            "authored_synthetic": true,
+            "text": "historical prose without a vendor timestamp",
+        },
+    }))
+    .expect("synthetic activity fixture serializes");
+    runtime.apply_stream(&admitted_stream(&session, &synthetic));
+
+    let activity = runtime
+        .newest_lineage_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
+        .expect("synthetic prose remains visible as activity");
     assert_eq!(
-        runtime
-            .newest_lane_activity(uuid(SECOND_LANE))
-            .expect("the member lane retains its own newest activity")
-            .authored(),
-        "2030-04-12T18:44:10.271Z"
-            .parse::<wire::Instant>()
-            .expect("fixture instant")
-            .get()
-            .as_millisecond()
+        activity.detail(),
+        "historical prose without a vendor timestamp"
     );
-    assert_eq!(team.class(), "prose");
-    assert_eq!(team.title(), "assistant");
-    assert_eq!(team.detail(), "newer teammate prose");
-    let other = runtime
-        .newest_lineage_activity(&lanes.lanes[1])
-        .expect("other lineage keeps its own activity");
-    assert_eq!(other.lane(), uuid(THIRD_LANE));
-    assert_eq!(other.class(), "tool");
-    assert_eq!(other.detail(), "Read");
     assert_eq!(
-        runtime.newest_event().expect("receipt chronology").title(),
-        "Steering inbox"
+        activity.authored(),
+        None,
+        "synthetic ordering instants are not source-authored age labels"
+    );
+    assert_eq!(
+        runtime.messages().len(),
+        1,
+        "synthetic prose still becomes a browsable message card"
     );
 }
 

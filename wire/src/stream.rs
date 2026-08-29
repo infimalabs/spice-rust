@@ -81,6 +81,9 @@ pub struct AgentMessage {
     pub locus: MessageLocus,
     /// Vendor record instant that authored this visible activity.
     pub authored: Instant,
+    /// Whether `authored` was synthesized because the vendor record omitted time.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub authored_synthetic: bool,
     /// Visible activity kind. Its absent wire spelling means prose.
     #[serde(default, skip_serializing_if = "AgentActivityKind::is_prose")]
     pub activity: AgentActivityKind,
@@ -89,6 +92,10 @@ pub struct AgentMessage {
     /// Admitted media carried beside this exact transcript event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<crate::Media>,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// A resumable journal position bound to one resident generation.

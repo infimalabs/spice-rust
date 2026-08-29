@@ -155,20 +155,38 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
             event: 4,
         },
         authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+        authored_synthetic: false,
         activity: AgentActivityKind::Prose,
         text: "settled".to_owned(),
         media: Vec::new(),
     };
     let encoded = wire::encode(&prose).expect("prose activity encodes");
+    let encoded_text = String::from_utf8_lossy(&encoded);
     assert!(
-        !String::from_utf8_lossy(&encoded).contains("activity"),
+        !encoded_text.contains("activity"),
         "the established prose wire shape stays unchanged"
     );
-    assert_eq!(
+    assert!(
+        !encoded_text.contains("authored_synthetic"),
+        "source-authored messages keep the established prose wire shape"
+    );
+    let decoded_prose = wire::decode::<AgentMessage>(&encoded).expect("default prose decodes");
+    assert_eq!(decoded_prose.activity, AgentActivityKind::Prose);
+    assert!(
+        !decoded_prose.authored_synthetic,
+        "retained messages from the old wire shape default to source-authored"
+    );
+
+    let synthetic = AgentMessage {
+        authored_synthetic: true,
+        ..prose.clone()
+    };
+    let encoded = wire::encode(&synthetic).expect("synthetic authored marker encodes");
+    assert!(String::from_utf8_lossy(&encoded).contains(r#""authored_synthetic":true"#));
+    assert!(
         wire::decode::<AgentMessage>(&encoded)
-            .expect("default prose decodes")
-            .activity,
-        AgentActivityKind::Prose
+            .expect("synthetic authored marker decodes")
+            .authored_synthetic
     );
 
     let tool = AgentMessage {

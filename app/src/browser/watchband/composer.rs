@@ -100,54 +100,18 @@ pub(super) fn render_agent_message_card(
     order: u64,
     layout: &CardLayout,
 ) -> Html {
-    let lane_key = quote_lane.to_string();
-    let quote_text = message.text.clone();
-    let quote_preview = watchband::first_nonquoted_prose(&message.text);
-    let quote_identity = agent_message_quote_identity(message);
     let source_id = agent_message_source_id(message);
-    let focus_identity = quote_identity.clone();
-    let focus_lane = lane_key.clone();
-    let quote_dispatcher = quote_dispatcher.clone();
-    let producer = format!(
-        "{} · {}",
-        watchband::leaf(&member.worktree),
-        watchband::short(message.author),
-    );
-    let correspondent = view::chrome::Correspondent {
-        name: producer.clone(),
-        accent: watchband::accent(member.lane),
-        speak: speak.clone(),
-        quote: Callback::from(move |()| {
-            quote_dispatcher.dispatch(ComposerAction::AddQuote {
-                lane: lane_key.clone(),
-                identity: quote_identity.clone(),
-                order,
-                quote: quote_text.clone(),
-                preview: quote_preview.clone(),
-            });
-            focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
-        }),
-    };
-    let locus = format!(
-        "tape {}:{}+{}#{}",
-        message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
+    let producer = agent_message_producer(member, message);
+    let correspondent = agent_message_correspondent(
+        member,
+        quote_lane,
+        message,
+        quote_dispatcher,
+        speak,
+        order,
+        &producer,
     );
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
-    let card_kind = if is_compaction {
-        "compaction"
-    } else {
-        "agent-message"
-    };
-    let activity = match message.activity {
-        wire::AgentActivityKind::Prose => "prose",
-        wire::AgentActivityKind::Tool => "tool",
-        wire::AgentActivityKind::Compaction => "compaction",
-    };
-    let card_actions = if is_compaction {
-        Html::default()
-    } else {
-        view::chrome::render_card_actions(&message.text, &correspondent)
-    };
     let reported_tasks = watchband::reported_tasks(&message.text);
     let unlinked_media = message
         .media
@@ -172,11 +136,11 @@ pub(super) fn render_agent_message_card(
             } else {
                 format!("Agent message from {producer}")
             }}
-            data-card-kind={card_kind}
+            data-card-kind={agent_card_kind(is_compaction)}
             data-mosaic-card-key={source_id}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
-            data-agent-activity={activity}
+            data-agent-activity={agent_activity_name(message.activity)}
             data-producer-target-id={quote_lane.to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
@@ -194,38 +158,142 @@ pub(super) fn render_agent_message_card(
             data-measure-span={layout.measure_span.to_string()}
         >
             <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
-            if !unlinked_media.is_empty() {
-                <div class="message-attachments">
-                    {for unlinked_media.into_iter().map(|media| html! {
-                        <img
-                            src={media.data_url.clone()}
-                            alt={media.name.clone()}
-                            title={media.name.clone()}
-                            data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
-                        />
-                    })}
-                </div>
-            }
-            <footer class="message-meta">
-                <span class="message-classifiers">
-                    <span class="message-key">{if is_compaction { "compaction" } else { "agent" }}</span>
-                    {for reported_tasks.into_iter().map(|task| {
-                        let handle = task.to_string();
-                        html! {
-                            <span
-                                class="message-task-chip"
-                                data-task-handle={handle.clone()}
-                                aria-label={format!("Reported task {handle}")}
-                                title={handle.clone()}
-                            >{handle}</span>
-                        }
-                    })}
-                </span>
-                <span class="message-age" title={locus.clone()}>{locus}</span>
-                <span class="message-author">{producer}</span>
-                {card_actions}
-            </footer>
+            {render_agent_message_media(unlinked_media)}
+            {render_agent_message_footer(
+                message,
+                &correspondent,
+                reported_tasks,
+                source_authored_millis(message),
+                is_compaction,
+                producer,
+            )}
         </article>
+    }
+}
+
+fn agent_message_producer(
+    member: &crate::runtime::LaneMember,
+    message: &wire::AgentMessage,
+) -> String {
+    format!(
+        "{} · {}",
+        watchband::leaf(&member.worktree),
+        watchband::short(message.author),
+    )
+}
+
+fn agent_message_correspondent(
+    member: &crate::runtime::LaneMember,
+    quote_lane: CanonicalUuid,
+    message: &wire::AgentMessage,
+    quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
+    speak: &Callback<String>,
+    order: u64,
+    producer: &str,
+) -> view::chrome::Correspondent {
+    let lane_key = quote_lane.to_string();
+    let quote_text = message.text.clone();
+    let quote_preview = watchband::first_nonquoted_prose(&message.text);
+    let quote_identity = agent_message_quote_identity(message);
+    let focus_identity = quote_identity.clone();
+    let focus_lane = lane_key.clone();
+    let quote_dispatcher = quote_dispatcher.clone();
+    view::chrome::Correspondent {
+        name: producer.to_owned(),
+        accent: watchband::accent(member.lane),
+        speak: speak.clone(),
+        quote: Callback::from(move |()| {
+            quote_dispatcher.dispatch(ComposerAction::AddQuote {
+                lane: lane_key.clone(),
+                identity: quote_identity.clone(),
+                order,
+                quote: quote_text.clone(),
+                preview: quote_preview.clone(),
+            });
+            focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
+        }),
+    }
+}
+
+fn source_authored_millis(message: &wire::AgentMessage) -> Option<String> {
+    (!message.authored_synthetic).then(|| message.authored.get().as_millisecond().to_string())
+}
+
+fn agent_card_kind(is_compaction: bool) -> &'static str {
+    if is_compaction {
+        "compaction"
+    } else {
+        "agent-message"
+    }
+}
+
+fn agent_activity_name(activity: wire::AgentActivityKind) -> &'static str {
+    match activity {
+        wire::AgentActivityKind::Prose => "prose",
+        wire::AgentActivityKind::Tool => "tool",
+        wire::AgentActivityKind::Compaction => "compaction",
+    }
+}
+
+fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
+    if unlinked_media.is_empty() {
+        return Html::default();
+    }
+    html! {
+        <div class="message-attachments">
+            {for unlinked_media.into_iter().map(|media| html! {
+                <img
+                    src={media.data_url.clone()}
+                    alt={media.name.clone()}
+                    title={media.name.clone()}
+                    data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
+                />
+            })}
+        </div>
+    }
+}
+
+fn render_agent_message_footer(
+    message: &wire::AgentMessage,
+    correspondent: &view::chrome::Correspondent,
+    reported_tasks: Vec<wire::TaskHandle>,
+    source_authored: Option<String>,
+    is_compaction: bool,
+    producer: String,
+) -> Html {
+    let locus = format!(
+        "tape {}:{}+{}#{}",
+        message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
+    );
+    let card_actions = if is_compaction {
+        Html::default()
+    } else {
+        view::chrome::render_card_actions(&message.text, correspondent)
+    };
+    html! {
+        <footer class="message-meta">
+            <span class="message-classifiers">
+                <span class="message-key">{if is_compaction { "compaction" } else { "agent" }}</span>
+                {for reported_tasks.into_iter().map(render_reported_task)}
+            </span>
+            <span class="message-age" title={locus.clone()} data-age-authored={source_authored}>
+                {locus}
+            </span>
+            <span class="message-author">{producer}</span>
+            {card_actions}
+        </footer>
+    }
+}
+
+fn render_reported_task(task: wire::TaskHandle) -> Html {
+    let handle = task.to_string();
+    html! {
+        <span
+            class="message-task-chip"
+            data-task-handle={handle.clone()}
+            aria-label={format!("Reported task {handle}")}
+            title={handle.clone()}
+        >{handle}</span>
     }
 }
 

@@ -458,7 +458,8 @@ fn latest_agent_prose(cards: &[ActivityCard], lane: CanonicalUuid) -> LatestAgen
             } if member.lane == lane => {
                 watchband::first_nonquoted_prose(&message.text).map(|prose| LatestAgentProse {
                     prose,
-                    authored: Some(message.authored.get().as_millisecond()),
+                    authored: (!message.authored_synthetic)
+                        .then(|| message.authored.get().as_millisecond()),
                 })
             }
             ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,

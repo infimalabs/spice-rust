@@ -585,6 +585,7 @@ mod tests {
                 event: 0,
             },
             authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+            authored_synthetic: false,
             activity: wire::AgentActivityKind::Prose,
             text: format!("lane {lane:02x} message {offset}"),
             media: Vec::new(),
