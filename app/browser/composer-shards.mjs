@@ -391,6 +391,8 @@ export async function assertComposerShards({
       const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
       return {
         href,
+        status: age.getAttribute("data-lane-status"),
+        label: age.textContent?.trim(),
         headerAuthored: age.querySelector(".composer-shard-age-label")?.dataset.ageAuthored,
         cardAuthored: card?.querySelector(".message-age")?.dataset.ageAuthored,
         cardKind: card?.getAttribute("data-card-kind"),
@@ -401,11 +403,30 @@ export async function assertComposerShards({
     `at least one composer heading links to an agent message: ${JSON.stringify(linkedHeaderAges)}`,
   );
   assert.ok(
-    linkedHeaderAges.every((age) => age.headerAuthored === age.cardAuthored),
-    `composer heading timestamps come from their linked latest message card: ${
+    linkedHeaderAges
+      .filter((age) => age.status !== "running")
+      .every((age) => age.headerAuthored === age.cardAuthored),
+    `idle composer heading timestamps come from their linked latest message card: ${
       JSON.stringify(linkedHeaderAges)
     }`,
   );
+  const runningHeaderAges = linkedHeaderAges.filter((age) => age.status === "running");
+  if (runningHeaderAges.length > 0) {
+    assert.ok(
+      runningHeaderAges.every((age) =>
+        Number.isFinite(Number(age.headerAuthored)) && age.headerAuthored !== age.cardAuthored
+      ),
+      `running composer heading ages come from live standing, not the stale linked card: ${
+        JSON.stringify(runningHeaderAges)
+      }`,
+    );
+    assert.ok(
+      runningHeaderAges.every((age) => age.label !== "1h"),
+      `running composer heading age must not retain the one-hour stale card label: ${
+        JSON.stringify(runningHeaderAges)
+      }`,
+    );
+  }
   assert.ok(
     activityChrome.every((age) => !age.pipMissing),
     `each composer activity age has a matching pip: ${JSON.stringify(activityChrome)}`,
