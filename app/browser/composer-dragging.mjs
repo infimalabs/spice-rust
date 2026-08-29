@@ -68,6 +68,27 @@ export async function assertPrimaryComposerDragging(
     "grab",
     "the primary composer alone exposes the member drag affordance",
   );
+  assert.equal(
+    await sourceComposer
+      .getByRole("textbox")
+      .evaluate((textarea) => getComputedStyle(textarea).cursor),
+    "text",
+    "the editable primary composer body keeps the text cursor",
+  );
+  assert.equal(
+    await sourceComposer.getByRole("textbox").evaluate((textarea) => {
+      const transfer = new DataTransfer();
+      const event = new DragEvent("dragstart", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer,
+      });
+      return textarea.dispatchEvent(event)
+        || transfer.types.includes("application/x-spice-lane");
+    }),
+    false,
+    "dragging from the textbox does not start a lane transfer",
+  );
 
   const sameTeamOrder = primaryRows.map((lane) => lane.lane);
   sameTeamOrder.splice(sameTeamOrder.indexOf(source.lane), 1);

@@ -507,6 +507,15 @@ fn lane_drag_transfer(event: &DragEvent) -> Option<web_sys::DataTransfer> {
         .then_some(transfer)
 }
 
+fn composer_drag_origin_is_interactive(event: &DragEvent) -> bool {
+    event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest("textarea, input, button, summary, a").ok())
+        .flatten()
+        .is_some()
+}
+
 fn primary_composer_dragging(
     lane: CanonicalUuid,
     enabled: bool,
@@ -514,6 +523,11 @@ fn primary_composer_dragging(
     sender: &SenderHandle,
 ) -> PrimaryComposerDragging {
     let start = Callback::from(move |event: DragEvent| {
+        if composer_drag_origin_is_interactive(&event) {
+            event.prevent_default();
+            event.stop_propagation();
+            return;
+        }
         event.stop_propagation();
         if let Some(transfer) = event.data_transfer() {
             let _ = transfer.set_data(LANE_DRAG_MIME, &lane.to_string());

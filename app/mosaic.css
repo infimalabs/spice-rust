@@ -556,6 +556,7 @@
 }
 .composer-shard--primary[draggable="true"] { cursor: grab; }
 .composer-shard--primary[draggable="true"]:active { cursor: grabbing; }
+.composer-shard--primary[draggable="true"] textarea { cursor: text; }
 .composer-shard--quote {
   order: 0;
   min-height: 112px;
