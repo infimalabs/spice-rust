@@ -176,6 +176,28 @@ export async function assertComposerPointerSelection(page, lane, composer) {
     [text.length - 1, text.length - 1],
     "keyboard navigation retains the composer caret",
   );
+  await page.keyboard.press("Shift+ArrowLeft");
+  assert.deepEqual(
+    await textarea.evaluate((node) => ({
+      range: [node.selectionStart, node.selectionEnd],
+      text: node.value.slice(node.selectionStart, node.selectionEnd),
+    })),
+    {
+      range: [text.length - 2, text.length - 1],
+      text: text.slice(text.length - 2, text.length - 1),
+    },
+    "keyboard selection retains its native range",
+  );
+
+  await page.mouse.click(geometry.alpha, geometry.y);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  const openingClick = await textarea.evaluate((node) => [node.selectionStart, node.selectionEnd]);
+  assert.ok(
+    openingClick[0] <= 4 && openingClick[0] === openingClick[1],
+    `single click retains an opening caret: ${JSON.stringify(openingClick)}`,
+  );
 
   await page.mouse.click(geometry.charlie, geometry.y);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
