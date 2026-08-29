@@ -1,8 +1,10 @@
+use app::LaneStatus;
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN, accent,
-    arrangement, badge, elapsed_label, first_nonquoted_prose, leaf, one_line, reported_tasks,
-    short, split_lineage, standing_title, standings, ticker_line, topology, truncate,
+    arrangement, badge, composer_activity_age, elapsed_label, first_nonquoted_prose, leaf,
+    one_line, reported_tasks, short, split_lineage, standing_title, standings, ticker_line,
+    topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -294,6 +296,46 @@ fn a_standing_carries_lease_instants_that_age_after_the_row_is_built() {
 
     assert_eq!(elapsed_label(at(60_000) - held), "6m");
     assert_eq!(elapsed_label(at(60_000) - renewed), "1m");
+}
+
+#[test]
+fn a_running_composer_heading_uses_live_lease_age_without_erasing_idle_activity_age() {
+    let lanes = [lane(LANE_A, "main-c")];
+    let tasks = [task("FIDELIT-1kKRSfyV", "review", LANE_A, 7, "active")];
+    let [standing] = standings(&lanes, &[], &tasks)
+        .try_into()
+        .expect("one standing");
+    let old_activity = Some(at(-3_600_000));
+
+    assert_eq!(
+        composer_activity_age(LaneStatus::Running, old_activity, &standing),
+        standing.renewed_at,
+        "an active running composer reports the live standing age, not the old message age",
+    );
+    assert_eq!(
+        composer_activity_age(LaneStatus::RunningStale, old_activity, &standing),
+        old_activity,
+        "an idle supervised lane keeps the retained activity age",
+    );
+    assert_eq!(
+        composer_activity_age(LaneStatus::Bound, old_activity, &standing),
+        old_activity,
+        "a vacant bound lane keeps the retained activity age",
+    );
+    assert_eq!(
+        composer_activity_age(LaneStatus::Queued, old_activity, &standing),
+        old_activity,
+        "queued direction remains tied to the authored activity chronology",
+    );
+
+    let [unclaimed] = standings(&lanes, &[], &[])
+        .try_into()
+        .expect("one standing");
+    assert_eq!(
+        composer_activity_age(LaneStatus::Running, old_activity, &unclaimed),
+        old_activity,
+        "a running lane with no active claim has no live lease age to substitute",
+    );
 }
 
 #[test]

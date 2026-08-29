@@ -776,6 +776,7 @@ fn render_composer_heading(
         close_agent_action_menu(&event);
         renew.emit(event);
     });
+    let age_authored = watchband::composer_activity_age(status, activity_authored, standing);
     html! {
         <header class="composer-shard-heading">
             <a
@@ -787,7 +788,7 @@ fn render_composer_heading(
                 href={format!("#{}", stream.target)}
                 aria-label={stream.label}
                 data-lane-status={status.key()}
-            >{lease_age(activity_authored, "composer-shard-age-label", "—")}</a>
+            >{lease_age(age_authored, "composer-shard-age-label", "—")}</a>
             <strong class="composer-shard-prose" title={prose.clone()}>{prose}</strong>
             {indicators}
             <details class="agent-action-menu">
