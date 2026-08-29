@@ -223,6 +223,16 @@ pub(super) fn publish_agent_event(
                 listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => Vec::new(),
             },
         ),
+        listen::Event::Compaction(compaction) => (
+            AgentActivityKind::Compaction,
+            compaction.locus,
+            compaction
+                .summary
+                .clone()
+                .filter(|summary| !summary.trim().is_empty())
+                .unwrap_or_else(|| "Context compacted".to_owned()),
+            Vec::new(),
+        ),
         _ => return Ok(()),
     };
     wire::media::admit_media(&media)

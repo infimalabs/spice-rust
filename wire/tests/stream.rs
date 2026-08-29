@@ -173,7 +173,7 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
     let tool = AgentMessage {
         activity: AgentActivityKind::Tool,
         text: "Bash".to_owned(),
-        ..prose
+        ..prose.clone()
     };
     let encoded = wire::encode(&tool).expect("tool activity encodes");
     assert!(String::from_utf8_lossy(&encoded).contains(r#""activity":"tool""#));
@@ -184,9 +184,23 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         AgentActivityKind::Tool
     );
 
+    let compaction = AgentMessage {
+        activity: AgentActivityKind::Compaction,
+        text: "Context compacted".to_owned(),
+        ..prose
+    };
+    let encoded = wire::encode(&compaction).expect("compaction activity encodes");
+    assert!(String::from_utf8_lossy(&encoded).contains(r#""activity":"compaction""#));
+    assert_eq!(
+        wire::decode::<AgentMessage>(&encoded)
+            .expect("explicit compaction decodes")
+            .activity,
+        AgentActivityKind::Compaction
+    );
+
     let unknown = String::from_utf8(encoded)
         .expect("wire is utf-8")
-        .replace(r#""activity":"tool""#, r#""activity":"future""#);
+        .replace(r#""activity":"compaction""#, r#""activity":"future""#);
     assert!(
         wire::decode::<AgentMessage>(unknown.as_bytes()).is_err(),
         "an unknown activity kind fails instead of choosing a fallback"

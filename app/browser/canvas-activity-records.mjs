@@ -21,6 +21,11 @@ export const triggeredActivityRecord = JSON.stringify({
   },
 });
 
+export const compactionActivityRecord = JSON.stringify({
+  type: "system",
+  subtype: "compact_boundary",
+});
+
 // The vendor correlation id joins the call to its result and is the exact
 // string an operator must never be shown, so the fixture spells a realistic
 // one rather than a friendly placeholder.

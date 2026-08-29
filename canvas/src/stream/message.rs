@@ -92,7 +92,10 @@ impl MessagePublisher {
 
 /// Whether one activity consumes a lane's visible-card retention budget.
 fn visible_message(message: &AgentMessage) -> bool {
-    message.activity.is_prose() || !message.media.is_empty()
+    matches!(
+        message.activity,
+        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Compaction
+    ) || !message.media.is_empty()
 }
 
 /// A capture-backed message could not enter the Canvas view.

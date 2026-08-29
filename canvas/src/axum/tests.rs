@@ -737,7 +737,8 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
         .message_publisher()
         .expect("streaming server publishes messages");
     let first = agent_message(0xe6, 10, "first author");
-    let second = agent_message(0xe7, 40, "second author");
+    let mut second = agent_message(0xe7, 40, "compaction boundary");
+    second.activity = wire::AgentActivityKind::Compaction;
     assert!(publisher.publish(first.clone()).expect("first publishes"));
     assert!(publisher.publish(second.clone()).expect("second publishes"));
     let address = server.local_addr().expect("address");

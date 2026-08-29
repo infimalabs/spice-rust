@@ -747,6 +747,19 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 text: "Bash".to_owned(),
                 media: Vec::new(),
             },
+            AgentMessage {
+                lane: first_id,
+                author: first_id,
+                locus: MessageLocus {
+                    member: 9,
+                    offset: 10,
+                    length: 11,
+                    event: 12,
+                },
+                activity: AgentActivityKind::Compaction,
+                text: "Context compacted".to_owned(),
+                media: Vec::new(),
+            },
         ],
     );
     let requests = stream_request_samples(epoch, first_id, second_id, cursor);
