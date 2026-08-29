@@ -94,7 +94,7 @@ pub(super) struct LineageControl {
     pub(super) previous_topology: Option<Vec<LineageArrangement>>,
     pub(super) speech: LineageSpeech,
     pub(super) life: LineageLife,
-    pub(super) pending_life: bool,
+    pub(super) pending_life: Option<LineageLife>,
     authoritative_life: LineageLife,
     issue: Option<String>,
 }
@@ -108,7 +108,7 @@ impl Default for LineageControl {
             previous_topology: None,
             speech: LineageSpeech::Speak,
             life: LineageLife::Steer,
-            pending_life: false,
+            pending_life: None,
             authoritative_life: LineageLife::Steer,
             issue: None,
         }
@@ -159,10 +159,11 @@ pub(crate) enum LineageControlAction {
     },
     SyncLanes {
         answer: wire::intent::LaneAnswer,
-        settle: bool,
+        settle: Option<(CanonicalUuid, LineageLife)>,
     },
     SettleIssue {
         lineage: CanonicalUuid,
+        life: Option<LineageLife>,
         issue: String,
     },
 }
@@ -197,8 +198,12 @@ impl Reducible for LineageControls {
             LineageControlAction::SyncLanes { answer, settle } => {
                 next.sync_lanes(&answer, settle);
             }
-            LineageControlAction::SettleIssue { lineage, issue } => {
-                next.settle_issue(lineage, issue);
+            LineageControlAction::SettleIssue {
+                lineage,
+                life,
+                issue,
+            } => {
+                next.settle_issue(lineage, life, issue);
             }
         }
         Rc::new(next)
@@ -302,13 +307,17 @@ impl LineageControls {
                 ..LineageControl::default()
             });
         state.life = life;
-        state.pending_life = true;
+        state.pending_life = Some(life);
         state.issue = None;
     }
 
     /// Reconcile a lane table. Ordinary reads cannot overtake an in-flight
     /// selection; the command's own authoritative reply can.
-    fn sync_lanes(&mut self, answer: &wire::intent::LaneAnswer, settle: bool) {
+    fn sync_lanes(
+        &mut self,
+        answer: &wire::intent::LaneAnswer,
+        settle: Option<(CanonicalUuid, LineageLife)>,
+    ) {
         // A lineage that left the authoritative subscription set is gone, not
         // hidden. Drop its browser-local controls before deciding whether a
         // newly seated first lineage should inherit the empty surface.
@@ -342,20 +351,25 @@ impl LineageControls {
             let life = subscription.policy.into();
             let state = self.lineages.entry(lineage).or_default();
             state.authoritative_life = life;
-            if settle || !state.pending_life {
+            let settles_pending = settle.is_some_and(|(settled_lineage, requested)| {
+                settled_lineage == lineage && state.pending_life == Some(requested)
+            });
+            if settles_pending || state.pending_life.is_none() {
                 state.life = life;
-                state.pending_life = false;
-                if settle {
+                state.pending_life = None;
+                if settles_pending {
                     state.issue = None;
                 }
             }
         }
     }
 
-    fn settle_issue(&mut self, lineage: CanonicalUuid, issue: String) {
+    fn settle_issue(&mut self, lineage: CanonicalUuid, life: Option<LineageLife>, issue: String) {
         let state = self.lineages.entry(lineage).or_default();
-        state.life = state.authoritative_life;
-        state.pending_life = false;
+        if life.is_some_and(|life| state.pending_life == Some(life)) {
+            state.life = state.authoritative_life;
+            state.pending_life = None;
+        }
         state.issue = Some(issue);
     }
 }
@@ -385,7 +399,7 @@ pub(super) fn render_lineage_controls(
             class="team-composer-controls"
             data-speech-mode={speech.label()}
             data-lifetime={selected.label()}
-            data-lifetime-pending={control.pending_life.to_string()}
+            data-lifetime-pending={control.pending_life.is_some().to_string()}
         >
             <label class={classes!(
                 "team-slider",
@@ -426,7 +440,7 @@ pub(super) fn render_lineage_controls(
                     value={selected.index().to_string()}
                     aria-label={format!("Task subscription policy: {}", selected.help())}
                     title={selected.help()}
-                    disabled={!can_configure || control.pending_life}
+                    disabled={!can_configure || control.pending_life.is_some()}
                     oninput={Callback::from(move |event: InputEvent| {
                         let input: HtmlInputElement = event.target_unchecked_into();
                         let index = input.value().parse::<usize>().unwrap_or(0).min(2);
@@ -442,7 +456,7 @@ pub(super) fn render_lineage_controls(
                                 topology_revision,
                                 lineage,
                                 member: None,
-                                life: life.wire(),
+                                life: Some(life.wire()),
                             },
                         );
                     })}

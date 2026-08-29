@@ -641,13 +641,13 @@ async fn send_lineage_configuration(
     topology_revision: u64,
     lineage: CanonicalUuid,
     member: Option<CanonicalUuid>,
-    life: LineageLife,
+    life: Option<LineageLife>,
 ) -> Result<(), String> {
     send_typed(
         principal,
         writer,
         pending,
-        PendingKind::LineageConfigure(lineage),
+        PendingKind::LineageConfigure { lineage, life },
         CommandKind::LineageConfigure,
         vec![],
         LineageConfigure {

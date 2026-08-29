@@ -109,11 +109,12 @@ fn apply_command_response(
         PendingKind::WakeSubmission { lane, submission } => {
             apply_wake_submission_response(session, handles, runtime, submission, lane, bytes)?
         }
-        PendingKind::LineageConfigure(lineage) => apply_lineage_configuration(
+        PendingKind::LineageConfigure { lineage, life } => apply_lineage_configuration(
             session,
             &handles.lineage_controls,
             runtime,
             lineage,
+            life,
             bytes,
         )?,
         PendingKind::Steer { lane } => {
@@ -181,7 +182,7 @@ fn apply_lane_response(
             .lineage_controls
             .dispatch(LineageControlAction::SyncLanes {
                 answer: reply.body.clone(),
-                settle: false,
+                settle: None,
             });
     } else if let Some(issue) = outcome_issue(
         "Agent woke, but Canvas could not confirm fresh residency",

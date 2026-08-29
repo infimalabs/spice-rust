@@ -96,16 +96,6 @@ fn render_agents(
         .filter(|lineage| !is_grouped_lineage(lineage))
         .flat_map(|lineage| &lineage.members)
         .collect::<Vec<_>>();
-    let life_by_member = lanes
-        .lanes
-        .iter()
-        .flat_map(|lineage| {
-            lineage
-                .members
-                .iter()
-                .map(move |member| (member.lane, lineage.subscription))
-        })
-        .collect::<BTreeMap<_, _>>();
     let solo_member_ids = solo_members
         .iter()
         .map(|member| member.lane)
@@ -147,7 +137,6 @@ fn render_agents(
             </section>
             {render_new_lineage_drop(
                 new_lineage,
-                life_by_member.clone(),
                 sender,
                 can_configure,
                 lanes.topology_revision,
@@ -155,7 +144,6 @@ fn render_agents(
             {render_solo_members_drop(
                 &solo_members,
                 solo_member_ids,
-                life_by_member,
                 &solo_render,
             )}
         </div>
@@ -178,7 +166,6 @@ fn render_lineage(
     lineage_controls: &UseReducerHandle<LineageControls>,
 ) -> Html {
     let target = lineage.lane;
-    let life = lineage.subscription;
     let current = lineage
         .members
         .iter()
@@ -188,7 +175,6 @@ fn render_lineage(
     let ondrop = drop_into_lineage(
         sender.clone(),
         target,
-        life,
         current,
         can_configure,
         topology_revision,
@@ -295,19 +281,12 @@ fn render_member(
 
 fn render_new_lineage_drop(
     target: CanonicalUuid,
-    life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     sender: &SenderHandle,
     can_configure: bool,
     topology_revision: u64,
 ) -> Html {
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_new_lineage(
-        sender.clone(),
-        target,
-        life_by_member,
-        can_configure,
-        topology_revision,
-    );
+    let ondrop = drop_into_new_lineage(sender.clone(), target, can_configure, topology_revision);
     html! {
         <section class="canvas-menu-section canvas-team-drop" {ondragover} {ondrop}>
             <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
@@ -327,14 +306,12 @@ struct SoloDropRender<'a> {
 fn render_solo_members_drop(
     members: &[&crate::runtime::LaneMember],
     current: Vec<CanonicalUuid>,
-    life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     render: &SoloDropRender<'_>,
 ) -> Html {
     let ondragover = allow_drop(render.can_configure);
     let ondrop = drop_into_solo_lineage(
         render.sender.clone(),
         current,
-        life_by_member,
         render.can_configure,
         render.topology_revision,
     );
@@ -402,7 +379,6 @@ fn dragged_member(event: &DragEvent) -> Option<CanonicalUuid> {
 fn drop_into_lineage(
     sender: SenderHandle,
     target: CanonicalUuid,
-    life: LineageLife,
     current: Vec<CanonicalUuid>,
     enabled: bool,
     topology_revision: u64,
@@ -413,7 +389,7 @@ fn drop_into_lineage(
             return;
         };
         if enabled && !current.contains(&member) {
-            send_member(&sender, target, member, life, topology_revision);
+            send_member(&sender, target, member, topology_revision);
         }
     })
 }
@@ -421,7 +397,6 @@ fn drop_into_lineage(
 fn drop_into_new_lineage(
     sender: SenderHandle,
     target: CanonicalUuid,
-    life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     enabled: bool,
     topology_revision: u64,
 ) -> Callback<DragEvent> {
@@ -430,8 +405,8 @@ fn drop_into_new_lineage(
         let Some(member) = dragged_member(&event) else {
             return;
         };
-        if let Some(life) = enabled.then(|| life_by_member.get(&member)).flatten() {
-            send_member(&sender, target, member, *life, topology_revision);
+        if enabled {
+            send_member(&sender, target, member, topology_revision);
         }
     })
 }
@@ -439,7 +414,6 @@ fn drop_into_new_lineage(
 fn drop_into_solo_lineage(
     sender: SenderHandle,
     current: Vec<CanonicalUuid>,
-    life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     enabled: bool,
     topology_revision: u64,
 ) -> Callback<DragEvent> {
@@ -448,11 +422,8 @@ fn drop_into_solo_lineage(
         let Some(member) = dragged_member(&event) else {
             return;
         };
-        if enabled
-            && !current.contains(&member)
-            && let Some(life) = life_by_member.get(&member)
-        {
-            send_member(&sender, member, member, *life, topology_revision);
+        if enabled && !current.contains(&member) {
+            send_member(&sender, member, member, topology_revision);
         }
     })
 }
@@ -461,7 +432,6 @@ fn send_member(
     sender: &SenderHandle,
     lineage: CanonicalUuid,
     member: CanonicalUuid,
-    life: LineageLife,
     topology_revision: u64,
 ) {
     send_action(
@@ -470,7 +440,7 @@ fn send_member(
             topology_revision,
             lineage,
             member: Some(member),
-            life,
+            life: None,
         },
     );
 }

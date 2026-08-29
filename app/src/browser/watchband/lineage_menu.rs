@@ -181,7 +181,6 @@ fn render_import(lineage: &crate::runtime::LaneRow, context: &Context<'_>) -> Ht
                 {for candidates.into_iter().map(|member| {
                     let sender = context.sender.clone();
                     let controls = context.controls.clone();
-                    let life = lineage.subscription;
                     html! {
                         <button
                             type="button"
@@ -194,7 +193,7 @@ fn render_import(lineage: &crate::runtime::LaneRow, context: &Context<'_>) -> Ht
                                         topology_revision,
                                         lineage: identity,
                                         member: Some(member),
-                                        life,
+                                        life: None,
                                     },
                                 );
                                 controls.dispatch(LineageControlAction::ToggleImport {

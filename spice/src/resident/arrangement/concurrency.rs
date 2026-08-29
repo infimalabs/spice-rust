@@ -43,7 +43,7 @@ impl Arranged {
             topology_revision,
             lineage_id,
             member: None,
-            life,
+            life: Some(life),
             manual_projects: None,
         };
         let command = Command {
@@ -60,6 +60,46 @@ impl Arranged {
             epoch: self.epoch,
         })
         .expect("operator lineage configuration admits");
+        let projects =
+            board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("project policy");
+        lane_surface::configure(
+            &self.bus,
+            self.epoch,
+            &self.seats,
+            &projects,
+            &command,
+            &request,
+        )
+    }
+
+    fn configure_member_at(
+        &self,
+        id: u8,
+        topology_revision: u64,
+        lineage_id: CanonicalUuid,
+        member: CanonicalUuid,
+    ) -> Outcome<CommandAnswer> {
+        let request = wire::intent::LineageConfigure {
+            topology_revision,
+            lineage_id,
+            member: Some(member),
+            life: None,
+            manual_projects: None,
+        };
+        let command = Command {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(id),
+            epoch: self.epoch,
+            kind: CommandKind::LineageConfigure,
+            expected: Vec::new(),
+            body: serde_json::to_value(&request).expect("lineage membership encodes"),
+        }
+        .admit(&wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: self.epoch,
+        })
+        .expect("operator lineage membership admits");
         let projects =
             board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("project policy");
         lane_surface::configure(
@@ -214,6 +254,55 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
             .iter()
             .find(|subscription| subscription.lineage_id == second_team)
             .expect("second team keeps a subscription")
+            .policy,
+        wire::intent::LineageLife::Drive,
+    );
+
+    fixture.retire();
+}
+
+#[test]
+fn membership_only_configuration_preserves_existing_lifetimes() {
+    let fixture = Arranged::seat("membership-configuration-preserves-life", &[0, 0, 1, 1]);
+    let [first_team, second_team] = fixture.teams;
+    let lanes = fixture.lanes.clone();
+    let configured = Arranged::committed(fixture.configure_at(
+        49,
+        fixture.head().topology_revision,
+        first_team,
+        wire::intent::LineageLife::Drain,
+    ));
+    let moved = Arranged::committed(fixture.configure_member_at(
+        50,
+        configured.topology_revision,
+        first_team,
+        lanes[2],
+    ));
+    assert_eq!(
+        moved
+            .lanes
+            .iter()
+            .find(|row| row.lane == lanes[2])
+            .expect("moved member remains seated")
+            .lineage_id,
+        first_team,
+    );
+    assert_eq!(
+        moved
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.lineage_id == first_team)
+            .expect("configured team keeps a subscription")
+            .policy,
+        wire::intent::LineageLife::Drain,
+        "a membership-only patch cannot restate a stale lifetime",
+    );
+    assert_eq!(
+        moved
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.lineage_id == second_team)
+            .expect("source team keeps a subscription")
             .policy,
         wire::intent::LineageLife::Drive,
     );

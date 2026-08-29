@@ -244,8 +244,13 @@ pub struct LineageConfigure {
         deserialize_with = "crate::optional::present"
     )]
     pub member: Option<CanonicalUuid>,
-    /// Authoritative task-subscription policy to commit for the lineage.
-    pub life: LineageLife,
+    /// Replacement task-subscription policy, or absent to preserve it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub life: Option<LineageLife>,
     /// Replacement operator-pinned project set, or absent to preserve it.
     #[serde(
         default,
