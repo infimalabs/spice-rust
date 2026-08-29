@@ -237,21 +237,21 @@ pub(super) fn complete_review_with_finding(
     ));
 }
 
-fn assert_review_assignment_fact(
+pub(super) fn assert_review_assignment_fact(
     bus: &Bus,
     assigned: &BoardAnswer,
     task: &TaskHandle,
     reviewer: &Actor,
 ) {
     let heads = at(assigned, task);
-    let snapshot = bus.fact_snapshot().expect("review assignment facts read");
+    let snapshot = bus.fact_snapshot().expect("assignment facts read");
     let envelope = snapshot
         .facts()
         .iter()
         .find(|fact| fact.seq == heads.workflow.position)
         .expect("review workflow head names a durable fact");
     let typed: wire::Envelope<wire::Fact<wire::body::TaskAssigned>> =
-        wire::decode(&wire::encode(envelope).expect("opaque review assignment fact encodes"))
+        wire::decode(&wire::encode(envelope).expect("assignment fact encodes"))
             .expect("workflow head is the registered review assignment fact");
     assert_eq!(typed.fact.body.task, heads.statement.body.born);
     assert_eq!(typed.fact.body.reviewer, *reviewer);
