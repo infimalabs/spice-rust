@@ -126,7 +126,7 @@ pub(crate) fn run(matches: &ArgMatches) -> Outcome<ConfigReport> {
         (_, None) if apply.is_some() => Err(refusal(
             "config::apply-without-mutation",
             None,
-            "supply one machine-local KEY VALUE pair with the plan digest",
+            "supply one mutable KEY VALUE pair with the plan digest",
         )),
         (key, None) => read(&repository, key.map(String::as_str)),
         (None, Some(_)) => unreachable!("clap cannot supply VALUE without KEY"),
@@ -161,21 +161,25 @@ fn set(
             "select one concrete path in the generated configuration registry",
         )
     })?;
-    if descriptor.policy_class() != PolicyClass::MachineLocal {
-        return Err(refusal(
-            "config::tracked-policy",
-            Some(key.to_owned()),
-            "edit tracked spice-rust.toml in an operator-reviewed commit",
-        ));
-    }
+    let target = match descriptor.policy_class() {
+        PolicyClass::Policy => {
+            return Err(refusal(
+                "config::tracked-policy",
+                Some(key.to_owned()),
+                "edit tracked spice-rust.toml in an operator-reviewed commit",
+            ));
+        }
+        PolicyClass::WorktreeLocal => MutationTarget::Worktree,
+        PolicyClass::MachineLocal => MutationTarget::Local,
+    };
     let value = parse_value(raw, descriptor.kind())?;
-    let documents = Documents::read(repository)?;
-    let mut local = documents.local_value()?;
-    set_value(&mut local, &keys, value)?;
-    let candidate = toml::to_string_pretty(&local)
+    let documents = Documents::read_for_mutation(repository, target)?;
+    let mut document = documents.value(target)?;
+    set_value(&mut document, &keys, value)?;
+    let candidate = toml::to_string_pretty(&document)
         .map_err(|error| protocol_fault("config::candidate-unencodable", &error.to_string()))?;
-    let resolved = documents.resolve(&candidate)?;
-    let plan = MutationPlan::new(&documents, key, candidate.as_bytes())?;
+    let resolved = documents.resolve(target, &candidate)?;
+    let plan = MutationPlan::new(&documents, target, key, candidate.as_bytes())?;
     let Some(spelling) = apply else {
         return report(resolved, Some(key), Some(plan), None);
     };
@@ -196,12 +200,60 @@ fn set(
             ),
         )));
     }
-    let receipt = publish(&documents, &plan, candidate.as_bytes())?;
+    let receipt = publish(&documents, target, &plan, candidate.as_bytes())?;
     report(resolved, Some(key), Some(plan), Some(receipt))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MutationTarget {
+    Worktree,
+    Local,
+}
+
+impl MutationTarget {
+    fn path(self, documents: &Documents) -> &Path {
+        match self {
+            Self::Worktree => &documents.worktree_path,
+            Self::Local => &documents.local_path,
+        }
+    }
+
+    fn current<'a>(self, documents: &'a Documents) -> Option<&'a [u8]> {
+        match self {
+            Self::Worktree => documents.worktree.as_deref(),
+            Self::Local => documents.local.as_deref(),
+        }
+    }
+
+    fn parent<'a>(self, documents: &'a Documents) -> &'a ParentWitness {
+        match self {
+            Self::Worktree => &documents.worktree_parent,
+            Self::Local => &documents.local_parent,
+        }
+    }
+
+    fn malformed_reason(self) -> &'static str {
+        match self {
+            Self::Worktree => "config::worktree-malformed",
+            Self::Local => "config::local-malformed",
+        }
+    }
+
+    fn non_utf8_reason(self) -> &'static str {
+        match self {
+            Self::Worktree => "config::worktree-non-utf8",
+            Self::Local => "config::local-non-utf8",
+        }
+    }
+}
+
 impl MutationPlan {
-    fn new(documents: &Documents, key: &str, candidate: &[u8]) -> Result<Self, Outcome<()>> {
+    fn new(
+        documents: &Documents,
+        target: MutationTarget,
+        key: &str,
+        candidate: &[u8],
+    ) -> Result<Self, Outcome<()>> {
         #[derive(Serialize)]
         struct Basis<'a> {
             version: u16,
@@ -216,14 +268,14 @@ impl MutationPlan {
 
         let before = Digest::compute(
             Domain::ConfigLocal,
-            documents.local.as_deref().unwrap_or(&[]),
+            target.current(documents).unwrap_or(&[]),
         );
         let after = Digest::compute(Domain::ConfigLocal, candidate);
         let basis = Basis {
             version: CONFIG_PLAN_VERSION,
             path: key,
-            destination: &documents.local_path,
-            parent: &documents.parent,
+            destination: target.path(documents),
+            parent: target.parent(documents),
             tracked: documents.tracked.as_deref(),
             worktree: documents.worktree.as_deref(),
             local: documents.local.as_deref(),
@@ -235,7 +287,7 @@ impl MutationPlan {
             version: CONFIG_PLAN_VERSION,
             digest: Digest::compute(Domain::ConfigPlan, &encoded),
             path: key.to_owned(),
-            destination: documents.local_path.clone(),
+            destination: target.path(documents).to_path_buf(),
             before,
             after,
         })
@@ -249,14 +301,14 @@ struct Documents {
     tracked_path: PathBuf,
     worktree_path: PathBuf,
     local_path: PathBuf,
-    parent: ParentWitness,
+    worktree_parent: ParentWitness,
+    local_parent: ParentWitness,
 }
 
 impl Documents {
     fn read(repository: &Repository) -> Result<Self, Outcome<()>> {
         admit_repository_owner(repository)?;
         let locations = config::locations(repository);
-        let parent = admit_parent(locations.local())?;
         Ok(Self {
             tracked: read_optional(locations.tracked())?,
             worktree: read_optional(locations.worktree())?,
@@ -264,48 +316,76 @@ impl Documents {
             tracked_path: locations.tracked().to_path_buf(),
             worktree_path: locations.worktree().to_path_buf(),
             local_path: locations.local().to_path_buf(),
-            parent,
+            worktree_parent: ParentWitness::Absent,
+            local_parent: ParentWitness::Absent,
         })
     }
 
-    fn local_value(&self) -> Result<toml::Value, Outcome<()>> {
-        let Some(bytes) = &self.local else {
+    fn read_for_mutation(
+        repository: &Repository,
+        target: MutationTarget,
+    ) -> Result<Self, Outcome<()>> {
+        let mut documents = Self::read(repository)?;
+        let parent = admit_parent(target.path(&documents))?;
+        match target {
+            MutationTarget::Worktree => documents.worktree_parent = parent,
+            MutationTarget::Local => documents.local_parent = parent,
+        }
+        Ok(documents)
+    }
+
+    fn value(&self, target: MutationTarget) -> Result<toml::Value, Outcome<()>> {
+        let Some(bytes) = target.current(self) else {
             return Ok(toml::Value::Table(toml::Table::new()));
         };
         let text = std::str::from_utf8(bytes).map_err(|error| {
             refusal(
-                "config::local-non-utf8",
-                Some(self.local_path.display().to_string()),
+                target.non_utf8_reason(),
+                Some(target.path(self).display().to_string()),
                 &error.to_string(),
             )
         })?;
         toml::from_str(text).map_err(|error| {
             refusal(
-                "config::local-malformed",
-                Some(self.local_path.display().to_string()),
+                target.malformed_reason(),
+                Some(target.path(self).display().to_string()),
                 &error.to_string(),
             )
         })
     }
 
-    fn resolve(&self, local: &str) -> Result<Resolved, Outcome<()>> {
-        self.resolve_with(Some(local))
+    fn resolve(&self, target: MutationTarget, candidate: &str) -> Result<Resolved, Outcome<()>> {
+        let worktree = if target == MutationTarget::Worktree {
+            Some(candidate)
+        } else {
+            optional_utf8(self.worktree.as_deref(), &self.worktree_path)?
+        };
+        let local = if target == MutationTarget::Local {
+            Some(candidate)
+        } else {
+            optional_utf8(self.local.as_deref(), &self.local_path)?
+        };
+        self.resolve_with(worktree, local)
     }
 
     fn resolve_current(&self) -> Result<Resolved, Outcome<()>> {
+        let worktree = optional_utf8(self.worktree.as_deref(), &self.worktree_path)?;
         let local = optional_utf8(self.local.as_deref(), &self.local_path)?;
-        self.resolve_with(local)
+        self.resolve_with(worktree, local)
     }
 
-    fn resolve_with(&self, local: Option<&str>) -> Result<Resolved, Outcome<()>> {
+    fn resolve_with(
+        &self,
+        worktree: Option<&str>,
+        local: Option<&str>,
+    ) -> Result<Resolved, Outcome<()>> {
         let tracked_text = optional_utf8(self.tracked.as_deref(), &self.tracked_path)?;
-        let worktree_text = optional_utf8(self.worktree.as_deref(), &self.worktree_path)?;
         let tracked_location = self.tracked_path.display().to_string();
         let worktree_location = self.worktree_path.display().to_string();
         let local_location = self.local_path.display().to_string();
         config::resolve(Inputs::with_worktree(
             tracked_text.map(|text| Document::new(&tracked_location, text)),
-            worktree_text.map(|text| Document::new(&worktree_location, text)),
+            worktree.map(|text| Document::new(&worktree_location, text)),
             local.map(|text| Document::new(&local_location, text)),
             &[],
         ))
@@ -334,11 +414,12 @@ fn admit_repository_owner(repository: &Repository) -> Result<(), Outcome<()>> {
 #[cfg(unix)]
 fn publish(
     documents: &Documents,
+    target: MutationTarget,
     plan: &MutationPlan,
     candidate: &[u8],
 ) -> Result<MutationReceipt, Outcome<()>> {
-    let parent = materialize_parent(documents)?;
-    let admitted = AdmittedParent::open(&documents.local_path, &parent)?;
+    let parent = materialize_parent(documents, target)?;
+    let admitted = AdmittedParent::open(target.path(documents), &parent)?;
     let changed = admitted.commit(documents, plan, candidate)?;
     Ok(receipt(plan, changed))
 }
@@ -346,6 +427,7 @@ fn publish(
 #[cfg(not(unix))]
 fn publish(
     _documents: &Documents,
+    _target: MutationTarget,
     _plan: &MutationPlan,
     _candidate: &[u8],
 ) -> Result<MutationReceipt, Outcome<()>> {
@@ -359,12 +441,13 @@ fn publish(
 struct AdmittedParent {
     directory: fs::File,
     path: PathBuf,
-    local_name: OsString,
+    target_path: PathBuf,
+    target_name: OsString,
 }
 
 #[cfg(unix)]
 impl AdmittedParent {
-    fn open(local: &Path, witness: &ParentWitness) -> Result<Self, Outcome<()>> {
+    fn open(target: &Path, witness: &ParentWitness) -> Result<Self, Outcome<()>> {
         let ParentWitness::Directory {
             canonical,
             device,
@@ -373,12 +456,12 @@ impl AdmittedParent {
         else {
             unreachable!("publication materializes one real directory")
         };
-        let parent = local_parent(local)?;
+        let parent = config_parent(target)?;
         if parent != canonical {
             return Err(source_moved(parent));
         }
-        let local_name = local.file_name().ok_or_else(|| {
-            environment_fault("config::local-path-invalid", &local.display().to_string())
+        let target_name = target.file_name().ok_or_else(|| {
+            environment_fault("config::target-path-invalid", &target.display().to_string())
         })?;
         let directory = unix_fs::open(
             canonical,
@@ -399,7 +482,8 @@ impl AdmittedParent {
         let admitted = Self {
             directory,
             path: canonical.clone(),
-            local_name: local_name.to_os_string(),
+            target_path: target.to_path_buf(),
+            target_name: target_name.to_os_string(),
         };
         admitted.verify_named()?;
         Ok(admitted)
@@ -507,8 +591,16 @@ impl AdmittedParent {
     fn ensure_unchanged(&self, documents: &Documents) -> Result<(), Outcome<()>> {
         self.verify_named()?;
         let tracked = read_optional(&documents.tracked_path)?;
-        let worktree = read_optional(&documents.worktree_path)?;
-        let local = self.read_local()?;
+        let worktree = if self.target_path == documents.worktree_path {
+            self.read_target()?
+        } else {
+            read_optional(&documents.worktree_path)?
+        };
+        let local = if self.target_path == documents.local_path {
+            self.read_target()?
+        } else {
+            read_optional(&documents.local_path)?
+        };
         self.verify_named()?;
         if tracked == documents.tracked
             && worktree == documents.worktree
@@ -524,10 +616,10 @@ impl AdmittedParent {
         }
     }
 
-    fn read_local(&self) -> Result<Option<Vec<u8>>, Outcome<()>> {
+    fn read_target(&self) -> Result<Option<Vec<u8>>, Outcome<()>> {
         let descriptor = match unix_fs::openat(
             &self.directory,
-            &self.local_name,
+            &self.target_name,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
             Mode::empty(),
         ) {
@@ -536,14 +628,14 @@ impl AdmittedParent {
             Err(rustix::io::Errno::LOOP) => {
                 return Err(refusal(
                     "config::source-not-regular",
-                    Some(self.path.join(&self.local_name).display().to_string()),
+                    Some(self.target_path.display().to_string()),
                     "replace the source with one regular file",
                 ));
             }
             Err(source) => {
                 return Err(environment_fault(
                     "config::source-unreadable",
-                    &format!("{}: {source}", self.path.join(&self.local_name).display()),
+                    &format!("{}: {source}", self.target_path.display()),
                 ));
             }
         };
@@ -551,13 +643,13 @@ impl AdmittedParent {
         let opened = file.metadata().map_err(|error| {
             environment_fault(
                 "config::source-unreadable",
-                &format!("{}: {error}", self.path.join(&self.local_name).display()),
+                &format!("{}: {error}", self.target_path.display()),
             )
         })?;
         if !opened.is_file() {
             return Err(refusal(
                 "config::source-not-regular",
-                Some(self.path.join(&self.local_name).display().to_string()),
+                Some(self.target_path.display().to_string()),
                 "replace the source with one regular file",
             ));
         }
@@ -565,19 +657,19 @@ impl AdmittedParent {
         file.read_to_end(&mut bytes).map_err(|error| {
             environment_fault(
                 "config::source-unreadable",
-                &format!("{}: {error}", self.path.join(&self.local_name).display()),
+                &format!("{}: {error}", self.target_path.display()),
             )
         })?;
         let finished = file.metadata().map_err(|error| {
             environment_fault(
                 "config::source-unreadable",
-                &format!("{}: {error}", self.path.join(&self.local_name).display()),
+                &format!("{}: {error}", self.target_path.display()),
             )
         })?;
         if same_generation(&opened, &finished) {
             Ok(Some(bytes))
         } else {
-            Err(source_moved(&self.path.join(&self.local_name)))
+            Err(source_moved(&self.target_path))
         }
     }
 
@@ -601,7 +693,7 @@ impl AdmittedParent {
                 &self.directory,
                 &temporary_name,
                 &self.directory,
-                &self.local_name,
+                &self.target_name,
             )
             .map_err(|source| {
                 environment_fault("config::publication-failed", &source.to_string())
@@ -677,19 +769,23 @@ fn receipt(plan: &MutationPlan, changed: bool) -> MutationReceipt {
     }
 }
 
-fn materialize_parent(documents: &Documents) -> Result<ParentWitness, Outcome<()>> {
-    let parent = local_parent(&documents.local_path)?;
-    match &documents.parent {
+fn materialize_parent(
+    documents: &Documents,
+    target: MutationTarget,
+) -> Result<ParentWitness, Outcome<()>> {
+    let path = target.path(documents);
+    let parent = config_parent(path)?;
+    match target.parent(documents) {
         ParentWitness::Directory { .. } => {
-            let current = admit_parent(&documents.local_path)?;
-            if current == documents.parent {
+            let current = admit_parent(path)?;
+            if current == *target.parent(documents) {
                 Ok(current)
             } else {
                 Err(source_moved(parent))
             }
         }
         ParentWitness::Absent => {
-            if !matches!(admit_parent(&documents.local_path)?, ParentWitness::Absent) {
+            if !matches!(admit_parent(path)?, ParentWitness::Absent) {
                 return Err(source_moved(parent));
             }
             match fs::create_dir(parent) {
@@ -699,12 +795,12 @@ fn materialize_parent(documents: &Documents) -> Result<ParentWitness, Outcome<()
                 }
                 Err(error) => {
                     return Err(environment_fault(
-                        "config::local-parent-unavailable",
+                        "config::parent-unavailable",
                         &error.to_string(),
                     ));
                 }
             }
-            let created = admit_parent(&documents.local_path)?;
+            let created = admit_parent(path)?;
             if matches!(created, ParentWitness::Directory { .. }) {
                 Ok(created)
             } else {
@@ -714,8 +810,8 @@ fn materialize_parent(documents: &Documents) -> Result<ParentWitness, Outcome<()
     }
 }
 
-fn admit_parent(local: &Path) -> Result<ParentWitness, Outcome<()>> {
-    let parent = local_parent(local)?;
+fn admit_parent(target: &Path) -> Result<ParentWitness, Outcome<()>> {
+    let parent = config_parent(target)?;
     let metadata = match fs::symlink_metadata(parent) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(ParentWitness::Absent),
@@ -730,7 +826,7 @@ fn admit_parent(local: &Path) -> Result<ParentWitness, Outcome<()>> {
         return Err(refusal(
             "config::parent-refused",
             Some(parent.display().to_string()),
-            "replace the local configuration parent with one real directory",
+            "replace the configuration parent with one real directory",
         ));
     }
     let canonical = fs::canonicalize(parent).map_err(|error| {
@@ -743,7 +839,7 @@ fn admit_parent(local: &Path) -> Result<ParentWitness, Outcome<()>> {
         return Err(refusal(
             "config::parent-refused",
             Some(canonical.display().to_string()),
-            "restore the exact unlinked Git-common local configuration parent",
+            "restore the exact unlinked configuration parent",
         ));
     }
     Ok(ParentWitness::Directory {
@@ -755,17 +851,17 @@ fn admit_parent(local: &Path) -> Result<ParentWitness, Outcome<()>> {
     })
 }
 
-fn local_parent(local: &Path) -> Result<&Path, Outcome<()>> {
-    local.parent().ok_or_else(|| {
-        environment_fault("config::local-parent-missing", &local.display().to_string())
-    })
+fn config_parent(target: &Path) -> Result<&Path, Outcome<()>> {
+    target
+        .parent()
+        .ok_or_else(|| environment_fault("config::parent-missing", &target.display().to_string()))
 }
 
 fn source_moved(path: &Path) -> Outcome<()> {
     refusal(
         "config::source-moved",
         Some(path.display().to_string()),
-        "preview the current tracked and local configuration generation and retry",
+        "preview the current tracked, worktree, and local configuration generation and retry",
     )
 }
 
@@ -1099,10 +1195,17 @@ mod tests {
             tracked_path,
             worktree_path,
             local_path: local_path.clone(),
-            parent: witness.clone(),
+            worktree_parent: ParentWitness::Absent,
+            local_parent: witness.clone(),
         };
         let candidate = b"[lock.worker]\ndirectory = 'locks/worker'\nshards = 2\n";
-        let plan = MutationPlan::new(&documents, "lock.worker.shards", candidate).unwrap();
+        let plan = MutationPlan::new(
+            &documents,
+            MutationTarget::Local,
+            "lock.worker.shards",
+            candidate,
+        )
+        .unwrap();
         let admitted = AdmittedParent::open(&local_path, &witness).unwrap();
 
         fs::rename(&parent, &parked).unwrap();
