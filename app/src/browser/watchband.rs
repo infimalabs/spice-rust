@@ -694,21 +694,28 @@ fn render_composer_body(
 ) -> Html {
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
+    // Firefox gives a draggable ancestor ownership of textarea pointer
+    // gestures. Keep only the noninteractive prose draggable; the composer
+    // remains the drop target for lane arrangement and draft content.
+    let PrimaryComposerDragging {
+        enabled: drag_enabled,
+        start: drag_start,
+        over: drag_over,
+        drop: drag_drop,
+    } = dragging;
     html! {
         <div
             class="mosaic-composer composer-shard composer-shard--primary"
             data-shard-kind="primary"
             data-shard-target-id={lane.to_string()}
-            data-primary-composer-draggable={dragging.enabled.to_string()}
+            data-primary-composer-draggable={drag_enabled.to_string()}
             data-draft-unsafe={(
                 !draft.body.is_empty()
                     || !draft.quotes.is_empty()
                     || !draft.attachments.is_empty()
             ).to_string()}
-            draggable={dragging.enabled.to_string()}
-            ondragstart={dragging.start}
-            ondragover={dragging.over}
-            ondrop={dragging.drop}
+            ondragover={drag_over}
+            ondrop={drag_drop}
         >
             {render_composer_heading(
                 lane,
@@ -720,6 +727,8 @@ fn render_composer_body(
                 stream,
                 prose,
                 render_image_indicators(lane_key, draft, drafts),
+                drag_enabled,
+                drag_start,
             )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
@@ -757,6 +766,8 @@ fn render_composer_heading(
     stream: ComposerStreamLink,
     prose: String,
     indicators: Html,
+    drag_enabled: bool,
+    drag_start: Callback<DragEvent>,
 ) -> Html {
     let focus_lane = lane_key.to_owned();
     let focus = Callback::from(move |event: MouseEvent| {
@@ -784,7 +795,13 @@ fn render_composer_heading(
                 aria-label={label}
                 data-lane-status={status.key()}
             >{lease_age(authored, "composer-shard-age-label", "—")}</a>
-            <strong class="composer-shard-prose" title={prose.clone()}>{prose}</strong>
+            <strong
+                class="composer-shard-prose"
+                title={prose.clone()}
+                data-composer-drag-handle={drag_enabled.to_string()}
+                draggable={drag_enabled.to_string()}
+                ondragstart={drag_start}
+            >{prose}</strong>
             {indicators}
             <details class="agent-action-menu">
                 <summary aria-label={format!("Actions for {}", standing.label)}>{"☰"}</summary>

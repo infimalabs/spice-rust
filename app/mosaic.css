@@ -574,9 +574,12 @@
   position: relative;
   order: 1;
 }
-.composer-shard--primary[draggable="true"] { cursor: grab; }
-.composer-shard--primary[draggable="true"]:active { cursor: grabbing; }
-.composer-shard--primary[draggable="true"] textarea { cursor: text; }
+.composer-shard-prose[data-composer-drag-handle="true"] {
+  cursor: grab;
+}
+.composer-shard-prose[data-composer-drag-handle="true"]:active {
+  cursor: grabbing;
+}
 .composer-shard--quote {
   order: 0;
   min-height: 112px;

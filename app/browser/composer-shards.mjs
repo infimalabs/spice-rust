@@ -131,6 +131,114 @@ export async function assertComposerTypingDoesNotRemeasureActivity(page, lane, c
   );
 }
 
+export async function assertComposerPointerSelection(page, lane, composer) {
+  const textarea = composer.getByRole("textbox");
+  const text = "alpha bravo charlie delta echo foxtrot";
+  await textarea.fill(text);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  const before = await activityMeasurementSnapshot(page, lane, "before pointer selection");
+  const geometry = await textarea.evaluate((node) => {
+    const style = getComputedStyle(node);
+    const context = document.createElement("canvas").getContext("2d");
+    context.font = style.font;
+    const rect = node.getBoundingClientRect();
+    const origin = rect.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+    const y = rect.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop)
+      + parseFloat(style.lineHeight) / 2;
+    const x = (offset) => origin + context.measureText(node.value.slice(0, offset)).width;
+    return { y, alpha: x(2), bravo: x(8), charlie: x(15), end: x(36) };
+  });
+  const dragScope = await textarea.evaluate((node) => {
+    window.__composerPointerEvents = [];
+    for (const type of ["pointerdown", "mousedown", "click", "dblclick", "select", "pointerup"]) {
+      node.addEventListener(type, () => window.__composerPointerEvents.push(type));
+    }
+    return {
+      draggable: node.getAttribute("draggable"),
+      draggableAncestor: node.closest('[draggable="true"]')?.className ?? null,
+    };
+  });
+  assert.deepEqual(
+    dragScope,
+    { draggable: null, draggableAncestor: null },
+    "the editable composer body is outside the native lane drag source",
+  );
+
+  await textarea.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  assert.deepEqual(
+    await textarea.evaluate((node) => [node.selectionStart, node.selectionEnd]),
+    [text.length - 1, text.length - 1],
+    "keyboard navigation retains the composer caret",
+  );
+
+  await page.mouse.click(geometry.charlie, geometry.y);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  const clicked = await textarea.evaluate((node) => [node.selectionStart, node.selectionEnd]);
+  assert.ok(
+    clicked[0] >= 12 && clicked[0] <= 18 && clicked[0] === clicked[1],
+    `single click retains a caret near the clicked character: ${JSON.stringify(clicked)}`,
+  );
+  await page.keyboard.type("x");
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  assert.equal(
+    await textarea.inputValue(),
+    `${text.slice(0, clicked[0])}x${text.slice(clicked[0])}`,
+    "ordinary typing remains at the pointer-positioned caret",
+  );
+  await textarea.fill(text);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+
+  await page.mouse.dblclick(geometry.bravo, geometry.y);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  assert.equal(
+    await textarea.evaluate((node) => node.value.slice(node.selectionStart, node.selectionEnd)),
+    "bravo",
+    "double click retains the clicked word selection",
+  );
+
+  await page.mouse.move(geometry.alpha, geometry.y);
+  await page.mouse.down();
+  await page.mouse.move(geometry.end, geometry.y, { steps: 12 });
+  await page.mouse.up();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+  const dragged = await textarea.evaluate((node) => ({
+    start: node.selectionStart,
+    end: node.selectionEnd,
+    text: node.value.slice(node.selectionStart, node.selectionEnd),
+  }));
+  assert.ok(
+    dragged.start <= 3 && dragged.end >= 34,
+    `pointer drag retains the intended composer range: ${JSON.stringify(dragged)}`,
+  );
+
+  assert.deepEqual(
+    await activityMeasurementSnapshot(page, lane, "after pointer selection"),
+    before,
+    "composer selection gestures leave the Mosaic activity plane cold",
+  );
+  const events = await page.evaluate(() => window.__composerPointerEvents);
+  for (const event of ["pointerdown", "mousedown", "click", "dblclick", "select", "pointerup"]) {
+    assert.ok(events.includes(event), `the composer receives ${event}: ${JSON.stringify(events)}`);
+  }
+  await textarea.fill("");
+}
+
 async function activityMeasurementSnapshot(page, lane, label) {
   await page.waitForFunction(
     (target) => {

@@ -35,6 +35,7 @@ export async function assertPrimaryComposerDragging(
   const primaryComposer = (lane) => console.locator(
     `.composer-shard--primary[data-shard-target-id="${lane}"]`,
   );
+  const dragHandle = (lane) => primaryComposer(lane).locator(".composer-shard-prose");
   const sourceComposer = primaryComposer(source.lane);
   await page.evaluate(() => {
     const socket = window.__canvasSockets.at(-1);
@@ -57,43 +58,49 @@ export async function assertPrimaryComposerDragging(
       }
     };
   });
-  const composerHandle = {
-    sourcePosition: { x: 10, y: 10 },
+  const composerTarget = {
     targetPosition: { x: 10, y: 10 },
   };
-  assert.equal(await sourceComposer.getAttribute("draggable"), "true");
+  assert.equal(await sourceComposer.getAttribute("draggable"), null);
   assert.equal(await sourceComposer.getAttribute("data-primary-composer-draggable"), "true");
   assert.equal(
-    await sourceComposer.evaluate((composer) => getComputedStyle(composer).cursor),
+    await dragHandle(source.lane).getAttribute("draggable"),
+    "true",
+    "the primary prose is the lane drag source",
+  );
+  assert.equal(
+    await dragHandle(source.lane).getAttribute("data-composer-drag-handle"),
+    "true",
+    "the lane drag source is explicitly identified",
+  );
+  assert.equal(
+    await dragHandle(source.lane).evaluate((heading) => getComputedStyle(heading).cursor),
     "grab",
-    "the primary composer alone exposes the member drag affordance",
+    "the primary prose exposes the member drag affordance",
   );
-  assert.equal(
-    await sourceComposer
-      .getByRole("textbox")
-      .evaluate((textarea) => getComputedStyle(textarea).cursor),
-    "text",
-    "the editable primary composer body keeps the text cursor",
-  );
-  assert.equal(
-    await sourceComposer.getByRole("textbox").evaluate((textarea) => {
-      const transfer = new DataTransfer();
-      const event = new DragEvent("dragstart", {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: transfer,
-      });
-      return textarea.dispatchEvent(event)
-        || transfer.types.includes("application/x-spice-lane");
-    }),
-    false,
-    "dragging from the textbox does not start a lane transfer",
+  const textareaDrag = await sourceComposer.getByRole("textbox").evaluate((textarea) => {
+    const transfer = new DataTransfer();
+    const event = new DragEvent("dragstart", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    });
+    return {
+      dispatched: textarea.dispatchEvent(event),
+      draggableAncestor: textarea.closest('[draggable="true"]')?.className ?? null,
+      types: [...transfer.types],
+    };
+  });
+  assert.deepEqual(
+    textareaDrag,
+    { dispatched: true, draggableAncestor: null, types: [] },
+    "the editable body has no native drag ancestor or lane-transfer handler",
   );
 
   const sameTeamOrder = primaryRows.map((lane) => lane.lane);
   sameTeamOrder.splice(sameTeamOrder.indexOf(source.lane), 1);
   sameTeamOrder.splice(sameTeamOrder.indexOf(sameTeamTarget.lane), 0, source.lane);
-  await sourceComposer.dragTo(primaryComposer(sameTeamTarget.lane), composerHandle);
+  await dragHandle(source.lane).dragTo(primaryComposer(sameTeamTarget.lane), composerTarget);
   await waitForPage(
     page,
     "same-team primary composer drag reorders members",
@@ -121,9 +128,9 @@ export async function assertPrimaryComposerDragging(
   const sameTeamTopologyRevision = laneSnapshot.body.topology_revision;
   const retainedDraft = "draft follows the primary composer across teams";
   await primaryComposer(source.lane).getByRole("textbox").fill(retainedDraft);
-  await primaryComposer(source.lane).dragTo(
+  await dragHandle(source.lane).dragTo(
     primaryComposer(crossTeamTarget.lane),
-    composerHandle,
+    composerTarget,
   );
   const destinationOrder = [source.lane, ...secondaryRows.map((lane) => lane.lane)];
   await waitForPage(
