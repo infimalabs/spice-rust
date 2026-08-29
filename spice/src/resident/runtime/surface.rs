@@ -185,11 +185,16 @@ pub(super) async fn run_surface(
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let residency = current_residency(bus, epoch)?;
+    let steering = bus
+        .fact_snapshot()
+        .ok()
+        .and_then(|snapshot| steer::Ledger::from_snapshot(&snapshot).ok());
     message_surface::restore_agent_messages(
         paths,
         residency.body(),
         &message_publisher,
         &mut message_surface::BacklogReader::default(),
+        steering.as_ref(),
         progress,
     )?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
