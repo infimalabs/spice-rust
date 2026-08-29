@@ -327,10 +327,46 @@ fn a_nonfinal_review_phase_prints_the_transition_it_can_accept() {
     let CommandAnswer::Claim(claim) = answer else {
         panic!("claim win returned another answer shape");
     };
+    let expected_next = format!("spice task show {task}");
     assert_eq!(
         claim.next.as_deref(),
-        Some("spice task done"),
-        "review is printable only when task review can settle the final phase",
+        Some(expected_next.as_str()),
+        "a fresh claim hands activation to the full task packet first",
+    );
+    let claimed = board(&bus, epoch, lane);
+    let shown = task_show(&claimed, at(&claimed, &task), &[]);
+    assert!(
+        shown.contains(&format!(
+            "next: spice task review {task} --finding clean --note \"description current; ...\""
+        )),
+        "the detail packet exposes the phase-specific command after activation"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn active_todo_task_show_prints_the_parser_owned_done_command() {
+    let (root, bus, epoch, seats) = fixture("todo-show-next-action", 1);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "SHOW-todo0001",
+        "Render the active todo next action",
+        Some("todo"),
+    );
+    let claim = capture_for(&bus, epoch, &seats[0], &task);
+    assert_eq!(claim.task, task);
+
+    let claimed = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let shown = task_show(&claimed, at(&claimed, &task), &[]);
+    assert!(
+        shown.contains("next: spice task done --validation \"...\""),
+        "the detail packet exposes the parser-owned task done form: {shown}"
+    );
+    assert!(
+        !shown.contains(&format!("next: spice task done {task}")),
+        "the detail packet must not advertise the rejected handle form: {shown}"
     );
     clean(&root, bus);
 }

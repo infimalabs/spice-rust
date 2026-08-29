@@ -105,7 +105,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 104);
+    assert_eq!(contracts().len(), 105);
 
     let unaccounted = contracts()
         .iter()
@@ -118,7 +118,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 104);
+    assert_eq!(landed, 105);
     assert_eq!(landing(&["gate", "commit-msg"]), Landing::Landed);
     assert_eq!(landing(&["gate", "reference-transaction"]), Landing::Landed);
     assert_eq!(landing(&["gate", "selection"]), Landing::Landed);
@@ -142,6 +142,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
     assert_eq!(landing(&["task", "list"]), Landing::Landed);
     assert_eq!(landing(&["task", "status"]), Landing::Landed);
+    assert_eq!(landing(&["task", "show"]), Landing::Landed);
     assert_eq!(landing(&["task", "effort"]), Landing::Landed);
     assert_eq!(landing(&["recall"]), Landing::Landed);
     assert_eq!(landing(&["steer"]), Landing::Landed);
@@ -443,6 +444,22 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
             .expect("status selects a contract")
             .path,
         ["task", "status"]
+    );
+
+    let show = command()
+        .try_get_matches_from(["spice", "task", "show", "TASK-1k4Q5gJw"])
+        .expect("task show parses");
+    assert_eq!(
+        selected_contract(&show)
+            .expect("show selects a contract")
+            .path,
+        ["task", "show"]
+    );
+    assert_eq!(
+        selected_matches(&show)
+            .get_one::<String>("HANDLE")
+            .map(String::as_str),
+        Some("TASK-1k4Q5gJw")
     );
 
     let add = command()

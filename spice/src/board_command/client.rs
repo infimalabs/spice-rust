@@ -29,6 +29,7 @@ fn dispatch_client(
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
+        ["task", "show"] => client_show(repository, contract, matches),
         ["task", "next"] => client_next(repository, contract),
         ["task", "recover"] => client_recover(repository, contract, matches),
         ["task", "reclaim"] => client_reclaim(repository, contract, matches),
@@ -855,7 +856,7 @@ fn attach_steering_origin_artifacts(
             retention: artifact::Retention::Permanent,
             created_at,
         }) {
-            return artifact_attachment_failure(error);
+            return artifact_operation_failure(error);
         }
     }
     outcome
@@ -963,12 +964,12 @@ fn attachment_extension(content_type: &str) -> &'static str {
     }
 }
 
-fn artifact_attachment_failure(error: artifact::Error) -> Outcome<CommandAnswer> {
+fn artifact_operation_failure(error: artifact::Error) -> Outcome<CommandAnswer> {
     match error.class() {
         artifact::ErrorClass::Refusal => refusal(
             "artifact::operation-refused",
             Some(error.to_string()),
-            "correct the steering attachment artifact and retry",
+            "correct the task artifact request and retry",
         ),
         artifact::ErrorClass::Corrupt => store_fault("artifact::store-corrupt", &error.to_string()),
         artifact::ErrorClass::Environment => {

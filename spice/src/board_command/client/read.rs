@@ -64,6 +64,56 @@ pub(super) fn client_list(
     }
 }
 
+pub(super) fn client_show(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let task = match required(matches, "HANDLE").parse::<TaskHandle>() {
+        Ok(task) => task,
+        Err(error) => {
+            return refusal(
+                "task::show-handle",
+                matches.get_one::<String>("HANDLE").cloned(),
+                &error.to_string(),
+            );
+        }
+    };
+    match crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead { family: None },
+    ) {
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Board(board),
+        }) => {
+            let task = match task_heads(&board, &task) {
+                Ok(task) => task,
+                Err(outcome) => return outcome,
+            };
+            let artifacts = match task_show_artifacts(repository, task) {
+                Ok(artifacts) => artifacts,
+                Err(outcome) => return outcome,
+            };
+            Outcome::Reply(Reply {
+                position,
+                body: CommandAnswer::Text(TextAnswer {
+                    text: task_show(&board, task, &artifacts),
+                }),
+            })
+        }
+        Outcome::Reply(_) => protocol_fault(
+            "task::show-answer",
+            "task show board read returned another answer shape",
+        ),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(in crate::board_command) enum TaskListStatus {
     Pending,
@@ -297,6 +347,167 @@ fn render_task_list_row(task: &BoardTask) -> String {
         task.statement.body.project,
         task.presentation_title()
     )
+}
+
+fn task_show_artifacts(
+    repository: &Repository,
+    task: &BoardTask,
+) -> Result<Vec<artifact::Artifact>, Outcome<CommandAnswer>> {
+    let state = repository
+        .admit_state()
+        .map_err(|error| repository_state_failure(&error))?;
+    let store = artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
+    store
+        .list(&task.statement.body.born)
+        .map_err(artifact_operation_failure)
+}
+
+pub(in crate::board_command) fn task_show(
+    board: &BoardAnswer,
+    task: &BoardTask,
+    artifacts: &[artifact::Artifact],
+) -> String {
+    let statement = &task.statement.body;
+    let workflow = &task.workflow.body;
+    let mut lines = vec![
+        format!("handle {}", statement.handle),
+        format!("title {}", task.presentation_title()),
+        format!(
+            "description {}",
+            statement.description.as_deref().unwrap_or("-")
+        ),
+        format!("origin {}", statement.provenance),
+        format!("project {}", statement.project),
+        format!("phase {}", workflow.phase),
+        format!("review {}", workflow.review),
+        format!("status {}", workflow.status),
+        format!("version {}", statement.revision),
+        format!("claim {}", claim_line(task)),
+        format!("claim_thread {}", claim_thread(task)),
+        format!("creator_context {}", task.origin_thread),
+    ];
+    if statement.tags.is_empty() {
+        lines.push("tags -".to_owned());
+    } else {
+        lines.push(format!(
+            "tags {}",
+            statement
+                .tags
+                .iter()
+                .map(|tag| format!("+{tag}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+    }
+    lines.push("acceptance:".to_owned());
+    if statement.acceptance.is_empty() {
+        lines.push("  -".to_owned());
+    } else {
+        for item in &statement.acceptance {
+            push_bulleted(&mut lines, item);
+        }
+    }
+    if !statement.dependencies.is_empty() {
+        lines.push("depends:".to_owned());
+        for dependency in &statement.dependencies {
+            lines.push(render_dependency(board, dependency));
+        }
+    }
+    lines.push("artifacts:".to_owned());
+    if artifacts.is_empty() {
+        lines.push("  -".to_owned());
+    } else {
+        for artifact in artifacts {
+            lines.push(format!(
+                "  {} {} {} {} B {}",
+                artifact.id, artifact.name, artifact.media_type, artifact.bytes, artifact.retention
+            ));
+            lines.push(format!(
+                "     spice task artifact show {} {}",
+                statement.handle, artifact.id
+            ));
+        }
+    }
+    lines.push(next_command_line(board, task));
+    lines.join("\n")
+}
+
+fn claim_line(task: &BoardTask) -> String {
+    let Some(claim) = &task.claim else {
+        return "- until -".to_owned();
+    };
+    let until = task
+        .lease
+        .as_ref()
+        .map_or_else(|| "-".to_owned(), |lease| lease.body.expiry.to_string());
+    format!("{} until {}", claim.body.actor, until)
+}
+
+fn claim_thread(task: &BoardTask) -> String {
+    task.claim
+        .as_ref()
+        .map_or_else(|| "-".to_owned(), |claim| claim.body.occupant.to_string())
+}
+
+fn push_bulleted(lines: &mut Vec<String>, text: &str) {
+    let mut parts = text.lines();
+    if let Some(first) = parts.next() {
+        lines.push(format!("  - {first}"));
+    } else {
+        lines.push("  -".to_owned());
+        return;
+    }
+    for continuation in parts {
+        lines.push(format!("    {continuation}"));
+    }
+}
+
+fn render_dependency(board: &BoardAnswer, dependency: &TaskStamp) -> String {
+    match task_heads_by_stamp(board, dependency) {
+        Ok(dependency) => {
+            let mut state = dependency.workflow.body.status.clone();
+            if dependency
+                .claim
+                .as_ref()
+                .is_some_and(|claim| claim.body.disposition == ClaimDisposition::Active)
+            {
+                state.push_str(" claim=");
+                state.push_str(
+                    &dependency
+                        .claim
+                        .as_ref()
+                        .expect("active claim checked")
+                        .body
+                        .actor
+                        .to_string(),
+                );
+            }
+            format!("  after {} {}", dependency.statement.body.handle, state)
+        }
+        Err(_) => format!("  after {dependency} (missing)"),
+    }
+}
+
+fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String {
+    if task.workflow.body.phase.as_str() == "review" {
+        if active_claimed_by_principal(board, task) {
+            return format!(
+                "next: spice task review {} --finding clean --note \"description current; ...\"",
+                task.statement.body.handle
+            );
+        }
+        return "next: spice task next".to_owned();
+    }
+    if !active_claimed_by_principal(board, task) {
+        return "next: spice task next".to_owned();
+    }
+    "next: spice task done --validation \"...\"".to_owned()
+}
+
+fn active_claimed_by_principal(board: &BoardAnswer, task: &BoardTask) -> bool {
+    task.claim.as_ref().is_some_and(|claim| {
+        claim.body.actor == board.principal && claim.body.disposition == ClaimDisposition::Active
+    })
 }
 
 fn actor_route_filter(board: &BoardAnswer) -> String {

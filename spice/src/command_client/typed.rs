@@ -56,6 +56,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["board", "handout"] => CommandKind::BoardHandout,
         ["task", "list"] => CommandKind::BoardRead,
         ["task", "status"] => CommandKind::BoardRead,
+        ["task", "show"] => CommandKind::BoardRead,
         ["task", "next"] => CommandKind::ClaimWin,
         ["task", "recover"] => CommandKind::ClaimWin,
         ["task", "reclaim"] => CommandKind::ClaimRenew,
