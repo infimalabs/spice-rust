@@ -1,4 +1,5 @@
 use super::*;
+use rusqlite::{Connection, params};
 use serde_json::json;
 use std::fs;
 
@@ -137,6 +138,61 @@ fn assert_unavailable_turn_identity(scratch: &Scratch) {
             .as_str()
             .is_some_and(|detail| detail.contains("--start"))
     );
+}
+
+#[test]
+fn live_thread_briefing_accounts_final_truncated_record_without_blocking() {
+    let scratch = Scratch::new("live-tail");
+    let codex_home = scratch.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    fs::create_dir_all(&sessions).expect("Codex session root exists");
+    let thread = "0123456789abcdef0123456789abcdef";
+    let dashed = "01234567-89ab-cdef-0123-456789abcdef";
+    let transcript = sessions.join("rollout-live-tail.jsonl");
+    let mut bytes = write_jsonl(&transcript, &codex_rows());
+    bytes.extend_from_slice(b"{\"timestamp\":");
+    fs::write(&transcript, bytes).expect("live tail fixture is written");
+    let state =
+        Connection::open(codex_home.join("state_5.sqlite")).expect("Codex state fixture opens");
+    state
+        .execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)", [])
+        .expect("Codex thread table exists");
+    state
+        .execute(
+            "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
+            params![dashed, transcript.to_string_lossy()],
+        )
+        .expect("Codex thread path is indexed");
+    drop(state);
+
+    let environment = [
+        ("CODEX_THREAD_ID", dashed.to_owned()), // env-policy: allow
+        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+    ];
+    let recall = reply_forms(
+        &strings(&["session", "briefing", "--deadline-seconds", "5"]),
+        &environment,
+        "recall",
+    );
+    assert_eq!(recall["sources"][0]["thread"], thread);
+    assert!(
+        recall["residues"].as_array().is_some_and(|residues| {
+            residues.iter().any(|residue| {
+                residue["kind"] == "live-tail-truncated"
+                    && residue["detail"]
+                        .as_str()
+                        .is_some_and(|detail| detail.contains("final live transcript row"))
+            })
+        }),
+        "live tail truncation is retained as residue: {recall}"
+    );
+
+    refusal(
+        &strings(&["session", "summary", &transcript.to_string_lossy()]),
+        &[],
+        "session::transcript-evidence-invalid",
+    );
+    scratch.remove();
 }
 
 #[test]
