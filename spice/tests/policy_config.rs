@@ -188,15 +188,15 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
 }
 
 #[test]
-fn rust_codex_default_matches_python_spice_and_explicit_selection_still_wins() {
-    assert_eq!(vendor::DEFAULT_CODEX_MODEL, "gpt-5.5");
+fn rust_codex_default_is_current_and_explicit_selection_still_wins() {
+    assert_eq!(vendor::DEFAULT_CODEX_MODEL, "gpt-5.6");
     assert_eq!(
         decode("")
             .expect("empty policy uses compiled defaults")
             .vendor()
             .codex()
             .model(),
-        "gpt-5.5"
+        "gpt-5.6"
     );
     assert_eq!(
         decode("[vendor.codex]\nmodel = \"operator-selected\"\n")
