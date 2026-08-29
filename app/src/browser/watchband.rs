@@ -156,7 +156,7 @@ fn render_compose(
                     .is_some_and(|draft| !compose(draft).trim().is_empty())
         });
     let ready = can_send
-        && !control.pending_life
+        && control.pending_life.is_none()
         && lineage.members.iter().any(|member| {
             (member.occupant.is_some() || (member.bound && can_wake))
                 && drafts

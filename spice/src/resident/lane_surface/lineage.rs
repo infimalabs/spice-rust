@@ -30,6 +30,7 @@ struct MembershipChange {
 struct ConfiguredLineage {
     membership: Option<MembershipChange>,
     previous: wire::LineageSubscription,
+    life: wire::intent::LineageLife,
     manual_projects: Vec<String>,
     sources: Vec<wire::body::LaneSourceBoundary>,
     next: wire::ResidencyHead,
@@ -86,13 +87,16 @@ pub(in crate::resident) fn configure(
             "the configured lineage has no task-subscription policy after membership moved",
         );
     };
-    if subscription.policy != request.life || manual_projects.is_some() {
+    if request.life.is_some_and(|life| subscription.policy != life) || manual_projects.is_some() {
         subscription.auto_projects.clear();
     }
-    subscription.policy = request.life;
+    if let Some(life) = request.life {
+        subscription.policy = life;
+    }
     if let Some(manual_projects) = manual_projects {
         subscription.manual_projects = manual_projects;
     }
+    let configured_life = subscription.policy;
     let configured_manual_projects = subscription.manual_projects.clone();
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
@@ -115,6 +119,7 @@ pub(in crate::resident) fn configure(
         ConfiguredLineage {
             membership,
             previous,
+            life: configured_life,
             manual_projects: configured_manual_projects,
             sources,
             next,
@@ -152,7 +157,7 @@ fn commit_configured(
                 .membership
                 .and_then(|change| change.source_rekeyed_to),
             from: configured.previous.policy,
-            life: request.life,
+            life: configured.life,
             from_manual_projects: configured.previous.manual_projects,
             manual_projects: configured.manual_projects,
             sources: configured.sources,

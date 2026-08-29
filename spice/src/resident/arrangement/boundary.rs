@@ -229,7 +229,7 @@ fn configure_member(
         topology_revision: fixture.head().topology_revision,
         lineage_id: lineage,
         member: Some(member),
-        life: wire::intent::LineageLife::Drive,
+        life: None,
         manual_projects: None,
     };
     let command = Command {

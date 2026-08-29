@@ -369,7 +369,7 @@ enum ClientAction {
         topology_revision: u64,
         lineage: CanonicalUuid,
         member: Option<CanonicalUuid>,
-        life: LineageLife,
+        life: Option<LineageLife>,
     },
     /// Where every team and every agent stands after one team drag.
     ///
@@ -425,7 +425,10 @@ enum PendingKind {
         lane: CanonicalUuid,
         submission: CanonicalUuid,
     },
-    LineageConfigure(CanonicalUuid),
+    LineageConfigure {
+        lineage: CanonicalUuid,
+        life: Option<LineageLife>,
+    },
     /// A team arrangement in flight.
     ///
     /// No lineage travels with it: an arrangement names every team, so there is
@@ -808,6 +811,7 @@ fn apply_lineage_configuration(
     lineage_controls: &UseReducerHandle<LineageControls>,
     runtime: &mut CanvasRuntime,
     lineage: CanonicalUuid,
+    life: Option<LineageLife>,
     bytes: &[u8],
 ) -> Result<bool, String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
@@ -817,18 +821,20 @@ fn apply_lineage_configuration(
         wire::Outcome::Reply(reply) => {
             lineage_controls.dispatch(LineageControlAction::SyncLanes {
                 answer: reply.body.clone(),
-                settle: true,
+                settle: life.map(|life| (lineage, life.into())),
             });
         }
         wire::Outcome::Refusal(refusal) => {
             lineage_controls.dispatch(LineageControlAction::SettleIssue {
                 lineage,
+                life: life.map(Into::into),
                 issue: format!("{}: {}", refusal.reason(), refusal.explanation()),
             });
         }
         wire::Outcome::Fault(fault) => {
             lineage_controls.dispatch(LineageControlAction::SettleIssue {
                 lineage,
+                life: life.map(Into::into),
                 issue: format!("{}: {}", fault.reason, fault.detail),
             });
         }
