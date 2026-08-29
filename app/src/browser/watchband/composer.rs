@@ -215,10 +215,6 @@ fn agent_message_correspondent(
     }
 }
 
-fn source_authored_millis(message: &wire::AgentMessage) -> Option<String> {
-    (!message.authored_synthetic).then(|| message.authored.get().as_millisecond().to_string())
-}
-
 fn agent_card_kind(is_compaction: bool) -> &'static str {
     if is_compaction {
         "compaction"
@@ -257,7 +253,7 @@ fn render_agent_message_footer(
     message: &wire::AgentMessage,
     correspondent: &view::chrome::Correspondent,
     reported_tasks: Vec<wire::TaskHandle>,
-    source_authored: Option<String>,
+    source_authored: Option<i64>,
     is_compaction: bool,
     producer: String,
 ) -> Html {
@@ -276,7 +272,11 @@ fn render_agent_message_footer(
                 <span class="message-key">{if is_compaction { "compaction" } else { "agent" }}</span>
                 {for reported_tasks.into_iter().map(render_reported_task)}
             </span>
-            <span class="message-age" title={locus.clone()} data-age-authored={source_authored}>
+            <span
+                class="message-age"
+                title={locus.clone()}
+                data-age-authored={source_authored.map(|authored| authored.to_string())}
+            >
                 {locus}
             </span>
             <span class="message-author">{producer}</span>

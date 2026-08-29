@@ -18,7 +18,7 @@ use wire::head::ClaimDisposition;
 use wire::intent::{BoardTask, LaneInbox};
 use wire::{CanonicalUuid, TaskHandle};
 
-use crate::runtime::{LaneRow, LaneStatus};
+use crate::runtime::LaneRow;
 
 /// Accent slots the band cycles through.
 ///
@@ -315,29 +315,6 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
             }
         })
         .collect()
-}
-
-/// Authored instant shown in the compact composer heading.
-///
-/// A running lane's heading describes live work, so it follows the active
-/// claim renewal instead of a possibly old transcript card. Quiet, queued, and
-/// vacant lanes keep the last authored activity the resident actually
-/// captured.
-#[must_use]
-pub fn composer_activity_age(
-    status: LaneStatus,
-    activity_authored: Option<i64>,
-    standing: &Standing,
-) -> Option<i64> {
-    match status {
-        LaneStatus::Running => standing
-            .renewed_at
-            .or(standing.held_since)
-            .or(activity_authored),
-        LaneStatus::Queued | LaneStatus::RunningStale | LaneStatus::Bound | LaneStatus::Unbound => {
-            activity_authored
-        }
-    }
 }
 
 /// The task a lane currently holds, or none.
