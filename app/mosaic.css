@@ -104,6 +104,26 @@
 }
 .mosaic-message-card footer button { margin-left: auto; }
 
+.mosaic-compaction-card {
+  justify-items: center;
+  border-left-width: 1px;
+  border-color: color-mix(in srgb, var(--muted) 38%, var(--line));
+  border-right: 1px solid color-mix(in srgb, var(--muted) 38%, var(--line));
+  background: color-mix(in srgb, var(--panel) 74%, var(--mosaic-card));
+  text-align: center;
+}
+.mosaic-compaction-card .message-body {
+  width: 100%;
+  color: var(--muted);
+  font-weight: 700;
+}
+.mosaic-compaction-card .message-body > :first-child { margin-top: 0; }
+.mosaic-compaction-card .message-body > :last-child { margin-bottom: 0; }
+.mosaic-compaction-card footer {
+  justify-content: center;
+  width: 100%;
+}
+
 .message-attachments { display: flex; flex-wrap: wrap; gap: 7px; }
 .message-attachments img {
   width: 72px;

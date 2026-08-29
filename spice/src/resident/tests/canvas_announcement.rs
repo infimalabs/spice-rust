@@ -414,9 +414,14 @@ fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result()
                     media: Vec::new(),
                     locus,
                 }),
+                listen::Event::Compaction(listen::Compaction {
+                    summary: Some("Pre-compaction transcript summarized".to_owned()),
+                    locus,
+                }),
             ],
         },
     };
+    seed_capture_residency(&bus, test_uuid(4), record.lane, record.occupant, &root);
     let mut seats = Seats::new();
     seats
         .seat(
@@ -444,7 +449,7 @@ fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result()
         CaptureViews::new(&mut previews, &mut diagnostics),
     )
     .expect("current capture projects");
-    assert_tool_media_and_prose_activity(&mut updates, &record, &media);
+    assert_tool_media_prose_and_compaction_activity(&mut updates, &record, &media);
     assert_stale_capture_ignored(
         &bus,
         &mut seats,
@@ -589,6 +594,48 @@ fn taste_record(
     }
 }
 
+fn seed_capture_residency(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    worktree: &std::path::Path,
+) {
+    let worktree = worktree
+        .canonicalize()
+        .expect("fixture worktree canonicalizes")
+        .to_string_lossy()
+        .into_owned();
+    let at = wire::Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+    let origin = format!("resident:{epoch}")
+        .parse::<wire::Origin>()
+        .expect("fixture origin");
+    let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::CommandDoor);
+    let resident = write
+        .fact(wire::body::UpSeated { epoch }, FactCause::Root)
+        .expect("resident fact");
+    write.residency_head(resident, move |_| wire::ResidencyHead {
+        epoch,
+        state: wire::ResidentState::Seated,
+        topology_revision: 1,
+        lanes: vec![wire::LaneResidency {
+            lane,
+            lineage_id: lane,
+            name: None,
+            worktree,
+            life: "drive".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            occupant: Some(occupant),
+            lineage: vec![occupant],
+            capabilities: vec![test_uuid(9)],
+            session: None,
+            disposition: "occupied".to_owned(),
+        }],
+        subscriptions: Vec::new(),
+    });
+    bus.commit(write).expect("residency seeds");
+}
+
 fn taste_bag(name: &str, trigger: &str, message: &str) -> taste::Bag {
     taste::Bag::new(vec![
         taste::Taste::new(name.parse().expect("taste name"), [trigger], message)
@@ -637,7 +684,7 @@ fn assert_direct_taste_reminder(bus: &Bus, paths: &RuntimePaths, lane: Canonical
     );
 }
 
-fn assert_tool_media_and_prose_activity(
+fn assert_tool_media_prose_and_compaction_activity(
     updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
     record: &lane::capture::CaptureRecord,
     media: &wire::Media,
@@ -687,6 +734,20 @@ fn assert_tool_media_and_prose_activity(
             offset: 120,
             length: 48,
             event: 3,
+        }
+    );
+    let compaction = updates.try_recv().expect("compaction publishes once");
+    assert_eq!(compaction.lane, record.lane);
+    assert_eq!(compaction.author, record.occupant);
+    assert_eq!(compaction.activity, wire::AgentActivityKind::Compaction);
+    assert_eq!(compaction.text, "Pre-compaction transcript summarized");
+    assert_eq!(
+        compaction.locus,
+        wire::MessageLocus {
+            member: 4,
+            offset: 120,
+            length: 48,
+            event: 4,
         }
     );
     assert!(matches!(

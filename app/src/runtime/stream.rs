@@ -373,6 +373,7 @@ impl CanvasRuntime {
         let (class, title) = match message.activity {
             AgentActivityKind::Prose => ("prose", "assistant"),
             AgentActivityKind::Tool => ("tool", "tool"),
+            AgentActivityKind::Compaction => ("compaction", "compaction"),
         };
         let activity_changed = self.push_activity(LaneActivity {
             lane: message.lane,
@@ -384,7 +385,7 @@ impl CanvasRuntime {
                 locus: message.locus,
             },
         });
-        if !message.activity.is_prose() && message.media.is_empty() {
+        if !visible_message_card(message) {
             return activity_changed;
         }
         if self.message_limit == Some(0) {
@@ -428,7 +429,7 @@ impl CanvasRuntime {
                 activities.insert(0, message);
                 retain_first_for_lane(&mut activities, message.lane, limit, |row| row.lane);
             }
-            if (message.activity.is_prose() || !message.media.is_empty())
+            if visible_message_card(message)
                 && !messages.iter().any(|existing| {
                     existing.lane == message.lane && existing.locus == message.locus
                 })
@@ -511,6 +512,7 @@ impl LaneActivity {
         let (class, title) = match message.activity {
             AgentActivityKind::Prose => ("prose", "assistant"),
             AgentActivityKind::Tool => ("tool", "tool"),
+            AgentActivityKind::Compaction => ("compaction", "compaction"),
         };
         self.lane == message.lane
             && self.class == class
@@ -522,6 +524,13 @@ impl LaneActivity {
                     locus: message.locus,
                 })
     }
+}
+
+fn visible_message_card(message: &AgentMessage) -> bool {
+    matches!(
+        message.activity,
+        AgentActivityKind::Prose | AgentActivityKind::Compaction
+    ) || !message.media.is_empty()
 }
 
 /// Keep the first bounded rows for one lane without evicting sibling-lane history.

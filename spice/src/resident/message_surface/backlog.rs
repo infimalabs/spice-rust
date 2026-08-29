@@ -203,6 +203,7 @@ fn visible_cards(scan: &listen::Scan) -> usize {
         .flatten()
         .filter(|event| match &event.event {
             listen::Event::Prose(prose) => prose.role == listen::ProseRole::Assistant,
+            listen::Event::Compaction(_) => true,
             listen::Event::Tool(tool) => match &tool.moment {
                 listen::ToolMoment::Result(outcome) => !outcome.media.is_empty(),
                 listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => false,

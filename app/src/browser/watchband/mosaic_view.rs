@@ -42,6 +42,17 @@ impl ActivityCard {
                 .expect("an admitted pending directive serializes for measurement identity"),
         }
     }
+
+    fn base_span(&self, geometry: &crate::mosaic::Geometry) -> usize {
+        match self {
+            Self::Agent { message, .. }
+                if message.activity == wire::AgentActivityKind::Compaction =>
+            {
+                crate::mosaic::TRACK_COUNT
+            }
+            Self::Agent { .. } | Self::Directive { .. } => geometry.base_span,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -705,12 +716,21 @@ fn measure_element(
     }
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
     let mut heights = Vec::with_capacity(3);
-    let candidates = crate::mosaic::span_candidates(&geometry, |span| {
+    let mut measure = |span: usize| {
         let _ = element.set_attribute("data-measure-span", &span.to_string());
         let height = element.offset_height();
         heights.push(height);
         f64::from(height)
-    });
+    };
+    let candidates = if activity.base_span(&geometry) == crate::mosaic::TRACK_COUNT {
+        let height = measure(crate::mosaic::TRACK_COUNT);
+        vec![crate::mosaic::Candidate {
+            span: crate::mosaic::TRACK_COUNT,
+            rows: crate::mosaic::rows_for(height, geometry.gap, geometry.module),
+        }]
+    } else {
+        crate::mosaic::span_candidates(&geometry, measure)
+    };
     let latched = latched_span
         .filter(|span| candidates.iter().all(|candidate| candidate.span != *span))
         .map(|span| {
@@ -879,7 +899,7 @@ fn render_activity_cards(
                 (Some((_plane, entry)), Some(measurement)) => {
                     CardLayout::placed(entry.card.creation_index, &entry.card, measurement)
                 }
-                _ => CardLayout::measuring(order, geometry.base_span),
+                _ => CardLayout::measuring(order, activity.base_span(geometry)),
             };
             let quote_order = u64::try_from(layout.measurement_index)
                 .expect("Mosaic creation index fits the quote ordering field");

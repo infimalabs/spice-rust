@@ -41,6 +41,8 @@ pub enum AgentActivityKind {
     Prose,
     /// A tool call, update, or result rendered in the lane status strip.
     Tool,
+    /// Context compaction boundary rendered as a full-width stream divider.
+    Compaction,
 }
 
 impl AgentActivityKind {

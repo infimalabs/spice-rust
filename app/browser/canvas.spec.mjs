@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -501,6 +501,28 @@ async function assertMosaicComposer(page, fixture, seeded) {
     entirelyQuotedMessage,
     latestPrimaryProse: seeded.quoteProse,
   });
+
+  await writeFile(join(seeded.teamWorktrees[0], ".spice-compaction-trigger"), "");
+  const divider = team.locator(
+    `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
+  ).filter({ hasText: "Context compacted" });
+  await divider.waitFor({ timeout: 10_000 });
+  await waitForPage(
+    page,
+    "compaction divider commits as one full-width message-stream card",
+    TRANSITION_MS,
+    (lane) => {
+      const card = document.querySelector(
+        `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${lane}"]`,
+      );
+      return card?.dataset.layoutPhase === "committed"
+        && card.dataset.span === "12"
+        && card.dataset.measureSpan === "12"
+        && card.querySelector(".message-key")?.textContent?.trim() === "compaction"
+        && card.querySelectorAll(".message-actions button").length === 0;
+    },
+    seeded.lane,
+  );
 
   await activity
     .filter({ hasText: "browser direction survives streaming" })

@@ -4,6 +4,8 @@ use super::*;
 
 const CODEX_PROSE: &[u8] = br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
 "#;
+const CODEX_COMPACTION: &[u8] = br#"{"type":"compacted"}
+"#;
 const CODEX_APPEND: &[u8] = br#"{"type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
 "#;
 
@@ -20,6 +22,8 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
         .expect("the backlog tape opens");
     tape.tee(CODEX_PROSE).expect("durable prose is captured");
+    tape.tee(CODEX_COMPACTION)
+        .expect("durable compaction is captured");
 
     for generation in 0..2 {
         let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
@@ -64,10 +68,14 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
             panic!("expected message snapshot")
         };
         assert_eq!(*limit, 256, "a missing sibling tape is not zero capacity");
-        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].lane, lane);
         assert_eq!(messages[0].author, author);
         assert_eq!(messages[0].text, "durable restart backlog");
+        assert_eq!(messages[1].lane, lane);
+        assert_eq!(messages[1].author, author);
+        assert_eq!(messages[1].activity, wire::AgentActivityKind::Compaction);
+        assert_eq!(messages[1].text, "Context compacted");
         drop(source);
     }
 

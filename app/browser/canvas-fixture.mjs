@@ -28,6 +28,7 @@ import {
 } from "./canvas-build.mjs";
 import {
   TOOL_ACTIVITY_TEXT,
+  compactionActivityRecord,
   sessionRecord,
   toolActivityRecord,
   toolResultRecord,
@@ -280,6 +281,10 @@ export async function configureFixture(
     "  if [ -f .spice-prose-trigger ]; then",
     "    rm -f .spice-prose-trigger",
     `    printf '%s\\n' '${triggeredActivityRecord}'`,
+    "  fi",
+    "  if [ -f .spice-compaction-trigger ]; then",
+    "    rm -f .spice-compaction-trigger",
+    `    printf '%s\\n' '${compactionActivityRecord}'`,
     "  fi",
     "  sleep 1",
     "done",

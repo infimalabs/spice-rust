@@ -132,6 +132,22 @@ pub(super) fn render_agent_message_card(
         "tape {}:{}+{}#{}",
         message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
     );
+    let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
+    let card_kind = if is_compaction {
+        "compaction"
+    } else {
+        "agent-message"
+    };
+    let activity = match message.activity {
+        wire::AgentActivityKind::Prose => "prose",
+        wire::AgentActivityKind::Tool => "tool",
+        wire::AgentActivityKind::Compaction => "compaction",
+    };
+    let card_actions = if is_compaction {
+        Html::default()
+    } else {
+        view::chrome::render_card_actions(&message.text, &correspondent)
+    };
     let reported_tasks = watchband::reported_tasks(&message.text);
     let unlinked_media = message
         .media
@@ -146,12 +162,21 @@ pub(super) fn render_agent_message_card(
         <article
             key={source_id.clone()}
             id={source_id.clone()}
-            class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
-            aria-label={format!("Agent message from {producer}")}
-            data-card-kind="agent-message"
+            class={classes!(
+                "mosaic-message-card",
+                is_compaction.then_some("mosaic-compaction-card"),
+                layout.lifecycle.as_str(),
+            )}
+            aria-label={if is_compaction {
+                format!("Compaction divider from {producer}")
+            } else {
+                format!("Agent message from {producer}")
+            }}
+            data-card-kind={card_kind}
             data-mosaic-card-key={source_id}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
+            data-agent-activity={activity}
             data-producer-target-id={quote_lane.to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
@@ -183,7 +208,7 @@ pub(super) fn render_agent_message_card(
             }
             <footer class="message-meta">
                 <span class="message-classifiers">
-                    <span class="message-key">{"agent"}</span>
+                    <span class="message-key">{if is_compaction { "compaction" } else { "agent" }}</span>
                     {for reported_tasks.into_iter().map(|task| {
                         let handle = task.to_string();
                         html! {
@@ -198,7 +223,7 @@ pub(super) fn render_agent_message_card(
                 </span>
                 <span class="message-age" title={locus.clone()}>{locus}</span>
                 <span class="message-author">{producer}</span>
-                {view::chrome::render_card_actions(&message.text, &correspondent)}
+                {card_actions}
             </footer>
         </article>
     }
