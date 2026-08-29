@@ -303,26 +303,13 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
     }
 }
 
-/// A command whose answer contends with the host declares the wider bound.
-///
-/// Every other command keeps the bound an answer composed from held state
-/// needs, so an unanswering peer is still detected as promptly as before.
+/// Every current command declares the widened resident answer bound.
 #[test]
-fn the_answer_bound_registry_widens_exactly_the_non_held_state_commands() {
-    let contended = [
-        CommandKind::LaneSeat,
-        CommandKind::LaneState,
-        CommandKind::ReleasePublish,
-        CommandKind::UpChange,
-    ];
+fn the_answer_bound_registry_declares_the_current_resident_answer_bound() {
     for kind in CommandKind::ALL {
         assert_eq!(
             crate::cli::answer_bound(*kind),
-            if contended.contains(kind) {
-                Duration::from_secs(20)
-            } else {
-                Duration::from_secs(3)
-            },
+            Duration::from_secs(20),
             "{kind} declares the wrong answer bound",
         );
     }
