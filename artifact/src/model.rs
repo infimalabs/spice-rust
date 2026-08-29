@@ -49,6 +49,7 @@ impl MediaType {
     pub const TEXT_TSV: &'static str = "text/tab-separated-values";
     pub const IMAGE_PNG: &'static str = "image/png";
     pub const IMAGE_JPEG: &'static str = "image/jpeg";
+    pub const IMAGE_GIF: &'static str = "image/gif";
     pub const IMAGE_WEBP: &'static str = "image/webp";
     pub const APPLICATION_PDF: &'static str = "application/pdf";
 
@@ -56,6 +57,7 @@ impl MediaType {
         Self::APPLICATION_JSON,
         Self::APPLICATION_PDF,
         Self::IMAGE_JPEG,
+        Self::IMAGE_GIF,
         Self::IMAGE_PNG,
         Self::IMAGE_WEBP,
         Self::TEXT_CSV,

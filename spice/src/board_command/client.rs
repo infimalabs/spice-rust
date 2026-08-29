@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine as _;
 
 /// Execute one generated board-family CLI leaf.
 pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
@@ -786,14 +787,213 @@ pub(crate) fn submit_task_add(
     contract: &Contract,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
-    mutate_from_board(repository, contract, |board| {
+    let steering_origin = match steering_origin_key(body.origin.as_ref()) {
+        Ok(key) => key,
+        Err(outcome) => return outcome,
+    };
+    let outcome = mutate_from_board(repository, contract, |board| {
         let stamp = allocate_inception(&board, jiff::Timestamp::now().as_millisecond());
         Ok((
             CommandKind::TaskAdd,
             vec![Witness::Absence { task: stamp }],
             serde_json::to_value(body).expect("typed intent encodes"),
         ))
+    });
+    attach_steering_origin_artifacts(repository, steering_origin.as_ref(), outcome)
+}
+
+fn attach_steering_origin_artifacts(
+    repository: &Repository,
+    origin: Option<&steer::Key>,
+    outcome: Outcome<CommandAnswer>,
+) -> Outcome<CommandAnswer> {
+    let Some(key) = origin else {
+        return outcome;
+    };
+    let task = match &outcome {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Task(answer),
+            ..
+        }) => match answer.task.born() {
+            Ok(task) => task,
+            Err(error) => {
+                return protocol_fault(
+                    "task::answer-handle-invalid",
+                    &format!("task add returned an invalid task handle: {error}"),
+                );
+            }
+        },
+        _ => return outcome,
+    };
+    let attachments = match steering_attachments(repository, key) {
+        Ok(attachments) => attachments,
+        Err(failure) => return failure,
+    };
+    if attachments.is_empty() {
+        return outcome;
+    }
+    let created_at = match current_instant() {
+        Ok(at) => at,
+        Err(failure) => return failure,
+    };
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return repository_state_failure(&error),
+    };
+    let store = artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
+    for (index, attachment) in attachments.iter().enumerate() {
+        let bytes = match decode_attachment(attachment) {
+            Ok(bytes) => bytes,
+            Err(failure) => return failure,
+        };
+        let name = steering_attachment_name(key, index, attachment);
+        if let Err(error) = store.add_bytes(artifact::AddBytesRequest {
+            task: &task,
+            bytes: &bytes,
+            name: &name,
+            media_type: Some(&attachment.content_type),
+            retention: artifact::Retention::Permanent,
+            created_at,
+        }) {
+            return artifact_attachment_failure(error);
+        }
+    }
+    outcome
+}
+
+fn steering_origin_key(
+    origin: Option<&wire::Origin>,
+) -> Result<Option<steer::Key>, Outcome<CommandAnswer>> {
+    let Some(origin) = origin else {
+        return Ok(None);
+    };
+    let text = origin.as_str();
+    let key = text
+        .strip_prefix("ack:")
+        .or_else(|| text.strip_prefix("steer:"));
+    key.map(|key| {
+        key.parse::<steer::Key>().map(Some).map_err(|error| {
+            refusal(
+                "task::steering-origin-invalid",
+                Some(text.to_owned()),
+                &error.to_string(),
+            )
+        })
     })
+    .unwrap_or(Ok(None))
+}
+
+fn steering_attachments(
+    repository: &Repository,
+    key: &steer::Key,
+) -> Result<Vec<wire::body::DirectiveAttachment>, Outcome<CommandAnswer>> {
+    let state = repository
+        .admit_state()
+        .map_err(|error| repository_state_failure(&error))?;
+    let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
+        store_fault(
+            "task::steering-journal-unreadable",
+            &format!("cannot inspect steering origin {key}: {error}"),
+        )
+    })?;
+    let snapshot = reader.fact_snapshot().map_err(|error| {
+        store_fault(
+            "task::steering-snapshot-unreadable",
+            &format!("cannot inspect steering origin {key}: {error}"),
+        )
+    })?;
+    let ledger = steer::Ledger::from_snapshot(&snapshot).map_err(|error| {
+        store_fault(
+            "task::steering-ledger-invalid",
+            &format!("cannot inspect steering origin {key}: {error}"),
+        )
+    })?;
+    Ok(ledger
+        .directives()
+        .into_iter()
+        .find(|directive| directive.key() == key)
+        .map_or_else(Vec::new, |directive| directive.attachments().to_vec()))
+}
+
+fn decode_attachment(
+    attachment: &wire::body::DirectiveAttachment,
+) -> Result<Vec<u8>, Outcome<CommandAnswer>> {
+    let prefix = format!("data:{};base64,", attachment.content_type);
+    let Some(payload) = attachment.data_url.strip_prefix(&prefix) else {
+        return Err(protocol_fault(
+            "task::steering-attachment-invalid",
+            &format!(
+                "{} does not carry its declared data URL prefix",
+                attachment.name
+            ),
+        ));
+    };
+    base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|error| {
+            protocol_fault(
+                "task::steering-attachment-invalid",
+                &format!("{} does not decode as base64: {error}", attachment.name),
+            )
+        })
+}
+
+fn steering_attachment_name(
+    key: &steer::Key,
+    index: usize,
+    attachment: &wire::body::DirectiveAttachment,
+) -> String {
+    if attachment.name.is_empty() {
+        format!(
+            "steering-{key}-attachment-{}.{}",
+            index + 1,
+            attachment_extension(&attachment.content_type)
+        )
+    } else {
+        attachment.name.clone()
+    }
+}
+
+fn attachment_extension(content_type: &str) -> &'static str {
+    match content_type {
+        artifact::MediaType::IMAGE_JPEG => "jpg",
+        artifact::MediaType::IMAGE_GIF => "gif",
+        artifact::MediaType::IMAGE_WEBP => "webp",
+        _ => "png",
+    }
+}
+
+fn artifact_attachment_failure(error: artifact::Error) -> Outcome<CommandAnswer> {
+    match error.class() {
+        artifact::ErrorClass::Refusal => refusal(
+            "artifact::operation-refused",
+            Some(error.to_string()),
+            "correct the steering attachment artifact and retry",
+        ),
+        artifact::ErrorClass::Corrupt => store_fault("artifact::store-corrupt", &error.to_string()),
+        artifact::ErrorClass::Environment => {
+            environment_fault("artifact::store-unavailable", &error.to_string())
+        }
+    }
+}
+
+fn repository_state_failure(error: &spice::repository::StateError) -> Outcome<CommandAnswer> {
+    match error {
+        spice::repository::StateError::Filesystem { .. } => {
+            environment_fault("repository::state-path-unavailable", &error.to_string())
+        }
+        spice::repository::StateError::Linked { .. }
+        | spice::repository::StateError::NotDirectory { .. }
+        | spice::repository::StateError::NotRegularFile { .. }
+        | spice::repository::StateError::RetiredState { .. } => refusal(
+            "repository::state-path-refused",
+            Some(error.to_string()),
+            &format!(
+                "follow the named archive/remove action or repair the malformed state component at {}",
+                error.path().display()
+            ),
+        ),
+    }
 }
 
 pub(crate) fn submit_taste_proposal(

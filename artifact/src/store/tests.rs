@@ -8,8 +8,8 @@ use std::thread;
 use wire::{Instant, TaskHandle, TaskStamp};
 
 use super::{
-    AddRequest, BackupFile, BackupImage, Error, ErrorClass, MediaType, Retention, Store,
-    object_dir, payload_path,
+    AddBytesRequest, AddRequest, BackupFile, BackupImage, Error, ErrorClass, MediaType, Retention,
+    Store, object_dir, payload_path,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -121,6 +121,31 @@ fn text_and_binary_artifacts_round_trip_with_stable_metadata() {
     assert_eq!(
         fixture.store.capture().expect("capture task set").tasks(),
         std::slice::from_ref(&task)
+    );
+}
+
+#[test]
+fn caller_owned_bytes_publish_without_a_source_file() {
+    let fixture = Fixture::new();
+    let task = task("ARTIFACT-bytes");
+    let artifact = fixture
+        .store
+        .add_bytes(AddBytesRequest {
+            task: &task,
+            bytes: b"\x89PNG\r\n\x1a\n",
+            name: "operator-capture.png",
+            media_type: Some(MediaType::IMAGE_PNG),
+            retention: Retention::Permanent,
+            created_at: instant("2030-01-01T00:00:00.000Z"),
+        })
+        .expect("publish caller-owned bytes");
+
+    assert_eq!(artifact.id, "A1");
+    assert_eq!(artifact.name, "operator-capture.png");
+    assert_eq!(artifact.media_type.as_str(), MediaType::IMAGE_PNG);
+    assert_eq!(
+        fixture.store.show(&task, "A1").expect("show bytes").1,
+        b"\x89PNG\r\n\x1a\n"
     );
 }
 

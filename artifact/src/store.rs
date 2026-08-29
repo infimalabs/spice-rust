@@ -38,6 +38,16 @@ pub struct AddRequest<'a> {
     pub created_at: Instant,
 }
 
+/// Inputs for one task artifact publication from already admitted bytes.
+pub struct AddBytesRequest<'a> {
+    pub task: &'a TaskStamp,
+    pub bytes: &'a [u8],
+    pub name: &'a str,
+    pub media_type: Option<&'a str>,
+    pub retention: Retention,
+    pub created_at: Instant,
+}
+
 /// One repository-common task artifact store and its serialization lock.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Store {
@@ -65,6 +75,11 @@ impl Store {
         self.add_with_hook(request, || Ok(()))
     }
 
+    /// Publish caller-owned bytes and cite them from the exact task manifest.
+    pub fn add_bytes(&self, request: AddBytesRequest<'_>) -> Result<Artifact, Error> {
+        self.add_bytes_with_hook(request, || Ok(()))
+    }
+
     fn add_with_hook<F>(
         &self,
         request: AddRequest<'_>,
@@ -73,8 +88,6 @@ impl Store {
     where
         F: FnOnce() -> Result<(), Error>,
     {
-        let _possession = self.acquire()?;
-        refuse_legacy_layout(&self.root)?;
         let bytes = read_source(request.source)?;
         let raw_name = request.name.map(str::to_owned).unwrap_or_else(|| {
             request
@@ -84,17 +97,50 @@ impl Store {
                 .unwrap_or("artifact")
                 .to_owned()
         });
-        let name = artifact_name(&raw_name);
+        self.add_bytes_with_hook(
+            AddBytesRequest {
+                task: request.task,
+                bytes: &bytes,
+                name: &raw_name,
+                media_type: request.media_type,
+                retention: request.retention,
+                created_at: request.created_at,
+            },
+            before_manifest,
+        )
+    }
+
+    fn add_bytes_with_hook<F>(
+        &self,
+        request: AddBytesRequest<'_>,
+        before_manifest: F,
+    ) -> Result<Artifact, Error>
+    where
+        F: FnOnce() -> Result<(), Error>,
+    {
+        let _possession = self.acquire()?;
+        refuse_legacy_layout(&self.root)?;
+        if request.bytes.len() > MAX_ARTIFACT_BYTES {
+            return Err(Error::refused(
+                "artifact size",
+                format!(
+                    "{} is {} bytes; maximum is {MAX_ARTIFACT_BYTES}",
+                    request.name,
+                    request.bytes.len()
+                ),
+            ));
+        }
+        let name = artifact_name(request.name);
         let media_type = match request.media_type {
             Some(value) => value
                 .parse::<MediaType>()
                 .map_err(|error| Error::refused("artifact media type", error.to_string()))?,
-            None => infer_media_type(&name, &bytes)?,
+            None => infer_media_type(&name, request.bytes)?,
         };
-        if media_type.is_text() && std::str::from_utf8(&bytes).is_err() {
+        if media_type.is_text() && std::str::from_utf8(request.bytes).is_err() {
             return Err(Error::refused(
                 "artifact text encoding",
-                format!("{} is not valid UTF-8", request.source.display()),
+                format!("{} is not valid UTF-8", request.name),
             ));
         }
 
@@ -112,10 +158,10 @@ impl Store {
             ));
         }
 
-        let digest = Digest::compute(Domain::TaskArtifactPayload, &bytes);
+        let digest = Digest::compute(Domain::TaskArtifactPayload, request.bytes);
         let object_dir = object_dir(&task_dir, &digest);
         create_private_directories(&object_dir)?;
-        publish_object(&object_dir, &digest, &bytes)?;
+        publish_object(&object_dir, &digest, request.bytes)?;
         before_manifest()?;
 
         let artifact = Artifact {
@@ -123,7 +169,7 @@ impl Store {
             name,
             digest,
             media_type,
-            bytes: count(bytes.len(), "artifact byte")?,
+            bytes: count(request.bytes.len(), "artifact byte")?,
             created_at: request.created_at,
             source: SOURCE.to_owned(),
             retention: request.retention,
@@ -632,6 +678,7 @@ fn infer_media_type(name: &str, bytes: &[u8]) -> Result<MediaType, Error> {
         Some("tsv") => Some(MediaType::TEXT_TSV),
         Some("png") => Some(MediaType::IMAGE_PNG),
         Some("jpg") | Some("jpeg") => Some(MediaType::IMAGE_JPEG),
+        Some("gif") => Some(MediaType::IMAGE_GIF),
         Some("webp") => Some(MediaType::IMAGE_WEBP),
         Some("pdf") => Some(MediaType::APPLICATION_PDF),
         _ if std::str::from_utf8(bytes).is_ok() => Some(MediaType::TEXT_PLAIN),
