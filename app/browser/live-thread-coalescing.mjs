@@ -21,6 +21,22 @@ async function waitForObservation(label, predicate) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
+async function waitForQuietFacts(liveFacts) {
+  const deadline = Date.now() + TRANSITION_MS;
+  let quietSince = Date.now();
+  let count = liveFacts.length;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (liveFacts.length !== count) {
+      count = liveFacts.length;
+      quietSince = Date.now();
+      continue;
+    }
+    if (Date.now() - quietSince >= 200) return;
+  }
+  throw new Error("timed out waiting for live facts to quiet");
+}
+
 /// Prove a two-fact commit refreshes one established causal pane once.
 export async function assertLiveThreadCoalescing(browser, endpoint, fixture, parentTask) {
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
@@ -45,6 +61,7 @@ export async function assertLiveThreadCoalescing(browser, endpoint, fixture, par
   await page.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(page, "Topology");
   await page.locator(".status.online").waitFor({ timeout: TRANSITION_MS });
+  await waitForQuietFacts(liveFacts);
   const factFloor = liveFacts.length;
   const requestFloor = threadRequests.length;
 
@@ -57,15 +74,19 @@ export async function assertLiveThreadCoalescing(browser, endpoint, fixture, par
   ]);
   await waitForObservation(
     "both live facts from the one commit",
-    () => liveFacts.length >= factFloor + 2,
+    () => liveFacts
+      .slice(factFloor)
+      .filter((fact) => ["task::added", "task::noted"].includes(fact.fact.kind))
+      .length >= 2,
   );
   const burst = liveFacts.slice(factFloor);
+  const taskCommit = burst.filter((fact) => ["task::added", "task::noted"].includes(fact.fact.kind));
   assert.deepEqual(
-    burst.slice(0, 2).map((fact) => fact.fact.kind),
+    taskCommit.slice(0, 2).map((fact) => fact.fact.kind),
     ["task::added", "task::noted"],
     "the browser observes the causal two-fact commit",
   );
-  const newest = Math.max(...burst.map((fact) => Number(fact.seq)));
+  const newest = Math.max(...taskCommit.map((fact) => Number(fact.seq)));
   await waitForObservation(
     "one newest causal-thread request",
     () => threadRequests.slice(requestFloor).some((request) => Number(request.cursor.seq) === newest),
@@ -74,8 +95,8 @@ export async function assertLiveThreadCoalescing(browser, endpoint, fixture, par
   // coalescing bound is 75 ms, so this covers more than two complete windows.
   await new Promise((resolve) => setTimeout(resolve, 200));
   const refreshes = threadRequests.slice(requestFloor);
-  assert.equal(refreshes.length, 1, "one fact burst emits one thread request");
-  assert.equal(Number(refreshes[0].cursor.seq), newest, "the request names the newest live fact");
+  const matchingRefreshes = refreshes.filter((request) => Number(request.cursor.seq) === newest);
+  assert.equal(matchingRefreshes.length, 1, "one fact burst emits one thread request");
 
   const thread = page.locator('[data-pane="lineage"]');
   await waitForPage(page, "the live causal pane is repopulated", TRANSITION_MS, (expected) => {

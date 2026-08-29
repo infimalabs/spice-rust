@@ -399,49 +399,7 @@ fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_envi
         "\"${GIT_DIR-unset}\" \"${PASSTHROUGH-unset}\" \"$PWD\" >> \"$2\"",
     );
     let log_text = log.to_str().expect("fixture log path is UTF-8");
-    let commands = parsed_commands(&[
-        row(
-            "all",
-            &[
-                "/bin/sh",
-                "-c",
-                script,
-                "configured-fixture",
-                "all",
-                log_text,
-            ],
-            &[],
-        ),
-        row(
-            "source",
-            &[
-                "/bin/sh",
-                "-c",
-                script,
-                "configured-fixture",
-                "source",
-                log_text,
-            ],
-            &["src/**"],
-        ),
-        row(
-            "docs",
-            &[
-                "/bin/sh",
-                "-c",
-                script,
-                "configured-fixture",
-                "docs",
-                log_text,
-            ],
-            &["docs/**"],
-        ),
-        row(
-            "skipped",
-            &["/bin/sh", "-c", "exit 91", "configured-fixture"],
-            &["assets/**"],
-        ),
-    ]);
+    let commands = ordered_environment_commands(script, log_text);
     let staged = vec![
         "docs/readme.md".to_owned(),
         "src/lib.rs".to_owned(),
@@ -487,23 +445,11 @@ fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_envi
         "every enabled boundary and the terminal verify"
     );
 
-    let lines = fs::read_to_string(log)
-        .expect("read configured command log")
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
+    let lines = configured_command_log(log);
     let canonical_root = fs::canonicalize(&scratch.root).expect("canonical scratch root");
     assert_eq!(lines.len(), 3);
     for (line, label) in lines.iter().zip(["all", "source", "docs"]) {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        assert_eq!(fields[0], label);
-        assert_eq!(fields[1], source.to_string());
-        assert_eq!(fields[3], "unset", "Git-local environment leaked: {line}");
-        assert_eq!(fields[4], "retained");
-        assert_eq!(
-            fields[5],
-            canonical_root.to_str().expect("scratch is UTF-8")
-        );
+        assert_configured_log_line(line, label, &source, &canonical_root);
     }
     let all_paths = json(&staged);
     let source_paths = json(&["src/lib.rs"]);
@@ -511,6 +457,72 @@ fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_envi
     assert_eq!(lines[0].split('\t').nth(2), Some(all_paths.as_str()));
     assert_eq!(lines[1].split('\t').nth(2), Some(source_paths.as_str()),);
     assert_eq!(lines[2].split('\t').nth(2), Some(docs_paths.as_str()),);
+}
+
+fn ordered_environment_commands(script: &str, log_text: &str) -> Vec<PreCommitStep> {
+    parsed_commands(&[
+        row(
+            "all",
+            &[
+                "/bin/sh",
+                "-c",
+                script,
+                "configured-fixture",
+                "all",
+                log_text,
+            ],
+            &[],
+        ),
+        row(
+            "source",
+            &[
+                "/bin/sh",
+                "-c",
+                script,
+                "configured-fixture",
+                "source",
+                log_text,
+            ],
+            &["src/**"],
+        ),
+        row(
+            "docs",
+            &[
+                "/bin/sh",
+                "-c",
+                script,
+                "configured-fixture",
+                "docs",
+                log_text,
+            ],
+            &["docs/**"],
+        ),
+        row(
+            "skipped",
+            &["/bin/sh", "-c", "exit 91", "configured-fixture"],
+            &["assets/**"],
+        ),
+    ])
+}
+
+fn configured_command_log(log: PathBuf) -> Vec<String> {
+    fs::read_to_string(log)
+        .expect("read configured command log")
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn assert_configured_log_line(line: &str, label: &str, source: &Digest, canonical_root: &Path) {
+    let fields = line.split('\t').collect::<Vec<_>>();
+    assert_eq!(fields[0], label);
+    assert_eq!(fields[1], source.to_string());
+    assert_eq!(fields[3], "unset", "Git-local environment leaked: {line}");
+    assert_eq!(fields[4], "retained");
+    assert_eq!(
+        fields[5],
+        canonical_root.to_str().expect("scratch is UTF-8")
+    );
 }
 
 #[test]

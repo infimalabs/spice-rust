@@ -547,6 +547,7 @@ fn captured_activity_without_a_vendor_timestamp_still_reaches_canvas() {
             .parse::<wire::Instant>()
             .expect("synthetic authored instant parses")
     );
+    assert!(message.authored_synthetic);
     assert!(
         diagnostics.is_empty(),
         "missing timestamp is not a Canvas publication diagnostic: {}",

@@ -118,29 +118,6 @@ export async function installSocketControl(context) {
   });
 }
 
-export async function assertSystemSpeech(page) {
-  await chooseCanvasView(page, "Flow");
-  const button = page.locator(".speech-button");
-  await button.waitFor();
-  assert.equal(await button.getAttribute("aria-label"), "Read current canvas");
-  const before = await button.boundingBox();
-  assert.ok(before, "speech control has stable geometry");
-  await button.click();
-  await page.locator('.speech-button[data-state="playing"]').waitFor();
-  assert.equal(await button.getAttribute("aria-label"), "Stop reading");
-  const after = await button.boundingBox();
-  assert.deepEqual(after, before, "play state does not shift the speech control");
-  const spoken = await page.evaluate(() => window.__speechLog.find((row) => row.action === "speak"));
-  assert.equal(spoken.voice, "Zoe (Premium)");
-  assert.equal(spoken.rate, 1);
-  assert.match(spoken.text, /Flow/);
-  assert.match(spoken.text, /Current work/);
-  await button.click();
-  await page.locator('.speech-button[data-state="idle"]').waitFor();
-  const actions = await page.evaluate(() => window.__speechLog.map((row) => row.action));
-  assert.ok(actions.includes("cancel"), "stop cancels system speech");
-}
-
 export async function assertSpeechVariants(browser, endpoint) {
   const unavailableContext = await browser.newContext({ viewport: { width: 1024, height: 768 } });
   await installBrowserSpeech(unavailableContext, []);

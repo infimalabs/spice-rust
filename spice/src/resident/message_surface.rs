@@ -241,7 +241,7 @@ pub(super) fn publish_agent_event(
         ),
         _ => return Ok(()),
     };
-    let authored = parse_agent_message_authored(authored, locus, event)?;
+    let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, event)?;
     wire::media::admit_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
     publisher
@@ -255,6 +255,7 @@ pub(super) fn publish_agent_event(
                 event,
             },
             authored,
+            authored_synthetic,
             activity,
             text,
             media,
@@ -267,12 +268,13 @@ fn parse_agent_message_authored(
     timestamp: Option<&str>,
     locus: listen::Locus,
     event: u32,
-) -> CommandResult<wire::Instant> {
+) -> CommandResult<(wire::Instant, bool)> {
     match timestamp {
         Some(timestamp) => timestamp
             .parse::<wire::Instant>()
+            .map(|authored| (authored, false))
             .map_err(|error| store_fault("canvas::message-authored-invalid", &error.to_string())),
-        None => synthetic_agent_message_authored(locus, event),
+        None => synthetic_agent_message_authored(locus, event).map(|authored| (authored, true)),
     }
 }
 

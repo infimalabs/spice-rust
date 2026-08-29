@@ -384,7 +384,7 @@ pub fn effort_is_zero(usage: &EffortUsage, wall_ms: u64) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneActivity {
     lane: CanonicalUuid,
-    authored: i64,
+    authored: Option<i64>,
     class: &'static str,
     title: String,
     detail: String,
@@ -399,7 +399,7 @@ impl LaneActivity {
     }
 
     #[must_use]
-    pub const fn authored(&self) -> i64 {
+    pub const fn authored(&self) -> Option<i64> {
         self.authored
     }
 

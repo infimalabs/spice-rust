@@ -7,6 +7,7 @@ export const sessionRecord = JSON.stringify({
 });
 
 export const triggeredActivityRecord = JSON.stringify({
+  timestamp: new Date().toISOString(),
   type: "assistant",
   message: {
     type: "message",

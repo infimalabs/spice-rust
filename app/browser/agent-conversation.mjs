@@ -164,6 +164,11 @@ export async function seatAgentTeam(
     await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
       console.locator(".team-detail-card").nth(index + 1));
   }
+  for (const lane of teamLaneIds) {
+    const wake = await reply(fixture, ["lane", "wake", lane]);
+    assert.equal(wake.body.lane, lane, "the fixture wakes each canonical team member");
+    assert.equal(wake.body.to, "occupied", "the fixture starts an agent before prose assertions");
+  }
   if (beforeReload) await beforeReload(console);
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
@@ -183,7 +188,7 @@ export async function seatAgentTeam(
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
   assert.equal(
     await console.locator(".team-detail-card").first().getAttribute("title"),
-    `Claude vendor; model: sonnet; effort: high; thread: ${seated[0].occupant}; `
+    `Claude vendor; model: claude-opus-5; effort: high; thread: ${seated[0].occupant}; `
       + "session: 018f7777-7777-7444-8888-999999999999",
     "the agent card tooltip carries the admitted launch and session identity",
   );
@@ -492,6 +497,7 @@ export async function assertAgentConversation(
     agentName: team.agentName,
     quoteProse: team.quoteProse,
     primaryHeadings: team.primaryHeadings,
+    teamWorktrees,
   };
 }
 
