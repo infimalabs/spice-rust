@@ -620,6 +620,59 @@ fn codex_and_claude_tool_results_preserve_one_admitted_image_per_call() {
 }
 
 #[test]
+fn codex_function_calls_do_not_extract_media_from_argument_text() {
+    let arguments = r#"{"cmd":"printf '%s\n' '![pixel.png](data:image/png;base64,'"}"#;
+    let codex_call = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "exec_command",
+            "arguments": arguments,
+            "call_id": "call-source-text",
+        },
+    }))
+    .expect("Codex function_call fixture encodes");
+    let codex_call =
+        decode(Dialect::Codex, &codex_call, locus(&codex_call)).expect("function_call decodes");
+
+    assert!(matches!(
+        SurfaceEvent::from(&codex_call.events()[0]),
+        SurfaceEvent::Tool {
+            call_id,
+            moment: SurfaceToolMoment::Call { name, arguments: decoded },
+        } if call_id == "call-source-text"
+            && name == "exec_command"
+            && decoded == arguments
+    ));
+}
+
+#[test]
+fn codex_tool_output_ignores_incomplete_markdown_image_literals_in_source_text() {
+    let codex_result = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "function_call_output",
+            "call_id": "call-source-text",
+            "output": concat!(
+                "const expected = \"![pixel.png](data:image/png;base64,\";\n",
+                "assert.match(attachment.data_url, /^data:image\\/png;base64,/);\n",
+            ),
+        },
+    }))
+    .expect("Codex function_call_output fixture encodes");
+    let codex_result = decode(Dialect::Codex, &codex_result, locus(&codex_result))
+        .expect("source text output decodes");
+
+    assert!(matches!(
+        SurfaceEvent::from(&codex_result.events()[0]),
+        SurfaceEvent::Tool {
+            call_id,
+            moment: SurfaceToolMoment::Result { media, .. },
+        } if call_id == "call-source-text" && media.is_empty()
+    ));
+}
+
+#[test]
 fn codex_and_claude_authored_directives_retain_delivered_media_beside_the_text() {
     let name = r"operator](capture)\雪.png";
     let media = wire::Media::from_base64(name, "image/png", "iVBORw0KGgo=")
