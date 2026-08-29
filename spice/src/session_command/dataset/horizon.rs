@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use flate2::read::GzDecoder;
-use listen::{Decoded, Event};
+use listen::{Decoded, Event, RecordDecodeError, ResidueKind};
 use wire::Refusal;
 
 use super::{
@@ -56,10 +56,19 @@ pub(super) fn read_records(
             break;
         }
         line = line.saturating_add(1);
+        let terminated = matches!(buffer.last(), Some(b'\n'));
         while matches!(buffer.last(), Some(b'\n' | b'\r')) {
             buffer.pop();
         }
         if buffer.is_empty() {
+            continue;
+        }
+        if !terminated
+            && let Some((observed, residue)) =
+                live_tail_truncated_residue(source, line, &buffer, dialect)?
+        {
+            dialect = Some(observed);
+            residues.push(residue);
             continue;
         }
         let (observed, row) = decode_row(source, line, &buffer, dialect)?;
@@ -78,6 +87,44 @@ pub(super) fn read_records(
         source.vendor
     };
     Ok((rows, residues, vendor))
+}
+
+fn live_tail_truncated_residue(
+    source: &ResolvedSource,
+    line: u64,
+    buffer: &[u8],
+    dialect: Option<listen::Dialect>,
+) -> Result<Option<(listen::Dialect, Residue)>, Refusal> {
+    if source.thread.is_none() || compressed(&source.path) {
+        return Ok(None);
+    }
+    let Some(expected) = dialect else {
+        return Ok(None);
+    };
+    let locus = listen::Locus::new(line, 0, buffer.len() as u64);
+    let truncated = match listen::decode_record(Some(expected), buffer, locus) {
+        Ok(detected) => match detected.decoded {
+            Decoded::Residue(residue) => matches!(residue.kind, ResidueKind::Truncated),
+            Decoded::Events { .. } => false,
+        },
+        Err(RecordDecodeError::Invalid {
+            kind: ResidueKind::Truncated,
+        }) => true,
+        Err(error) => return Err(record_refusal(&source.path, line, &error)),
+    };
+    Ok(truncated.then(|| {
+        (
+            expected,
+            Residue {
+                source: source.path.display().to_string(),
+                line,
+                kind: "live-tail-truncated".to_owned(),
+                detail: "final live transcript row ended before a complete JSON record".to_owned(),
+                recovery: "retry after the vendor finishes appending the current transcript record"
+                    .to_owned(),
+            },
+        )
+    }))
 }
 
 pub(super) fn transcript_reader(
