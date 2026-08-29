@@ -13,6 +13,13 @@ pub(crate) fn markdown(text: &str) -> Result<Vec<Media>, ResidueKind> {
     unique(media)
 }
 
+fn embedded_markdown(text: &str) -> Vec<Media> {
+    wire::media::parse_markdown(text)
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect()
+}
+
 pub(crate) fn value(value: &Value, default_name: &str) -> Result<Vec<Media>, ResidueKind> {
     let mut media = Vec::new();
     collect(value, default_name, &mut media)?;
@@ -27,7 +34,7 @@ fn collect(value: &Value, default_name: &str, media: &mut Vec<Media>) -> Result<
             }
         }
         Value::String(text) => {
-            media.extend(markdown(text)?);
+            media.extend(embedded_markdown(text));
             if matches!(text.trim_start().chars().next(), Some('[' | '{'))
                 && let Ok(document) = serde_json::from_str::<Value>(text)
             {
