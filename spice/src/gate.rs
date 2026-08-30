@@ -169,6 +169,27 @@ impl PreparedArm<'_> {
         )
     }
 
+    /// Derive one reached focused arm from this preparation's immutable source.
+    ///
+    /// The derived arm shares the selected tree, contract, command-rim
+    /// environment, and state transaction while retaining an independent
+    /// executor and exact authored reach.
+    pub fn derive_reached_arm(
+        &self,
+        selection: &ChangeSelectionReport,
+        gate_id: GateId,
+    ) -> Result<PreparedArm<'static>, RunError> {
+        self.capture
+            .derive_arm_in_state_reached(selection, gate_id)
+            .map(|capture| PreparedArm {
+                capture,
+                gate_id,
+                compiler_environment: self.compiler_environment.clone(),
+                cargo_jobs: self.cargo_jobs,
+            })
+            .map_err(|error| RunError::refusal("gate::capture-refused", error))
+    }
+
     /// Shared state transaction for additional focused captures in this run.
     #[must_use]
     pub fn state_run(&self) -> ::gate::BatteryStateRun {

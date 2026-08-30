@@ -252,6 +252,40 @@ impl SelectedTree {
         self.source.verify(&repository)
     }
 
+    /// Refresh the staged byte seal after a gate-owned Git observation writes
+    /// index cache data without changing staged semantics.
+    ///
+    /// Canonical entries, the exact `HEAD` rename base, and rename lineage are
+    /// independently recaptured and compared before the new seal is accepted.
+    pub(crate) fn refresh_staged_seal(&mut self) -> Result<(), TreeError> {
+        let Some(expected) = self.staged_authority.as_ref() else {
+            return self.verify_source();
+        };
+        let repository = open_repository(&self.repository)?;
+        let before = IndexSeal::capture(&repository)?;
+        let head = head_seal(&repository)?;
+        let scratch = BuildRoot::create()?;
+        let head_commit = head
+            .as_ref()
+            .map(|seal| seal.resolve(&repository, "HEAD", &scratch.workspace))
+            .transpose()?;
+        let index = before.open(&repository, &scratch.workspace)?;
+        let items = index_items(&index)?;
+        let renames = staged_renames(&repository, head_commit, &index)?;
+        let observed = StagedAuthority {
+            entries: items,
+            rename_base: head_commit,
+            renames,
+        };
+        if !expected.differences(&observed).is_empty() {
+            return Err(TreeError::IndexChanged {
+                path: repository.index_path(),
+            });
+        }
+        self.source = SelectionSeal::Index { before, head };
+        Ok(())
+    }
+
     /// Check this source while preserving index movement as a recapture signal.
     ///
     /// Revision and rename-base movement remains an error. Only an index seal

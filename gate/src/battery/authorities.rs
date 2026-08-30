@@ -1,17 +1,17 @@
 //! One capture of everything a battery run consumes and everything it runs.
 //!
-//! [`RepositoryExecutor`] already materializes one selection, loads the tracked
-//! contract from it, and resolves the source identity every arm is labelled
-//! with. The authorities the battery reads alongside those arms come from the
-//! same three things, so they are taken here rather than assembled beside a
-//! second materialization of the same selection.
+//! [`RepositorySelection`] materializes one selection and loads its tracked
+//! contract before the state, source identity, and repository observations are
+//! bound. The authorities the battery reads alongside its arms come from that
+//! same source capture, so they are retained here rather than assembled beside
+//! a second materialization of the selection.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use wire::{Digest, Domain};
 
-use super::repository_executor::RepositoryExecutor;
+use super::repository_executor::{RepositoryExecutor, RepositorySelection, RepositorySource};
 use super::{
     BatteryArmResult, BatteryError, BatteryInputs, BatteryReport, BatteryScope, BatteryStateRun,
     BatteryToolEvidence, ConfigurationEvidence, RepositoryExecutionEvent, StateRunScope,
@@ -56,6 +56,18 @@ struct BatteryAuthorities {
     tools: Vec<BatteryToolEvidence>,
 }
 
+/// Run-wide authority that every focused arm derives from without recapturing bytes.
+#[derive(Clone)]
+struct BatterySourceCapture {
+    repository: RepositorySource,
+    actor: ActorCapture,
+    resolved_actor: ActorResolution,
+    scope: BatteryScope,
+    state: StateLedger,
+    rim: RimCapture,
+    hygiene: HygieneConfiguration,
+}
+
 impl BatteryAuthorities {
     /// Borrow the complete authority set as one validated input contract.
     fn inputs(&self) -> Result<BatteryInputs<'_>, BatteryError> {
@@ -78,6 +90,7 @@ impl BatteryAuthorities {
 /// took the authorities from one selection and ran the arms against another
 /// would publish a report whose context describes a tree its results never saw.
 pub struct BatteryCapture<'trace> {
+    source_capture: BatterySourceCapture,
     authorities: BatteryAuthorities,
     executor: RepositoryExecutor<'trace>,
     selected: Option<crate::GateId>,
@@ -586,25 +599,48 @@ impl<'trace> BatteryCapture<'trace> {
             Some(state_run) => state_run,
             None => BatteryStateRun::capture(&repository)?,
         };
-        let executor = RepositoryExecutor::capture(
-            &repository,
-            selector,
-            claim,
-            actor,
+        let repository_source = RepositorySelection::capture(&repository, selector, input_mode)?;
+        let tree = repository_source.tree();
+        let (state, bound_actor) =
+            state_run.bind(tree.paths(), tree.renames(), tree.publishes_state(), &actor)?;
+        let repository_source =
+            repository_source.bind(claim, bound_actor.clone(), state.latches(), &rim)?;
+        let source_capture = BatterySourceCapture {
+            repository: repository_source,
+            actor: bound_actor,
+            state,
+            resolved_actor,
+            scope,
             rim,
             hygiene,
+        };
+        Self::capture_from_source(source_capture, selected, trace, state_run, selection)
+    }
+
+    fn capture_from_source(
+        source_capture: BatterySourceCapture,
+        selected: Option<crate::GateId>,
+        trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+        state_run: BatteryStateRun,
+        selection: Option<&crate::ChangeSelectionReport>,
+    ) -> Result<Self, BatteryError> {
+        source_capture.repository.verify_source()?;
+        let executor = RepositoryExecutor::capture_from_source(
+            &source_capture.repository,
+            source_capture.actor.clone(),
+            source_capture.rim.clone(),
+            source_capture.hygiene.clone(),
             &state_run,
-            input_mode,
+            &source_capture.state,
             selected,
             selection,
             trace,
         )?;
-        let state = state_run.ledger()?;
         let contract = executor.contract();
         let authorities = BatteryAuthorities {
             source: executor.source().clone(),
-            actor: resolved_actor,
-            scope,
+            actor: source_capture.resolved_actor.clone(),
+            scope: source_capture.scope.clone(),
             configuration: tracked_evidence(contract)?,
             policy: contract.rule_policy().clone(),
             // The repository-document, structural file-shape, and structural
@@ -614,10 +650,11 @@ impl<'trace> BatteryCapture<'trace> {
             // decided from the same ledger published above; nothing is
             // re-resolved merely to describe the run.
             bounds: executor.bounds().to_vec(),
-            state,
+            state: source_capture.state.clone(),
             tools: tool_evidence(contract)?,
         };
         Ok(Self {
+            source_capture,
             authorities,
             executor,
             selected,
@@ -727,6 +764,26 @@ impl<'trace> BatteryCapture<'trace> {
             .into_iter()
             .map(|gate_id| super::run_focused_arm(&inputs, &mut self.executor, gate_id))
             .collect()
+    }
+
+    /// Derive one reached focused arm from this capture's immutable source authority.
+    ///
+    /// The live selector seal is verified before derivation. The returned arm
+    /// receives a distinct executor and arm-specific evidence while sharing the
+    /// selected tree, loaded contract, core observations, ancestry baselines,
+    /// actor, command rim, hygiene configuration, and enclosing state ledger.
+    pub fn derive_arm_in_state_reached(
+        &self,
+        selection: &crate::ChangeSelectionReport,
+        gate_id: crate::GateId,
+    ) -> Result<BatteryCapture<'static>, BatteryError> {
+        BatteryCapture::<'static>::capture_from_source(
+            self.source_capture.clone(),
+            Some(gate_id),
+            None,
+            self.state_run.clone(),
+            Some(selection),
+        )
     }
 
     /// Identity of the selected bytes this capture owns.

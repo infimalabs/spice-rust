@@ -408,28 +408,6 @@ impl SelectionSurface {
             }
         }
     }
-
-    fn prepare_arm_in_state(
-        self,
-        selection: &ChangeSelectionReport,
-        gate_id: GateId,
-        state_run: ::gate::BatteryStateRun,
-    ) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
-        match self {
-            Self::Packaged | Self::Resolution => crate::gate::prepare_arm_in_state_reached(
-                Selector::staged(),
-                selection,
-                gate_id,
-                state_run,
-            ),
-            Self::CurrentSource => crate::gate::prepare_arm_in_state_reached_strict(
-                Selector::staged(),
-                selection,
-                gate_id,
-                state_run,
-            ),
-        }
-    }
 }
 
 fn run_with_selection(
@@ -470,7 +448,6 @@ fn run_with_selection(
         &mut anchor,
         &selection,
         &source,
-        surface,
         execution,
         &mut shared_progress,
     )?;
@@ -559,7 +536,6 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
                     &mut retry,
                     context.selection,
                     context.source,
-                    context.surface,
                     context.budget,
                     BTreeMap::new(),
                     progress,
@@ -758,7 +734,6 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
     anchor: &mut crate::gate::PreparedArm<'_>,
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
-    surface: SelectionSurface,
     execution: ChangeGateExecution,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<(TestSelectionReport, ChangePolicyReport), ChangeGateError> {
@@ -771,8 +746,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         budget,
         environment,
     } = execution;
-    let preexecuted =
-        preexecute_policy_screen(anchor, selection, source, surface, budget, progress)?;
+    let preexecuted = preexecute_policy_screen(anchor, selection, source, budget, progress)?;
     let test_run = TestRun::new(
         &selected_root,
         &writable_root,
@@ -799,7 +773,6 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
             anchor,
             selection,
             source,
-            surface,
             budget,
             preexecuted.reports,
             progress,
@@ -836,11 +809,9 @@ fn preexecute_policy_screen<W: Write + Send + ?Sized>(
     anchor: &mut crate::gate::PreparedArm<'_>,
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
-    surface: SelectionSurface,
     budget: CargoBudget,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<PreexecutedPolicy, ChangeGateError> {
-    let state_run = anchor.state_run();
     let mut prepared = Vec::new();
     for reach in selection
         .reach()
@@ -850,14 +821,7 @@ fn preexecute_policy_screen<W: Write + Send + ?Sized>(
         let gate_id = reach.gate_id();
         publish_policy_start(progress, gate_id)?;
         let started = Instant::now();
-        let arm = prepare_policy_arm(
-            surface,
-            selection,
-            reach,
-            state_run.clone(),
-            budget,
-            progress,
-        )?;
+        let arm = prepare_policy_arm(anchor, selection, reach, budget, progress)?;
         prepared.push((gate_id, started, arm));
     }
 
@@ -929,12 +893,10 @@ fn run_focused_policy(
     anchor: &mut crate::gate::PreparedArm<'_>,
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
-    surface: SelectionSurface,
     budget: CargoBudget,
     mut preexecuted: BTreeMap<GateId, gate::FocusedArmReport>,
     progress: &mut impl Write,
 ) -> Result<FocusedPolicyExecution, ChangeGateError> {
-    let state_run = anchor.state_run();
     let mut policy = Vec::with_capacity(selection.reach().len());
     let mut reaches = selection.reach().iter().peekable();
     while let Some(reach) = reaches.next() {
@@ -950,26 +912,12 @@ fn run_focused_policy(
                 .peek()
                 .is_some_and(|next| next.gate_id() == GateId::CanvasWebTypecheck)
         {
-            let rust = prepare_policy_arm(
-                surface,
-                selection,
-                reach,
-                state_run.clone(),
-                budget,
-                progress,
-            )?;
+            let rust = prepare_policy_arm(anchor, selection, reach, budget, progress)?;
             let canvas_reach = reaches
                 .next()
                 .expect("the adjacent Canvas reach was observed above");
             publish_policy_start(progress, GateId::CanvasWebTypecheck)?;
-            let canvas = prepare_policy_arm(
-                surface,
-                selection,
-                canvas_reach,
-                state_run.clone(),
-                budget,
-                progress,
-            )?;
+            let canvas = prepare_policy_arm(anchor, selection, canvas_reach, budget, progress)?;
             let (rust, canvas) = std::thread::scope(|scope| {
                 let canvas = scope.spawn(|| execute_prepared_policy_arm(canvas));
                 let rust = execute_prepared_policy_arm(rust);
@@ -1000,14 +948,7 @@ fn run_focused_policy(
             )?;
             anchor.execute().map_err(ChangeGateError::gate)
         } else {
-            let prepared = prepare_policy_arm(
-                surface,
-                selection,
-                reach,
-                state_run.clone(),
-                budget,
-                progress,
-            )?;
+            let prepared = prepare_policy_arm(anchor, selection, reach, budget, progress)?;
             execute_prepared_policy_arm(prepared)
         };
         let disposition = if report.is_ok() {
@@ -1053,16 +994,15 @@ fn publish_policy_terminal(
 }
 
 fn prepare_policy_arm(
-    surface: SelectionSurface,
+    anchor: &crate::gate::PreparedArm<'_>,
     selection: &ChangeSelectionReport,
     reach: &gate::ChangeArmReach,
-    state_run: gate::BatteryStateRun,
     budget: CargoBudget,
     progress: &mut impl Write,
 ) -> Result<crate::gate::PreparedArm<'static>, ChangeGateError> {
     let gate_id = reach.gate_id();
-    let mut prepared = surface
-        .prepare_arm_in_state(selection, gate_id, state_run)
+    let mut prepared = anchor
+        .derive_reached_arm(selection, gate_id)
         .map_err(ChangeGateError::gate)?;
     prepared
         .bind_cargo_jobs(budget.policy_jobs())

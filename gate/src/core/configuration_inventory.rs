@@ -30,7 +30,7 @@ struct ParsedSource {
 
 impl ConfigurationInventorySource {
     /// Parse every admitted production Rust source from the selected tree once.
-    pub(super) fn capture(source: &CoreSource<'_>) -> Result<Self, CoreInputError> {
+    pub(super) fn capture(source: &CoreSource) -> Result<Self, CoreInputError> {
         let entries = source.jurisdiction().entries();
         let spice_surface = entries.iter().any(|entry| production_rust(entry.path()));
         let mut files = Vec::new();

@@ -37,7 +37,7 @@ const DEFAULT_TEST_ROOT: &str = "tests";
 const PYPROJECT: &str = "pyproject.toml";
 
 pub(super) fn repo_shape(
-    source: &CoreSource<'_>,
+    source: &CoreSource,
     contract: &Contract,
 ) -> Result<CoreObservation, CoreInputError> {
     let policy = contract.shape();
