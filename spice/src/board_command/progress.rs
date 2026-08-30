@@ -73,7 +73,8 @@ pub(super) fn claim_free(
     let answer = wire::intent::ClaimAnswer {
         task: task.task.clone(),
         holder: command.actor().clone(),
-        warnings: Vec::new(),
+        expiry: None,
+        warnings: Box::default(),
         next: None,
     };
     if let Err(error) = write.command_result(
@@ -145,7 +146,8 @@ pub(super) fn claim_reclaim_with_clock(
     let answer = wire::intent::ClaimAnswer {
         task: renew.task.clone(),
         holder: command.actor().clone(),
-        warnings: Vec::new(),
+        expiry: Some(Box::new(until)),
+        warnings: Box::default(),
         next: None,
     };
     if let Err(error) = write.command_result(

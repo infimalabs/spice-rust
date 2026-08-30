@@ -309,7 +309,8 @@ fn reconcile_client_recovery(
                         body: CommandAnswer::Claim(wire::intent::ClaimAnswer {
                             task: task.clone(),
                             holder: sealed.actor,
-                            warnings: Vec::new(),
+                            expiry: None,
+                            warnings: Box::default(),
                             next: None,
                         }),
                     })

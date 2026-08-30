@@ -62,6 +62,8 @@ mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod run_meter;
+#[cfg(not(target_arch = "wasm32"))]
 mod session_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod steering_command;
@@ -689,6 +691,21 @@ fn run(command: Vec<OsString>) -> ! {
         let mut stderr = io::stderr().lock();
         let _ = writeln!(stderr, "{diagnostic}");
     }
+    let meter = run_meter::Runtime::start(
+        Path::new("."),
+        spice::extension::registry()
+            .expect("compiled extension declarations are validated by the test gate")
+            .session_vendors()
+            .into_iter()
+            .map(|vendor| {
+                (
+                    vendor,
+                    bootstrap_environment(vendor.thread_id_environment())
+                        .and_then(|value| value.into_string().ok()),
+                )
+            })
+            .collect(),
+    );
     let selected = rewritten
         .as_ref()
         .map_or(command.as_slice(), spice::rtk::Decision::command);
@@ -697,8 +714,12 @@ fn run(command: Vec<OsString>) -> ! {
         .expect("clap requires the run command operand");
 
     match steer::run::hand(program, arguments) {
-        Ok(status) => terminate_child(status),
+        Ok(status) => {
+            meter.stop();
+            terminate_child(status)
+        }
         Err(error) => {
+            meter.stop();
             let mut stderr = io::stderr().lock();
             let _ = writeln!(stderr, "spice run: {error}");
             let code = match error.kind() {

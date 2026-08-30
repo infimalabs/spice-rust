@@ -95,6 +95,9 @@ fn invoke_configured(argv: &[&str], inbox: Option<&OsStr>, current_dir: Option<&
     command
         .args(argv)
         .env_remove(steer::hook::INBOX)
+        .env_remove("CODEX_THREAD_ID") // env-policy: allow
+        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
+        .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
         // Assertions below exercise the CLI's words, not terminal styling.
         // Refuse ambient color-forcing variables so captured output remains
         // stable under developer shells, CI runners, and test harnesses.

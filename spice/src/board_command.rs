@@ -22,6 +22,10 @@ use wire::{
 
 use crate::cli::Contract;
 
+pub(crate) const AUTOMATIC_PROVISIONAL_SECONDS: i64 = 60;
+pub(crate) const AUTOMATIC_HEARTBEAT_SECONDS: i64 = 20;
+pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
+
 // `mod` rather than `include!`, which reverses the decision EFFORT-1kKrXfRq
 // recorded here. That decision's measurements survive the reversal: a child
 // module does already read its ancestors' private items, so the guard tests
@@ -54,7 +58,9 @@ use followup::*;
 mod next_action;
 use next_action::*;
 mod automatic_lifecycle;
-pub(crate) use automatic_lifecycle::{AutomaticClaim, claim_automatic, release_automatic};
+pub(crate) use automatic_lifecycle::{
+    AutomaticClaim, claim_automatic, is_automatic_claim, release_automatic,
+};
 mod mutation;
 use mutation::*;
 mod progress;

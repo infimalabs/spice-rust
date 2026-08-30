@@ -656,9 +656,16 @@ pub struct ClaimAnswer {
     pub task: TaskHandle,
     /// Actor holding it after the transaction.
     pub holder: Actor,
+    /// Resulting lease expiry when this command explicitly renewed possession.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub expiry: Option<Box<crate::Instant>>,
     /// Non-blocking overlap warnings discovered from the claim-time board.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<ClaimWarning>,
+    #[serde(default, skip_serializing_if = "claim_warnings_empty")]
+    pub warnings: Box<[ClaimWarning]>,
     /// Exact CLI command admitted as the next action, when one is available.
     #[serde(
         default,
@@ -666,6 +673,10 @@ pub struct ClaimAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub next: Option<Box<str>>,
+}
+
+fn claim_warnings_empty(warnings: &[ClaimWarning]) -> bool {
+    warnings.is_empty()
 }
 
 /// One active claim whose acceptance names the same implementation surface.

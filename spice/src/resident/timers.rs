@@ -26,6 +26,7 @@ pub(super) struct Runtime {
     projects: ProjectPolicy,
     steering: steer::Config,
     claims: BTreeMap<TaskHandle, ArmedClaim>,
+    renewals: BTreeMap<TaskHandle, ArmedRenewal>,
     warnings: BTreeMap<TaskHandle, ArmedWarning>,
     directives: BTreeMap<CanonicalUuid, ArmedDirective>,
     wake: Option<ArmedWake>,
@@ -42,6 +43,23 @@ struct ClaimAuthority {
 struct ArmedClaim {
     id: TimerId,
     authority: ClaimAuthority,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RenewalAuthority {
+    task: TaskHandle,
+    stamp: wire::TaskStamp,
+    claim: journal::JournalHead<wire::ClaimHead>,
+    lease: journal::JournalHead<wire::LeaseHead>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    deadline: Instant,
+}
+
+struct ArmedRenewal {
+    id: TimerId,
+    authority: RenewalAuthority,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,6 +102,7 @@ struct ArmedWake {
 pub(super) enum Fired {
     Stale,
     ClaimLapse,
+    ClaimRenew,
     ClaimWarning(WarningDelivery),
     Steering,
     TaskWake(CanonicalUuid),
@@ -170,6 +189,7 @@ impl Runtime {
             projects,
             steering,
             claims: BTreeMap::new(),
+            renewals: BTreeMap::new(),
             warnings: BTreeMap::new(),
             directives: BTreeMap::new(),
             wake: None,
@@ -236,6 +256,8 @@ impl Runtime {
             })
             .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
         let desired = desired_claims(&snapshot.0, snapshot.1.as_ref())?;
+        let desired_renewals =
+            desired_renewals(&snapshot.0, snapshot.1.as_ref(), snapshot.3.facts())?;
         let desired_warnings =
             desired_warnings(&snapshot.0, snapshot.1.as_ref(), snapshot.3.facts())?;
         let desired_directives = desired_directives(&snapshot.2, &self.steering)?;
@@ -265,6 +287,7 @@ impl Runtime {
                 .map_err(|error| store_fault("bus::timer-arm-failed", &error.to_string()))?;
             self.claims.insert(task, ArmedClaim { id, authority });
         }
+        self.synchronize_renewals(desired_renewals)?;
         self.synchronize_warnings(desired_warnings)?;
         let stale = self
             .directives
@@ -337,6 +360,39 @@ impl Runtime {
         Ok(())
     }
 
+    fn synchronize_renewals(
+        &mut self,
+        desired: BTreeMap<TaskHandle, RenewalAuthority>,
+    ) -> CommandResult<()> {
+        let stale = self
+            .renewals
+            .iter()
+            .filter_map(|(task, armed)| {
+                (desired.get(task) != Some(&armed.authority)).then_some(task.clone())
+            })
+            .collect::<Vec<_>>();
+        for task in stale {
+            let armed = self
+                .renewals
+                .remove(&task)
+                .expect("stale task came from the renewal map");
+            self.worker()?
+                .cancel(armed.id)
+                .map_err(|error| store_fault("bus::timer-cancel-failed", &error.to_string()))?;
+        }
+        for (task, authority) in desired {
+            if self.renewals.contains_key(&task) {
+                continue;
+            }
+            let id = self
+                .worker()?
+                .arm(task.to_string(), TimerKind::ClaimRenew, authority.deadline)
+                .map_err(|error| store_fault("bus::timer-arm-failed", &error.to_string()))?;
+            self.renewals.insert(task, ArmedRenewal { id, authority });
+        }
+        Ok(())
+    }
+
     /// Consume one fired event using only authority captured when it was armed.
     pub(super) fn consume(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<Fired> {
         match event.kind() {
@@ -345,6 +401,7 @@ impl Runtime {
                 self.consume_steering(bus, event).map(|()| Fired::Steering)
             }
             TimerKind::ClaimLapse => self.consume_claim(bus, event),
+            TimerKind::ClaimRenew => self.consume_renewal(bus, event),
             TimerKind::ClaimWarning => self.consume_warning(bus, event),
             kind => Err(environment_fault(
                 "bus::timer-kind-unhandled",
@@ -424,6 +481,78 @@ impl Runtime {
         match lapse {
             Ok(_) | Err(board::lapse::LapseError::Refused(_)) => Ok(Fired::ClaimLapse),
             Err(error) => Err(store_fault("bus::timer-lapse-failed", &error.to_string())),
+        }
+    }
+
+    fn consume_renewal(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<Fired> {
+        let Some(task) = self
+            .renewals
+            .iter()
+            .find_map(|(task, armed)| (armed.id == event.id()).then_some(task.clone()))
+        else {
+            return Ok(Fired::Stale);
+        };
+        let armed = self
+            .renewals
+            .remove(&task)
+            .expect("event task came from the renewal map");
+        if event.owner() != armed.authority.task.to_string()
+            || event.deadline() != armed.authority.deadline
+        {
+            return Err(environment_fault(
+                "bus::timer-authority-mismatch",
+                "fired timer identity disagreed with its captured renewal authority",
+            ));
+        }
+        let at = Instant::new(jiff::Timestamp::now())
+            .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))?;
+        if at < armed.authority.deadline || at >= armed.authority.lease.body().expiry {
+            return Ok(Fired::Stale);
+        }
+        let rolling = shifted(
+            at,
+            std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
+        )?;
+        let until = std::cmp::max(rolling, armed.authority.lease.body().expiry);
+        let maximum = std::cmp::max(until, armed.authority.lease.body().maximum);
+        let authority = armed.authority;
+        let origin = resident_origin(authority.epoch)?;
+        let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);
+        let guarded = authority.clone();
+        proposal.guard(JournalGuard::new(move |read| {
+            renewal_guard(read, &guarded, at)
+        }));
+        let renewed = proposal
+            .fact(
+                wire::body::ClaimRenewed {
+                    task: authority.stamp.clone(),
+                    epoch: authority.epoch,
+                    until,
+                    maximum,
+                },
+                FactCause::Root,
+            )
+            .map_err(|error| store_fault("claim::renewal-invalid", &error.to_string()))?;
+        let mut lease = authority.lease.body().clone();
+        lease.renewal = at;
+        lease.expiry = until;
+        lease.maximum = maximum;
+        proposal.lease_head(authority.stamp, renewed, move |_| lease);
+        match bus
+            .commit(proposal)
+            .map_err(|error| store_fault("bus::commit-failed", &error.to_string()))?
+        {
+            CommitOutcome::Committed(_) => Ok(Fired::ClaimRenew),
+            CommitOutcome::Refused(refusal) if refusal.reason().starts_with("claim::renewal-") => {
+                Ok(Fired::Stale)
+            }
+            CommitOutcome::Refused(refusal) => Err(store_fault(
+                "claim::renewal-commit-refused",
+                refusal.reason(),
+            )),
+            CommitOutcome::Fault(fault) => {
+                Err(store_fault("journal::commit-failed", fault.detail()))
+            }
         }
     }
 
@@ -641,6 +770,9 @@ fn desired_warnings(
         {
             continue;
         }
+        if crate::board_command::is_automatic_claim(claim.body(), facts) {
+            continue;
+        }
         let lease = coherent_lease(heads, claim.body())?;
         let task = TaskHandle::for_project(
             &heads.statement().body().project,
@@ -662,6 +794,86 @@ fn desired_warnings(
         }
     }
     Ok(desired)
+}
+
+fn desired_renewals(
+    tasks: &[journal::TaskHeads],
+    residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
+    facts: &[wire::Envelope<wire::AnyFact>],
+) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
+    let Some(residency) = residency else {
+        return Ok(BTreeMap::new());
+    };
+    if residency.body().state != ResidentState::Seated {
+        return Ok(BTreeMap::new());
+    }
+    let now = Instant::new(jiff::Timestamp::now())
+        .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))?;
+    let mut desired = BTreeMap::new();
+    for heads in tasks {
+        let Some(claim) = heads.claim() else { continue };
+        if claim.body().disposition != ClaimDisposition::Active
+            || claim.body().epoch != residency.body().epoch
+            || !current_claim_occupant(residency.body(), claim.body())
+            || !crate::board_command::is_automatic_claim(claim.body(), facts)
+        {
+            continue;
+        }
+        let lease = coherent_lease(heads, claim.body())?;
+        if lease.body().expiry <= now {
+            continue;
+        }
+        let deadline = shifted(
+            lease.body().renewal,
+            std::time::Duration::from_secs(
+                crate::board_command::AUTOMATIC_HEARTBEAT_SECONDS as u64,
+            ),
+        )?;
+        let task = TaskHandle::for_project(
+            &heads.statement().body().project,
+            &heads.statement().body().born,
+        );
+        desired.insert(
+            task.clone(),
+            RenewalAuthority {
+                task,
+                stamp: heads.statement().body().born.clone(),
+                claim: claim.clone(),
+                lease: lease.clone(),
+                lane: claim.body().lane,
+                occupant: claim.body().occupant,
+                epoch: claim.body().epoch,
+                deadline,
+            },
+        );
+    }
+    Ok(desired)
+}
+
+fn renewal_guard(
+    read: &journal::JournalRead<'_>,
+    expected: &RenewalAuthority,
+    at: Instant,
+) -> Result<(), GuardError> {
+    if at < expected.deadline || at >= expected.lease.body().expiry {
+        return Err(GuardError::refused("claim::renewal-outside-horizon"));
+    }
+    let Some(heads) = read.task_heads_for(&expected.stamp)? else {
+        return Err(GuardError::refused("claim::renewal-task-moved"));
+    };
+    if heads.claim() != Some(&expected.claim) || heads.lease() != Some(&expected.lease) {
+        return Err(GuardError::refused("claim::renewal-authority-moved"));
+    }
+    let Some(residency) = read.residency_head()? else {
+        return Err(GuardError::refused("claim::renewal-residency-missing"));
+    };
+    if residency.body().state != ResidentState::Seated
+        || residency.body().epoch != expected.epoch
+        || !current_claim_occupant(residency.body(), expected.claim.body())
+    {
+        return Err(GuardError::refused("claim::renewal-residency-moved"));
+    }
+    Ok(())
 }
 
 fn coherent_lease<'a>(

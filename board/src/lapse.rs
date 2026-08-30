@@ -368,7 +368,8 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
             intent::ClaimAnswer {
                 task,
                 holder,
-                warnings: Vec::new(),
+                expiry: None,
+                warnings: Box::default(),
                 next: None,
             },
         )
@@ -556,7 +557,8 @@ mod tests {
                 intent::ClaimAnswer {
                     task: task(),
                     holder: actor,
-                    warnings: Vec::new(),
+                    expiry: None,
+                    warnings: Box::default(),
                     next: None,
                 },
             )

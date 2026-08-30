@@ -95,17 +95,19 @@ fn vacant_lane_claims_once_and_exact_launch_cleanup_frees_it() {
         .clone();
     assert_eq!(
         lease.expiry,
-        fixture_instant_after(lease.start, 15 * 60),
-        "automatic lifecycle claims keep the shortened launch lease",
+        fixture_instant_after(lease.start, AUTOMATIC_PROVISIONAL_SECONDS),
+        "automatic lifecycle claims begin with the provisional launch lease",
     );
     assert_eq!(
-        lease.maximum,
-        fixture_instant_after(lease.start, 60 * 60),
-        "automatic lifecycle claims still cap renewal at one hour",
+        lease.maximum, lease.expiry,
+        "the provisional generation cannot extend before startup proof",
     );
     assert!(
-        lease.expiry < lease.maximum,
-        "automatic lifecycle claims must remain shorter than manual claims",
+        is_automatic_claim(
+            &active,
+            bus.fact_snapshot().expect("automatic facts read").facts()
+        ),
+        "the winning fact durably identifies automatic lease policy",
     );
 
     release_automatic(&bus, &claimed).expect("exact launch compensation frees claim");

@@ -15,6 +15,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod live;
+#[cfg(not(target_arch = "wasm32"))]
+pub use live::LiveMeter;
+
 /// Remaining lease below this duration enters the warning tier.
 pub const CLAIM_WARNING_BOUNDARY: Duration = Duration::from_secs(10 * 60);
 /// Remaining lease below this duration enters the urgent tier.
@@ -628,6 +633,100 @@ mod tests {
             assert_eq!(decision.refresh_after, Some(expected));
             assert!(decision.refresh_after.is_some_and(|delay| !delay.is_zero()));
         }
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn lease_tiers_are_strict_and_renewal_transitions_speak_immediately() {
+        let root = fixture("strict-tiers");
+        let cases = [
+            (600, None),
+            (599, Some("CLAIM LEASE WARNING")),
+            (299, Some("CLAIM LEASE URGENT")),
+            (59, Some("CLAIM LEASE CRITICAL")),
+        ];
+        for (index, (remaining, warning)) in cases.into_iter().enumerate() {
+            let decision = Meter::new(root.join(format!("boundary-{index}.json")))
+                .evaluate(&state(Some(remaining)), Duration::from_secs(1))
+                .expect("strict boundary evaluates");
+            let line = decision.announcement.expect("new state speaks once");
+            assert_eq!(
+                ["WARNING", "URGENT", "CRITICAL"]
+                    .into_iter()
+                    .find(|label| line.contains(&format!("CLAIM LEASE {label}"))),
+                warning.map(|warning| warning.rsplit_once(' ').expect("label").1),
+            );
+            if warning.is_some() {
+                assert!(line.contains(&format!("has {remaining}s remaining")));
+                assert!(line.contains("run spice task reclaim METER-00000001"));
+            }
+        }
+
+        let path = root.join("renewals.json");
+        let meter = Meter::new(&path);
+        let critical = meter
+            .evaluate(&state(Some(59)), Duration::from_secs(10))
+            .expect("critical evaluates");
+        let same_tier = meter
+            .evaluate(&state(Some(58)), Duration::from_secs(11))
+            .expect("same tier renewal evaluates");
+        let urgent = meter
+            .evaluate(&state(Some(299)), Duration::from_secs(12))
+            .expect("critical to urgent evaluates");
+        let warning = meter
+            .evaluate(&state(Some(599)), Duration::from_secs(13))
+            .expect("urgent to warning evaluates");
+        let quiet = meter
+            .evaluate(&state(Some(600)), Duration::from_secs(14))
+            .expect("warning exit evaluates");
+
+        assert!(critical.announcement.is_some());
+        assert_eq!(same_tier.announcement, None);
+        assert!(
+            urgent
+                .announcement
+                .as_deref()
+                .is_some_and(|line| { line.contains("CLAIM LEASE URGENT") })
+        );
+        assert!(
+            warning
+                .announcement
+                .as_deref()
+                .is_some_and(|line| { line.contains("CLAIM LEASE WARNING") })
+        );
+        assert!(
+            quiet
+                .announcement
+                .as_deref()
+                .is_some_and(|line| !line.contains("CLAIM LEASE"))
+        );
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn no_claim_keeps_durable_suppression_for_same_key_reacquisition() {
+        let root = fixture("reacquisition");
+        let path = root.join("working-state.json");
+        let meter = Meter::new(&path);
+        let first = meter
+            .evaluate(&state(Some(599)), Duration::from_secs(10))
+            .expect("warning speaks");
+        let stored = fs::read(&path).expect("suppression state reads");
+        let absent = meter
+            .evaluate(&WorkingState::default(), Duration::from_secs(11))
+            .expect("no claim is silent");
+        let reacquired = Meter::new(&path)
+            .evaluate(&state(Some(598)), Duration::from_secs(12))
+            .expect("fresh process honors prior cadence");
+
+        assert!(first.announcement.is_some());
+        assert_eq!(absent, Decision::default());
+        assert_eq!(fs::read(&path).expect("state remains"), stored);
+        assert_eq!(reacquired.announcement, None);
+        assert_eq!(
+            reacquired.refresh_after,
+            Some(CLAIM_WARNING_REPEAT - Duration::from_secs(2))
+        );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

@@ -188,6 +188,7 @@ pub(in crate::board_command) fn commit_claim(
     let answer = wire::intent::ClaimAnswer {
         task,
         holder: command.actor().clone(),
+        expiry: None,
         warnings: board::claim_overlaps(&selected, &snapshot.entries)
             .into_iter()
             .map(|overlap| wire::intent::ClaimWarning {
@@ -195,7 +196,8 @@ pub(in crate::board_command) fn commit_claim(
                 lane: overlap.lane,
                 surface: overlap.surface,
             })
-            .collect(),
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
         next,
     };
     if let Err(error) = write.command_result(
