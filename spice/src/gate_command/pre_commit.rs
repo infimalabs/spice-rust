@@ -692,9 +692,11 @@ fn resolution_selection_worker() -> Outcome<()> {
     let result = spice::change_gate::run_resolution(&mut progress);
     match result {
         Ok(report)
-            if report.selection().source().to_string() == expected_source
-                && report.tests().changed_sources() == expected_paths
-                && report.admits() =>
+            if resolution_selection_authority_matches(
+                report.selection(),
+                &expected_source,
+                &expected_paths,
+            ) && report.admits() =>
         {
             Outcome::Reply(Reply {
                 position: ReplyPosition::Direct {},
@@ -702,15 +704,18 @@ fn resolution_selection_worker() -> Outcome<()> {
             })
         }
         Ok(report)
-            if report.selection().source().to_string() != expected_source
-                || report.tests().changed_sources() != expected_paths =>
+            if !resolution_selection_authority_matches(
+                report.selection(),
+                &expected_source,
+                &expected_paths,
+            ) =>
         {
             Outcome::Refusal(Refusal::evidence(
                 "gate::resolution-configured-source-moved",
                 format!(
                     "expected_source={expected_source}; observed_source={}; expected_paths={expected_paths:?}; observed_paths={:?}",
                     report.selection().source(),
-                    report.tests().changed_sources(),
+                    report.selection().changed_sources(),
                 ),
                 "retry task completion after the staged source and path set stop moving",
             ))
@@ -734,6 +739,15 @@ fn resolution_selection_worker() -> Outcome<()> {
             "repair the selected source finding, then retry task completion",
         )),
     }
+}
+
+fn resolution_selection_authority_matches(
+    selection: &gate::ChangeSelectionReport,
+    expected_source: &str,
+    expected_paths: &[String],
+) -> bool {
+    selection.source().to_string() == expected_source
+        && selection.changed_sources() == expected_paths
 }
 
 fn supervise(files: &WorkerFiles, generation: &ApplianceGenerationFence) -> Outcome<Report> {
