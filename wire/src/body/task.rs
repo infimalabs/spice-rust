@@ -5,6 +5,7 @@
 //! authoritative again.
 
 use super::*;
+use crate::intent::TaskGuidance;
 
 /// How a review closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -216,6 +217,13 @@ pub struct TaskCompletionTerminal {
     pub operation: CanonicalUuid,
     /// Workflow status returned by the completing transaction.
     pub status: String,
+    /// Actionable guidance returned by the completing transaction.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub guidance: Option<TaskGuidance>,
     /// Exact next action projected by that transaction.
     #[serde(
         default,

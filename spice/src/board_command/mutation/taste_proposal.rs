@@ -277,6 +277,7 @@ fn reused(snapshot: &ValidatedSnapshot, index: usize, completed: bool) -> Outcom
                 "reused-active"
             }
             .to_owned(),
+            guidance: None,
             completion: None,
             learning: None,
             next: next_action(snapshot, entry, false),

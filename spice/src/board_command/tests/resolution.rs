@@ -1,5 +1,7 @@
 use super::*;
 
+mod plan_advance;
+
 #[test]
 fn lane_claim_free_done_and_review_finding_survive_restart() {
     let (root, bus, epoch, seats) = fixture("workflow", 2);

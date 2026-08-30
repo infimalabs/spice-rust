@@ -472,20 +472,18 @@ fn publish_task_boundary_inner(
     match spice::task_git::publish_claimed(&lane, metadata, &active, resolution) {
         Ok(boundary) => Ok(Some(boundary)),
         Err(error) if error.reason() == "git::resolution-in-progress" => {
-            let operation = match error.detail().parse::<wire::CanonicalUuid>() {
-                Ok(operation) => operation,
-                Err(parse) => {
-                    return Err(protocol_fault(
-                        "task::completion-operation-invalid",
-                        &parse.to_string(),
-                    ));
-                }
-            };
+            let operation = error
+                .detail()
+                .parse::<wire::CanonicalUuid>()
+                .map_err(|parse| {
+                    protocol_fault("task::completion-operation-invalid", &parse.to_string())
+                })?;
             Err(Outcome::Reply(Reply {
                 position: ReplyPosition::Direct {},
                 body: CommandAnswer::Task(wire::intent::TaskAnswer {
                     task: entry.handle().clone(),
                     status: entry.workflow().status.clone(),
+                    guidance: None,
                     completion: Some(wire::intent::TaskCompletionAnswer {
                         operation,
                         state: wire::intent::TaskCompletionState::Running,

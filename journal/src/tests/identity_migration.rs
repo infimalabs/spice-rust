@@ -355,6 +355,7 @@ fn insert_legacy_review_receipt(connection: &Connection) {
             body: wire::intent::TaskAnswer {
                 task: HANDLE.parse().expect("fixture handle"),
                 status: "todo".to_owned(),
+                guidance: None,
                 completion: None,
                 learning: None,
                 next: None,
@@ -427,6 +428,7 @@ fn insert_legacy_empty_review_receipt(connection: &Connection) {
             body: wire::intent::TaskAnswer {
                 task: HANDLE.parse().expect("fixture handle"),
                 status: "completed".to_owned(),
+                guidance: None,
                 completion: None,
                 learning: None,
                 next: None,
