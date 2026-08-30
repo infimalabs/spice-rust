@@ -32,6 +32,8 @@ pub(super) async fn socket(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     upgrade
+        .max_message_size(SOCKET_MESSAGE_BYTES)
+        .max_frame_size(SOCKET_MESSAGE_BYTES)
         .on_upgrade(move |socket| socket_session(socket, state))
         .into_response()
 }
