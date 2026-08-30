@@ -290,6 +290,7 @@ mod tests {
             },
             authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
             authored_synthetic: false,
+            observed: None,
             activity: wire::AgentActivityKind::Prose,
             text: "quoted prose".to_owned(),
             media: Vec::new(),

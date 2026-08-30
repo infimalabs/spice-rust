@@ -69,8 +69,9 @@ pub enum Ingested {
     Accounted {
         /// Journal outcome of the accounting transaction.
         applied: Applied,
-        /// Position the head now stands at.
-        to: body::TranscriptPosition,
+        /// Exact durable batch whose commit instant can timestamp records that
+        /// carried no vendor-authored time.
+        batch: body::JournalIngested,
     },
 }
 
@@ -148,7 +149,7 @@ pub fn ingest(journal: &mut Journal, ingestion: Ingestion) -> Result<Ingested, I
         return Ok(Ingested::Unchanged);
     }
     let batch = fold(&ingestion, &resume, &scan);
-    let to = batch.to;
+    let retained = batch.clone();
     let applied = account(
         journal,
         Accounting {
@@ -159,7 +160,10 @@ pub fn ingest(journal: &mut Journal, ingestion: Ingestion) -> Result<Ingested, I
         },
     )
     .map_err(IngestError::Account)?;
-    Ok(Ingested::Accounted { applied, to })
+    Ok(Ingested::Accounted {
+        applied,
+        batch: retained,
+    })
 }
 
 /// The generation the tape currently publishes.

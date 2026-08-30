@@ -156,6 +156,7 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         },
         authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         authored_synthetic: false,
+        observed: None,
         activity: AgentActivityKind::Prose,
         text: "settled".to_owned(),
         media: Vec::new(),
@@ -169,6 +170,10 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
     assert!(
         !encoded_text.contains("authored_synthetic"),
         "source-authored messages keep the established prose wire shape"
+    );
+    assert!(
+        !encoded_text.contains("observed"),
+        "source-authored messages do not grow an observation field"
     );
     let decoded_prose = wire::decode::<AgentMessage>(&encoded).expect("default prose decodes");
     assert_eq!(decoded_prose.activity, AgentActivityKind::Prose);
@@ -187,6 +192,22 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         wire::decode::<AgentMessage>(&encoded)
             .expect("synthetic authored marker decodes")
             .authored_synthetic
+    );
+
+    let observed = AgentMessage {
+        observed: Some(
+            "2030-04-12T18:44:10.271Z"
+                .parse()
+                .expect("fixture observation instant"),
+        ),
+        ..synthetic
+    };
+    let encoded = wire::encode(&observed).expect("observed instant encodes");
+    assert_eq!(
+        wire::decode::<AgentMessage>(&encoded)
+            .expect("observed instant decodes")
+            .observed,
+        observed.observed,
     );
 
     let tool = AgentMessage {

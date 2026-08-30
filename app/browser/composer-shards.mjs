@@ -10,7 +10,7 @@ import {
 
 /// Production resolves one destination per primary shard, in one order
 /// (`primary_stream_link` in app/src/browser/watchband.rs): the last rendered
-/// message card owned by that exact lane, then the lineage's last message card,
+/// prose card owned by that exact lane, then the lineage's last prose card,
 /// and only for a lineage with no message card the named stream default. Every
 /// branch is read back off the live DOM because a hand-written anchor id is
 /// precisely what went stale when that resolver landed.
@@ -23,12 +23,11 @@ export async function primaryDestination(team, lane) {
   const rendered = await surface
     .locator(
       `.team-activity-grid .mosaic-message-card[data-agent-lane="${lane}"]`
-        + ':is([data-card-kind="agent-message"], [data-card-kind="compaction"])',
+        + '[data-card-kind="agent-message"]',
     )
     .evaluateAll((cards) => cards.map((card) => card.id));
   const lineageMessages = await surface.locator(
-    ".team-activity-grid .mosaic-message-card"
-      + ':is([data-card-kind="agent-message"], [data-card-kind="compaction"])',
+    '.team-activity-grid .mosaic-message-card[data-card-kind="agent-message"]',
   ).evaluateAll((cards) => cards.map((card) => card.id));
   if (rendered.length === 0) {
     if (lineageMessages.length === 0) {
@@ -50,8 +49,8 @@ export async function primaryDestination(team, lane) {
   );
   assert.match(
     label,
-    /^Jump to latest .+ activity$/,
-    `${lane} announces its own latest activity, not the lineage default`,
+    /^Jump to latest .+ message$/,
+    `${lane} announces its own latest prose message, not the lineage default`,
   );
   assert.notEqual((await link.innerText()).trim(), "—");
   return { link, href, rendered, lineageMessages };
@@ -546,7 +545,7 @@ export async function assertComposerShards({
     }));
   assert.ok(activityChrome.length >= 2, "multiple composer activity ages are visible");
   assert.ok(
-    activityChrome.every((age) => /^(?:now|\d+[smhd]|99d\+)$/.test(age.label)),
+    activityChrome.every((age) => /^(?:now|\d+[smhd])$/.test(age.label)),
     `every composer activity age comes from a selected message card: ${
       JSON.stringify(activityChrome)
     }`,
@@ -574,7 +573,7 @@ export async function assertComposerShards({
         cardAuthored: card?.querySelector("[data-age-authored]")?.dataset.ageAuthored,
         cardKind: card?.getAttribute("data-card-kind"),
       };
-    }).filter((age) => ["agent-message", "compaction"].includes(age.cardKind)));
+    }).filter((age) => age.cardKind === "agent-message"));
   assert.ok(
     linkedHeaderAges.length > 0,
     `at least one composer heading links to a user-facing agent card: ${

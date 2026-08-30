@@ -169,8 +169,12 @@ fn render_compose(
             <form class="team-composer" onsubmit={submit.clone()}>
                 <div class="team-agents">
                     {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                        let stream = primary_stream_link(&cards, lineage, member.lane, standing);
-                        let prose = latest_agent_prose(&cards, member.lane);
+                        let header = primary_composer_header(
+                            &cards,
+                            lineage,
+                            member.lane,
+                            standing,
+                        );
                         render_agent_composer(
                             member,
                             standing,
@@ -183,8 +187,8 @@ fn render_compose(
                             sender,
                             drafts,
                             submissions,
-                            stream,
-                            prose,
+                            header.stream,
+                            header.prose,
                         )
                     })}
                 </div>
@@ -419,57 +423,79 @@ struct ComposerStreamLink {
     authored: Option<i64>,
 }
 
-fn primary_stream_link(
+struct ComposerHeader {
+    stream: ComposerStreamLink,
+    prose: String,
+}
+
+/// Resolve one human-facing message once, then derive every header field from it.
+///
+/// Tool previews and compaction boundaries remain useful activity cards, but
+/// neither is the assistant prose printed beside this age. Selecting them here
+/// would make the clock describe a different event from the text it labels.
+fn primary_composer_header(
     cards: &[ActivityCard],
     lineage: &crate::runtime::LaneRow,
     lane: CanonicalUuid,
     standing: &Standing,
-) -> ComposerStreamLink {
-    let own_source = cards.iter().rev().find_map(|card| match card {
-        ActivityCard::Agent {
-            member, message, ..
-        } if member.lane == lane => Some(message),
-        ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
-    });
+) -> ComposerHeader {
+    let own_source = cards
+        .iter()
+        .rev()
+        .find_map(|card| visible_agent_prose(card, Some(lane)));
+    let is_own_source = own_source.is_some();
     let source = own_source.or_else(|| {
-        cards.iter().rev().find_map(|card| match card {
-            ActivityCard::Agent { message, .. } => Some(message),
-            ActivityCard::Directive { .. } => None,
-        })
+        cards
+            .iter()
+            .rev()
+            .find_map(|card| visible_agent_prose(card, None))
     });
     source.map_or_else(
-        || ComposerStreamLink {
-            target: format!("lineage-stream-{}", lineage.lane),
-            label: "Jump to lineage activity".to_owned(),
-            authored: None,
-        },
-        |message| ComposerStreamLink {
-            target: agent_message_source_id(message),
-            label: if own_source.is_some() {
-                format!("Jump to latest {} activity", standing.label)
-            } else {
-                "Jump to latest lineage message".to_owned()
+        || ComposerHeader {
+            stream: ComposerStreamLink {
+                target: format!("lineage-stream-{}", lineage.lane),
+                label: "Jump to lineage activity".to_owned(),
+                authored: None,
             },
-            authored: Some(source_authored_millis(message)),
+            prose: "No agent prose yet".to_owned(),
+        },
+        |(message, prose)| ComposerHeader {
+            stream: ComposerStreamLink {
+                target: agent_message_source_id(message),
+                label: if is_own_source {
+                    format!("Jump to latest {} message", standing.label)
+                } else {
+                    "Jump to latest lineage message".to_owned()
+                },
+                authored: source_authored_millis(message),
+            },
+            prose,
         },
     )
 }
 
-fn source_authored_millis(message: &wire::AgentMessage) -> i64 {
-    message.authored.get().as_millisecond()
+fn visible_agent_prose(
+    card: &ActivityCard,
+    lane: Option<CanonicalUuid>,
+) -> Option<(&wire::AgentMessage, String)> {
+    match card {
+        ActivityCard::Agent {
+            member, message, ..
+        } if lane.is_none_or(|lane| lane == member.lane)
+            && message.activity == wire::AgentActivityKind::Prose =>
+        {
+            watchband::first_nonquoted_prose(&message.text).map(|prose| (message, prose))
+        }
+        ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
+    }
 }
 
-fn latest_agent_prose(cards: &[ActivityCard], lane: CanonicalUuid) -> String {
-    cards
-        .iter()
-        .rev()
-        .find_map(|card| match card {
-            ActivityCard::Agent {
-                member, message, ..
-            } if member.lane == lane => watchband::first_nonquoted_prose(&message.text),
-            ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
-        })
-        .unwrap_or_else(|| "No agent prose yet".to_owned())
+fn source_authored_millis(message: &wire::AgentMessage) -> Option<i64> {
+    message
+        .observed
+        .as_ref()
+        .or_else(|| (!message.authored_synthetic).then_some(&message.authored))
+        .map(|instant| instant.get().as_millisecond())
 }
 
 fn renewal_callback(

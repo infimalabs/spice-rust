@@ -186,15 +186,16 @@ pub(super) async fn run_surface(
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let residency = current_residency(bus, epoch)?;
-    let steering = bus
+    let message_snapshot = bus
         .fact_snapshot()
-        .ok()
-        .and_then(|snapshot| steer::Ledger::from_snapshot(&snapshot).ok());
+        .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
+    let steering = steer::Ledger::from_snapshot(&message_snapshot).ok();
+    let mut message_reader = message_surface::BacklogReader::from_snapshot(&message_snapshot);
     message_surface::restore_agent_messages(
         paths,
         residency.body(),
         &message_publisher,
-        &mut message_surface::BacklogReader::default(),
+        &mut message_reader,
         steering.as_ref(),
         progress,
     )?;
@@ -228,6 +229,7 @@ pub(super) async fn run_surface(
         shutdown,
         server_task,
         message_publisher,
+        message_reader.into_state(),
         taste_submitter,
         taste_completions,
         records,
@@ -335,6 +337,7 @@ pub(super) async fn drive_surface(
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
+    mut message_state: message_surface::MessageState,
     mut taste_submitter: Option<&mut taste_surface::AdjudicationSubmitter>,
     mut taste_completions: Option<&mut taste_surface::AdjudicationCompletions>,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
@@ -361,7 +364,6 @@ pub(super) async fn drive_surface(
     // one turn before clients can observe the discovery file.
     tokio::task::yield_now().await;
     publication.publish(bus, command_surface.paths, residency.body(), diagnostic)?;
-    let mut tool_previews = CallPreviews::default();
     loop {
         tokio::select! {
             request = control.recv() => {
@@ -373,7 +375,7 @@ pub(super) async fn drive_surface(
             }
             record = records.recv() => accept_record(
                 bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), record, &mut tool_previews, diagnostic,
+                taste_submitter.as_deref_mut(), record, &mut message_state, diagnostic,
             )?,
             completed = receive_judgment(&mut taste_completions) => {
                 let completed = completed?;
@@ -399,7 +401,7 @@ pub(super) async fn drive_surface(
             report = supervisor_reports.recv() => accept_supervisor_report(
                 bus, epoch, seats, command_surface, &message_publisher,
                 taste_submitter.as_deref_mut(), &mut lifecycle, report,
-                &mut tool_previews, diagnostic,
+                &mut message_state, diagnostic,
             )?,
             timer = timers.recv() => {
                 let timer = timer.ok_or_else(|| environment_fault(
@@ -434,7 +436,7 @@ fn accept_supervisor_report(
     taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     lifecycle: &mut lifecycle::Runtime,
     report: io::Result<super::supervisor::Notice>,
-    tool_previews: &mut CallPreviews,
+    message_state: &mut message_surface::MessageState,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let notice = match report {
@@ -482,7 +484,7 @@ fn accept_supervisor_report(
         message_publisher,
         taste_judge,
         Some(record),
-        tool_previews,
+        message_state,
         diagnostic,
     )
 }
@@ -542,7 +544,7 @@ fn accept_record(
     message_publisher: &canvas::stream::MessagePublisher,
     taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     record: Option<lane::capture::CaptureRecord>,
-    tool_previews: &mut CallPreviews,
+    message_state: &mut message_surface::MessageState,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let record = record.ok_or_else(|| {
@@ -565,7 +567,7 @@ fn accept_record(
             &surfaces,
             taste_judge,
             &record,
-            message_surface::CaptureViews::new(tool_previews, diagnostic),
+            message_surface::CaptureViews::new(message_state, diagnostic),
         )
     } else {
         accept_capture_record(
@@ -575,7 +577,7 @@ fn accept_record(
             &surfaces,
             None,
             &record,
-            message_surface::CaptureViews::new(tool_previews, diagnostic),
+            message_surface::CaptureViews::new(message_state, diagnostic),
         )
     }
 }

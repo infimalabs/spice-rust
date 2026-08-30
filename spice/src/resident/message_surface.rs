@@ -43,16 +43,70 @@ impl<'a, P> CaptureSurfaces<'a, P> {
 
 /// Mutable per-record fold state at the admitted capture boundary.
 pub(super) struct CaptureViews<'a> {
-    previews: &'a mut CallPreviews,
+    state: &'a mut MessageState,
     diagnostic: &'a mut dyn io::Write,
 }
 
 impl<'a> CaptureViews<'a> {
-    pub(super) fn new(previews: &'a mut CallPreviews, diagnostic: &'a mut dyn io::Write) -> Self {
-        Self {
-            previews,
-            diagnostic,
+    pub(super) fn new(state: &'a mut MessageState, diagnostic: &'a mut dyn io::Write) -> Self {
+        Self { state, diagnostic }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(in crate::resident) struct MessageState {
+    previews: CallPreviews,
+    observations: MessageObservations,
+}
+
+#[derive(Clone, Debug)]
+struct MessageObservation {
+    lane: CanonicalUuid,
+    from: wire::body::TranscriptPosition,
+    to: wire::body::TranscriptPosition,
+    at: wire::Instant,
+}
+
+#[derive(Debug, Default)]
+struct MessageObservations(Vec<MessageObservation>);
+
+impl MessageObservations {
+    fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
+        let mut observations = Self::default();
+        for envelope in snapshot.facts() {
+            if let Some(batch) = envelope.fact.read::<wire::body::JournalIngested>() {
+                observations.push(&batch, envelope.at.clone());
+            }
         }
+        observations
+    }
+
+    fn extend(&mut self, observations: Vec<super::TranscriptObservation>) {
+        for observation in observations {
+            self.push(&observation.batch, observation.at);
+        }
+    }
+
+    fn push(&mut self, batch: &wire::body::JournalIngested, at: wire::Instant) {
+        self.0.push(MessageObservation {
+            lane: batch.lane,
+            from: batch.from,
+            to: batch.to,
+            at,
+        });
+    }
+
+    fn at(&self, lane: CanonicalUuid, locus: listen::Locus) -> Option<wire::Instant> {
+        let position = (locus.member, locus.offset);
+        self.0
+            .iter()
+            .rev()
+            .find(|observation| {
+                observation.lane == lane
+                    && (observation.from.member, observation.from.offset) <= position
+                    && position < (observation.to.member, observation.to.offset)
+            })
+            .map(|observation| observation.at.clone())
     }
 }
 
@@ -127,7 +181,9 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     // keeps the transcript head level with the records the resident has taken
     // responsibility for, rather than leaving the gap for the next start to
     // find. A record the resident did not accept above does not account either.
-    super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), views.diagnostic)?;
+    let observations =
+        super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), views.diagnostic)?;
+    views.state.observations.extend(observations);
     match recognition {
         TasteRecognition::Deferred(judge) => {
             judge.recognize(bus, epoch, surfaces.tastes, record)?;
@@ -156,12 +212,7 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
         }
     }
     let steering = steering_ledger(bus, record);
-    match publish_agent_messages(
-        surfaces.publisher,
-        record,
-        views.previews,
-        steering.as_ref(),
-    ) {
+    match publish_agent_messages(surfaces.publisher, record, views.state, steering.as_ref()) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(
@@ -178,7 +229,7 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
 pub(super) fn publish_agent_messages(
     publisher: &impl AgentMessagePublisher,
     record: &lane::capture::CaptureRecord,
-    previews: &mut CallPreviews,
+    state: &mut MessageState,
     steering: Option<&steer::Ledger>,
 ) -> CommandResult<()> {
     let authored = record
@@ -196,8 +247,9 @@ pub(super) fn publish_agent_messages(
                 ordinal: event,
                 decoded,
                 authored,
+                observations: &state.observations,
             },
-            previews,
+            &mut state.previews,
             steering,
         )?;
     }
@@ -210,6 +262,7 @@ struct AgentEvent<'a> {
     ordinal: u32,
     decoded: &'a listen::Event,
     authored: Option<&'a str>,
+    observations: &'a MessageObservations,
 }
 
 /// Project one typed tape event through the sole live/restored message policy.
@@ -225,6 +278,7 @@ fn publish_agent_event(
         ordinal,
         decoded,
         authored,
+        observations,
     } = event;
     let (activity, locus, text, media) = match decoded {
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => (
@@ -255,6 +309,9 @@ fn publish_agent_event(
         _ => return Ok(()),
     };
     let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, ordinal)?;
+    let observed = authored_synthetic
+        .then(|| observations.at(lane, locus))
+        .flatten();
     wire::media::admit_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
     publisher
@@ -269,6 +326,7 @@ fn publish_agent_event(
             },
             authored,
             authored_synthetic,
+            observed,
             activity,
             text,
             media,
@@ -295,8 +353,9 @@ fn synthetic_agent_message_authored(
     locus: listen::Locus,
     event: u32,
 ) -> CommandResult<wire::Instant> {
-    // Some current Codex records omit vendor time; Canvas still needs a stable
-    // authored field, so use the durable tape coordinates instead.
+    // Some current Codex records omit vendor time. The wire identity still
+    // needs a stable ordering key, so derive one from durable tape coordinates;
+    // presentation must use `observed` and never expose this surrogate as time.
     const BASE_MILLIS: i64 = 946_684_800_000;
     const MEMBER_MILLIS: i64 = 86_400_000;
 

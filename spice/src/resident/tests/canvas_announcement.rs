@@ -431,7 +431,7 @@ fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result()
         )
         .expect("capture fixture occupant starts");
     let mut diagnostics = Vec::new();
-    let mut previews = CallPreviews::default();
+    let mut message_state = MessageState::default();
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
     let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
@@ -443,7 +443,7 @@ fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result()
         &surfaces,
         None,
         &record,
-        CaptureViews::new(&mut previews, &mut diagnostics),
+        CaptureViews::new(&mut message_state, &mut diagnostics),
     )
     .expect("current capture projects");
     assert_tool_media_prose_and_compaction_activity(&mut updates, &record, &media);
@@ -453,7 +453,7 @@ fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result()
         &surfaces,
         &mut updates,
         &record,
-        &mut previews,
+        &mut message_state,
         &mut diagnostics,
     );
     seats
@@ -508,7 +508,7 @@ fn captured_activity_without_a_vendor_timestamp_still_reaches_canvas() {
         )
         .expect("capture fixture occupant starts");
     let mut diagnostics = Vec::new();
-    let mut previews = CallPreviews::default();
+    let mut message_state = MessageState::default();
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
     let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
@@ -520,7 +520,7 @@ fn captured_activity_without_a_vendor_timestamp_still_reaches_canvas() {
         &surfaces,
         None,
         &record,
-        CaptureViews::new(&mut previews, &mut diagnostics),
+        CaptureViews::new(&mut message_state, &mut diagnostics),
     )
     .expect("timestamp-free capture projects");
 
@@ -586,7 +586,7 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         )
         .expect("capture fixture occupant starts");
     let mut diagnostics = Vec::new();
-    let mut previews = CallPreviews::default();
+    let mut message_state = MessageState::default();
     let steering = steer::Config::default();
     let surfaces = CaptureSurfaces::new(&paths, &bag, &steering, &publisher);
 
@@ -598,7 +598,7 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
             &surfaces,
             None,
             &record,
-            CaptureViews::new(&mut previews, &mut diagnostics),
+            CaptureViews::new(&mut message_state, &mut diagnostics),
         )
         .expect("current capture admits");
     }
@@ -621,7 +621,7 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         &judged_surfaces,
         Some(&mut judge),
         &judged_record,
-        CaptureViews::new(&mut previews, &mut diagnostics),
+        CaptureViews::new(&mut message_state, &mut diagnostics),
     )
     .expect("enabled capture reaches resident adjudication");
     let snapshot = bus.fact_snapshot().expect("adjudicated facts read");
@@ -852,7 +852,7 @@ fn assert_stale_capture_ignored<P: AgentMessagePublisher>(
     surfaces: &CaptureSurfaces<'_, P>,
     updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
     record: &lane::capture::CaptureRecord,
-    previews: &mut CallPreviews,
+    message_state: &mut MessageState,
     diagnostics: &mut Vec<u8>,
 ) {
     seats
@@ -896,7 +896,7 @@ fn assert_stale_capture_ignored<P: AgentMessagePublisher>(
         surfaces,
         None,
         &stale,
-        CaptureViews::new(previews, diagnostics),
+        CaptureViews::new(message_state, diagnostics),
     )
     .expect("stale capture is ignored");
     assert!(matches!(
@@ -977,6 +977,7 @@ fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
 
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
     let publisher = source.message_publisher();
+    let mut updates = source.subscribe_messages();
     let locus = listen::Locus::new(1, 0, CODEX_USAGE.len() as u64);
     let record = lane::capture::CaptureRecord {
         lane,
@@ -986,7 +987,7 @@ fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
         locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: authored_context(),
+            context: listen::RecordContext::default(),
             events: vec![listen::Event::Prose(listen::Prose {
                 role: listen::ProseRole::Assistant,
                 text: "agent-authored answer".to_owned(),
@@ -1008,7 +1009,7 @@ fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
         )
         .expect("ingestion fixture occupant starts");
     let mut diagnostics = Vec::new();
-    let mut previews = CallPreviews::default();
+    let mut message_state = MessageState::default();
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
     let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
@@ -1025,11 +1026,27 @@ fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
         &surfaces,
         None,
         &record,
-        CaptureViews::new(&mut previews, &mut diagnostics),
+        CaptureViews::new(&mut message_state, &mut diagnostics),
     )
     .expect("the live capture record is accepted");
 
     let accounted = bus.fact_snapshot().expect("accounted facts read");
+    let message = updates
+        .try_recv()
+        .expect("the timestamp-free capture publishes its message");
+    let observed = accounted
+        .facts()
+        .iter()
+        .find(|envelope| envelope.fact.kind() == wire::FactKind::JournalIngested)
+        .expect("the transcript batch has a durable observation instant")
+        .at
+        .clone();
+    assert!(message.authored_synthetic);
+    assert_eq!(
+        message.observed,
+        Some(observed),
+        "the message age uses the durable batch observation, not its synthetic ordering instant",
+    );
     assert_eq!(
         ingested_head(&bus, lane).map(|head| head.next),
         Some(wire::body::TranscriptPosition {

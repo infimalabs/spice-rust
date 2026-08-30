@@ -16,7 +16,23 @@ const INITIAL_WINDOW_BYTES: u64 = 256 * 1024;
 #[derive(Debug, Default)]
 pub(in crate::resident) struct BacklogReader {
     cursors: BTreeMap<CanonicalUuid, listen::Checkpoint>,
-    previews: CallPreviews,
+    state: MessageState,
+}
+
+impl BacklogReader {
+    pub(in crate::resident) fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
+        Self {
+            cursors: BTreeMap::new(),
+            state: MessageState {
+                previews: CallPreviews::default(),
+                observations: MessageObservations::from_snapshot(snapshot),
+            },
+        }
+    }
+
+    pub(in crate::resident) fn into_state(self) -> MessageState {
+        self.state
+    }
 }
 
 /// Seed each current lane's bounded Canvas backlog before discovery is published.
@@ -107,7 +123,7 @@ fn forget_changed_source(
 ) {
     if matches!(&error, listen::ScanError::SourceChanged { .. }) {
         reader.cursors.remove(&lane);
-        reader.previews.clear_lane(lane);
+        reader.state.previews.clear_lane(lane);
     }
     let _ = writeln!(
         diagnostic,
@@ -142,8 +158,9 @@ fn publish_scan(
                     ordinal: event,
                     decoded: &sourced.event,
                     authored: sourced.context.timestamp.as_deref(),
+                    observations: &reader.state.observations,
                 },
-                &mut reader.previews,
+                &mut reader.state.previews,
                 steering,
             ) {
                 match outcome {

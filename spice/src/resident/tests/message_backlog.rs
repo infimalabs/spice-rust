@@ -4,7 +4,9 @@ use super::*;
 
 const CODEX_PROSE: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
 "#;
-const CODEX_COMPACTION: &[u8] = br#"{"timestamp":"2030-04-12T18:44:39.271Z","type":"compacted"}
+const CODEX_PROSE_WITHOUT_TIME: &[u8] = br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
+"#;
+const CODEX_COMPACTION_WITHOUT_TIME: &[u8] = br#"{"type":"compacted"}
 "#;
 const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
 "#;
@@ -21,14 +23,22 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
     seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
         .expect("the backlog tape opens");
-    tape.tee(CODEX_PROSE).expect("durable prose is captured");
-    tape.tee(CODEX_COMPACTION)
+    tape.tee(CODEX_PROSE_WITHOUT_TIME)
+        .expect("durable prose is captured");
+    tape.tee(CODEX_COMPACTION_WITHOUT_TIME)
         .expect("durable compaction is captured");
+    let mut ingest_diagnostic = Vec::new();
+    let observations = ingest_transcripts(&bus, &paths, Some(lane), &mut ingest_diagnostic)
+        .expect("durable tape is accounted");
+    assert_eq!(observations.len(), 1);
+    assert!(ingest_diagnostic.is_empty());
+    let observed = observations[0].at.clone();
 
     for generation in 0..2 {
         let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
         let publisher = source.message_publisher();
-        let mut reader = message_surface::BacklogReader::default();
+        let snapshot = bus.fact_snapshot().expect("durable message times load");
+        let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot);
         let mut diagnostic = Vec::new();
         let residency = current_residency(&bus, epoch).expect("residency reads");
         message_surface::restore_agent_messages(
@@ -72,10 +82,14 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         assert_eq!(messages[0].lane, lane);
         assert_eq!(messages[0].author, author);
         assert_eq!(messages[0].text, "durable restart backlog");
+        assert!(messages[0].authored_synthetic);
+        assert_eq!(messages[0].observed.as_ref(), Some(&observed));
         assert_eq!(messages[1].lane, lane);
         assert_eq!(messages[1].author, author);
         assert_eq!(messages[1].activity, wire::AgentActivityKind::Compaction);
         assert_eq!(messages[1].text, "Context compacted");
+        assert!(messages[1].authored_synthetic);
+        assert_eq!(messages[1].observed.as_ref(), Some(&observed));
         drop(source);
     }
 

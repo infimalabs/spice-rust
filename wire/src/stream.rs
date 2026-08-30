@@ -84,6 +84,17 @@ pub struct AgentMessage {
     /// Whether `authored` was synthesized because the vendor record omitted time.
     #[serde(default, skip_serializing_if = "is_false")]
     pub authored_synthetic: bool,
+    /// Durable Spice observation instant when the vendor record omitted time.
+    ///
+    /// This is distinct from `authored`: the synthetic authored value remains
+    /// a stable ordering identity, while this instant is the wall-clock time at
+    /// which the transcript batch containing the message crossed the journal.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub observed: Option<Instant>,
     /// Visible activity kind. Its absent wire spelling means prose.
     #[serde(default, skip_serializing_if = "AgentActivityKind::is_prose")]
     pub activity: AgentActivityKind,

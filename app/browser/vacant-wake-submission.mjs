@@ -95,9 +95,10 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     chronologyBeforeDrain,
     "draining the lane cannot replace the selected message or timestamp",
   );
-  assert.ok(
-    ["agent-message", "compaction"].includes(vacantChronology.cardKind),
-    `the vacant composer still links to its latest user-facing agent card: ${
+  assert.equal(
+    vacantChronology.cardKind,
+    "agent-message",
+    `the vacant composer still links to its latest prose card: ${
       JSON.stringify(vacantChronology)
     }`,
   );

@@ -50,7 +50,9 @@ pub(crate) fn admit_steering_index(journal: &mut journal::Journal) -> CommandRes
 use message_surface::AgentMessagePublisher;
 #[cfg(test)]
 use message_surface::CaptureViews;
-use message_surface::{CallPreviews, CaptureSurfaces, accept_capture_record};
+#[cfg(test)]
+use message_surface::MessageState;
+use message_surface::{CaptureSurfaces, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 
 mod runtime;

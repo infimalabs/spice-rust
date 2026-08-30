@@ -54,10 +54,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
         )
         .await
         .expect("Canvas surface starts");
-        assert!(
-            !paths.canvas.exists(),
-            "binding alone must not publish a command surface before drive_surface is ready"
-        );
+        assert!(!paths.canvas.exists(), "surface published before drive");
         let StartedSurface {
             capabilities,
             discovery,
@@ -118,6 +115,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             shutdown,
             server_task,
             message_publisher,
+            MessageState::default(),
             Some(submitter),
             Some(completions),
             records,

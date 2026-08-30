@@ -30,7 +30,7 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
         )
         .expect("capture fixture group starts");
     let mut diagnostics = Vec::new();
-    let mut previews = CallPreviews::default();
+    let mut message_state = MessageState::default();
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
     let publisher = UnavailableMessagePublisher;
@@ -67,7 +67,7 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
             &surfaces,
             None,
             &record,
-            CaptureViews::new(&mut previews, &mut diagnostics),
+            CaptureViews::new(&mut message_state, &mut diagnostics),
         )
         .expect("a failed Canvas view leaves the capture handler live");
     }
