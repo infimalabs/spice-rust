@@ -293,6 +293,118 @@ fn reached_file_shape_measures_only_the_authored_path_and_binds_its_source() {
 }
 
 #[test]
+fn derived_reached_arms_share_one_tree_and_run_wide_authorities() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::create_dir_all(repository.join("app/src")).expect("reached Rust source directory");
+    let reached = "app/src/reached.rs";
+    fs::write(repository.join(reached), "pub fn reached() {}\n")
+        .expect("write reached Rust source");
+    fixture_git(&repository, &["add", reached]);
+
+    let state_run = crate::BatteryStateRun::capture(&repository).expect("capture shared state run");
+    let anchor = crate::BatteryCapture::capture_arm_in_state(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting(),
+        reached_rim(&repository, reached),
+        hygiene(),
+        GateId::Staging,
+        state_run,
+    )
+    .expect("capture shared staged source");
+    let selection =
+        crate::select_current_source_change_gates(anchor.source().clone(), &[reached.to_owned()])
+            .expect("select reached current-source arm plan");
+    let anchor_context = anchor.context().expect("capture anchor context");
+
+    let mut file_shape = anchor
+        .derive_arm_in_state_reached(&selection, GateId::FileShape)
+        .expect("derive reached file-shape arm");
+    let mut complexity = anchor
+        .derive_arm_in_state_reached(&selection, GateId::Complexity)
+        .expect("derive reached complexity arm");
+
+    assert_eq!(file_shape.root(), anchor.root());
+    assert_eq!(complexity.root(), anchor.root());
+    assert_eq!(file_shape.source(), anchor.source());
+    assert_eq!(complexity.source(), anchor.source());
+    for (gate_id, derived) in [
+        (GateId::FileShape, &file_shape),
+        (GateId::Complexity, &complexity),
+    ] {
+        assert_eq!(
+            derived.execution_objects(),
+            selection.reach_for(gate_id).map(|reach| reach.objects()),
+        );
+        let context = derived.context().expect("capture derived context");
+        assert_eq!(context.source(), anchor_context.source());
+        assert_eq!(context.actor(), anchor_context.actor());
+        assert_eq!(context.scope(), anchor_context.scope());
+        assert_eq!(context.configuration(), anchor_context.configuration());
+        assert_eq!(context.policy(), anchor_context.policy());
+        assert_eq!(context.state(), anchor_context.state());
+        assert_eq!(context.latches(), anchor_context.latches());
+        assert_eq!(context.tools(), anchor_context.tools());
+    }
+
+    let file_shape = file_shape
+        .execute_arm_report(GateId::FileShape)
+        .expect("execute derived file-shape arm");
+    let complexity = complexity
+        .execute_arm_report(GateId::Complexity)
+        .expect("execute derived complexity arm");
+    assert_eq!(file_shape.context().source(), anchor.source());
+    assert_eq!(complexity.context().source(), anchor.source());
+}
+
+#[test]
+fn reached_arm_derivation_refuses_source_movement_after_anchor_capture() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::create_dir_all(repository.join("app/src")).expect("reached Rust source directory");
+    let reached = "app/src/reached.rs";
+    fs::write(repository.join(reached), "pub fn reached() {}\n")
+        .expect("write reached Rust source");
+    fixture_git(&repository, &["add", reached]);
+
+    let state_run = crate::BatteryStateRun::capture(&repository).expect("capture shared state run");
+    let anchor = crate::BatteryCapture::capture_arm_in_state(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting(),
+        reached_rim(&repository, reached),
+        hygiene(),
+        GateId::Staging,
+        state_run,
+    )
+    .expect("capture shared staged source");
+    let selection =
+        crate::select_current_source_change_gates(anchor.source().clone(), &[reached.to_owned()])
+            .expect("select reached current-source arm plan");
+
+    fs::write(
+        repository.join(reached),
+        "pub fn moved_after_capture() {}\n",
+    )
+    .expect("move selected source after capture");
+    fixture_git(&repository, &["add", reached]);
+
+    let error = match anchor.derive_arm_in_state_reached(&selection, GateId::FileShape) {
+        Ok(_) => panic!("source movement must refuse reached-arm derivation"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .detail()
+            .contains("changed while its staged tree was selected"),
+        "{error}"
+    );
+}
+
+#[test]
 fn reached_markdown_parses_only_authored_docs_but_resolves_unmodified_targets() {
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);

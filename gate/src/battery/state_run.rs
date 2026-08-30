@@ -157,14 +157,6 @@ impl BatteryStateRun {
         Ok(())
     }
 
-    /// Exact run-start ledger every attached capture judged.
-    pub(super) fn ledger(&self) -> Result<StateLedger, BatteryError> {
-        self.lock()?
-            .judged
-            .clone()
-            .ok_or_else(|| BatteryError::new("battery state run has not bound a selected source"))
-    }
-
     /// Finish the complete accumulated proposal, publishing only staged sources.
     ///
     /// Revision-selected proposals are deliberately reconciled to preserve the

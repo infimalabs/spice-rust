@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use wire::Digest;
 
@@ -60,28 +61,117 @@ enum FamilyExecution {
     Refused(String),
 }
 
-/// Core evidence and committed ancestry captured in one repository instant.
+/// Core evidence projected from one run-wide repository instant.
 struct CapturedCore {
     source: Digest,
     evidence: Option<Result<Vec<ArmEvidence>, String>>,
     bounds: Vec<BoundDecision>,
     observations: Vec<LatchObservation>,
-    baselines: BaselineCapture,
+}
+
+/// One immutable selected tree before run-start authorities are bound to it.
+pub(super) struct RepositorySelection {
+    tree: Arc<SelectedTree>,
+    contract: Arc<Contract>,
+}
+
+impl RepositorySelection {
+    pub(super) fn capture(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        input_mode: InputMode,
+    ) -> Result<Self, BatteryError> {
+        let repository = repository.into();
+        let tree = Arc::new(selector.materialize(&repository).map_err(|error| {
+            BatteryError::new(format!("cannot capture battery source: {error}"))
+        })?);
+        let contract = Arc::new(
+            match input_mode {
+                InputMode::Strict => Contract::load(tree.root()),
+                InputMode::Generic => Contract::load_generic(tree.root()),
+            }
+            .map_err(|error| {
+                BatteryError::new(format!("cannot load captured battery contract: {error}"))
+            })?,
+        );
+        Ok(Self { tree, contract })
+    }
+
+    pub(super) fn bind(
+        mut self,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        latches: &[LatchEntry],
+        rim: &RimCapture,
+    ) -> Result<RepositorySource, BatteryError> {
+        self.verify_source()?;
+        let core = Arc::new(
+            CoreSource::capture(&self.tree, &self.contract, claim, actor, latches).map_err(
+                |error| BatteryError::new(format!("cannot identify battery source: {error}")),
+            )?,
+        );
+        Arc::get_mut(&mut self.tree)
+            .expect("an unbound repository selection has one tree owner")
+            .refresh_staged_seal()
+            .map_err(|error| BatteryError::new(error.to_string()))?;
+        let baselines = Arc::new(capture_baselines(
+            self.tree.repository(),
+            &self.contract,
+            rim,
+            core.clean_merge_tree(),
+        ));
+        self.verify_source()?;
+        Ok(RepositorySource {
+            tree: self.tree,
+            contract: self.contract,
+            core,
+            baselines,
+        })
+    }
+
+    fn verify_source(&self) -> Result<(), BatteryError> {
+        self.tree
+            .verify_source()
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
+
+    pub(super) fn tree(&self) -> &SelectedTree {
+        &self.tree
+    }
+}
+
+/// Run-wide selected bytes and live observations shared by focused executors.
+#[derive(Clone)]
+pub(super) struct RepositorySource {
+    tree: Arc<SelectedTree>,
+    contract: Arc<Contract>,
+    core: Arc<CoreSource>,
+    baselines: Arc<BaselineCapture>,
+}
+
+impl RepositorySource {
+    pub(super) fn verify_source(&self) -> Result<(), BatteryError> {
+        self.tree
+            .verify_source()
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
 }
 
 /// One capture-owning production implementation of [`BatteryExecutor`].
 ///
 /// A family is projected when its first arm is requested. A complete capture
-/// caches the family's complete result set or refusal; a selected capture
-/// caches only the named result. Either way, no requested analysis runs twice.
+/// caches the family's complete result set or refusal; a selected executor
+/// projects only the named result from its run-wide source authority. Either
+/// way, no requested analysis runs twice.
 ///
 /// The core and metrics families are the two exceptions, and are acquired at
-/// capture. A complete run acquires each complete family; a selected run
-/// acquires only the named arm. Two core arms observe the live repository the
-/// tree was materialized from, so they can only be taken in the same moment the
-/// source is captured: an acquisition deferred to first request would read an
-/// index, a `MERGE_HEAD`, or a worktree that moved after the capture the report
-/// names.
+/// capture. One run-wide core source retains the live repository observations;
+/// each executor projects either the complete family or its named arm from
+/// those observations. Two core arms inspect the repository the tree was
+/// materialized from, so those observations can only be taken in the same
+/// moment the source is captured: an acquisition deferred to first request
+/// would read an index, a `MERGE_HEAD`, or a worktree that moved after the
+/// capture the report names.
 /// Metrics are acquired immediately after that observation because their
 /// file-shape and routine-complexity rows decide elastic bounds which must be
 /// present in the immutable run context before any arm executes. Each complete
@@ -99,12 +189,12 @@ struct CapturedCore {
 /// capture to the structural acquisition. That keeps both families deciding
 /// against one ledger reading; neither is retained for a later observation.
 pub struct RepositoryExecutor<'trace> {
-    tree: SelectedTree,
-    contract: Contract,
+    tree: Arc<SelectedTree>,
+    contract: Arc<Contract>,
     source: Digest,
     core: Option<Result<Vec<ArmEvidence>, String>>,
     metrics: Option<Result<Vec<ArmEvidence>, String>>,
-    baselines: BaselineCapture,
+    baselines: Arc<BaselineCapture>,
     bounds: Vec<BoundDecision>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
@@ -119,7 +209,7 @@ pub struct RepositoryExecutor<'trace> {
 }
 
 impl<'trace> RepositoryExecutor<'trace> {
-    /// Materialize and retain one repository selection for a complete battery.
+    /// Derive one battery executor from a retained repository selection.
     ///
     /// `rim` carries the directory, executable search path, and changed paths
     /// the caller observed at the binary rim. All three are supplied rather than
@@ -127,11 +217,12 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// set the caller never saw, and an executor that defaulted to none would
     /// scan nothing and call every tree clean.
     ///
-    /// `latches` is the durable breach inventory the core family decides its
-    /// elastic bounds against: a latched path is held to its base limit rather
-    /// than the varied one. The enclosing [`BatteryStateRun`] supplies the
-    /// fixed-clock ledger, so the bounds this capture decides and the state its
-    /// report names are one read.
+    /// `state` is the fixed-clock ledger already bound to the selected source.
+    /// Its latches are the durable breach inventory the core and structural
+    /// families decide their elastic bounds against: a latched path is held to
+    /// its base limit rather than the varied one. The enclosing
+    /// [`BatteryStateRun`] receives the resulting observations, so the bounds
+    /// this executor decides and the state its report names are one read.
     ///
     /// Every arm and family invocation is emitted to `trace` when one is given,
     /// which observes execution without gaining any authority over it.
@@ -147,24 +238,20 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// evidence every core position projects.
     ///
     /// [`BatteryCapture`]: super::BatteryCapture
-    // Every argument is an observation of the live repository that no selected
-    // tree can supply, so there is nothing here to group into a narrower type
-    // that would not just be this list under one name.
+    // The source authority is grouped already; the remaining arguments are
+    // independent arm, state, command-rim, and observation controls.
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn capture(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
+    pub(super) fn capture_from_source(
+        repository_source: &RepositorySource,
         actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
         state_run: &BatteryStateRun,
-        input_mode: InputMode,
+        state: &crate::StateLedger,
         selected: Option<GateId>,
         selection: Option<&ChangeSelectionReport>,
         mut trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     ) -> Result<Self, BatteryError> {
-        let repository: PathBuf = repository.into();
         let reached_paths = path_local_reach(selected, selection)?;
         let rim = if selected.is_some() {
             reached_paths
@@ -175,33 +262,18 @@ impl<'trace> RepositoryExecutor<'trace> {
         };
         let execution_objects =
             bound_execution_objects(selected, selection, reached_paths.as_deref(), rim.changes())?;
-        let tree = selector.materialize(&repository).map_err(|error| {
-            BatteryError::new(format!("cannot capture battery source: {error}"))
-        })?;
-        let contract = match input_mode {
-            InputMode::Strict => Contract::load(tree.root()),
-            InputMode::Generic => Contract::load_generic(tree.root()),
-        }
-        .map_err(|error| {
-            BatteryError::new(format!("cannot load captured battery contract: {error}"))
-        })?;
-        let (state, actor) =
-            state_run.bind(tree.paths(), tree.renames(), tree.publishes_state(), &actor)?;
+        let tree = Arc::clone(&repository_source.tree);
+        let contract = Arc::clone(&repository_source.contract);
         let latches = state.latches();
         let CapturedCore {
-            source,
+            source: digest,
             evidence: core,
             mut bounds,
             mut observations,
-            baselines,
         } = capture_core(
-            &repository,
-            &tree,
+            &repository_source.core,
             &contract,
-            claim,
-            &actor,
-            latches,
-            &rim,
+            &repository_source.baselines,
             selected,
             reached_paths.as_deref(),
             selection.map(ChangeSelectionReport::source),
@@ -217,7 +289,7 @@ impl<'trace> RepositoryExecutor<'trace> {
                 let (evidence, bounds, observations) = metrics_family(
                     &tree,
                     &contract,
-                    &baselines,
+                    &repository_source.baselines,
                     &actor,
                     latches,
                     reached_paths.as_deref(),
@@ -229,7 +301,7 @@ impl<'trace> RepositoryExecutor<'trace> {
                 let (evidence, bounds, observations) = metrics_arm(
                     &tree,
                     &contract,
-                    &baselines,
+                    &repository_source.baselines,
                     &actor,
                     latches,
                     gate_id,
@@ -245,10 +317,10 @@ impl<'trace> RepositoryExecutor<'trace> {
         Ok(Self {
             tree,
             contract,
-            source,
+            source: digest,
             core,
             metrics,
-            baselines,
+            baselines: Arc::clone(&repository_source.baselines),
             bounds,
             rim,
             hygiene,
@@ -334,7 +406,7 @@ impl<'trace> RepositoryExecutor<'trace> {
     }
 
     /// The tracked contract this capture loaded from the selected tree.
-    pub(super) const fn contract(&self) -> &Contract {
+    pub(super) fn contract(&self) -> &Contract {
         &self.contract
     }
 
@@ -538,60 +610,31 @@ impl BatteryExecutor for RepositoryExecutor<'_> {
     }
 }
 
-/// Capture core evidence and every committed comparison against one instant.
-///
-/// Suffix classes cover arms with class-bound jurisdictions; exact rim changes
-/// cover every-change arms such as local-paths, whose inputs may be
-/// extensionless. Both are retained together because a second capture could
-/// name a different commit than the report does.
-#[expect(clippy::too_many_arguments)]
+/// Project one arm's core evidence from run-wide source observations.
 fn capture_core(
-    repository: &Path,
-    tree: &SelectedTree,
+    source: &CoreSource,
     contract: &Contract,
-    claim: ClaimCapture,
-    actor: &ActorCapture,
-    latches: &[LatchEntry],
-    rim: &RimCapture,
+    baselines: &BaselineCapture,
     selected: Option<GateId>,
     reached: Option<&[String]>,
     expected_source: Option<&Digest>,
     trace: &mut Option<&mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 ) -> Result<CapturedCore, BatteryError> {
-    let source = match selected {
-        Some(gate_id) => CoreSource::capture_arm(
-            tree,
-            contract,
-            claim,
-            actor.clone(),
-            latches,
-            gate_id,
-            reached,
-        ),
-        None => CoreSource::capture(tree, contract, claim, actor.clone(), latches),
-    }
-    .map_err(|error| BatteryError::new(format!("cannot identify battery source: {error}")))?;
     if expected_source.is_some_and(|expected| expected != source.digest()) {
         return Err(BatteryError::new(
             "selected-arm reach authority names a different immutable source",
         ));
     }
-    let baselines = capture_baselines(
-        repository,
-        contract,
-        rim,
-        reached,
-        source.clean_merge_tree(),
-    );
     let (evidence, bounds, observations) = match selected {
         None => {
             record_capture_analyses(trace, ArmFamily::Core, CORE_GATE_IDS);
-            let (evidence, bounds, observations) = core_family(&source, contract, &baselines);
+            let (evidence, bounds, observations) = core_family(source, contract, baselines);
             (Some(evidence), bounds, observations)
         }
         Some(gate_id) if CORE_GATE_IDS.contains(&gate_id) => {
             record_capture_analyses(trace, ArmFamily::Core, [gate_id]);
-            let (evidence, bounds, observations) = core_arm(&source, contract, &baselines, gate_id);
+            let (evidence, bounds, observations) =
+                core_arm(source, contract, baselines, gate_id, reached);
             (Some(evidence), bounds, observations)
         }
         Some(_) => (None, Vec::new(), Vec::new()),
@@ -601,7 +644,6 @@ fn capture_core(
         evidence,
         bounds,
         observations,
-        baselines,
     })
 }
 
@@ -609,12 +651,8 @@ fn capture_baselines(
     repository: &Path,
     contract: &Contract,
     rim: &RimCapture,
-    reached: Option<&[String]>,
     clean_merge_tree: Option<(&str, &str, &str)>,
 ) -> BaselineCapture {
-    if let Some(reached) = reached {
-        return BaselineCapture::capture_with_paths(repository, &[], reached, clean_merge_tree);
-    }
     let classes = contract.rule_policy().document().file_classes();
     let mut suffixes = classes.magic().to_vec();
     suffixes.extend(classes.file_shape().iter().cloned());
@@ -695,10 +733,10 @@ fn metrics_arm(
 
 /// Acquire and judge the complete core family from one captured source.
 ///
-/// Taken while the capture is still in hand rather than from anything the
-/// executor retains afterwards, because the source is the only thing that ever
-/// held the two Git observations. A refusal is carried as the family's result
-/// instead of failing the capture: an incomplete family is evidence the battery
+/// Projected while the shared source authority is in hand rather than from a
+/// later repository read, because that authority is the only thing that holds
+/// the Git observations. A refusal is carried as the family's result instead
+/// of failing the capture: an incomplete family is evidence the battery
 /// projects, not a reason no battery can run.
 ///
 /// The bounds the acquisition decided are returned beside the arms because this
@@ -706,7 +744,7 @@ fn metrics_arm(
 /// them from the report afterwards would be a second decision nothing was
 /// judged against.
 fn core_family(
-    source: &CoreSource<'_>,
+    source: &CoreSource,
     contract: &Contract,
     baselines: &BaselineCapture,
 ) -> (
@@ -729,22 +767,23 @@ fn core_family(
     (Ok(arms), bounds, observations)
 }
 
-/// Acquire and judge exactly one core arm from the capture made for it.
+/// Acquire and judge exactly one core arm from the shared captured source.
 fn core_arm(
-    source: &CoreSource<'_>,
+    source: &CoreSource,
     contract: &Contract,
     baselines: &BaselineCapture,
     gate_id: GateId,
+    reached: Option<&[String]>,
 ) -> (
     Result<Vec<ArmEvidence>, String>,
     Vec<BoundDecision>,
     Vec<LatchObservation>,
 ) {
-    let (input, bounds, observations) = match acquire_core_arm(source, contract, baselines, gate_id)
-    {
-        Ok(acquisition) => acquisition,
-        Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
-    };
+    let (input, bounds, observations) =
+        match acquire_core_arm(source, contract, baselines, gate_id, reached) {
+            Ok(acquisition) => acquisition,
+            Err(error) => return (Err(error.to_string()), Vec::new(), Vec::new()),
+        };
     let report = evaluate_core_arm(&input);
     (Ok(vec![ArmEvidence::Core { report }]), bounds, observations)
 }

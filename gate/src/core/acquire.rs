@@ -17,12 +17,11 @@
 //! mutated or swapped after capture has nothing left to reach: there is no
 //! later state that can cross into a report under the captured digest.
 
-use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use sill::{Argv, Completion, spawn};
+use sill::{Argv, Completion, Environment, spawn};
 use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
@@ -167,28 +166,27 @@ impl ActorCapture {
 /// One captured Git source and everything acquisition is permitted to read.
 ///
 /// Capture computes the immutable tree identity once and, in the same moment,
-/// takes either both Git-declared observations for a complete run or the one a
-/// selected arm requires. Every acquired arm therefore binds to the same
-/// digest, and [`CoreInputs`] cannot be assembled from a moving tree or a
-/// moving repository.
+/// takes every Git-declared observation the run can project. Complete and
+/// selected-arm acquisitions therefore bind to the same digest and live
+/// repository instant, and [`CoreInputs`] cannot be assembled from a moving
+/// tree or repository.
 ///
 /// The durable latches are copied in for the same reason: a bounded arm decides
 /// against the ledger this run publishes as its state authority, and reading
 /// that ledger again mid-acquisition could answer from a version the report
 /// never names.
 #[derive(Debug)]
-pub struct CoreSource<'a> {
-    root: &'a Path,
+pub struct CoreSource {
+    root: PathBuf,
     jurisdiction: Jurisdiction,
     digest: Digest,
     claim: ClaimCapture,
     actor: ActorCapture,
     git: GitObservations,
     latches: Vec<LatchEntry>,
-    reached: Option<BTreeSet<String>>,
 }
 
-impl<'a> CoreSource<'a> {
+impl CoreSource {
     /// Capture one immutable source for the core family.
     ///
     /// The repository is taken from the tree rather than accepted beside it, so
@@ -206,73 +204,46 @@ impl<'a> CoreSource<'a> {
     /// Returns the walk or read failure that prevented one complete tree
     /// identity. A partially digested tree is never returned.
     pub fn capture(
-        tree: &'a SelectedTree,
+        tree: &SelectedTree,
         contract: &Contract,
         claim: ClaimCapture,
         actor: ActorCapture,
         latches: &[LatchEntry],
     ) -> Result<Self, CoreInputError> {
-        Self::capture_inner(tree, contract, claim, actor, latches, None, None)
-    }
-
-    /// Capture only the live Git observation required by one selected arm.
-    pub(crate) fn capture_arm(
-        tree: &'a SelectedTree,
-        contract: &Contract,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        latches: &[LatchEntry],
-        gate_id: GateId,
-        reached: Option<&[String]>,
-    ) -> Result<Self, CoreInputError> {
-        Self::capture_inner(
-            tree,
-            contract,
-            claim,
-            actor,
-            latches,
-            Some(gate_id),
-            reached,
-        )
+        Self::capture_inner(tree, contract, claim, actor, latches)
     }
 
     fn capture_inner(
-        tree: &'a SelectedTree,
+        tree: &SelectedTree,
         contract: &Contract,
         claim: ClaimCapture,
         actor: ActorCapture,
         latches: &[LatchEntry],
-        gate_id: Option<GateId>,
-        reached: Option<&[String]>,
     ) -> Result<Self, CoreInputError> {
         // Taken before the walk because it is the only subject here that can
         // still move: the selected tree was sealed at materialization, while
         // the repository stays live and writable underneath the run.
-        let git = gate_id.map_or_else(
-            || GitObservations::capture(tree.repository(), contract.bounds()),
-            |gate_id| GitObservations::capture_arm(tree.repository(), contract.bounds(), gate_id),
-        );
+        let git = GitObservations::capture(tree.repository(), contract.bounds());
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| CoreInputError::new(format!("core source jurisdiction: {error}")))?;
         let digest = jurisdiction
             .tree_digest()
             .map_err(|error| CoreInputError::new(format!("core source tree identity: {error}")))?;
         Ok(Self {
-            root: tree.root(),
+            root: tree.root().to_path_buf(),
             jurisdiction,
             digest,
             claim,
             actor,
             git,
             latches: latches.to_vec(),
-            reached: reached.map(|paths| paths.iter().cloned().collect()),
         })
     }
 
     /// Immutable selected-tree root every compiled provider reads.
     #[must_use]
-    pub const fn root(&self) -> &Path {
-        self.root
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// Admitted inventory that produced this source identity.
@@ -346,17 +317,6 @@ impl GitObservations {
             clean_merge_tree: clean_merge_tree(repository, bounds),
         }
     }
-
-    fn capture_arm(repository: &Path, bounds: &Bounds, gate_id: GateId) -> Self {
-        Self {
-            merge_integrity: (gate_id == GateId::MergeIntegrity)
-                .then(|| merge_integrity(repository, bounds)),
-            staging: (gate_id == GateId::Staging).then(|| staging(repository, bounds)),
-            clean_merge_tree: (gate_id == GateId::FileShape)
-                .then(|| clean_merge_tree(repository, bounds))
-                .flatten(),
-        }
-    }
 }
 
 /// Acquire one complete core-family battery from one captured source.
@@ -373,7 +333,7 @@ impl GitObservations {
 /// provenance the declaration cannot supply, evidence that fails admission, or
 /// an arm vector the family will not admit.
 pub fn acquire_core(
-    source: &CoreSource<'_>,
+    source: &CoreSource,
     contract: &Contract,
     baselines: &BaselineCapture,
 ) -> Result<CoreInputs, CoreInputError> {
@@ -382,7 +342,7 @@ pub fn acquire_core(
 
 /// Acquire the complete core family and retain its exact state observations.
 pub(crate) fn acquire_core_with_observations(
-    source: &CoreSource<'_>,
+    source: &CoreSource,
     contract: &Contract,
     baselines: &BaselineCapture,
 ) -> Result<(CoreInputs, Vec<LatchObservation>), CoreInputError> {
@@ -407,6 +367,7 @@ pub(crate) fn acquire_core_with_observations(
                 contract,
                 baselines,
                 Some(&configuration),
+                None,
                 &mut bounds,
                 &mut observations,
             )?,
@@ -417,10 +378,11 @@ pub(crate) fn acquire_core_with_observations(
 
 /// Acquire exactly one core arm and the elastic bounds that arm decided.
 pub(crate) fn acquire_core_arm(
-    source: &CoreSource<'_>,
+    source: &CoreSource,
     contract: &Contract,
     baselines: &BaselineCapture,
     gate_id: GateId,
+    reached: Option<&[String]>,
 ) -> Result<(CoreArmInput, Vec<BoundDecision>, Vec<LatchObservation>), CoreInputError> {
     let declaration = core_declarations()
         .iter()
@@ -446,6 +408,7 @@ pub(crate) fn acquire_core_arm(
         contract,
         baselines,
         configuration.as_ref(),
+        reached,
         &mut bounds,
         &mut observations,
     )?;
@@ -453,12 +416,17 @@ pub(crate) fn acquire_core_arm(
         .map(|input| (input, bounds, observations))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arm-local reach accompanies the captured source and its observation outputs"
+)]
 fn observe(
     declaration: &CoreArmDeclaration,
-    source: &CoreSource<'_>,
+    source: &CoreSource,
     contract: &Contract,
     baselines: &BaselineCapture,
     configuration: Option<&ConfigurationInventorySource>,
+    reached: Option<&[String]>,
     bounds: &mut Vec<BoundDecision>,
     observations: &mut Vec<LatchObservation>,
 ) -> Result<CoreObservation, CoreInputError> {
@@ -473,7 +441,7 @@ fn observe(
         })?,
         GateId::ConfigKeyValidity => return config_keys(contract),
         GateId::RepoDocs => {
-            return repo_docs(source, contract, baselines, bounds, observations);
+            return repo_docs(source, contract, baselines, reached, bounds, observations);
         }
         GateId::ConfigFalseDisable => {
             return configuration
@@ -494,9 +462,10 @@ fn observe(
 }
 
 fn repo_docs(
-    source: &CoreSource<'_>,
+    source: &CoreSource,
     contract: &Contract,
     baselines: &BaselineCapture,
+    reached: Option<&[String]>,
     bounds: &mut Vec<BoundDecision>,
     observations: &mut Vec<LatchObservation>,
 ) -> Result<CoreObservation, CoreInputError> {
@@ -508,11 +477,7 @@ fn repo_docs(
     let mut measurements = Vec::new();
     for entry in source.jurisdiction.measurable() {
         let path = entry.path();
-        if source
-            .reached
-            .as_ref()
-            .is_some_and(|reached| !reached.contains(path))
-        {
+        if reached.is_some_and(|reached| !reached.iter().any(|candidate| candidate == path)) {
             continue;
         }
         let selected = contract
@@ -859,7 +824,10 @@ fn git(
 ) -> Result<(i32, String), GitRefusal> {
     let argv = Argv::new(GIT, arguments.iter().map(OsStr::new))
         .map_err(|error| GitRefusal::Unmeasured(format!("git argument vector: {error}")))?;
-    let outcome = spawn(bounds.spec(argv, repository))
+    let mut spec = bounds.spec(argv, repository);
+    spec.environment = Environment::new([("GIT_OPTIONAL_LOCKS", "0")])
+        .map_err(|error| GitRefusal::Unmeasured(format!("git environment: {error}")))?;
+    let outcome = spawn(spec)
         .map_err(|error| GitRefusal::Unavailable(format!("git did not start: {error}")))?
         .wait()
         .map_err(|error| GitRefusal::Unmeasured(format!("git was not reaped: {error}")))?;
