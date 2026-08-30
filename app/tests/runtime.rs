@@ -72,6 +72,32 @@ fn task_fact(position: u64, cause: Option<u64>) -> serde_json::Value {
     value
 }
 
+fn journal_ingested_fact(position: u64, cause: Option<u64>) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "v": 1,
+        "seq": position,
+        "at": "2030-04-12T18:44:09.271Z",
+        "actor": "spice",
+        "origin": format!("lane:{LANE}"),
+        "fact": {
+            "kind": "journal::ingested",
+            "lane": LANE,
+            "vendor": "codex",
+            "stream": "transcript",
+            "source": REQUEST,
+            "from": {"member": 0, "offset": 0},
+            "to": {"member": 0, "offset": 4096},
+            "usage": [],
+            "non_usage_records": 3,
+            "residue_records": 0,
+        },
+    });
+    if let Some(cause) = cause {
+        value["cause"] = serde_json::json!(cause);
+    }
+    value
+}
+
 fn seated_fact(position: u64, capability: Option<&str>) -> serde_json::Value {
     let mut value = serde_json::json!({
         "v": 1,

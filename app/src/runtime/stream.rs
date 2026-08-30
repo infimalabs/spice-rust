@@ -174,6 +174,13 @@ impl CanvasRuntime {
                     return StreamApplication::new(Vec::new(), false);
                 }
                 self.observe_fact_rows(admitted, std::slice::from_ref(fact), false);
+                self.resume = Some(StreamCursor {
+                    epoch,
+                    seq: fact.seq(),
+                });
+                if !operator_visible_fact(fact.kind()) {
+                    return StreamApplication::new(Vec::new(), false);
+                }
                 let packed = Packed {
                     rows: vec![FactRow::from(fact)],
                     overflow: None,
@@ -181,10 +188,6 @@ impl CanvasRuntime {
                 };
                 let page = self.page(admitted, packed);
                 push_bounded_page(&mut self.fact_pages, page, FACT_PAGE_LIMIT);
-                self.resume = Some(StreamCursor {
-                    epoch,
-                    seq: fact.seq(),
-                });
                 self.prepare_thread(fact.seq());
                 StreamApplication::new(Vec::new(), true)
             }
@@ -260,20 +263,24 @@ impl CanvasRuntime {
             return StreamApplication::new(continuation(ViewSubject::Facts, epoch, packed), false);
         }
         let page = project_page(packed);
+        let visible_tail = page.rows.last().map(FactRow::seq);
         self.observe_fact_rows(admitted, &packed.rows, false);
-        let page = self.page(admitted, page);
-        push_bounded_page(&mut self.fact_pages, page, FACT_PAGE_LIMIT);
+        let changed = !page.rows.is_empty();
+        if changed {
+            let page = self.page(admitted, page);
+            push_bounded_page(&mut self.fact_pages, page, FACT_PAGE_LIMIT);
+        }
         self.resume = Some(StreamCursor {
             epoch,
             seq: page_cursor,
         });
         let mut directives = continuation(ViewSubject::Facts, epoch, packed);
         if packed.overflow.is_none()
-            && let Some(last) = packed.rows.last()
+            && let Some(seq) = visible_tail
         {
-            directives.push(self.begin_thread(epoch, last.seq()));
+            directives.push(self.begin_thread(epoch, seq));
         }
-        StreamApplication::new(directives, true)
+        StreamApplication::new(directives, changed)
     }
 
     fn apply_trust_page(
@@ -554,10 +561,27 @@ fn retain_first_for_lane<T>(
 
 fn project_page(packed: &Packed<wire::StreamFact>) -> Packed<FactRow> {
     Packed {
-        rows: packed.rows.iter().map(FactRow::from).collect(),
+        rows: packed
+            .rows
+            .iter()
+            .filter(|fact| operator_visible_fact(fact.kind()))
+            .map(FactRow::from)
+            .collect(),
         overflow: packed.overflow,
         horizon: packed.horizon,
     }
+}
+
+/// Whether one durable fact is useful in the operator's event chronology.
+///
+/// Transcript ingestion receipts prove that a capture reader consumed one
+/// source byte range. They remain durable and continue advancing the stream
+/// cursor and causal-header window, but rendering every receipt overwhelms the
+/// facts about tasks, claims, lanes, and steering that the chronology exists
+/// to expose. The transcript message stream is the operator-facing projection
+/// of the captured content.
+fn operator_visible_fact(kind: FactKind) -> bool {
+    kind != FactKind::JournalIngested
 }
 
 fn continuation<T>(

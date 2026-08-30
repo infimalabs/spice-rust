@@ -314,6 +314,59 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
     );
 }
 
+#[test]
+fn transcript_ingestion_advances_resume_without_displacing_visible_chronology_or_thread() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let task = admitted_stream(&session, &fact_frame(task_fact(41, None)));
+    assert!(runtime.apply_stream_frame(&task).changed());
+    assert_eq!(runtime.pending_thread().expect("task thread").seq, seq(41));
+
+    let ingestion = admitted_stream(&session, &fact_frame(journal_ingested_fact(42, Some(41))));
+    assert!(
+        !runtime.apply_stream_frame(&ingestion).changed(),
+        "capture bookkeeping is not an operator-visible chronology mutation"
+    );
+    assert_eq!(
+        runtime.resume().expect("ingestion advances resume").seq,
+        seq(42)
+    );
+    assert_eq!(runtime.fact_pages().len(), 1);
+    assert_eq!(runtime.fact_pages()[0].rows()[0].seq(), seq(41));
+    assert_eq!(
+        runtime
+            .pending_thread()
+            .expect("visible thread remains")
+            .seq,
+        seq(41)
+    );
+}
+
+#[test]
+fn a_backlog_projects_transcript_receipts_out_of_the_visible_fact_page() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let rows = [task_fact(41, None), journal_ingested_fact(42, Some(41))];
+    let backlog = admitted_stream(&session, &packed_frame("facts", &rows, None, 42));
+
+    let application = runtime.apply_stream_frame(&backlog);
+    assert!(application.changed());
+    assert_eq!(
+        runtime.resume().expect("raw barrier is retained").seq,
+        seq(42)
+    );
+    let pages = runtime.fact_pages();
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].rows().len(), 1);
+    assert_eq!(pages[0].rows()[0].seq(), seq(41));
+    assert_eq!(
+        runtime.pending_thread().expect("visible tail thread").seq,
+        seq(41)
+    );
+}
+
 /// The tile ladder is the predecessor's, and every rung has its own cause.
 ///
 /// The five rungs are read from three independent inputs — queued direction,
