@@ -24,7 +24,7 @@ const PREBUILT_APP_FLAG = "--spice-prebuilt-app";
 const CONCURRENCY_FLAG = "--spice-concurrency";
 const COVERAGE_RECEIPT = "BROWSER-1kKSWhZk browser coverage complete\n";
 const SHARD_TIMEOUT_MS = 120_000;
-const COORDINATOR_TIMEOUT_MS = 180_000;
+const COORDINATOR_TIMEOUT_MS = 270_000;
 const PROGRESS_MS = 30_000;
 const TERMINATION_GRACE_MS = 30_000;
 const RESIDENT_CONCURRENCY = 4;
@@ -149,10 +149,11 @@ async function runShard(shard) {
   active.set(shard.name, state);
   observeEvents(child, state);
   const closed = once(child, "close");
+  const timeoutMs = shard.timeoutMs ?? SHARD_TIMEOUT_MS;
   const timer = setTimeout(() => {
     process.stderr.write(`canvas shard timeout name=${shard.name} phase=worker\n`);
     void terminate(child);
-  }, SHARD_TIMEOUT_MS);
+  }, timeoutMs);
   const [code, signal] = await closed;
   clearTimeout(timer);
   active.delete(shard.name);
@@ -168,7 +169,10 @@ async function runShard(shard) {
     shard.scenarios,
     `${shard.name} executes its registered scenarios exactly once and in order`,
   );
-  assert.ok(elapsedMs < SHARD_TIMEOUT_MS, `${shard.name} finishes inside 120 seconds`);
+  assert.ok(
+    elapsedMs < timeoutMs,
+    `${shard.name} finishes inside ${Math.floor(timeoutMs / 1000)} seconds`,
+  );
   assert.ok(state.summary, `${shard.name} reports CPU and wall timing`);
   if (shard.name !== "ownership") {
     assert.ok(state.ownership, `${shard.name} reports its exact descendant and fixture ownership`);
@@ -203,7 +207,9 @@ async function coordinate() {
     );
   }, PROGRESS_MS);
   const overall = setTimeout(() => {
-    process.stderr.write("canvas coordinator timeout phase=shards elapsed_ms=180000\n");
+    process.stderr.write(
+      `canvas coordinator timeout phase=shards elapsed_ms=${COORDINATOR_TIMEOUT_MS}\n`,
+    );
     void terminateAll();
   }, COORDINATOR_TIMEOUT_MS - buildElapsedMs);
   try {
@@ -223,7 +229,10 @@ async function coordinate() {
     clearTimeout(overall);
   }
   const elapsedMs = Date.now() - started;
-  assert.ok(elapsedMs < COORDINATOR_TIMEOUT_MS, "Canvas coordinator finishes inside 180 seconds");
+  assert.ok(
+    elapsedMs < COORDINATOR_TIMEOUT_MS,
+    `Canvas coordinator finishes inside ${Math.floor(COORDINATOR_TIMEOUT_MS / 1000)} seconds`,
+  );
   assert.deepEqual(
     results.map(({ shard }) => shard).sort(),
     CANVAS_SHARDS.map(({ name }) => name).sort(),

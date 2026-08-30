@@ -8,7 +8,7 @@ import { installActivityReplay } from "./activity-replay.mjs";
 import { assertAgesTickWhileTheResidentIsSilent } from "./age-ticker.mjs";
 import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
-  nestedQuoteMessage, nestedQuotePreview, seatAgentTeam,
+  nestedQuoteMessage, nestedQuotePreview, seatAgentTeam, seatLeaseAgent,
 } from "./agent-conversation.mjs";
 import { assertCompactionBoundary } from "./agent-conversation-mosaic.mjs";
 import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
@@ -69,6 +69,7 @@ import {
   chooseCanvasView,
   configureFixture,
   declareVendorModel,
+  assertHeldTaskCount,
   journalExtent,
   monitorPage,
   reply,
@@ -799,7 +800,10 @@ try {
     linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
     owner = ownFixture({ fixture, linkedRoot });
     await mkdir(artifacts, { recursive: true });
-    const worktrees = await configureFixture(fixture, linkedRoot, 6, { noCardMember: 5 });
+    const worktrees = await configureFixture(fixture, linkedRoot, 6, {
+      laneLease: run.owns("lease") ? "5m" : "5s",
+      noCardMember: 5,
+    });
     resident = owner.ownResident(await startResident(fixture));
     const seeded = await seedAuthority(fixture);
     browser = await launchBrowser();
@@ -839,7 +843,11 @@ try {
       await assertCanvas(lightPage, "light");
       await run.scenario("agent-conversation", async () => {
         Object.assign(seeded, await assertAgentConversation(
-          lightPage, fixture, worktrees, activityReplay, artifacts,
+          lightPage,
+          fixture,
+          worktrees,
+          activityReplay,
+          artifacts,
         ));
         const pointerLane = lightPage.locator(
           `.team-agent[data-agent-lane="${seeded.lane}"]`,
@@ -881,6 +889,37 @@ try {
         await assertTaskNotes(lightPage, seeded.task);
         await assertRetainedHistory(lightPage, fixture);
         await assertTaskEffortSurface(lightPage, fixture, seeded);
+        lightMonitor.assertClean();
+        await light.close();
+      });
+    } else if (run.owns("lease")) {
+      light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
+      await installBrowserSpeech(light);
+      await installSocketControl(light);
+      lightPage = await light.newPage();
+      lightMonitor = monitorPage(lightPage);
+      lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
+      await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+      await assertCanvas(lightPage, "light-lease");
+      await run.scenario("composer-lease", async () => {
+        const team = await seatLeaseAgent(lightPage, fixture, worktrees[0]);
+        await assertHeldTaskCount(
+          team.console,
+          fixture,
+          team.lane,
+          async (deadline) => {
+            lightMonitor.expectNetworkInterruption(true);
+            await stopResident(fixture, resident);
+            const remaining = deadline - Date.now();
+            if (remaining > 0) {
+              await new Promise((resolve) => setTimeout(resolve, remaining));
+            }
+            resident = owner.ownResident(await startResident(fixture));
+            await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+            lightMonitor.expectNetworkInterruption(false);
+            await chooseCanvasView(lightPage, "Agents");
+          },
+        );
         lightMonitor.assertClean();
         await light.close();
       });

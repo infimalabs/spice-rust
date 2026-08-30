@@ -15,9 +15,9 @@ import {
 import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertSyntheticComposerObservation } from "./composer-shards.mjs";
 import {
-  assertHeldTaskCount,
   chooseCanvasView,
   reply,
+  replyAsLane,
   CONNECT_MS,
   TRANSITION_MS,
   waitForLocator as waitForElement,
@@ -219,6 +219,60 @@ export async function seatAgentTeam(
         : agentProse(teamWorktrees[index]),
     })),
   };
+}
+
+/// Seat one lineage directly under automatic task policy.
+///
+/// Unlike the conversation fixture, this lane never transitions from an
+/// already-running Steer process into task work. Its first rendered composer
+/// and automatic lease therefore belong to one startup generation.
+export async function seatLeaseAgent(page, fixture, worktree) {
+  const console = page.locator('[data-pane="agent-console"]');
+  await chooseCanvasView(page, "Agents");
+  await console.getByRole("tab", { name: /^Info/ }).click();
+  await console.getByLabel("Name").fill(agentNames[0]);
+  await console.getByLabel("Worktree").fill(worktree);
+  await console.getByLabel("Life").fill("steer");
+  await assignTeamLaneIds(page);
+  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+  await waitForElement(page, "automatic lease agent renders", AGENT_SEAT_MS,
+    console.locator(".team-detail-card").first());
+
+  const lanes = await reply(fixture, ["lane"]);
+  const seated = lanes.body.lanes.find((lane) => lane.worktree === worktree);
+  assert.ok(seated, "the automatic lease agent has one durable standing");
+  assert.equal(seated.lane, teamLaneIds[0], "the lease fixture fixes its lane identity");
+  await reply(fixture, ["lane", "wake", seated.lane]);
+  for (const title of ["Lease provenance witness", "Lease allocation companion"]) {
+    await replyAsLane(fixture, seated.lane, [
+      "task", "add", title,
+      "--project", "app.browser",
+      "--acceptance", "the automatic lease remains observable in Canvas",
+    ]);
+  }
+  await reply(fixture, ["lane", "drain", seated.lane]);
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  await console.locator('.team-lifetime input[type="range"]').fill("2");
+  await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
+  await waitForLeaseAgentOccupant(fixture, worktree, AGENT_SEAT_MS * 2);
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  await console.locator(`.team-agent[data-agent-lane="${seated.lane}"]`).waitFor();
+  return { console, lane: seated.lane };
+}
+
+async function waitForLeaseAgentOccupant(fixture, worktree, timeout) {
+  const deadline = Date.now() + timeout;
+  let last;
+  while (Date.now() < deadline) {
+    const lanes = await reply(fixture, ["lane"]);
+    last = lanes.body.lanes.find((lane) => lane.worktree === worktree);
+    if (last?.occupant) return last;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`timed out waiting for automatic lease occupant: ${JSON.stringify(last)}`);
 }
 
 async function assertStableOperatorAuthorship(page, fixture, console, lane, activityReplay) {
@@ -614,7 +668,6 @@ export async function assertAgentConversation(
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
-  await assertHeldTaskCount(console, fixture, seated[0].lane);
   await activityReplay.assertOlderToolIgnored(page, console);
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {

@@ -232,12 +232,21 @@ export async function replyAsLane(fixture, lane, args) {
   return outcome;
 }
 
-export function assertHeldTaskCount(team, fixture, lane) {
-  return assertHeldTaskCountWith(team, fixture, lane, replyAsLane);
+export function assertHeldTaskCount(team, fixture, lane, restartAfterExpiry) {
+  return assertHeldTaskCountWith(team, fixture, lane, {
+    claimMs: CONNECT_MS,
+    reply,
+    replyAsLane,
+    restartAfterExpiry,
+    transitionMs: TRANSITION_MS,
+  });
 }
 
 export async function configureFixture(
-  fixture, linkedRoot, memberCount = 5, { noCardMember = null } = {},
+  fixture,
+  linkedRoot,
+  memberCount = 5,
+  { laneLease = "5s", noCardMember = null } = {},
 ) {
   assert.ok(
     noCardMember === null
@@ -314,7 +323,7 @@ export async function configureFixture(
     "budget = 2",
     "",
     "[lane]",
-    'lease = "5s"',
+    `lease = ${JSON.stringify(laneLease)}`,
     'vendor = "claude"',
     "",
     "[tasks]",

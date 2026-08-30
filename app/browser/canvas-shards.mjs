@@ -12,6 +12,7 @@ const EXPECTED_SCENARIOS = [
   "firefox-restored-mosaic",
   "reference-composer",
   "authority-task-flow",
+  "composer-lease",
   "variant-surfaces",
   "socket-resilience",
   "team-lifecycle",
@@ -35,6 +36,14 @@ export const CANVAS_SHARDS = Object.freeze([
       "reference-composer",
       "authority-task-flow",
     ]),
+  }),
+  Object.freeze({
+    name: "lease",
+    // This shard crosses one production automatic-claim deadline. The rolling
+    // lease itself consumes 100 seconds after the observed heartbeat, plus
+    // restart catch-up under the ordinary browser load policy.
+    timeoutMs: 180_000,
+    scenarios: Object.freeze(["composer-lease"]),
   }),
   Object.freeze({
     name: "resilience",
