@@ -98,45 +98,36 @@ fn task_completion_terminal_replays_once_after_claim_release_and_restart() {
         ClaimDisposition::Freed
     );
 
-    assert_concurrent_terminal_retries(
-        &bus,
+    let replay = CompletionReplay {
         epoch,
-        &seats[0],
-        &lane,
-        &task,
-        &done,
-        &terminal_position,
-        &terminal,
-    );
-    assert_terminal_replay_after_restart(
-        &root,
-        bus,
-        epoch,
-        &seats[0],
+        seat: &seats[0],
         lane,
-        &task,
-        &done,
-        &terminal_position,
-        &terminal,
-    );
+        task: &task,
+        done: &done,
+        terminal_position: &terminal_position,
+        terminal: &terminal,
+    };
+    assert_concurrent_terminal_retries(&bus, &replay);
+    assert_terminal_replay_after_restart(&root, bus, &replay);
 }
 
-fn assert_concurrent_terminal_retries(
-    bus: &Bus,
+struct CompletionReplay<'a> {
     epoch: CanonicalUuid,
-    seat: &Seat,
-    lane: &Actor,
-    task: &TaskHandle,
-    done: &TaskDone,
-    terminal_position: &ReplyPosition,
-    terminal: &wire::intent::TaskAnswer,
-) {
-    let settled = board(bus, epoch, lane.clone());
+    seat: &'a Seat,
+    lane: Actor,
+    task: &'a TaskHandle,
+    done: &'a TaskDone,
+    terminal_position: &'a ReplyPosition,
+    terminal: &'a wire::intent::TaskAnswer,
+}
+
+fn assert_concurrent_terminal_retries(bus: &Bus, replay: &CompletionReplay<'_>) {
+    let settled = board(bus, replay.epoch, replay.lane.clone());
     let expected = progress_witnesses(
         &settled,
-        at(&settled, task),
-        seat.lane,
-        seat.occupant,
+        at(&settled, replay.task),
+        replay.seat.lane,
+        replay.seat.occupant,
         false,
     )
     .expect("freed task retains replay witnesses");
@@ -146,11 +137,11 @@ fn assert_concurrent_terminal_retries(
                 scope.spawn(|| {
                     let outcome = issue(
                         bus,
-                        epoch,
-                        lane.clone(),
+                        replay.epoch,
+                        replay.lane.clone(),
                         CommandKind::TaskDone,
                         expected.clone(),
-                        done,
+                        replay.done,
                     );
                     let Outcome::Reply(Reply {
                         position,
@@ -159,8 +150,8 @@ fn assert_concurrent_terminal_retries(
                     else {
                         panic!("terminal retry did not replay: {outcome:?}");
                     };
-                    assert_eq!(&position, terminal_position);
-                    assert_eq!(&replayed, terminal);
+                    assert_eq!(&position, replay.terminal_position);
+                    assert_eq!(&replayed, replay.terminal);
                 })
             })
             .collect::<Vec<_>>();
@@ -168,31 +159,25 @@ fn assert_concurrent_terminal_retries(
             retry.join().expect("terminal retry joins");
         }
     });
-    assert_eq!(task_done_fact_count(bus, task), 1);
+    assert_eq!(task_done_fact_count(bus, replay.task), 1);
 }
 
 fn assert_terminal_replay_after_restart(
     root: &std::path::Path,
     bus: Bus,
-    epoch: CanonicalUuid,
-    seat: &Seat,
-    lane: Actor,
-    task: &TaskHandle,
-    done: &TaskDone,
-    terminal_position: &ReplyPosition,
-    terminal: &wire::intent::TaskAnswer,
+    replay: &CompletionReplay<'_>,
 ) {
     bus.verify().expect("terminal replay authority verifies");
     bus.shutdown().expect("terminal replay bus stops");
     let reopened = journal::Journal::open(root.join("authority.sqlite3"))
         .expect("terminal replay journal reopens");
     let reopened = Bus::start(reopened).expect("terminal replay bus restarts");
-    let settled = board(&reopened, epoch, lane.clone());
+    let settled = board(&reopened, replay.epoch, replay.lane.clone());
     let expected = progress_witnesses(
         &settled,
-        at(&settled, task),
-        seat.lane,
-        seat.occupant,
+        at(&settled, replay.task),
+        replay.seat.lane,
+        replay.seat.occupant,
         false,
     )
     .expect("restarted task retains replay witnesses");
@@ -201,18 +186,18 @@ fn assert_terminal_replay_after_restart(
         body: CommandAnswer::Task(replayed),
     }) = issue(
         &reopened,
-        epoch,
-        lane,
+        replay.epoch,
+        replay.lane.clone(),
         CommandKind::TaskDone,
         expected,
-        done,
+        replay.done,
     )
     else {
         panic!("restart retry did not replay its terminal answer");
     };
-    assert_eq!(&position, terminal_position);
-    assert_eq!(&replayed, terminal);
-    assert_eq!(task_done_fact_count(&reopened, task), 1);
+    assert_eq!(&position, replay.terminal_position);
+    assert_eq!(&replayed, replay.terminal);
+    assert_eq!(task_done_fact_count(&reopened, replay.task), 1);
     clean(root, reopened);
 }
 
