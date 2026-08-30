@@ -45,7 +45,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
-fn consent_and_effort_requests_read_one_current_generation_at_constant_cost() {
+fn current_reads_advance_effort_inputs_without_deriving_an_unrequested_answer() {
     let (root, paths) = resident_fixture("current-read-materializations");
     let mut authority = journal::Journal::open(&paths.journal).expect("fixture authority opens");
     authority
@@ -90,6 +90,7 @@ fn consent_and_effort_requests_read_one_current_generation_at_constant_cost() {
         0,
         "unrelated retained facts never enter the task-effort input set"
     );
+    assert_eq!(reads.effort_derivations(), 0);
 
     let mut one_more = JournalWrite::new(
         Actor::Spice,
@@ -117,19 +118,40 @@ fn consent_and_effort_requests_read_one_current_generation_at_constant_cost() {
     assert_eq!(advanced.decoded_facts(), 1);
     assert_eq!(advanced.effort_inputs(), 0);
     assert!(!advanced.consent_rebuilt());
-    assert!(!advanced.effort_rebuilt());
+    assert_eq!(
+        reads.effort_derivations(),
+        0,
+        "ordinary generation maintenance never derives effort"
+    );
 
+    assert!(matches!(
+        bus.commit(effort_ingestion())
+            .expect("transcript ingestion commits"),
+        CommitOutcome::Committed(_)
+    ));
+    let ingested = reads.current().expect("ingestion delta advances");
+    assert_eq!(ingested.cursor(), seq(515));
+    assert_eq!(ingested.decoded_facts(), 1);
+    assert_eq!(ingested.effort_inputs(), 1);
+    assert_eq!(
+        reads.effort_derivations(),
+        0,
+        "retaining transcript accounting does not derive its effort answer"
+    );
+
+    fs::create_dir_all(&paths.folds).expect("fold sentinel directory creates");
     let unavailable_fold = paths.folds.with_extension("unavailable");
     fs::rename(&paths.folds, &unavailable_fold).expect("fold store moves out of request reach");
     let barriers = reads.request_barriers();
     let effort = effort_surface::read(&reads, &wire::intent::EffortRead { task: None });
     let consent = policy_surface::read(&reads, &policy);
     assert_eq!(reads.request_barriers() - barriers, 2);
+    assert_eq!(reads.effort_derivations(), 1);
     for outcome in [effort, consent] {
         let Outcome::Reply(Reply { position, .. }) = outcome else {
             panic!("current materialized request did not reply")
         };
-        assert_eq!(position, ReplyPosition::Snapshot(seq(514)));
+        assert_eq!(position, ReplyPosition::Snapshot(seq(515)));
     }
     assert!(
         !paths.folds.exists(),
@@ -162,6 +184,40 @@ fn effort_recognition(label: &str, second: u8) -> JournalWrite {
             FactCause::Root,
         )
         .expect("fixture recognition fact");
+    write
+}
+
+fn effort_ingestion() -> JournalWrite {
+    let lane = test_uuid(30);
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("lane:{lane}").parse().expect("fixture lane origin"),
+        "2030-04-12T18:47:00.271Z".parse().expect("fixture instant"),
+        Producer::ResidentRecognition,
+    );
+    write
+        .fact(
+            wire::body::JournalIngested {
+                lane,
+                vendor: "codex".parse().expect("fixture vendor"),
+                stream: "transcript".to_owned(),
+                source: test_uuid(31),
+                supersedes: None,
+                from: wire::body::TranscriptPosition {
+                    member: 0,
+                    offset: 0,
+                },
+                to: wire::body::TranscriptPosition {
+                    member: 0,
+                    offset: 4096,
+                },
+                usage: Vec::new(),
+                non_usage_records: 3,
+                residue_records: 0,
+            },
+            FactCause::Root,
+        )
+        .expect("fixture ingestion fact");
     write
 }
 

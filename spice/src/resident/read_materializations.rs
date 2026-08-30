@@ -7,28 +7,26 @@
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant as Monotonic};
 
 use bus::{Bus, BusReader};
-use fold::{Store, TaskEffortInputs, TaskEffortReducer, task_effort_answer};
-use wire::Seq;
+use fold::TaskEffortInputs;
 use wire::intent::EffortAnswer;
+use wire::{Instant, Seq};
 
 use super::RuntimePaths;
 
 #[derive(Debug)]
 pub(super) struct Generation {
     cursor: Seq,
+    at: Instant,
     consent: Arc<consent::Queue>,
-    effort: Arc<EffortAnswer>,
     #[cfg(test)]
     decoded_facts: usize,
     #[cfg(test)]
     effort_inputs: usize,
     #[cfg(test)]
     consent_rebuilt: bool,
-    #[cfg(test)]
-    effort_rebuilt: bool,
 }
 
 impl Generation {
@@ -38,10 +36,6 @@ impl Generation {
 
     pub(super) fn consent(&self) -> &consent::Queue {
         self.consent.as_ref()
-    }
-
-    pub(super) fn effort(&self) -> &EffortAnswer {
-        self.effort.as_ref()
     }
 
     #[cfg(test)]
@@ -58,17 +52,13 @@ impl Generation {
     pub(super) const fn consent_rebuilt(&self) -> bool {
         self.consent_rebuilt
     }
-
-    #[cfg(test)]
-    pub(super) const fn effort_rebuilt(&self) -> bool {
-        self.effort_rebuilt
-    }
 }
 
 struct ReadState {
     generation: Arc<Generation>,
     consent: Arc<consent::Queue>,
     effort: TaskEffortInputs,
+    effort_answer: Option<(Seq, Arc<EffortAnswer>)>,
 }
 
 #[derive(Debug)]
@@ -94,21 +84,24 @@ pub(super) struct CurrentReads {
     worker: Option<JoinHandle<()>>,
     #[cfg(test)]
     request_barriers: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    effort_derivations: std::sync::atomic::AtomicU64,
 }
 
 impl CurrentReads {
     pub(super) fn start(
         bus: &Bus,
-        paths: &RuntimePaths,
+        _paths: &RuntimePaths,
         policy: &consent::Policy,
     ) -> Result<Self, String> {
         let reader = bus.reader();
-        let (initial, state) = build_initial(&reader, &paths.folds, policy)?;
+        let (initial, state) = build_initial(&reader, policy)?;
         let initial = Arc::new(initial);
         let state = Arc::new(Mutex::new(ReadState {
             generation: Arc::clone(&initial),
             consent: state.0,
             effort: state.1,
+            effort_answer: None,
         }));
         let published = Arc::new((
             Mutex::new(Publication {
@@ -135,6 +128,8 @@ impl CurrentReads {
             worker: Some(worker),
             #[cfg(test)]
             request_barriers: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            effort_derivations: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -183,7 +178,7 @@ impl CurrentReads {
         #[cfg(test)]
         self.request_barriers
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let deadline = Instant::now() + CURRENT_WAIT;
+        let deadline = Monotonic::now() + CURRENT_WAIT;
         loop {
             let authority = self
                 .reader
@@ -204,7 +199,7 @@ impl CurrentReads {
 
             let revision = current.revision;
             self.refresh()?;
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining = deadline.saturating_duration_since(Monotonic::now());
             if remaining.is_zero() {
                 return Err(format!(
                     "read materialization did not reach authority {authority} within {}s",
@@ -223,9 +218,49 @@ impl CurrentReads {
         }
     }
 
+    /// Derive task effort only for an explicit effort read.
+    ///
+    /// Normal commits advance the retained reducer inputs alongside the cheap
+    /// current generation, but never walk or serialize the accumulated effort
+    /// history. A repeated read at the same barrier reuses its one answer.
+    pub(super) fn effort(&self) -> Result<(Seq, Arc<EffortAnswer>), String> {
+        loop {
+            let generation = self.current()?;
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| "read materializer state lock is poisoned".to_owned())?;
+            if state.generation.cursor != generation.cursor {
+                drop(state);
+                continue;
+            }
+            if let Some((cursor, answer)) = &state.effort_answer
+                && *cursor == generation.cursor
+            {
+                return Ok((*cursor, Arc::clone(answer)));
+            }
+            let answer = state
+                .effort
+                .answer(Some(generation.cursor), Some(generation.at))
+                .map_err(|error| format!("task-effort materialization failed: {error}"))?;
+            let answer = Arc::new(answer);
+            state.effort_answer = Some((generation.cursor, Arc::clone(&answer)));
+            #[cfg(test)]
+            self.effort_derivations
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok((generation.cursor, answer));
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn request_barriers(&self) -> u64 {
         self.request_barriers
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(super) fn effort_derivations(&self) -> u64 {
+        self.effort_derivations
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
@@ -318,38 +353,30 @@ fn advance_generation(
     } else {
         Arc::clone(&state.consent)
     };
-    let advanced_effort = state
-        .effort
-        .advance_and_answer(
-            packed.rows.iter(),
-            Some(authority),
-            packed.rows.last().map(|row| row.at),
-        )
-        .map_err(|error| format!("task-effort materialization failed: {error}"))?;
-    #[cfg(test)]
-    let effort_rebuilt = advanced_effort.is_some();
-    let effort = advanced_effort.map_or_else(|| Arc::clone(&state.generation.effort), Arc::new);
+    state.effort.advance(packed.rows.iter());
     let generation = Arc::new(Generation {
         cursor: authority,
+        at: packed
+            .rows
+            .last()
+            .expect("a non-empty generation delta has a last fact")
+            .at,
         consent: Arc::clone(&consent),
-        effort,
         #[cfg(test)]
         decoded_facts: packed.rows.len(),
         #[cfg(test)]
         effort_inputs: state.effort.len(),
         #[cfg(test)]
         consent_rebuilt,
-        #[cfg(test)]
-        effort_rebuilt,
     });
     state.consent = consent;
+    state.effort_answer = None;
     state.generation = Arc::clone(&generation);
     Ok(generation)
 }
 
 fn build_initial(
     reader: &BusReader,
-    folds: &std::path::Path,
     policy: &consent::Policy,
 ) -> Result<(Generation, (Arc<consent::Queue>, TaskEffortInputs)), String> {
     let snapshot = reader
@@ -361,33 +388,21 @@ fn build_initial(
     let consent = consent::Queue::from_snapshot(&snapshot, policy)
         .map_err(|error| format!("consent materialization is invalid: {error}"))?;
     let effort_inputs = TaskEffortInputs::from_snapshot(&snapshot);
-    let mut store =
-        Store::open(folds).map_err(|error| format!("task-effort store is unavailable: {error}"))?;
-    let materialization = store
-        .read_or_rebuild_snapshot(&snapshot, &TaskEffortReducer)
-        .map_err(|error| format!("task-effort materialization failed: {error}"))?
-        .materialization;
-    if materialization.cursor.position() != Some(cursor) {
-        return Err(format!(
-            "task-effort materialization is at {:?}, authority is at {cursor}",
-            materialization.cursor.position()
-        ));
-    }
-    let effort = task_effort_answer(&materialization)
-        .map_err(|error| format!("task-effort payload is invalid: {error}"))?;
     Ok((
         Generation {
             cursor,
+            at: snapshot
+                .facts()
+                .last()
+                .expect("a snapshot with a horizon has a last fact")
+                .at,
             consent: Arc::new(consent.clone()),
-            effort: Arc::new(effort),
             #[cfg(test)]
             decoded_facts: snapshot.facts().len(),
             #[cfg(test)]
             effort_inputs: effort_inputs.len(),
             #[cfg(test)]
             consent_rebuilt: true,
-            #[cfg(test)]
-            effort_rebuilt: true,
         },
         (Arc::new(consent), effort_inputs),
     ))
