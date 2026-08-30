@@ -39,6 +39,8 @@ use socket::{admit_headers, is_dark, reachable_as, socket};
 /// machine alone, on whatever port the kernel has free.
 const LOOPBACK_EPHEMERAL: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 const SESSION_DRAIN_GRACE: Duration = Duration::from_secs(1);
+/// One-frame native commands share the socket's existing message ceiling.
+const SOCKET_MESSAGE_BYTES: usize = 64 * 1_024 * 1_024;
 const SPEECH_REQUEST_BYTES: usize = 64 * 1_024;
 const SPEECH_TEXT_BYTES: usize = 32 * 1_024;
 const SPEECH_AUDIO_BYTES: u64 = 16 * 1_024 * 1_024;
