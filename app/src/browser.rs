@@ -520,12 +520,12 @@ fn canvas_app() -> Html {
     };
     let speak = {
         let speech_runtime = speech_runtime.clone();
-        Callback::from(move |request: SpeechRequest| {
+        use_callback((), move |request: SpeechRequest, ()| {
             speech_runtime.enqueue(request);
         })
     };
     let narration_cursors = use_mut_ref(load_narration_cursors);
-    let narrate = narration_callback(narration_cursors, speak.clone());
+    let narrate = use_narration_callback(narration_cursors, speak.clone());
     let agents = use_agent_controls(sender.clone(), surface.clone(), speak.clone(), narrate);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     use_surface_connection(
@@ -822,11 +822,12 @@ fn store_narration_cursors(cursors: &NarrationCursors) {
     let _ = storage.set_item(NARRATION_CURSOR_STORAGE, &value);
 }
 
-fn narration_callback(
+#[hook]
+fn use_narration_callback(
     cursors: Rc<RefCell<NarrationCursors>>,
     speak: Callback<SpeechRequest>,
 ) -> Callback<NarrationBatch> {
-    Callback::from(move |batch: NarrationBatch| {
+    use_callback((), move |batch: NarrationBatch, ()| {
         let lines = {
             let mut cursors = cursors.borrow_mut();
             let lines = cursors.observe(batch.materialization, &batch.messages);
