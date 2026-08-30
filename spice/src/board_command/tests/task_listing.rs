@@ -194,6 +194,59 @@ fn active_todo_task_show_prints_the_parser_owned_done_command() {
 }
 
 #[test]
+fn active_plan_task_show_prints_the_execution_contract_and_native_commands() {
+    let (root, bus, epoch, seats) = fixture("plan-show-guidance", 1);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "SHOW-plan0001",
+        "Render actionable plan guidance",
+        Some("plan,todo,review"),
+    );
+    let claim = capture_for(&bus, epoch, &seats[0], &task);
+    assert_eq!(
+        claim.next.as_deref(),
+        Some(format!("spice task show {task}").as_str())
+    );
+
+    let claimed = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let shown = task_show(&claimed, at(&claimed, &task), &[]);
+    assert!(shown.contains("phase_guidance:\n  phase:plan makes the execution contract explicit"));
+    assert!(shown.contains(&format!("spice task modify {task} --acceptance \"...\"")));
+    assert!(shown.contains("spice task add \"...\" --project PROJECT --acceptance \"...\""));
+    assert!(shown.contains(&format!("spice task depends {task} --after CHILD")));
+    assert!(shown.contains(&format!("spice task note {task} \"...\"")));
+    assert!(shown.contains("Planning changes board state, not repository files"));
+    assert!(shown.contains("spice task done --validation \"...\""));
+    clean(&root, bus);
+}
+
+#[test]
+fn plan_only_task_show_requires_an_accepted_connected_child() {
+    let (root, bus, epoch, seats) = fixture("plan-only-show-guidance", 1);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "SHOW-plan0002",
+        "Render plan-only guidance",
+        Some("plan"),
+    );
+    capture_for(&bus, epoch, &seats[0], &task);
+
+    let claimed = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let shown = task_show(&claimed, at(&claimed, &task), &[]);
+    assert!(shown.contains("phase:plan is this task's entire flow"));
+    assert!(shown.contains("acceptance on this task alone cannot complete it"));
+    assert!(shown.contains("connect at least one pending child task carrying acceptance"));
+    assert!(shown.contains("spice task add \"...\" --project PROJECT --acceptance \"...\""));
+    assert!(shown.contains(&format!("spice task depends {task} --after CHILD")));
+    assert!(shown.contains("complete the planning bookend with spice task done"));
+    clean(&root, bus);
+}
+
+#[test]
 fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
     let (root, bus, epoch, _) = fixture("task-bootstrap", 1);
     let born = wire::TaskStamp::for_millis(8_001).expect("fixture task stamp");

@@ -428,6 +428,7 @@ pub(in crate::board_command) fn task_show(
             ));
         }
     }
+    lines.extend(phase_guidance_lines(task));
     lines.push(next_command_line(board, task));
     lines.join("\n")
 }
@@ -460,6 +461,43 @@ fn push_bulleted(lines: &mut Vec<String>, text: &str) {
     for continuation in parts {
         lines.push(format!("    {continuation}"));
     }
+}
+
+fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
+    let statement = &task.statement.body;
+    let workflow = &task.workflow.body;
+    if workflow.status != "pending" || workflow.phase.as_str() != "plan" {
+        return Vec::new();
+    }
+    let handle = &statement.handle;
+    if workflow.flow.len() == 1 && workflow.flow.first() == Some(&workflow.phase) {
+        return vec![
+            "phase_guidance:".to_owned(),
+            "  phase:plan is this task's entire flow; connect at least one pending child task carrying acceptance, because acceptance on this task alone cannot complete it."
+                .to_owned(),
+            format!(
+                "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", then connect it with spice task depends {handle} --after CHILD."
+            ),
+            "  Planning changes board state, not repository files; do not edit or commit implementation."
+                .to_owned(),
+            format!(
+                "  Record out-of-scope discoveries with spice task note {handle} \"...\"; then complete the planning bookend with spice task done --validation \"...\"."
+            ),
+        ];
+    }
+    vec![
+        "phase_guidance:".to_owned(),
+        "  phase:plan makes the execution contract explicit on this task or decomposes it into dependency-connected child tasks."
+            .to_owned(),
+        format!(
+            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create accepted children with spice task add \"...\" --project PROJECT --acceptance \"...\" and connect them with spice task depends {handle} --after CHILD."
+        ),
+        "  Planning changes board state, not repository files; do not edit or commit implementation."
+            .to_owned(),
+        format!(
+            "  Record out-of-scope discoveries with spice task note {handle} \"...\"; then advance with spice task done --validation \"...\"."
+        ),
+    ]
 }
 
 fn render_dependency(board: &BoardAnswer, dependency: &TaskStamp) -> String {
