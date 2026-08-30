@@ -834,8 +834,8 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
         runtime
             .newest_lane_activity(uuid(SECOND_LANE))
             .expect("the member lane retains its own newest activity")
-            .authored(),
-        Some(instant_ms("2030-04-12T18:44:10.271Z"))
+            .display_millis(),
+        instant_ms("2030-04-12T18:44:10.271Z")
     );
     assert_eq!(team.class(), "prose");
     assert_eq!(team.title(), "assistant");
@@ -882,8 +882,8 @@ fn lineage_runtime_with_activity_and_receipts() -> CanvasRuntime {
         .expect("transcript tool becomes activity");
     assert_eq!(activity.lane(), uuid(LANE));
     assert_eq!(
-        activity.authored(),
-        Some(instant_ms("2030-04-12T18:44:09.271Z"))
+        activity.display_millis(),
+        instant_ms("2030-04-12T18:44:09.271Z")
     );
     assert_eq!(activity.class(), "tool");
     assert_eq!(activity.title(), "tool");
@@ -947,7 +947,7 @@ fn apply_receipt_noise(
 }
 
 #[test]
-fn synthetic_agent_activity_retains_prose_without_a_visible_age() {
+fn synthetic_agent_activity_retains_provenance_and_gains_a_display_time() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -982,14 +982,20 @@ fn synthetic_agent_activity_retains_prose_without_a_visible_age() {
         "historical prose without a vendor timestamp"
     );
     assert_eq!(
-        activity.authored(),
-        None,
-        "synthetic ordering instants are not source-authored age labels"
+        activity.display_millis(),
+        instant_ms("2000-01-01T00:00:00.087Z"),
+        "a synthetic ordering instant remains available to the display chronology"
     );
     assert_eq!(
         runtime.messages().len(),
         1,
         "synthetic prose still becomes a browsable message card"
+    );
+    assert!(runtime.messages()[0].authored_synthetic);
+    assert_eq!(
+        runtime.messages()[0].observed,
+        None,
+        "display projection does not relabel ordering identity as Spice observation time"
     );
 }
 

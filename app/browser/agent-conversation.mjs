@@ -13,6 +13,7 @@ import {
   waitForMosaicReady,
 } from "./agent-conversation-mosaic.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
+import { assertSyntheticComposerObservation } from "./composer-shards.mjs";
 import {
   assertHeldTaskCount,
   chooseCanvasView,
@@ -310,6 +311,13 @@ export async function assertAgentConversation(
   const producerNames = new Set(await authored.locator(".message-author").allTextContents());
   assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
   assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
+  await assertSyntheticComposerObservation(
+    page,
+    console,
+    activityReplay,
+    seated[0].lane,
+    seated[1].lane,
+  );
   await assertStableOperatorAuthorship(
     page,
     fixture,

@@ -10,7 +10,7 @@
 //! The clock is inverted here. [`WallClock`] owns the only interval in the
 //! canvas and publishes the current instant as context; [`Age`] consumes it and
 //! is the only thing that subtracts. Every surface that shows an age holds an
-//! absolute authored instant and renders an `<Age>`, so they all advance
+//! absolute display instant and renders an `<Age>`, so they all advance
 //! together off one timer, and none of them needs a frame from the resident.
 //!
 //! The shape matters as much as the sharing. `Age` is a leaf, so a tick
@@ -69,7 +69,10 @@ pub(super) fn wall_clock(props: &WallClockProps) -> Html {
 
 #[derive(Properties, PartialEq)]
 pub(super) struct AgeProps {
-    /// Epoch milliseconds the aged thing was authored, claimed or renewed.
+    /// Epoch milliseconds selected by the caller's display chronology.
+    ///
+    /// Provenance remains with the caller; this component only renders elapsed
+    /// time and does not classify the instant as authored or observed.
     pub(super) authored: i64,
     /// Element class, so a caller keeps its own placement and colour.
     pub(super) class: Classes,

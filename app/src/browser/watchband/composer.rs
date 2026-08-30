@@ -165,7 +165,7 @@ pub(super) fn render_agent_message_card(
                 {render_agent_message_footer(
                     message,
                     &correspondent,
-                    source_authored_millis(message),
+                    crate::runtime::agent_message_display_millis(message),
                     false,
                     producer,
                 )}
@@ -183,15 +183,13 @@ fn render_compaction_boundary(
         .clone()
         .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
     let label = format!("{agent} compacted context");
-    let authored = source_authored_millis(message);
+    let display_millis = crate::runtime::agent_message_display_millis(message);
     html! {
         <>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
             <span class="mosaic-compaction-label">
-                if let Some(authored) = authored {
-                    <Age {authored} class="mosaic-compaction-age" />
-                    <span aria-hidden="true">{"\u{b7}"}</span>
-                }
+                <Age authored={display_millis} class="mosaic-compaction-age" />
+                <span aria-hidden="true">{"\u{b7}"}</span>
                 <span class="message-key" title={label.clone()}>{label}</span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
@@ -280,7 +278,7 @@ fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
 fn render_agent_message_footer(
     message: &wire::AgentMessage,
     correspondent: &view::chrome::Correspondent,
-    source_authored: Option<i64>,
+    display_millis: i64,
     is_compaction: bool,
     producer: String,
 ) -> Html {
@@ -301,7 +299,7 @@ fn render_agent_message_footer(
             <span
                 class="message-age"
                 title={locus.clone()}
-                data-age-authored={source_authored.map(|authored| authored.to_string())}
+                data-age-authored={display_millis.to_string()}
             >
                 {locus}
             </span>

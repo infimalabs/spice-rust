@@ -429,11 +429,7 @@ impl CanvasRuntime {
         };
         let activity_changed = self.push_activity(LaneActivity {
             lane: message.lane,
-            authored: message
-                .observed
-                .as_ref()
-                .or_else(|| (!message.authored_synthetic).then_some(&message.authored))
-                .map(|instant| instant.get().as_millisecond()),
+            display_millis: agent_message_display_millis(message),
             class,
             title: title.to_owned(),
             detail: message.text.clone(),

@@ -56,6 +56,96 @@ export async function primaryDestination(team, lane) {
   return { link, href, rendered, lineageMessages };
 }
 
+/// A valid wire message may carry only a synthetic ordering instant. Replace
+/// the current message snapshot with exactly that case so one composer selects
+/// it as its own source and another must select it through lineage fallback.
+/// Both headers and the card must expose one finite display chronology without
+/// rewriting the frame as vendor-authored or Spice-observed.
+export async function assertSyntheticComposerObservation(
+  page,
+  team,
+  activityReplay,
+  ownLane,
+  fallbackLane,
+) {
+  assert.notEqual(ownLane, fallbackLane, "own and lineage-fallback composers are distinct");
+  const text = `synthetic display chronology ${crypto.randomUUID()}`;
+  await team.evaluate((surface, lanes) => {
+    window.__syntheticComposerStates = [];
+    const capture = () => {
+      for (const lane of lanes) {
+        const link = surface.querySelector(
+          `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+        );
+        const href = link?.getAttribute("href");
+        const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+        window.__syntheticComposerStates.push({
+          lane,
+          href,
+          headerDisplay: link?.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+          cardDisplay: card?.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+        });
+      }
+    };
+    capture();
+    window.__syntheticComposerObserver = new MutationObserver(capture);
+    window.__syntheticComposerObserver.observe(surface, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+  }, [ownLane, fallbackLane]);
+
+  try {
+    const witness = await activityReplay.injectSyntheticSnapshot(page, ownLane, text);
+    const card = team.locator('[data-card-kind="agent-message"]').filter({ hasText: text });
+    const cardId = await card.getAttribute("id");
+    const expectedDisplay = Date.parse(witness.authored).toString();
+    const cardDisplay = await card.locator("[data-age-authored]").getAttribute("data-age-authored");
+    assert.equal(cardDisplay, expectedDisplay, "the card displays its stable synthetic instant");
+    assert.ok(Number.isFinite(Number(cardDisplay)), "the synthetic card display time is finite");
+
+    const states = [];
+    for (const [lane, source] of [[ownLane, "own-agent"], [fallbackLane, "lineage fallback"]]) {
+      const composer = team.locator(`.team-agent[data-agent-lane="${lane}"]`);
+      const link = composer.locator(".composer-shard--primary .composer-shard-age");
+      const age = link.locator("[data-age-authored]");
+      const state = {
+        source,
+        href: await link.getAttribute("href"),
+        label: (await age.innerText()).trim(),
+        display: await age.getAttribute("data-age-authored"),
+        prose: (await composer.locator(".composer-shard-prose").innerText()).trim(),
+      };
+      states.push(state);
+      assert.equal(state.href, `#${cardId}`, `${source} header links to the synthetic card`);
+      assert.equal(state.display, cardDisplay, `${source} header uses the linked card timestamp`);
+      assert.notEqual(state.label, "—", `${source} header never renders a dash`);
+      assert.match(state.label, /^(?:now|\d+[smhd])$/, `${source} header renders relative time`);
+      assert.equal(state.prose, text, `${source} header prose comes from the same card`);
+    }
+    assert.deepEqual(
+      states.map(({ href, display }) => ({ href, display })),
+      Array.from({ length: 2 }, () => ({ href: `#${cardId}`, display: cardDisplay })),
+      "own-agent and lineage fallback select one card and one display instant",
+    );
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+      () => requestAnimationFrame(resolve),
+    )));
+    const observedStates = await page.evaluate(() => window.__syntheticComposerStates);
+    assert.ok(observedStates.length >= 2, "both synthetic composer paths were observed");
+    assert.ok(
+      observedStates.every((state) => state.headerDisplay === state.cardDisplay),
+      `no rendered header mixes a card link with another display time: ${
+        JSON.stringify(observedStates)
+      }`,
+    );
+  } finally {
+    await page.evaluate(() => window.__syntheticComposerObserver?.disconnect());
+    await activityReplay.restoreProseSnapshot(page);
+  }
+}
+
 async function appendPrimaryDestinationProbe(team, fixture, lane, ordinal) {
   const text = `primary destination ordering witness ${ordinal} ${crypto.randomUUID()}`;
   await reply(fixture, ["steer", lane, text]);
