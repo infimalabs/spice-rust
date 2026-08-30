@@ -37,7 +37,7 @@ use typed::kind_for;
 
 /// Bound for an opening that proves a contract and sends no command, so no
 /// registry row governs it.
-const OPENING_BOUND: Duration = Duration::from_secs(3);
+const OPENING_BOUND: Duration = crate::cli::CANVAS_ANSWER_BOUND;
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
 
 type ClientResult<T> = Result<T, Outcome<CommandAnswer>>;
@@ -559,21 +559,7 @@ fn request(
     )
 }
 
-pub(crate) fn answer_bound(kind: CommandKind, discovery_path: &Path) -> Duration {
-    // Only selected integration fixtures publish this private runtime marker.
-    // A featured binary without it remains byte-for-byte production policy at
-    // the decision boundary, including when the verifier shares that binary
-    // with Canvas browser tests.
-    #[cfg(feature = "test-short-horizons")]
-    if kind == CommandKind::UpChange
-        && discovery_path
-            .with_file_name("test-short-client-bound")
-            .is_file()
-    {
-        return Duration::from_secs(3);
-    }
-    #[cfg(not(feature = "test-short-horizons"))]
-    let _ = discovery_path;
+pub(crate) fn answer_bound(kind: CommandKind, _discovery_path: &Path) -> Duration {
     crate::cli::answer_bound(kind)
 }
 
