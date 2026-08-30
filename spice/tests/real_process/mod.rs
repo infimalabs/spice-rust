@@ -1,7 +1,7 @@
 use std::fs;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, SystemTime};
 
 const FIXTURE_RERUN_VARIABLE: &str = "SPICE_FIXTURE_RERUN"; // env-policy: allow
@@ -292,7 +292,7 @@ fn cleanup_pins_the_generation_of_a_live_cargo_child_across_home_advance() {
         .cargo_check(&fixture.first)
         .spawn()
         .expect("launch Cargo on generation A");
-    wait_for_path(&fixture.ready);
+    wait_for_path_or_child(&fixture.ready, &mut first);
     first.kill().expect("crash the generation A wrapper");
     assert!(!first.wait().expect("reap crashed wrapper").success());
 
@@ -411,6 +411,16 @@ fn seed_count(fixture: &Fixture) -> usize {
         .expect("read real seed counter")
         .lines()
         .count()
+}
+
+/// Leave the overall deadline to the test runner while Cargo is still making progress.
+fn wait_for_path_or_child(path: &Path, child: &mut Child) {
+    while !path.exists() {
+        if let Some(status) = child.try_wait().expect("read rendezvous child status") {
+            panic!("child exited with {status} before publishing {path:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn wait_for_path(path: &Path) {
