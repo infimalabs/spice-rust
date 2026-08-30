@@ -621,22 +621,71 @@ export async function assertPersistentMosaic(
   assert.equal(refreshed.commits, refreshProbe.commits, "a no-op refresh commits no plane");
   await settleMosaicActivity(page, plane);
 
-  const tickingAge = console.locator('.message-age[data-age-clock="shared"]')
+  const tickingAge = console.locator(
+    '.mosaic-message-card[data-layout-phase="committed"] .message-age[data-age-clock="shared"]',
+  )
     .filter({ hasText: /^(?:now|\d+s)$/ })
     .last();
   await tickingAge.waitFor();
+  const ageTarget = await tickingAge.evaluate((element) => {
+    const card = element.closest(".mosaic-message-card");
+    const token = crypto.randomUUID();
+    element.__messageFooterAgeProbe = token;
+    return {
+      authored: element.dataset.ageAuthored,
+      cardKey: card?.dataset.mosaicCardKey,
+      token,
+    };
+  });
+  assert.ok(
+    ageTarget.authored && ageTarget.cardKey,
+    `the selected message footer names its authored instant and card: ${JSON.stringify(ageTarget)}`,
+  );
+  assert.ok(
+    await console.locator('.composer-shard-age-label[data-age-clock="shared"]')
+      .evaluateAll((ages, authored) => ages.some(
+        (age) => age.dataset.ageAuthored === authored,
+      ), ageTarget.authored),
+    "the composer header shares the selected message footer's authored instant",
+  );
   const ageProbe = await armPlacementProbe(plane);
+  const ageCardBefore = ageProbe.cards.find((card) => card.key === ageTarget.cardKey);
+  assert.ok(ageCardBefore, `the placement probe includes message card ${ageTarget.cardKey}`);
   const ageBefore = await tickingAge.innerText();
-  await waitForPage(page, "a card age advances on the shared clock", TRANSITION_MS,
-    ({ authored, before }) => {
-      const age = [...document.querySelectorAll('[data-age-clock="shared"]')]
-        .find((candidate) => candidate.dataset.ageAuthored === authored);
-      return age?.textContent !== before;
-    }, {
-      authored: await tickingAge.getAttribute("data-age-authored"),
-      before: ageBefore,
-    });
+  await tickingAge.evaluate((element, expected) => new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(deadline);
+      observer.disconnect();
+    };
+    const changed = () => {
+      if (element.textContent === expected.before) return;
+      cleanup();
+      resolve();
+    };
+    if (element.__messageFooterAgeProbe !== expected.token
+      || element.dataset.ageAuthored !== expected.authored
+      || element.closest(".mosaic-message-card")?.dataset.mosaicCardKey !== expected.cardKey) {
+      reject(new Error(`the selected message footer moved before its tick: ${JSON.stringify(expected)}`));
+      return;
+    }
+    const observer = new MutationObserver(changed);
+    observer.observe(element, { childList: true, characterData: true, subtree: true });
+    const deadline = setTimeout(() => {
+      cleanup();
+      reject(new Error(`the selected message footer age did not advance: ${JSON.stringify(expected)}`));
+    }, expected.deadlineMs);
+    changed();
+  }), {
+    ...ageTarget,
+    before: ageBefore,
+    deadlineMs: TRANSITION_MS,
+  });
   const aged = await finishPlacementProbe(plane, ageProbe);
+  assert.deepEqual(
+    aged.cards.find((card) => card.key === ageTarget.cardKey),
+    ageCardBefore,
+    "the selected message card preserves its Mosaic placement and bounding geometry",
+  );
   assertUnmoved(ageProbe, aged, "a shared-clock age tick");
   assert.equal(
     aged.commits,
