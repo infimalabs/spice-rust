@@ -474,7 +474,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task reclaim [HANDLE] [--lease-seconds SECONDS]",
         Lane,
         Command,
-        [ClaimRenewed],
+        [ClaimRenewed, ClaimRebound],
         [Resident, LaneCapability],
         Reply,
         "board::reclaim"

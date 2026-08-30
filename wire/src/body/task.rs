@@ -403,6 +403,27 @@ pub struct ClaimCarried {
     pub source: SourceBoundary,
 }
 
+/// Possession was rebound by its lane after residency moved ahead of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimRebound {
+    /// Rebound task.
+    pub task: TaskStamp,
+    /// Lane the possession remains bound to.
+    pub lane: CanonicalUuid,
+    /// Current occupant receiving possession.
+    pub occupant: CanonicalUuid,
+    /// Occupant named by the predecessor authority being recovered.
+    pub ancestor: CanonicalUuid,
+    /// Current resident epoch authorizing recovery.
+    pub epoch: CanonicalUuid,
+    /// Resulting lease expiry.
+    pub until: Instant,
+    /// Durable maximum the recovery stayed within.
+    pub maximum: Instant,
+    /// Accounted transcript boundary where current authority takes over.
+    pub source: SourceBoundary,
+}
+
 /// Possession was released and the task became eligible again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimFreed {

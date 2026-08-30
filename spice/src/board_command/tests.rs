@@ -20,6 +20,10 @@ use fixture::*;
 mod reclaim;
 use reclaim::*;
 
+// A command-level recovery fixture keeps commit-bearing stale residency apart
+// from ordinary renewal arithmetic.
+mod stale_reclaim;
+
 // Each allocator re-read refusal is pinned by a scenario that moves only
 // what that one comparison reads, so severing them apart is observable.
 mod allocation_guard;

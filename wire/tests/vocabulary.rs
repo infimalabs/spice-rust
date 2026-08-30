@@ -42,6 +42,18 @@ const CLAIM_RENEWED: &str = r#"{
   "maximum": "2030-04-12T22:44:09.271Z"
 }"#;
 
+const CLAIM_REBOUND: &str = r#"{
+  "kind": "claim::rebound",
+  "task": "0000000B",
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c1",
+  "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "ancestor": "018f82d4-6f59-7d06-92e3-bce9131163c0",
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "until": "2030-04-12T19:44:09.271Z",
+  "maximum": "2030-04-12T22:44:09.271Z",
+  "source": { "proven": { "heads": [] } }
+}"#;
+
 const STEER_ACKED: &str = r#"{
   "kind": "steer::acked",
   "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
@@ -140,6 +152,11 @@ fn the_command_door_body_matches_the_specified_fields() {
     assert_eq!(fact.producer(), Producer::CommandDoor);
     assert_eq!(fact.body.operations, 7);
     assert_eq!(fact.body.barrier.get(), 48213);
+
+    let rebound: Fact<body::ClaimRebound> = round_trip(CLAIM_REBOUND);
+    assert_eq!(rebound.kind(), FactKind::ClaimRebound);
+    assert_eq!(rebound.producer(), Producer::CommandDoor);
+    assert_ne!(rebound.body.occupant, rebound.body.ancestor);
 }
 
 #[test]

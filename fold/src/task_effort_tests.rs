@@ -258,6 +258,47 @@ fn carry_and_lineage_movement_split_at_their_recorded_source_loci() {
 }
 
 #[test]
+fn rebound_splits_effort_at_its_recorded_source_locus() {
+    let mut facts = Facts::new();
+    facts.task();
+    facts.lane();
+    facts.session(occupant_a(), "sonnet", "high");
+    facts.claim(occupant_a(), proven(None));
+    facts.batch(source(), ORIGIN, pos(1, 50), vec![sample(1, 10, 10, 3)], 0);
+    facts.push(body::ClaimRebound {
+        task: task(),
+        lane: lane(),
+        occupant: occupant_b(),
+        ancestor: occupant_a(),
+        epoch: uuid(EPOCH),
+        until: instant(20),
+        maximum: instant(40),
+        source: proven(Some(pos(1, 50))),
+    });
+    facts.session(occupant_b(), "sonnet", "high");
+    facts.batch(
+        source(),
+        pos(1, 50),
+        pos(1, 100),
+        vec![sample(1, 60, 10, 5)],
+        0,
+    );
+    facts.done(proven(Some(pos(1, 100))));
+
+    let answer = derive(&facts.snapshot()).expect("rebound effort derives");
+    let phase = &answer.phases[0];
+    assert_available(phase, 8);
+    assert_eq!(
+        phase
+            .segments
+            .iter()
+            .map(|segment| segment.occupant)
+            .collect::<Vec<_>>(),
+        vec![occupant_a(), occupant_b()]
+    );
+}
+
+#[test]
 fn interrupted_and_unproven_attempts_stay_visible_but_nonnumeric() {
     let mut facts = Facts::new();
     facts.task();

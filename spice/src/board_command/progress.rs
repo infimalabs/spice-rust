@@ -1,5 +1,8 @@
 use super::*;
 
+mod reclaim;
+use reclaim::*;
+
 pub(super) fn claim_free(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -117,7 +120,7 @@ pub(super) fn claim_reclaim_with_clock(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let (until, lease) = match reclaim_window(entry, &snapshot, command, renew, at) {
+    let window = match reclaim_window(bus, entry, &snapshot, command, renew, at) {
         Ok(window) => window,
         Err(outcome) => return outcome,
     };
@@ -125,24 +128,11 @@ pub(super) fn claim_reclaim_with_clock(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::BusTimer);
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, window.producer());
     guard(&mut write, command.expected().to_vec());
-    let renewed = match write.fact(
-        body::ClaimRenewed {
-            task: entry.born().clone(),
-            epoch: command.epoch(),
-            until,
-            maximum: lease.maximum,
-        },
-        FactCause::Root,
-    ) {
-        Ok(fact) => fact,
-        Err(error) => return store_fault("claim::reclaim-build", &error.to_string()),
-    };
-    let mut next = lease.clone();
-    next.renewal = at;
-    next.expiry = until;
-    write.lease_head(entry.born().clone(), renewed, move |_| next);
+    if let Err(outcome) = append_reclaim(&mut write, entry, command, at, window) {
+        return outcome;
+    }
     let answer = wire::intent::ClaimAnswer {
         task: renew.task.clone(),
         holder: command.actor().clone(),
@@ -160,112 +150,9 @@ pub(super) fn claim_reclaim_with_clock(
     committed(bus, write, CommandAnswer::Claim(answer))
 }
 
-fn reclaim_entry<'a>(
-    snapshot: &'a ValidatedSnapshot,
-    renew: &ClaimRenew,
-) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &renew.task)
-        .ok_or_else(|| {
-            refusal(
-                "task::unknown",
-                Some(renew.task.to_string()),
-                "read board and reclaim one current task handle",
-            )
-        })
-}
+// Reclaim admission and head publication live in `progress/reclaim.rs` so the
+// ordinary workflow transitions below remain independently reviewable.
 
-fn reclaim_window(
-    entry: &Entry,
-    snapshot: &ValidatedSnapshot,
-    command: &wire::AdmittedCommand,
-    renew: &ClaimRenew,
-    at: Instant,
-) -> Result<(Instant, LeaseHead), Outcome<CommandAnswer>> {
-    let claim = entry.claim().ok_or_else(|| {
-        refusal(
-            "claim::head-missing",
-            Some(renew.task.to_string()),
-            "reclaim only the current lane's active task",
-        )
-    })?;
-    let lease = entry.lease().ok_or_else(|| {
-        protocol_fault(
-            "claim::lease-missing",
-            "an active claim head has no durable lease head",
-        )
-    })?;
-    let Actor::Lane(lane) = command.actor() else {
-        return Err(refusal(
-            "claim::lane-required",
-            Some(command.actor().to_string()),
-            "reclaim through the lane capability that owns the claim",
-        ));
-    };
-    if claim.disposition != ClaimDisposition::Active || claim.actor != *command.actor() {
-        return Err(refusal(
-            "claim::ownership-refused",
-            Some(claim.actor.to_string()),
-            "reclaim only an active claim owned by this lane capability",
-        ));
-    }
-    board::Active::admit(entry, command.actor(), at).map_err(|error| {
-        refusal(
-            "claim::active-refused",
-            Some(error.to_string()),
-            "reclaim before lapse; use task next after reallocation",
-        )
-    })?;
-    admit_reclaim_residency(snapshot, command, renew, claim, lease, *lane)?;
-    let seconds = i64::try_from(renew.lease_seconds)
-        .ok()
-        .filter(|seconds| *seconds > 0)
-        .ok_or_else(|| {
-            refusal(
-                "claim::lease-seconds-invalid",
-                Some(renew.lease_seconds.to_string()),
-                "request a positive representable lease duration",
-            )
-        })?;
-    let until = std::cmp::min(instant_after(at, seconds)?, lease.maximum);
-    if until <= lease.expiry {
-        return Err(refusal(
-            "claim::lease-nonextending",
-            Some(lease.expiry.to_string()),
-            "request an extension before the durable maximum",
-        ));
-    }
-    Ok((until, lease.clone()))
-}
-
-fn admit_reclaim_residency(
-    snapshot: &ValidatedSnapshot,
-    command: &wire::AdmittedCommand,
-    renew: &ClaimRenew,
-    claim: &ClaimHead,
-    lease: &LeaseHead,
-    lane: wire::CanonicalUuid,
-) -> Result<(), Outcome<CommandAnswer>> {
-    let residency = &snapshot.answer.residency.body;
-    let seated = residency.lanes.iter().find(|seat| seat.lane == lane);
-    let exact = claim.lane == lane
-        && claim.epoch == command.epoch()
-        && lease.epoch == command.epoch()
-        && residency.epoch == command.epoch()
-        && seated.is_some_and(|seat| {
-            seat.disposition == "occupied" && seat.occupant == Some(claim.occupant)
-        });
-    if exact {
-        return Ok(());
-    }
-    Err(refusal(
-        "claim::residency-moved",
-        Some(renew.task.to_string()),
-        "read current lane residency and reclaim its exact active claim",
-    ))
-}
 pub(super) fn task_done(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -443,9 +330,9 @@ fn done_transition(
         return Err(refusal(
             "claim::epoch-moved",
             Some(active.epoch().to_string()),
-            concat!(
-                "win the task again under the current resident ",
-                "generation",
+            &format!(
+                "run spice task reclaim {} under the current resident generation",
+                entry.handle()
             ),
         ));
     }
