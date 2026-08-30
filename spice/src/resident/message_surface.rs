@@ -401,7 +401,7 @@ fn synthetic_agent_message_authored(
     })
 }
 
-fn steering_ledger(
+pub(super) fn steering_ledger(
     bus: &Bus,
     record: &lane::capture::CaptureRecord,
 ) -> CommandResult<Option<steer::Ledger>> {
@@ -410,7 +410,7 @@ fn steering_ledger(
             event,
             listen::Event::Prose(prose)
                 if prose.role == listen::ProseRole::Assistant
-                    && prose.text.lines().any(steering_marker_line)
+                    && steer::has_acknowledgement(&prose.text)
         )
     });
     if !required {
@@ -422,11 +422,6 @@ fn steering_ledger(
     steer::Ledger::from_snapshot(&snapshot)
         .map(Some)
         .map_err(|error| store_fault("canvas::message-steering-invalid", &error.to_string()))
-}
-
-fn steering_marker_line(line: &str) -> bool {
-    let line = line.trim_start();
-    line.starts_with("ACK ") || line.starts_with("NACK ")
 }
 
 fn present_steering_acknowledgements(
