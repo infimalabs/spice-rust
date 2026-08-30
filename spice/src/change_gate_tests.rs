@@ -73,3 +73,46 @@ fn pretest_screen_covers_reusable_and_cheap_static_policy() {
         ],
     );
 }
+
+#[test]
+fn budget_publication_warns_only_above_the_exact_advisory_share() {
+    let below = published_budget(CargoBudget::from_allocations(12, 1, 1, 1));
+    assert!(below.contains("advisory_share=3"));
+    assert!(!below.contains("change-gate-budget-warning"));
+
+    let equal = published_budget(CargoBudget::from_allocations(12, 1, 1, 2));
+    assert!(!equal.contains("change-gate-budget-warning"));
+
+    let above = published_budget(CargoBudget::from_allocations(12, 1, 1, 3));
+    assert_eq!(above.matches("[change-gate-budget-warning]").count(), 1);
+    assert!(above.contains("[change-gate-budget-warning] reason=advisory-lane-share-exceeded"));
+    assert!(above.contains("host_capacity=12 ordinary_lanes=4 advisory_share=3"));
+    assert!(above.contains("requested_slots=4"));
+    assert!(above.contains(
+        "allocations=policy_jobs:1+test_prebuild_shards:1x3=3 action=continue-unchanged"
+    ));
+}
+
+#[test]
+fn measured_twelve_cpu_overlapping_budget_is_process_observable_and_unchanged() {
+    let budget = CargoBudget::from_capacity(12, 4);
+    let published = published_budget(budget);
+
+    assert_eq!(budget.policy_jobs(), 12);
+    assert_eq!(budget.test_concurrency(), 3);
+    assert_eq!(budget.shard_jobs(), 4);
+    assert!(published.contains(
+        "cpus=12 ordinary_lanes=4 advisory_share=3 policy_jobs=12 test_concurrency=3 shard_jobs=4"
+    ));
+    assert_eq!(published.matches("[change-gate-budget-warning]").count(), 1);
+    assert!(published.contains("requested_slots=24"));
+    assert!(published.contains(
+        "allocations=policy_jobs:12+test_prebuild_shards:3x4=12 action=continue-unchanged"
+    ));
+}
+
+fn published_budget(budget: CargoBudget) -> String {
+    let mut output = Vec::new();
+    publish_budget(&mut output, budget, "overlapped-policy-tests").expect("publish gate budget");
+    String::from_utf8(output).expect("budget publication is text")
+}
