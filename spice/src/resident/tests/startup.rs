@@ -187,6 +187,23 @@ fn send_steer_send(
     );
 }
 
+fn seed_socket_fanout_lanes(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lineage: CanonicalUuid,
+    root: &std::path::Path,
+) -> [(CanonicalUuid, CanonicalUuid); 3] {
+    let lanes = [
+        (test_uuid(94), test_uuid(95)),
+        (test_uuid(96), test_uuid(97)),
+        (test_uuid(98), test_uuid(99)),
+    ];
+    for (lane, occupant) in lanes {
+        seed_lane_in_lineage(bus, epoch, lane, lineage, occupant, root);
+    }
+    lanes
+}
+
 fn assert_lane_read_response(
     socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
     command_id: CanonicalUuid,
@@ -250,6 +267,66 @@ fn assert_socket_fanout_published(
             fold.delivery(),
             wire::intent::DeliveryStanding::Published { .. }
         ));
+    }
+}
+
+struct SocketFanoutDispatch<'a> {
+    bus: &'a Bus,
+    repository: &'a Repository,
+    paths: &'a RuntimePaths,
+    config: &'a runtime::SurfaceConfig,
+    capabilities: &'a canvas::axum::Capabilities,
+    discovery: &'a canvas::Discovery,
+    epoch: CanonicalUuid,
+}
+
+impl SocketFanoutDispatch<'_> {
+    async fn run(
+        self,
+        control: &mut canvas::axum::Control,
+        lanes: [(CanonicalUuid, CanonicalUuid); 3],
+    ) {
+        let reads =
+            read_materializations::CurrentReads::start(self.bus, self.paths, &self.config.consent)
+                .expect("read materializations start");
+        let reporter = Arc::new(NoopCaptureReporter);
+        let command_surface = command_surface::Surface::new(
+            self.bus,
+            self.repository,
+            self.paths,
+            self.epoch,
+            command_surface::Runtimes::new(
+                lane_surface::Runtime::new(self.capabilities, self.discovery, reporter.clone()),
+                lane_recovery::Runtime::new(reporter),
+            ),
+            self.config,
+            &reads,
+        );
+        let mut seats = Seats::new();
+        let mut lifecycle = lifecycle::Runtime::new(&self.config.lane);
+        for (index, _) in lanes.iter().enumerate() {
+            let request = tokio::time::timeout(Duration::from_secs(3), control.recv())
+                .await
+                .expect("control request arrives before socket dispatch stalls")
+                .expect("control receives command");
+            assert_eq!(
+                request.command().id(),
+                test_uuid(84 + u8::try_from(index).expect("fixture index fits"))
+            );
+            assert!(
+                !runtime::dispatch_control(
+                    &command_surface,
+                    &mut seats,
+                    &mut lifecycle,
+                    control,
+                    Some(request),
+                )
+                .await
+                .expect("socket steering dispatch completes")
+                .reached_dark,
+                "steering send must not request resident shutdown"
+            );
+        }
     }
 }
 
@@ -526,14 +603,7 @@ async fn socket_dispatch_publishes_three_lane_fanout_before_any_restart_or_ack()
     let bus = Bus::start(journal).expect("fixture bus starts");
     let (epoch, lineage, fanout) = (test_uuid(91), test_uuid(92), test_uuid(93));
     commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
-    let lanes = [
-        (test_uuid(94), test_uuid(95)),
-        (test_uuid(96), test_uuid(97)),
-        (test_uuid(98), test_uuid(99)),
-    ];
-    for (lane, occupant) in lanes {
-        seed_lane_in_lineage(&bus, epoch, lane, lineage, occupant, &root);
-    }
+    let lanes = seed_socket_fanout_lanes(&bus, epoch, lineage, &root);
     let operator = test_uuid(89);
     let capabilities = canvas::axum::Capabilities::default();
     capabilities
@@ -581,48 +651,17 @@ async fn socket_dispatch_publishes_three_lane_fanout_before_any_restart_or_ack()
         let _ = responses_read.send(());
     });
     commands_ready.await.expect("client submits commands");
-    {
-        let reads = read_materializations::CurrentReads::start(&bus, &paths, &config.consent)
-            .expect("read materializations start");
-        let reporter = Arc::new(NoopCaptureReporter);
-        let command_surface = command_surface::Surface::new(
-            &bus,
-            &repository,
-            &paths,
-            epoch,
-            command_surface::Runtimes::new(
-                lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
-                lane_recovery::Runtime::new(reporter),
-            ),
-            &config,
-            &reads,
-        );
-        let mut seats = Seats::new();
-        let mut lifecycle = lifecycle::Runtime::new(&config.lane);
-        for (index, _) in lanes.iter().enumerate() {
-            let request = tokio::time::timeout(Duration::from_secs(3), control.recv())
-                .await
-                .expect("control request arrives before socket dispatch stalls")
-                .expect("control receives command");
-            assert_eq!(
-                request.command().id(),
-                test_uuid(84 + u8::try_from(index).expect("fixture index fits"))
-            );
-            assert!(
-                !runtime::dispatch_control(
-                    &command_surface,
-                    &mut seats,
-                    &mut lifecycle,
-                    &mut control,
-                    Some(request),
-                )
-                .await
-                .expect("socket steering dispatch completes")
-                .reached_dark,
-                "steering send must not request resident shutdown"
-            );
-        }
+    SocketFanoutDispatch {
+        bus: &bus,
+        repository: &repository,
+        paths: &paths,
+        config: &config,
+        capabilities: &capabilities,
+        discovery: &discovery,
+        epoch,
     }
+    .run(&mut control, lanes)
+    .await;
     tokio::time::timeout(Duration::from_secs(3), responses_done)
         .await
         .expect("socket responses are read before client stalls")
