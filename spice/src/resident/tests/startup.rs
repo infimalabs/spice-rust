@@ -323,14 +323,14 @@ fn an_unbindable_listen_request_is_refused_by_name() {
 }
 
 #[test]
-fn remote_listening_requires_explicit_consent_and_a_url_safe_token() {
+fn remote_listening_requires_explicit_consent_and_validates_an_optional_token() {
     assert_eq!(
         access_refusal_for(&["spice", "up", "--host", "0.0.0.0"]),
         "resident::insecure-bind-consent-required"
     );
-    assert_eq!(
-        access_refusal_for(&["spice", "up", "--host", "0.0.0.0", "--allow-insecure-bind",]),
-        "resident::auth-token-required"
+    assert!(
+        access_for(&["spice", "up", "--host", "0.0.0.0", "--allow-insecure-bind"]).is_ok(),
+        "explicit insecure consent admits a network-protected remote bind"
     );
     let invalid = access_refusal(&[
         "spice",
@@ -379,7 +379,7 @@ fn remote_listening_requires_explicit_consent_and_a_url_safe_token() {
 /// `::1` alone passes just as well against a gate that admits everything, and
 /// `::` is the address that a rule reading only `Ipv4Addr` would wave through.
 #[test]
-fn ipv6_loopback_needs_no_consent_or_token_while_its_wildcard_needs_both() {
+fn ipv6_loopback_needs_no_consent_while_its_wildcard_needs_explicit_consent() {
     assert!(
         access_for(&["spice", "up", "--host", "::1"]).is_ok(),
         "IPv6 loopback is reachable from this machine alone"
@@ -389,9 +389,9 @@ fn ipv6_loopback_needs_no_consent_or_token_while_its_wildcard_needs_both() {
         access_refusal_for(&["spice", "up", "--host", "::"]),
         "resident::insecure-bind-consent-required"
     );
-    assert_eq!(
-        access_refusal_for(&["spice", "up", "--host", "::", "--allow-insecure-bind"]),
-        "resident::auth-token-required"
+    assert!(
+        access_for(&["spice", "up", "--host", "::", "--allow-insecure-bind"]).is_ok(),
+        "explicit insecure consent admits the IPv6 wildcard"
     );
 }
 

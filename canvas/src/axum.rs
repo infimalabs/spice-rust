@@ -275,17 +275,30 @@ struct SurfaceState {
     admission_observed: watch::Sender<Option<AdmissionObservation>>,
 }
 
-/// Authentication required before a caller may learn or use operator authority.
+/// Network boundary applied before a caller may learn or use operator authority.
 #[derive(Clone, Default)]
 pub struct Access {
     token: Option<Arc<str>>,
+    allow_non_loopback: bool,
 }
 
 impl Access {
     /// Local-only surface whose network boundary is its authentication boundary.
     #[must_use]
     pub const fn local() -> Self {
-        Self { token: None }
+        Self {
+            token: None,
+            allow_non_loopback: false,
+        }
+    }
+
+    /// Remotely reachable surface whose surrounding network is trusted.
+    #[must_use]
+    pub const fn insecure() -> Self {
+        Self {
+            token: None,
+            allow_non_loopback: true,
+        }
     }
 
     /// Remotely reachable surface guarded by one caller-held token.
@@ -293,11 +306,12 @@ impl Access {
     pub fn authenticated(token: String) -> Self {
         Self {
             token: Some(Arc::from(token)),
+            allow_non_loopback: true,
         }
     }
 
-    fn is_authenticated(&self) -> bool {
-        self.token.as_deref().is_some_and(|token| !token.is_empty())
+    fn allows_non_loopback(&self) -> bool {
+        self.allow_non_loopback
     }
 
     fn admits_token(&self, query: Option<&str>) -> bool {
@@ -325,6 +339,7 @@ impl fmt::Debug for Access {
         formatter
             .debug_struct("Access")
             .field("authenticated", &self.token.is_some())
+            .field("allow_non_loopback", &self.allow_non_loopback)
             .finish()
     }
 }
@@ -618,10 +633,10 @@ impl Server {
         capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         let Binding { requested, access } = binding;
-        if !requested.ip().is_loopback() && !access.is_authenticated() {
+        if !requested.ip().is_loopback() && !access.allows_non_loopback() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                "a non-loopback canvas listener requires authenticated access",
+                "a non-loopback canvas listener requires explicit access",
             ));
         }
         let listener = tokio::net::TcpListener::bind(requested).await?;

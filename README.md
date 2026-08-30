@@ -101,7 +101,8 @@ incomplete generation. `127.0.0.1:8767` is the no-fallback default. `--host` and
 The accepted browser-substrate decision and its conditional migration sequence
 are recorded in [app/SUBSTRATE.md](app/SUBSTRATE.md).
 
-A non-loopback listener requires explicit consent and a URL-safe bearer token:
+A non-loopback listener requires explicit consent. Add a URL-safe bearer token
+unless the surrounding network is the intended access boundary:
 
 ```sh
 "$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice" \
@@ -109,11 +110,14 @@ A non-loopback listener requires explicit consent and a URL-safe bearer token:
   --auth-token correct-horse-battery-staple --open
 ```
 
-Readiness uses that token, but the reply contains only endpoint and epoch. A
-one-shot private descriptor keeps it out of argv, environment, discovery, log
-URLs, and replies. `--open` appends it as a URL fragment, outside the HTTP
-origin. Wildcard binds publish loopback; for a VPN browser, replace
-`127.0.0.1` with the host's VPN address, keep the port, and append `#TOKEN`.
+On a trusted VPN, omit `--auth-token` to use the VPN as that boundary.
+
+When supplied, readiness uses that token, but the reply contains only endpoint
+and epoch. A one-shot private descriptor keeps it out of argv, environment,
+discovery, log URLs, and replies. `--open` appends it as a URL fragment, outside
+the HTTP origin. Wildcard binds publish loopback; for a VPN browser, replace
+`127.0.0.1` with the host's VPN address, keep the port, and append `#TOKEN` only
+when authentication is enabled.
 
 Activation refuses unless all three installed hooks are executable. Pre-commit
 runs the ordinary staged selector: recognized paths execute only their affected

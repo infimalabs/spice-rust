@@ -385,25 +385,24 @@ fn requested_access_with(
             ),
         ));
     }
-    if !listen.ip().is_loopback() && !leaf.get_flag("allow-insecure-bind") {
+    let allow_insecure = leaf.get_flag("allow-insecure-bind");
+    if !listen.ip().is_loopback() && !allow_insecure {
         return Err(access_refusal(
             "resident::insecure-bind-consent-required",
             Some(&listen.to_string()),
             "add --allow-insecure-bind only when this network exposure is intended",
         ));
     }
-    if !listen.ip().is_loopback() && token.is_none() {
-        return Err(access_refusal(
-            "resident::auth-token-required",
-            Some(&listen.to_string()),
-            "add --auth-token TOKEN and open the remote URL with #TOKEN",
-        ));
-    }
-    let policy = token
-        .as_ref()
-        .map_or_else(canvas::axum::Access::local, |token| {
-            canvas::axum::Access::authenticated(token.clone())
-        });
+    let policy = token.as_ref().map_or_else(
+        || {
+            if !listen.ip().is_loopback() && allow_insecure {
+                canvas::axum::Access::insecure()
+            } else {
+                canvas::axum::Access::local()
+            }
+        },
+        |token| canvas::axum::Access::authenticated(token.clone()),
+    );
     Ok(CanvasAccess { policy, token })
 }
 
@@ -421,7 +420,7 @@ fn access_refusal(reason: &str, observed: Option<&str>, detail: &str) -> Outcome
         wire::RefusalDiagnostic::new(
             reason.to_owned(),
             Some("requested-canvas-access".to_owned()),
-            Some("loopback, or an explicitly consented authenticated bind".to_owned()),
+            Some("loopback, or an explicitly consented non-loopback bind".to_owned()),
             observed.map(str::to_owned),
         )
         .with_detail(detail),
