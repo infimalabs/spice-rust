@@ -6,6 +6,7 @@ export const SHARD_EVENT_PREFIX = "CANVAS-SHARD ";
 
 const EXPECTED_SCENARIOS = [
   "launch-boundaries",
+  "fixture-reaping",
   "light-readiness",
   "inline-task-chip",
   "agent-conversation",
@@ -14,13 +15,15 @@ const EXPECTED_SCENARIOS = [
   "authority-task-flow",
   "composer-lease",
   "variant-surfaces",
+  "socket-resilience",
+  "team-lifecycle",
   "resident-restart",
 ];
 
 export const CANVAS_SHARDS = Object.freeze([
   Object.freeze({
     name: "ownership",
-    scenarios: Object.freeze(["launch-boundaries"]),
+    scenarios: Object.freeze(["launch-boundaries", "fixture-reaping"]),
   }),
   Object.freeze({
     name: "readiness",
@@ -49,7 +52,11 @@ export const CANVAS_SHARDS = Object.freeze([
   }),
   Object.freeze({
     name: "resilience",
-    scenarios: Object.freeze(["variant-surfaces"]),
+    scenarios: Object.freeze([
+      "variant-surfaces",
+      "socket-resilience",
+      "team-lifecycle",
+    ]),
   }),
   Object.freeze({
     name: "restart",

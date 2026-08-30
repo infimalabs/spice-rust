@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import { assertTeamActions } from "./team-actions.mjs";
 
 const darkPalette = {
   quiet: "rgb(138, 169, 232)",
@@ -394,6 +395,125 @@ async function assertInlineTaskChip(surface) {
     0,
     "a card with no useful inline identifier omits the chip entirely",
   );
+}
+
+/// The operator agent card carries its own control: renewing this agent has to
+/// name both the action and the request it sends, stay on the exact agent lane
+/// it was drawn for, and reach the resident rather than only the message list.
+export async function assertAgentRenewalRequest(page, surface, fixture) {
+  const surfaces = page.locator('[data-pane="agent-console"] .team-surface');
+  if ((await surfaces.count()) === 2) {
+    const primaryLineage = await surface.getAttribute("data-lineage-id");
+    assert.ok(primaryLineage, "the primary control surface names its lineage");
+    const first = surfaces.first();
+    const secondaryRow = await first.getAttribute("data-lineage-id") === primaryLineage
+      ? surfaces.nth(1)
+      : first;
+    const secondaryLineage = await secondaryRow.getAttribute("data-lineage-id");
+    assert.ok(secondaryLineage, "the sibling control surface names its lineage");
+    const secondary = page.locator(
+      `[data-pane="agent-console"] .team-surface[data-lineage-id="${secondaryLineage}"]`,
+    );
+    await assertTeamActions(page, surface, secondary, primaryLineage);
+  }
+  const renewalRequest = "Renew your current task lease now.";
+  const menu = surface
+    .locator(
+      ".composer-shard--primary .agent-action-menu:has(.agent-renew-request:not(:disabled))",
+    )
+    .first();
+  await menu.waitFor();
+  const composer = menu.locator(
+    "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' composer-shard--primary ')][1]",
+  );
+  const textbox = composer.getByRole("textbox");
+  assert.equal(
+    await menu.getAttribute("open"),
+    null,
+    "agent renewal starts inside a closed drawer",
+  );
+  const trigger = menu.locator(":scope > summary");
+  const focus = menu.getByRole("button", { name: "Focus message editor" });
+  const renew = menu.locator(".agent-renew-request:not(:disabled)");
+  assert.equal(await renew.isVisible(), false, "renewal is hidden while its drawer is closed");
+  await trigger.click();
+  await renew.waitFor();
+  const geometry = await menu.evaluate((details) => {
+    const composer = details.closest(".composer-shard--primary");
+    const drawer = details.querySelector(".agent-action-drawer");
+    const trigger = details.querySelector(":scope > summary");
+    if (!composer || !drawer || !trigger) throw new Error("agent menu geometry is incomplete");
+    const rect = (element) => element.getBoundingClientRect().toJSON();
+    const composerBox = rect(composer);
+    const drawerBox = rect(drawer);
+    const hit = document.elementFromPoint(
+      composerBox.left + composerBox.width / 2,
+      composerBox.bottom - 8,
+    );
+    return {
+      composer: composerBox,
+      drawer: drawerBox,
+      trigger: rect(trigger),
+      drawerOwnsComposerInterior: hit !== null && drawer.contains(hit),
+    };
+  });
+  for (const edge of ["top", "right", "bottom", "left"]) {
+    assert.ok(
+      Math.abs(geometry.drawer[edge] - geometry.composer[edge]) <= 1,
+      `the open agent menu covers the composer's ${edge} edge: ${JSON.stringify(geometry)}`,
+    );
+  }
+  assert.ok(
+    geometry.trigger.left >= geometry.composer.left &&
+      geometry.trigger.right <= geometry.composer.right &&
+      geometry.trigger.top >= geometry.composer.top &&
+      geometry.trigger.bottom <= geometry.composer.bottom,
+    `the hamburger remains inside the composer while its full overlay is open: ${JSON.stringify(geometry)}`,
+  );
+  assert.equal(
+    geometry.drawerOwnsComposerInterior,
+    true,
+    "the open drawer receives interaction across the composer's covered interior",
+  );
+  await focus.click();
+  assert.equal(await menu.getAttribute("open"), null, "focusing the editor closes its overlay");
+  const textboxId = await textbox.getAttribute("id");
+  assert.ok(textboxId, "the primary message editor has a stable focus target");
+  await waitForPageFunction(
+    page,
+    "the focus action returns interaction to this agent's message editor",
+    TRANSITION_MS,
+    (id) => document.activeElement?.id === id,
+    textboxId,
+  );
+
+  await trigger.click();
+  await renew.waitFor();
+  assert.equal(
+    (await renew.innerText()).replaceAll("\n", " "),
+    "Renew this agent request renewal",
+    "the renewal action names both the command and its request",
+  );
+  const renewalLane = await renew.evaluate(
+    (button) => button.closest(".team-agent")?.dataset.agentLane,
+  );
+  assert.ok(renewalLane, "the renewal control retains its exact agent lane");
+  await renew.click();
+  assert.equal(await menu.getAttribute("open"), null, "renewing closes the full composer overlay");
+  const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
+  assert.ok(
+    renewalInbox.body.lanes[0].pending.some(
+      (directive) => directive.text === renewalRequest,
+    ),
+    "Renew this agent routes a residency-witnessed renewal request through the resident",
+  );
+  assert.equal(
+    await surface.locator(`.mosaic-message-card[data-agent-lane="${renewalLane}"]`)
+      .filter({ hasText: renewalRequest }).count(),
+    0,
+    "an unacknowledged renewal request is absent from the conversation",
+  );
+  assert.equal(await renew.isVisible(), false, "renewal hides again when its drawer closes");
 }
 
 export async function captureReferenceControls(page, team, artifactPath) {
