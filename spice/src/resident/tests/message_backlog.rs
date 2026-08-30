@@ -100,6 +100,100 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
 }
 
 #[test]
+fn each_resident_generation_restores_the_same_complete_compaction_window() {
+    let (root, paths) = resident_fixture("message-backlog-compaction-window");
+    let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
+        .expect("backlog bus starts");
+    let epoch = test_uuid(44);
+    let lane = test_uuid(45);
+    let empty_lane = test_uuid(46);
+    let author = test_uuid(47);
+    seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        .expect("the backlog tape opens");
+    let filler = "x".repeat(1_800);
+    let mut history = Vec::new();
+    for index in 0..300 {
+        if matches!(index, 20 | 80 | 220) {
+            history.extend_from_slice(b"{\"type\":\"compacted\"}\n");
+        } else {
+            history.extend_from_slice(
+                format!(
+                    "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"message {index} {filler}\"}}}}\n"
+                )
+                .as_bytes(),
+            );
+        }
+    }
+    tape.tee(&history).expect("compaction history is durable");
+    let mut ingest_diagnostic = Vec::new();
+    ingest_transcripts(&bus, &paths, Some(lane), &mut ingest_diagnostic)
+        .expect("durable tape is accounted");
+    assert!(ingest_diagnostic.is_empty());
+
+    let mut generation_windows = Vec::new();
+    for generation in 0..2 {
+        let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+        let publisher = source.message_publisher();
+        let snapshot = bus.fact_snapshot().expect("durable message times load");
+        let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot)
+            .expect("durable steering context loads");
+        let mut diagnostic = Vec::new();
+        let residency = current_residency(&bus, epoch).expect("residency reads");
+        message_surface::restore_agent_messages(
+            &paths,
+            residency.body(),
+            &publisher,
+            &mut reader,
+            &mut diagnostic,
+        )
+        .expect("durable compaction window restores");
+        assert!(
+            diagnostic.is_empty(),
+            "generation {generation} restore diagnosed: {}",
+            String::from_utf8_lossy(&diagnostic),
+        );
+
+        let accepted = wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch,
+        };
+        let request = wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(48 + generation),
+            epoch,
+            subjects: vec![wire::ViewSubject::Messages],
+            after: None,
+        };
+        let (_, frames) = source
+            .begin(&accepted, &request)
+            .expect("Canvas subscription begins");
+        let wire::StreamFrame::Messages {
+            limit, messages, ..
+        } = &frames[0]
+        else {
+            panic!("expected message snapshot")
+        };
+        assert_eq!(*limit as usize, canvas::stream::MESSAGE_CAPACITY);
+        assert_eq!(messages.len(), 220);
+        assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
+        assert_eq!(messages[0].text, "Context compacted");
+        assert_eq!(messages[140].activity, wire::AgentActivityKind::Compaction);
+        assert!(messages[219].text.starts_with("message 299 "));
+        generation_windows.push(messages.clone());
+        drop(source);
+    }
+    assert_eq!(
+        generation_windows[0], generation_windows[1],
+        "restart and reload select the identical compaction horizon",
+    );
+
+    bus.shutdown().expect("backlog bus stops");
+    fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+#[test]
 fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_append() {
     let (root, paths) = resident_fixture("message-backlog-resume");
     let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))

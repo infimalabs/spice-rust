@@ -51,6 +51,24 @@ impl AgentActivityKind {
     pub const fn is_prose(&self) -> bool {
         matches!(self, Self::Prose)
     }
+
+    /// Oldest visible-card ordinal retained by one bounded lane history.
+    ///
+    /// Under capacity pressure, a compaction inside the newest `limit` cards
+    /// is the hard floor: no fragment of the preceding context epoch survives
+    /// below it. Without such a boundary, the deterministic horizon is the
+    /// newest `limit` cards. Histories below the limit remain complete.
+    #[must_use]
+    pub fn retention_start(activities: &[Self], limit: usize) -> usize {
+        if activities.len() < limit {
+            return 0;
+        }
+        let capacity_floor = activities.len().saturating_sub(limit);
+        activities[capacity_floor..]
+            .iter()
+            .position(|activity| *activity == Self::Compaction)
+            .map_or(capacity_floor, |boundary| capacity_floor + boundary)
+    }
 }
 
 /// Agent-authored activity projected from one durable transcript event.
@@ -107,6 +125,31 @@ pub struct AgentMessage {
 
 const fn is_false(value: &bool) -> bool {
     !*value
+}
+
+#[cfg(test)]
+mod message_retention_tests {
+    use super::*;
+
+    #[test]
+    fn bounded_history_starts_at_the_oldest_compaction_inside_its_capacity() {
+        let mut activities = vec![AgentActivityKind::Prose; 300];
+        activities[20] = AgentActivityKind::Compaction;
+        activities[80] = AgentActivityKind::Compaction;
+        activities[220] = AgentActivityKind::Compaction;
+
+        assert_eq!(AgentActivityKind::retention_start(&activities, 256), 80);
+        assert_eq!(AgentActivityKind::retention_start(&activities, 32), 268);
+        assert_eq!(
+            AgentActivityKind::retention_start(&activities[..200], 256),
+            0,
+        );
+        assert_eq!(
+            AgentActivityKind::retention_start(&activities[..256], 256),
+            20,
+        );
+        assert_eq!(AgentActivityKind::retention_start(&activities, 0), 300);
+    }
 }
 
 /// A resumable journal position bound to one resident generation.

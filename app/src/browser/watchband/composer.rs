@@ -127,7 +127,7 @@ pub(super) fn render_agent_message_card(
                 layout.lifecycle.as_str(),
             )}
             aria-label={if is_compaction {
-                format!("Compaction divider from {producer}")
+                format!("Context compacted by {producer}")
             } else {
                 format!("Agent message from {producer}")
             }}
@@ -178,7 +178,6 @@ fn render_compaction_boundary(
         .name
         .clone()
         .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
-    let label = format!("{agent} compacted context");
     let display_millis = crate::runtime::agent_message_display_millis(message);
     html! {
         <>
@@ -186,7 +185,9 @@ fn render_compaction_boundary(
             <span class="mosaic-compaction-label">
                 <Age authored={display_millis} class="mosaic-compaction-age" />
                 <span aria-hidden="true">{"\u{b7}"}</span>
-                <span class="message-key" title={label.clone()}>{label}</span>
+                <span class="message-key">{"Context compacted"}</span>
+                <span aria-hidden="true">{"\u{b7}"}</span>
+                <span class="mosaic-compaction-agent" title={agent.clone()}>{agent}</span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
         </>

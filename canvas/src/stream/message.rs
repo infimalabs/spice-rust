@@ -68,22 +68,14 @@ impl MessagePublisher {
                 Err(MessagePublishError::IdentityConflict)
             };
         }
-        if visible_message(&message) {
-            if retained
-                .iter()
-                .filter(|existing| existing.lane == message.lane && visible_message(existing))
-                .count()
-                == self.feed.capacity
-                && let Some(oldest) = retained
-                    .iter()
-                    .position(|existing| existing.lane == message.lane && visible_message(existing))
-            {
-                retained.remove(oldest);
-            }
-        } else {
+        let visible = visible_message(&message);
+        if !visible {
             retained.retain(|existing| existing.lane != message.lane || visible_message(existing));
         }
         retained.push_back(message.clone());
+        if visible {
+            trim_visible_lane(&mut retained, message.lane, self.feed.capacity);
+        }
         drop(retained);
         let _ = self.feed.updates.send(message);
         Ok(true)
@@ -96,6 +88,27 @@ fn visible_message(message: &AgentMessage) -> bool {
         message.activity,
         wire::AgentActivityKind::Prose | wire::AgentActivityKind::Compaction
     ) || !message.media.is_empty()
+}
+
+fn trim_visible_lane(
+    retained: &mut VecDeque<AgentMessage>,
+    lane: wire::CanonicalUuid,
+    limit: usize,
+) {
+    let activities = retained
+        .iter()
+        .filter(|message| message.lane == lane && visible_message(message))
+        .map(|message| message.activity)
+        .collect::<Vec<_>>();
+    let mut discard = wire::AgentActivityKind::retention_start(&activities, limit);
+    retained.retain(|message| {
+        if message.lane != lane || !visible_message(message) || discard == 0 {
+            true
+        } else {
+            discard -= 1;
+            false
+        }
+    });
 }
 
 /// A capture-backed message could not enter the Canvas view.

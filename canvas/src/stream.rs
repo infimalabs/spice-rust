@@ -602,6 +602,8 @@ mod tests {
     use journal::{FactCause, Journal, JournalWrite};
     use wire::{Actor, Disposition, Domain, Producer, SteeringHead, TrustHead, TrustState, body};
 
+    mod retention;
+
     fn uuid(value: &str) -> wire::CanonicalUuid {
         value.parse().expect("canonical fixture uuid")
     }
@@ -658,60 +660,6 @@ mod tests {
         let bus = Bus::start(Journal::in_memory().expect("authority opens")).expect("bus starts");
         commit_notes(&bus, notes, true);
         bus
-    }
-
-    #[test]
-    fn retained_message_capacity_is_independent_for_each_lane() {
-        let bus = fixture(1);
-        let source = Source::new(bus.reader(), epoch(), 10);
-        let publisher = source.message_publisher();
-        for lane in [0xe5, 0xe6] {
-            for offset in 0..MESSAGE_CAPACITY {
-                publisher
-                    .publish(message(lane, u64::try_from(offset).expect("offset fits")))
-                    .expect("lane backlog publishes");
-            }
-        }
-        publisher
-            .publish(message(
-                0xe5,
-                u64::try_from(MESSAGE_CAPACITY).expect("capacity fits"),
-            ))
-            .expect("new lane activity publishes");
-
-        let (_, frames) = source
-            .begin(
-                &accepted(Actor::Operator),
-                &request(0xc4, vec![ViewSubject::Messages], None),
-            )
-            .expect("message subscription begins");
-        let StreamFrame::Messages {
-            limit, messages, ..
-        } = &frames[0]
-        else {
-            panic!("expected retained message snapshot")
-        };
-        assert_eq!(*limit as usize, MESSAGE_CAPACITY);
-        assert_eq!(messages.len(), MESSAGE_CAPACITY * 2);
-        for lane in [0xe5, 0xe6] {
-            let lane = message(lane, 0).lane;
-            assert_eq!(
-                messages
-                    .iter()
-                    .filter(|message| message.lane == lane)
-                    .count(),
-                MESSAGE_CAPACITY,
-            );
-        }
-        let busy_lane = message(0xe5, 0).lane;
-        assert!(
-            messages
-                .iter()
-                .all(|message| message.lane != busy_lane || message.locus.offset > 0),
-            "the busy lane evicts only its own oldest row"
-        );
-        drop(source);
-        bus.shutdown().expect("bus shuts down");
     }
 
     #[test]
