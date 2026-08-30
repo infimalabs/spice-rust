@@ -1,4 +1,9 @@
 //! Daemonless, read-only transcript forensics at the Rust process rim.
+//!
+//! Durable task completion belongs to the resident operation path. This
+//! read-only surface does not distill or persist completion learnings, and no
+//! test-only substitute is retained. The optional learning response shape is
+//! wire compatibility data only; current task commands never produce it.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -8,12 +13,6 @@ use wire::{Outcome, Refusal, Reply, ReplyPosition};
 
 mod authority;
 mod dataset;
-#[cfg(test)]
-#[allow(
-    dead_code,
-    reason = "completion learning is retained only for its focused extraction tests"
-)]
-mod learnings;
 mod model;
 mod project;
 mod source;
