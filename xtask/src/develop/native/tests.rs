@@ -197,6 +197,59 @@ fn restart_surfaces_the_daemon_launchers_exact_refusal() {
     );
 }
 
+#[test]
+fn restart_forwards_up_arguments_and_does_not_duplicate_their_endpoint_options() {
+    let request = RefreshRequest {
+        restart: true,
+        up_arguments: ["--host", "0.0.0.0", "--allow-insecure-bind"]
+            .map(OsString::from)
+            .into(),
+        ..RefreshRequest::default()
+    };
+
+    let command = restart_command(
+        Path::new("/installed/spice"),
+        (Some("127.0.0.1"), Some(8767)),
+        &request,
+    );
+    let arguments = command.get_args().collect::<Vec<_>>();
+
+    assert_eq!(
+        arguments,
+        [
+            "--json",
+            "up",
+            "--port",
+            "8767",
+            "--host",
+            "0.0.0.0",
+            "--allow-insecure-bind",
+        ]
+        .map(OsStr::new)
+    );
+}
+
+#[test]
+fn joined_forwarded_endpoint_options_also_override_published_values() {
+    let request = RefreshRequest {
+        restart: true,
+        up_arguments: ["--host=0.0.0.0", "--port=9000"].map(OsString::from).into(),
+        ..RefreshRequest::default()
+    };
+
+    let command = restart_command(
+        Path::new("/installed/spice"),
+        (Some("127.0.0.1"), Some(8767)),
+        &request,
+    );
+    let arguments = command.get_args().collect::<Vec<_>>();
+
+    assert_eq!(
+        arguments,
+        ["--json", "up", "--host=0.0.0.0", "--port=9000"].map(OsStr::new)
+    );
+}
+
 /// A clean stop is not reported as a refusal.
 ///
 /// `down` succeeding is the outcome that has nothing to say, so the assertion

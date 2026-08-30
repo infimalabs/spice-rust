@@ -14,8 +14,6 @@ use wire::{
 
 use super::*;
 
-mod warnings;
-
 struct Fixture {
     bus: Bus,
     projects: ProjectPolicy,
@@ -46,16 +44,6 @@ impl Authority {
 }
 
 #[test]
-fn claim_warning_horizon_is_strictly_below_three_hundred_seconds() {
-    let at = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
-    let at_three_hundred = warning_deadline(shifted(at, 300)).expect("warning deadline");
-    let at_two_ninety_nine = warning_deadline(shifted(at, 299)).expect("warning deadline");
-
-    assert_eq!(at_three_hundred, shifted(at, 1));
-    assert_eq!(at_two_ninety_nine, at);
-}
-
-#[test]
 fn automatic_claim_heartbeat_rolls_one_hundred_seconds_and_rearms_lapse() {
     let fixture = automatic_fixture();
     let initial_expiry = fixture.authority.expiry;
@@ -65,10 +53,7 @@ fn automatic_claim_heartbeat_rolls_one_hundred_seconds_and_rearms_lapse() {
         .synchronize(&fixture.bus)
         .expect("automatic heartbeat arms");
     assert_eq!(timers.renewals.len(), 1);
-    assert!(
-        timers.warnings.is_empty(),
-        "rolling automatic leases use the agent meter rather than durable steering warnings"
-    );
+    assert!(timers.directives.is_empty());
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
@@ -267,179 +252,53 @@ fn expired_automatic_claim_lapses_without_arming_a_renewal_loop() {
 }
 
 #[test]
-fn due_claim_warning_opens_once_and_restart_keeps_it_suppressed() {
+fn manual_claims_never_create_resident_warning_protocol() {
     let fixture = fixture_with_expiry(60);
-    let other_lane = uuid(23);
+    let initial_fact_count = fixture
+        .bus
+        .fact_snapshot()
+        .expect("initial facts read")
+        .facts()
+        .len();
     let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
         .expect("timer runtime starts");
-    timers.synchronize(&fixture.bus).expect("due warning arms");
-    assert_eq!(timers.warnings.len(), 1);
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("fixture async runtime builds");
-    let event = runtime.block_on(timers.recv()).expect("due warning fires");
-    assert_eq!(event.kind(), TimerKind::ClaimWarning);
-    let Ok(Fired::ClaimWarning(delivery)) = timers.consume(&fixture.bus, event) else {
-        panic!("due warning did not commit for its exact lane")
-    };
-    assert_eq!(delivery.lane(), fixture.authority.lane);
     timers
         .synchronize(&fixture.bus)
-        .expect("durable warning suppresses its generation");
-    assert!(timers.warnings.is_empty());
+        .expect("manual claim lapse arms without warning protocol");
 
-    let facts = fixture.bus.fact_snapshot().expect("warning facts read");
-    let warned = facts
-        .facts()
-        .iter()
-        .filter_map(|envelope| envelope.fact.read::<body::ClaimLeaseWarned>())
-        .collect::<Vec<_>>();
-    assert_eq!(warned.len(), 1);
-    assert_eq!(warned[0].lane, fixture.authority.lane);
-    assert_eq!(warned[0].occupant, fixture.authority.occupant);
-    assert_eq!(warned[0].epoch, fixture.authority.epoch);
-    assert_eq!(warned[0].expiry, fixture.authority.expiry);
-    assert!(warned[0].text.contains(&fixture.authority.task.to_string()));
-    assert!(warned[0].text.contains("spice task reclaim"));
-    let warned_directive = warned[0].directive;
-    let warned_key = warned[0].key.clone();
-    let lane_heads = fixture
-        .bus
-        .read(move |read| read.pending_steering(Some(fixture.authority.lane)))
-        .expect("warned lane inbox reads");
-    assert_eq!(lane_heads.len(), 1);
-    assert_eq!(lane_heads[0].body().directive, warned_directive);
-    assert_eq!(lane_heads[0].body().key, warned_key);
-    assert_eq!(lane_heads[0].body().stage, body::SteeringStage::Overdue);
-    let expiry_timer = timers
-        .directives
-        .get(&warned_directive)
-        .expect("warning owns only its expiry timer");
-    assert_eq!(expiry_timer.authority.deadline, fixture.authority.expiry);
-    assert_eq!(
-        expiry_timer.authority.body.transition,
-        steering::DeadlineTransition::Lapse
+    assert_eq!(timers.claims.len(), 1);
+    assert!(timers.renewals.is_empty());
+    assert!(timers.directives.is_empty());
+    let facts = fixture.bus.fact_snapshot().expect("facts read");
+    assert_eq!(facts.facts().len(), initial_fact_count);
+    assert!(
+        facts
+            .facts()
+            .iter()
+            .all(|envelope| envelope.fact.kind() != wire::FactKind::ClaimLeaseWarned)
     );
-    fixture.bus.verify().expect("warning authority verifies");
     assert!(
         fixture
             .bus
-            .read(move |read| read.pending_steering(Some(other_lane)))
-            .expect("other lane inbox reads")
+            .read({
+                let lane = fixture.authority.lane;
+                move |read| read.pending_steering(Some(lane))
+            })
+            .expect("lane inbox reads")
             .is_empty()
     );
 
-    drop(timers);
-    let mut restarted = Runtime::start(fixture.projects.clone(), steer::Config::default())
-        .expect("replacement timer runtime starts");
-    restarted
-        .synchronize(&fixture.bus)
-        .expect("replacement folds durable warning");
-    assert!(restarted.warnings.is_empty());
-    drop(restarted);
-    fixture.bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
-fn renewal_rearms_a_warned_claim_as_a_new_lease_generation() {
-    let fixture = fixture_with_expiry(60);
-    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
-        .expect("timer runtime starts");
-    timers.synchronize(&fixture.bus).expect("due warning arms");
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("fixture async runtime builds");
-    let event = runtime.block_on(timers.recv()).expect("due warning fires");
-    let Ok(Fired::ClaimWarning(delivery)) = timers.consume(&fixture.bus, event) else {
-        panic!("due warning did not commit")
-    };
-    let warned_lease = fixture
-        .bus
-        .read({
-            let task = fixture.authority.born();
-            move |read| {
-                Ok(read
-                    .lease_head(&task)?
-                    .expect("lease head exists")
-                    .position())
-            }
-        })
-        .expect("warned lease reads");
-
-    let renewed_expiry = shifted(fixture.authority.expiry, 60);
-    renew_claim(&fixture, renewed_expiry);
-    assert!(
-        fixture
-            .bus
-            .read(move |read| delivery.current_residency(read))
-            .expect("delivery generation reads")
-            .is_none(),
-        "the old warning generation cannot publish after renewal"
-    );
+    renew_claim(&fixture, shifted(fixture.authority.expiry, 60));
     timers
         .synchronize(&fixture.bus)
-        .expect("renewed warning generation arms");
-    let armed = timers
-        .warnings
-        .get(&fixture.authority.task)
-        .expect("renewed generation owns a warning timer");
-    assert_ne!(armed.authority.lease.position(), warned_lease);
-    assert_eq!(armed.authority.expiry, renewed_expiry);
-
-    drop(timers);
-    fixture.bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
-fn occupant_movement_makes_an_already_fired_warning_stale() {
-    let fixture = fixture_with_expiry(60);
-    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
-        .expect("timer runtime starts");
-    timers.synchronize(&fixture.bus).expect("due warning arms");
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("fixture async runtime builds");
-    let event = runtime.block_on(timers.recv()).expect("due warning fires");
-    move_residency(&fixture, fixture.authority.epoch, uuid(24));
-
-    assert_eq!(timers.consume(&fixture.bus, event), Ok(Fired::Stale));
+        .expect("renewed manual claim remains outside warning protocol");
+    assert!(timers.directives.is_empty());
     assert!(
         fixture
             .bus
             .fact_snapshot()
-            .expect("facts read")
-            .facts()
-            .iter()
-            .all(|envelope| envelope.fact.kind() != wire::FactKind::ClaimLeaseWarned)
-    );
-    timers
-        .synchronize(&fixture.bus)
-        .expect("moved occupant suppresses warning");
-    assert!(timers.warnings.is_empty());
-
-    drop(timers);
-    fixture.bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
-fn claim_release_cancels_an_armed_warning_without_emitting_it() {
-    let fixture = fixture_with_expiry(60);
-    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
-        .expect("timer runtime starts");
-    timers.synchronize(&fixture.bus).expect("due warning arms");
-    assert_eq!(timers.warnings.len(), 1);
-
-    free_claim(&fixture);
-    timers
-        .synchronize(&fixture.bus)
-        .expect("released claim disarms warning");
-    assert!(timers.warnings.is_empty());
-    assert!(
-        fixture
-            .bus
-            .fact_snapshot()
-            .expect("facts read")
+            .expect("renewed facts read")
             .facts()
             .iter()
             .all(|envelope| envelope.fact.kind() != wire::FactKind::ClaimLeaseWarned)
@@ -447,101 +306,6 @@ fn claim_release_cancels_an_armed_warning_without_emitting_it() {
 
     drop(timers);
     fixture.bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
-fn task_settlement_cancels_an_armed_warning_without_emitting_it() {
-    let fixture = fixture_with_expiry(60);
-    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
-        .expect("timer runtime starts");
-    timers.synchronize(&fixture.bus).expect("due warning arms");
-    assert_eq!(timers.warnings.len(), 1);
-
-    settle_task(&fixture);
-    timers
-        .synchronize(&fixture.bus)
-        .expect("settled task disarms warning");
-    assert!(timers.warnings.is_empty());
-    assert!(
-        fixture
-            .bus
-            .fact_snapshot()
-            .expect("facts read")
-            .facts()
-            .iter()
-            .all(|envelope| envelope.fact.kind() != wire::FactKind::ClaimLeaseWarned)
-    );
-
-    drop(timers);
-    fixture.bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
-fn concurrent_claim_warnings_remain_isolated_to_their_exact_lanes() {
-    let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
-    let epoch = uuid(22);
-    let first = Authority {
-        task: task(),
-        lane: uuid(20),
-        occupant: uuid(21),
-        epoch,
-        worktree: format!("/fixture/{}", uuid(20)),
-        start: shifted(now, -2),
-        expiry: shifted(now, 60),
-        maximum: shifted(now, 600),
-    };
-    let second = Authority {
-        task: TaskHandle::for_project(
-            "timer.claim",
-            &"1kKRRsDQ".parse().expect("second fixture task stamp"),
-        ),
-        lane: uuid(25),
-        occupant: uuid(26),
-        epoch,
-        worktree: format!("/fixture/{}", uuid(25)),
-        start: shifted(now, -2),
-        expiry: shifted(now, 60),
-        maximum: shifted(now, 600),
-    };
-    let mut journal = Journal::in_memory().expect("fixture journal opens");
-    journal
-        .apply(seed_write(&first))
-        .expect("first authority seeds");
-    journal
-        .apply(seed_write_with_lanes(
-            &second,
-            vec![lane_residency(&first), lane_residency(&second)],
-        ))
-        .expect("second authority and joint residency seed");
-    let bus = Bus::start(journal).expect("fixture bus starts");
-    let mut timers =
-        Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
-    timers.synchronize(&bus).expect("both warnings arm");
-    assert_eq!(timers.warnings.len(), 2);
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("fixture async runtime builds");
-    let mut delivered = Vec::new();
-    for _ in 0..2 {
-        let event = runtime.block_on(timers.recv()).expect("due warning fires");
-        let Ok(Fired::ClaimWarning(delivery)) = timers.consume(&bus, event) else {
-            panic!("concurrent warning did not commit")
-        };
-        delivered.push(delivery.lane());
-    }
-    delivered.sort();
-    assert_eq!(delivered, vec![first.lane, second.lane]);
-    for lane in [first.lane, second.lane] {
-        let heads = bus
-            .read(move |read| read.pending_steering(Some(lane)))
-            .expect("lane warning reads");
-        assert_eq!(heads.len(), 1);
-        assert_eq!(heads[0].body().lane, lane);
-    }
-
-    drop(timers);
-    bus.shutdown().expect("fixture bus stops");
 }
 
 #[test]
@@ -1027,55 +791,6 @@ fn free_claim(fixture: &Fixture) {
     write.claim_head(stamp, freed, move |fact| ClaimHead { fact, ..next });
     assert!(matches!(
         fixture.bus.commit(write).expect("release commits"),
-        bus::CommitOutcome::Committed(_)
-    ));
-}
-
-fn settle_task(fixture: &Fixture) {
-    let stamp = fixture.authority.born();
-    let heads = fixture
-        .bus
-        .read({
-            let stamp = stamp.clone();
-            move |read| {
-                read.task_heads_for(&stamp)?
-                    .ok_or_else(|| GuardError::Invalid("fixture task heads are missing".to_owned()))
-            }
-        })
-        .expect("task heads read");
-    let at = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
-    let mut write = JournalWrite::new(
-        Actor::Lane(fixture.authority.lane),
-        format!("task:{}", fixture.authority.task)
-            .parse()
-            .expect("fixture origin"),
-        at,
-        Producer::CommandDoor,
-    );
-    let completed = write
-        .fact(
-            body::TaskDone {
-                task: stamp.clone(),
-                validation: "fixture settlement".to_owned(),
-                terminal: None,
-                git: None,
-                source: body::SourceBoundary::Proven { heads: Vec::new() },
-            },
-            FactCause::Root,
-        )
-        .expect("completion fact builds");
-    let mut claim = heads.claim().expect("claim head exists").body().clone();
-    claim.disposition = ClaimDisposition::Freed;
-    write.claim_head(stamp.clone(), completed, move |fact| ClaimHead {
-        fact,
-        ..claim
-    });
-    let mut workflow = heads.workflow().body().clone();
-    workflow.status = "completed".to_owned();
-    workflow.completion = Some(at);
-    write.workflow_head(stamp, completed, move |_| workflow);
-    assert!(matches!(
-        fixture.bus.commit(write).expect("settlement commits"),
         bus::CommitOutcome::Committed(_)
     ));
 }

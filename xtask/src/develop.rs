@@ -15,6 +15,7 @@
 //! refusal stay published on every target so a caller compiled for wasm sees
 //! the same [`refresh`] signature and one honest [`RefreshError::Unavailable`].
 
+use std::ffi::OsString;
 use std::fmt;
 use std::io::Write;
 use std::path::PathBuf;
@@ -38,6 +39,8 @@ pub struct RefreshRequest {
     pub release: bool,
     /// Restart the resident after the executable is republished.
     pub restart: bool,
+    /// Arguments forwarded verbatim to the detached `spice up` launcher.
+    pub up_arguments: Vec<OsString>,
 }
 
 /// What one completed refresh published.

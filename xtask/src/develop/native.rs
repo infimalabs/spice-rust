@@ -5,6 +5,7 @@
 //! itself gates off the wasm target. [`super::refresh`] publishes the signature
 //! on every target and delegates to [`perform`] only where these exist.
 
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
 use std::net::TcpStream;
@@ -413,15 +414,7 @@ fn restart(
     if !request.restart {
         return Ok(None);
     }
-    let mut command = Command::new(installed);
-    command.args(["--json", "up"]);
-    let (host, port) = endpoint;
-    if let Some(host) = host {
-        command.args(["--host", host]);
-    }
-    if let Some(port) = port {
-        command.args(["--port", &port.to_string()]);
-    }
+    let mut command = restart_command(installed, endpoint, request);
     let answer = command.current_dir(repository.worktree_root()).output()?;
     if !answer.status.success() {
         let refusal = refusal_text(&answer.stderr);
@@ -446,6 +439,43 @@ fn restart(
     };
     writeln!(output, "resident ready at {}", ready.body.endpoint)?;
     Ok(Some(ready.body.endpoint))
+}
+
+/// Construct the detached launcher command, with explicit forwarded endpoint
+/// options taking precedence over the endpoint inherited from discovery.
+fn restart_command(
+    installed: &Path,
+    endpoint: (Option<&str>, Option<u16>),
+    request: &RefreshRequest,
+) -> Command {
+    let mut command = Command::new(installed);
+    command.args(["--json", "up"]);
+    let (host, port) = endpoint;
+    if !forwards_option(&request.up_arguments, "--host") {
+        if let Some(host) = host {
+            command.args(["--host", host]);
+        }
+    }
+    if !forwards_option(&request.up_arguments, "--port") {
+        if let Some(port) = port {
+            command.args(["--port", &port.to_string()]);
+        }
+    }
+    command.args(&request.up_arguments);
+    command
+}
+
+/// Whether a forwarded argv names one long option, either separately or with
+/// its value joined by `=`. Only these two spellings suppress inherited state.
+fn forwards_option(arguments: &[OsString], option: &str) -> bool {
+    let option_os = OsStr::new(option);
+    arguments.iter().any(|argument| {
+        argument == option_os
+            || argument
+                .to_str()
+                .and_then(|argument| argument.strip_prefix(option))
+                .is_some_and(|suffix| suffix.starts_with('='))
+    })
 }
 
 /// Whether a published endpoint accepts a connection right now.

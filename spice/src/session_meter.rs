@@ -723,6 +723,8 @@ mod tests {
             if warning.is_some() {
                 assert!(line.contains(&format!("has {remaining}s remaining")));
                 assert!(line.contains("run spice task reclaim METER-00000001"));
+                assert!(!line.contains(" ACK"));
+                assert!(!line.contains(" NACK"));
             }
         }
 
@@ -743,6 +745,9 @@ mod tests {
         let quiet = meter
             .evaluate(&state(Some(600)), Duration::from_secs(14))
             .expect("warning exit evaluates");
+        let renewed = meter
+            .evaluate(&state(Some(700)), Duration::from_secs(15))
+            .expect("renewed lease evaluates");
 
         assert!(critical.announcement.is_some());
         assert_eq!(same_tier.announcement, None);
@@ -764,6 +769,7 @@ mod tests {
                 .as_deref()
                 .is_some_and(|line| !line.contains("CLAIM LEASE"))
         );
+        assert_eq!(renewed.announcement, None);
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

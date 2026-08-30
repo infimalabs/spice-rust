@@ -899,8 +899,6 @@ mod surface;
 pub(super) use surface::announce_canvas;
 #[cfg(test)]
 pub(in crate::resident) use surface::dispatch_control;
-#[cfg(test)]
-pub(in crate::resident) use surface::refresh_warning_inboxes;
 use surface::run_surface;
 #[cfg(test)]
 use surface::{StartedSurface, drive_surface, start_surface};

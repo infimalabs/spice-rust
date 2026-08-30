@@ -369,8 +369,7 @@ pub(super) async fn drive_surface(
                     command_surface, seats, &mut lifecycle, &mut control, request,
                 ).await?;
                 if dispatched.reached_dark {
-                    let refresh = timers.synchronize(bus)?;
-                    refresh_warning_inboxes(bus, command_surface.paths, refresh)?;
+                    timers.synchronize(bus)?;
                     return stop_surface(publication, shutdown, server_task).await;
                 }
                 if dispatched.lifecycle_released {
@@ -521,16 +520,6 @@ fn accept_timer_fired(
             }
             Ok(())
         }
-        timers::Fired::ClaimWarning(delivery) => {
-            let lane = delivery.lane();
-            let residency = bus
-                .read(move |read| delivery.current_residency(read))
-                .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
-            if let Some(residency) = residency {
-                steering::publish_inbox(bus, command_surface.paths, residency.body(), lane)?;
-            }
-            Ok(())
-        }
         timers::Fired::Stale
         | timers::Fired::ClaimLapse
         | timers::Fired::ClaimRenew
@@ -673,29 +662,9 @@ fn reconcile_wakes(
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
 ) -> CommandResult<()> {
-    let refresh = timers.synchronize(bus)?;
-    refresh_warning_inboxes(bus, command_surface.paths, refresh)?;
+    timers.synchronize(bus)?;
     let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
     timers.synchronize_wake(wake)
-}
-
-pub(in crate::resident) fn refresh_warning_inboxes(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    refresh: impl IntoIterator<Item = CanonicalUuid>,
-) -> CommandResult<()> {
-    let residency = bus
-        .residency_head()
-        .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
-    let Some(residency) = residency else {
-        return Ok(());
-    };
-    for lane in refresh {
-        if residency.body().lanes.iter().any(|row| row.lane == lane) {
-            steering::publish_inbox(bus, paths, residency.body(), lane)?;
-        }
-    }
-    Ok(())
 }
 pub(in crate::resident) struct ControlDispatch {
     pub(in crate::resident) reached_dark: bool,

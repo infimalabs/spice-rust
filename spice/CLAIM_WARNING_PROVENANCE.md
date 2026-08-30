@@ -18,31 +18,27 @@ checks Rust citations without requiring a predecessor checkout in CI.
 
 ## Outcome
 
-The predecessor combined two concerns in one command-wrapper working-state
-meter. Rust separates them by authority:
+The predecessor combined claim observation and warning delivery in one
+command-wrapper working-state meter. Rust keeps the same ownership boundary:
+the command rim proves one vendor identity from the process environment, reads
+the Rust board, and emits tiered stderr hook feedback while a supervised command
+runs. The resident owns claim lapse and automatic renewal deadlines, but it does
+not create warning facts or steering.
 
-1. The resident owns a durable warning for a manual claim. It derives a timer
-   from journaled claim and lease authority, re-proves the complete generation
-   when the timer fires, records `claim::warned`, and publishes steering only to
-   the still-matching lane.
-2. The command rim owns current-process working-state decoration. It proves one
-   vendor identity from the process environment, reads the Rust board, and emits
-   tiered stderr notices while a supervised command runs.
-
-Neither path imports Python state, infers a claim from transcript prose, or asks
-the agent to poll. There is one current Rust path for each responsibility. The
-predecessor remains evidence for semantics, not a release-specific fallback.
+This path does not import Python state, infer a claim from transcript prose,
+write an inbox, or ask the agent to acknowledge a warning. The predecessor
+remains evidence for semantics, not a release-specific fallback.
 
 ```text
 Python task export                         Rust journal
 ACTIVE + actor + worktree                  task + claim + lease + residency
           |                                           |
           v                                           v
-command working-state meter              resident timer     LiveMeter
-          |                                  |                 |
-          +-- supervisor side channel        |                 +-- command stderr
-                    |                        v
-                    +--> command stderr   claim::warned --> exact lane inbox
+command working-state meter                         LiveMeter
+          |                                           |
+          +-- supervisor side channel                 +-- command stderr
+                    |
+                    +--> command stderr
 ```
 
 ## Responsibility map
@@ -50,14 +46,14 @@ command working-state meter              resident timer     LiveMeter
 | Concern | Python owner | Rust owner |
 | --- | --- | --- |
 | Claim | Active row plus actor and worktree | Journal heads plus residency |
-| Clock | `claim_until` minus wall clock | Journal timer and live-board clock |
-| Tiers | Strict 600, 300, and 60 seconds | Same meter tiers; resident at expiry minus 299 |
-| Dedupe | Persist handle, phase, other state, and tier | Fact generation plus persisted meter key |
+| Clock | `claim_until` minus wall clock | Live-board lease minus wall clock |
+| Tiers | Strict 600, 300, and 60 seconds | Same strict meter tiers |
+| Dedupe | Persist handle, phase, other state, and tier | Persist current working-state key and tier |
 | Wait | Side-channel `select` deadline | Cancellable meter worker |
-| Renew | Renew, wake, then reread expiry | New lease head re-arms both observations |
-| Restart | Recreate streams; read display key | Fold heads; read meter key |
-| End or move | No matching active row | Stale timer; no old meter claim |
-| Deliver | Command stderr | Exact-lane steering and command stderr |
+| Renew | Renew, wake, then reread expiry | Reread the current lease at the next evaluation |
+| Restart | Recreate streams; read display key | Recreate worker; read meter key |
+| End or move | No matching active row | No current meter claim; one deduplicated loss notice |
+| Deliver | Command stderr | Command stderr hook feedback only |
 
 ## Python causal path
 
@@ -141,64 +137,21 @@ catches that `OSError` and closes that delivery stream. These meter failures do
 not replace the supervised child command's output or exit status, but a
 state-write failure is not retroactive silence.
 
-## Rust resident warning
+## Legacy Rust warning facts
 
-### Durable authority and timer
+Rust journals may retain warning facts created by earlier releases. Their wire
+shape remains defined at
+`wire/src/body/task.rs#pub struct ClaimLeaseWarned`, and the fixed vocabulary
+remains at
+`wire/src/fact.rs#ClaimLeaseWarned = "claim::warned" by BusTimer;` so those
+journals remain readable. The steering ledger and lane reply fold may still
+interpret such retained facts, but no current timer schedules or appends one.
 
-The resident warning authority is defined by
-`spice/src/resident/timers.rs#struct WarningAuthority`. Selection at
-`spice/src/resident/timers.rs#fn desired_warnings(` admits only an active manual
-claim in the seated resident epoch with the current lane occupant and a coherent
-lease. It captures the task stamp, positioned claim and lease heads, lane,
-occupant, epoch, deadline, and expiry. Automatic claims are excluded because
-their resident heartbeat renews a much shorter rolling lease.
-
-`spice/src/resident/timers.rs#fn synchronize_warnings(` cancels process-local
-timers whose captured authority no longer equals the desired fold and arms the
-new generation. Resident startup runs the same synchronization over durable
-heads, so restart is recovery from authority rather than persistence of an old
-sleep.
-
-The deadline at `spice/src/resident/timers.rs#fn warning_deadline(` is expiry
-minus 299 seconds. When it fires,
-`spice/src/resident/timers.rs#fn consume_warning(` rejects an early or expired
-event and commits `wire/src/body/task.rs#pub struct ClaimLeaseWarned` under a
-journal guard. `spice/src/resident/timers.rs#fn warning_guard(` re-reads the
-exact task, claim, lease, residency epoch, lane occupant, horizon, and prior
-warning generation atomically. A renewal, reclaim, completion, free, lapse,
-movement, or resident replacement makes the old proposal stale.
-
-The fact kind is fixed at `wire/src/fact.rs#ClaimLeaseWarned = "claim::warned" by BusTimer;`.
-`spice/src/resident/timers.rs#fn warning_recorded(` deduplicates by task stamp,
-claim head, lease head, and expiry. A genuinely new lease generation is
-warnable; replaying the same generation is not.
-
-### Exact-lane publication
-
-After commit, `spice/src/resident/timers.rs#pub(super) struct WarningDelivery`
-retains the complete generation. Its
-`spice/src/resident/timers.rs#impl WarningDelivery` re-reads the current
-generation before the runtime branch at
-`spice/src/resident/runtime/surface.rs#timers::Fired::ClaimWarning(delivery) => {`
-publishes the lane inbox. This is the immediate post-commit check: if authority
-moved after commit but before this branch, no immediate publication occurs. The
-steering projection recognizes the warning fact at
-`spice/src/resident/lane_surface/reply.rs#wire::FactKind::ClaimLeaseWarned => {`.
-
-Durable suppression is separately shipped at the pinned Rust revision.
-`spice/src/resident/timers.rs#fn cancel_stale_warnings(` scans pending steering
-at every timer synchronization, and
-`spice/src/resident/timers.rs#fn stale_warnings(` excludes a warning unless its
-exact task stamp, claim and lease heads, expiry, lane and occupant, and seated
-resident epoch are still current. The cancellation owner commits a
-`SteerCanceled` transition under guards that re-prove both the pending steering
-head and the obsolete generation. It returns affected lanes to
-`spice/src/resident/runtime/surface.rs#pub(in crate::resident) fn refresh_warning_inboxes(`,
-which rematerializes their current inboxes. Startup performs the same
-synchronization before initial publication, and later journal commits reconcile
-again, so restart and unrelated publication cannot resurrect the canceled head.
-The documentation owns only this record; the resident timer and runtime surface
-own retirement and exclusion.
+The focused resident proof at
+`spice/src/resident/timers/tests/mod.rs#fn manual_claims_never_create_resident_warning_protocol()`
+synchronizes and renews a manual claim, then verifies that no warning fact,
+steering head, or pending lane inbox is created. This preserves forward reading
+without keeping the old implementation as an executable arm.
 
 ## Rust command meter
 
@@ -217,7 +170,12 @@ claim.
 
 The pure policy in `spice/src/session_meter.rs#enum LeaseTier` preserves the
 predecessor's strict 600, 300, and 60 second boundaries and 120, 60, and 15
-second repeats. Its persisted key excludes remaining seconds. The scheduler at
+second repeats. `spice/src/session_meter.rs#pub struct Meter` persists the
+announcement key, and
+`spice/src/session_meter.rs#pub fn evaluate(&self, snapshot: &WorkingState, now: Duration)`
+suppresses same-tier repeats while allowing tier transitions immediately. The
+key excludes remaining seconds. `spice/src/session_meter.rs#fn render(` emits
+the tier, live remaining seconds, and exact reclaim command. The scheduler at
 `spice/src/session_meter.rs#fn next_refresh(` selects the next tier or repeat
 deadline and applies the same 50 millisecond floor.
 
@@ -229,7 +187,10 @@ so the meter cannot outlive the command it decorates.
 
 ## Compatibility boundary
 
-The retained data is Rust journal authority and Rust meter suppression state.
+The retained data is Rust journal authority, including readable legacy warning
+facts, and Rust meter suppression state. Legacy facts are not a current warning
+producer.
+
 Python task exports, side-channel sockets, working-state JSON, and thread
 pointers are never migrated or consulted. If a future release cannot interpret
 retained Rust state, it must migrate that state once or refuse while naming the

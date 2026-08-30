@@ -186,15 +186,18 @@ This shortcut also restores the resident; `--no-resident` omits that lifecycle:
 
 ```sh
 "$SPICE_BIN" dev xtask -- install --port PORT
+"$SPICE_BIN" dev xtask -- install -- --host 0.0.0.0 --allow-insecure-bind
 ```
 
 It retains the endpoint unless `--host` or `--port` overrides it; `--release`
-selects release build. Manual apply accepts only its exact preview digest.
-Refresh retains the first install's reversal images and replaces files in place,
-so every linked worktree sees one Git-common upgrade. The installed pre-commit
-worker checks its receipt, assets, and exact current binary before selected
-source verification; freshness failures name the repair preview. Nothing
-outside Rust Spice stops.
+selects release build. Arguments after `--` are forwarded verbatim to the
+detached `spice up` launcher and an explicitly forwarded `--host` or `--port`
+overrides the retained endpoint. Manual apply accepts only its exact preview
+digest. Refresh retains the first install's reversal images and replaces files
+in place, so every linked worktree sees one Git-common upgrade. The installed
+pre-commit worker checks its receipt, assets, and exact current binary before
+selected source verification; freshness failures name the repair preview.
+Nothing outside Rust Spice stops.
 
 ## Retirement is separate from the authority switch
 

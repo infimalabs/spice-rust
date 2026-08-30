@@ -15,7 +15,8 @@ const USAGE: &str = concat!(
     "usage: \"$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir)",
     "/.spice-install/bin/spice\" dev xtask -- <help|verify --package PACKAGE|",
     "gate [--report] ARM|app|",
-    "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
+    "install [--host HOST] [--port PORT] [--release] [--no-resident] ",
+    "[-- UP-OPTION...]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
     "[--free-space-floor BYTES] [--retain-live-worktrees N]|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
@@ -253,6 +254,10 @@ fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
             "--no-resident" => request.restart = false,
             "--host" => request.host = Some(arguments.next()?.to_str()?.to_owned()),
             "--port" => request.port = Some(arguments.next()?.to_str()?.parse().ok()?),
+            "--" => {
+                request.up_arguments.extend(arguments.cloned());
+                break;
+            }
             _ => return None,
         }
     }
@@ -502,7 +507,9 @@ fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::help;
+    use std::ffi::OsString;
+
+    use super::{help, install_request};
 
     #[test]
     fn help_omits_retired_hook_runtime_commands() {
@@ -521,5 +528,26 @@ mod tests {
         for instrument in ["suite-seam", "mutation-coverage", "test-subsumption"] {
             assert!(help.contains(instrument));
         }
+    }
+
+    #[test]
+    fn install_forwards_every_argument_after_its_delimiter_to_up() {
+        let arguments = [
+            "--release",
+            "--",
+            "--host",
+            "0.0.0.0",
+            "--allow-insecure-bind",
+            "--open",
+        ]
+        .map(OsString::from);
+
+        let request = install_request(&arguments).expect("install arguments parse");
+
+        assert!(request.release);
+        assert_eq!(
+            request.up_arguments,
+            ["--host", "0.0.0.0", "--allow-insecure-bind", "--open"].map(OsString::from)
+        );
     }
 }
