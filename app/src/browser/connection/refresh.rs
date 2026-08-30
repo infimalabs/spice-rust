@@ -11,10 +11,19 @@ pub(super) async fn send_after_frame(
     stale: crate::Stale,
 ) -> Result<(), String> {
     if full {
-        send_refresh(principal, writer, pending, submissions).await
+        send_refresh(principal, writer, pending, submissions).await?;
     } else {
-        send_stale(principal, writer, pending, submissions, stale).await
+        send_stale(principal, writer, pending, submissions, stale).await?;
     }
+
+    // A lane read already in flight can coalesce the refresh caused by a wake
+    // reply, but that older read cannot prove post-wake residency. Once its
+    // response clears it, keep the causal read live until one nominated after
+    // the wake is actually in flight.
+    if !submissions.queue.borrow().awaiting_residency().is_empty() {
+        send_lanes(principal, writer, pending, submissions).await?;
+    }
+    Ok(())
 }
 
 pub(super) async fn send_refresh(

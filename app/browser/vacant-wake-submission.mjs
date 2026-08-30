@@ -131,7 +131,34 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
         + `[data-agent-lane="${targetLane}"]`,
     )
     .filter({ hasText: exactDraft });
-  await directiveCard.waitFor({ timeout: WAKE_MS });
+  try {
+    await directiveCard.waitFor({ timeout: WAKE_MS });
+  } catch (error) {
+    const operatorCards = console_.locator('[data-card-kind="operator-message"]');
+    const observed = {
+      lane: await reply(fixture, ["lane"]),
+      inbox: await reply(fixture, ["inbox", targetLane]),
+      member: await lane.evaluate((node) => ({
+        classes: node.className,
+        text: node.textContent,
+        wake: node.dataset.wakeAndSend,
+      })),
+      operatorCardCount: await operatorCards.count(),
+      recentOperatorCards: await operatorCards.evaluateAll((cards) =>
+        cards.slice(-8).map((card) => ({
+          directive: card.dataset.directive,
+          id: card.id,
+          lane: card.dataset.agentLane,
+          phase: card.dataset.layoutPhase,
+          state: card.dataset.state,
+          visible: card.getClientRects().length > 0,
+        })),
+      ),
+    };
+    throw new Error(`wake direction did not render: ${JSON.stringify(observed)}`, {
+      cause: error,
+    });
+  }
   assert.equal(await directiveCard.count(), 1, "the exact wake draft renders once");
   const directive = await directiveCard.getAttribute("data-directive");
   assert.ok(directive, "the wake path renders the durable directive identity");
