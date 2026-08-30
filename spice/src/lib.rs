@@ -27,6 +27,8 @@ pub mod placeholder;
 pub mod repository;
 pub mod resident_lock;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod rtk;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod session_meter;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod task_git;

@@ -128,8 +128,10 @@ Disposition: Irreducible glue.
 
 Reason: It receives the shell tool's complete argument vector before the native
 command shell exists, then replaces itself with `spice run` and the separately
-packaged inner stage. A Rust child cannot replace the shell process that chose
-to start it.
+packaged inner stage. `spice run` first gives the complete top-level command to
+the optional configured RTK selector and falls back unchanged with a diagnostic
+for every unusable answer. A Rust child cannot replace the shell process that
+chose to start it.
 
 ## `steer/hooks/static/stage.sh`
 

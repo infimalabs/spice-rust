@@ -20,13 +20,16 @@ The Python measurements below were last checked at revision
 
 ## Direct-call boundary
 
-Neither implementation directly invokes the other. Python's tool subprocess at
-`spice-z/spice/tasks/ops.py#run_tool_command` launches the configured `rtk`
-from `spice-z/spice/config/values.py#configured_rtk_executable`, not this port.
-Rust's `spice/src/cli.rs#Command::new("spice")` is a clap command name, not a
-process construction. The executable-name convergence still mattered through
-an inherited shell `PATH`; the routing root cause and closure are recorded
-below.
+Neither implementation directly invokes the other. Both independently launch
+their configured optional RTK companion: Python does so through
+`spice-z/spice/tasks/ops.py#run_tool_command` and
+`spice-z/spice/config/values.py#configured_rtk_executable`; Rust does so through
+`spice/src/rtk.rs#pub fn rewrite`. Rust keeps its history below its own
+Git-common `.spice-rs` root, so the two implementations share neither RTK
+configuration nor history state. Rust's `spice/src/cli.rs#Command::new("spice")`
+is a clap command name, not a process construction. The executable-name
+convergence still mattered through an inherited shell `PATH`; the routing root
+cause and closure are recorded below.
 
 ## Physical routing ledger
 

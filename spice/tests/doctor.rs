@@ -316,13 +316,14 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
     // accounts the ones its fixtures, Git shadow, and predecessor development
     // bridge use. The gate's name ledger is pinned separately in
     // wire/tests/environment_vocabulary.rs.
-    const UNOWNED: [&str; 27] = [
+    const UNOWNED: [&str; 28] = [
         "GIT_CONFIG_COUNT",                             // env-policy: allow
         "GIT_CONFIG_SYSTEM",                            // env-policy: allow
         "GIT_DIR",                                      // env-policy: allow
         "GIT_EDITOR",                                   // env-policy: allow
         "GIT_INDEX_FILE",                               // env-policy: allow
         "GIT_WORK_TREE",                                // env-policy: allow
+        "RTK_DB_PATH",                                  // env-policy: allow
         "SPICE_CANVAS_BINARY",                          // env-policy: allow
         "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",          // env-policy: allow
         "SPICE_FIXTURE_RERUN",                          // env-policy: allow
@@ -727,6 +728,43 @@ fn missing_optional_rtk_is_an_unhealthy_row_inside_a_direct_reply() {
         tool.requirement == wire::DoctorToolRequirement::Optional
             && matches!(tool.observation, DoctorObservation::Unavailable { .. })
     }));
+}
+
+#[test]
+fn doctor_observes_the_exact_configured_rtk_path_without_executing_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repository = Scratch::repository("configured-rtk");
+    repository.tracked("");
+    let executable = repository.path().join("alternate-rtk");
+    fs::write(&executable, b"not executed\n").expect("write configured RTK fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make configured RTK fixture executable");
+    repository.local(&format!(
+        "[rtk]\nexecutable = {:?}\n",
+        executable.display().to_string()
+    ));
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+
+    let report = reply(&invoke(
+        repository.path(),
+        &["doctor", "--json"],
+        empty_path.as_os_str(),
+        &[],
+    ))
+    .body;
+    let rtk = command(&report, "doctor")
+        .tools
+        .iter()
+        .find(|tool| tool.name == "rtk")
+        .expect("RTK tool row");
+
+    assert!(matches!(rtk.observation, DoctorObservation::Ready {}));
+    assert_eq!(
+        fs::read(&executable).expect("fixture remains"),
+        b"not executed\n"
+    );
 }
 
 #[test]

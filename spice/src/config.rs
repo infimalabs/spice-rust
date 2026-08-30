@@ -5,6 +5,7 @@
 //! render help, and report provenance without carrying a second value parser.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,7 @@ pub use task_migration::{
 pub struct Root {
     commands: CommandMounts,
     wrappers: steer::Wrappers,
+    rtk: RtkConfig,
     tasks: TaskMetadata,
     judge: JudgeConfig,
     policy: WorkspacePolicy,
@@ -74,6 +76,12 @@ impl Root {
     #[must_use]
     pub const fn wrappers(&self) -> &steer::Wrappers {
         &self.wrappers
+    }
+
+    /// Optional command-output optimizer used by supervised agent shells.
+    #[must_use]
+    pub const fn rtk(&self) -> &RtkConfig {
+        &self.rtk
     }
 
     /// Shared task scheduler declarations.
@@ -164,6 +172,64 @@ impl Root {
     #[must_use]
     pub const fn proof(&self) -> &proof::Config {
         &self.proof
+    }
+}
+
+/// Optional RTK command-output optimizer configuration.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RtkConfig {
+    executable: String,
+}
+
+impl RtkConfig {
+    /// Exact basename or absolute executable path selected for RTK.
+    #[must_use]
+    pub fn executable(&self) -> &str {
+        &self.executable
+    }
+}
+
+impl Default for RtkConfig {
+    fn default() -> Self {
+        Self {
+            executable: "rtk".to_owned(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RawRtkConfig {
+    executable: String,
+}
+
+impl Default for RawRtkConfig {
+    fn default() -> Self {
+        Self {
+            executable: RtkConfig::default().executable,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for RtkConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawRtkConfig::deserialize(deserializer)?;
+        let path = Path::new(&raw.executable);
+        let basename = path
+            .file_name()
+            .is_some_and(|name| name == path.as_os_str());
+        if raw.executable.is_empty()
+            || raw.executable.contains('\0')
+            || (!path.is_absolute()
+                && (!basename || raw.executable.chars().any(char::is_whitespace)))
+        {
+            return Err(D::Error::custom(
+                "rtk.executable must be one non-empty executable basename or absolute path",
+            ));
+        }
+        Ok(Self {
+            executable: raw.executable,
+        })
     }
 }
 

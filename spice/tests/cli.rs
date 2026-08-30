@@ -602,6 +602,55 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
 
 #[test]
 #[cfg(unix)]
+fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("run-rtk");
+    let calls = scratch.path().join("rtk-calls");
+    let history = scratch.path().join("lane/rtk/history.db");
+    let rtk = scratch.path().join("alternate-rtk");
+    fs::write(
+        &rtk,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n%s\\n' \"$*\" \"$RTK_DB_PATH\" > '{}'\nprintf '%s\\n' 'printf rewritten'\nexit 3\n",
+            calls.display()
+        ),
+    )
+    .expect("write RTK fixture");
+    fs::set_permissions(&rtk, fs::Permissions::from_mode(0o700))
+        .expect("make RTK fixture executable");
+
+    let rewritten = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(["run", "--", "/bin/sh", "-c", "printf native"])
+        .env_remove(steer::hook::INBOX)
+        .env(spice::rtk::EXECUTABLE_VARIABLE, &rtk)
+        .env(spice::rtk::HISTORY_VARIABLE, &history)
+        .output()
+        .expect("run through RTK");
+    assert!(rewritten.status.success());
+    assert_eq!(rewritten.stdout, b"rewritten");
+    assert!(rewritten.stderr.is_empty());
+    assert_eq!(
+        fs::read_to_string(&calls).expect("read RTK call"),
+        format!("rewrite -- printf native\n{}\n", history.display())
+    );
+
+    let missing = scratch.path().join("missing-rtk");
+    let native = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(["run", "--", "/bin/sh", "-c", "printf native"])
+        .env_remove(steer::hook::INBOX)
+        .env(spice::rtk::EXECUTABLE_VARIABLE, &missing)
+        .env(spice::rtk::HISTORY_VARIABLE, &history)
+        .output()
+        .expect("missing RTK degrades to native");
+    assert!(native.status.success());
+    assert_eq!(native.stdout, b"native");
+    assert!(String::from_utf8_lossy(&native.stderr).contains("RTK rewrite degraded to native"));
+    scratch.remove();
+}
+
+#[test]
+#[cfg(unix)]
 fn steering_follows_the_wrappers_own_stderr_redirection() {
     let scratch = Scratch::new("run-stderr");
     let inbox = scratch.path().join("inbox");
