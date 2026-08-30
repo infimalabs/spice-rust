@@ -19,8 +19,8 @@ pub use message::{MESSAGE_CAPACITY, MessagePublishError, MessagePublisher};
 use message::{MessageFeed, message_snapshot_fault};
 pub use policy::Failure;
 use policy::{
-    admit_subject, admit_subjects, pack_unique, present_facts, protocol_fault, refusal,
-    required_horizon, thread_fault, trust_rows,
+    admit_subject, admit_subjects, canvas_visible_fact, pack_unique, present_facts, protocol_fault,
+    refusal, required_horizon, thread_fault, trust_rows,
 };
 
 /// Generation-owned source for every streamed canvas answer.
@@ -391,14 +391,19 @@ impl Subscription {
             let packed = source.facts(journal::FactPageStart::After(self.cursor), horizon)?;
             fact_cursor = packed.rows.last().map(|fact| fact.seq);
             complete = packed.overflow.is_none();
-            frames.extend(packed.rows.into_iter().map(StreamFact::from).map(|fact| {
-                StreamFrame::Fact {
-                    v: WireVersion::CURRENT,
-                    id: self.id,
-                    epoch: self.epoch,
-                    fact,
-                }
-            }));
+            frames.extend(
+                packed
+                    .rows
+                    .into_iter()
+                    .filter(canvas_visible_fact)
+                    .map(StreamFact::from)
+                    .map(|fact| StreamFrame::Fact {
+                        v: WireVersion::CURRENT,
+                        id: self.id,
+                        epoch: self.epoch,
+                        fact,
+                    }),
+            );
         }
         let trust_continuation = if complete && self.subjects.contains(&ViewSubject::Trust) {
             let trust = trust_rows(heads);
@@ -784,6 +789,43 @@ mod tests {
         }
     }
 
+    fn commit_ingestion(bus: &Bus) -> JournalCommit {
+        let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
+        let mut write = JournalWrite::new(
+            Actor::Spice,
+            format!("lane:{lane}").parse().expect("lane origin"),
+            "2030-04-12T18:44:10.271Z".parse().expect("instant"),
+            Producer::ResidentRecognition,
+        );
+        write
+            .fact(
+                body::JournalIngested {
+                    lane,
+                    vendor: "codex".parse().expect("vendor name"),
+                    stream: "transcript".to_owned(),
+                    source: uuid("018f82d4-6f59-7d06-92e3-bce9131163e6"),
+                    supersedes: None,
+                    from: body::TranscriptPosition {
+                        member: 0,
+                        offset: 0,
+                    },
+                    to: body::TranscriptPosition {
+                        member: 0,
+                        offset: 4096,
+                    },
+                    usage: Vec::new(),
+                    non_usage_records: 3,
+                    residue_records: 0,
+                },
+                FactCause::Root,
+            )
+            .expect("ingestion fact builds");
+        match bus.commit(write).expect("commit answers") {
+            CommitOutcome::Committed(commit) => commit,
+            other => panic!("fixture commit failed: {other:?}"),
+        }
+    }
+
     fn facts(frame: &StreamFrame) -> &Packed<StreamFact> {
         let StreamFrame::Facts { packed, .. } = frame else {
             panic!("expected facts, found {frame:?}");
@@ -963,6 +1005,37 @@ mod tests {
         );
         subscription.admit(delivery);
         assert_eq!(subscription.cursor(), Some(seq(3)));
+        drop(source);
+        bus.shutdown().expect("bus shuts down");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn transcript_ingestion_advances_live_cursor_without_crossing_canvas() {
+        let bus = fixture(1);
+        let source = Source::new(bus.reader(), epoch(), 10);
+        let mut broadcasts = source.subscribe();
+        let (mut subscription, _) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(0xc4, vec![ViewSubject::Facts], None),
+            )
+            .expect("subscription begins");
+        let before = subscription.cursor().expect("operator begins live");
+
+        let committed = commit_ingestion(&bus);
+        let noticed = broadcasts.recv().await.expect("commit broadcasts");
+        assert_eq!(noticed, committed);
+        let delivery = subscription
+            .advance(&source, noticed)
+            .expect("broadcast advances stream")
+            .expect("accounting receipt advances the cursor");
+        assert!(
+            delivery.frames().is_empty(),
+            "resident-only accounting does not cross the Canvas socket"
+        );
+        assert_eq!(subscription.cursor(), Some(before));
+        subscription.admit(delivery);
+        assert_eq!(subscription.cursor(), Some(seq(committed.last())));
         drop(source);
         bus.shutdown().expect("bus shuts down");
     }

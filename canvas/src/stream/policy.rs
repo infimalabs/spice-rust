@@ -111,10 +111,27 @@ pub(super) fn trust_rows(heads: &CanvasHeads) -> Vec<TrustView> {
 
 pub(super) fn present_facts(packed: Packed<wire::Envelope<wire::AnyFact>>) -> Packed<StreamFact> {
     Packed {
-        rows: packed.rows.into_iter().map(StreamFact::from).collect(),
+        rows: packed
+            .rows
+            .into_iter()
+            .filter(canvas_visible_fact)
+            .map(StreamFact::from)
+            .collect(),
         overflow: packed.overflow,
         horizon: packed.horizon,
     }
+}
+
+/// Whether one authority fact belongs on the operator Canvas stream.
+///
+/// `journal::ingested` is a resident accounting receipt for a captured source
+/// byte range. The separately bounded message subject carries the transcript
+/// activity an operator can act on; sending both turns every growing
+/// transcript into duplicate socket traffic and exposes internal accounting as
+/// chronology. The receipt remains in durable authority for replay and
+/// forensic reads.
+pub(super) fn canvas_visible_fact(fact: &wire::Envelope<wire::AnyFact>) -> bool {
+    fact.fact.kind() != wire::FactKind::JournalIngested
 }
 
 pub(super) fn pack_unique<T>(
