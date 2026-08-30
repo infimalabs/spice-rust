@@ -405,9 +405,14 @@ pub(super) fn partition_largest_prebuilt_tests(
         prebuilt_test_cases(test, environment, cancellation)
     })?;
     let discovery_elapsed = discovery_started.elapsed();
-    let failure_index =
-        report_prebuilt_discoveries(&tests, &discoveries, discovery_elapsed, concurrency, output)?;
-    if let Some(failure_index) = failure_index {
+    report_prebuilt_discoveries(
+        &tests,
+        &discoveries.completed,
+        discovery_elapsed,
+        concurrency,
+        output,
+    )?;
+    if let Some(failure_index) = discoveries.causal_failure {
         writeln!(
             output,
             "[rust-test] stage=partition-terminal elapsed_ms={} disposition=failed",
@@ -416,20 +421,30 @@ pub(super) fn partition_largest_prebuilt_tests(
         .map_err(output_error)?;
         output.flush().map_err(output_error)?;
         return Err(discoveries
+            .completed
             .into_iter()
             .find(|discovery| discovery.ordinal == failure_index)
             .and_then(|discovery| discovery.cases.err())
             .expect("recorded discovery failure retains its error"));
     }
-    if discoveries.len() != candidate_count {
+    if discoveries
+        .completed
+        .iter()
+        .any(|discovery| discovery.cases.is_err())
+    {
+        return Err(WorkspaceTestError::new(
+            "prebuilt test discovery recorded sibling cancellation without a causal failure",
+        ));
+    }
+    if discoveries.completed.len() != candidate_count {
         return Err(WorkspaceTestError::new(format!(
             "prebuilt test discovery completed {} of {candidate_count} candidate(s) without reporting a failure",
-            discoveries.len(),
+            discoveries.completed.len(),
         )));
     }
 
     let mut partitioned = Vec::new();
-    for (test, discovery) in tests.into_iter().zip(discoveries) {
+    for (test, discovery) in tests.into_iter().zip(discoveries.completed) {
         let cases = discovery
             .cases
             .expect("complete discovery was checked before partitioning");
@@ -478,14 +493,14 @@ fn report_prebuilt_discoveries(
     elapsed: Duration,
     concurrency: usize,
     output: &mut impl Write,
-) -> Result<Option<usize>, WorkspaceTestError> {
-    let mut failure_index = None;
+) -> Result<(), WorkspaceTestError> {
+    let mut failed = false;
     for discovery in discoveries {
         let test = &tests[discovery.ordinal];
         let (disposition, cases) = match &discovery.cases {
             Ok(cases) => ("success", cases.len().to_string()),
             Err(_) => {
-                failure_index.get_or_insert(discovery.ordinal);
+                failed = true;
                 ("failed", "unknown".to_owned())
             }
         };
@@ -498,11 +513,7 @@ fn report_prebuilt_discoveries(
         )
         .map_err(output_error)?;
     }
-    let disposition = if failure_index.is_some() {
-        "failed"
-    } else {
-        "success"
-    };
+    let disposition = if failed { "failed" } else { "success" };
     writeln!(
         output,
         "[rust-test] stage=discovery-batch-terminal elapsed_ms={} disposition={disposition} candidates={} completed={} lanes={}",
@@ -513,14 +524,27 @@ fn report_prebuilt_discoveries(
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
-    Ok(failure_index)
+    Ok(())
+}
+
+#[derive(Debug)]
+struct PrebuiltDiscoveryBatch {
+    /// Progress records retained in candidate ordinal order.
+    completed: Vec<PrebuiltTestDiscovery>,
+    /// First independently observed failure, excluding cancellation caused by a sibling.
+    causal_failure: Option<usize>,
+}
+
+struct PrebuiltDiscoveryAdmission {
+    next: usize,
+    causal_failure: Option<usize>,
 }
 
 fn run_bounded_discovery<T, F>(
     candidates: &[T],
     concurrency: usize,
     discover: F,
-) -> Result<Vec<PrebuiltTestDiscovery>, WorkspaceTestError>
+) -> Result<PrebuiltDiscoveryBatch, WorkspaceTestError>
 where
     T: Sync,
     F: Fn(&T, CancellationToken) -> Result<Vec<String>, WorkspaceTestError> + Sync,
@@ -532,23 +556,29 @@ where
         )));
     }
     if candidates.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PrebuiltDiscoveryBatch {
+            completed: Vec::new(),
+            causal_failure: None,
+        });
     }
 
     let lanes = concurrency.min(candidates.len());
-    let next = Mutex::new(0_usize);
+    let admission = Mutex::new(PrebuiltDiscoveryAdmission {
+        next: 0,
+        causal_failure: None,
+    });
     let cancellation = CancellationToken::new();
     let mut completed = thread::scope(|scope| {
         let mut workers = Vec::with_capacity(lanes);
         for _ in 0..lanes {
             let discover = &discover;
-            let next = &next;
+            let admission = &admission;
             let cancellation = &cancellation;
             workers.push(scope.spawn(move || {
                 let mut completed = Vec::new();
                 loop {
                     let ordinal = {
-                        let mut next = next.lock().map_err(|_| {
+                        let mut admission = admission.lock().map_err(|_| {
                             WorkspaceTestError::new(
                                 "prebuilt test discovery admission lock was poisoned",
                             )
@@ -556,8 +586,8 @@ where
                         if cancellation.is_cancelled() {
                             break;
                         }
-                        let ordinal = *next;
-                        *next = (*next).saturating_add(1);
+                        let ordinal = admission.next;
+                        admission.next = admission.next.saturating_add(1);
                         ordinal
                     };
                     let Some(candidate) = candidates.get(ordinal) else {
@@ -566,11 +596,17 @@ where
                     let started = Instant::now();
                     let cases = discover(candidate, cancellation.clone());
                     if cases.is_err() {
-                        let _admission = next.lock().map_err(|_| {
+                        let mut admission = admission.lock().map_err(|_| {
                             WorkspaceTestError::new(
                                 "prebuilt test discovery admission lock was poisoned",
                             )
                         })?;
+                        if cases
+                            .as_ref()
+                            .is_err_and(|error| !error.is_synthetic_cancellation())
+                        {
+                            admission.causal_failure.get_or_insert(ordinal);
+                        }
                         cancellation.cancel();
                     }
                     completed.push(PrebuiltTestDiscovery {
@@ -593,7 +629,16 @@ where
             .map(|completed| completed.into_iter().flatten().collect::<Vec<_>>())
     })?;
     completed.sort_by_key(|result| result.ordinal);
-    Ok(completed)
+    let causal_failure = admission
+        .into_inner()
+        .map_err(|_| {
+            WorkspaceTestError::new("prebuilt test discovery admission lock was poisoned")
+        })?
+        .causal_failure;
+    Ok(PrebuiltDiscoveryBatch {
+        completed,
+        causal_failure,
+    })
 }
 
 fn prebuilt_test_cases(
@@ -630,6 +675,14 @@ fn prebuilt_test_cases_with_deadline(
     let capture_failed = !outcome.outputs_drained()
         || outcome.stdout().is_some_and(|output| output.truncated())
         || outcome.stderr().is_some_and(|output| output.truncated());
+    if matches!(outcome.completion(), Completion::Cancelled(_)) {
+        return Err(WorkspaceTestError::synthetic_cancellation(format!(
+            "{owner} ended as {}: stdout-tail={:?}; stderr-tail={:?}",
+            completion_name(outcome.completion()),
+            captured_excerpt(outcome.stdout()),
+            captured_excerpt(outcome.stderr()),
+        )));
+    }
     if !matches!(outcome.completion(), Completion::Exited(status) if status.success())
         || capture_failed
     {
@@ -1154,11 +1207,13 @@ mod tests {
 
         assert_eq!(
             discoveries
+                .completed
                 .iter()
                 .map(|discovery| discovery.ordinal)
                 .collect::<Vec<_>>(),
             (0..candidates.len()).collect::<Vec<_>>(),
         );
+        assert_eq!(discoveries.causal_failure, None);
         assert!(peak.load(AtomicOrdering::Acquire) <= 3);
         assert_eq!(active.load(AtomicOrdering::Acquire), 0);
     }
@@ -1187,12 +1242,14 @@ mod tests {
 
         assert_eq!(
             discoveries
+                .completed
                 .iter()
                 .map(|discovery| discovery.ordinal)
                 .collect::<Vec<_>>(),
             vec![0, 1],
         );
-        assert!(discoveries[0].cases.is_err());
+        assert!(discoveries.completed[0].cases.is_err());
+        assert_eq!(discoveries.causal_failure, Some(0));
         assert_eq!(invoked.load(AtomicOrdering::Acquire), 2);
     }
 
@@ -1240,13 +1297,14 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(
             discoveries
+                .completed
                 .iter()
                 .map(|discovery| discovery.ordinal)
                 .collect::<Vec<_>>(),
             vec![0, 1],
         );
         assert!(
-            discoveries[0]
+            discoveries.completed[0]
                 .cases
                 .as_ref()
                 .expect_err("first child fails")
@@ -1254,14 +1312,57 @@ mod tests {
                 .contains("exit code=19"),
         );
         assert!(
-            discoveries[1]
+            discoveries.completed[1]
                 .cases
                 .as_ref()
                 .expect_err("sibling is cancelled")
                 .to_string()
                 .contains("cancelled"),
         );
+        assert_eq!(discoveries.causal_failure, Some(0));
         assert!(!process_is_alive(fixture_pid(&pid)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reversed_real_failure_survives_lower_ordinal_sibling_cancellation() {
+        let fixture = DiscoveryFixture::new();
+        let ready = fixture.root.join("reversed-sleeper-ready");
+        let pid = fixture.root.join("reversed-sleeper-pid");
+        let sleeper = fixture.script(
+            "ordinal-0-sleeper",
+            &format!(
+                "printf '%s\\n' \"$$\" > '{}'\nprintf 'ready\\n' > '{}'\nexec /bin/sleep 30\n",
+                pid.display(),
+                ready.display(),
+            ),
+        );
+        let failure = fixture.script(
+            "ordinal-1-failure",
+            &format!(
+                "while [ ! -f '{}' ]; do /bin/sleep 0.01; done\nexit 19\n",
+                ready.display(),
+            ),
+        );
+        let tests = vec![
+            fixture.test("ordinal-0-sleeper", sleeper),
+            fixture.test("ordinal-1-failure", failure),
+        ];
+        let mut output = Vec::new();
+        let started = Instant::now();
+
+        let error = partition_largest_prebuilt_tests(tests, &empty_environment(), 2, &mut output)
+            .expect_err("ordinal 1 exit fails discovery");
+
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(error.to_string().contains("ordinal-1-failure"), "{error}");
+        assert!(error.to_string().contains("exit code=19"), "{error}");
+        assert!(!error.to_string().contains("cancelled"), "{error}");
+        assert!(!process_is_alive(fixture_pid(&pid)));
+        let output = String::from_utf8(output).expect("discovery progress is UTF-8");
+        let ordinal_0 = output.find("ordinal-0-sleeper").expect("ordinal 0 reports");
+        let ordinal_1 = output.find("ordinal-1-failure").expect("ordinal 1 reports");
+        assert!(ordinal_0 < ordinal_1, "{output}");
     }
 
     #[cfg(unix)]
@@ -1337,6 +1438,7 @@ mod tests {
 
         assert_eq!(
             discoveries
+                .completed
                 .iter()
                 .map(|discovery| discovery.ordinal)
                 .collect::<Vec<_>>(),
@@ -1344,6 +1446,7 @@ mod tests {
         );
         assert_eq!(
             discoveries
+                .completed
                 .into_iter()
                 .map(|discovery| discovery.cases.expect("discovery succeeds"))
                 .collect::<Vec<_>>(),

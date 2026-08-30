@@ -185,13 +185,27 @@ impl WorkspaceTestExecution {
 #[derive(Debug)]
 pub struct WorkspaceTestError {
     detail: String,
+    /// Internal classification used only to keep sibling cancellation from becoming the cause.
+    synthetic_cancellation: bool,
 }
 
 impl WorkspaceTestError {
     fn new(detail: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
+            synthetic_cancellation: false,
         }
+    }
+
+    fn synthetic_cancellation(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            synthetic_cancellation: true,
+        }
+    }
+
+    fn is_synthetic_cancellation(&self) -> bool {
+        self.synthetic_cancellation
     }
 }
 
