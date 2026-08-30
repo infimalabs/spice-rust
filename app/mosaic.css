@@ -528,6 +528,7 @@
    the reference widths and the narrow-viewport ones both land without a second
    place to keep in step. */
 .team-composer {
+  --team-composer-block-size: 120px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
@@ -549,8 +550,8 @@
 .team-surface .team-agent {
   display: flex;
   min-width: 0;
-  height: 218px;
-  max-height: 218px;
+  height: var(--team-composer-block-size);
+  max-height: var(--team-composer-block-size);
   flex-direction: column;
   align-self: stretch;
   overflow: hidden;
@@ -563,10 +564,10 @@
 .team-surface .team-agent--vacant { opacity: .72; }
 
 .agent-composer-stack {
-  --composer-shard-block-size: 140px;
+  --composer-shard-block-size: var(--team-composer-block-size);
   display: grid;
   gap: 5px;
-  max-height: 218px;
+  max-height: var(--team-composer-block-size);
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -589,7 +590,7 @@
 .composer-shard--primary {
   position: relative;
   order: 1;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 .composer-shard-prose[data-composer-drag-handle="true"] {
   cursor: grab;
@@ -722,15 +723,6 @@
   font: .58rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: left;
 }
-.composer-shard-standing {
-  display: flex;
-  justify-content: space-between;
-  gap: 4px;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .52rem;
-}
-
 .agent-renew-request {
   display: grid;
   gap: 2px;
@@ -851,6 +843,7 @@
 /* The reference narrows the same stack rather than letting it crowd the agent
    cards once the viewport can no longer afford the full-width pills. */
 @media (max-width: 720px) {
+  .team-composer { --team-composer-block-size: 114px; }
   .team-composer-controls {
     --team-control-item-height: 34px;
     --team-control-track-width: 68px;

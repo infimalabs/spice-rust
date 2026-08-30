@@ -146,15 +146,6 @@ fn render_compose(
         drafts.clone(),
         submissions.clone(),
     );
-    let wake_ready = can_send
-        && can_wake
-        && lineage.members.iter().any(|member| {
-            member.occupant.is_none()
-                && member.bound
-                && drafts
-                    .get(&member.lane.to_string())
-                    .is_some_and(|draft| !compose(draft).trim().is_empty())
-        });
     let ready = can_send
         && control.pending_life.is_none()
         && lineage.members.iter().any(|member| {
@@ -201,7 +192,6 @@ fn render_compose(
                     sender,
                     can_configure,
                     ready,
-                    wake_ready,
                 )}
             </form>
             {view::chrome::render_lineage_ticker(runtime, lineage)}
@@ -745,10 +735,6 @@ fn render_composer_body(
                 drag_enabled,
                 drag_start,
             )}
-            <div class="composer-shard-standing">
-                <span>{format!("{pending} pending")}</span>
-                <span>{standing.liveness.as_str()}</span>
-            </div>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}
