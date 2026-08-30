@@ -389,8 +389,58 @@ fn launch_environment(
     }
     let environment = Environment::new(values)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
-    spice::git_shadow::environment(repository, environment)
-        .map_err(|error| store_fault("lane::git-shadow-unavailable", &error.to_string()))
+    let environment = spice::git_shadow::environment(repository, environment)
+        .map_err(|error| store_fault("lane::git-shadow-unavailable", &error.to_string()))?;
+    let health = spice::rtk::probe_health_in_environment(
+        std::ffi::OsStr::new(rtk_executable),
+        repository.worktree_root(),
+        &environment,
+    );
+    Ok(rtk_environment(environment, health.active()))
+}
+
+fn rtk_environment(environment: Environment, active: bool) -> Environment {
+    if active {
+        return environment;
+    }
+    Environment::new(
+        environment
+            .entries()
+            .iter()
+            .filter(|(name, _)| {
+                name != spice::rtk::EXECUTABLE_VARIABLE && name != spice::rtk::HISTORY_VARIABLE
+            })
+            .cloned(),
+    )
+    .expect("filtering valid environment entries preserves their validity")
+}
+
+#[cfg(test)]
+mod rtk_environment_tests {
+    use super::*;
+
+    fn fixture() -> Environment {
+        Environment::new([
+            ("PATH", "/fixture/bin"),
+            (spice::rtk::EXECUTABLE_VARIABLE, "fixture-rtk"),
+            (spice::rtk::HISTORY_VARIABLE, "/fixture/history.db"),
+        ])
+        .expect("fixture environment is valid")
+    }
+
+    #[test]
+    fn only_an_active_health_verdict_exports_rtk_to_the_lane() {
+        let active = rtk_environment(fixture(), true);
+        assert!(
+            active
+                .entries()
+                .iter()
+                .any(|(name, _)| { name == spice::rtk::EXECUTABLE_VARIABLE })
+        );
+
+        let native = rtk_environment(fixture(), false);
+        assert_eq!(native.entries(), [("PATH".into(), "/fixture/bin".into())]);
+    }
 }
 
 /// Ambient search path, optionally led by one configured wrapper directory.
