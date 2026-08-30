@@ -212,9 +212,7 @@ impl ResidentLock {
                     .map(|holder| holder.trim().to_owned())
                     .filter(|holder| !holder.is_empty())
                     .unwrap_or_else(|| "holder metadata unavailable".to_owned());
-                Err(Outcome::Refusal(Refusal::repairable(
-                    wire::SpiceCommand::new("down", std::iter::empty::<&str>())
-                        .expect("the static resident shutdown command is valid"),
+                Err(Outcome::Refusal(Refusal::bare(
                     wire::RefusalDiagnostic::new(
                         "resident::already-up".to_owned(),
                         Some("resident-lock".to_owned()),

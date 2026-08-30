@@ -666,6 +666,7 @@ fn contended_resident_names_the_holder_while_its_record_is_rewritten() {
                 panic!("the resident contender did not refuse");
             };
             assert_eq!(refusal.reason(), "resident::already-up");
+            assert!(matches!(refusal, wire::Refusal::Bare { .. }));
             observed = refusal
                 .diagnostic()
                 .and_then(wire::RefusalDiagnostic::observed)
