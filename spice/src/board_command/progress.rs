@@ -93,6 +93,17 @@ pub(super) fn claim_reclaim(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    claim_reclaim_with_clock(bus, command, renew, projects, allocation, current_instant)
+}
+
+pub(super) fn claim_reclaim_with_clock(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    renew: &ClaimRenew,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    clock: impl FnOnce() -> Result<Instant, Outcome<CommandAnswer>>,
+) -> Outcome<CommandAnswer> {
     let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -101,7 +112,11 @@ pub(super) fn claim_reclaim(
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
-    let (at, until, lease) = match reclaim_window(entry, &snapshot, command, renew) {
+    let at = match clock() {
+        Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let (until, lease) = match reclaim_window(entry, &snapshot, command, renew, at) {
         Ok(window) => window,
         Err(outcome) => return outcome,
     };
@@ -165,7 +180,8 @@ fn reclaim_window(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     renew: &ClaimRenew,
-) -> Result<(Instant, Instant, LeaseHead), Outcome<CommandAnswer>> {
+    at: Instant,
+) -> Result<(Instant, LeaseHead), Outcome<CommandAnswer>> {
     let claim = entry.claim().ok_or_else(|| {
         refusal(
             "claim::head-missing",
@@ -193,7 +209,6 @@ fn reclaim_window(
             "reclaim only an active claim owned by this lane capability",
         ));
     }
-    let at = current_instant()?;
     board::Active::admit(entry, command.actor(), at).map_err(|error| {
         refusal(
             "claim::active-refused",
@@ -220,7 +235,7 @@ fn reclaim_window(
             "request an extension before the durable maximum",
         ));
     }
-    Ok((at, until, lease.clone()))
+    Ok((until, lease.clone()))
 }
 
 fn admit_reclaim_residency(
