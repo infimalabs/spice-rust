@@ -146,9 +146,9 @@ impl Fixture {
 }
 
 fn initialize_fixture_repository(root: &std::path::Path) -> (PathBuf, String, PathBuf, PathBuf) {
-    git(&root, &["init", "--quiet", "--initial-branch", "main"]);
-    git(&root, &["config", "user.name", "Spice Test"]);
-    git(&root, &["config", "user.email", "spice@example.test"]);
+    git(root, &["init", "--quiet", "--initial-branch", "main"]);
+    git(root, &["config", "user.name", "Spice Test"]);
+    git(root, &["config", "user.email", "spice@example.test"]);
     let cargo_home = root.join(".git/fixture-cargo-home");
     fs::create_dir(&cargo_home).expect("fixture Cargo home");
     fs::write(
@@ -163,7 +163,7 @@ fn initialize_fixture_repository(root: &std::path::Path) -> (PathBuf, String, Pa
     .expect("fixture Cargo lock");
     fs::create_dir(root.join("src")).expect("fixture source directory");
     fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture base source");
-    staged_app::seed(&root);
+    staged_app::seed(root);
     let skill = root.join(".git/.spice-install/agents/skills/spice/SKILL.md");
     fs::create_dir_all(skill.parent().expect("fixture skill parent"))
         .expect("fixture skill directory");
@@ -216,18 +216,18 @@ fn initialize_fixture_repository(root: &std::path::Path) -> (PathBuf, String, Pa
         evidence_command.display().to_string(),
     );
     fs::write(root.join("spice-rust.toml"), &tracked_policy).expect("fixture task policy");
-    git(&root, &["add", "."]);
-    git(&root, &["commit", "--quiet", "-m", "fixture base"]);
+    git(root, &["add", "."]);
+    git(root, &["commit", "--quiet", "-m", "fixture base"]);
     (cargo_home, tracked_policy, evidence_release, evidence_count)
 }
 
 fn prepare_conflicted_publication(root: &std::path::Path) -> PathBuf {
     let remote = root.join(".git/upstream.git");
     let remote_text = remote.display().to_string();
-    git(&root, &["init", "--quiet", "--bare", &remote_text]);
-    git(&root, &["remote", "add", "origin", &remote_text]);
+    git(root, &["init", "--quiet", "--bare", &remote_text]);
+    git(root, &["remote", "add", "origin", &remote_text]);
     git(
-        &root,
+        root,
         &["push", "--quiet", "--set-upstream", "origin", "main"],
     );
 
@@ -236,13 +236,13 @@ fn prepare_conflicted_publication(root: &std::path::Path) -> PathBuf {
         "pub fn fixture() { println!(\"lane\"); }\n",
     )
     .expect("fixture lane source");
-    git(&root, &["add", "src/lib.rs"]);
-    git(&root, &["commit", "--quiet", "-m", "lane work"]);
+    git(root, &["add", "src/lib.rs"]);
+    git(root, &["commit", "--quiet", "-m", "lane work"]);
 
     let upstream_work = root.join(".git/upstream-work");
     let upstream_work_text = upstream_work.display().to_string();
     git(
-        &root,
+        root,
         &["clone", "--quiet", &remote_text, &upstream_work_text],
     );
     git(&upstream_work, &["config", "user.name", "Spice Test"]);
@@ -263,15 +263,15 @@ fn prepare_conflicted_publication(root: &std::path::Path) -> PathBuf {
     git(&upstream_work, &["push", "--quiet", "origin", "main"]);
     fs::remove_dir_all(&upstream_work).expect("remove upstream work clone");
 
-    git(&root, &["fetch", "--quiet", "origin"]);
-    git_failure(&root, &["merge", "--no-ff", "origin/main"]);
+    git(root, &["fetch", "--quiet", "origin"]);
+    git_failure(root, &["merge", "--no-ff", "origin/main"]);
     fs::write(root.join(".git/MERGE_MODE"), "no-ff\n").expect("fixture allocator merge mode");
     fs::write(
         root.join("src/lib.rs"),
         "pub fn fixture() { println!(\"resolved\"); }\n",
     )
     .expect("resolve fixture source");
-    git(&root, &["add", "src/lib.rs"]);
+    git(root, &["add", "src/lib.rs"]);
     remote
 }
 
@@ -522,7 +522,7 @@ fn interrupt_after_git_publication(fixture: &Fixture, resident: Resident) {
 }
 
 fn assert_terminal_replay(fixture: &Fixture) {
-    let recovered = Resident::start(&fixture);
+    let recovered = Resident::start(fixture);
     let (terminal_output, terminal_answer) = fixture.done();
     assert!(terminal_answer.completion.is_none());
     assert!(terminal_answer.learning.is_none());
@@ -548,9 +548,9 @@ fn assert_terminal_replay(fixture: &Fixture) {
         "resident stopped answering after retries: {}",
         String::from_utf8_lossy(&status.stderr)
     );
-    recovered.stop(&fixture);
+    recovered.stop(fixture);
 
-    let restarted = Resident::start(&fixture);
+    let restarted = Resident::start(fixture);
     let (restarted_output, restarted_answer) = fixture.done();
     assert_eq!(restarted_answer, terminal_answer);
     assert_same_output(&restarted_output, &terminal_output);
@@ -559,7 +559,7 @@ fn assert_terminal_replay(fixture: &Fixture) {
         fs::read_to_string(&fixture.evidence_count).unwrap(),
         "evidence\n"
     );
-    restarted.stop(&fixture);
+    restarted.stop(fixture);
 }
 
 struct FileArrival {
