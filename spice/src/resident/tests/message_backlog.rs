@@ -10,7 +10,7 @@ const CODEX_COMPACTION_WITHOUT_TIME: &[u8] = br#"{"type":"compacted"}
 "#;
 const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
 "#;
-const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK 1kQwPZtK nope 1kQwPZtL 1kQwPZtM: One response."}}
+const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK\t1kQwPZtK nope 1kQwPZtM: One response.\nNACK\t1kQwPZtL: Unsafe."}}
 "#;
 
 #[test]
@@ -173,7 +173,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
 }
 
 #[test]
-fn mixed_acknowledgements_publish_live_and_replay_with_stable_context() {
+fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     let (root, paths) = resident_fixture("message-backlog-acknowledgements");
     let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
         .expect("backlog bus starts");
@@ -201,15 +201,16 @@ fn mixed_acknowledgements_publish_live_and_replay_with_stable_context() {
     let record = mixed_acknowledgement_record(lane, author);
     let expected = concat!(
         "> ACK 1kQwPZtK: First direction.\n\n",
-        "> ACK 1kQwPZtL: Second direction.\n\n",
-        "ACK nope 1kQwPZtM: One response."
+        "ACK nope 1kQwPZtM: One response.\n",
+        "> NACK 1kQwPZtL: Second direction.\n\n",
+        "Unsafe."
     );
 
     let live = canvas::stream::Source::new(bus.reader(), epoch, 8);
     let publisher = live.message_publisher();
-    let steering =
-        steer::Ledger::from_snapshot(&bus.fact_snapshot().expect("live steering context reads"))
-            .expect("live steering context reduces");
+    let steering = message_surface::steering_ledger(&bus, &record)
+        .expect("live steering context reads")
+        .expect("canonical horizontal acknowledgement requests context");
     message_surface::publish_agent_messages(
         &publisher,
         &record,
@@ -258,7 +259,11 @@ fn mixed_acknowledgement_record(
             },
             events: vec![listen::Event::Prose(listen::Prose {
                 role: listen::ProseRole::Assistant,
-                text: "ACK 1kQwPZtK nope 1kQwPZtL 1kQwPZtM: One response.".to_owned(),
+                text: concat!(
+                    "ACK\t1kQwPZtK nope 1kQwPZtM: One response.\n",
+                    "NACK\t1kQwPZtL: Unsafe."
+                )
+                .to_owned(),
                 phase: None,
                 media: Vec::new(),
                 locus,
@@ -319,10 +324,12 @@ fn assert_mixed_acknowledgement_message(
     };
     assert_eq!(messages.len(), 1, "one event remains one card");
     assert_eq!(messages[0].text, expected);
-    assert_eq!(messages[0].text.matches("> ACK ").count(), 2);
+    assert_eq!(messages[0].text.matches("> ACK ").count(), 1);
+    assert_eq!(messages[0].text.matches("> NACK ").count(), 1);
     assert_eq!(messages[0].text.matches("nope").count(), 1);
     assert_eq!(messages[0].text.matches("1kQwPZtM").count(), 1);
     assert_eq!(messages[0].text.matches("One response.").count(), 1);
+    assert_eq!(messages[0].text.matches("Unsafe.").count(), 1);
 }
 
 fn seed_steering(

@@ -13,6 +13,7 @@
 //! the same outcomes, whether it runs at the door or during replay.
 
 use std::fmt;
+use std::ops::ControlFlow;
 
 use wire::Disposition;
 
@@ -126,6 +127,34 @@ pub trait Standing {
 /// first.
 pub fn scan(prose: &str, standing: &impl Standing) -> Vec<Recognition> {
     let mut recognitions = Vec::new();
+    let _ = visit_acknowledgement_clauses(prose, |line, clause| {
+        clause.judge(line, standing, &mut recognitions);
+        ControlFlow::Continue(())
+    });
+    recognitions
+}
+
+/// Whether prose contains an acknowledgement attempt that leads its line.
+///
+/// This is the standing-independent preflight for callers that need to load
+/// standing before they can run [`scan`]. It deliberately shares the canonical
+/// clause parser, including horizontal whitespace, quoting, and fence rules.
+#[must_use]
+pub fn has_acknowledgement(prose: &str) -> bool {
+    visit_acknowledgement_clauses(prose, |_, clause| {
+        if clause.position == Position::Placed {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })
+    .is_break()
+}
+
+fn visit_acknowledgement_clauses(
+    prose: &str,
+    mut visit: impl FnMut(usize, Clause) -> ControlFlow<()>,
+) -> ControlFlow<()> {
     let mut fence = None;
     for (index, line) in prose.lines().enumerate() {
         if fence.is_some_and(|open: Fence| open.closes(line)) {
@@ -139,10 +168,10 @@ pub fn scan(prose: &str, standing: &impl Standing) -> Vec<Recognition> {
             continue;
         }
         if let Some(clause) = Clause::read(line, fence.is_some()) {
-            clause.judge(index + 1, standing, &mut recognitions);
+            visit(index + 1, clause)?;
         }
     }
-    recognitions
+    ControlFlow::Continue(())
 }
 
 /// One Markdown fenced block, closed only by its own character and width.

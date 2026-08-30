@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use steer::ack::keys::Key;
-use steer::ack::scan::{Miss, Outcome, Recognition, Standing, scan};
+use steer::ack::scan::{Miss, Outcome, Recognition, Standing, has_acknowledgement, scan};
 use wire::Disposition;
 
 const ACKNOWLEDGED: &str = include_str!("prose/acknowledged.md");
@@ -38,6 +38,29 @@ fn a_leading_clause_retires_every_key_it_names() {
             "7:5 1kJKB307 acked".to_owned(),
         ]
     );
+}
+
+/// Standing is loaded only when the canonical grammar sees a placed attempt;
+/// the preflight must therefore make the same whitespace and quoting choices
+/// as the scanner that consumes that standing.
+#[test]
+fn acknowledgement_preflight_uses_the_canonical_clause_grammar() {
+    for prose in [
+        "ACK 1kJK6N3R: spaced.",
+        "ACK\t1kJK6N3R: tabbed.",
+        "NACK\t1kJK7Sqy: declined.",
+    ] {
+        assert!(has_acknowledgement(prose), "missed {prose:?}");
+    }
+
+    for prose in [
+        "> ACK\t1kJK6N3R: quoted.",
+        "    NACK\t1kJK7Sqy: code.",
+        "Earlier ACK\t1kJK6N3R: buried.",
+        "ACK\n1kJK6N3R: no horizontal separator.",
+    ] {
+        assert!(!has_acknowledgement(prose), "accepted {prose:?}");
+    }
 }
 
 /// One assistant message may distribute acknowledgements across separate
