@@ -56,3 +56,20 @@ fn malformed_staged_policy_refuses_before_any_compiled_inventory_is_selected() {
     assert!(error.detail().contains("configuration"), "{error}");
     fs::remove_dir_all(root).expect("remove malformed-policy fixture");
 }
+
+#[test]
+fn pretest_screen_covers_reusable_and_cheap_static_policy() {
+    let screened = GateId::BATTERY
+        .into_iter()
+        .filter(|gate_id| pretest_screen_gate(*gate_id))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        screened,
+        vec![
+            GateId::RustTypecheck,
+            GateId::CanvasWebTypecheck,
+            GateId::Complexity,
+        ],
+    );
+}

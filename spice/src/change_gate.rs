@@ -1,5 +1,6 @@
 //! One fail-closed ordinary gate over exact staged-change evidence.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -560,7 +561,7 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
                     context.source,
                     context.surface,
                     context.budget,
-                    None,
+                    BTreeMap::new(),
                     progress,
                 )?;
                 policy = ChangePolicyReport::focused_summaries(context.source, focused.summaries);
@@ -770,10 +771,8 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         budget,
         environment,
     } = execution;
-    let preexecuted_rust =
-        preexecute_reusable_rust_policy(anchor, selection, source, surface, budget, progress)?;
-    let (rust_report, rust_workspace) =
-        preexecuted_rust.map_or((None, None), |rust| (Some(rust.report), rust.workspace));
+    let preexecuted =
+        preexecute_policy_screen(anchor, selection, source, surface, budget, progress)?;
     let test_run = TestRun::new(
         &selected_root,
         &writable_root,
@@ -782,7 +781,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         budget,
         environment,
     );
-    let test_run = match rust_workspace.as_ref() {
+    let test_run = match preexecuted.rust_workspace.as_ref() {
         Some(workspace) => test_run.with_reusable(workspace),
         None => test_run,
     };
@@ -802,7 +801,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
             source,
             surface,
             budget,
-            rust_report,
+            preexecuted.reports,
             progress,
         );
         let policy_disposition = if focused.is_ok() { "success" } else { "failed" };
@@ -828,52 +827,102 @@ struct FocusedPolicyExecution {
     summaries: Vec<PolicyArmSummary>,
 }
 
-struct PreexecutedRustPolicy {
-    report: gate::FocusedArmReport,
-    workspace: Option<gate::RustAnalysisWorkspace>,
+struct PreexecutedPolicy {
+    reports: BTreeMap<GateId, gate::FocusedArmReport>,
+    rust_workspace: Option<gate::RustAnalysisWorkspace>,
 }
 
-fn preexecute_reusable_rust_policy<W: Write + Send + ?Sized>(
-    anchor: &crate::gate::PreparedArm<'_>,
+fn preexecute_policy_screen<W: Write + Send + ?Sized>(
+    anchor: &mut crate::gate::PreparedArm<'_>,
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     surface: SelectionSurface,
     budget: CargoBudget,
     progress: &mut SharedProgress<'_, W>,
-) -> Result<Option<PreexecutedRustPolicy>, ChangeGateError> {
-    let Some(reach) = selection
+) -> Result<PreexecutedPolicy, ChangeGateError> {
+    let state_run = anchor.state_run();
+    let mut prepared = Vec::new();
+    for reach in selection
         .reach()
         .iter()
-        .find(|reach| reach.gate_id() == GateId::RustTypecheck)
-    else {
-        return Ok(None);
-    };
-    publish_policy_start(progress, GateId::RustTypecheck)?;
-    let mut prepared = prepare_policy_arm(
-        surface,
-        selection,
-        reach,
-        anchor.state_run(),
-        budget,
-        progress,
-    )?;
-    let started = Instant::now();
-    let report = prepared.execute().map_err(ChangeGateError::gate);
-    let disposition = if report.is_ok() {
-        "completed"
-    } else {
-        "failed"
-    };
-    publish_policy_terminal(progress, GateId::RustTypecheck, started, disposition)?;
-    let report = report?;
-    if report.context().source() != source {
+        .filter(|reach| pretest_screen_gate(reach.gate_id()))
+    {
+        let gate_id = reach.gate_id();
+        publish_policy_start(progress, gate_id)?;
+        let started = Instant::now();
+        let arm = prepare_policy_arm(
+            surface,
+            selection,
+            reach,
+            state_run.clone(),
+            budget,
+            progress,
+        )?;
+        prepared.push((gate_id, started, arm));
+    }
+
+    let executed = std::thread::scope(|scope| {
+        let handles = prepared
+            .into_iter()
+            .map(|(gate_id, started, mut arm)| {
+                let handle = scope.spawn(move || {
+                    let report = arm.execute().map_err(ChangeGateError::gate)?;
+                    let workspace = (gate_id == GateId::RustTypecheck)
+                        .then(|| arm.reusable_rust_workspace().cloned())
+                        .flatten();
+                    Ok::<_, ChangeGateError>((report, workspace))
+                });
+                (gate_id, started, handle)
+            })
+            .collect::<Vec<_>>();
+        let mut executed = Vec::with_capacity(handles.len());
+        for (gate_id, started, handle) in handles {
+            let result = handle.join().map_err(|_| {
+                ChangeGateError::protocol(
+                    "change-gate-policy-panicked",
+                    format!("focused {} policy arm panicked", gate_id.as_str()),
+                )
+            })?;
+            let disposition = match &result {
+                Ok((report, _)) if report.admits() => "completed",
+                Ok(_) => "refused",
+                Err(_) => "failed",
+            };
+            publish_policy_terminal(progress, gate_id, started, disposition)?;
+            let (report, workspace) = result?;
+            executed.push((gate_id, report, workspace));
+        }
+        Ok::<_, ChangeGateError>(executed)
+    })?;
+
+    let mut reports = BTreeMap::new();
+    let mut rust_workspace = None;
+    for (gate_id, report, workspace) in executed {
+        validate_focused_policy_source(&report, source)?;
+        if gate_id == GateId::RustTypecheck {
+            rust_workspace = workspace;
+        }
+        reports.insert(gate_id, report);
+    }
+    if reports.values().any(|report| !report.admits()) {
+        anchor.reject_state().map_err(ChangeGateError::gate)?;
+        let reports = reports.into_values().collect::<Vec<_>>();
         return Err(ChangeGateError::refusal(
-            "change-gate-source-moved",
-            "focused native Rust arm observed a different staged source",
+            "change-gate-policy-regressed",
+            gate::BatteryRefusalFold::from_focused_reports(&reports),
         ));
     }
-    let workspace = prepared.reusable_rust_workspace().cloned();
-    Ok(Some(PreexecutedRustPolicy { report, workspace }))
+    Ok(PreexecutedPolicy {
+        reports,
+        rust_workspace,
+    })
+}
+
+const fn pretest_screen_gate(gate_id: GateId) -> bool {
+    matches!(
+        gate_id,
+        GateId::RustTypecheck | GateId::CanvasWebTypecheck | GateId::Complexity
+    )
 }
 
 fn run_focused_policy(
@@ -882,7 +931,7 @@ fn run_focused_policy(
     source: &wire::Digest,
     surface: SelectionSurface,
     budget: CargoBudget,
-    mut preexecuted_rust: Option<gate::FocusedArmReport>,
+    mut preexecuted: BTreeMap<GateId, gate::FocusedArmReport>,
     progress: &mut impl Write,
 ) -> Result<FocusedPolicyExecution, ChangeGateError> {
     let state_run = anchor.state_run();
@@ -890,9 +939,7 @@ fn run_focused_policy(
     let mut reaches = selection.reach().iter().peekable();
     while let Some(reach) = reaches.next() {
         let gate_id = reach.gate_id();
-        if gate_id == GateId::RustTypecheck
-            && let Some(report) = preexecuted_rust.take()
-        {
+        if let Some(report) = preexecuted.remove(&gate_id) {
             record_policy_report(&mut policy, report, source)?;
             continue;
         }
@@ -1044,6 +1091,21 @@ fn record_policy_report(
     report: gate::FocusedArmReport,
     source: &wire::Digest,
 ) -> Result<(), ChangeGateError> {
+    validate_focused_policy_source(&report, source)?;
+    let encoded = report.encode().map_err(|error| {
+        ChangeGateError::protocol("change-gate-focused-policy-unencodable", error)
+    })?;
+    policy.push(PolicyArmSummary::from_result(
+        report.result(),
+        wire::Digest::compute(wire::Domain::GateFocusedReport, &encoded),
+    ));
+    Ok(())
+}
+
+fn validate_focused_policy_source(
+    report: &gate::FocusedArmReport,
+    source: &wire::Digest,
+) -> Result<(), ChangeGateError> {
     if report.context().source() != source {
         return Err(ChangeGateError::refusal(
             "change-gate-source-moved",
@@ -1053,13 +1115,6 @@ fn record_policy_report(
             ),
         ));
     }
-    let encoded = report.encode().map_err(|error| {
-        ChangeGateError::protocol("change-gate-focused-policy-unencodable", error)
-    })?;
-    policy.push(PolicyArmSummary::from_result(
-        report.result(),
-        wire::Digest::compute(wire::Domain::GateFocusedReport, &encoded),
-    ));
     Ok(())
 }
 

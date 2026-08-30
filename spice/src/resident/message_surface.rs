@@ -75,7 +75,7 @@ impl MessageObservations {
         let mut observations = Self::default();
         for envelope in snapshot.facts() {
             if let Some(batch) = envelope.fact.read::<wire::body::JournalIngested>() {
-                observations.push(&batch, envelope.at.clone());
+                observations.push(&batch, envelope.at);
             }
         }
         observations
@@ -106,7 +106,7 @@ impl MessageObservations {
                     && (observation.from.member, observation.from.offset) <= position
                     && position < (observation.to.member, observation.to.offset)
             })
-            .map(|observation| observation.at.clone())
+            .map(|observation| observation.at)
     }
 }
 

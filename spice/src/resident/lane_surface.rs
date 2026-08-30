@@ -892,7 +892,7 @@ fn degrade_occupant(
     row.occupant = None;
     row.disposition = DEGRADED.to_owned();
     let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
-    guard_residency(&mut write, &observed);
+    guard_residency(&mut write, observed);
     let fact = write
         .fact(
             wire::body::LaneDegraded { lane, marker },

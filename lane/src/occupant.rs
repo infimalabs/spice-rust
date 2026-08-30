@@ -64,7 +64,7 @@ pub enum DetachedWait {
 }
 
 enum OccupantProcess {
-    Direct(Running),
+    Direct(Box<Running>),
     Detached(Box<dyn DetachedProcess>),
 }
 
@@ -166,7 +166,7 @@ impl Occupant {
             process,
         } = self;
         match process {
-            OccupantProcess::Direct(running) => match running.wait_for(duration)? {
+            OccupantProcess::Direct(running) => match (*running).wait_for(duration)? {
                 WaitStep::Exited(outcome) => Ok(OccupantWait::Exited {
                     lane,
                     occupant,
@@ -175,7 +175,7 @@ impl Occupant {
                 WaitStep::Running(running) => Ok(OccupantWait::Running(Box::new(Self {
                     lane,
                     occupant,
-                    process: OccupantProcess::Direct(*running),
+                    process: OccupantProcess::Direct(running),
                 }))),
             },
             OccupantProcess::Detached(process) => match process.wait_for(duration)? {
@@ -224,7 +224,7 @@ impl Occupant {
     /// Returns [`WaitError`] as the sill door reports it.
     pub fn wait(self) -> Result<WaitOutcome, WaitError> {
         match self.process {
-            OccupantProcess::Direct(running) => running.wait(),
+            OccupantProcess::Direct(running) => (*running).wait(),
             OccupantProcess::Detached(process) => process.wait(),
         }
     }
@@ -471,7 +471,7 @@ impl Seats {
         let occupant = self.occupied.entry(lane).or_insert(Occupant {
             lane,
             occupant,
-            process: OccupantProcess::Direct(running),
+            process: OccupantProcess::Direct(Box::new(running)),
         });
         let seated = Activity::new(occupant.occupant, Monotonic::now());
         self.started.insert(lane, seated);

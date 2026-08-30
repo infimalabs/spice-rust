@@ -107,9 +107,22 @@ pub(super) fn git(root: &Path, arguments: &[&str]) {
     );
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the process-fixture rim inherits PATH and pins its exact Cargo ahead of it"
+)]
 pub(super) fn fixture_command(program: impl AsRef<OsStr>) -> Command {
+    let cargo_bin = Path::new(env!("CARGO"))
+        .parent()
+        .expect("the Cargo executable has a parent directory");
+    let ambient_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        std::iter::once(cargo_bin.to_path_buf()).chain(std::env::split_paths(&ambient_path)),
+    )
+    .expect("the fixture Cargo directory joins the ambient PATH");
     let mut command = Command::new(program);
     command
+        .env("PATH", path)
         .env_remove("GIT_INDEX_FILE") // env-policy: allow
         .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
         .env_remove(wire::SpiceVariable::PreCommitPaths.as_str())

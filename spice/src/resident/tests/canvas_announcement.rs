@@ -1039,8 +1039,7 @@ fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
         .iter()
         .find(|envelope| envelope.fact.kind() == wire::FactKind::JournalIngested)
         .expect("the transcript batch has a durable observation instant")
-        .at
-        .clone();
+        .at;
     assert!(message.authored_synthetic);
     assert_eq!(
         message.observed,

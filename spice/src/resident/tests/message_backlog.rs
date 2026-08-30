@@ -32,7 +32,7 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         .expect("durable tape is accounted");
     assert_eq!(observations.len(), 1);
     assert!(ingest_diagnostic.is_empty());
-    let observed = observations[0].at.clone();
+    let observed = observations[0].at;
 
     for generation in 0..2 {
         let source = canvas::stream::Source::new(bus.reader(), epoch, 8);

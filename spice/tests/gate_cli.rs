@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use gate::{ChangeReachMode, ChangeReachObject, ChangeSelectionReport, CoverageCompleteness};
@@ -97,6 +98,54 @@ fn commit_worker_executes_known_and_authority_targets_but_refuses_unknown_source
     );
 }
 
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the process-boundary test replaces Cargo at the inherited PATH rim"
+)]
+fn policy_screen_refuses_before_selected_tests_start() {
+    let marker_scratch = Scratch::new("screen-refusal-marker");
+    let marker = marker_scratch.path().join("executed");
+    let repository = GateRepository::new();
+    repository.write_selected_test(&marker);
+    repository.add("src/lib.rs");
+
+    let programs = Scratch::new("screen-refusal-programs");
+    let cargo = programs.path().join("cargo");
+    fs::write(
+        &cargo,
+        "#!/bin/sh\nprintf '%s\\n' 'cargo 0.0.0 (screen-refusal fixture)'\n",
+    )
+    .expect("write drifted Cargo fixture");
+    let mut permissions = fs::metadata(&cargo)
+        .expect("inspect drifted Cargo fixture")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&cargo, permissions).expect("make drifted Cargo fixture executable");
+    let ambient_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        std::iter::once(programs.path().to_path_buf()).chain(std::env::split_paths(&ambient_path)),
+    )
+    .expect("prepend drifted Cargo fixture to PATH");
+
+    let boundary = run_commit_worker_with(repository.path(), |command| {
+        command.env("PATH", path);
+    });
+    let Some((kind, document)) = boundary.terminal.split_first() else {
+        panic!("screened staged source produced no terminal record");
+    };
+    assert_eq!(*kind, b'F', "screened staged source did not refuse");
+    let failure: serde_json::Value =
+        serde_json::from_slice(document).expect("decode policy-screen refusal boundary");
+    assert_eq!(failure["reason"], "gate::change-gate-policy-regressed");
+    assert!(!marker.exists(), "policy-screen refusal executed a test");
+    assert!(
+        !boundary.progress.contains("[rust-test"),
+        "policy-screen refusal started selected tests: {}",
+        boundary.progress,
+    );
+}
+
 fn selected_execution_signature(boundary: &WorkerBoundary) -> (ChangeSelectionReport, Vec<String>) {
     assert_eq!(
         boundary.terminal.first(),
@@ -122,12 +171,20 @@ struct WorkerBoundary {
 }
 
 fn run_commit_worker(root: &Path) -> WorkerBoundary {
+    run_commit_worker_with(root, |_| {})
+}
+
+fn run_commit_worker_with(
+    root: &Path,
+    configure: impl FnOnce(&mut std::process::Command),
+) -> WorkerBoundary {
     let scratch = Scratch::new("commit-worker-boundary");
     let progress = scratch.path().join("progress.jsonl");
     let terminal = scratch.path().join("terminal.bin");
     fs::write(&progress, []).expect("create worker progress file");
     fs::write(&terminal, []).expect("create worker terminal file");
-    let output = fixture_command(env!("CARGO_BIN_EXE_spice"))
+    let mut command = fixture_command(env!("CARGO_BIN_EXE_spice"));
+    command
         .arg("__gate-pre-commit-worker")
         .arg(&progress)
         .arg(&terminal)
@@ -135,7 +192,9 @@ fn run_commit_worker(root: &Path) -> WorkerBoundary {
         .current_dir(root)
         .env_remove(PRE_COMMIT_PATHS)
         .env_remove(PRE_COMMIT_SOURCE)
-        .env_remove(steer::hook::INBOX)
+        .env_remove(steer::hook::INBOX);
+    configure(&mut command);
+    let output = command
         .output()
         .expect("launch normal commit worker boundary");
     assert!(
