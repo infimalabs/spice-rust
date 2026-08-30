@@ -194,6 +194,7 @@ impl<K: Clone + Eq> PersistentLanePlane<K> {
                 card,
             })
             .collect::<Vec<_>>();
+        freeze_completed_epochs(&mut cards);
         assert_boundary_floors(&cards);
         apply_display_bases(&mut cards);
         let (max_row, min_base) = display_extent(&cards);
@@ -325,6 +326,7 @@ fn plane_card<K: Clone>(item: &MeasuredCard<K>, card: &Card) -> PlaneCard<K> {
 }
 
 fn commit<K>(mut plane: PersistentLanePlane<K>, transition: Transition) -> PersistentLanePlane<K> {
+    freeze_completed_epochs(&mut plane.cards);
     assert_boundary_floors(&plane.cards);
     apply_display_bases(&mut plane.cards);
     let (max_row, min_base) = display_extent(&plane.cards);
@@ -333,6 +335,15 @@ fn commit<K>(mut plane: PersistentLanePlane<K>, transition: Transition) -> Persi
     plane.commits += 1;
     plane.transition = transition;
     plane
+}
+
+fn freeze_completed_epochs<K>(entries: &mut [PlaneCard<K>]) {
+    let Some(boundary) = entries.iter().rposition(|entry| entry.boundary) else {
+        return;
+    };
+    for entry in &mut entries[..=boundary] {
+        entry.card.lifecycle = mosaic::Lifecycle::Frozen;
+    }
 }
 
 fn apply_display_bases<K>(entries: &mut [PlaneCard<K>]) {

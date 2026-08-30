@@ -378,6 +378,57 @@ fn compaction_boundary_resets_the_incremental_plane_floor() {
 }
 
 #[test]
+fn content_resize_preserves_a_boundary_below_a_later_frozen_subset() {
+    let initial = [
+        measured("a", candidates(12, 2)),
+        measured("b", candidates(12, 2)),
+        measured("c", candidates(12, 2)),
+        measured("d", candidates(12, 2)),
+    ];
+    let epoch = [
+        initial[0].clone(),
+        initial[1].clone(),
+        initial[2].clone(),
+        initial[3].clone(),
+        boundary("compact", 1),
+        measured("post-a", candidates(6, 1)),
+        measured("post-b", candidates(6, 100)),
+        measured("post-c", candidates(6, 1)),
+        measured("post-d", candidates(6, 1)),
+    ];
+    let plane = PersistentLanePlane::new(900, &initial).reconcile(900, &epoch);
+    assert!(
+        plane.cards()[..=4]
+            .iter()
+            .all(|entry| entry.card.lifecycle == Lifecycle::Frozen),
+        "the boundary latches its completed chronological epoch"
+    );
+    assert_eq!(plane.cards()[5].card.lifecycle, Lifecycle::Frozen);
+    let boundary_geometry = plane.cards()[4].card.clone();
+
+    let resized = plane.reconcile(
+        900,
+        &[
+            epoch[0].clone(),
+            epoch[1].clone(),
+            epoch[2].clone(),
+            epoch[3].clone(),
+            epoch[4].clone(),
+            epoch[5].clone(),
+            epoch[6].clone(),
+            epoch[7].clone(),
+            measured("post-d", candidates(6, 2)),
+        ],
+    );
+
+    assert_eq!(resized.cards()[4].card, boundary_geometry);
+    assert!(
+        resized.cards()[5].card.base >= resized.cards()[4].card.base + resized.cards()[4].card.rows
+    );
+    assert_eq!(resized.transition(), Transition::ContentResize);
+}
+
+#[test]
 fn frozen_content_resolution_keeps_shrink_reservation_and_ripples_growth() {
     let initial = [
         measured("a", candidates(12, 2)),
