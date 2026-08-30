@@ -60,6 +60,55 @@ impl JournalRead<'_> {
         Ok(heads)
     }
 
+    /// Newest operator-authored direction heads per lane, in creation order.
+    pub fn operator_steering(
+        &self,
+        per_lane_limit: usize,
+    ) -> Result<Vec<JournalHead<wire::SteeringHead>>, GuardError> {
+        self.require_current_steering_index()?;
+        let limit = i64::try_from(per_lane_limit)
+            .map_err(|_| GuardError::Invalid("operator steering limit exceeds i64".to_owned()))?;
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut statement = self
+            .connection
+            .prepare(
+                "WITH ranked AS (\
+                 SELECT steering.directive, steering.steer_key, steering.lane, \
+                 steering.disposition, steering.created_seq, steering.minted_millis, \
+                 steering.head_seq, steering.body, \
+                 ROW_NUMBER() OVER (\
+                   PARTITION BY steering.lane ORDER BY steering.created_seq DESC\
+                 ) AS lane_rank \
+                 FROM steering_heads AS steering \
+                 JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
+                 WHERE creating.kind = ?1 AND creating.actor = ?2\
+                 ) \
+                 SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+                 head_seq, body FROM ranked WHERE lane_rank <= ?3 ORDER BY created_seq",
+            )
+            .map_err(GuardError::Store)?;
+        read_metrics::observe_query();
+        let rows = statement
+            .query_map(
+                rusqlite::params![
+                    wire::FactKind::SteerSent.as_str(),
+                    wire::Actor::Operator.to_string(),
+                    limit,
+                ],
+                read_steering_columns,
+            )
+            .map_err(GuardError::Store)?;
+        let mut heads = Vec::new();
+        for row in rows {
+            let row = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            heads.push(self.decode_steering_row(row)?);
+        }
+        Ok(heads)
+    }
+
     /// Greatest moment already consumed by the current key mint.
     pub fn steering_minted_millis(&self) -> Result<Option<i64>, GuardError> {
         self.require_current_steering_index()?;

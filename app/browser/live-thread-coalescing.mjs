@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { installPersistedMosaicImageRoutes } from "./agent-conversation-mosaic.mjs";
 import {
   chooseCanvasView,
   monitorPage,
@@ -40,6 +41,7 @@ async function waitForQuietFacts(liveFacts) {
 /// Prove a two-fact commit refreshes one established causal pane once.
 export async function assertLiveThreadCoalescing(browser, endpoint, fixture, parentTask) {
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  await installPersistedMosaicImageRoutes(context);
   const page = await context.newPage();
   const monitor = monitorPage(page);
   const liveFacts = [];

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 
 import { assertMosaicLattice } from "./agent-conversation.mjs";
+import { installPersistedMosaicImageRoutes } from "./agent-conversation-mosaic.mjs";
 import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
 import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import { assertComposerPointerSelection } from "./composer-shards.mjs";
@@ -47,6 +48,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
     colorScheme: "dark",
     viewport: { width: 1717, height: 1470 },
   });
+  await installPersistedMosaicImageRoutes(context);
   const page = await context.newPage();
   await page.clock.install();
   const monitor = monitorPage(page);

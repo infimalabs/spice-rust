@@ -303,6 +303,12 @@ export async function configureFixture(
     "    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')",
     `    printf '{"timestamp":"%s",%s\\n' "$timestamp" '${triggeredActivityTail}'`,
     "  fi",
+    "  if [ -f .spice-ack-trigger ]; then",
+    "    key=$(cat .spice-ack-trigger)",
+    "    rm -f .spice-ack-trigger",
+    "    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')",
+    `    printf '{"timestamp":"%s","type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK %s: applied"}],"usage":{"input_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":1}}}\\n' "$timestamp" "$key"`,
+    "  fi",
     "  if [ -f .spice-compaction-trigger ]; then",
     "    rm -f .spice-compaction-trigger",
     `    printf '%s\\n' '${compactionActivityRecord}'`,
@@ -338,8 +344,14 @@ export async function configureFixture(
   ].join("\n"));
   await writeFile(
     join(fixture, ".gitignore"),
-    ["dist/stage-app", ".spice-tool-trigger", ".spice-prose-trigger", VENDOR_PID_LEDGER, ""]
-      .join("\n"),
+    [
+      "dist/stage-app",
+      ".spice-tool-trigger",
+      ".spice-prose-trigger",
+      ".spice-ack-trigger",
+      VENDOR_PID_LEDGER,
+      "",
+    ].join("\n"),
   );
   await execute(
     "git",

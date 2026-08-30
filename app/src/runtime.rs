@@ -2,9 +2,10 @@
 //!
 //! Every mutation enters through an admitted acceptance, response, or stream
 //! frame. Stream facts contribute credential-free envelope metadata; accepted
-//! steering replies contribute the operator records rendered by conversation.
+//! steering replies, live steering facts, and durable direction snapshots
+//! contribute the operator records rendered by conversation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, EffortAnswer,
@@ -548,6 +549,7 @@ impl CanvasRuntime {
     pub fn subjects(&self) -> Vec<ViewSubject> {
         let mut subjects = vec![ViewSubject::Facts];
         if GrantPane::over(&self.principal).is_some() {
+            subjects.push(ViewSubject::Directions);
             subjects.push(ViewSubject::Trust);
             subjects.push(ViewSubject::Messages);
         }
@@ -848,7 +850,7 @@ impl CanvasRuntime {
             && let Outcome::Reply(reply) = &admitted.get().outcome
             && reply.body.disposition == wire::Disposition::Live
         {
-            self.retain_operator_submission(
+            self.retain_operator_message(
                 reply.body.authored,
                 reply.body.directive,
                 reply.body.key.clone(),

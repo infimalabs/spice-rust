@@ -360,7 +360,7 @@ struct UncheckedFact {
     body: serde_json::Map<String, serde_json::Value>,
 }
 
-fn decode_registered_body<F: Body>(
+pub(crate) fn decode_registered_body<F: Body>(
     body: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<F, serde_json::Error> {
     let supplied = serde_json::Value::Object(body.clone());

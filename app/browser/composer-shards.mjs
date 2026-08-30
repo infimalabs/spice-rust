@@ -844,7 +844,7 @@ export async function assertComposerShards({
   const sourceHref = await sourceLink.getAttribute("href");
   assert.match(
     sourceHref,
-    /^#message-(?:agent|directive)-/,
+    /^#message-(?:agent|directive|operator)-/,
     "the draft shard links to its exact source card",
   );
   await sourceLink.click();

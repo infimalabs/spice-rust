@@ -717,6 +717,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
         epoch,
         seq: seq(48213),
     };
+    cover_operator_directions(covered, first_id, second_id);
     law(
         covered,
         "AgentMessage",
@@ -806,6 +807,38 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
         epoch, next_epoch, first_id, second_id, cursor,
     ));
     law(covered, "StreamFrame", &frames);
+}
+
+fn cover_operator_directions(
+    covered: &mut BTreeSet<String>,
+    first_id: CanonicalUuid,
+    second_id: CanonicalUuid,
+) {
+    law(
+        covered,
+        "OperatorDirection",
+        &[
+            OperatorDirection {
+                authored: at("2030-04-12T18:44:09.271Z"),
+                directive: first_id,
+                key: "amber-fern".to_owned(),
+                lane: second_id,
+                text: "hold the indexed line".to_owned(),
+                attachments: Vec::new(),
+            },
+            OperatorDirection {
+                authored: at("2030-04-12T18:44:09.272Z"),
+                directive: second_id,
+                key: "silver-ash".to_owned(),
+                lane: first_id,
+                text: "resume after acknowledgement".to_owned(),
+                attachments: vec![
+                    wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
+                        .expect("fixture media"),
+                ],
+            },
+        ],
+    );
 }
 
 fn stream_request_samples(
