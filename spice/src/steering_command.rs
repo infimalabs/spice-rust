@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use spice::repository::Repository;
-use wire::intent::{CommandAnswer, InboxAnswer, LaneInbox};
+use wire::intent::{CommandAnswer, InboxAnswer};
 use wire::{CanonicalUuid, Disposition, Fault, FaultClass, Outcome, Refusal};
 
 use crate::command_client::{SelectedCommand, execute_steering};
@@ -27,6 +27,22 @@ struct HookSpecificOutput {
     hook_event_name: &'static str,
     #[serde(rename = "additionalContext")]
     additional_context: String,
+}
+
+struct HookPublication {
+    lanes: Vec<HookLanePublication>,
+}
+
+struct HookLanePublication {
+    lane: CanonicalUuid,
+    groups: Vec<HookDirectiveGroup>,
+}
+
+struct HookDirectiveGroup {
+    identity: String,
+    stage: String,
+    text: Option<String>,
+    keys: Vec<String>,
 }
 
 const HOOK_DELIVERY_LOCK: &str = "steering-delivery";
@@ -51,6 +67,15 @@ struct LaneDeliveryState {
     occupant: CanonicalUuid,
     compaction: u64,
     contents: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    delivered_keys: Vec<DeliveredKey>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeliveredKey {
+    content: String,
+    key: String,
 }
 
 pub(crate) fn hook_document(
@@ -129,25 +154,39 @@ fn validate_hook_answer(answer: &CommandAnswer, harness: &str) -> Result<(), Str
     Ok(())
 }
 
-fn render_hook_document(inbox: &InboxAnswer) -> Result<Option<Vec<u8>>, String> {
+fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>, String> {
     let executable = std::env::current_exe()
         .map(PathBuf::into_os_string)
         .map_err(|error| format!("inbox hook executable unavailable: {error}"))?;
     let executable = executable.to_string_lossy();
-    let mut context = format!(
-        concat!(
-            "Rust Spice steering is pending. Address every key immediately before other work. ",
-            "Begin assistant prose with `ACK <key>:` or `NACK <key>:`, then retire it after ",
-            "that prose with `{} ack <key>` or `{} ack <key> --decline`."
-        ),
-        executable, executable,
-    );
-    for lane in &inbox.lanes {
-        for directive in &lane.pending {
+    let mut context = concat!(
+        "Rust Spice steering is pending. Address every key immediately before other work. ",
+        "Begin assistant prose with `ACK <key> [<key> ...]:` or ",
+        "`NACK <key> [<key> ...]:`, then retire every listed key after that prose by ",
+        "running each printed `ack <key>` command; append `--decline` for a NACK."
+    )
+    .to_owned();
+    for lane in &publication.lanes {
+        for group in &lane.groups {
+            let keys = if group.keys.len() == 1 {
+                format!("key={}", group.keys[0])
+            } else {
+                format!("keys={}", group.keys.join(" "))
+            };
             context.push_str(&format!(
-                "\n\nlane={} key={} stage={}\n{}",
-                lane.lane, directive.key, directive.stage, directive.text
+                "\n\nlane={} {} stage={}\n",
+                lane.lane, keys, group.stage,
             ));
+            match &group.text {
+                Some(text) => context.push_str(text),
+                None => context.push_str(
+                    "Same-content steering was already delivered in this compaction epoch. \
+                     Acknowledge every newly listed key without replaying the directive text.",
+                ),
+            }
+            for key in &group.keys {
+                context.push_str(&format!("\ncommand: `{executable} ack {key}`"));
+            }
         }
     }
     let mut document = wire::encode(&HookOutput {
@@ -185,7 +224,7 @@ fn write_hook_delivery_state(path: &Path, state: &HookDeliveryState) -> Result<(
 fn filter_hook_inbox(
     inbox: &InboxAnswer,
     state: &mut HookDeliveryState,
-) -> Result<(Option<InboxAnswer>, bool), String> {
+) -> Result<(Option<HookPublication>, bool), String> {
     let mut changed = false;
     let mut lanes = Vec::new();
     for lane in &inbox.lanes {
@@ -212,6 +251,7 @@ fn filter_hook_inbox(
                     occupant,
                     compaction,
                     contents: Vec::new(),
+                    delivered_keys: Vec::new(),
                 });
                 changed = true;
                 state.lanes.last_mut().expect("the lane row was appended")
@@ -224,28 +264,50 @@ fn filter_hook_inbox(
             row.occupant = occupant;
             row.compaction = compaction;
             row.contents.clear();
+            row.delivered_keys.clear();
             changed = true;
         }
-        let mut filtered = LaneInbox {
-            pending: Vec::new(),
-            ..lane.clone()
+        let mut filtered = HookLanePublication {
+            lane: lane.lane,
+            groups: Vec::new(),
         };
         for directive in &lane.pending {
             let identity = rendered_content_identity(lane.lane, directive);
-            if !row.contents.contains(&identity) {
-                row.contents.push(identity);
-                filtered.pending.push(directive.clone());
-                changed = true;
+            if row
+                .delivered_keys
+                .iter()
+                .any(|delivered| delivered.content == identity && delivered.key == directive.key)
+            {
+                continue;
             }
+            let content_was_delivered = row.contents.contains(&identity);
+            match filtered
+                .groups
+                .iter_mut()
+                .find(|group| group.identity == identity)
+            {
+                Some(group) => group.keys.push(directive.key.clone()),
+                None => filtered.groups.push(HookDirectiveGroup {
+                    identity: identity.clone(),
+                    stage: directive.stage.to_string(),
+                    text: (!content_was_delivered).then(|| directive.text.clone()),
+                    keys: vec![directive.key.clone()],
+                }),
+            }
+            if !content_was_delivered {
+                row.contents.push(identity.clone());
+            }
+            row.delivered_keys.push(DeliveredKey {
+                content: identity,
+                key: directive.key.clone(),
+            });
+            changed = true;
         }
-        if !filtered.pending.is_empty() {
+        if !filtered.groups.is_empty() {
             lanes.push(filtered);
         }
     }
-    let filtered = (!lanes.is_empty()).then_some(InboxAnswer {
-        epoch: inbox.epoch,
-        lanes,
-    });
+    let filtered = (!lanes.is_empty()).then_some(HookPublication { lanes });
     Ok((filtered, changed))
 }
 

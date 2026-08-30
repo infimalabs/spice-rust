@@ -192,23 +192,83 @@ fn acknowledgment_key_parses_only_for_the_ack_contract() {
 }
 
 #[test]
-fn distinct_keys_with_identical_rendered_content_publish_once_per_agent_epoch() {
+fn simultaneous_duplicate_content_publishes_one_text_and_every_key() {
+    let scratch = HookScratch::new();
+    let simultaneous = inbox_answer(
+        OCCUPANT,
+        10,
+        &[
+            ("1kFirst1", "published", "hold the exact boundary"),
+            ("1kSecond", "published", "hold the exact boundary"),
+        ],
+    );
+
+    let document = deliver(&scratch, &simultaneous).expect("duplicate keys publish together");
+    let context = additional_context(&document);
+    assert!(context.contains("keys=1kFirst1 1kSecond"));
+    assert_eq!(context.matches("hold the exact boundary").count(), 1);
+    assert!(context.contains("ack 1kFirst1"));
+    assert!(context.contains("ack 1kSecond"));
+    assert_eq!(deliver(&scratch, &simultaneous), None);
+}
+
+#[test]
+fn sequential_duplicate_content_publishes_each_new_key_without_replaying_text() {
     let scratch = HookScratch::new();
     let first = inbox_answer(
         OCCUPANT,
-        10,
+        11,
         &[("1kFirst1", "published", "hold the exact boundary")],
     );
-    let repeated = inbox_answer(
+    let second = inbox_answer(
         OCCUPANT,
-        10,
+        11,
         &[("1kSecond", "published", "hold the exact boundary")],
     );
 
-    let document = deliver(&scratch, &first).expect("first exact content publishes");
-    let context = additional_context(&document);
-    assert!(context.contains("key=1kFirst1"));
-    assert_eq!(deliver(&scratch, &repeated), None);
+    let initial = deliver(&scratch, &first).expect("first content publishes");
+    assert!(additional_context(&initial).contains("hold the exact boundary"));
+    let alias = deliver(&scratch, &second).expect("new duplicate key remains visible");
+    let context = additional_context(&alias);
+    assert!(context.contains("1kSecond"));
+    assert!(context.contains("ack 1kSecond"));
+    assert!(context.contains("Same-content steering was already delivered"));
+    assert!(!context.contains("hold the exact boundary"));
+    assert_eq!(deliver(&scratch, &second), None);
+}
+
+#[test]
+fn content_only_delivery_state_migrates_to_key_tracking_once() {
+    let scratch = HookScratch::new();
+    let first = inbox_answer(
+        OCCUPANT,
+        12,
+        &[("1kBefore", "published", "retain old suppression")],
+    );
+    let later = inbox_answer(
+        OCCUPANT,
+        12,
+        &[("1kLater1", "published", "retain old suppression")],
+    );
+    assert!(deliver(&scratch, &first).is_some());
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&fs::read(&scratch.state).expect("read current delivery state"))
+            .expect("delivery state decodes");
+    state["lanes"][0]
+        .as_object_mut()
+        .expect("lane state is an object")
+        .remove("delivered_keys");
+    fs::write(
+        &scratch.state,
+        serde_json::to_vec(&state).expect("retained state encodes"),
+    )
+    .expect("publish retained state fixture");
+
+    let migrated = deliver(&scratch, &later).expect("retained content admits its unseen key");
+    let context = additional_context(&migrated);
+    assert!(context.contains("1kLater1"));
+    assert!(!context.contains("retain old suppression"));
+    assert_eq!(deliver(&scratch, &later), None);
 }
 
 #[test]
