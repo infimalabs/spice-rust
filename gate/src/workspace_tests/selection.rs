@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// Ordinary source changes must stay comfortably below the historical
+/// repository-wide selected-test inventory. Authority changes are exhaustive
+/// and deliberately exempt because their effect cannot be narrowed.
+pub(super) const ROUTINE_TEST_TARGET_LIMIT: usize = 32;
+
 #[derive(Debug)]
 pub(super) struct SelectionPlan {
     report: crate::TestSelectionReport,
@@ -165,15 +170,30 @@ pub(super) fn selection_plan(
         }
         let direct_test_only = exact_test_only_claim(&claims, &absolute);
         for claim in claims {
-            if claim.package_wide
-                || (!direct_test_only
-                    && claim
-                        .targets
-                        .iter()
-                        .any(|target| target_reaches_dependents(target)))
-            {
+            if claim.package_wide {
                 for package in reverse_dependency_closure(inventory, claim.package) {
                     select_package_targets(package, changed, &mut tests, &mut edges)?;
+                }
+                continue;
+            }
+            if !direct_test_only
+                && claim
+                    .targets
+                    .iter()
+                    .any(|target| target_reaches_dependents(target))
+            {
+                select_direct_targets(&claim, changed, &mut tests, &mut edges)?;
+                for package in reverse_dependency_closure(inventory, claim.package)
+                    .into_iter()
+                    .filter(|package| package.id != claim.package.id)
+                {
+                    select_targets(
+                        package,
+                        contract_test_targets(package),
+                        changed,
+                        &mut tests,
+                        &mut edges,
+                    )?;
                 }
                 continue;
             }
@@ -192,6 +212,7 @@ pub(super) fn selection_plan(
             )));
         }
     }
+    enforce_routine_target_budget(&build_sources, tests.len())?;
     let report = crate::TestEvidenceGraph::select_tests(
         source,
         build_sources,
@@ -234,13 +255,7 @@ pub(super) fn cargo_check_selections(
         }
         let direct_test_only = exact_test_only_claim(&claims, &absolute);
         for claim in claims {
-            if claim.package_wide
-                || (!direct_test_only
-                    && claim
-                        .targets
-                        .iter()
-                        .any(|target| target_reaches_dependents(target)))
-            {
+            if claim.package_wide {
                 select_package_checks([claim.package], &mut reached)?;
                 select_reverse_package_checks(
                     reverse_dependency_closure(inventory, claim.package)
@@ -248,6 +263,21 @@ pub(super) fn cargo_check_selections(
                         .filter(|package| package.id != claim.package.id),
                     &mut reached,
                 )?;
+                continue;
+            }
+            if !direct_test_only
+                && claim
+                    .targets
+                    .iter()
+                    .any(|target| target_reaches_dependents(target))
+            {
+                select_target_checks(claim.package, claim.targets.iter().copied(), &mut reached)?;
+                for package in reverse_dependency_closure(inventory, claim.package)
+                    .into_iter()
+                    .filter(|package| package.id != claim.package.id)
+                {
+                    select_target_checks(package, contract_test_targets(package), &mut reached)?;
+                }
                 continue;
             }
             let targets = reached.entry(claim.package.id.as_str()).or_default();
@@ -337,6 +367,68 @@ fn exact_test_only_claim(claims: &[SourceClaim<'_>], source: &Path) -> bool {
     source.is_file() && claim.test_only && claim.targets.len() == 1
 }
 
+fn select_direct_targets(
+    claim: &SourceClaim<'_>,
+    changed: &str,
+    tests: &mut BTreeSet<String>,
+    edges: &mut BTreeSet<crate::TestSelectionEdge>,
+) -> Result<(), WorkspaceTestError> {
+    select_targets(
+        claim.package,
+        claim
+            .targets
+            .iter()
+            .copied()
+            .filter(|target| claim.package.targets.contains(target)),
+        changed,
+        tests,
+        edges,
+    )
+}
+
+/// Runtime contracts in reverse dependents enter through their library or
+/// binary unit harness. Process-heavy integration targets remain in the full
+/// verifier and are selected directly when their own source changes.
+fn contract_test_targets(package: &PackageInventory) -> Vec<&TargetIdentity> {
+    let contract = package
+        .targets
+        .iter()
+        .filter(|target| target_is_library(target) || target_has_kind(target, "bin"))
+        .collect::<Vec<_>>();
+    if contract.is_empty() {
+        package.targets.iter().collect()
+    } else {
+        contract
+    }
+}
+
+pub(super) fn routine_selection(changed_sources: &[String]) -> bool {
+    changed_sources
+        .iter()
+        .filter(|path| test_relevant_source(path))
+        .all(|path| !selection_authority_source(path))
+}
+
+fn selection_authority_source(path: &str) -> bool {
+    workspace_wide_source(path)
+        || matches!(
+            Path::new(path).file_name().and_then(OsStr::to_str),
+            Some("Cargo.toml") | Some("build.rs")
+        )
+}
+
+fn enforce_routine_target_budget(
+    changed_sources: &[String],
+    targets: usize,
+) -> Result<(), WorkspaceTestError> {
+    if routine_selection(changed_sources) && targets > ROUTINE_TEST_TARGET_LIMIT {
+        return Err(WorkspaceTestError::new(format!(
+            "routine Rust test selection reached {targets} targets, exceeding the repository limit of {ROUTINE_TEST_TARGET_LIMIT}; add a narrower target edge or classify the changed authority",
+        )));
+    }
+    Ok(())
+}
+
 fn containing_package<'a>(
     inventory: &'a Inventory,
     absolute: &Path,
@@ -423,6 +515,20 @@ fn select_package_checks<'a>(
                 "Cargo package {:?} has no directly addressable build target",
                 package.name,
             )));
+        }
+    }
+    Ok(())
+}
+
+fn select_target_checks<'a>(
+    package: &'a PackageInventory,
+    selected: impl IntoIterator<Item = &'a TargetIdentity>,
+    reached: &mut BTreeMap<&'a str, BTreeSet<CargoTargetSelection>>,
+) -> Result<(), WorkspaceTestError> {
+    let targets = reached.entry(package.id.as_str()).or_default();
+    for target in selected {
+        if let Some(target) = cargo_target_selection(target, package.targets.contains(target))? {
+            targets.insert(target);
         }
     }
     Ok(())
@@ -583,6 +689,13 @@ fn target_is_library(target: &TargetIdentity) -> bool {
     })
 }
 
-fn target_reaches_dependents(target: &TargetIdentity) -> bool {
-    target_is_library(target) || target.kind.split('+').any(|kind| kind == "custom-build")
+fn target_has_kind(target: &TargetIdentity, expected: &str) -> bool {
+    target.kind.split('+').any(|kind| kind == expected)
 }
+
+fn target_reaches_dependents(target: &TargetIdentity) -> bool {
+    target_is_library(target) || target_has_kind(target, "custom-build")
+}
+
+#[cfg(test)]
+mod tests;
