@@ -618,7 +618,9 @@ pub struct TaskAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub completion: Option<TaskCompletionAnswer>,
-    /// Best-effort learning continuation run after a successful completion.
+    /// Compatibility-only learning report retained when decoding older answers.
+    ///
+    /// Current task completion does not produce this field.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -652,7 +654,10 @@ pub enum TaskCompletionState {
     Running,
 }
 
-/// Bounded task-completion learning distillation report.
+/// Compatibility shape for a learning report carried by an older task answer.
+///
+/// This DTO preserves retained answer decoding; it is not a current execution
+/// contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskLearning {

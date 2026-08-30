@@ -56,8 +56,8 @@
 //!   disposable rendering beneath each worktree's Git-dir `.spice-rs` root. A
 //!   tracked `<worktree>/.spice-rs` lookalike is ordinary repository content
 //!   that neither authority surface opens.
-//! * **Artifacts, learnings, and dynamically named locks** remain Rust-only
-//!   because their parents are below the common exclusive `.spice-rs` root.
+//! * **Artifacts and dynamically named locks** remain Rust-only because their
+//!   parents are below the common exclusive `.spice-rs` root.
 //!   `artifacts/tasks/<INCEPTION-STAMP>/` uses the board's sole task identity;
 //!   the rendered handle never becomes a second filesystem authority.
 //! * **Installed hooks, skills, and binaries** stay in the already-disjoint
@@ -122,7 +122,6 @@ pub struct StatePaths {
     local_configuration: PathBuf,
     lane_canvas: PathBuf,
     inbox: PathBuf,
-    learnings: PathBuf,
     install_rollback_blobs: PathBuf,
 }
 
@@ -172,7 +171,6 @@ impl StatePaths {
             steering_delivery: worktree_runtime.join("steering-delivery.json"),
             steering_delivery_lock: worktree_locks.join("steering-delivery"),
             install_rollback_blobs: runtime.join("install-rollback"),
-            learnings: runtime.join("learnings"),
             artifact_data,
             runtime,
             worktree_runtime,
@@ -329,16 +327,6 @@ impl StatePaths {
         &self.inbox
     }
 
-    /// Rust-owned bounded operational learnings, partitioned by project stem.
-    ///
-    /// The predecessor's similarly named store is worktree-visible at
-    /// `<worktree>/.spice/learnings`; this directory is below the Git-common
-    /// state root. The equal leaf name therefore does not create shared files.
-    #[must_use]
-    pub fn learnings(&self) -> &Path {
-        &self.learnings
-    }
-
     /// Directories whose shape this runtime admits before it does any work.
     ///
     /// Admission is narrower than ownership on purpose. A path belongs here
@@ -375,10 +363,9 @@ impl StatePaths {
     #[must_use]
     pub fn owned_directories(&self) -> Vec<&Path> {
         let mut paths = self.admitted_directories();
-        for path in [self.lane_canvas(), self.learnings()] {
-            if !paths.contains(&path) {
-                paths.push(path);
-            }
+        let lane_canvas = self.lane_canvas();
+        if !paths.contains(&lane_canvas) {
+            paths.push(lane_canvas);
         }
         paths
     }
