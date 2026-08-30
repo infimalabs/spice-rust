@@ -413,6 +413,7 @@ fn replay_task_completion(
             body: CommandAnswer::Task(wire::intent::TaskAnswer {
                 task: entry.handle().clone(),
                 status: terminal.status,
+                guidance: terminal.guidance,
                 completion: None,
                 learning: None,
                 next: terminal.next,
@@ -563,6 +564,7 @@ fn append_done(
     next: Option<Box<str>>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
     let status = transition.next().status.clone();
+    let guidance = plan_advance_guidance(transition);
     let completed = write
         .fact(
             body::TaskDone {
@@ -573,6 +575,7 @@ fn append_done(
                         .operation
                         .expect("live task completion requires an operation"),
                     status: status.clone(),
+                    guidance,
                     next: next.clone(),
                 }),
                 git: published,
@@ -607,10 +610,19 @@ fn append_done(
     Ok(wire::intent::TaskAnswer {
         task: done.task.clone(),
         status,
+        guidance,
         completion: None,
         learning: None,
         next,
     })
+}
+
+fn plan_advance_guidance(transition: &board::Transition) -> Option<wire::intent::TaskGuidance> {
+    matches!(
+        transition.kind(),
+        board::TransitionKind::Advance { from, .. } if from.as_str() == "plan"
+    )
+    .then_some(wire::intent::TaskGuidance::PlanAdvanceOwnership)
 }
 
 fn projected_done_next_action(
@@ -791,6 +803,7 @@ pub(super) fn task_review(
     let answer = wire::intent::TaskAnswer {
         task: review.task.clone(),
         status: "completed".to_owned(),
+        guidance: None,
         completion: None,
         learning: None,
         next: None,

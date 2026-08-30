@@ -572,6 +572,30 @@ pub struct TaskAssign {
     pub reviewer: Actor,
 }
 
+/// Closed agent-facing guidance attached to a task transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskGuidance {
+    /// A plan advance released its claim without reserving the following phase.
+    #[serde(
+        rename = "phase ownership: this advance released your claim; only the held plan phase was completed. Run spice task next for another assignment; it may select any eligible work and does not guarantee this task's next phase."
+    )]
+    PlanAdvanceOwnership,
+}
+
+impl TaskGuidance {
+    /// Exact agent-facing guidance carried on the wire.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PlanAdvanceOwnership => concat!(
+                "phase ownership: this advance released your claim; only the held plan phase ",
+                "was completed. Run spice task next for another assignment; it may select any ",
+                "eligible work and does not guarantee this task's next phase."
+            ),
+        }
+    }
+}
+
 /// The answer a task command returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -580,6 +604,13 @@ pub struct TaskAnswer {
     pub task: TaskHandle,
     /// Its status after the transaction.
     pub status: String,
+    /// Actionable guidance attached to this exact transition.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub guidance: Option<TaskGuidance>,
     /// Durable completion operation still running before this task may move.
     #[serde(
         default,

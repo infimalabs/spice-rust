@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 use wire::intent::{
     AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, EffortUnavailableCode,
-    Intent, Positioned, ProjectVisibility,
+    Intent, Positioned, ProjectVisibility, TaskGuidance,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LeaseHead, Phase, Seq,
@@ -840,5 +840,20 @@ fn every_unavailable_reason_spells_itself_the_way_it_encodes() {
     assert!(
         wire::decode::<EffortUnavailableCode>(br#""untagged_launch""#).is_err(),
         "the vocabulary is closed against a spelling it does not carry"
+    );
+}
+
+#[test]
+fn task_guidance_has_one_exact_actionable_spelling() {
+    let guidance = TaskGuidance::PlanAdvanceOwnership;
+    let encoded = wire::encode(&guidance).expect("task guidance encodes");
+    assert_eq!(encoded, format!("\"{}\"", guidance.as_str()).as_bytes());
+    assert_eq!(
+        wire::decode::<TaskGuidance>(&encoded).expect("task guidance decodes"),
+        guidance
+    );
+    assert!(
+        wire::decode::<TaskGuidance>(br#""same-task-next-phase""#).is_err(),
+        "task guidance must refuse promises outside its closed vocabulary"
     );
 }
