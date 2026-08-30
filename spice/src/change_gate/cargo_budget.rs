@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::fmt;
 use std::thread;
 
 use sill::Environment;
@@ -11,6 +12,35 @@ use super::ChangeGateError;
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 const CONCURRENT_ORDINARY_GATE_SLICES: usize = 4;
 const TEST_HARNESS_THREADS_PER_SHARD: usize = 1;
+
+/// Exact host share available to one of the ordinary concurrent gate lanes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct AdvisoryLaneShare {
+    host_capacity: usize,
+    ordinary_lanes: usize,
+}
+
+impl AdvisoryLaneShare {
+    fn exceeded_by(self, requested_slots: usize) -> bool {
+        requested_slots
+            .checked_mul(self.ordinary_lanes)
+            .is_none_or(|requested| requested > self.host_capacity)
+    }
+}
+
+impl fmt::Display for AdvisoryLaneShare {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let whole = self.host_capacity / self.ordinary_lanes;
+        let remainder = self.host_capacity % self.ordinary_lanes;
+        match (whole, remainder) {
+            (whole, 0) => write!(formatter, "{whole}"),
+            (0, remainder) => write!(formatter, "{remainder}/{}", self.ordinary_lanes),
+            (whole, remainder) => {
+                write!(formatter, "{whole}+{remainder}/{}", self.ordinary_lanes)
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct CargoBudget {
@@ -63,6 +93,46 @@ impl CargoBudget {
         self.cpus
     }
 
+    pub(super) const fn ordinary_lanes(self) -> usize {
+        CONCURRENT_ORDINARY_GATE_SLICES
+    }
+
+    pub(super) const fn advisory_lane_share(self) -> AdvisoryLaneShare {
+        AdvisoryLaneShare {
+            host_capacity: self.cpus,
+            ordinary_lanes: CONCURRENT_ORDINARY_GATE_SLICES,
+        }
+    }
+
+    pub(super) const fn test_slots(self) -> usize {
+        self.test_concurrency.saturating_mul(self.shard_jobs)
+    }
+
+    pub(super) const fn requested_slots(self) -> usize {
+        self.slice_jobs.saturating_add(self.test_slots())
+    }
+
+    pub(super) fn exceeds_advisory_lane_share(self) -> bool {
+        self.advisory_lane_share()
+            .exceeded_by(self.requested_slots())
+    }
+
+    #[cfg(test)]
+    pub(super) const fn from_allocations(
+        cpus: usize,
+        policy_jobs: usize,
+        test_concurrency: usize,
+        shard_jobs: usize,
+    ) -> Self {
+        Self {
+            cpus,
+            slice_jobs: policy_jobs,
+            test_concurrency,
+            shard_jobs,
+            test_threads: TEST_HARNESS_THREADS_PER_SHARD,
+        }
+    }
+
     pub(super) fn bind_test_environment(
         self,
         environment: Environment,
@@ -101,6 +171,28 @@ mod tests {
         assert_eq!(minimum.test_concurrency(), 1);
         assert_eq!(minimum.shard_jobs(), 1);
         assert_eq!(minimum.test_threads(), 1);
+    }
+
+    #[test]
+    fn advisory_share_renders_exact_division_remainders_and_small_hosts() {
+        assert_eq!(
+            CargoBudget::from_capacity(12, 4)
+                .advisory_lane_share()
+                .to_string(),
+            "3",
+        );
+        assert_eq!(
+            CargoBudget::from_capacity(10, 4)
+                .advisory_lane_share()
+                .to_string(),
+            "2+2/4",
+        );
+        assert_eq!(
+            CargoBudget::from_capacity(2, 4)
+                .advisory_lane_share()
+                .to_string(),
+            "2/4",
+        );
     }
 
     #[test]

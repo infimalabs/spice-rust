@@ -664,10 +664,12 @@ fn publish_budget(
     writeln!(
         progress,
         concat!(
-            "[change-gate-budget] cpus={} policy_jobs={} ",
+            "[change-gate-budget] cpus={} ordinary_lanes={} advisory_share={} policy_jobs={} ",
             "test_concurrency={} shard_jobs={} test_threads={} scheduling={}"
         ),
         budget.cpus(),
+        budget.ordinary_lanes(),
+        budget.advisory_lane_share(),
         budget.policy_jobs(),
         budget.test_concurrency(),
         budget.shard_jobs(),
@@ -675,6 +677,26 @@ fn publish_budget(
         scheduling,
     )
     .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    if budget.exceeds_advisory_lane_share() {
+        writeln!(
+            progress,
+            concat!(
+                "[change-gate-budget-warning] reason=advisory-lane-share-exceeded ",
+                "host_capacity={} ordinary_lanes={} advisory_share={} requested_slots={} ",
+                "allocations=policy_jobs:{}+test_prebuild_shards:{}x{}={} ",
+                "action=continue-unchanged"
+            ),
+            budget.cpus(),
+            budget.ordinary_lanes(),
+            budget.advisory_lane_share(),
+            budget.requested_slots(),
+            budget.policy_jobs(),
+            budget.test_concurrency(),
+            budget.shard_jobs(),
+            budget.test_slots(),
+        )
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    }
     progress
         .flush()
         .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
