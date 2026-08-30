@@ -21,7 +21,6 @@ impl TimerId {
 pub enum TimerKind {
     ClaimLapse,
     ClaimRenew,
-    ClaimWarning,
     SteerEscalate,
     SteerLapse,
     LaneHold,
