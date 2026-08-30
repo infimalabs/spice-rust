@@ -2,7 +2,8 @@ use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN, accent,
     arrangement, badge, elapsed_label, first_nonquoted_prose, leaf, one_line, reported_tasks,
-    short, split_lineage, standing_title, standings, ticker_line, topology, truncate,
+    short, split_lineage, standing_title, standings, task_mentions, ticker_line, topology,
+    truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -570,12 +571,24 @@ fn authored_prose_reports_only_canonical_base52_tasks_once_through_punctuation()
         );
     }
 
-    let tasks = reported_tasks(
-        "Settled `CONTROL-1kKbC3j4` (CONTROL-1kKbC3j4 again). APP-a1 is short; \
-         OVERFLOW-000000000 is wide; WRONG-1kKAC3j4 uses the wrong alphabet; \
-         SHAPED-abcdefgh only matches the broad shape; lower-a1 TASK- TASK-a-b \
-         and ordinary-hyphenated-prose are not handles.",
+    let text = "Settled `CONTROL-1kKbC3j4` (CONTROL-1kKbC3j4 again). APP-a1 is short; \
+                OVERFLOW-000000000 is wide; WRONG-1kKAC3j4 uses the wrong alphabet; \
+                SHAPED-abcdefgh only matches the broad shape; lower-a1 TASK- TASK-a-b \
+                and ordinary-hyphenated-prose are not handles.";
+    let mentions = task_mentions(text);
+    assert_eq!(
+        mentions
+            .iter()
+            .map(|(range, task)| (&text[range.clone()], task.to_string()))
+            .collect::<Vec<_>>(),
+        [
+            ("CONTROL-1kKbC3j4", "CONTROL-1kKbC3j4".to_owned()),
+            ("CONTROL-1kKbC3j4", "CONTROL-1kKbC3j4".to_owned()),
+        ],
+        "the parser-backed scanner retains only canonical inline locations",
     );
+
+    let tasks = reported_tasks(text);
 
     assert_eq!(
         tasks.iter().map(ToString::to_string).collect::<Vec<_>>(),

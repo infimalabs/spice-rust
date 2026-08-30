@@ -474,17 +474,37 @@ pub fn badge(count: usize) -> Option<String> {
 #[must_use]
 pub fn reported_tasks(text: &str) -> Vec<TaskHandle> {
     let mut tasks = Vec::new();
-    for token in
-        text.split(|character: char| !character.is_ascii_alphanumeric() && character != '-')
-    {
-        let Ok(task) = token.parse::<TaskHandle>() else {
-            continue;
-        };
-        if task.born().is_ok() && !tasks.contains(&task) {
+    for (_, task) in task_mentions(text) {
+        if !tasks.contains(&task) {
             tasks.push(task);
         }
     }
     tasks
+}
+
+/// Canonical task handles and their byte ranges in authored text.
+///
+/// The browser uses the ranges to replace the handle where it was written,
+/// while [`reported_tasks`] retains the de-duplicated identity view used by
+/// non-browser surfaces.
+#[must_use]
+pub fn task_mentions(text: &str) -> Vec<(std::ops::Range<usize>, TaskHandle)> {
+    let mut mentions = Vec::new();
+    let mut start = None;
+    for (index, character) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        if character.is_ascii_alphanumeric() || character == '-' {
+            start.get_or_insert(index);
+        } else if let Some(start) = start.take()
+            && let Ok(task) = text[start..index].parse::<TaskHandle>()
+            && task.born().is_ok()
+        {
+            mentions.push((start..index, task));
+        }
+    }
+    mentions
 }
 
 /// Fold authored text onto one line, spelling the breaks it had.
