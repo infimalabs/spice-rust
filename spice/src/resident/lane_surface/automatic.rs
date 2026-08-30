@@ -467,7 +467,103 @@ fn commit_automatic_wake(
 
 #[cfg(test)]
 mod tests {
+    use super::super::launch::test_support::{InactiveRtkFixture, assert_obsolete_health};
     use super::*;
+
+    #[test]
+    fn automatic_wake_commits_inactive_rtk_for_capability_free_readback_without_reprobe() {
+        let fixture = InactiveRtkFixture::new();
+        let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        seed_vacant_lane(&bus, &fixture);
+        let capabilities = canvas::axum::Capabilities::default();
+        let discovery = canvas::Discovery {
+            endpoint: "http://127.0.0.1:1".to_owned(),
+            capability: fixture.capability,
+            epoch: fixture.epoch,
+        };
+        let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+        let mut seats = Seats::new();
+
+        let result = wake_automatic(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &mut seats,
+            &runtime,
+            fixture.lane,
+            fixture.occupant,
+            None,
+            None,
+        )
+        .expect("automatic inactive-RTK launch commits");
+
+        match result {
+            AutomaticWake::Started => {}
+            AutomaticWake::Unstarted(outcome) => {
+                panic!("automatic inactive-RTK launch did not start: {outcome:?}")
+            }
+        }
+        fixture.assert_occupant_started_without_rtk();
+        fixture.assert_one_configured_probe_from_launch_worktree();
+        let residency = current_residency(&bus, fixture.epoch).expect("committed residency reads");
+        let answer = answer(residency.body(), None, &seats).expect("capability-free lane readback");
+        let row = answer.lanes.first().expect("automatic lane projects");
+        assert_obsolete_health(row.rtk.as_ref().expect("readback retains RTK health"));
+        let encoded = serde_json::to_string(&answer).expect("lane readback encodes");
+        assert!(
+            !encoded.contains(&fixture.capability.to_string()),
+            "{encoded}"
+        );
+        fixture.assert_one_configured_probe_from_launch_worktree();
+
+        stop_lane(&mut seats, fixture.lane);
+        bus.verify().expect("automatic RTK authority verifies");
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    fn seed_vacant_lane(bus: &Bus, fixture: &InactiveRtkFixture) {
+        let mut write = write(Actor::Spice, fixture.epoch, Producer::CommandDoor)
+            .expect("fixture write starts");
+        let seated = write
+            .fact(
+                wire::body::UpSeated {
+                    epoch: fixture.epoch,
+                },
+                FactCause::Root,
+            )
+            .expect("fixture resident seats");
+        let root = fixture.root.display().to_string();
+        let vendor = fixture.vendor.clone();
+        let epoch = fixture.epoch;
+        let lane = fixture.lane;
+        let capability = fixture.capability;
+        write.residency_head(seated, move |_| wire::ResidencyHead {
+            epoch,
+            state: ResidentState::Seated,
+            topology_revision: 1,
+            lanes: vec![wire::LaneResidency {
+                lane,
+                lineage_id: lane,
+                name: None,
+                worktree: root,
+                life: "drive".to_owned(),
+                vendor,
+                occupant: None,
+                lineage: Vec::new(),
+                capabilities: vec![capability],
+                session: None,
+                disposition: VACANT.to_owned(),
+            }],
+            subscriptions: vec![wire::LineageSubscription {
+                lineage_id: lane,
+                policy: wire::intent::LineageLife::Drive,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
+            }],
+        });
+        commit(bus, write).expect("fixture residency commits");
+    }
 
     #[test]
     fn startup_ready_promotes_provisional_lease_to_one_hundred_seconds() {
