@@ -377,6 +377,61 @@ fn next_rule() -> ClaimWin {
     }
 }
 
+/// The allocator keeps expected exhaustion distinct from broken allocator state.
+///
+/// The binary rim may treat this exact refusal as a successful terminal drain
+/// for a steered lane. The allocator itself still reports the typed reason, so
+/// every other caller and every genuine fault remains distinguishable.
+#[test]
+fn an_empty_allocator_retains_its_exact_diagnostic() {
+    let (root, bus, epoch, seats) = fixture("claim-empty-plan", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "EMPTY-1",
+        "deferred allocator row",
+        None,
+    );
+    let before_defer = board(&bus, epoch, Actor::Operator);
+    let heads = at(&before_defer, &task);
+    let until = instant_after(current_instant().expect("clock"), 300).expect("future instant");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDefer,
+        vec![workflow_witness(heads), deferral_witness(heads)],
+        &TaskDefer {
+            task: task.clone(),
+            wait: until,
+        },
+    ));
+    let empty = board(&bus, epoch, actor.clone());
+    let command = fixture_command(
+        epoch,
+        actor,
+        CommandKind::ClaimWin,
+        claim_expected(&empty, &task, &seats[0]),
+        &next_rule(),
+    );
+
+    let Err(Outcome::Refusal(refusal)) = claim_plan(
+        &bus,
+        &command,
+        &next_rule(),
+        None,
+        &guard_projects(),
+        &board::NextConfig::default(),
+    ) else {
+        panic!("an exhausted allocator must return its typed refusal");
+    };
+    assert_eq!(refusal.reason(), "board::allocator-empty");
+
+    clean(&root, bus);
+}
+
 /// Drive the production claim path up to the point it has decided.
 ///
 /// The project policy and allocator config are the ones `dispatch` builds, so
