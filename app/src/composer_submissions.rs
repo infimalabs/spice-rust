@@ -876,10 +876,20 @@ mod tests {
         assert!(queue.ready().is_empty());
         assert!(queue.ready_wakes().is_empty());
 
+        let stale_nomination = queue.awaiting_residency();
         queue.reconnect();
         assert_eq!(queue.ready_wakes()[0].id, uuid(ID_A));
         queue.wake_sent(uuid(ID_A)).unwrap();
         queue.wake_accepted(uuid(ID_A)).unwrap();
+        assert!(
+            queue.awaiting_lanes(&stale_nomination).is_empty(),
+            "a lane read nominated before the wake reply cannot establish fresh residency"
+        );
+        assert_eq!(
+            queue.awaiting_residency(),
+            [uuid(ID_A)],
+            "the stale read leaves an explicit demand for a post-wake lane read"
+        );
         let nominated = queue.awaiting_residency();
         assert_eq!(nominated, [uuid(ID_A)]);
         assert_eq!(
