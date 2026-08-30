@@ -31,7 +31,7 @@ const HANDOFF_MAGIC: &[u8] = b"SPICE-RS-DAEMON\0";
 const MAX_HANDOFF_BYTES: usize = 16 * 1024;
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 const ARRIVAL_HORIZON: Duration = Duration::from_secs(30);
-const PROBE_BOUND: Duration = Duration::from_secs(3);
+const PROBE_BOUND: Duration = Duration::from_secs(20);
 const TERMINATION_HORIZON: Duration = Duration::from_secs(5);
 
 /// The only secret crossing from the launcher into its child.

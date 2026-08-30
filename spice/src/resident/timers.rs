@@ -30,6 +30,14 @@ pub(super) struct Runtime {
     warnings: BTreeMap<TaskHandle, ArmedWarning>,
     directives: BTreeMap<CanonicalUuid, ArmedDirective>,
     wake: Option<ArmedWake>,
+    synchronized: Option<wire::Seq>,
+}
+
+struct TimerSnapshot {
+    tasks: Vec<journal::TaskHeads>,
+    residency: Option<journal::JournalHead<wire::ResidencyHead>>,
+    steering: Vec<journal::JournalHead<wire::SteeringHead>>,
+    facts: journal::FactSnapshot,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -252,6 +260,7 @@ impl Runtime {
             warnings: BTreeMap::new(),
             directives: BTreeMap::new(),
             wake: None,
+            synchronized: None,
         })
     }
 
@@ -302,25 +311,24 @@ impl Runtime {
 
     /// Make process-local waits exactly match current lapse-capable claim heads.
     pub(super) fn synchronize(&mut self, bus: &Bus) -> CommandResult<BTreeSet<CanonicalUuid>> {
-        let refresh = cancel_stale_warnings(bus)?;
-        let snapshot = bus
-            .read(|read| {
-                Ok((
-                    read.task_heads()?,
-                    read.residency_head()?,
-                    read.pending_steering(None)?,
-                    read.fact_snapshot().map_err(|error| {
-                        GuardError::Invalid(format!("timer fact snapshot is invalid: {error}"))
-                    })?,
-                ))
-            })
-            .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
-        let desired = desired_claims(&snapshot.0, snapshot.1.as_ref())?;
-        let desired_renewals =
-            desired_renewals(&snapshot.0, snapshot.1.as_ref(), snapshot.3.facts())?;
-        let desired_warnings =
-            desired_warnings(&snapshot.0, snapshot.1.as_ref(), snapshot.3.facts())?;
-        let desired_directives = desired_directives(&snapshot.2, &self.steering)?;
+        let mut snapshot = timer_snapshot(bus)?;
+        let (refresh, changed) = cancel_stale_warnings(bus, &snapshot)?;
+        if changed {
+            snapshot = timer_snapshot(bus)?;
+        }
+        let synchronized = snapshot.facts.horizon();
+        let desired = desired_claims(&snapshot.tasks, snapshot.residency.as_ref())?;
+        let desired_renewals = desired_renewals(
+            &snapshot.tasks,
+            snapshot.residency.as_ref(),
+            snapshot.facts.facts(),
+        )?;
+        let desired_warnings = desired_warnings(
+            &snapshot.tasks,
+            snapshot.residency.as_ref(),
+            snapshot.facts.facts(),
+        )?;
+        let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
         let stale = self
             .claims
             .iter()
@@ -380,7 +388,19 @@ impl Runtime {
             self.directives
                 .insert(directive, ArmedDirective { id, authority });
         }
+        self.synchronized = synchronized;
         Ok(refresh)
+    }
+
+    /// Whether a queued notification is already represented by the last fold.
+    ///
+    /// Synchronization reads through the writer's current cursor, which can
+    /// cover several notifications already waiting in the broadcast channel.
+    /// Replaying each of those notifications would decode the complete fact
+    /// stream again without observing any newer authority.
+    pub(super) fn covers(&self, commit: bus::JournalCommit) -> bool {
+        self.synchronized
+            .is_some_and(|horizon| horizon.get() >= commit.last())
     }
 
     fn synchronize_warnings(
@@ -759,6 +779,20 @@ impl Runtime {
     }
 }
 
+fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
+    bus.read(|read| {
+        Ok(TimerSnapshot {
+            tasks: read.task_heads()?,
+            residency: read.residency_head()?,
+            steering: read.pending_steering(None)?,
+            facts: read.fact_snapshot().map_err(|error| {
+                GuardError::Invalid(format!("timer fact snapshot is invalid: {error}"))
+            })?,
+        })
+    })
+    .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))
+}
+
 impl Drop for Runtime {
     fn drop(&mut self) {
         if let Some(worker) = self.worker.take() {
@@ -981,29 +1015,21 @@ struct StaleWarning {
     body: wire::body::ClaimLeaseWarned,
 }
 
-fn cancel_stale_warnings(bus: &Bus) -> CommandResult<BTreeSet<CanonicalUuid>> {
+fn cancel_stale_warnings(
+    bus: &Bus,
+    snapshot: &TimerSnapshot,
+) -> CommandResult<(BTreeSet<CanonicalUuid>, bool)> {
     let at = Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("claim::warning-clock-invalid", &error.to_string()))?;
-    let snapshot = bus
-        .read(|read| {
-            Ok((
-                read.task_heads()?,
-                read.residency_head()?,
-                read.pending_steering(None)?,
-                read.fact_snapshot().map_err(|error| {
-                    GuardError::Invalid(format!("warning fact snapshot is invalid: {error}"))
-                })?,
-            ))
-        })
-        .map_err(|error| store_fault("claim::warning-snapshot-failed", &error.to_string()))?;
     let stale = stale_warnings(
-        &snapshot.0,
-        snapshot.1.as_ref(),
-        &snapshot.2,
-        snapshot.3.facts(),
+        &snapshot.tasks,
+        snapshot.residency.as_ref(),
+        &snapshot.steering,
+        snapshot.facts.facts(),
         at,
     )?;
     let mut refresh = BTreeSet::new();
+    let mut changed = false;
     for stale in stale {
         let directive = stale.head.body().directive;
         let lane = stale.head.body().lane;
@@ -1047,6 +1073,7 @@ fn cancel_stale_warnings(bus: &Bus) -> CommandResult<BTreeSet<CanonicalUuid>> {
         {
             CommitOutcome::Committed(_) => {
                 refresh.insert(lane);
+                changed = true;
             }
             CommitOutcome::Refused(refusal) if refusal.reason().starts_with("claim::warning-") => {}
             CommitOutcome::Refused(refusal) => {
@@ -1060,7 +1087,7 @@ fn cancel_stale_warnings(bus: &Bus) -> CommandResult<BTreeSet<CanonicalUuid>> {
             }
         }
     }
-    Ok(refresh)
+    Ok((refresh, changed))
 }
 
 fn stale_warnings(

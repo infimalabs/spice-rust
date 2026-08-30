@@ -641,7 +641,14 @@ fn accept_commit(
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<()> {
     match committed {
-        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+        Ok(commit) => {
+            command_surface.refresh_reads()?;
+            if timers.covers(commit) {
+                return Ok(());
+            }
+            reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
             command_surface.refresh_reads()?;
             reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)
         }
