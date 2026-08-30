@@ -188,43 +188,8 @@ fn seed_task_claim(
     let origin: wire::Origin = format!("task:{task}").parse().expect("fixture origin");
     let actor = Actor::Lane(durable.lane);
     let mut write = JournalWrite::new(actor.clone(), origin.clone(), start, Producer::CommandDoor);
-    let added = write
-        .fact(
-            wire::body::TaskAdded {
-                task: task.clone(),
-                title: "Restore claimed work".to_owned(),
-                description: None,
-                acceptance: Vec::new(),
-                project: "task.claim".to_owned(),
-                tags: Vec::new(),
-                depends: Vec::new(),
-                flow: vec![phase.clone()],
-                phase: phase.clone(),
-                revision: 1,
-            },
-            FactCause::Root,
-        )
-        .expect("task fact builds");
-    let won = write
-        .fact(
-            wire::body::ClaimWon {
-                task: task.clone(),
-                actor: actor.clone(),
-                lane: durable.lane,
-                occupant: durable.occupant.expect("durable occupant"),
-                epoch: old_epoch,
-                cell: Some(wire::ClaimCell {
-                    project: "task.claim".to_owned(),
-                    phase: phase.clone(),
-                }),
-                until: expiry,
-                git: None,
-                recovery: None,
-                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
-            },
-            FactCause::Pending(added),
-        )
-        .expect("claim fact builds");
+    let (added, won) =
+        append_seed_claim_facts(&mut write, &phase, &actor, task, durable, old_epoch, expiry);
     let statement_task = task.clone();
     let statement_phase = phase.clone();
     write.task_head(added, move |position| wire::TaskHead {
@@ -278,6 +243,55 @@ fn seed_task_claim(
         bus.commit(write).expect("fixture task authority commits"),
         bus::CommitOutcome::Committed(_)
     ));
+}
+
+fn append_seed_claim_facts(
+    write: &mut JournalWrite,
+    phase: &wire::Phase,
+    actor: &Actor,
+    task: &wire::TaskStamp,
+    durable: &wire::LaneResidency,
+    old_epoch: CanonicalUuid,
+    expiry: wire::Instant,
+) -> (PendingFact, PendingFact) {
+    let added = write
+        .fact(
+            wire::body::TaskAdded {
+                task: task.clone(),
+                title: "Restore claimed work".to_owned(),
+                description: None,
+                acceptance: Vec::new(),
+                project: "task.claim".to_owned(),
+                tags: Vec::new(),
+                depends: Vec::new(),
+                flow: vec![phase.clone()],
+                phase: phase.clone(),
+                revision: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("task fact builds");
+    let won = write
+        .fact(
+            wire::body::ClaimWon {
+                task: task.clone(),
+                actor: actor.clone(),
+                lane: durable.lane,
+                occupant: durable.occupant.expect("durable occupant"),
+                epoch: old_epoch,
+                cell: Some(wire::ClaimCell {
+                    project: "task.claim".to_owned(),
+                    phase: phase.clone(),
+                }),
+                until: expiry,
+                git: None,
+                recovery: None,
+                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
+            },
+            FactCause::Pending(added),
+        )
+        .expect("claim fact builds");
+    (added, won)
 }
 
 fn seed_restart_residency(

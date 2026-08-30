@@ -221,7 +221,6 @@ pub(super) fn commit_restored(
     proven: &ProvenOccupant,
 ) -> CommandResult<()> {
     let occupant = proven.occupant;
-    let group = proven.group;
     let session = &proven.session;
     let observed = current_residency(bus, epoch)?;
     let carried = observe_restored_claim(bus, durable)?;
@@ -241,50 +240,13 @@ pub(super) fn commit_restored(
     if let Some(carried) = &carried {
         guard_restored_claim(&mut write, carried);
     }
-    let mut fact = if let Some(ancestor) = row.occupant {
-        let degraded = write
-            .fact(
-                wire::body::LaneDegraded {
-                    lane: row.lane,
-                    marker: "prior resident generation left no supervised process group".to_owned(),
-                },
-                FactCause::Existing(observed.position()),
-            )
-            .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?;
-        let declared = write
-            .fact(session_fact(session), FactCause::Pending(degraded))
-            .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?;
-        write
-            .fact(
-                wire::body::LaneRenewed {
-                    lane: row.lane,
-                    occupant,
-                    ancestor,
-                    epoch,
-                    group,
-                },
-                FactCause::Pending(declared),
-            )
-            .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?
-    } else {
-        let declared = write
-            .fact(
-                session_fact(session),
-                FactCause::Existing(observed.position()),
-            )
-            .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?;
-        write
-            .fact(
-                wire::body::LaneStarted {
-                    lane: row.lane,
-                    occupant,
-                    epoch,
-                    group,
-                },
-                FactCause::Pending(declared),
-            )
-            .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?
-    };
+    let mut fact = append_restored_lane(
+        &mut write,
+        row,
+        proven,
+        epoch,
+        FactCause::Existing(observed.position()),
+    )?;
     if let Some(carried) = &carried {
         fact = append_restored_claim(
             &mut write,
@@ -301,6 +263,58 @@ pub(super) fn commit_restored(
     row.disposition = OCCUPIED.to_owned();
     write.residency_head(fact, move |_| next);
     commit(bus, write).map(|_| ())
+}
+
+/// Append the session and lane facts for one restored process.
+fn append_restored_lane(
+    write: &mut JournalWrite,
+    row: &wire::LaneResidency,
+    proven: &ProvenOccupant,
+    epoch: CanonicalUuid,
+    cause: FactCause,
+) -> CommandResult<PendingFact> {
+    let declared_cause = if let Some(ancestor) = row.occupant {
+        let degraded = write
+            .fact(
+                wire::body::LaneDegraded {
+                    lane: row.lane,
+                    marker: "prior resident generation left no supervised process group".to_owned(),
+                },
+                cause,
+            )
+            .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?;
+        let declared = write
+            .fact(session_fact(&proven.session), FactCause::Pending(degraded))
+            .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?;
+        return write
+            .fact(
+                wire::body::LaneRenewed {
+                    lane: row.lane,
+                    occupant: proven.occupant,
+                    ancestor,
+                    epoch,
+                    group: proven.group,
+                },
+                FactCause::Pending(declared),
+            )
+            .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()));
+    } else {
+        cause
+    };
+    let declared = write
+        .fact(session_fact(&proven.session), declared_cause)
+        .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?;
+    write
+        .fact(
+            wire::body::LaneStarted {
+                lane: row.lane,
+                occupant: proven.occupant,
+                epoch,
+                group: proven.group,
+            },
+            FactCause::Pending(declared),
+        )
+        .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))
 }
 
 /// Carry only epoch-bound claim authority when the same detached supervisor
