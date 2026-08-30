@@ -132,8 +132,14 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     )
     .filter({ hasText: exactDraft });
   await directiveCard.waitFor({ timeout: WAKE_MS });
+  assert.equal(await directiveCard.count(), 1, "the exact wake draft renders once");
   const directive = await directiveCard.getAttribute("data-directive");
   assert.ok(directive, "the wake path renders the durable directive identity");
+  assert.equal(
+    await directiveCard.getAttribute("id"),
+    `message-operator-${directive}`,
+    "the Operator card identity derives from the durable directive",
+  );
 
   const after = await reply(fixture, ["lane"]);
   const resident = after.body.lanes.find((candidate) => candidate.lane === targetLane);
@@ -164,4 +170,27 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
 
   await reply(fixture, ["steer", "cancel", directive]);
   await directiveCard.waitFor({ timeout: TRANSITION_MS });
+  const reloaded = await page.context().newPage();
+  try {
+    await reloaded.goto(page.url(), { waitUntil: "networkidle" });
+    await reloaded.reload({ waitUntil: "networkidle" });
+    await chooseCanvasView(reloaded, "Agents");
+    const reloadedCard = reloaded
+      .locator('[data-pane="agent-console"]')
+      .locator(
+        `.mosaic-message-card[data-card-kind="operator-message"]`
+          + `[data-agent-lane="${targetLane}"]`
+          + `[data-directive="${directive}"]`,
+      )
+      .filter({ hasText: exactDraft });
+    await reloadedCard.waitFor({ timeout: WAKE_MS });
+    assert.equal(await reloadedCard.count(), 1, "reload restores the exact wake draft once");
+    assert.equal(
+      await reloadedCard.getAttribute("id"),
+      `message-operator-${directive}`,
+      "reload preserves the Operator card's directive identity",
+    );
+  } finally {
+    await reloaded.close();
+  }
 }

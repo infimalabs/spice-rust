@@ -211,6 +211,18 @@ fn directions_frame(text: &str) -> Vec<u8> {
     .expect("direction snapshot serializes")
 }
 
+fn empty_directions_frame() -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "stream": "directions",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "limit": 256,
+        "directions": [],
+    }))
+    .expect("empty direction snapshot serializes")
+}
+
 fn message_frame(
     lane: &str,
     author: &str,
@@ -547,7 +559,7 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
         operator_text.to_owned(),
         Vec::new(),
     );
-    let operator = runtime.operator_messages();
+    let operator = runtime.operator_messages().to_vec();
     assert_eq!(
         operator.len(),
         1,
@@ -555,6 +567,18 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
     );
     assert_eq!(operator[0].directive(), uuid(REQUEST));
     assert_eq!(operator[0].text(), operator_text);
+
+    assert!(
+        !runtime
+            .apply_stream_frame(&admitted_stream(&session, &empty_directions_frame()))
+            .changed(),
+        "a stale refresh cannot erase a locally accepted direction"
+    );
+    assert_eq!(
+        runtime.operator_messages(),
+        operator.as_slice(),
+        "the accepted directive keeps one stable identity across refresh"
+    );
 
     runtime.apply_stream(&admitted_stream(
         &session,
