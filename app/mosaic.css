@@ -549,6 +549,7 @@
 .team-surface .team-agent {
   display: flex;
   min-width: 0;
+  height: 218px;
   max-height: 218px;
   flex-direction: column;
   align-self: stretch;
@@ -562,6 +563,7 @@
 .team-surface .team-agent--vacant { opacity: .72; }
 
 .agent-composer-stack {
+  --composer-shard-block-size: 140px;
   display: grid;
   gap: 5px;
   max-height: 218px;
@@ -572,7 +574,12 @@
   scroll-behavior: smooth;
 }
 .composer-shard {
+  width: 100%;
+  height: var(--composer-shard-block-size);
+  min-height: var(--composer-shard-block-size);
+  max-height: var(--composer-shard-block-size);
   min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--panel);
@@ -582,6 +589,7 @@
 .composer-shard--primary {
   position: relative;
   order: 1;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 .composer-shard-prose[data-composer-drag-handle="true"] {
   cursor: grab;
@@ -591,7 +599,7 @@
 }
 .composer-shard--quote {
   order: 0;
-  min-height: 112px;
+  grid-template-rows: auto minmax(0, 1fr);
   border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
   background: color-mix(in srgb, var(--accent) 5%, var(--panel));
 }
@@ -752,13 +760,12 @@
   padding: 7px;
   background: color-mix(in srgb, var(--accent) 2%, var(--panel));
 }
-.team-surface .composer-shard--quote textarea {
-  min-height: 68px;
-  resize: none;
-}
 .team-surface .mosaic-composer textarea {
-  min-height: 76px;
+  height: 100%;
+  min-height: 0;
   padding: 7px 8px;
+  overflow-y: auto;
+  resize: none;
   font-size: .72rem;
   line-height: 1.35;
 }
