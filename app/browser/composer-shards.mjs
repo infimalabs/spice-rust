@@ -503,6 +503,10 @@ export async function assertComposerShards({
     .getByRole("button", { name: "Quote this message" });
   const quoteStack = quoteLane.locator(".agent-composer-stack");
   const quotePrimary = quoteStack.locator(".composer-shard--primary");
+  const initialQuoteLaneFrame = await quoteLane.evaluate((lane) => {
+    const box = lane.getBoundingClientRect();
+    return { width: box.width, height: box.height };
+  });
   const primaryShard = team.locator(
     `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary`,
   );
@@ -766,11 +770,20 @@ export async function assertComposerShards({
     const quote = quoteShard?.getBoundingClientRect();
     return {
       owner: stack.dataset.agentComposerStack,
-      primary: primary && { top: primary.top, left: primary.left, right: primary.right },
+      primary: primary && {
+        top: primary.top,
+        left: primary.left,
+        right: primary.right,
+        width: primary.width,
+        height: primary.height,
+      },
       quote: quote && {
+        top: quote.top,
         bottom: quote.bottom,
         left: quote.left,
         right: quote.right,
+        width: quote.width,
+        height: quote.height,
         owner: quoteShard.closest(".team-agent")?.dataset.agentLane,
         target: quoteShard.dataset.quoteTargetId,
       },
@@ -792,6 +805,11 @@ export async function assertComposerShards({
       Math.abs(verticalStack.quote.right - verticalStack.primary.right) < 1,
     `the quote and primary retain one aligned ownership column: ${JSON.stringify(verticalStack)}`,
   );
+  assert.ok(
+    Math.abs(verticalStack.quote.width - verticalStack.primary.width) < 1 &&
+      Math.abs(verticalStack.quote.height - verticalStack.primary.height) < 1,
+    `the quote and primary use the same fixed outer frame: ${JSON.stringify(verticalStack)}`,
+  );
   let previewLabel = await previewShard.locator("header strong").innerText();
   assert.equal(previewLabel, nestedQuotePreview);
   assert.doesNotMatch(previewLabel, /[<>]/, "the producer preview contains no quote marker");
@@ -799,6 +817,38 @@ export async function assertComposerShards({
     await previewShard.getAttribute("title"),
     nestedQuoteMessage,
     "the complete nested message remains reachable from the shard",
+  );
+  const overflowingReply = Array.from(
+    { length: 16 },
+    (_, index) => `independently scrolling quote reply line ${index + 1}`,
+  ).join("\n");
+  const overflowingTextarea = previewShard.getByRole("textbox");
+  const quoteFrameBeforeOverflow = await previewShard.evaluate((shard) => {
+    const box = shard.getBoundingClientRect();
+    return { width: box.width, height: box.height };
+  });
+  await overflowingTextarea.fill(overflowingReply);
+  const quoteOverflow = await previewShard.evaluate((shard) => {
+    const box = shard.getBoundingClientRect();
+    const textarea = shard.querySelector("textarea");
+    return {
+      frame: { width: box.width, height: box.height },
+      textarea: {
+        clientHeight: textarea.clientHeight,
+        scrollHeight: textarea.scrollHeight,
+        overflowY: getComputedStyle(textarea).overflowY,
+      },
+    };
+  });
+  assert.deepEqual(
+    quoteOverflow.frame,
+    quoteFrameBeforeOverflow,
+    "overflowing reply content does not resize its quote composer frame",
+  );
+  assert.ok(
+    ["auto", "scroll"].includes(quoteOverflow.textarea.overflowY) &&
+      quoteOverflow.textarea.scrollHeight > quoteOverflow.textarea.clientHeight,
+    `the overflowing quote reply scrolls inside its fixed composer: ${JSON.stringify(quoteOverflow)}`,
   );
   assert.equal(
     await previewShard.locator(".agent-action-menu").count(),
@@ -1011,13 +1061,61 @@ export async function assertComposerShards({
   );
   assert.equal(await quoteLane.locator(".composer-shard--quote .agent-action-menu").count(), 0);
   assert.equal(await quoteLane.locator(".composer-shard--quote .agent-renew-request").count(), 0);
-  const stackOverflow = await quoteStack.evaluate((stack) => ({
-    clientHeight: stack.clientHeight,
-    scrollHeight: stack.scrollHeight,
-    overflowY: getComputedStyle(stack).overflowY,
-    shardCount: stack.querySelectorAll(".composer-shard").length,
-  }));
+  const stackOverflow = await quoteStack.evaluate((stack) => {
+    const lane = stack.closest(".team-agent");
+    const laneBox = lane.getBoundingClientRect();
+    const primary = stack.querySelector(".composer-shard--primary").getBoundingClientRect();
+    const quotes = [...stack.querySelectorAll(".composer-shard--quote")].map((shard) => {
+      const box = shard.getBoundingClientRect();
+      return {
+        label: shard.querySelector("header strong")?.textContent.trim(),
+        top: box.top,
+        bottom: box.bottom,
+        width: box.width,
+        height: box.height,
+      };
+    });
+    return {
+      clientHeight: stack.clientHeight,
+      scrollHeight: stack.scrollHeight,
+      overflowY: getComputedStyle(stack).overflowY,
+      shardCount: stack.querySelectorAll(".composer-shard").length,
+      lane: { width: laneBox.width, height: laneBox.height },
+      primary: {
+        top: primary.top,
+        bottom: primary.bottom,
+        width: primary.width,
+        height: primary.height,
+      },
+      quotes,
+    };
+  });
   assert.equal(stackOverflow.shardCount, 3);
+  assert.deepEqual(
+    stackOverflow.quotes.map((quote) => quote.label),
+    [nestedQuotePreview, "quoted message"],
+    "quote shards stack by age with the newest immediately above the primary",
+  );
+  assert.deepEqual(
+    stackOverflow.lane,
+    initialQuoteLaneFrame,
+    "accumulating quote composers does not extend the surrounding agent frame",
+  );
+  for (const quote of stackOverflow.quotes) {
+    assert.ok(
+      Math.abs(quote.width - stackOverflow.primary.width) < 1 &&
+        Math.abs(quote.height - stackOverflow.primary.height) < 1,
+      `every quote retains the primary composer's outer dimensions: ${JSON.stringify(stackOverflow)}`,
+    );
+  }
+  const orderedFrames = [...stackOverflow.quotes, stackOverflow.primary];
+  assert.ok(
+    orderedFrames.every(
+      (frame, index) =>
+        index === orderedFrames.length - 1 || frame.bottom <= orderedFrames[index + 1].top + 1,
+    ),
+    `oldest quote, newest quote, and primary do not overlap: ${JSON.stringify(stackOverflow)}`,
+  );
   // The excess height must also be reachable. Clipping the stack instead of
   // scrolling it leaves the height reading below completely unchanged, so that
   // reading alone cannot tell a scrollable stack from a truncated one.
@@ -1031,7 +1129,70 @@ export async function assertComposerShards({
   );
   await assertNoDraftPreview(quoteStack, 3);
 
-  previewShard = quoteLane.locator(".composer-shard--quote").first();
+  const viewport = page.viewportSize();
+  assert.ok(viewport, "the quote-frame fixture has a viewport to restore");
+  try {
+    await page.setViewportSize({ width: 520, height: viewport.height });
+    await quoteLane.scrollIntoViewIfNeeded();
+    const narrow = await quoteStack.evaluate((stack) => {
+      const stackBox = stack.getBoundingClientRect();
+      const primary = stack.querySelector(".composer-shard--primary").getBoundingClientRect();
+      const quotes = [...stack.querySelectorAll(".composer-shard--quote")].map((shard) => {
+        const box = shard.getBoundingClientRect();
+        return {
+          width: box.width,
+          height: box.height,
+          label: shard.querySelector("header strong")?.textContent.trim(),
+          textareaWidth: shard.querySelector("textarea")?.clientWidth,
+          textareaHeight: shard.querySelector("textarea")?.clientHeight,
+        };
+      });
+      return {
+        bodyWidth: document.body.scrollWidth,
+        viewportWidth: innerWidth,
+        stack: { top: stackBox.top, bottom: stackBox.bottom },
+        primary: { width: primary.width, height: primary.height },
+        quotes,
+      };
+    });
+    assert.ok(
+      narrow.bodyWidth <= narrow.viewportWidth,
+      `narrow quote composers do not widen the document: ${JSON.stringify(narrow)}`,
+    );
+    assert.ok(
+      narrow.quotes.every(
+        (quote) =>
+          Math.abs(quote.width - narrow.primary.width) < 1 &&
+          Math.abs(quote.height - narrow.primary.height) < 1 &&
+          quote.textareaWidth > 0 &&
+          quote.textareaHeight > 0 &&
+          quote.label,
+      ),
+      `narrow quote composers remain equal, editable, and nonblank: ${JSON.stringify(narrow)}`,
+    );
+    const reachability = await quoteStack.evaluate(async (stack) => {
+      stack.scrollTo({ top: 0, behavior: "instant" });
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const stackBox = stack.getBoundingClientRect();
+      const oldest = stack.querySelector(".composer-shard--quote").getBoundingClientRect();
+      stack.scrollTo({ top: stack.scrollHeight, behavior: "instant" });
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const primary = stack.querySelector(".composer-shard--primary").getBoundingClientRect();
+      return {
+        top: { stack: stackBox.top, quote: oldest.top },
+        bottom: { stack: stackBox.bottom, primary: primary.bottom },
+      };
+    });
+    assert.ok(
+      reachability.top.quote >= reachability.top.stack - 1 &&
+        reachability.bottom.primary <= reachability.bottom.stack + 1,
+      `the bounded narrow stack can reveal both oldest quote and displaced primary: ${JSON.stringify(reachability)}`,
+    );
+  } finally {
+    await page.setViewportSize(viewport);
+  }
+
+  previewShard = quoteLane.locator(".composer-shard--quote").last();
   await previewShard.waitFor();
   previewLabel = await previewShard.locator("header strong").innerText();
   assert.equal(previewLabel, "quoted message", "an absent preview has a visible placeholder");

@@ -210,9 +210,8 @@ pub(crate) fn quote_lane(members: &[LaneMember], message: &AgentMessage) -> Cano
 
 fn sort_quotes(quotes: &mut [QuoteDraft]) {
     quotes.sort_by(|left, right| {
-        right
-            .order
-            .cmp(&left.order)
+        left.order
+            .cmp(&right.order)
             .then_with(|| left.identity.cmp(&right.identity))
     });
 }
@@ -357,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_identity_deduplicates_without_conflating_equal_text_and_sorts_newest_first() {
+    fn quote_identity_deduplicates_without_conflating_equal_text_and_sorts_oldest_first() {
         let mut store = DraftStore::default();
         assert_eq!(
             store.add_quote(
@@ -397,7 +396,7 @@ mod tests {
             .iter()
             .map(|quote| quote.identity.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(identities, ["message-new", "message-old"]);
+        assert_eq!(identities, ["message-old", "message-new"]);
 
         store.remove_quote("agent-a".to_owned(), "message-old");
         assert_eq!(store.get("agent-a").unwrap().quotes.len(), 1);
@@ -497,7 +496,7 @@ mod tests {
                 .iter()
                 .map(|quote| quote.identity.as_str())
                 .collect::<Vec<_>>(),
-            ["newer-quote", "sent-quote"]
+            ["sent-quote", "newer-quote"]
         );
         assert_eq!(store.get("agent-b").unwrap().body, "untouched");
     }
