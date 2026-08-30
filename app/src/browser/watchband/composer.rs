@@ -1,6 +1,6 @@
 //! Browser callbacks, activity cards, attachments, and safe Markdown for lane messages.
 
-use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag};
+use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag, TagEnd};
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader};
 use yew::functional::UseReducerDispatcher;
 
@@ -112,7 +112,6 @@ pub(super) fn render_agent_message_card(
         &producer,
     );
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
-    let reported_tasks = watchband::reported_tasks(&message.text);
     let unlinked_media = message
         .media
         .iter()
@@ -165,7 +164,6 @@ pub(super) fn render_agent_message_card(
                 {render_agent_message_footer(
                     message,
                     &correspondent,
-                    reported_tasks,
                     source_authored_millis(message),
                     false,
                     producer,
@@ -281,7 +279,6 @@ fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
 fn render_agent_message_footer(
     message: &wire::AgentMessage,
     correspondent: &view::chrome::Correspondent,
-    reported_tasks: Vec<wire::TaskHandle>,
     source_authored: Option<i64>,
     is_compaction: bool,
     producer: String,
@@ -299,7 +296,6 @@ fn render_agent_message_footer(
         <footer class="message-meta">
             <span class="message-classifiers">
                 <span class="message-key">{if is_compaction { "compaction" } else { "agent" }}</span>
-                {for reported_tasks.into_iter().map(render_reported_task)}
             </span>
             <span
                 class="message-age"
@@ -311,18 +307,6 @@ fn render_agent_message_footer(
             <span class="message-author">{producer}</span>
             {card_actions}
         </footer>
-    }
-}
-
-fn render_reported_task(task: wire::TaskHandle) -> Html {
-    let handle = task.to_string();
-    html! {
-        <span
-            class="message-task-chip"
-            data-task-handle={handle.clone()}
-            aria-label={format!("Reported task {handle}")}
-            title={handle.clone()}
-        >{handle}</span>
     }
 }
 
@@ -687,10 +671,84 @@ fn render_markdown(markdown: &str) -> Html {
         | Options::ENABLE_SMART_PUNCTUATION
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
-    let events = Parser::new_ext(markdown, options).map(sanitize_markdown_event);
+    let mut rendered_tasks = Vec::new();
+    let mut code_block = false;
+    let events = Parser::new_ext(markdown, options).flat_map(|event| {
+        let event = sanitize_markdown_event(event);
+        match &event {
+            MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
+            MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
+            _ => {}
+        }
+        if code_block {
+            vec![event]
+        } else {
+            inline_task_chips(event, &mut rendered_tasks)
+        }
+    });
     let mut output = String::new();
     pulldown_cmark::html::push_html(&mut output, events);
     Html::from_html_unchecked(AttrValue::from(output))
+}
+
+fn inline_task_chips<'a>(
+    event: MarkdownEvent<'a>,
+    rendered: &mut Vec<wire::TaskHandle>,
+) -> Vec<MarkdownEvent<'a>> {
+    match event {
+        MarkdownEvent::Text(text) => inline_task_text(text, rendered),
+        MarkdownEvent::Code(code) => {
+            let Ok(task) = code.parse::<wire::TaskHandle>() else {
+                return vec![MarkdownEvent::Code(code)];
+            };
+            if rendered.contains(&task) {
+                vec![MarkdownEvent::Code(code)]
+            } else {
+                rendered.push(task.clone());
+                vec![MarkdownEvent::InlineHtml(task_chip_html(&task).into())]
+            }
+        }
+        other => vec![other],
+    }
+}
+
+fn inline_task_text<'a>(
+    text: CowStr<'a>,
+    rendered: &mut Vec<wire::TaskHandle>,
+) -> Vec<MarkdownEvent<'a>> {
+    let mentions = watchband::task_mentions(&text);
+    if mentions.is_empty() {
+        return vec![MarkdownEvent::Text(text)];
+    }
+    let mut events = Vec::new();
+    let mut cursor = 0;
+    for (range, task) in mentions {
+        if rendered.contains(&task) {
+            continue;
+        }
+        if cursor < range.start {
+            events.push(MarkdownEvent::Text(
+                text[cursor..range.start].to_owned().into(),
+            ));
+        }
+        events.push(MarkdownEvent::InlineHtml(task_chip_html(&task).into()));
+        rendered.push(task);
+        cursor = range.end;
+    }
+    if cursor < text.len() {
+        events.push(MarkdownEvent::Text(text[cursor..].to_owned().into()));
+    }
+    events
+}
+
+fn task_chip_html(task: &wire::TaskHandle) -> String {
+    // TaskHandle parsing admits only the canonical ASCII handle grammar, so
+    // these fixed attributes cannot acquire markup from authored prose.
+    let handle = task.to_string();
+    format!(
+        "<span class=\"message-task-chip\" data-task-handle=\"{handle}\" \
+         aria-label=\"Reported task {handle}\" title=\"{handle}\">{handle}</span>"
+    )
 }
 
 fn sanitize_markdown_event(event: MarkdownEvent<'_>) -> MarkdownEvent<'_> {

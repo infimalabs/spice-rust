@@ -324,8 +324,13 @@ function assertReferenceGuardRejectsPerturbation(geometry) {
   );
 }
 
-async function assertReportedTaskChip(surface) {
-  const chip = surface.locator(".message-task-chip").first();
+async function assertInlineTaskChip(surface) {
+  assert.equal(
+    await surface.locator(".message-meta .message-task-chip").count(),
+    0,
+    "card footers never repeat a reported task handle",
+  );
+  const chip = surface.locator(".message-body .message-task-chip").first();
   await chip.waitFor();
   const handle = await chip.getAttribute("data-task-handle");
   assert.ok(handle, "the reported-task chip carries its canonical handle");
@@ -340,6 +345,20 @@ async function assertReportedTaskChip(surface) {
     await card.locator(".message-body").innerText(),
     new RegExp(handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     "the chip is derived from the task handle the message body reports",
+  );
+  assert.equal(
+    await card.locator(".message-meta .message-task-chip").count(),
+    0,
+    "the inline identifier has no duplicate footer chip",
+  );
+  const chiplessCard = surface
+    .locator('.mosaic-message-card[data-card-kind="agent-message"]:not(:has(.message-task-chip))')
+    .first();
+  await chiplessCard.waitFor();
+  assert.equal(
+    await chiplessCard.locator(".message-task-chip").count(),
+    0,
+    "a card with no useful inline identifier omits the chip entirely",
   );
   const geometry = await chip.evaluate((element) => {
     const box = element.getBoundingClientRect();
@@ -507,7 +526,7 @@ export async function captureReferenceControls(page, team, artifactPath) {
     assert.equal(await drain.isEnabled(), true, "a real draft enables the Drain action");
     assert.equal(await speech.inputValue(), "0", "the native speech range selects Quiet");
     assert.equal(await lifetime.inputValue(), "2", "the native lifetime range selects Drain");
-    await assertReportedTaskChip(surface);
+    await assertInlineTaskChip(surface);
     const geometry = await surface.evaluate(measureReference);
     assertReferenceGuardRejectsPerturbation(geometry);
     assertReferenceGeometry(geometry);
