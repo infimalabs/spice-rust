@@ -5,7 +5,6 @@ import { join } from "node:path";
 import {
   chooseCanvasView,
   reply,
-  TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
@@ -17,9 +16,10 @@ const WAKE_MS = 15_000;
 /// operator encounters after an agent exits. The browser then crosses its
 /// visible refresh boundary before using the discoverable team action. Pending
 /// directions are cleared first so lifecycle auto-wake cannot consume the
-/// vacancy under test. The resulting operator card proves durable steering,
-/// while a new agent-authored card proves the wake launched a replacement
-/// occupant rather than sending against the departed one.
+/// vacancy under test. The durable inbox proves steering without exposing the
+/// operator-authored direction as a card, while a new agent-authored card proves
+/// the wake launched a replacement occupant rather than sending against the
+/// departed one.
 export async function assertVacantWakeSubmission(page, fixture, seeded) {
   const targetLane = seeded.lane;
   await chooseCanvasView(page, "Agents");
@@ -123,49 +123,51 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     /confirm fresh residency/i,
     "the action explains that steering follows a fresh residency check",
   );
+  await page.evaluate(({ laneId, text }) => {
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    window.__wakeDirectionFact = new Promise((resolve) => {
+      socket.addEventListener("message", async (event) => {
+        const bytes = typeof event.data === "string"
+          ? event.data
+          : event.data instanceof Blob
+            ? await event.data.text()
+            : new TextDecoder().decode(event.data);
+        const frame = JSON.parse(bytes);
+        if (frame.stream === "fact"
+          && frame.fact?.fact?.kind === "steer::sent"
+          && frame.fact.fact.lane === laneId
+          && frame.fact.fact.text === text) {
+          resolve(frame.fact.fact);
+        }
+      });
+    });
+  }, { laneId: targetLane, text: exactDraft });
   await wakeAndSteer.click();
 
-  const directiveCard = console_
-    .locator(
-      `.mosaic-message-card[data-card-kind="operator-message"]`
-        + `[data-agent-lane="${targetLane}"]`,
-    )
-    .filter({ hasText: exactDraft });
-  try {
-    await directiveCard.waitFor({ timeout: WAKE_MS });
-  } catch (error) {
-    const operatorCards = console_.locator('[data-card-kind="operator-message"]');
-    const observed = {
-      lane: await reply(fixture, ["lane"]),
-      inbox: await reply(fixture, ["inbox", targetLane]),
-      member: await lane.evaluate((node) => ({
-        classes: node.className,
-        text: node.textContent,
-        wake: node.dataset.wakeAndSend,
-      })),
-      operatorCardCount: await operatorCards.count(),
-      recentOperatorCards: await operatorCards.evaluateAll((cards) =>
-        cards.slice(-8).map((card) => ({
-          directive: card.dataset.directive,
-          id: card.id,
-          lane: card.dataset.agentLane,
-          phase: card.dataset.layoutPhase,
-          state: card.dataset.state,
-          visible: card.getClientRects().length > 0,
-        })),
-      ),
-    };
-    throw new Error(`wake direction did not render: ${JSON.stringify(observed)}`, {
-      cause: error,
-    });
-  }
-  assert.equal(await directiveCard.count(), 1, "the exact wake draft renders once");
-  const directive = await directiveCard.getAttribute("data-directive");
-  assert.ok(directive, "the wake path renders the durable directive identity");
+  const sent = await page.evaluate((timeout) => Promise.race([
+    window.__wakeDirectionFact,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error("wake direction fact did not arrive")),
+      timeout,
+    )),
+  ]), WAKE_MS);
+  const durableInbox = await reply(fixture, ["inbox", targetLane]);
+  const durable = durableInbox.body.lanes[0].pending.find(
+    (candidate) => candidate.directive === sent.directive,
+  );
+  assert.ok(durable, "wake-and-steer durably preserves the exact authored draft");
+  assert.equal(durable.text, exactDraft, "the durable direction retains the submitted text");
+  const directive = durable.directive;
   assert.equal(
-    await directiveCard.getAttribute("id"),
-    `message-operator-${directive}`,
-    "the Operator card identity derives from the durable directive",
+    await console_.locator('[data-card-kind="operator-message"]').count(),
+    0,
+    "the live client renders no standalone operator card",
+  );
+  assert.equal(
+    await console_.locator(".mosaic-message-card").filter({ hasText: exactDraft }).count(),
+    0,
+    "the unacknowledged wake direction remains outside the conversation",
   );
 
   const after = await reply(fixture, ["lane"]);
@@ -191,31 +193,32 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     { laneId: targetLane, prior: postDirectiveCardKeys },
   );
 
-  const inbox = await reply(fixture, ["inbox", targetLane]);
-  const durable = inbox.body.lanes[0].pending.find((candidate) => candidate.directive === directive);
-  assert.equal(durable?.text, exactDraft, "wake-and-steer preserves the exact authored draft");
-
   await reply(fixture, ["steer", "cancel", directive]);
-  await directiveCard.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await console_.locator('[data-card-kind="operator-message"]').count(), 0);
+  assert.equal(
+    await console_.locator(".mosaic-message-card").filter({ hasText: exactDraft }).count(),
+    0,
+    "cancellation does not publish operator prose",
+  );
   const reloaded = await page.context().newPage();
   try {
     await reloaded.goto(page.url(), { waitUntil: "networkidle" });
     await reloaded.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(reloaded, "Agents");
-    const reloadedCard = reloaded
-      .locator('[data-pane="agent-console"]')
-      .locator(
-        `.mosaic-message-card[data-card-kind="operator-message"]`
-          + `[data-agent-lane="${targetLane}"]`
-          + `[data-directive="${directive}"]`,
-      )
-      .filter({ hasText: exactDraft });
-    await reloadedCard.waitFor({ timeout: WAKE_MS });
-    assert.equal(await reloadedCard.count(), 1, "reload restores the exact wake draft once");
+    const reloadedConsole = reloaded.locator('[data-pane="agent-console"]');
+    await reloadedConsole.getByRole("tab", { name: /^Compose/ }).click();
+    await reloadedConsole.locator(`.team-agent[data-agent-lane="${targetLane}"]`).waitFor({
+      timeout: WAKE_MS,
+    });
     assert.equal(
-      await reloadedCard.getAttribute("id"),
-      `message-operator-${directive}`,
-      "reload preserves the Operator card's directive identity",
+      await reloadedConsole.locator('[data-card-kind="operator-message"]').count(),
+      0,
+      "a fresh client restores no standalone operator card",
+    );
+    assert.equal(
+      await reloadedConsole.locator(".mosaic-message-card").filter({ hasText: exactDraft }).count(),
+      0,
+      "reload keeps the canceled unacknowledged direction invisible",
     );
   } finally {
     await reloaded.close();

@@ -17,9 +17,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    agent_message_source_id, drop_on_lane, focus_after_render, keyboard_submit,
-    operator_message_source_id, paste_images, primary_textarea_id, render_agent_message_card,
-    render_image_indicators, render_operator_message_card, render_quote_shards, update_body,
+    agent_message_source_id, drop_on_lane, focus_after_render, keyboard_submit, paste_images,
+    primary_textarea_id, render_agent_message_card, render_image_indicators, render_quote_shards,
+    update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -217,12 +217,12 @@ fn render_compose(
     }
 }
 
-/// Every stable authored record the lineage can render in source chronology.
+/// Every stable assistant-authored record the lineage can render in source chronology.
 ///
 /// That order reaches the plane only as the order *unseen* keys are offered:
 /// the plane keeps its own creation order and `render_activity_cards` renders
 /// from that, so this chain is not the order an operator sees. A message
-/// arriving while operator direction is visible therefore appends to the lattice
+/// arriving while another record is visible therefore appends to the lattice
 /// tail rather than displacing it, which is decided behavior — see the
 /// tail-by-decision case in `app/tests/mosaic_plane.rs` for why honoring this
 /// order instead would repack the plane on its ordinary path.
@@ -238,13 +238,6 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
                 message: message.clone(),
             })
         })
-        .chain(runtime.operator_messages().iter().filter_map(|message| {
-            lineage
-                .member(message.lane())
-                .map(|_| ActivityCard::Operator {
-                    message: message.clone(),
-                })
-        }))
         .collect::<Vec<_>>();
     cards.sort_by_key(ActivityCard::chronology_key);
     cards
@@ -483,7 +476,7 @@ fn visible_agent_prose(
         {
             watchband::first_nonquoted_prose(&message.text).map(|prose| (message, prose))
         }
-        ActivityCard::Agent { .. } | ActivityCard::Operator { .. } => None,
+        ActivityCard::Agent { .. } => None,
     }
 }
 

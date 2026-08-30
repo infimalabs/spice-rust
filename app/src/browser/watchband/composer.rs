@@ -71,10 +71,6 @@ pub(super) fn agent_message_source_id(message: &wire::AgentMessage) -> String {
     format!("message-{}", agent_message_quote_identity(message))
 }
 
-pub(super) fn operator_message_source_id(message: &crate::runtime::OperatorMessage) -> String {
-    format!("message-operator-{}", message.directive())
-}
-
 pub(super) fn focus_after_render(id: String) {
     spawn_local(async move {
         TimeoutFuture::new(0).await;
@@ -306,103 +302,6 @@ fn render_agent_message_footer(
             <span class="message-author">{producer}</span>
             {card_actions}
         </footer>
-    }
-}
-
-pub(super) fn render_operator_message_card(
-    message: &crate::runtime::OperatorMessage,
-    lane_key: &str,
-    quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
-    speak: &Callback<String>,
-    order: u64,
-    layout: &CardLayout,
-) -> Html {
-    let quote_preview = watchband::first_nonquoted_prose(message.text());
-    let quote_text = message.text().to_owned();
-    let quote_identity = format!("operator-{}", message.directive());
-    let source_id = operator_message_source_id(message);
-    let focus_identity = quote_identity.clone();
-    let focus_lane = lane_key.to_owned();
-    let quote_lane = lane_key.to_owned();
-    let quote_dispatcher = quote_dispatcher.clone();
-    let correspondent = view::chrome::Correspondent {
-        name: "Operator".to_owned(),
-        accent: watchband::accent(message.lane()),
-        speak: speak.clone(),
-        quote: Callback::from(move |()| {
-            quote_dispatcher.dispatch(ComposerAction::AddQuote {
-                lane: quote_lane.clone(),
-                identity: quote_identity.clone(),
-                order,
-                quote: quote_text.clone(),
-                preview: quote_preview.clone(),
-            });
-            focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
-        }),
-    };
-    let authored = message.authored().get().as_millisecond();
-    let chronology = format!(
-        "operator direction {}; authored {}",
-        message.key(),
-        message.authored()
-    );
-    let unlinked_attachments = message
-        .attachments()
-        .iter()
-        .filter(|attachment| {
-            !attachment
-                .is_embedded_in(message.text())
-                .expect("operator message media passed admission before browser rendering")
-        })
-        .collect::<Vec<_>>();
-    html! {
-        <article
-            key={source_id.clone()}
-            id={source_id.clone()}
-            class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
-            aria-label="Operator message"
-            data-directive={message.directive().to_string()}
-            data-card-kind="operator-message"
-            data-message-role="operator"
-            data-mosaic-card-key={source_id}
-            data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
-            data-agent-lane={message.lane().to_string()}
-            data-accent={correspondent.accent.to_string()}
-            data-accent-slot={correspondent.accent.to_string()}
-            data-state={layout.lifecycle.as_str()}
-            data-track={layout.track.to_string()}
-            data-span={layout.span.to_string()}
-            data-base={layout.base.to_string()}
-            data-row={layout.row.to_string()}
-            data-rows={layout.rows.to_string()}
-            data-creation-index={layout.measurement_index.to_string()}
-            data-mosaic-measure-index={layout.measurement_index.to_string()}
-            data-measurement-reads={layout.measurement_reads.to_string()}
-            data-measured-heights={layout.measured_heights.clone()}
-            data-candidate-spans={layout.candidate_spans.clone()}
-            data-measure-span={layout.measure_span.to_string()}
-        >
-            <div class="message-body markdown-body">{render_markdown(message.text())}</div>
-            if !unlinked_attachments.is_empty() {
-                <div class="message-attachments">
-                    {for unlinked_attachments.into_iter().map(|attachment| html! {
-                        <img
-                            src={attachment.data_url.clone()}
-                            alt={attachment.name.clone()}
-                            title={attachment.name.clone()}
-                        />
-                    })}
-                </div>
-            }
-            <footer class="message-meta">
-                <span class="message-key">
-                    {message.key().to_owned()}
-                </span>
-                <Age {authored} class="message-age" title={chronology} />
-                <span class="message-author">{correspondent.name.clone()}</span>
-                {view::chrome::render_card_actions(message.text(), &correspondent)}
-            </footer>
-        </article>
     }
 }
 

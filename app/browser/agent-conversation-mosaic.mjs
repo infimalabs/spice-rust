@@ -171,7 +171,14 @@ export function assertMosaicLifecycleAdvanced(before, after, label) {
   );
 }
 
-export async function assertCompactionBoundary(page, fixture, team, seeded, artifacts) {
+export async function assertCompactionBoundary(
+  page,
+  fixture,
+  team,
+  seeded,
+  artifacts,
+  activityReplay,
+) {
   const before = await committedPlacementSnapshot(team);
   const plane = team.locator(".lane-mosaic-plane");
   const viewport = page.viewportSize();
@@ -242,22 +249,30 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
     "a compaction epoch while scrolled",
   );
 
-  const text = `post-compaction floor witness ${crypto.randomUUID()}`;
-  await reply(fixture, ["steer", seeded.lane, text]);
-  const inbox = await reply(fixture, ["inbox", seeded.lane]);
-  const pending = inbox.body.lanes[0].pending.find((directive) => directive.text === text);
-  assert.ok(pending, "the post-compaction direction reached the compacting lane");
-  const afterCard = team.locator(
-    `.mosaic-message-card[data-card-kind="operator-message"][data-directive="${pending.directive}"]`,
+  const beforeKeys = await team.locator('[data-card-kind="agent-message"]').evaluateAll(
+    (cards) => cards.map((card) => card.dataset.mosaicCardKey),
   );
+  const nextProse = activityReplay.nextAgentProse(seeded.lane);
+  await writeFile(join(seeded.teamWorktrees[0], ".spice-prose-trigger"), "emit\n");
+  const afterMessage = await nextProse;
+  const afterKey = [
+    "message-agent",
+    afterMessage.lane,
+    afterMessage.locus.member,
+    afterMessage.locus.offset,
+    afterMessage.locus.length,
+    afterMessage.locus.event,
+  ].join("-");
+  const afterCard = team.locator(`[data-mosaic-card-key="${afterKey}"]`);
   await afterCard.waitFor({ timeout: TRANSITION_MS });
+  assert.ok(!beforeKeys.includes(afterKey), "post-compaction activity is a new assistant record");
   await waitForPage(
     page,
     "post-compaction activity commits beyond the boundary floor",
     TRANSITION_MS,
-    ({ boundaryKey, directive }) => {
+    ({ boundaryKey, cardKey }) => {
       const boundary = document.querySelector(`[data-mosaic-card-key="${boundaryKey}"]`);
-      const card = document.querySelector(`[data-directive="${directive}"]`);
+      const card = document.querySelector(`[data-mosaic-card-key="${cardKey}"]`);
       if (boundary?.dataset.layoutPhase !== "committed"
         || card?.dataset.layoutPhase !== "committed") return false;
       return Number(card.dataset.base) + Number(card.dataset.rows)
@@ -265,7 +280,7 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
     },
     {
       boundaryKey: await divider.getAttribute("data-mosaic-card-key"),
-      directive: pending.directive,
+      cardKey: afterKey,
     },
   );
   const boundaryBox = await divider.boundingBox();
@@ -441,18 +456,9 @@ function assertUnmoved(armed, finished, label) {
   );
 }
 
-async function cancelDirection(fixture, lane, text) {
-  const inbox = await reply(fixture, ["inbox", lane]);
-  const directive = inbox.body.lanes[0].pending.find((candidate) => candidate.text === text);
-  assert.ok(directive, `the persistent-Mosaic probe reached ${lane}`);
-  await reply(fixture, ["steer", "cancel", directive.directive]);
-}
-
-async function submitDirection(console, lane, text) {
-  const composer = console.locator(`.team-agent[data-agent-lane="${lane}"]`);
-  await composer.getByRole("textbox").fill(text);
-  await console.getByRole("button", { name: "Steer", exact: true }).click();
-  return console.locator(`[data-card-kind="operator-message"][data-agent-lane="${lane}"]`)
+async function submitAssistantActivity(page, console, lane, text, activityReplay) {
+  await activityReplay.injectAgentProse(page, lane, text);
+  return console.locator(`[data-card-kind="agent-message"][data-agent-lane="${lane}"]`)
     .filter({ hasText: text.split("\n", 1)[0] });
 }
 
@@ -501,7 +507,14 @@ async function settleMosaicActivity(page, plane) {
   }), { quietMs: ACTIVITY_QUIET_MS, deadlineMs: ACTIVITY_DEADLINE_MS });
 }
 
-export async function assertPersistentMosaic(page, fixture, console, plane, member) {
+export async function assertPersistentMosaic(
+  page,
+  fixture,
+  console,
+  plane,
+  member,
+  activityReplay,
+) {
   await settleMosaicActivity(page, plane);
   const firstCard = console.locator('.mosaic-message-card[data-layout-phase="committed"]').first();
   const life = console.locator('.team-lifetime input[type="range"]');
@@ -549,7 +562,7 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
   assert.equal(refreshed.commits, refreshProbe.commits, "a no-op refresh commits no plane");
   await settleMosaicActivity(page, plane);
 
-  const tickingAge = console.locator('.mosaic-message-card .message-age[data-age-clock="shared"]')
+  const tickingAge = console.locator('.composer-shard-age-label[data-age-clock="shared"]')
     .filter({ hasText: /^(?:now|\d+s)$/ })
     .last();
   await tickingAge.waitFor();
@@ -557,7 +570,7 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
   const ageBefore = await tickingAge.innerText();
   await waitForPage(page, "a card age advances on the shared clock", TRANSITION_MS,
     ({ authored, before }) => {
-      const age = [...document.querySelectorAll('.message-age[data-age-clock="shared"]')]
+      const age = [...document.querySelectorAll('[data-age-clock="shared"]')]
         .find((candidate) => candidate.dataset.ageAuthored === authored);
       return age?.textContent !== before;
     }, {
@@ -652,7 +665,7 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
     });
     const text = `late Mosaic image ${outcome}\n\n![${outcome}](${url})`;
     const pendingProbe = await armPlacementProbe(plane);
-    const card = await submitDirection(console, member.lane, text);
+    const card = await submitAssistantActivity(page, console, member.lane, text, activityReplay);
     await card.waitFor({ state: "attached", timeout: 10_000 });
     await requested;
     await card.locator('img[data-mosaic-image-state="pending"]').waitFor({ state: "attached" });
@@ -694,19 +707,23 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
     assert.equal(resolved.commits, pending.commits + 1, `late image ${outcome} corrects once`);
     assert.equal(await card.locator("img").getAttribute("data-mosaic-image-state"),
       outcome === "load" ? "loaded" : "error");
-    await cancelDirection(fixture, member.lane, text);
-    await card.waitFor({ timeout: TRANSITION_MS });
     assert.equal(
       await card.getAttribute("data-mosaic-card-key"),
       cardKey,
-      `reconciliation retains the authored ${outcome} operator record`,
+      `reconciliation retains the authored ${outcome} assistant record`,
     );
     await page.unroute(url);
   }
 
   const readyText = `already complete Mosaic image\n\n![ready](data:image/png;base64,${PIXEL_PNG})`;
   const readyProbe = await armPlacementProbe(plane);
-  const readyCard = await submitDirection(console, member.lane, readyText);
+  const readyCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    readyText,
+    activityReplay,
+  );
   await readyCard.waitFor({ state: "attached", timeout: 10_000 });
   await waitForPage(page, "already-complete image commits", TRANSITION_MS, (key) => {
     const card = [...document.querySelectorAll(".mosaic-message-card")]
@@ -720,8 +737,6 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
   assert.ok(ready.retained, "an already-complete image retains untouched card nodes");
   assert.deepEqual(ready.writes, [], "an already-complete image writes no untouched placement");
   assert.equal(ready.commits, readyProbe.commits + 1, "an already-complete image corrects once");
-  await cancelDirection(fixture, member.lane, readyText);
-  await readyCard.waitFor({ timeout: TRANSITION_MS });
   await assertMosaicLattice(page, true);
 }
 
@@ -854,7 +869,6 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
   assert.ok(kinds.has("agent-message"), "agent-authored cards use the measured policy");
   assert.ok(readPaths.has(1), "a short card takes exactly one DOM height read");
   if (requireBothReadPaths) {
-    assert.ok(kinds.has("operator-message"), "operator messages use the measured policy");
     assert.ok(readPaths.has(2), "a tall card takes exactly two DOM height reads");
   }
   return placements;

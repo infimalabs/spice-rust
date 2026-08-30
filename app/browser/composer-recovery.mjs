@@ -192,19 +192,16 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   for (const directive of [firstDirective, secondInbox.found]) {
     await reply(fixture, ["steer", "cancel", directive.directive]);
   }
-  for (const [directive, text] of [
-    [firstDirective, first],
-    [secondInbox.found, second],
-  ]) {
-    const retained = page.locator(
-      `.mosaic-message-card[data-agent-lane="${seeded.lane}"]`
-        + `[data-directive="${directive.directive}"]`,
-    ).filter({ hasText: text });
-    await retained.waitFor({ timeout: TRANSITION_MS });
-    assert.equal(await retained.count(), 1, "cancellation retains one stable operator record");
+  assert.equal(
+    await page.locator('[data-card-kind="operator-message"]').count(),
+    0,
+    "recovered and canceled submissions never render standalone operator cards",
+  );
+  for (const text of [first, second]) {
     assert.equal(
-      await retained.getAttribute("data-mosaic-card-key"),
-      `message-operator-${directive.directive}`,
+      await page.locator(".mosaic-message-card").filter({ hasText: text }).count(),
+      0,
+      "recovered unacknowledged operator prose remains outside the conversation",
     );
   }
 

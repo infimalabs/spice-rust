@@ -3,8 +3,6 @@ import { Buffer } from "node:buffer";
 
 import { TOOL_ACTIVITY_TEXT, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
-const newerProse = "assistant: newest lane prose witness";
-
 function decodeServerFrame(message) {
   return JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
 }
@@ -16,8 +14,11 @@ export async function installActivityReplay(context) {
   let activeSocket;
   let replayed = false;
   let withheldBootstrap = false;
+  let injectedEvent = 10_000;
   const observedProse = [];
   const proseFrames = new Map();
+  const proseWaiters = [];
+  let canonicalProseFrames;
   await context.routeWebSocket(/.*/, (socket) => {
     activeSocket = socket;
     const server = socket.connectToServer();
@@ -32,13 +33,20 @@ export async function installActivityReplay(context) {
         return;
       }
       socket.send(message);
-      if (frame.stream === "message" && frame.message?.activity !== "tool") {
+      if (socket === activeSocket
+        && frame.stream === "message"
+        && frame.message?.activity !== "tool") {
         observedProse.push({
           lane: frame.message?.lane,
           author: frame.message?.author,
           text: frame.message?.text,
         });
         proseFrames.set(frame.message?.lane, frame);
+        for (let index = proseWaiters.length - 1; index >= 0; index -= 1) {
+          if (proseWaiters[index].lane === frame.message?.lane) {
+            proseWaiters.splice(index, 1)[0].resolve(frame.message);
+          }
+        }
       }
       if (captured) return;
       if (
@@ -52,6 +60,9 @@ export async function installActivityReplay(context) {
   });
 
   return {
+    nextAgentProse(lane) {
+      return new Promise((resolve) => proseWaiters.push({ lane, resolve }));
+    },
     async injectAgentProse(page, lane, text) {
       const source = proseFrames.get(lane);
       assert.ok(source, `the route captured an agent prose frame for ${lane}`);
@@ -61,17 +72,38 @@ export async function installActivityReplay(context) {
       frame.message.authored = new Date().toISOString();
       frame.message.authored_synthetic = false;
       delete frame.message.observed;
-      frame.message.locus.event += 10_000;
+      frame.message.locus.event += injectedEvent;
+      injectedEvent += 1;
+      const expectedKey = [
+        "message-agent",
+        frame.message.lane,
+        frame.message.locus.member,
+        frame.message.locus.offset,
+        frame.message.locus.length,
+        frame.message.locus.event,
+      ].join("-");
       activeSocket.send(Buffer.from(JSON.stringify(frame)));
       await waitForPageFunction(
         page,
         "deterministic agent prose reaches the browser",
         TRANSITION_MS,
-        ({ expectedLane, expectedText }) => [...document.querySelectorAll(
-          `[data-card-kind="agent-message"][data-agent-lane="${expectedLane}"]`,
-        )].some((card) => card.textContent?.includes(expectedText)),
-        { expectedLane: lane, expectedText: text },
+        (key) => [...document.querySelectorAll('[data-card-kind="agent-message"]')]
+          .some((card) => card.dataset.mosaicCardKey === key),
+        expectedKey,
+        {
+          observed: async () => ({
+            frame,
+            currentSource: source === proseFrames.get(lane),
+            cards: await page.locator(
+              `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+            ).evaluateAll((cards) => cards.map((card) => ({
+              key: card.dataset.mosaicCardKey,
+              text: card.textContent,
+            }))),
+          }),
+        },
       );
+      return { key: expectedKey };
     },
     async injectSyntheticSnapshot(page, lane, text) {
       const source = proseFrames.get(lane);
@@ -111,17 +143,19 @@ export async function installActivityReplay(context) {
       return { authored: message.authored, text };
     },
     async restoreProseSnapshot(page) {
-      const frames = [...proseFrames.values()];
-      assert.ok(frames.length > 1, "the route retained the lineage prose snapshot");
+      canonicalProseFrames ??= [...proseFrames.values()];
+      const current = [...proseFrames.values()];
+      assert.ok(canonicalProseFrames.length > 1, "the route retained the lineage prose snapshot");
+      assert.ok(current.length > 1, "the route retained current message transport authority");
       assert.ok(activeSocket, "the route retains the current browser WebSocket");
-      const source = frames[0];
+      const source = current[0];
       activeSocket.send(Buffer.from(JSON.stringify({
         stream: "messages",
         v: source.v,
         id: source.id,
         epoch: source.epoch,
         limit: 256,
-        messages: frames.map((frame) => frame.message),
+        messages: canonicalProseFrames.map((frame) => frame.message),
       })));
       await waitForPageFunction(
         page,
@@ -130,8 +164,12 @@ export async function installActivityReplay(context) {
         (expected) => document.querySelectorAll(
           '[data-card-kind="agent-message"]',
         ).length === expected,
-        frames.length,
+        canonicalProseFrames.length,
       );
+      return canonicalProseFrames.map((frame) => ({
+        lane: frame.message.lane,
+        prose: frame.message.text,
+      }));
     },
     async assertBootstrapLiveMessages(console) {
       assert.equal(withheldBootstrap, true, "the route withheld the initial message snapshot");
@@ -166,6 +204,7 @@ export async function installActivityReplay(context) {
         lane: captured.frame.message.lane,
         locus: captured.frame.message.locus,
       };
+      const before = await team.locator(".ticker").innerText();
       await page.evaluate((expected) => {
         const socket = window.__canvasSockets.at(-1);
         if (!socket) throw new Error("canvas WebSocket was not captured");
@@ -200,7 +239,7 @@ export async function installActivityReplay(context) {
       }));
       assert.equal(
         await team.locator(".ticker").innerText(),
-        newerProse,
+        before,
         "a replayed older activity does not walk the status strip backwards",
       );
     },

@@ -16,16 +16,12 @@ pub(super) enum ActivityCard {
         quote_lane: CanonicalUuid,
         message: wire::AgentMessage,
     },
-    Operator {
-        message: crate::runtime::OperatorMessage,
-    },
 }
 
 impl ActivityCard {
     fn key(&self) -> String {
         match self {
             Self::Agent { message, .. } => agent_message_source_id(message),
-            Self::Operator { message } => operator_message_source_id(message),
         }
     }
 
@@ -36,9 +32,6 @@ impl ActivityCard {
                 1,
                 self.key(),
             ),
-            Self::Operator { message } => {
-                (message.authored().get().as_millisecond(), 0, self.key())
-            }
         }
     }
 
@@ -50,12 +43,6 @@ impl ActivityCard {
                 "agent\0{}\0{}\0{}\0{}",
                 member.worktree, message.author, message.locus.event, message.text
             ),
-            Self::Operator { message } => format!(
-                "operator\0{}\0{}\0{}",
-                message.directive(),
-                message.key(),
-                message.text()
-            ),
         }
     }
 
@@ -66,7 +53,7 @@ impl ActivityCard {
             {
                 crate::mosaic::TRACK_COUNT
             }
-            Self::Agent { .. } | Self::Operator { .. } => geometry.base_span,
+            Self::Agent { .. } => geometry.base_span,
         }
     }
 
@@ -524,8 +511,8 @@ fn use_narration(
     let materialized = use_mut_ref(|| false);
     let messages = cards
         .iter()
-        .filter_map(|card| match card {
-            ActivityCard::Agent { message, .. } => Some(NarrationMessage {
+        .map(|card| match card {
+            ActivityCard::Agent { message, .. } => NarrationMessage {
                 lane: message.lane.to_string(),
                 key: format!(
                     "{}:{}:{}:{}:{}",
@@ -536,8 +523,7 @@ fn use_narration(
                     message.locus.event,
                 ),
                 text: message.text.clone(),
-            }),
-            ActivityCard::Operator { .. } => None,
+            },
         })
         .collect::<Vec<_>>();
     use_effect_with((speech, messages), move |(speech, messages)| {
@@ -1006,14 +992,6 @@ fn render_activity_cards(
                     member,
                     *quote_lane,
                     message,
-                    &properties.quote_dispatcher,
-                    &speak,
-                    quote_order,
-                    &layout,
-                ),
-                ActivityCard::Operator { message } => render_operator_message_card(
-                    message,
-                    &message.lane().to_string(),
                     &properties.quote_dispatcher,
                     &speak,
                     quote_order,

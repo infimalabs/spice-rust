@@ -17,7 +17,6 @@ import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertSyntheticComposerObservation } from "./composer-shards.mjs";
 import {
   chooseCanvasView,
-  journalExtent,
   reply,
   replyAsLane,
   CONNECT_MS,
@@ -281,25 +280,28 @@ async function waitForLeaseAgentOccupant(fixture, worktree, timeout) {
   throw new Error(`timed out waiting for automatic lease occupant: ${JSON.stringify(last)}`);
 }
 
+async function assertOperatorProseHidden(console, text, label) {
+  assert.equal(
+    await console.locator('[data-card-kind="operator-message"]').count(),
+    0,
+    `${label}: Canvas renders no standalone operator cards`,
+  );
+  assert.equal(
+    await console.locator('.mosaic-message-card').filter({ hasText: text }).count(),
+    0,
+    `${label}: unacknowledged operator prose is absent from the conversation`,
+  );
+}
+
 async function assertStableOperatorAuthorship(page, fixture, console, lane, activityReplay) {
   const text = `stable operator authorship ${crypto.randomUUID()}`;
   const composer = console.locator(`.team-agent[data-agent-lane="${lane}"]`);
   await composer.getByRole("textbox").fill(text);
   await console.getByRole("button", { name: "Steer", exact: true }).click();
-
-  const operator = console.locator(
-    `[data-card-kind="operator-message"][data-agent-lane="${lane}"]`,
-  ).filter({ hasText: text });
-  await operator.waitFor({ timeout: 10_000 });
-  const source = await operator.getAttribute("data-mosaic-card-key");
-  assert.match(source, /^message-operator-/);
-  assert.equal(await operator.getAttribute("data-message-role"), "operator");
-  assert.equal((await operator.locator(".message-author").innerText()).trim(), "Operator");
-  assert.equal(
-    await console.locator('[data-card-kind="agent-message"]').filter({ hasText: text }).count(),
-    0,
-    "operator prose never appears in an agent-authored card before acknowledgement",
-  );
+  const inbox = await reply(fixture, ["inbox", lane]);
+  const directive = inbox.body.lanes[0].pending.find((row) => row.text === text);
+  assert.ok(directive, "the focused operator record has durable steering identity");
+  await assertOperatorProseHidden(console, text, "live steering");
   assert.notEqual(
     (await composer.locator(".composer-shard-prose").innerText()).trim(),
     text,
@@ -318,20 +320,8 @@ async function assertStableOperatorAuthorship(page, fixture, console, lane, acti
     .filter({ hasText: agentText }).last();
   await response.waitFor({ timeout: TRANSITION_MS });
   assert.equal(await response.getAttribute("data-message-role"), "agent");
-  assert.notEqual(await response.getAttribute("data-mosaic-card-key"), source);
-
-  const inbox = await reply(fixture, ["inbox", lane]);
-  const directive = inbox.body.lanes[0].pending.find((row) => row.text === text);
-  assert.ok(directive, "the focused operator record has durable steering identity");
   await reply(fixture, ["steer", "cancel", directive.directive]);
-  await operator.waitFor({ timeout: TRANSITION_MS });
-  assert.equal(await operator.getAttribute("data-mosaic-card-key"), source);
-  assert.equal(await operator.count(), 1, "reconciliation neither replaces nor duplicates operator prose");
-  assert.equal(
-    await console.locator('[data-card-kind="agent-message"]').filter({ hasText: text }).count(),
-    0,
-    "agent acknowledgement never relabels the retained operator record",
-  );
+  await assertOperatorProseHidden(console, text, "canceled steering");
 }
 
 async function assertExternalOperatorReplay(page, fixture, console, lane, worktree) {
@@ -363,83 +353,53 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   ), sent.body.directive);
   assert.equal(streamed.actor, "operator", `external steer retains operator authorship: ${JSON.stringify(streamed)}`);
   assert.equal(streamed.fact.lane, lane, "external steer fact retains its target lane");
-  const source = `message-operator-${sent.body.directive}`;
-  const card = console.locator(
-    `[data-card-kind="operator-message"][data-directive="${sent.body.directive}"]`,
-  );
-  await waitForPage(page, "external operator card renders", TRANSITION_MS, (directive) => (
-    [...document.querySelectorAll('[data-card-kind="operator-message"]')].some((candidate) => (
-      candidate.dataset.directive === directive && candidate.checkVisibility()
-    ))
-  ), sent.body.directive, {
-    observed: async () => ({
-      fact: streamed,
-      cards: await console.locator('[data-card-kind="operator-message"]').evaluateAll((cards) => (
-        cards.map((candidate) => ({
-          directive: candidate.dataset.directive,
-          phase: candidate.dataset.layoutPhase,
-          visible: candidate.checkVisibility(),
-        }))
-      )),
-    }),
-  });
-  assert.equal(await card.count(), 1, "an external direction renders once on the live client");
-  assert.equal(await card.getAttribute("data-mosaic-card-key"), source);
-  assert.equal(await card.getAttribute("data-message-role"), "operator");
-  assert.equal((await card.locator(".message-author").innerText()).trim(), "Operator");
+  await assertOperatorProseHidden(console, text, "external live steering");
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Compose/ }).click();
-  await card.waitFor({ timeout: CONNECT_MS });
-  assert.equal(await card.count(), 1, "bootstrap restores one live external direction");
-  assert.equal(await card.getAttribute("data-mosaic-card-key"), source);
+  await assertOperatorProseHidden(console, text, "pre-acknowledgement replay");
 
-  const plane = console.locator(".lane-mosaic-plane");
-  const beforeEvidence = await journalExtent(fixture);
   await writeFile(join(worktree, ".spice-ack-trigger"), `${sent.body.key}\n`);
-  await console.locator(
+  const acknowledgedCard = console.locator(
     `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
-  ).filter({ hasText: `ACK ${sent.body.key}` }).waitFor({ timeout: CONNECT_MS });
-  const evidenceDeadline = Date.now() + CONNECT_MS;
-  let evidence = beforeEvidence;
-  while (evidence.facts <= beforeEvidence.facts && Date.now() < evidenceDeadline) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    evidence = await journalExtent(fixture);
-  }
-  assert.ok(
-    evidence.facts > beforeEvidence.facts,
-    `ACK transcript evidence becomes durable: before=${JSON.stringify(beforeEvidence)} after=${JSON.stringify(evidence)}`,
+  ).filter({ hasText: text });
+  await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
+  assert.equal(await acknowledgedCard.count(), 1, "acknowledgement renders one assistant card");
+  assert.equal(await acknowledgedCard.getAttribute("data-message-role"), "agent");
+  assert.equal(
+    (await acknowledgedCard.locator("blockquote").innerText()).trim(),
+    `ACK ${sent.body.key}: ${text}`,
+    "the assistant card quotes the acknowledged operator direction",
   );
-  await waitForPage(page, "external operator replay Mosaic settles", TRANSITION_MS, () => {
+  assert.match(
+    (await acknowledgedCard.locator(".message-body").innerText()).trim(),
+    /\napplied$/,
+    "the assistant response follows its acknowledgement quote",
+  );
+  assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
+  await waitForPage(page, "external acknowledgement Mosaic settles", TRANSITION_MS, () => {
     const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
     return element?.dataset.measurementPhase === "ready"
       && element.dataset.measurementPending === "0";
   });
-  const commits = Number(await plane.getAttribute("data-plane-commits"));
   const acknowledged = await replyAsLane(worktree, lane, ["ack", sent.body.key]);
   await waitForPage(page, "external acknowledgement reaches Canvas", TRANSITION_MS, (cursor) => (
     document.querySelector(".bar-meta")?.textContent === cursor
   ), `cursor ${acknowledged.seq.last}`);
-  await waitForPage(page, "acknowledgement refresh leaves Mosaic settled", TRANSITION_MS, () => (
-    document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')
-      ?.dataset.measurementPending === "0"
-  ));
-  assert.equal(await card.count(), 1, "acknowledgement retains one operator record");
-  assert.equal(await card.getAttribute("data-mosaic-card-key"), source);
-  assert.equal(
-    Number(await plane.getAttribute("data-plane-commits")),
-    commits,
-    "an acknowledgement-only refresh is a Mosaic no-op",
-  );
-
+  assert.equal(await acknowledgedCard.count(), 1, "acknowledgement refresh retains one assistant card");
+  assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Compose/ }).click();
-  await card.waitFor({ timeout: CONNECT_MS });
-  assert.equal(await card.count(), 1, "bootstrap restores one acknowledged external direction");
-  assert.equal(await card.getAttribute("data-mosaic-card-key"), source);
-  assert.equal((await card.locator(".message-author").innerText()).trim(), "Operator");
+  await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
+  assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
+  assert.equal(
+    (await acknowledgedCard.locator("blockquote").innerText()).trim(),
+    `ACK ${sent.body.key}: ${text}`,
+    "durable replay restores the operator direction only as an inline quote",
+  );
+  assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
 }
 
 export async function assertAgentConversation(
@@ -500,10 +460,14 @@ export async function assertAgentConversation(
     seated[0].lane,
     teamWorktrees[0],
   );
+  const currentProse = seated.map((member) => activityReplay.nextAgentProse(member.lane));
   await Promise.all([
     writeFile(join(teamWorktrees[0], ".spice-tool-trigger"), "emit\n"),
-    writeFile(join(teamWorktrees[0], ".spice-prose-trigger"), "emit\n"),
+    ...teamWorktrees.slice(0, seated.length).map((worktree) => (
+      writeFile(join(worktree, ".spice-prose-trigger"), "emit\n")
+    )),
   ]);
+  await Promise.all(currentProse);
   await assertInitiallyDeferredMosaicIsReadable(page, console);
   await assertRosterPips(page, console, seated);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
@@ -533,34 +497,39 @@ export async function assertAgentConversation(
     const column = console.locator(`.team-agent[data-agent-lane="${lane.lane}"]`);
     await column.getByRole("textbox").fill(messages[index]);
     await console.getByRole("button", { name: "Steer", exact: true }).click();
+  }
+  const quoteLane = console.locator(`.team-agent[data-agent-lane="${seated[3].lane}"]`);
+  await quoteLane.getByRole("textbox").fill(entirelyQuotedMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  const tallLane = console.locator(`.team-agent[data-agent-lane="${seated[1].lane}"]`);
+  await tallLane.getByRole("textbox").fill(tallMosaicMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  const refreshedProse = seated.map((member) => activityReplay.nextAgentProse(member.lane));
+  await Promise.all(teamWorktrees.slice(0, seated.length).map((worktree) => (
+    writeFile(join(worktree, ".spice-prose-trigger"), "emit\n")
+  )));
+  await Promise.all(refreshedProse);
+  for (const [index, lane] of seated.entries()) {
+    await activityReplay.injectAgentProse(page, lane.lane, messages[index]);
     await console
       .locator(`.mosaic-message-card[data-agent-lane="${lane.lane}"]`)
       .filter({ hasText: messageLabels[index] })
       .waitFor({ timeout: 10_000 });
   }
-  const quoteLane = console.locator(`.team-agent[data-agent-lane="${seated[3].lane}"]`);
-  await quoteLane.getByRole("textbox").fill(entirelyQuotedMessage);
-  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await activityReplay.injectAgentProse(page, seated[3].lane, entirelyQuotedMessage);
   await console
     .locator(`.mosaic-message-card[data-agent-lane="${seated[3].lane}"]`)
     .filter({ hasText: "Borrowed context has no authored preview." })
     .waitFor({ timeout: 10_000 });
-  const tallLane = console.locator(`.team-agent[data-agent-lane="${seated[1].lane}"]`);
-  await tallLane.getByRole("textbox").fill(tallMosaicMessage);
-  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await activityReplay.injectAgentProse(page, seated[1].lane, tallMosaicMessage);
   await console
     .locator(`.mosaic-message-card[data-agent-lane="${seated[1].lane}"]`)
     .filter({ hasText: "Measured lattice witness" })
     .waitFor({ timeout: 10_000 });
-  const orderedInbox = await reply(fixture, ["inbox", seated[1].lane]);
-  const pendingOrder = orderedInbox.body.lanes[0].pending.map((directive) => directive.directive);
-  const renderedOperatorOrder = await console
-    .locator(`[data-card-kind="operator-message"][data-agent-lane="${seated[1].lane}"]`)
-    .evaluateAll((cards) => cards.map((card) => card.dataset.directive));
-  assert.deepEqual(
-    renderedOperatorOrder.filter((directive) => pendingOrder.includes(directive)),
-    pendingOrder,
-    "pending direction retains its durable order among stable operator history",
+  assert.equal(
+    await console.locator('[data-card-kind="operator-message"]').count(),
+    0,
+    "pending directions never join assistant-authored Mosaic history",
   );
   assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
   assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
@@ -579,7 +548,7 @@ export async function assertAgentConversation(
   );
   await plane.waitFor();
   const placements = await assertMosaicLattice(page, true);
-  assert.ok(placements.length > seated.length, "the lane packs agent and operator cards");
+  assert.ok(placements.length > seated.length, "the lane packs assistant-authored cards");
   assert.ok(placements.every((card) => card.span >= 1 && card.track + card.span <= 12));
   assert.ok(placements.every((card) => card.rows >= 3));
   assert.ok(placements.every((card) => card.columnStart === card.track + 1));
@@ -589,32 +558,13 @@ export async function assertAgentConversation(
   for (const member of seated) {
     assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
   }
-  await assertPersistentMosaic(page, fixture, console, plane, seated[0]);
-
-  const operatorChrome = await console.locator('[data-card-kind="operator-message"]').evaluateAll(
-    (cards) => cards.map((card) => ({
-      lane: card.dataset.agentLane,
-      accent: card.dataset.accent,
-      edge: getComputedStyle(card).borderRightColor,
-    })),
-  );
-  const repeatedLane = seated[1].lane;
-  const repeatedChrome = operatorChrome.filter((card) => card.lane === repeatedLane);
-  assert.ok(repeatedChrome.length >= 2, "the accent probe has two cards from one lane");
-  assert.ok(repeatedChrome.every((card) => card.accent === repeatedChrome[0].accent));
-  assert.ok(repeatedChrome.every((card) => card.edge === repeatedChrome[0].edge));
-  const distinctChrome = operatorChrome.find(
-    (card) => card.lane !== repeatedLane && card.accent !== repeatedChrome[0].accent,
-  );
-  assert.ok(distinctChrome, "the fixture exposes a different lane accent slot");
-  assert.notEqual(distinctChrome.edge, repeatedChrome[0].edge);
+  await assertPersistentMosaic(page, fixture, console, plane, seated[0], activityReplay);
 
   // The first and fourth lanes hold one slot between them, by the construction
   // teamLaneIds explains. That is the ordinary case for a lineage, so the
   // colour is decoration and the assertions below are what an operator and a
   // test actually read to tell the two apart. A message card names its producer
-  // as the worktree leaf beside the short author; operator records use their
-  // explicit role label, which is why the pairing is asserted on agent cards.
+  // as the worktree leaf beside the short author.
   const messageChrome = await console.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => ({
       lane: card.dataset.agentLane,
@@ -636,29 +586,23 @@ export async function assertAgentConversation(
     "the producer name is what stays distinct when the colour does not",
   );
   const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
-  for (const kind of ["agent-message", "operator-message"]) {
-    const card = console.locator(`[data-card-kind="${kind}"]`).first();
-    assert.ok((await card.locator(".message-author").innerText()).trim());
-    assert.deepEqual(
-      await card.locator(".message-actions button").evaluateAll(
-        (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
-      ),
-      expectedActions,
-      `${kind} exposes the reference speak, quote, and copy controls`,
-    );
-  }
+  const actionCard = console.locator('[data-card-kind="agent-message"]').first();
+  assert.ok((await actionCard.locator(".message-author").innerText()).trim());
+  assert.deepEqual(
+    await actionCard.locator(".message-actions button").evaluateAll(
+      (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
+    ),
+    expectedActions,
+    "assistant cards expose the reference speak, quote, and copy controls",
+  );
 
   const scroller = plane;
-  const compensationLane = console.locator(
-    `.team-agent[data-agent-lane="${seated[0].lane}"]`,
-  );
   const compensationViewport = page.viewportSize();
   await page.setViewportSize({ width: compensationViewport.width, height: 360 });
   await scroller.evaluate((element) => element.scrollTo(0, 0));
 
   const topText = `mosaic at-top follow probe ${crypto.randomUUID()}`;
-  await compensationLane.getByRole("textbox").fill(topText);
-  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await activityReplay.injectAgentProse(page, seated[0].lane, topText);
   const topCard = console
     .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
     .filter({ hasText: topText });
@@ -679,12 +623,6 @@ export async function assertAgentConversation(
     };
   }, await topCard.getAttribute("data-mosaic-card-key"));
   assert.deepEqual(topFollow, { scrollTop: 0, visible: true }, "at-top activity follows visibly");
-  const topInbox = await reply(fixture, ["inbox", seated[0].lane]);
-  const topDirective = topInbox.body.lanes[0].pending.find(
-    (directive) => directive.text === topText,
-  );
-  assert.ok(topDirective, "the at-top follow probe reached the real inbox");
-  await reply(fixture, ["steer", "cancel", topDirective.directive]);
   await topCard.waitFor({ timeout: TRANSITION_MS });
 
   await assertMosaicScrollInputs(page, scroller);
@@ -693,8 +631,7 @@ export async function assertAgentConversation(
     "mosaic scroll compensation probe",
     ...Array.from({ length: 72 }, (_, index) => `- exact row delta ${index + 1}`),
   ].join("\n");
-  await compensationLane.getByRole("textbox").fill(compensationMessage);
-  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await activityReplay.injectAgentProse(page, seated[0].lane, compensationMessage);
   const compensationCard = console
     .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
     .filter({ hasText: "mosaic scroll compensation probe" });
@@ -745,12 +682,6 @@ export async function assertAgentConversation(
       '[data-pane="agent-console"] .lane-mosaic-plane',
     )?.dataset.committedWidth) > narrowWidth,
     narrow.committedWidth);
-  const compensationInbox = await reply(fixture, ["inbox", seated[0].lane]);
-  const compensationDirective = compensationInbox.body.lanes[0].pending.find(
-    (directive) => directive.text === compensationMessage,
-  );
-  assert.ok(compensationDirective, "the compensation probe reached the real inbox");
-  await reply(fixture, ["steer", "cancel", compensationDirective.directive]);
   await compensationCard.waitFor({ timeout: TRANSITION_MS });
   await page.locator('.task-pill[data-task-stem="app"]').waitFor();
   await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
@@ -764,24 +695,12 @@ export async function assertAgentConversation(
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   const pendingDirective = inbox.body.lanes[0].pending[0];
   assert.equal(pendingDirective.text, messages[0]);
-  assert.equal(
-    await outgoing.locator(".message-key").innerText(),
-    pendingDirective.key,
-  );
+  assert.equal(await outgoing.getAttribute("data-card-kind"), "agent-message");
   await assertQueuedRosterPip(page, console, seated[0]);
-  const age = outgoing.locator(".message-age");
-  const authoredAt = Date.parse(inbox.body.lanes[0].pending[0].authored);
-  const beforeRead = Date.now();
-  const renderedAge = await age.innerText();
-  const accepted = ageLabelsWithinOneTick(authoredAt, beforeRead, Date.now());
-  assert.ok(
-    accepted.includes(renderedAge),
-    `the card shows authored age: ${JSON.stringify({ renderedAge, accepted })}`,
-  );
-  assert.match(
-    await age.getAttribute("title"),
-    new RegExp(`^operator direction ${pendingDirective.key}; authored .+$`),
-  );
+  const locus = outgoing.locator(".message-age");
+  assert.match((await locus.innerText()).trim(), /^tape \d+:\d+\+\d+#\d+$/);
+  assert.equal(await locus.getAttribute("title"), (await locus.innerText()).trim());
+  assert.equal(await locus.getAttribute("data-age-clock"), null);
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
   for (const mode of ["Filters", "Metrics", "Info"]) {
@@ -794,6 +713,11 @@ export async function assertAgentConversation(
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   await activityReplay.assertOlderToolIgnored(page, console);
+  const restoredProse = await activityReplay.restoreProseSnapshot(page);
+  const restoredQuoteProse = restoredProse.find(
+    (message) => message.lane === team.quoteLane,
+  )?.prose;
+  assert.ok(restoredQuoteProse, "the canonical replay retains the quote lane's assistant prose");
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);
@@ -802,62 +726,18 @@ export async function assertAgentConversation(
     lane: team.lane,
     quoteLane: team.quoteLane,
     agentName: team.agentName,
-    quoteProse: team.quoteProse,
-    primaryHeadings: team.primaryHeadings,
+    quoteProse: restoredQuoteProse,
+    primaryHeadings: restoredProse,
     teamWorktrees,
   };
 }
 
 // The newest thing an agent itself said, which is what a composer heading
 // shows. Each fake agent emits one assistant record naming its own worktree,
-// so this is a different string per lane and seeded operator messages cannot
+// so this is a different string per lane and seeded operator directions cannot
 // masquerade as the producer's own prose.
 function agentProse(worktree) {
   return `Canvas message reports \`CONTROL-1kKbC3j4\` and \`APP-a1\` from ${basename(worktree)}`;
-}
-
-// Mirrors `app::watchband::elapsed_label`, including the saturating day arm
-// that keeps the label inside its fixed slot. Drifting from the Rust bound
-// would make this the more permissive of the two and hide a widened label
-// rather than catch it, so the ceiling is restated here rather than left out
-// as unreachable in the fixtures.
-const AGE_LABEL_MAX_DAYS = 99;
-
-function elapsedLabel(millis) {
-  const seconds = Math.trunc(millis / 1_000);
-  if (seconds <= 0) return "now";
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3_600) return `${Math.trunc(seconds / 60)}m`;
-  if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
-  const days = Math.trunc(seconds / 86_400);
-  return days <= AGE_LABEL_MAX_DAYS ? `${days}d` : `${AGE_LABEL_MAX_DAYS}d+`;
-}
-
-/// The shared clock's period, mirroring `TICK_MILLIS` in
-/// `app/src/browser/clock.rs`.
-const AGE_TICK_MS = 1_000;
-
-/// Every label the card may legitimately be showing when Node reads it.
-///
-/// The canvas no longer spells an age from the instant its frame rendered; it
-/// spells one from a clock published once a tick, which is what lets a quiet
-/// lane keep ageing. The cost is that the label trails a Node-side reading by
-/// up to one publication, so demanding the label a `Date.now()` taken at the
-/// read implies is demanding sub-tick agreement the design never promised.
-///
-/// The window is one tick and nothing more. It is not a load allowance --
-/// `canvas-load.mjs` argues at length that load belongs in the report rather
-/// than in the bound -- and it stays narrow enough to fail: an age spelled from
-/// the wrong instant misses by minutes, not by a second.
-function ageLabelsWithinOneTick(authoredAt, beforeRead, afterRead) {
-  // Stepping a whole tick at a time cannot skip a label, because two instants
-  // one tick apart land in adjacent seconds; the closing instant is added
-  // separately so a read that took less than a step still contributes its own.
-  const labels = new Set([elapsedLabel(afterRead - authoredAt)]);
-  for (let instant = beforeRead - AGE_TICK_MS; instant < afterRead; instant += AGE_TICK_MS) {
-    labels.add(elapsedLabel(instant - authoredAt));
-  }
-  return [...labels];
 }
 
 export async function assertFourAgentDensity(console) {

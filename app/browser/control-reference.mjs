@@ -492,7 +492,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   assert.equal(
     (await renew.innerText()).replaceAll("\n", " "),
     "Renew this agent request renewal",
-    "the operator card names both the action and its renewal request",
+    "the renewal action names both the command and its request",
   );
   const renewalLane = await renew.evaluate(
     (button) => button.closest(".team-agent")?.dataset.agentLane,

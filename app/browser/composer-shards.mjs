@@ -152,26 +152,17 @@ async function appendPrimaryDestinationProbe(team, fixture, lane, ordinal) {
   const inbox = await reply(fixture, ["inbox", lane]);
   const pending = inbox.body.lanes[0].pending.find((directive) => directive.text === text);
   assert.ok(pending, `the primary destination probe reached ${lane}`);
-  const card = team.locator(
-    `.mosaic-message-card[data-card-kind="operator-message"][data-agent-lane="${lane}"]`
-      + `[data-directive="${pending.directive}"]`,
+  assert.equal(
+    await team.locator('[data-card-kind="operator-message"]').count(),
+    0,
+    "a newer direction never creates a standalone source card",
   );
-  await card.waitFor({ timeout: TRANSITION_MS });
-  const order = await team
-    .locator(`.team-activity-grid .mosaic-message-card[data-agent-lane="${lane}"]`)
-    .evaluateAll((cards) => cards.map((candidate) => ({
-      directive: candidate.dataset.directive,
-      kind: candidate.dataset.cardKind,
-    })).map((candidate, index) => ({ ...candidate, index })));
-  const latestMessage = order.filter((candidate) => candidate.kind === "agent-message").at(-1);
-  const probe = order.find((candidate) => candidate.directive === pending.directive);
-  assert.ok(latestMessage, `${lane} renders an agent message before the ordering probe`);
-  assert.ok(probe, `${lane} renders the exact ordering probe directive`);
-  assert.ok(
-    probe.index > latestMessage.index,
-    `${lane} renders a newer directive after its latest agent message: ${JSON.stringify(order)}`,
+  assert.equal(
+    await team.locator(".mosaic-message-card").filter({ hasText: text }).count(),
+    0,
+    "unacknowledged direction text remains outside the activity plane",
   );
-  return { card, directive: pending.directive };
+  return { directive: pending.directive };
 }
 
 /// A draft shard shows the operator what they typed and nothing built from it:
@@ -505,6 +496,7 @@ export async function assertComposerShards({
   nestedQuoteMessage,
   entirelyQuotedMessage,
   latestPrimaryProse,
+  activityReplay,
 }) {
   const nestedCard = quoteActivity
     .filter({ hasText: nestedQuotePreview })
@@ -746,9 +738,18 @@ export async function assertComposerShards({
   for (const lane of seatedLanes) await primaryDestination(team, lane);
   for (const probe of destinationProbes) {
     await reply(fixture, ["steer", "cancel", probe.directive]);
-    await probe.card.waitFor({ timeout: TRANSITION_MS });
   }
 
+  const latestAuthoredQuoteWitness = await activityReplay.injectAgentProse(
+    page,
+    seeded.quoteLane,
+    nestedQuoteMessage,
+  );
+  await activityReplay.injectAgentProse(
+    page,
+    seeded.quoteLane,
+    entirelyQuotedMessage,
+  );
   await nestedCard.click();
   let previewShard = quoteLane
     .locator(".composer-shard--quote")
@@ -819,10 +820,14 @@ export async function assertComposerShards({
   // the draft shard's is below.
   const primaryLink = quotePrimary.locator("header > .composer-shard-link:first-child");
   const primaryHref = await primaryLink.getAttribute("href");
+  const latestAuthoredQuoteCard = team.locator(
+    `[data-mosaic-card-key="${latestAuthoredQuoteWitness.key}"]`,
+  );
+  const latestAuthoredQuoteCardId = await latestAuthoredQuoteCard.getAttribute("id");
   assert.equal(
     primaryHref,
-    primarySources[1],
-    "the primary shard retains this agent's proven stream destination",
+    `#${latestAuthoredQuoteCardId}`,
+    "quote-only borrowed context does not displace the latest authored assistant message",
   );
   await primaryLink.click();
   assert.equal(await page.evaluate(() => window.location.hash), primaryHref);
@@ -844,7 +849,7 @@ export async function assertComposerShards({
   const sourceHref = await sourceLink.getAttribute("href");
   assert.match(
     sourceHref,
-    /^#message-(?:agent|directive|operator)-/,
+    /^#message-(?:agent|directive)-/,
     "the draft shard links to its exact source card",
   );
   await sourceLink.click();

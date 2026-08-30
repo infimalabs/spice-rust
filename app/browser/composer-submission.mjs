@@ -30,6 +30,8 @@ export async function assertCompleteComposerSubmission({
   seeded,
   composer,
   quotedComposer,
+  quoteSource,
+  quoteSourceTitle,
   artifactPath,
 }) {
   await assertNoDraftPreview(lane, 2);
@@ -41,11 +43,14 @@ export async function assertCompleteComposerSubmission({
   await page.screenshot({ path: artifactPath, fullPage: true });
 
   await quotedComposer.getByRole("textbox").press("Control+Enter");
-  await activity.filter({ hasText: "canvas quote reply" }).waitFor({ timeout: 10_000 });
+  await quotedComposer.waitFor({ state: "detached", timeout: 10_000 });
+  const primaryTextarea = lane.locator("textarea[data-primary-composer-target-id]");
+  await primaryTextarea.evaluate((textarea) => {
+    if (document.activeElement === textarea) return;
+    return new Promise((resolve) => textarea.addEventListener("focus", resolve, { once: true }));
+  });
   assert.equal(
-    await lane
-      .locator("textarea[data-primary-composer-target-id]")
-      .evaluate((textarea) => document.activeElement === textarea),
+    await primaryTextarea.evaluate((textarea) => document.activeElement === textarea),
     true,
     "quote keyboard submission returns focus to that target's primary composer",
   );
@@ -54,11 +59,7 @@ export async function assertCompleteComposerSubmission({
     2,
     "target keyboard submission leaves sibling target drafts unchanged",
   );
-  assert.equal(
-    await activity.filter({ hasText: "canvas quote reply" }).locator(".message-body img").count(),
-    2,
-    "durable image links render through the card Markdown body",
-  );
+  assert.equal(await activity.filter({ hasText: "canvas quote reply" }).count(), 0);
 
   const quoted = await reply(fixture, ["inbox", seeded.lane]);
   const quotedDirective = quoted.body.lanes[0].pending.find(
@@ -68,7 +69,7 @@ export async function assertCompleteComposerSubmission({
   assertDocumentOrder(
     quotedDirective,
     [
-      "> browser direction survives streaming",
+      `> ${quoteSourceTitle}`,
       "canvas quote reply",
       "canvas primary body",
       "![pixel.png](data:image/png;base64,",
@@ -85,11 +86,7 @@ export async function assertCompleteComposerSubmission({
     assert.match(attachment.data_url, /^data:image\/png;base64,/);
   }
 
-  await activity
-    .filter({ hasText: "browser direction survives streaming" })
-    .first()
-    .getByRole("button", { name: "Quote this message" })
-    .click();
+  await quoteSource.getByRole("button", { name: "Quote this message" }).click();
   const firstAllQuote = lane.locator(".composer-shard--quote");
   await firstAllQuote.getByRole("textbox").fill("all-agents first quote reply");
   await composer.getByRole("textbox").fill("all-agents first primary");
@@ -104,10 +101,8 @@ export async function assertCompleteComposerSubmission({
   await secondPrimary.getByRole("img", { name: "all-second.png" }).waitFor();
 
   await lane.locator("xpath=ancestor::form[1]").locator(".team-send").click();
-  await activity.filter({ hasText: "all-agents first primary" }).waitFor({ timeout: 10_000 });
-  await quoteActivity.filter({ hasText: "all-agents second primary" }).waitFor({
-    timeout: 10_000,
-  });
+  await firstAllQuote.waitFor({ state: "detached", timeout: 10_000 });
+  await secondAllQuote.waitFor({ state: "detached", timeout: 10_000 });
   const allFirstInbox = await reply(fixture, ["inbox", seeded.lane]);
   const allSecondInbox = await reply(fixture, ["inbox", seeded.quoteLane]);
   const allFirst = allFirstInbox.body.lanes[0].pending.find(
@@ -116,6 +111,8 @@ export async function assertCompleteComposerSubmission({
   const allSecond = allSecondInbox.body.lanes[0].pending.find(
     (directive) => directive.text.includes("all-agents second primary"),
   );
+  assert.equal(await activity.filter({ hasText: "all-agents first primary" }).count(), 0);
+  assert.equal(await quoteActivity.filter({ hasText: "all-agents second primary" }).count(), 0);
   for (const [directive, replyText, primaryText, attachment] of [
     [allFirst, "all-agents first quote reply", "all-agents first primary", "all-first.png"],
     [allSecond, "all-agents second quote reply", "all-agents second primary", "all-second.png"],
