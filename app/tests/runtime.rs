@@ -387,6 +387,7 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
                 model: bound.then(|| "sonnet".to_owned()),
                 effort: bound.then(|| "high".to_owned()),
                 git: bound.then(|| "current".to_owned()),
+                rtk: None,
                 occupant: occupant.map(uuid),
                 lineage: Vec::new(),
                 session: bound.then(|| "session-fixture".to_owned()),

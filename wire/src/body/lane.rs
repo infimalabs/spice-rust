@@ -132,7 +132,89 @@ pub struct LaneArranged {
     pub sources: Vec<LaneSourceBoundary>,
 }
 
-/// Exact model, effort, and observable Git outcome for one vendor launch.
+/// Closed resident admission state for optional RTK rewriting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RtkHealthState {
+    /// The configured executable passed every health probe.
+    Active,
+    /// The configured executable could not be started.
+    Missing,
+    /// The configured executable predates the supported rewrite contract.
+    Obsolete,
+    /// The executable did not implement the required rewrite protocol.
+    ProtocolInvalid,
+    /// A rewritten search changed the probe answer.
+    RewriteUnfaithful,
+}
+
+impl RtkHealthState {
+    /// Stable operator-facing wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Missing => "missing",
+            Self::Obsolete => "obsolete",
+            Self::ProtocolInvalid => "protocol-invalid",
+            Self::RewriteUnfaithful => "rewrite-unfaithful",
+        }
+    }
+}
+
+/// Exact launch-time RTK health verdict published by the resident.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RtkHealth {
+    /// Closed admission state observed for the configured executable.
+    state: RtkHealthState,
+    /// Validated executable version, when version admission reached that far.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    version: Option<String>,
+    /// Source-grounded reason for the verdict.
+    detail: String,
+}
+
+impl RtkHealth {
+    /// Build one complete launch-time verdict.
+    pub fn new(state: RtkHealthState, version: Option<String>, detail: impl Into<String>) -> Self {
+        Self {
+            state,
+            version,
+            detail: detail.into(),
+        }
+    }
+
+    /// Whether supervised shells may enable RTK rewriting.
+    #[must_use]
+    pub const fn active(&self) -> bool {
+        matches!(self.state, RtkHealthState::Active)
+    }
+
+    /// Stable admission state.
+    #[must_use]
+    pub const fn state(&self) -> RtkHealthState {
+        self.state
+    }
+
+    /// Validated RTK version, when version admission reached that far.
+    #[must_use]
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
+
+    /// Source-grounded reason for this verdict.
+    #[must_use]
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+/// Exact model, effort, and observable launch outcomes for one vendor launch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneLaunchIdentity {
@@ -147,6 +229,13 @@ pub struct LaneLaunchIdentity {
         deserialize_with = "crate::optional::present"
     )]
     pub git: Option<String>,
+    /// RTK health observed under the exact supervised launch environment.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub rtk: Option<RtkHealth>,
 }
 
 impl LaneLaunchIdentity {
@@ -156,6 +245,7 @@ impl LaneLaunchIdentity {
             model: model.into(),
             effort: effort.into(),
             git: None,
+            rtk: None,
         }
     }
 
@@ -166,25 +256,50 @@ impl LaneLaunchIdentity {
         self
     }
 
+    /// Attach the resident's launch-time RTK health verdict.
+    #[must_use]
+    pub fn with_rtk(mut self, rtk: RtkHealth) -> Self {
+        self.rtk = Some(rtk);
+        self
+    }
+
     pub(crate) fn from_parts(
         model: Option<String>,
         effort: Option<String>,
         git: Option<String>,
+        rtk: Option<RtkHealth>,
     ) -> Result<Option<Self>, &'static str> {
-        match (model, effort, git) {
-            (Some(model), Some(effort), git) => Ok(Some(Self { model, effort, git })),
-            (None, None, None) => Ok(None),
-            (Some(_), None, _) => Err("lane launch identity is missing effort"),
-            (None, Some(_), _) => Err("lane launch identity is missing model"),
-            (None, None, Some(_)) => Err("lane launch identity is missing model and effort"),
+        match (model, effort, git, rtk) {
+            (Some(model), Some(effort), git, rtk) => Ok(Some(Self {
+                model,
+                effort,
+                git,
+                rtk,
+            })),
+            (None, None, None, None) => Ok(None),
+            (Some(_), None, _, _) => Err("lane launch identity is missing effort"),
+            (None, Some(_), _, _) => Err("lane launch identity is missing model"),
+            (None, None, Some(_), _) | (None, None, None, Some(_)) => {
+                Err("lane launch identity is missing model and effort")
+            }
         }
     }
 
     pub(crate) fn into_parts(
         identity: Option<Self>,
-    ) -> (Option<String>, Option<String>, Option<String>) {
-        identity.map_or((None, None, None), |identity| {
-            (Some(identity.model), Some(identity.effort), identity.git)
+    ) -> (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<RtkHealth>,
+    ) {
+        identity.map_or((None, None, None, None), |identity| {
+            (
+                Some(identity.model),
+                Some(identity.effort),
+                identity.git,
+                identity.rtk,
+            )
         })
     }
 }
@@ -247,6 +362,12 @@ struct LaneSessionDeclaredWire {
         deserialize_with = "crate::optional::present"
     )]
     git: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    rtk: Option<RtkHealth>,
     epoch: CanonicalUuid,
     stream: String,
     identity: String,
@@ -264,7 +385,7 @@ impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
             occupant: wire.occupant,
             worktree: wire.worktree,
             vendor: wire.vendor,
-            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort, wire.git)?,
+            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort, wire.git, wire.rtk)?,
             epoch: wire.epoch,
             stream: wire.stream,
             identity: wire.identity,
@@ -277,7 +398,7 @@ impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
 
 impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
     fn from(declaration: LaneSessionDeclared) -> Self {
-        let (model, effort, git) = LaneLaunchIdentity::into_parts(declaration.launch);
+        let (model, effort, git, rtk) = LaneLaunchIdentity::into_parts(declaration.launch);
         Self {
             lane: declaration.lane,
             occupant: declaration.occupant,
@@ -286,6 +407,7 @@ impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
             model,
             effort,
             git,
+            rtk,
             epoch: declaration.epoch,
             stream: declaration.stream,
             identity: declaration.identity,

@@ -117,6 +117,11 @@ const RESIDENCY: &str = r#"{
       "model": "sonnet",
       "effort": "high",
       "git": "current",
+      "rtk": {
+        "state": "active",
+        "version": "0.45.0",
+        "detail": "rewrite protocol and answer fidelity passed"
+      },
       "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
       "stream": "stdout",
       "identity": "018f7777-7777-7444-8888-999999999999",
@@ -273,6 +278,7 @@ fn a_pre_extension_residency_head_has_one_visible_unrecorded_launch_state() {
         session.get("model").is_none()
             && session.get("effort").is_none()
             && session.get("git").is_none()
+            && session.get("rtk").is_none()
     );
 
     for (present, missing) in [("model", "effort"), ("effort", "model")] {

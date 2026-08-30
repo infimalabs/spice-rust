@@ -91,6 +91,11 @@ pub(super) fn import(
         from: context.row.worktree.clone(),
         to: context.worktree.clone(),
         git: Some(proven.git.clone().into_boxed_str()),
+        rtk: proven
+            .session
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.rtk.clone()),
     };
     let proposal = propose_import(command, epoch, request, &context, &proven, answer.clone());
     let proposal = match proposal {

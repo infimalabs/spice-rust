@@ -728,6 +728,13 @@ pub struct LaneAnswerRow {
         deserialize_with = "crate::optional::present"
     )]
     pub git: Option<String>,
+    /// RTK health observed for the declared occupant launch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub rtk: Option<crate::body::RtkHealth>,
     /// Current occupant, absent between seats.
     #[serde(
         default,
@@ -787,6 +794,13 @@ pub struct LaneChangeAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub git: Option<Box<str>>,
+    /// RTK health for a launch transition; absent for non-launch changes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub rtk: Option<crate::body::RtkHealth>,
 }
 
 /// One bounded continuity event retained in a recall account.

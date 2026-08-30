@@ -54,6 +54,7 @@ pub(super) fn drain(
         from: OCCUPIED.to_owned(),
         to: disposition.to_owned(),
         git: None,
+        rtk: None,
     };
     let proposal = match propose_drain(
         command,

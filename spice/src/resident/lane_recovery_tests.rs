@@ -755,6 +755,11 @@ fn proof(expected: Option<&str>) -> Proof {
             model: "sonnet".into(),
             effort: "high".into(),
             git: "current".into(),
+            rtk: wire::body::RtkHealth::new(
+                wire::body::RtkHealthState::Active,
+                Some("0.45.0".to_owned()),
+                "fixture active",
+            ),
             epoch: uuid(2),
             stream: vendor::RecordStream::Stdout,
             expected: expected.map(str::to_owned),
@@ -927,6 +932,10 @@ fn session_proof_carries_the_one_admitted_launch_identity() {
         .expect("current declaration records its launch");
     assert_eq!(launch.model, "sonnet");
     assert_eq!(launch.effort, "high");
+    let rtk = launch.rtk.expect("current declaration records RTK health");
+    assert_eq!(rtk.state(), wire::body::RtkHealthState::Active);
+    assert_eq!(rtk.version(), Some("0.45.0"));
+    assert_eq!(rtk.detail(), "fixture active");
     assert_eq!(session.identity, "successor-session");
 }
 
@@ -1177,6 +1186,7 @@ fn import_moves_seat_lineage_session_and_claim_into_the_successor_worktree() {
         from: context.row.worktree.clone(),
         to: context.worktree.clone(),
         git: Some("current".into()),
+        rtk: None,
     };
     let proposal = propose_import(
         &admitted(&fixture, &request),

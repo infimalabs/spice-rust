@@ -168,6 +168,7 @@ pub(in crate::resident) struct DeclarationReporter {
     pub(in crate::resident) model: String,
     pub(in crate::resident) effort: String,
     pub(in crate::resident) git: String,
+    pub(in crate::resident) rtk: wire::body::RtkHealth,
     pub(in crate::resident) epoch: CanonicalUuid,
     pub(in crate::resident) stream: vendor::RecordStream,
     pub(in crate::resident) expected: Option<String>,
@@ -274,7 +275,8 @@ impl CaptureReporter for DeclarationReporter {
             vendor: self.vendor.clone(),
             launch: Some(
                 wire::body::LaneLaunchIdentity::new(self.model.clone(), self.effort.clone())
-                    .with_git(self.git.clone()),
+                    .with_git(self.git.clone())
+                    .with_rtk(self.rtk.clone()),
             ),
             epoch: self.epoch,
             stream: record_stream(self.stream).to_owned(),

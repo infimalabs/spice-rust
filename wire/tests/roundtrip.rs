@@ -860,6 +860,7 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         normalized.get("model").is_none()
             && normalized.get("effort").is_none()
             && normalized.get("git").is_none()
+            && normalized.get("rtk").is_none()
     );
 
     let complete = serde_json::json!({
@@ -870,6 +871,11 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         "model": "sonnet",
         "effort": "high",
         "git": "current",
+        "rtk": {
+            "state": "active",
+            "version": "0.45.0",
+            "detail": "rewrite protocol and answer fidelity passed"
+        },
         "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c4",
         "stream": "stdout",
         "identity": "session-a",
@@ -886,8 +892,14 @@ fn a_declared_session_requires_one_complete_launch_identity() {
             launch.model.as_str(),
             launch.effort.as_str(),
             launch.git.as_deref(),
+            launch.rtk.as_ref().map(wire::body::RtkHealth::state),
         ),
-        ("sonnet", "high", Some("current"))
+        (
+            "sonnet",
+            "high",
+            Some("current"),
+            Some(wire::body::RtkHealthState::Active),
+        )
     );
 
     let mut pre_note = complete.clone();
@@ -902,6 +914,20 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         recorded.launch.expect("launch identity remains").git,
         None,
         "compatibility does not invent a launch outcome"
+    );
+
+    let mut pre_rtk = complete.clone();
+    pre_rtk
+        .as_object_mut()
+        .expect("fixture is an object")
+        .remove("rtk");
+    let bytes = serde_json::to_vec(&pre_rtk).expect("fixture encodes");
+    let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
+        .expect("a declaration recorded before RTK verdicts still decodes");
+    assert_eq!(
+        recorded.launch.expect("launch identity remains").rtk,
+        None,
+        "compatibility does not invent a current RTK verdict"
     );
 
     for field in ["model", "effort"] {

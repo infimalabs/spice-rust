@@ -131,6 +131,11 @@ fn declaration_reporter_forwards_the_kernel_exit_to_its_resident_sink() {
         model: "sonnet".to_owned(),
         effort: "high".to_owned(),
         git: "skipped:test".to_owned(),
+        rtk: wire::body::RtkHealth::new(
+            wire::body::RtkHealthState::Active,
+            Some("0.45.0".to_owned()),
+            "fixture active",
+        ),
         epoch: uuid(3),
         stream: vendor::RecordStream::Stdout,
         expected: None,
