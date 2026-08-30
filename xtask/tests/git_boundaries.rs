@@ -63,7 +63,7 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 6] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 9] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
     // control-plane boundary after authored release approval. Each count
@@ -79,6 +79,12 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 6] = [
     // subcommands by name to give them a longer timeout, and issues nothing.
     ("spice/src/task_git/command.rs", "fetch", 1),
     ("spice/src/task_git/command.rs", "push", 1),
+    // The completion interruption fixture creates a bare repository below its
+    // temporary test root and exercises publication conflict recovery against
+    // that local path. These are test-only Git calls, not production authority.
+    ("spice/tests/task_completion_cli.rs", "clone", 1),
+    ("spice/tests/task_completion_cli.rs", "fetch", 1),
+    ("spice/tests/task_completion_cli.rs", "push", 2),
 ];
 
 /// The activation surface, which GIT-06 keeps free of git entirely.
