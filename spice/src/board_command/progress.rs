@@ -130,6 +130,7 @@ pub(super) fn claim_reclaim_with_clock(
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, window.producer());
     guard(&mut write, command.expected().to_vec());
+    let until = window.expiry();
     if let Err(outcome) = append_reclaim(&mut write, entry, command, at, window) {
         return outcome;
     }
