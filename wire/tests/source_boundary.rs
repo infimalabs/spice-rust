@@ -65,6 +65,7 @@ fn task_done() -> body::TaskDone {
     body::TaskDone {
         task: stamp(),
         validation: "the fixture validated".to_owned(),
+        terminal: None,
         git: None,
         source: proven(),
     }
@@ -245,6 +246,7 @@ fn every_carrier_stored_before_boundaries_still_reads_through_the_registry() {
     assert_eq!(registered::<body::ClaimWon>(CLAIM_WON).source, migrated);
     let legacy_done = registered::<body::TaskDone>(TASK_DONE);
     assert_eq!(legacy_done.source, migrated);
+    assert_eq!(legacy_done.terminal, None);
     assert_eq!(
         registered::<body::TaskReviewed>(TASK_REVIEWED).source,
         migrated

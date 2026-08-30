@@ -186,6 +186,13 @@ pub struct TaskDone {
     pub task: TaskStamp,
     /// Evidence the completion rests on.
     pub validation: String,
+    /// Replayable terminal response for the completion operation.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub terminal: Option<TaskCompletionTerminal>,
     /// Repository history published before the workflow advanced.
     #[serde(
         default,
@@ -199,6 +206,23 @@ pub struct TaskDone {
         skip_serializing_if = "SourceBoundary::is_unrecorded"
     )]
     pub source: SourceBoundary,
+}
+
+/// Durable fields needed to reconstruct one terminal task response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCompletionTerminal {
+    /// Identity returned by the initiating running acknowledgement.
+    pub operation: CanonicalUuid,
+    /// Workflow status returned by the completing transaction.
+    pub status: String,
+    /// Exact next action projected by that transaction.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub next: Option<Box<str>>,
 }
 
 /// A review verdict landed with reviewer and assignment witnesses.

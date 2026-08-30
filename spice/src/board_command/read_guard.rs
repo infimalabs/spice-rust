@@ -362,7 +362,9 @@ pub(super) fn resumable_task_completion(
     match crate::gate_command::has_resolution_operation(
         &lane,
         crate::gate_command::ResolutionAuthority {
-            operation: command.id(),
+            operation: done
+                .operation
+                .expect("live task completion requires an operation"),
             task: entry.handle().as_str(),
             actor: command.actor(),
             epoch: claim.epoch,
@@ -406,17 +408,21 @@ fn publish_task_boundary_inner(
     let claim = entry
         .claim()
         .expect("an admitted task boundary has a claim");
-    let validation = match command.body() {
-        wire::intent::Intent::TaskDone(done) => done.validation.as_str(),
-        wire::intent::Intent::TaskReview(review) => review.finding.as_str(),
-        _ => "task boundary",
+    let (validation, operation) = match command.body() {
+        wire::intent::Intent::TaskDone(done) => (
+            done.validation.as_str(),
+            done.operation
+                .expect("live task completion requires an operation"),
+        ),
+        wire::intent::Intent::TaskReview(review) => (review.finding.as_str(), command.id()),
+        _ => ("task boundary", command.id()),
     };
     let resolution = || {
         let evidence = if command.kind() == CommandKind::TaskDone {
             crate::gate_command::resolution_evidence(
                 &lane,
                 crate::gate_command::ResolutionAuthority {
-                    operation: command.id(),
+                    operation,
                     task: entry.handle().as_str(),
                     actor: command.actor(),
                     epoch: claim.epoch,

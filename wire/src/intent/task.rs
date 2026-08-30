@@ -506,6 +506,24 @@ pub struct TaskDone {
     pub task: TaskHandle,
     /// How completion was verified.
     pub validation: String,
+    /// Durable completion identity minted by the initiating client.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operation: Option<CanonicalUuid>,
+}
+
+impl TaskDone {
+    /// Derive the one default completion operation owned by a claim.
+    #[must_use]
+    pub fn operation_for_claim(claim: Seq) -> CanonicalUuid {
+        const CLAIM_OPERATION_PREFIX: u128 = 0x7370_6963_652d_0000_0000_0000_0000_0000;
+        CanonicalUuid::new(uuid::Uuid::from_u128(
+            CLAIM_OPERATION_PREFIX | u128::from(claim.get()),
+        ))
+    }
 }
 
 /// Record an assigned review verdict.

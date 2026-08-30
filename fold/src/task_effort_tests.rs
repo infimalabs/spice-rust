@@ -942,6 +942,7 @@ impl Facts {
         self.push(body::TaskDone {
             task: task(),
             validation: "fixture validated".to_owned(),
+            terminal: None,
             git: None,
             source,
         });

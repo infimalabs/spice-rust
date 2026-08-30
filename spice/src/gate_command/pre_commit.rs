@@ -490,13 +490,6 @@ pub(super) fn has_resolution_operation(
     resolution_operation::exists(repository, authority)
 }
 
-pub(super) fn resolution_terminal_path(
-    repository: &Repository,
-    claim: wire::Seq,
-) -> std::io::Result<PathBuf> {
-    resolution_operation::terminal_path(repository, claim)
-}
-
 #[derive(Debug)]
 struct DispatchGuard {
     _possession: Possession,

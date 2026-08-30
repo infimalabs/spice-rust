@@ -385,6 +385,7 @@ pub(super) fn complete_mined_proposal(fixture: &Fixture, proposal: &wire::TaskHa
             wire::body::TaskDone {
                 task: proposal.born().unwrap(),
                 validation: "operator reviewed the first mined recurrence".to_owned(),
+                terminal: None,
                 git: None,
                 source: wire::body::SourceBoundary::unrecorded(),
             },
