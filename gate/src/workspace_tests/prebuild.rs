@@ -75,8 +75,25 @@ pub(super) fn prebuild_selected_tests(
             artifacts,
         }
     })?;
+    let repair_started = Instant::now();
     repair_missing_binary_outputs(root, environment, cargo, inventory, output)?;
-    prebuilt_test_plan(inventory, &artifacts)
+    writeln!(
+        output,
+        "[rust-test] stage=binary-output-repair-terminal elapsed_ms={} disposition=success",
+        repair_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    let plan_started = Instant::now();
+    let plan = prebuilt_test_plan(inventory, &artifacts)?;
+    writeln!(
+        output,
+        "[rust-test] stage=artifact-plan-terminal elapsed_ms={} disposition=success artifacts={}",
+        plan_started.elapsed().as_millis(),
+        plan.len(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    Ok(plan)
 }
 
 #[derive(Clone, Debug)]
@@ -351,7 +368,7 @@ pub(super) fn prebuilt_test_plan(
 /// scheduling priority so a split long-running harness cannot fall behind smaller
 /// unsplit targets.
 pub(super) fn partition_largest_prebuilt_tests(
-    tests: Vec<PrebuiltTest>,
+    mut tests: Vec<PrebuiltTest>,
     environment: &Environment,
     concurrency: usize,
     output: &mut impl Write,
@@ -359,11 +376,18 @@ pub(super) fn partition_largest_prebuilt_tests(
     const CANDIDATES_PER_LANE: usize = 5;
     const CASES_PER_PARTITION: usize = 5;
 
+    let started = Instant::now();
     let original_count = tests.len();
     if concurrency <= 1 {
         writeln!(
             output,
             "[rust-test] stage=partition artifacts={original_count} candidates=0 shards={original_count}",
+        )
+        .map_err(output_error)?;
+        writeln!(
+            output,
+            "[rust-test] stage=partition-terminal elapsed_ms={} disposition=success",
+            started.elapsed().as_millis(),
         )
         .map_err(output_error)?;
         output.flush().map_err(output_error)?;
@@ -374,21 +398,48 @@ pub(super) fn partition_largest_prebuilt_tests(
         .saturating_add(usize::from(
             tests.iter().any(|test| test.target.kind == "bin"),
         ));
-    let mut candidates = 0;
+    let candidate_count = candidate_limit.min(tests.len());
+    let remaining = tests.split_off(candidate_count);
+    let discovery_started = Instant::now();
+    let discoveries = run_bounded_discovery(&tests, concurrency, |test| {
+        prebuilt_test_cases(test, environment)
+    })?;
+    let discovery_elapsed = discovery_started.elapsed();
+    let failure_index =
+        report_prebuilt_discoveries(&tests, &discoveries, discovery_elapsed, concurrency, output)?;
+    if let Some(failure_index) = failure_index {
+        writeln!(
+            output,
+            "[rust-test] stage=partition-terminal elapsed_ms={} disposition=failed",
+            started.elapsed().as_millis(),
+        )
+        .map_err(output_error)?;
+        output.flush().map_err(output_error)?;
+        return Err(discoveries
+            .into_iter()
+            .find(|discovery| discovery.ordinal == failure_index)
+            .and_then(|discovery| discovery.cases.err())
+            .expect("recorded discovery failure retains its error"));
+    }
+    if discoveries.len() != candidate_count {
+        return Err(WorkspaceTestError::new(format!(
+            "prebuilt test discovery completed {} of {candidate_count} candidate(s) without reporting a failure",
+            discoveries.len(),
+        )));
+    }
+
     let mut partitioned = Vec::new();
-    for test in tests {
-        if candidates >= candidate_limit {
-            partitioned.push(test);
-            continue;
-        }
-        candidates += 1;
-        let cases = prebuilt_test_cases(&test, environment)?;
+    for (test, discovery) in tests.into_iter().zip(discoveries) {
+        let cases = discovery
+            .cases
+            .expect("complete discovery was checked before partitioning");
         let partitions = cases
             .len()
             .div_ceil(CASES_PER_PARTITION)
             .clamp(1, concurrency);
         partitioned.extend(test.into_partitions(&cases, partitions));
     }
+    partitioned.extend(remaining);
     partitioned.sort_by(|left, right| {
         right
             .requires_exclusive_lane()
@@ -400,12 +451,132 @@ pub(super) fn partition_largest_prebuilt_tests(
     });
     writeln!(
         output,
-        "[rust-test] stage=partition artifacts={original_count} candidates={candidates} shards={}",
+        "[rust-test] stage=partition artifacts={original_count} candidates={candidate_count} shards={}",
         partitioned.len(),
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "[rust-test] stage=partition-terminal elapsed_ms={} disposition=success",
+        started.elapsed().as_millis(),
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
     Ok(partitioned)
+}
+
+#[derive(Debug)]
+struct PrebuiltTestDiscovery {
+    ordinal: usize,
+    elapsed: Duration,
+    cases: Result<Vec<String>, WorkspaceTestError>,
+}
+
+fn report_prebuilt_discoveries(
+    tests: &[PrebuiltTest],
+    discoveries: &[PrebuiltTestDiscovery],
+    elapsed: Duration,
+    concurrency: usize,
+    output: &mut impl Write,
+) -> Result<Option<usize>, WorkspaceTestError> {
+    let mut failure_index = None;
+    for discovery in discoveries {
+        let test = &tests[discovery.ordinal];
+        let (disposition, cases) = match &discovery.cases {
+            Ok(cases) => ("success", cases.len().to_string()),
+            Err(_) => {
+                failure_index.get_or_insert(discovery.ordinal);
+                ("failed", "unknown".to_owned())
+            }
+        };
+        writeln!(
+            output,
+            "[rust-test] stage=discovery-terminal package={:?} target={:?} elapsed_ms={} disposition={disposition} cases={cases}",
+            test.package,
+            test.target.name,
+            discovery.elapsed.as_millis(),
+        )
+        .map_err(output_error)?;
+    }
+    let disposition = if failure_index.is_some() {
+        "failed"
+    } else {
+        "success"
+    };
+    writeln!(
+        output,
+        "[rust-test] stage=discovery-batch-terminal elapsed_ms={} disposition={disposition} candidates={} completed={} lanes={}",
+        elapsed.as_millis(),
+        tests.len(),
+        discoveries.len(),
+        concurrency.min(tests.len()),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    Ok(failure_index)
+}
+
+fn run_bounded_discovery<T, F>(
+    candidates: &[T],
+    concurrency: usize,
+    discover: F,
+) -> Result<Vec<PrebuiltTestDiscovery>, WorkspaceTestError>
+where
+    T: Sync,
+    F: Fn(&T) -> Result<Vec<String>, WorkspaceTestError> + Sync,
+{
+    if !(1..=crate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP).contains(&concurrency) {
+        return Err(WorkspaceTestError::new(format!(
+            "prebuilt test discovery concurrency must be between 1 and {}, got {concurrency}",
+            crate::PREBUILT_WORKSPACE_TEST_CONCURRENCY_CAP,
+        )));
+    }
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let lanes = concurrency.min(candidates.len());
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let mut completed = thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(lanes);
+        for _ in 0..lanes {
+            let discover = &discover;
+            let next = &next;
+            let failed = &failed;
+            workers.push(scope.spawn(move || {
+                let mut completed = Vec::new();
+                while !failed.load(AtomicOrdering::Acquire) {
+                    let ordinal = next.fetch_add(1, AtomicOrdering::AcqRel);
+                    let Some(candidate) = candidates.get(ordinal) else {
+                        break;
+                    };
+                    let started = Instant::now();
+                    let cases = discover(candidate);
+                    if cases.is_err() {
+                        failed.store(true, AtomicOrdering::Release);
+                    }
+                    completed.push(PrebuiltTestDiscovery {
+                        ordinal,
+                        elapsed: started.elapsed(),
+                        cases,
+                    });
+                }
+                completed
+            }));
+        }
+        workers
+            .into_iter()
+            .map(|worker| {
+                worker.join().map_err(|_| {
+                    WorkspaceTestError::new("prebuilt test discovery worker thread panicked")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|completed| completed.into_iter().flatten().collect::<Vec<_>>())
+    })?;
+    completed.sort_by_key(|result| result.ordinal);
+    Ok(completed)
 }
 
 fn prebuilt_test_cases(
@@ -813,4 +984,93 @@ struct CargoBuildTarget {
 #[derive(Deserialize)]
 struct CargoBuildProfile {
     test: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+
+    #[test]
+    fn single_lane_partition_reports_its_terminal_timing() {
+        let environment = Environment::new(std::iter::empty::<(OsString, OsString)>())
+            .expect("empty fixture environment is valid");
+        let mut output = Vec::new();
+
+        let partitioned =
+            partition_largest_prebuilt_tests(Vec::new(), &environment, 1, &mut output)
+                .expect("single-lane partition succeeds");
+
+        assert!(partitioned.is_empty());
+        let report = String::from_utf8(output).expect("partition report is UTF-8");
+        assert!(report.contains("stage=partition artifacts=0 candidates=0 shards=0"));
+        assert!(report.contains("stage=partition-terminal elapsed_ms="));
+    }
+
+    #[test]
+    fn bounded_discovery_preserves_candidate_order_and_lane_bound() {
+        let candidates = (0..9).collect::<Vec<_>>();
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+
+        let discoveries = run_bounded_discovery(&candidates, 3, |candidate| {
+            let now_active = active.fetch_add(1, AtomicOrdering::AcqRel) + 1;
+            peak.fetch_max(now_active, AtomicOrdering::AcqRel);
+            thread::sleep(Duration::from_millis(2));
+            active.fetch_sub(1, AtomicOrdering::AcqRel);
+            Ok(vec![candidate.to_string()])
+        })
+        .expect("bounded discovery succeeds");
+
+        assert_eq!(
+            discoveries
+                .iter()
+                .map(|discovery| discovery.ordinal)
+                .collect::<Vec<_>>(),
+            (0..candidates.len()).collect::<Vec<_>>(),
+        );
+        assert!(peak.load(AtomicOrdering::Acquire) <= 3);
+        assert_eq!(active.load(AtomicOrdering::Acquire), 0);
+    }
+
+    #[test]
+    fn bounded_discovery_stops_admission_after_failure() {
+        let candidates = (0..100).collect::<Vec<_>>();
+        let first_wave = Barrier::new(2);
+        let invoked = AtomicUsize::new(0);
+
+        let discoveries = run_bounded_discovery(&candidates, 2, |candidate| {
+            invoked.fetch_add(1, AtomicOrdering::AcqRel);
+            if *candidate < 2 {
+                first_wave.wait();
+            }
+            if *candidate == 0 {
+                Err(WorkspaceTestError::new("fixture discovery failed"))
+            } else {
+                if *candidate == 1 {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Ok(vec![candidate.to_string()])
+            }
+        })
+        .expect("worker pool reports child failures through ordered results");
+
+        assert_eq!(
+            discoveries
+                .iter()
+                .map(|discovery| discovery.ordinal)
+                .collect::<Vec<_>>(),
+            vec![0, 1],
+        );
+        assert!(discoveries[0].cases.is_err());
+        assert_eq!(invoked.load(AtomicOrdering::Acquire), 2);
+    }
+
+    #[test]
+    fn bounded_discovery_refuses_unbounded_concurrency() {
+        let error = run_bounded_discovery(&[0], usize::MAX, |_| Ok(Vec::new()))
+            .expect_err("unbounded discovery concurrency is refused");
+
+        assert!(error.to_string().contains("concurrency must be between 1"));
+    }
 }

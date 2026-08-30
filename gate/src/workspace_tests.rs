@@ -671,16 +671,47 @@ fn execute_selected_tests(
     prebuild_budget: Option<WorkspaceTestBudget>,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
+    let execution_started = Instant::now();
+    let setup_started = Instant::now();
     let environment = inventory.execution_environment(
         environment,
         root,
         roots.writable,
         roots.reusable.is_some(),
     )?;
+    writeln!(
+        output,
+        "[rust-test] stage=selected-environment-terminal elapsed_ms={} disposition=success",
+        setup_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    let inventory_started = Instant::now();
     let selected = inventory.selected(tests)?;
+    writeln!(
+        output,
+        "[rust-test] stage=selected-inventory-terminal elapsed_ms={} disposition=success",
+        inventory_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    let units_started = Instant::now();
     write_selected_test_units(&selected, output)?;
+    writeln!(
+        output,
+        "[rust-test] stage=selected-units-terminal elapsed_ms={} disposition=success",
+        units_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    let target_partition_started = Instant::now();
     let shards = partition_with_target_limit(&selected, SELECTED_TARGETS_PER_SHARD);
     validate_partition_with_target_limit(&selected, &shards, SELECTED_TARGETS_PER_SHARD)?;
+    writeln!(
+        output,
+        "[rust-test] stage=selected-target-partition-terminal elapsed_ms={} disposition=success shards={}",
+        target_partition_started.elapsed().as_millis(),
+        shards.len(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
     let prebuilt = if shards.len() > 1 {
         let prebuilt = prebuild_selected_tests(
             root,
@@ -738,6 +769,13 @@ fn execute_selected_tests(
         )
         .run()?;
     }
+    writeln!(
+        output,
+        "[rust-test] stage=selected-execution-terminal elapsed_ms={} disposition=success",
+        execution_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
     Ok(())
 }
 
