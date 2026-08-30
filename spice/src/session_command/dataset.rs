@@ -295,7 +295,7 @@ fn reduce(
                         }
                     }
                     ToolMoment::Result(outcome) => {
-                        complete_tool_call(dataset, record, &tool.call_id, outcome, &mut pending)?;
+                        complete_tool_call(dataset, record, &tool.call_id, outcome, &mut pending);
                     }
                 },
                 Event::Usage(usage) => push_usage(dataset, record, usage),
@@ -705,17 +705,20 @@ fn complete_tool_call(
     call_id: &str,
     outcome: &ToolOutcome,
     pending: &mut BTreeMap<String, PendingTool>,
-) -> Result<(), Refusal> {
-    let pending = pending.remove(call_id).ok_or_else(|| {
-        refusal(
-            "session::tool-invocation-missing",
-            Some(format!(
-                "{}:{} call_id={call_id}",
-                record.source, record.line
-            )),
-            "restore the matching invocation before its tool outcome",
-        )
-    })?;
+) {
+    let Some(pending) = pending.remove(call_id) else {
+        dataset.residues.push(Residue {
+            source: record.source.clone(),
+            line: record.line,
+            kind: "tool-invocation-missing".to_owned(),
+            detail: format!(
+                "call_id={call_id} outcome was not attributed because no matching invocation preceded it"
+            ),
+            recovery: "restore the matching invocation to account this outcome; independent session evidence remains available"
+                .to_owned(),
+        });
+        return;
+    };
     let failed =
         outcome.result == ToolResult::Failed || outcome.exit_code.is_some_and(|code| code != 0);
     if failed {
@@ -737,7 +740,6 @@ fn complete_tool_call(
         .to_owned();
     }
     touch_turn(dataset, pending.turn, record_timestamp(record));
-    Ok(())
 }
 
 fn push_usage(dataset: &mut Dataset, record: &TypedRecord, usage: &listen::Usage) {

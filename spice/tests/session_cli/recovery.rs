@@ -141,6 +141,77 @@ fn assert_unavailable_turn_identity(scratch: &Scratch) {
 }
 
 #[test]
+fn briefing_retains_an_end_only_mcp_outcome_as_unattributed_residue() {
+    let scratch = Scratch::new("end-only-mcp");
+    let transcript = scratch.path().join("codex-session.jsonl");
+    write_jsonl(
+        &transcript,
+        &[
+            codex_event(
+                "2026-01-03T00:00:00Z",
+                "event_msg",
+                json!({"type": "task_started", "turn_id": "turn-one"}),
+            ),
+            codex_message(
+                "2026-01-03T00:00:01Z",
+                "user",
+                None,
+                "Preserve the independent dialogue.",
+            ),
+            codex_event(
+                "2026-01-03T00:00:02Z",
+                "event_msg",
+                json!({
+                    "type": "mcp_tool_call_end",
+                    "call_id": "exec-end-only",
+                    "invocation": {
+                        "server": "node_repl",
+                        "tool": "js",
+                        "arguments": {"code": "return 1"},
+                    },
+                    "result": {"Ok": {
+                        "content": [{"type": "text", "text": "one"}],
+                        "isError": false,
+                    }},
+                }),
+            ),
+            codex_message(
+                "2026-01-03T00:00:03Z",
+                "assistant",
+                Some("final_answer"),
+                "Independent dialogue preserved.",
+            ),
+            codex_event(
+                "2026-01-03T00:00:04Z",
+                "event_msg",
+                json!({"type": "task_complete", "turn_id": "turn-one"}),
+            ),
+        ],
+    );
+
+    let recall = reply_forms(
+        &strings(&["session", "briefing", &transcript.to_string_lossy()]),
+        &[],
+        "recall",
+    );
+    assert_eq!(recall["window"]["turns"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        recall["window"]["turns"][0]["dialogue"][1]["text"],
+        "Independent dialogue preserved."
+    );
+    assert_eq!(recall["residues"].as_array().map(Vec::len), Some(1));
+    assert_eq!(recall["residues"][0]["kind"], "tool-invocation-missing");
+    assert_eq!(recall["residues"][0]["line"], 3);
+    assert!(
+        recall["residues"][0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("call_id=exec-end-only"))
+    );
+    assert!(recall["residues"][0]["recovery"].is_string());
+    scratch.remove();
+}
+
+#[test]
 fn live_thread_briefing_accounts_final_truncated_record_without_blocking() {
     let scratch = Scratch::new("live-tail");
     let codex_home = scratch.path().join("codex-home");
