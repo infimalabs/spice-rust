@@ -515,6 +515,16 @@ fn accept_timer_fired(
             }
             Ok(())
         }
+        timers::Fired::ClaimWarning(delivery) => {
+            let lane = delivery.lane();
+            let residency = bus
+                .read(move |read| delivery.current_residency(read))
+                .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
+            if let Some(residency) = residency {
+                steering::publish_inbox(bus, command_surface.paths, residency.body(), lane)?;
+            }
+            Ok(())
+        }
         timers::Fired::Stale | timers::Fired::ClaimLapse | timers::Fired::TaskWake(_) => Ok(()),
     }
 }

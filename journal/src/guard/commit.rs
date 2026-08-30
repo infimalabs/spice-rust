@@ -293,6 +293,9 @@ pub(crate) fn steering_fact_identity(
         wire::FactKind::TasteReminded => fact
             .read::<wire::body::TasteReminded>()
             .map(|body| (Some(body.directive), body.key)),
+        wire::FactKind::ClaimLeaseWarned => fact
+            .read::<wire::body::ClaimLeaseWarned>()
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::TasteJudged => {
             fact.read::<wire::body::TasteJudged>()
                 .and_then(|body| match body.decision {
@@ -688,6 +691,7 @@ pub(crate) fn steering_head_agrees(
     match fact.kind() {
         wire::FactKind::SteerSent => sent_head_agrees(fact, at, seq, head),
         wire::FactKind::TasteReminded => reminder_head_agrees(fact, at, seq, head),
+        wire::FactKind::ClaimLeaseWarned => claim_warning_head_agrees(fact, at, seq, head),
         wire::FactKind::TasteJudged => judgment_head_agrees(fact, at, seq, head),
         wire::FactKind::SteerEscalated => escalation_head_agrees(fact, at, head),
         wire::FactKind::SteerRecovered => recovery_head_agrees(fact, head),
@@ -787,6 +791,34 @@ fn reminder_head_agrees(
         && head.escalations.is_empty())
     .then_some(())
     .ok_or_else(|| "taste reminder head disagrees with its creating fact".to_owned())
+}
+
+fn claim_warning_head_agrees(
+    fact: &wire::AnyFact,
+    at: wire::Instant,
+    seq: wire::Seq,
+    head: &wire::SteeringHead,
+) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::ClaimLeaseWarned>()
+        .expect("registered kind");
+    steering_identity_agrees(
+        body.directive,
+        &body.key,
+        body.lane,
+        wire::Disposition::Live,
+        head,
+    )?;
+    (head.created == seq
+        && head.published == at
+        && head.text == body.text
+        && head.control.is_none()
+        && head.attachments.is_empty()
+        && head.expires == body.expiry
+        && head.stage == wire::body::SteeringStage::Overdue
+        && head.escalations.is_empty())
+    .then_some(())
+    .ok_or_else(|| "claim warning head disagrees with its creating fact".to_owned())
 }
 
 fn judgment_head_agrees(

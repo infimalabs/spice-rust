@@ -187,6 +187,8 @@ vocabulary! {
     ClaimLapsed = "claim::lapsed" by BusTimer;
     /// The resident extended a live, epoch-bound lease within its maximum.
     ClaimRenewed = "claim::renewed" by BusTimer;
+    /// A live lease crossed its warning horizon and opened ordinary lane steering.
+    ClaimLeaseWarned = "claim::warned" by BusTimer;
 
     /// The exact normalized plan digest landed at its witnessed board barrier.
     DocApplied = "doc::applied" by CommandDoor;
