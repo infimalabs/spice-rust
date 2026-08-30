@@ -17,17 +17,23 @@ const INITIAL_WINDOW_BYTES: u64 = 256 * 1024;
 pub(in crate::resident) struct BacklogReader {
     cursors: BTreeMap<CanonicalUuid, listen::Checkpoint>,
     state: MessageState,
+    steering: steer::Ledger,
 }
 
 impl BacklogReader {
-    pub(in crate::resident) fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
-        Self {
+    pub(in crate::resident) fn from_snapshot(
+        snapshot: &journal::FactSnapshot,
+    ) -> CommandResult<Self> {
+        let steering = steer::Ledger::from_snapshot(snapshot)
+            .map_err(|error| store_fault("canvas::message-steering-invalid", &error.to_string()))?;
+        Ok(Self {
             cursors: BTreeMap::new(),
             state: MessageState {
                 previews: CallPreviews::default(),
                 observations: MessageObservations::from_snapshot(snapshot),
             },
-        }
+            steering,
+        })
     }
 
     pub(in crate::resident) fn into_state(self) -> MessageState {
@@ -156,6 +162,7 @@ fn publish_scan(
                     observations: &reader.state.observations,
                 },
                 &mut reader.state.previews,
+                Some(&reader.steering),
             ) {
                 match outcome {
                     Outcome::Fault(fault) => {

@@ -189,7 +189,7 @@ pub(super) async fn run_surface(
     let message_snapshot = bus
         .fact_snapshot()
         .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
-    let mut message_reader = message_surface::BacklogReader::from_snapshot(&message_snapshot);
+    let mut message_reader = message_surface::BacklogReader::from_snapshot(&message_snapshot)?;
     message_surface::restore_agent_messages(
         paths,
         residency.body(),
