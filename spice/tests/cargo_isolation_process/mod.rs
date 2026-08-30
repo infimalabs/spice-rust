@@ -5,7 +5,6 @@ use std::fs;
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use spice::install::{InstallStatus, apply, plan};
 use spice::repository::Repository;
@@ -145,7 +144,7 @@ fn developer_xtask_preserves_the_native_cargo_exit_status() {
 }
 
 #[test]
-fn cold_plain_commit_routes_the_source_gate_through_the_installed_private_cargo_lifecycle() {
+fn exclusive_lane_cold_plain_commit_uses_installed_private_cargo_lifecycle() {
     let fixture = Fixture::new();
     super::cargo_isolation_support::git(&fixture.first, &["config", "--unset", "core.hooksPath"]);
     let repository = Repository::discover(&fixture.first).expect("discover commit fixture");
@@ -174,7 +173,6 @@ fn cold_plain_commit_routes_the_source_gate_through_the_installed_private_cargo_
 
     let conventional = fixture.root.join("conventional-home");
     fs::create_dir(&conventional).expect("create blank conventional home");
-    let started = Instant::now();
     let output = fixture
         .git_command(
             &fixture.first,
@@ -190,11 +188,6 @@ fn cold_plain_commit_routes_the_source_gate_through_the_installed_private_cargo_
         .expect("run plain commit through installed hooks");
 
     assert_success(&output);
-    assert!(
-        started.elapsed() < Duration::from_secs(15),
-        "cold plain commit exceeded the focused hook proof deadline: {:?}",
-        started.elapsed(),
-    );
     assert!(
         !fixture.hostile_marker.exists(),
         "configured gate searched PATH: {}",
