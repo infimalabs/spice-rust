@@ -167,6 +167,7 @@ fn effort_fact(kind: FactKind) -> bool {
             | FactKind::ClaimWon
             | FactKind::ClaimRenewed
             | FactKind::ClaimCarried
+            | FactKind::ClaimRebound
             | FactKind::ClaimFreed
             | FactKind::ClaimLapsed
             | FactKind::LaneSeated
@@ -295,6 +296,7 @@ fn apply_lifecycle(
         FactKind::ClaimWon => record_claim_won(envelope, tasks, phases, evidence),
         FactKind::ClaimRenewed => record_claim_renewed(envelope, tasks),
         FactKind::ClaimCarried => record_claim_carried(envelope, tasks),
+        FactKind::ClaimRebound => record_claim_rebound(envelope, tasks),
         FactKind::TaskDone => {
             let body: body::TaskDone = read(envelope);
             close_terminal(
@@ -472,17 +474,54 @@ fn record_claim_carried(
     tasks: &mut BTreeMap<TaskStamp, TaskState>,
 ) {
     let body: body::ClaimCarried = read(envelope);
-    let Some(open) = tasks
-        .get_mut(&body.task)
-        .and_then(|state| state.open.as_mut())
-    else {
+    record_claim_transfer(
+        envelope.seq,
+        body.task,
+        body.lane,
+        body.occupant,
+        body.ancestor,
+        body.source,
+        tasks,
+    );
+}
+
+fn record_claim_rebound(
+    envelope: &wire::Envelope<wire::AnyFact>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
+) {
+    let body: body::ClaimRebound = read(envelope);
+    record_claim_transfer(
+        envelope.seq,
+        body.task,
+        body.lane,
+        body.occupant,
+        body.ancestor,
+        body.source,
+        tasks,
+    );
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "claim transfer fields are shared by carried and rebound facts"
+)]
+fn record_claim_transfer(
+    seq: Seq,
+    task: TaskStamp,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    ancestor: CanonicalUuid,
+    source: body::SourceBoundary,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
+) {
+    let Some(open) = tasks.get_mut(&task).and_then(|state| state.open.as_mut()) else {
         return;
     };
     let expected_ancestor = open
         .carries
         .last()
         .map_or(open.occupant, |carry| carry.occupant);
-    if body.lane != open.lane || body.ancestor != expected_ancestor {
+    if lane != open.lane || ancestor != expected_ancestor {
         push_reason(
             &mut open.reasons,
             EffortUnavailableCode::BrokenCarry,
@@ -491,15 +530,15 @@ fn record_claim_carried(
                     "carry at {} names lane {} ancestor {}, ",
                     "expected lane {} occupant {}"
                 ),
-                envelope.seq, body.lane, body.ancestor, open.lane, expected_ancestor
+                seq, lane, ancestor, open.lane, expected_ancestor
             ),
         );
     }
     open.carries.push(CarryCut {
-        seq: envelope.seq,
-        boundary: body.source,
-        ancestor: body.ancestor,
-        occupant: body.occupant,
+        seq,
+        boundary: source,
+        ancestor,
+        occupant,
     });
 }
 

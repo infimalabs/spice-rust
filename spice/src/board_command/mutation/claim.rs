@@ -80,7 +80,10 @@ fn refuse_if_actor_already_claims(
     Err(refusal(
         "claim::active-exists",
         Some(first.handle().to_string()),
-        "finish, review, unclaim, or reclaim the active task before claiming another",
+        &format!(
+            "run spice task reclaim {} before claiming another task",
+            first.handle()
+        ),
     ))
 }
 

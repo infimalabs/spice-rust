@@ -67,6 +67,7 @@ const PINNED: &[(&str, &str)] = &[
     ("TaskDeleted", "task::deleted"),
     ("ClaimWon", "claim::won"),
     ("ClaimCarried", "claim::carried"),
+    ("ClaimRebound", "claim::rebound"),
     ("ClaimFreed", "claim::freed"),
     ("ClaimLapsed", "claim::lapsed"),
     ("ClaimRenewed", "claim::renewed"),
@@ -151,6 +152,7 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::TaskDeleted => "task",
         FactKind::ClaimWon
         | FactKind::ClaimCarried
+        | FactKind::ClaimRebound
         | FactKind::ClaimFreed
         | FactKind::ClaimLapsed
         | FactKind::ClaimRenewed

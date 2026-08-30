@@ -298,8 +298,9 @@ pub fn prepare_free(repository: &Repository, task: &str) -> Result<(), Error> {
             listed = stranded.join("; "),
         ),
         format!(
-            "run `spice task done {task}` to record those commits under this \
-             task, or reset the lane to the task baseline before freeing it",
+            "run `spice task reclaim {task}` to recover current residency, then \
+             `spice task done {task}` to record those commits; or reset the lane \
+             to the task baseline before freeing it",
         ),
     ))
 }

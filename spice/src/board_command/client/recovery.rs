@@ -102,7 +102,10 @@ pub(in crate::board_command) fn recovery_preflight(
         return Err(refusal(
             "claim::active-exists",
             Some(active.handle().to_string()),
-            "finish, review, unclaim, or reclaim the active task before recovering another",
+            &format!(
+                "run spice task reclaim {} before recovering another task",
+                active.handle()
+            ),
         ));
     }
     let heads = task_heads(board, task)?;

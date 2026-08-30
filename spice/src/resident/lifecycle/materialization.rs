@@ -444,6 +444,7 @@ fn changed_task(
             | wire::FactKind::TaskDeleted
             | wire::FactKind::ClaimWon
             | wire::FactKind::ClaimCarried
+            | wire::FactKind::ClaimRebound
             | wire::FactKind::ClaimFreed
             | wire::FactKind::ClaimLapsed
             | wire::FactKind::ClaimRenewed

@@ -71,6 +71,7 @@ const fn is_claim(kind: wire::FactKind) -> bool {
         kind,
         wire::FactKind::ClaimWon
             | wire::FactKind::ClaimCarried
+            | wire::FactKind::ClaimRebound
             | wire::FactKind::ClaimFreed
             | wire::FactKind::ClaimLapsed
             | wire::FactKind::ClaimRenewed

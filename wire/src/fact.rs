@@ -181,6 +181,8 @@ vocabulary! {
     ClaimWon = "claim::won" by CommandDoor;
     /// Possession passed to a successor with ancestor lineage preserved.
     ClaimCarried = "claim::carried" by ResidentRecognition;
+    /// A lane recovered possession after residency moved ahead of its claim.
+    ClaimRebound = "claim::rebound" by CommandDoor;
     /// Possession was released and the task became eligible again.
     ClaimFreed = "claim::freed" by CommandDoor;
     /// The lease deadline passed and the resident expired possession.
