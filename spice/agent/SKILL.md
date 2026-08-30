@@ -41,10 +41,13 @@ If continuity is clipped, recover only the detail needed to proceed with
 - Handle the operator's current direction first. A durable direction can be
   captured inline on its own line as
   `TASK title=... | project=STEM.CHILD | acceptance=...`, or with
-  `spice task add TITLE --project PROJECT`. Capture does not claim or switch tasks.
+  `spice task add TITLE --project PROJECT`. Capture does not claim or switch
+  tasks; finish the immediate direction, then return to the allocator.
 - Drain allocator-selected work with `spice task next` until it reports no work
-  or a real blocker exists. Work only the phase it assigns; do not hunt parked
-  rows or assume the next phase returns to the same lane.
+  or a real blocker exists. An `allocator-empty` result ends only that drain
+  pass; it does not discharge uncaptured operator direction or other
+  obligations from the current turn. Work only the phase it assigns; do not
+  hunt parked rows or assume the next phase returns to the same lane.
 - Rehydrate any context command printed by an assignment before editing. If the
   description no longer matches the repository or operator state, update,
   split, or release the task instead of forcing stale work forward.
@@ -61,8 +64,9 @@ If continuity is clipped, recover only the detail needed to proceed with
 - Complete implementation with `spice task done --validation TEXT`; complete an
   assigned review with
   `spice task review HANDLE --finding FINDING --note NOTE`. Then run
-  `spice task next` again. A clean review requires inspecting the integrated diff
-  and independently checking proportionate evidence.
+  `spice task next` again and keep draining until `allocator-empty` or a real
+  blocker. A clean review requires inspecting the integrated diff and
+  independently checking proportionate evidence.
 - If a claim moves to another worktree, stop editing and return to the allocator.
   Fold any resulting loose commit into its assigned task with
   `spice task capture`; never leave an uncaptured commit between tasks.

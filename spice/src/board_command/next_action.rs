@@ -57,7 +57,8 @@ pub(super) fn accepted_transition(
     // This check is deliberately first. A completed workflow retains its final
     // phase, but no command may infer another review merely from that phase.
     if entry.workflow().status == "completed" || entry.workflow().completion.is_some() {
-        return NextTransition::Settled;
+        return allocator_continuation(principal, residency, entries, entry)
+            .unwrap_or(NextTransition::Settled);
     }
 
     if principal_can_progress(principal, residency, entries, entry) {
@@ -75,14 +76,32 @@ pub(super) fn accepted_transition(
         return NextTransition::Wake;
     }
 
-    let Ok(subscription) = allocation_subscription(residency, principal) else {
-        return NextTransition::Inert;
-    };
-    if board::selectable_entry(entries, entry, principal, subscription) {
-        NextTransition::Next
-    } else {
-        NextTransition::Inert
+    allocator_continuation(principal, residency, entries, entry).unwrap_or(NextTransition::Inert)
+}
+
+fn allocator_continuation(
+    principal: &Actor,
+    residency: &wire::ResidencyHead,
+    entries: &[Entry],
+    entry: &Entry,
+) -> Option<NextTransition> {
+    if principal_has_active_claim(entries, principal) {
+        return None;
     }
+    let subscription = allocation_subscription(residency, principal).ok()?;
+    // A drain lane asks the allocator even when this row is no longer
+    // selectable; the typed allocator-empty response closes that drain pass.
+    (subscription.policy == wire::intent::LineageLife::Drain
+        || board::selectable_entry(entries, entry, principal, subscription))
+    .then_some(NextTransition::Next)
+}
+
+fn principal_has_active_claim(entries: &[Entry], principal: &Actor) -> bool {
+    entries.iter().any(|candidate| {
+        candidate.claim().is_some_and(|claim| {
+            claim.actor == *principal && claim.disposition == ClaimDisposition::Active
+        })
+    })
 }
 
 fn principal_can_progress(

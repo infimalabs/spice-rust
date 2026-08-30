@@ -183,6 +183,15 @@ fn collect(
         });
     };
     let pending_inbox_count = read.pending_steering(Some(lane.lane))?.len();
+    let mut subscriptions = residency
+        .body()
+        .subscriptions
+        .iter()
+        .filter(|subscription| subscription.lineage_id == lane.lineage_id);
+    let drain_queue = subscriptions
+        .next()
+        .is_some_and(|subscription| subscription.policy == wire::intent::LineageLife::Drain)
+        && subscriptions.next().is_none();
     let heads = read.active_claim_for_actor(&Actor::Lane(lane.lane))?;
     let current = heads
         .as_ref()
@@ -205,6 +214,7 @@ fn collect(
     Ok(BoardObservation {
         state: WorkingState {
             pending_inbox_count,
+            drain_queue,
             claim,
             last_taste: String::new(),
         },

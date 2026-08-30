@@ -107,7 +107,8 @@ fn listed(answer: &BoardAnswer, status: Option<TaskListStatus>) -> String {
 /// counted as work that got done.
 #[test]
 fn a_withdrawal_takes_the_row_off_the_board_and_keeps_its_reason_readable() {
-    let (root, bus, epoch, _) = fixture("delete-record", 1);
+    let (root, bus, epoch, seats) = fixture("delete-record", 1);
+    let lane = Actor::Lane(seats[0].lane);
     let task = add(
         &bus,
         epoch,
@@ -120,7 +121,7 @@ fn a_withdrawal_takes_the_row_off_the_board_and_keeps_its_reason_readable() {
     let outcome = withdraw(
         &bus,
         epoch,
-        Actor::Operator,
+        lane,
         &withdrawal(
             &task,
             "an agent-technique lesson, not a product defect",
@@ -132,6 +133,7 @@ fn a_withdrawal_takes_the_row_off_the_board_and_keeps_its_reason_readable() {
     };
     assert_eq!(answer.task, task);
     assert_eq!(answer.status, "deleted");
+    assert_eq!(answer.next.as_deref(), Some("spice task next"));
     assert_eq!(
         delete_facts(&bus, &task),
         vec![(
