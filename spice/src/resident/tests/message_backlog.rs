@@ -10,6 +10,8 @@ const CODEX_COMPACTION_WITHOUT_TIME: &[u8] = br#"{"type":"compacted"}
 "#;
 const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
 "#;
+const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK 1kQwPZtK 1kQwPZtL: One response."}}
+"#;
 
 #[test]
 fn each_resident_generation_restores_durable_prose_before_canvas_subscription() {
@@ -38,7 +40,8 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
         let publisher = source.message_publisher();
         let snapshot = bus.fact_snapshot().expect("durable message times load");
-        let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot);
+        let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot)
+            .expect("durable steering context loads");
         let mut diagnostic = Vec::new();
         let residency = current_residency(&bus, epoch).expect("residency reads");
         message_surface::restore_agent_messages(
@@ -167,6 +170,121 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
     drop(source);
     bus.shutdown().expect("backlog bus stops");
     fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+#[test]
+fn distributed_acknowledgements_replay_once_with_stable_directive_context() {
+    let (root, paths) = resident_fixture("message-backlog-acknowledgements");
+    let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
+        .expect("backlog bus starts");
+    let epoch = test_uuid(24);
+    let lane = test_uuid(25);
+    let empty_lane = test_uuid(26);
+    let author = test_uuid(27);
+    seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
+    seed_steering(
+        &bus,
+        epoch,
+        lane,
+        test_uuid(28),
+        "1kQwPZtK",
+        "First direction.",
+    );
+    seed_steering(
+        &bus,
+        epoch,
+        lane,
+        test_uuid(29),
+        "1kQwPZtL",
+        "Second direction.",
+    );
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        .expect("the backlog tape opens");
+    tape.tee(CODEX_DISTRIBUTED_ACK)
+        .expect("distributed acknowledgements are captured");
+    let expected = concat!(
+        "> ACK 1kQwPZtK: First direction.\n\n",
+        "> ACK 1kQwPZtL: Second direction.\n\n",
+        "One response."
+    );
+
+    for generation in 0..2 {
+        let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+        let publisher = source.message_publisher();
+        let snapshot = bus.fact_snapshot().expect("steering context reads");
+        let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot)
+            .expect("steering context reduces");
+        let residency = current_residency(&bus, epoch).expect("residency reads");
+        let mut diagnostic = Vec::new();
+        message_surface::restore_agent_messages(
+            &paths,
+            residency.body(),
+            &publisher,
+            &mut reader,
+            &mut diagnostic,
+        )
+        .expect("distributed acknowledgements restore");
+        assert!(diagnostic.is_empty());
+
+        let accepted = wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch,
+        };
+        let request = wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(30 + generation),
+            epoch,
+            subjects: vec![wire::ViewSubject::Messages],
+            after: None,
+        };
+        let (_, frames) = source
+            .begin(&accepted, &request)
+            .expect("Canvas subscription begins");
+        let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+            panic!("expected message snapshot")
+        };
+        assert_eq!(messages.len(), 1, "one transcript event remains one card");
+        assert_eq!(messages[0].text, expected);
+        assert_eq!(messages[0].text.matches("> ACK ").count(), 2);
+        assert_eq!(messages[0].text.matches("One response.").count(), 1);
+        drop(source);
+    }
+
+    bus.shutdown().expect("backlog bus stops");
+    fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+fn seed_steering(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    directive: CanonicalUuid,
+    key: &str,
+    text: &str,
+) {
+    let at = wire::Instant::new(jiff::Timestamp::now()).expect("steering instant");
+    let origin = format!("resident:{epoch}")
+        .parse::<wire::Origin>()
+        .expect("steering origin");
+    let body = wire::body::SteerSent {
+        directive,
+        fanout: None,
+        key: key.to_owned(),
+        lane,
+        text: text.to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: "2030-04-12T19:44:09.271Z".parse().expect("steering expiry"),
+    };
+    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let sent = write
+        .fact(body.clone(), FactCause::Root)
+        .expect("steering fact builds");
+    write.steering_head(sent, move |seq| {
+        steer::Ledger::sent_head(&body, origin, at, seq).expect("steering head builds")
+    });
+    assert!(matches!(bus.commit(write), Ok(CommitOutcome::Committed(_))));
 }
 
 fn seat_backlog_residency(

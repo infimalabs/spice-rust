@@ -1,5 +1,6 @@
 //! Durable taste recognition and fallible Canvas views over admitted lane capture.
 
+use std::collections::BTreeMap;
 use std::io;
 
 use bus::Bus;
@@ -210,7 +211,8 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
             )?;
         }
     }
-    match publish_agent_messages(surfaces.publisher, record, views.state) {
+    let steering = steering_ledger(bus, record)?;
+    match publish_agent_messages(surfaces.publisher, record, views.state, steering.as_ref()) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(
@@ -228,6 +230,7 @@ pub(super) fn publish_agent_messages(
     publisher: &impl AgentMessagePublisher,
     record: &lane::capture::CaptureRecord,
     state: &mut MessageState,
+    steering: Option<&steer::Ledger>,
 ) -> CommandResult<()> {
     let authored = record
         .decoded
@@ -247,6 +250,7 @@ pub(super) fn publish_agent_messages(
                 observations: &state.observations,
             },
             &mut state.previews,
+            steering,
         )?;
     }
     Ok(())
@@ -266,6 +270,7 @@ fn publish_agent_event(
     publisher: &impl AgentMessagePublisher,
     event: AgentEvent<'_>,
     previews: &mut CallPreviews,
+    steering: Option<&steer::Ledger>,
 ) -> CommandResult<()> {
     let AgentEvent {
         lane,
@@ -279,7 +284,7 @@ fn publish_agent_event(
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => (
             AgentActivityKind::Prose,
             prose.locus,
-            present_steering_acknowledgement(&prose.text),
+            present_steering_acknowledgements(&prose.text, steering)?,
             prose.media.clone(),
         ),
         listen::Event::Tool(tool) => (
@@ -396,69 +401,278 @@ fn synthetic_agent_message_authored(
     })
 }
 
-fn present_steering_acknowledgement(text: &str) -> String {
-    let Some(acknowledgement) = steering_acknowledgement(text) else {
-        return text.to_owned();
+fn steering_ledger(
+    bus: &Bus,
+    record: &lane::capture::CaptureRecord,
+) -> CommandResult<Option<steer::Ledger>> {
+    let required = record.decoded.events().iter().any(|event| {
+        matches!(
+            event,
+            listen::Event::Prose(prose)
+                if prose.role == listen::ProseRole::Assistant
+                    && prose.text.lines().any(steering_marker_line)
+        )
+    });
+    if !required {
+        return Ok(None);
+    }
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| store_fault("canvas::message-steering-unavailable", &error.to_string()))?;
+    steer::Ledger::from_snapshot(&snapshot)
+        .map(Some)
+        .map_err(|error| store_fault("canvas::message-steering-invalid", &error.to_string()))
+}
+
+fn steering_marker_line(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("ACK ") || line.starts_with("NACK ")
+}
+
+fn present_steering_acknowledgements(
+    text: &str,
+    steering: Option<&steer::Ledger>,
+) -> CommandResult<String> {
+    let Some(steering) = steering else {
+        return Ok(text.to_owned());
     };
-    let prose = acknowledgement.prose.trim_start();
-    if prose.is_empty() {
-        text.to_owned()
-    } else {
-        prose.to_owned()
+    present_steering_acknowledgements_with_directives(
+        text,
+        &PresentationDirectives::from_ledger(steering),
+    )
+    .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))
+}
+
+#[derive(Debug, Default)]
+struct PresentationDirectives(BTreeMap<steer::Key, String>);
+
+impl PresentationDirectives {
+    fn from_ledger(steering: &steer::Ledger) -> Self {
+        Self(
+            steering
+                .directives()
+                .into_iter()
+                .map(|directive| (directive.key().clone(), directive.text().to_owned()))
+                .collect(),
+        )
     }
 }
 
-#[derive(Debug, Clone)]
-struct SteeringAcknowledgement<'a> {
-    prose: &'a str,
+impl steer::Standing for PresentationDirectives {
+    fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
+        // Presentation replays acknowledgements after their directives retired.
+        // "Live" here lets the canonical scanner recover marker polarity; it
+        // does not mutate the durable steering ledger.
+        self.0.contains_key(key).then_some(wire::Disposition::Live)
+    }
 }
 
-fn steering_acknowledgement(text: &str) -> Option<SteeringAcknowledgement<'_>> {
-    let trimmed = text.trim_start();
-    let leading = text.len() - trimmed.len();
-    let line = trimmed.lines().next()?;
-    let (marker_len, rest) = line
-        .strip_prefix("ACK ")
-        .map(|rest| ("ACK".len(), rest))
-        .or_else(|| line.strip_prefix("NACK ").map(|rest| ("NACK".len(), rest)))?;
-    let colon = rest.find(':')?;
-    let keys = rest[..colon].split_whitespace().collect::<Vec<_>>();
-    if keys.is_empty() || !keys.iter().all(|key| key.parse::<steer::Key>().is_ok()) {
-        return None;
+#[derive(Debug, Default)]
+struct LineAcknowledgements {
+    recognized: Vec<(steer::Key, wire::Disposition)>,
+    missed: bool,
+}
+
+fn present_steering_acknowledgements_with_directives(
+    text: &str,
+    directives: &PresentationDirectives,
+) -> Result<String, String> {
+    let mut lines = BTreeMap::<usize, LineAcknowledgements>::new();
+    for recognition in steer::scan(text, directives) {
+        let line = lines.entry(recognition.locus.line).or_default();
+        match recognition.outcome {
+            steer::ack::scan::Outcome::Retired { key, disposition } => {
+                if !line
+                    .recognized
+                    .iter()
+                    .any(|known| known == &(key.clone(), disposition))
+                {
+                    line.recognized.push((key, disposition));
+                }
+            }
+            steer::ack::scan::Outcome::Missed { .. } => line.missed = true,
+        }
     }
-    let prefix_len = leading + marker_len + 1 + colon + 1;
-    Some(SteeringAcknowledgement {
-        prose: text.get(prefix_len..)?,
-    })
+    if lines.is_empty() {
+        return Ok(text.to_owned());
+    }
+
+    let mut rendered = Vec::new();
+    for (index, source) in text.split('\n').enumerate() {
+        match lines.get(&(index + 1)) {
+            Some(acknowledgements) => rendered.push(render_acknowledgement_line(
+                source,
+                acknowledgements,
+                directives,
+            )?),
+            None => rendered.push(source.to_owned()),
+        }
+    }
+    Ok(rendered.join("\n"))
+}
+
+fn render_acknowledgement_line(
+    source: &str,
+    acknowledgements: &LineAcknowledgements,
+    directives: &PresentationDirectives,
+) -> Result<String, String> {
+    if acknowledgements.missed || acknowledgements.recognized.is_empty() {
+        return Ok(source.to_owned());
+    }
+    let colon = source.find(':').ok_or_else(|| {
+        "canonical acknowledgment recognition named a line without a colon".to_owned()
+    })?;
+    let mut rendered = String::new();
+    for (key, disposition) in &acknowledgements.recognized {
+        let directive = directives
+            .0
+            .get(key)
+            .ok_or_else(|| format!("canonical acknowledgment recognition lost directive {key}"))?;
+        if !rendered.is_empty() {
+            rendered.push_str("\n\n");
+        }
+        append_acknowledgement_quote(&mut rendered, key, *disposition, directive)?;
+    }
+    let prose = source
+        .get(colon + 1..)
+        .ok_or_else(|| "acknowledgment body crossed a non-character boundary".to_owned())?
+        .trim_start();
+    if !prose.is_empty() {
+        rendered.push_str("\n\n");
+        rendered.push_str(prose);
+    }
+    Ok(rendered)
+}
+
+fn append_acknowledgement_quote(
+    rendered: &mut String,
+    key: &steer::Key,
+    disposition: wire::Disposition,
+    directive: &str,
+) -> Result<(), String> {
+    let marker = match disposition {
+        wire::Disposition::Acked => "ACK",
+        wire::Disposition::Declined => "NACK",
+        wire::Disposition::Live
+        | wire::Disposition::Lapsed
+        | wire::Disposition::DeadLettered
+        | wire::Disposition::Canceled => {
+            return Err(format!(
+                "acknowledgment scanner returned nonterminal disposition {disposition:?}"
+            ));
+        }
+    };
+    rendered.push_str("> ");
+    rendered.push_str(marker);
+    rendered.push(' ');
+    rendered.push_str(key.as_str());
+    rendered.push_str(": ");
+    for (index, line) in directive.lines().enumerate() {
+        if index > 0 {
+            rendered.push_str("\n> ");
+        }
+        rendered.push_str(line);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
+        PresentationDirectives(
+            rows.iter()
+                .map(|(key, text)| {
+                    (
+                        key.parse::<steer::Key>().expect("fixture key parses"),
+                        (*text).to_owned(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
     #[test]
-    fn steering_acknowledgement_keeps_only_agent_authored_prose() {
+    fn steering_acknowledgement_renders_key_context_and_agent_prose_once() {
+        let directives = directives(&[("1kQnrzNZ", "Keep one tested, visible current path.")]);
         assert_eq!(
-            present_steering_acknowledgement(
-                "ACK 1kQnrzNZ: Landed in the stream presentation path."
+            present_steering_acknowledgements_with_directives(
+                "ACK 1kQnrzNZ: Landed in the stream presentation path.",
+                &directives,
+            )
+            .expect("acknowledgment presents"),
+            "> ACK 1kQnrzNZ: Keep one tested, visible current path.\n\nLanded in the stream presentation path.",
+        );
+    }
+
+    #[test]
+    fn distributed_acknowledgements_render_every_context_without_repeating_the_message() {
+        let text = concat!(
+            "ACK 1kQwPZtK: The current completion path is singular and visible.\n\n",
+            "ACK 1kQwPZtL: Historical records remain evidence only."
+        );
+        let directives = directives(&[
+            ("1kQwPZtK", "Keep one current completion path."),
+            ("1kQwPZtL", "Do not execute historical records."),
+        ]);
+
+        let rendered = present_steering_acknowledgements_with_directives(text, &directives)
+            .expect("distributed acknowledgments present");
+        assert_eq!(rendered.matches("The current completion path").count(), 1);
+        assert_eq!(rendered.matches("Historical records").count(), 1);
+        assert_eq!(rendered.matches("> ACK ").count(), 2);
+        assert!(rendered.contains("> ACK 1kQwPZtK: Keep one current completion path."));
+        assert!(rendered.contains("> ACK 1kQwPZtL: Do not execute historical records."));
+    }
+
+    #[test]
+    fn shared_acknowledgement_prose_renders_once_after_every_context() {
+        let directives = directives(&[
+            ("1kQwPZtK", "Keep one current completion path."),
+            ("1kQwPZtL", "Do not execute historical records."),
+        ]);
+
+        assert_eq!(
+            present_steering_acknowledgements_with_directives(
+                "ACK 1kQwPZtK 1kQwPZtL: One response covers both directions.",
+                &directives,
+            )
+            .expect("shared acknowledgment presents"),
+            concat!(
+                "> ACK 1kQwPZtK: Keep one current completion path.\n\n",
+                "> ACK 1kQwPZtL: Do not execute historical records.\n\n",
+                "One response covers both directions."
             ),
-            "Landed in the stream presentation path.",
         );
     }
 
     #[test]
-    fn steering_acknowledgement_never_repeats_operator_direction() {
+    fn mixed_acknowledgement_dispositions_keep_their_own_keys_and_contexts() {
+        let directives = directives(&[
+            ("1kQwPZtK", "Apply the current path."),
+            ("1kQwPZtL", "Remove the safety check."),
+        ]);
         assert_eq!(
-            present_steering_acknowledgement("ACK 1kQnrzNZ 1kQnqLHc: Done."),
-            "Done.",
+            present_steering_acknowledgements_with_directives(
+                "ACK 1kQwPZtK: Applied.\nNACK 1kQwPZtL: Unsafe.",
+                &directives,
+            )
+            .expect("mixed acknowledgments present"),
+            "> ACK 1kQwPZtK: Apply the current path.\n\nApplied.\n> NACK 1kQwPZtL: Remove the safety check.\n\nUnsafe.",
         );
     }
 
     #[test]
-    fn empty_steering_acknowledgement_remains_visible() {
-        assert_eq!(
-            present_steering_acknowledgement("ACK 1kQnrzNZ:"),
-            "ACK 1kQnrzNZ:",
-        );
+    fn unknown_key_preserves_the_original_message_across_replay() {
+        let text = "ACK 1kQwPZtK: No directive owns this key.";
+        let directives = PresentationDirectives::default();
+        let first = present_steering_acknowledgements_with_directives(text, &directives)
+            .expect("unknown key remains visible");
+        let replayed = present_steering_acknowledgements_with_directives(text, &directives)
+            .expect("unknown key replay remains visible");
+
+        assert_eq!(first, text);
+        assert_eq!(replayed, first);
     }
 }
