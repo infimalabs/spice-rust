@@ -27,7 +27,7 @@ export async function cleanupLineageFixture({ fixture, resident, owner, request 
     if (resident && !childExited(resident.child)) {
       const liveTeam = await request(fixture, ["lane"]);
       for (const agent of liveTeam.body.lanes) {
-        await request(fixture, ["lane", "drain", agent.lane]);
+        if (agent.occupant) await request(fixture, ["lane", "drain", agent.lane]);
       }
     }
   } catch (error) {
@@ -92,6 +92,7 @@ export async function assertLineageLifeIsolation(browser) {
     assert.equal(driveMembers.length, 4, "the sibling lineage contains four members");
     assert.ok(driveMembers.every((lane) => lane.life === "drive"));
     assert.notEqual(drive.lineage_id, host.lineage_id);
+    await reply(fixture, ["lane", "wake", drive.lane]);
 
     context = await browser.newContext({
       colorScheme: "dark",
@@ -113,25 +114,46 @@ export async function assertLineageLifeIsolation(browser) {
     await driveSurface.getByRole("button", { name: "Drive", exact: true }).waitFor();
     assert.equal(await console.locator(".team-surface").count(), 2);
 
-    await drainSurface.getByRole("textbox").first().fill("drain lineage accessibility");
-    await drainSurface.getByRole("button", { name: "Drain", exact: true }).click();
+    const drainTextbox = drainSurface.getByRole("textbox").first();
+    await drainTextbox.fill("drain lineage accessibility");
+    assert.equal(
+      await drainSurface.getByRole("button", { name: "Drain", exact: true }).isDisabled(),
+      true,
+      "a vacant Drain lineage exposes its current non-submittable boundary",
+    );
     const drainPlane = drainSurface.locator(".lane-mosaic-plane");
-    await drainPlane
-      .locator(".mosaic-message-card")
-      .filter({ hasText: "drain lineage accessibility" })
-      .waitFor({ timeout: 10_000 });
-    await driveSurface.getByRole("textbox").first().fill("drive lineage accessibility");
+    const driveTextbox = driveSurface
+      .locator(`.team-agent[data-agent-lane="${drive.lane}"]`)
+      .getByRole("textbox");
+    await driveTextbox.fill("drive lineage accessibility");
     await driveSurface.getByRole("button", { name: "Drive", exact: true }).click();
     const drivePlane = driveSurface.locator(".lane-mosaic-plane");
-    await drivePlane
-      .locator(".mosaic-message-card")
-      .filter({ hasText: "drive lineage accessibility" })
-      .waitFor({ timeout: 10_000 });
+    const driveInbox = await reply(fixture, ["inbox", drive.lane]);
+    assert.ok(
+      driveInbox.body.lanes[0].pending.some(
+        (directive) => directive.text === "drive lineage accessibility",
+      ),
+      "the occupied Drive sibling receives its submitted direction",
+    );
 
     const planes = console.locator(".lane-mosaic-plane");
     assert.equal(await planes.count(), 2, "two admitted lineages own exactly two packed planes");
-    assert.match(await drainPlane.ariaSnapshot(), /Drain policy, 4 members/);
-    assert.match(await drivePlane.ariaSnapshot(), /Drive policy, 4 members/);
+    assert.deepEqual(
+      [
+        await drainPlane.getAttribute("data-lineage-policy"),
+        await drainPlane.getAttribute("data-lineage-members"),
+      ],
+      ["Drain", "4"],
+      "the vacant plane retains the Drain lineage's policy and member count",
+    );
+    assert.deepEqual(
+      [
+        await drivePlane.getAttribute("data-lineage-policy"),
+        await drivePlane.getAttribute("data-lineage-members"),
+      ],
+      ["Drive", "4"],
+      "the occupied plane retains the Drive lineage's policy and member count",
+    );
     await assertTiledWorkspace(
       page,
       console,
@@ -151,28 +173,23 @@ export async function assertLineageLifeIsolation(browser) {
       changed.body.lanes
         .filter((lane) => lane.lineage_id === host.lineage_id)
         .every((lane) => lane.life === "drain"),
-      "changing task subscription preserves the lineage's terminal seat life",
+      "changing task subscription preserves the lineage's declared seat life",
     );
     assert.equal(
       await driveSurface.getByRole("button", { name: "Drive", exact: true }).count(),
       1,
       "changing the Drain lineage leaves its Drive sibling unchanged",
     );
-    await drainSurface.getByRole("textbox").first().fill("isolated lineage submission");
-    await drainSurface.getByRole("button", { name: "Steer", exact: true }).click();
-    await drainPlane
-      .locator(".mosaic-message-card")
-      .filter({ hasText: "isolated lineage submission" })
-      .waitFor({ timeout: 10_000 });
+    await drainTextbox.fill("isolated lineage submission");
     assert.equal(
-      await drainSurface.getByRole("button", { name: "Steer", exact: true }).count(),
-      1,
-      "submitting the changed lineage retains its own policy",
+      await drainSurface.getByRole("button", { name: "Steer", exact: true }).isDisabled(),
+      true,
+      "changing task policy does not manufacture residency for a vacant Drain seat",
     );
     assert.equal(
       await drivePlane.getAttribute("data-lineage-policy"),
       "Drive",
-      "submitting one lineage does not mutate its sibling policy",
+      "changing one lineage does not mutate its sibling policy",
     );
     monitor.assertClean();
   } finally {
