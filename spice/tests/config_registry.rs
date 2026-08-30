@@ -244,7 +244,7 @@ fn sample_path(template: &str) -> Vec<OwnedSegment> {
 }
 
 #[test]
-fn root_is_exactly_the_seventeen_typed_domains() {
+fn root_is_exactly_the_eighteen_typed_domains() {
     let root = decode(&complete()).expect("the complete root decodes");
     let round_trip = decode(&toml::to_string_pretty(&root).expect("root renders"))
         .expect("rendered root decodes");
@@ -253,6 +253,7 @@ fn root_is_exactly_the_seventeen_typed_domains() {
     assert!(Root::default().policy().pre_commit_builtins());
     assert!(Root::default().policy().pre_commit().is_empty());
     assert!(Root::default().wrappers().spice().is_none());
+    assert_eq!(Root::default().rtk().executable(), "rtk");
     assert_eq!(
         root.wrappers().spice(),
         Some(steer::WrapperReference::Appliance)
@@ -301,7 +302,7 @@ fn root_is_exactly_the_seventeen_typed_domains() {
     assert_eq!(
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
-            "commands", "wrappers", "tasks", "judge", "policy", "taste", "consent", "gate",
+            "commands", "wrappers", "rtk", "tasks", "judge", "policy", "taste", "consent", "gate",
             "board", "lane", "steer", "vendor", "listen", "lock", "canvas", "say", "proof",
         ])
     );
@@ -343,6 +344,9 @@ fn shared_metadata_directly_refuses_invalid_names_depths_and_children() {
         ("[tasks]\nunknown = true\n", "unknown"),
         ("[wrappers]\nunknown = \"appliance\"\n", "unknown"),
         ("[wrappers]\nspice = \"ambient\"\n", "unknown variant"),
+        ("[rtk]\nexecutable = \"\"\n", "non-empty executable"),
+        ("[rtk]\nexecutable = \"path/rtk\"\n", "basename or absolute"),
+        ("[rtk]\nunknown = \"rtk\"\n", "unknown"),
         ("[policy]\nunknown = true\n", "unknown"),
     ] {
         let error = decode(document).expect_err("invalid shared metadata must refuse");
@@ -526,6 +530,7 @@ fn registry_builtins_are_the_typed_root_defaults() {
 const EXPECTED_TEMPLATES: &[&str] = &[
     "commands.<name>",
     "wrappers.spice",
+    "rtk.executable",
     "tasks.stems",
     "tasks.hidden_stems",
     "tasks.project_min_depth",
@@ -716,6 +721,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
     assert_eq!(
         local,
         [
+            "rtk.executable",
             "judge.enabled",
             "listen.window",
             "lock.busy",

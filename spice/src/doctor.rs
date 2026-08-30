@@ -235,10 +235,22 @@ fn tool_observation(
             Ok(()) => DoctorObservation::Ready {},
             Err(reason) => DoctorObservation::Unavailable { reason },
         },
-        DoctorToolSource::WorktreeConfiguration => match probe.named(tool.name) {
-            Ok(()) => DoctorObservation::Ready {},
-            Err(reason) => DoctorObservation::Unavailable { reason },
-        },
+        DoctorToolSource::WorktreeConfiguration => {
+            let executable = configuration.rtk().executable();
+            let observed = if Path::new(executable).is_absolute() {
+                probe.exact(Path::new(executable))
+            } else {
+                probe.named(executable)
+            };
+            match observed {
+                Ok(()) => DoctorObservation::Ready {},
+                Err(reason) => DoctorObservation::Unavailable {
+                    reason: format!(
+                        "configured RTK executable {executable:?} is unavailable: {reason}"
+                    ),
+                },
+            }
+        }
     }
 }
 

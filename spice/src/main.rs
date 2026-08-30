@@ -665,14 +665,26 @@ fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> 
 /// Emits pending direction to this wrapper's stderr and waits on its one child.
 #[cfg(not(target_arch = "wasm32"))]
 fn run(command: Vec<OsString>) -> ! {
-    let (program, arguments) = command
-        .split_first()
-        .expect("clap requires the run command operand");
-
     if let Some(rendering) = bootstrap_environment(steer::hook::INBOX) {
         let mut stderr = io::stderr().lock();
         let _ = steer::run::emit(Path::new(&rendering), &mut stderr);
     }
+
+    let rewritten = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE)
+        .map(|executable| spice::rtk::rewrite(&command, &executable));
+    if let Some(diagnostic) = rewritten
+        .as_ref()
+        .and_then(spice::rtk::Decision::diagnostic)
+    {
+        let mut stderr = io::stderr().lock();
+        let _ = writeln!(stderr, "{diagnostic}");
+    }
+    let selected = rewritten
+        .as_ref()
+        .map_or(command.as_slice(), spice::rtk::Decision::command);
+    let (program, arguments) = selected
+        .split_first()
+        .expect("clap requires the run command operand");
 
     match steer::run::hand(program, arguments) {
         Ok(status) => terminate_child(status),

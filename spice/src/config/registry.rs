@@ -310,6 +310,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "rtk.executable" {
+        kind: String,
+        builtin: Some(Builtin::String("rtk")),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
     fixed "tasks.stems" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),

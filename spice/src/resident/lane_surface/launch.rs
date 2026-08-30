@@ -153,7 +153,14 @@ fn launch_plan(
     let wrapper_command = wrapper
         .as_ref()
         .map(spice::agent_wrapper::Resolved::command);
-    let environment = launch_environment(paths, repository, &executable, wrapper_command, lane)?;
+    let environment = launch_environment(
+        paths,
+        repository,
+        &executable,
+        wrapper_command,
+        resolved.root().rtk().executable(),
+        lane,
+    )?;
     let Some(vendor) = spice::extension::vendor(name.as_str()) else {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
@@ -288,6 +295,7 @@ fn launch_environment(
     repository: &Repository,
     executable: &Path,
     wrapper_command: Option<&Path>,
+    rtk_executable: &str,
     lane: CanonicalUuid,
 ) -> CommandResult<Environment> {
     let inbox = paths.inbox_for_repository(repository)?;
@@ -306,6 +314,17 @@ fn launch_environment(
             "the supervised environment has no native SHELL to restore behind interception",
         )
     })?;
+    let rtk_history = paths
+        .runtime
+        .join("agents")
+        .join(lane.to_string())
+        .join("rtk/history.db");
+    fs::create_dir_all(
+        rtk_history
+            .parent()
+            .expect("the RTK history contract always has a parent"),
+    )
+    .map_err(|error| store_fault("lane::rtk-history-unavailable", &error.to_string()))?;
     let mut values = ["HOME", "TMPDIR", "USER"]
         .into_iter()
         .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
@@ -355,6 +374,14 @@ fn launch_environment(
         (
             OsString::from(steer::hook::EXECUTABLE),
             executable.as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::rtk::EXECUTABLE_VARIABLE),
+            OsString::from(rtk_executable),
+        ),
+        (
+            OsString::from(spice::rtk::HISTORY_VARIABLE),
+            rtk_history.into_os_string(),
         ),
     ]);
     if let Some(path) = shell_path(wrapper_command)? {

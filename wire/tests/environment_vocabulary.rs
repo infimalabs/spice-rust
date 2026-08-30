@@ -46,7 +46,9 @@ struct EnvironmentPolicy {
 /// private appliance marker. Those references oblige the ledger to account all
 /// twenty original names. Compiler-receipt admission also observes six
 /// operational launcher and fixture names which remain outside the typed
-/// product-variable vocabulary. All twenty-seven are named here rather than added to [`SpiceVariable`],
+/// product-variable vocabulary. RTK's upstream history override is the
+/// twenty-eighth foreign name. All are named here rather than added to
+/// [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
 /// would claim ownership Spice does not have.
 ///
@@ -61,6 +63,7 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_EDITOR",                                   // env-policy: allow
     "GIT_INDEX_FILE",                               // env-policy: allow
     "GIT_WORK_TREE",                                // env-policy: allow
+    "RTK_DB_PATH",                                  // env-policy: allow
     "SPICE_CANVAS_BINARY",                          // env-policy: allow
     "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",          // env-policy: allow
     "SPICE_FIXTURE_RERUN",                          // env-policy: allow

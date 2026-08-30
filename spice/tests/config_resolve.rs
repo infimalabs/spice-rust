@@ -133,7 +133,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 55);
+    assert_eq!(missing.provenance().len(), 56);
     assert!(
         missing
             .provenance()
@@ -156,6 +156,25 @@ fn missing_and_empty_documents_are_empty_intent() {
     let default_json = serde_json::to_value(missing.root()).expect("default JSON renders");
     assert!(default_json["proof"].get("container").is_none());
     assert!(default_json["proof"].get("runner").is_none());
+}
+
+#[test]
+fn local_rtk_executable_overrides_tracked_identity_with_provenance() {
+    let tracked = "[rtk]\nexecutable = 'tracked-rtk'\n";
+    let local_path = absolute("local-rtk");
+    let local = format!("[rtk]\nexecutable = {local_path:?}\n");
+    let resolved =
+        resolve(documents(Some(tracked), Some(&local))).expect("layered RTK executable resolves");
+
+    assert_eq!(resolved.root().rtk().executable(), local_path);
+    assert_eq!(
+        path_source(&resolved, "rtk.executable"),
+        ConfigSource::Local
+    );
+    assert_eq!(
+        path_builtin(&resolved, "rtk.executable"),
+        Some(Builtin::String("rtk"))
+    );
 }
 
 #[test]
@@ -687,6 +706,9 @@ release = ["tool", "release"]
 
 [wrappers]
 spice = "appliance"
+
+[rtk]
+executable = "tracked-rtk"
 
 [taste.alpha]
 words = ["done"]

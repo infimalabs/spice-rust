@@ -54,6 +54,35 @@ It returns an endpoint-and-epoch reply after owner-only discovery and an
 authenticated `/bootstrap` agree on the resident generation. `--json` uses the
 typed envelope; `--open` opens the browser.
 
+### Optional RTK companion
+
+Supervised agent shells use [RTK](https://github.com/rtk-ai/rtk) when it is
+installed, and otherwise run every command natively. RTK remains a separate
+optional executable rather than an appliance asset:
+
+```sh
+brew install rtk
+rtk --version
+rtk rewrite -- git status
+```
+
+The default executable identity is `rtk`. Tracked `spice-rust.toml` or
+Git-common `.spice-rs/config.toml` may select one basename or absolute path:
+
+```toml
+[rtk]
+executable = "/opt/rtk/bin/rtk"
+```
+
+Each top-level shell command crosses a bounded `rtk rewrite -- ...` selector.
+Exit 0 or 3 with nonempty output selects the rewrite; exit 1 with empty output
+keeps the native command. Launch, timeout, protocol, and parsing failures print
+`RTK rewrite degraded to native` and execute the original argv unchanged. RTK
+history is isolated at
+`<git-common>/.spice-rs/agents/<lane>/rtk/history.db` through `RTK_DB_PATH`.
+`spice doctor` reports whether the exact configured executable is available but
+does not start it.
+
 ```
 {"endpoint":"http://127.0.0.1:8767","epoch":"..."}
 ```
