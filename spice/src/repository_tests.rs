@@ -56,6 +56,17 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
     assert_eq!(state.degraded(), common.join(".spice-rs/degraded"));
     assert_eq!(state.tape(), common.join(".spice-rs/tape"));
     assert_eq!(state.inbox(), common.join(".spice-rs/inbox"));
+    let retired_learnings = common.join(".spice-rs/learnings");
+    assert!(
+        !state
+            .owned_directories()
+            .contains(&retired_learnings.as_path()),
+        "repository state no longer claims the unconsumed learnings directory"
+    );
+    assert!(
+        !retired_learnings.exists(),
+        "state admission does not create the retired learnings directory"
+    );
     assert_eq!(
         proof::Layout::new(
             repository.worktree_root(),

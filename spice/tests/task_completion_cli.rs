@@ -436,6 +436,10 @@ fn assert_running_handoff(fixture: &Fixture) -> Resident {
         .completion
         .as_ref()
         .expect("initial completion returns Running");
+    assert!(
+        running.learning.is_none(),
+        "current completion handoff has no learning continuation"
+    );
     assert_eq!(completion.state, wire::intent::TaskCompletionState::Running);
     assert_eq!(
         completion.operation,
