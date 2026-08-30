@@ -259,7 +259,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
 fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("classifier peer binds");
     let address = listener.local_addr().expect("classifier peer address");
-    let bound = Duration::from_secs(3);
+    let bound = crate::cli::CANVAS_ANSWER_BOUND;
     let mut stream = DeadlineStream::connect(&address, bound).expect("classifier peer accepts");
 
     for (recorded, assumed, reason) in [
@@ -297,27 +297,141 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
         assert_eq!(fault.class, FaultClass::Environment);
         assert!(fault.detail.contains("peer detail"), "{fault:?}");
         assert_eq!(
-            fault.detail.contains("3s"),
+            fault.detail.contains("20s"),
             reason == "canvas::deadline-elapsed",
             "only an elapsed bound names itself: {fault:?}"
         );
     }
 }
 
-/// Task completion restores its handoff bound without narrowing other work.
+/// Every command shares the temporary Canvas answer bound.
 #[test]
 fn the_answer_bound_registry_declares_the_current_resident_answer_bound() {
     for kind in CommandKind::ALL {
         assert_eq!(
             crate::cli::answer_bound(*kind),
-            if *kind == CommandKind::TaskDone {
-                Duration::from_secs(3)
-            } else {
-                Duration::from_secs(20)
-            },
+            Duration::from_secs(20),
             "{kind} declares the wrong answer bound",
         );
     }
+    assert_eq!(OPENING_BOUND, Duration::from_secs(20));
+}
+
+fn answer_delayed_task_done(
+    listener: TcpListener,
+    delay: Duration,
+    epoch: CanonicalUuid,
+    id: CanonicalUuid,
+) -> bool {
+    let (stream, _) = listener.accept().expect("delayed peer accepts");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("delayed peer read timeout");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .expect("delayed peer write timeout");
+    let mut socket = tungstenite::accept(stream).expect("delayed peer opens socket");
+    let hello: wire::Hello =
+        wire::decode(&socket.read().expect("delayed peer reads Hello").into_data())
+            .expect("delayed Hello decodes");
+    socket
+        .send(Message::Binary(
+            wire::encode(&wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Operator,
+                epoch,
+            })
+            .expect("delayed acceptance encodes")
+            .into(),
+        ))
+        .expect("delayed peer accepts client");
+    assert_eq!(hello.epoch, epoch);
+    let command: Command<serde_json::Value> = wire::decode(
+        &socket
+            .read()
+            .expect("delayed peer reads command")
+            .into_data(),
+    )
+    .expect("delayed command decodes");
+    assert_eq!(command.id, id);
+    assert_eq!(command.kind, CommandKind::TaskDone);
+
+    std::thread::sleep(delay);
+    let response = Response::<serde_json::Value> {
+        v: wire::WireVersion::CURRENT,
+        id,
+        epoch,
+        outcome: Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "fixture::delayed-response".to_owned(),
+            None,
+            None,
+            None,
+        ))),
+    };
+    socket
+        .send(Message::Binary(
+            wire::encode(&response)
+                .expect("delayed response encodes")
+                .into(),
+        ))
+        .is_ok()
+}
+
+fn delayed_task_done_response(delay: Duration) -> (Outcome<CommandAnswer>, bool) {
+    let fixture = Fixture::new("delayed-task-done");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("delayed peer binds");
+    let epoch = uuid(20);
+    let id = uuid(21);
+    canvas::Discovery {
+        endpoint: format!(
+            "http://{}",
+            listener.local_addr().expect("delayed peer address")
+        ),
+        capability: uuid(22),
+        epoch,
+    }
+    .publish(&fixture.canvas)
+    .expect("delayed discovery publishes");
+    fixture.hold(epoch);
+    let peer = std::thread::spawn(move || answer_delayed_task_done(listener, delay, epoch, id));
+
+    let discovery = DiscoveryRead::open(&fixture.canvas, &resident_lock_path(&fixture.canvas))
+        .expect("delayed discovery reads");
+    let outcome = request(
+        &COMMAND_CONTRACT,
+        MappedCommand {
+            id,
+            kind: CommandKind::TaskDone,
+            expected: Vec::new(),
+            body: serde_json::to_value(wire::intent::TaskDone {
+                task: "CANVAS-1kR2v8Pn".parse().expect("fixture task handle"),
+                validation: "fixture delayed response".to_owned(),
+                operation: Some(uuid(23)),
+            })
+            .expect("fixture TaskDone encodes"),
+        },
+        discovery,
+    );
+    let delivered = peer.join().expect("delayed peer joins");
+    (outcome, delivered)
+}
+
+#[test]
+#[ignore = "intentional 25-second wall-clock proof of the temporary Canvas response bound"]
+fn task_done_admits_a_response_after_three_seconds_and_rejects_one_after_twenty() {
+    let (within, delivered) = delayed_task_done_response(Duration::from_secs(4));
+    let Outcome::Refusal(refusal) = within else {
+        panic!("four-second response must arrive within the Canvas bound: {within:?}");
+    };
+    assert_eq!(refusal.reason(), "fixture::delayed-response");
+    assert!(delivered, "the admitted response reaches the client");
+
+    let (beyond, _) = delayed_task_done_response(Duration::from_secs(21));
+    let Outcome::Fault(fault) = beyond else {
+        panic!("twenty-one-second response must exceed the Canvas bound: {beyond:?}");
+    };
+    assert_eq!(fault.reason, "canvas::deadline-elapsed");
+    assert!(fault.detail.contains("20s"), "{fault:?}");
 }
 
 #[test]
