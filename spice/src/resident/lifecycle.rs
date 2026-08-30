@@ -80,9 +80,80 @@ enum Attempted {
     DeadLettered(Vec<super::steering::DeadLetter>),
 }
 
-/// Process-local retry state; durable eligibility remains in the bus.
+/// Process-local lifecycle backoff; durable eligibility remains in the bus.
+#[derive(Default)]
+struct Backoff {
+    timed: BTreeMap<CanonicalUuid, Instant>,
+    parked: BTreeMap<CanonicalUuid, Trigger>,
+}
+
+impl Backoff {
+    fn retain_targets(&mut self, targets: &[Target]) {
+        self.timed
+            .retain(|lane, _| targets.iter().any(|target| target.lane == *lane));
+        self.parked
+            .retain(|lane, _| targets.iter().any(|target| target.lane == *lane));
+    }
+
+    fn release(&mut self, lane: CanonicalUuid) {
+        self.timed.remove(&lane);
+        self.parked.remove(&lane);
+    }
+
+    fn due(&self, lane: CanonicalUuid, trigger: Trigger, eligible_at: Instant) -> Option<Instant> {
+        if self.parked.get(&lane) == Some(&trigger) {
+            return None;
+        }
+        Some(
+            self.timed
+                .get(&lane)
+                .copied()
+                .filter(|deadline| *deadline > eligible_at)
+                .unwrap_or(eligible_at),
+        )
+    }
+
+    fn refused(
+        &mut self,
+        trigger: Trigger,
+        lane: CanonicalUuid,
+        reason: &str,
+        now: Instant,
+        diagnostic: &mut dyn std::io::Write,
+    ) -> CommandResult<Option<WakeDeadline>> {
+        if !start_refusal_is_retryable(reason) {
+            self.timed.remove(&lane);
+            self.parked.insert(lane, trigger);
+            let _ = writeln!(
+                diagnostic,
+                "lifecycle parked trigger={} lane={} reason={}",
+                trigger.as_str(),
+                lane,
+                reason,
+            );
+            return Ok(None);
+        }
+
+        let deadline = after(now, RETRY_SECONDS)?;
+        self.timed.insert(lane, deadline);
+        let _ = writeln!(
+            diagnostic,
+            "lifecycle refused trigger={} lane={} reason={} retry={}",
+            trigger.as_str(),
+            lane,
+            reason,
+            deadline,
+        );
+        Ok(Some(WakeDeadline {
+            lane,
+            at: deadline,
+            kind: WakeKind::Task,
+        }))
+    }
+}
+
 pub(super) struct Runtime {
-    retry: BTreeMap<CanonicalUuid, Instant>,
+    backoff: Backoff,
     holds: Holds,
     projection: Projection,
 }
@@ -104,7 +175,7 @@ pub(super) enum WakeKind {
 impl Runtime {
     pub(super) fn new(config: &lane::Config) -> Self {
         Self {
-            retry: BTreeMap::new(),
+            backoff: Backoff::default(),
             holds: Holds::new(config.deaths()),
             projection: Projection::new(),
         }
@@ -135,7 +206,8 @@ impl Runtime {
         self.synchronize_holds(&snapshot, self.projection.cursor())?;
         self.projection.advance(&snapshot, &config.projects)?;
         let targets = project_targets(&snapshot, &self.projection, now, &self.holds)?;
-        let task = match resolve(&targets, &self.retry, now) {
+        self.backoff.retain_targets(&targets);
+        let task = match resolve(&targets, &self.backoff, now) {
             Resolution::Idle => None,
             Resolution::Wait { lane, deadline, .. } => {
                 // A wait is unchanged process-local scheduler state, not a
@@ -163,7 +235,7 @@ impl Runtime {
                 );
                 match result {
                     Ok(Attempted::Started) => {
-                        self.retry.remove(&lane);
+                        self.backoff.release(lane);
                         let _ = writeln!(
                             diagnostic,
                             "lifecycle started trigger={} lane={}",
@@ -173,7 +245,7 @@ impl Runtime {
                         None
                     }
                     Ok(Attempted::DeadLettered(parked)) => {
-                        self.retry.remove(&lane);
+                        self.backoff.release(lane);
                         for directive in parked {
                             let _ = writeln!(
                                 diagnostic,
@@ -188,21 +260,8 @@ impl Runtime {
                         None
                     }
                     Err(Outcome::Refusal(refusal)) => {
-                        let deadline = after(now, RETRY_SECONDS)?;
-                        self.retry.insert(lane, deadline);
-                        let _ = writeln!(
-                            diagnostic,
-                            "lifecycle refused trigger={} lane={} reason={} retry={}",
-                            trigger.as_str(),
-                            lane,
-                            refusal.reason(),
-                            deadline
-                        );
-                        Some(WakeDeadline {
-                            lane,
-                            at: deadline,
-                            kind: WakeKind::Task,
-                        })
+                        self.backoff
+                            .refused(trigger, lane, refusal.reason(), now, diagnostic)?
                     }
                     Err(Outcome::Fault(fault)) => return Err(Outcome::Fault(fault)),
                     Err(Outcome::Reply(_)) => {
@@ -217,6 +276,16 @@ impl Runtime {
             kind: WakeKind::Hold,
         });
         Ok(earliest(task, hold))
+    }
+
+    /// A same-lane command is the event that can make a parked local
+    /// precondition current again. It also supersedes an elapsed-time retry.
+    pub(super) fn observe_command(&mut self, actor: &Actor) -> bool {
+        let Actor::Lane(lane) = actor else {
+            return false;
+        };
+        self.backoff.release(*lane);
+        true
     }
 
     /// Classify one observed occupant death through the shared hold reducer.
@@ -290,6 +359,7 @@ impl Runtime {
         epoch: CanonicalUuid,
         lane: CanonicalUuid,
     ) -> CommandResult<()> {
+        self.backoff.release(lane);
         let until = self.holds.held(lane);
         let resumed = self.holds.wake(lane);
         self.commit_resume(bus, epoch, lane, until, resumed)
@@ -465,11 +535,15 @@ const RETRYABLE_START_REFUSALS: [&str; 4] = [
     "lifecycle::held-claim-lease-moved",
 ];
 
+fn start_refusal_is_retryable(reason: &str) -> bool {
+    RETRYABLE_START_REFUSALS.contains(&reason)
+}
+
 fn pending_start_failure_is_terminal(failure: &Outcome<()>) -> bool {
     matches!(
         failure,
         Outcome::Refusal(refusal)
-            if !RETRYABLE_START_REFUSALS.contains(&refusal.reason())
+            if !start_refusal_is_retryable(refusal.reason())
     )
 }
 
@@ -617,11 +691,7 @@ fn available_from_ready_instants(eligible: &mut [Instant]) -> CommandResult<Avai
     }
 }
 
-fn resolve(
-    targets: &[Target],
-    retry: &BTreeMap<CanonicalUuid, Instant>,
-    now: Instant,
-) -> Resolution {
+fn resolve(targets: &[Target], backoff: &Backoff, now: Instant) -> Resolution {
     let mut candidates = Vec::new();
     for target in targets {
         let (trigger, available) = if target.pending_inbox {
@@ -636,11 +706,9 @@ fn resolve(
             Available::At(deadline) if deadline > now => deadline,
             Available::At(_) | Available::Ready => now,
         };
-        let due = retry
-            .get(&target.lane)
-            .copied()
-            .filter(|deadline| *deadline > eligible_at)
-            .unwrap_or(eligible_at);
+        let Some(due) = backoff.due(target.lane, trigger, eligible_at) else {
+            continue;
+        };
         candidates.push((trigger, target.lane, due));
     }
     for trigger in [
@@ -714,7 +782,7 @@ mod tests {
         row.held_claim = true;
         row.available = Available::Ready;
         assert_eq!(
-            resolve(&[row], &BTreeMap::new(), instant(10)),
+            resolve(&[row], &Backoff::default(), instant(10)),
             Resolution::Attempt {
                 trigger: Trigger::PendingInbox,
                 lane: lane(1),
@@ -722,7 +790,7 @@ mod tests {
         );
         row.pending_inbox = false;
         assert_eq!(
-            resolve(&[row], &BTreeMap::new(), instant(10)),
+            resolve(&[row], &Backoff::default(), instant(10)),
             Resolution::Attempt {
                 trigger: Trigger::HeldClaim,
                 lane: lane(1),
@@ -739,7 +807,7 @@ mod tests {
         let mut inbox = target(3);
         inbox.pending_inbox = true;
         assert_eq!(
-            resolve(&[available, held, inbox], &BTreeMap::new(), instant(10)),
+            resolve(&[available, held, inbox], &Backoff::default(), instant(10),),
             Resolution::Attempt {
                 trigger: Trigger::PendingInbox,
                 lane: lane(3),
@@ -747,7 +815,7 @@ mod tests {
         );
         inbox.pending_inbox = false;
         assert_eq!(
-            resolve(&[available, held, inbox], &BTreeMap::new(), instant(10)),
+            resolve(&[available, held, inbox], &Backoff::default(), instant(10),),
             Resolution::Attempt {
                 trigger: Trigger::HeldClaim,
                 lane: lane(2),
@@ -762,7 +830,7 @@ mod tests {
         let mut second = target(2);
         second.available = Available::Ready;
         assert_eq!(
-            resolve(&[second, first], &BTreeMap::new(), instant(10)),
+            resolve(&[second, first], &Backoff::default(), instant(10),),
             Resolution::Attempt {
                 trigger: Trigger::AvailableWork,
                 lane: lane(2),
@@ -775,7 +843,7 @@ mod tests {
         let mut row = target(1);
         row.available = Available::At(instant(12));
         assert_eq!(
-            resolve(&[row], &BTreeMap::new(), instant(10)),
+            resolve(&[row], &Backoff::default(), instant(10)),
             Resolution::Wait {
                 trigger: Trigger::AvailableWork,
                 lane: lane(1),
@@ -783,7 +851,7 @@ mod tests {
             }
         );
         assert!(matches!(
-            resolve(&[row], &BTreeMap::new(), instant(12)),
+            resolve(&[row], &Backoff::default(), instant(12)),
             Resolution::Attempt { .. }
         ));
     }
@@ -825,6 +893,9 @@ mod tests {
         assert!(pending_start_failure_is_terminal(&failure(
             "lane::session-authority-missing"
         )));
+        assert!(pending_start_failure_is_terminal(&failure(
+            "git::claim-loose-commits"
+        )));
         for reason in [
             "lifecycle::wake-capacity-moved",
             "lifecycle::snapshot-moved",
@@ -836,10 +907,63 @@ mod tests {
     }
 
     #[test]
+    fn permanent_refusal_has_no_timer_while_authority_movement_retries() {
+        let selected = lane(1);
+        let mut parked = Backoff {
+            timed: BTreeMap::from([(selected, instant(30))]),
+            ..Backoff::default()
+        };
+        let mut diagnostic = Vec::new();
+        assert_eq!(
+            parked
+                .refused(
+                    Trigger::AvailableWork,
+                    selected,
+                    "git::claim-loose-commits",
+                    instant(10),
+                    &mut diagnostic,
+                )
+                .expect("permanent refusal parks"),
+            None,
+        );
+        assert!(!parked.timed.contains_key(&selected));
+        assert_eq!(parked.parked.get(&selected), Some(&Trigger::AvailableWork));
+        assert!(
+            String::from_utf8(diagnostic)
+                .expect("diagnostic is UTF-8")
+                .contains("lifecycle parked trigger=available-work")
+        );
+
+        let mut retrying = Backoff::default();
+        let wake = retrying
+            .refused(
+                Trigger::HeldClaim,
+                selected,
+                "lifecycle::snapshot-moved",
+                instant(10),
+                &mut Vec::new(),
+            )
+            .expect("movement refusal retries");
+        assert_eq!(
+            wake,
+            Some(WakeDeadline {
+                lane: selected,
+                at: instant(15),
+                kind: WakeKind::Task,
+            })
+        );
+        assert_eq!(retrying.timed.get(&selected), Some(&instant(15)));
+        assert!(!retrying.parked.contains_key(&selected));
+    }
+
+    #[test]
     fn cheap_declines_do_not_spend_the_shared_retry_bucket() {
         let row = target(1);
-        let retry = BTreeMap::from([(lane(1), instant(30))]);
-        assert_eq!(resolve(&[row], &retry, instant(10)), Resolution::Idle);
+        let backoff = Backoff {
+            timed: BTreeMap::from([(lane(1), instant(30))]),
+            ..Backoff::default()
+        };
+        assert_eq!(resolve(&[row], &backoff, instant(10)), Resolution::Idle);
     }
 
     #[test]
@@ -857,9 +981,12 @@ mod tests {
             } else {
                 Available::None
             };
-            let retry = BTreeMap::from([(lane(1), instant(30))]);
+            let backoff = Backoff {
+                timed: BTreeMap::from([(lane(1), instant(30))]),
+                ..Backoff::default()
+            };
             assert_eq!(
-                resolve(&[row], &retry, instant(10)),
+                resolve(&[row], &backoff, instant(10)),
                 Resolution::Wait {
                     trigger,
                     lane: lane(1),
@@ -876,7 +1003,7 @@ mod tests {
         let mut ready = target(2);
         ready.available = Available::Ready;
         assert_eq!(
-            resolve(&[waiting, ready], &BTreeMap::new(), instant(10)),
+            resolve(&[waiting, ready], &Backoff::default(), instant(10),),
             Resolution::Attempt {
                 trigger: Trigger::AvailableWork,
                 lane: lane(2),
@@ -890,14 +1017,81 @@ mod tests {
         retrying.pending_inbox = true;
         let mut sibling = target(2);
         sibling.available = Available::Ready;
-        let retry = BTreeMap::from([(lane(1), instant(30))]);
+        let backoff = Backoff {
+            timed: BTreeMap::from([(lane(1), instant(30))]),
+            ..Backoff::default()
+        };
         assert_eq!(
-            resolve(&[retrying, sibling], &retry, instant(10)),
+            resolve(&[retrying, sibling], &backoff, instant(10)),
             Resolution::Attempt {
                 trigger: Trigger::AvailableWork,
                 lane: lane(2),
             }
         );
+    }
+
+    #[test]
+    fn permanent_refusal_parks_only_the_trigger_that_failed() {
+        let mut row = target(1);
+        row.available = Available::Ready;
+        let backoff = Backoff {
+            parked: BTreeMap::from([(lane(1), Trigger::AvailableWork)]),
+            ..Backoff::default()
+        };
+        assert_eq!(resolve(&[row], &backoff, instant(10)), Resolution::Idle,);
+
+        row.held_claim = true;
+        assert_eq!(
+            resolve(&[row], &backoff, instant(10)),
+            Resolution::Attempt {
+                trigger: Trigger::HeldClaim,
+                lane: lane(1),
+            },
+        );
+    }
+
+    #[test]
+    fn same_lane_command_releases_timed_and_parked_backoff() {
+        let selected = lane(1);
+        let sibling = lane(2);
+        let mut runtime = Runtime::new(&lane::Config::default());
+        runtime.backoff.timed.insert(selected, instant(30));
+        runtime.backoff.timed.insert(sibling, instant(30));
+        runtime
+            .backoff
+            .parked
+            .insert(selected, Trigger::AvailableWork);
+        runtime.backoff.parked.insert(sibling, Trigger::HeldClaim);
+
+        assert!(runtime.observe_command(&Actor::Lane(selected)));
+
+        assert!(!runtime.backoff.timed.contains_key(&selected));
+        assert!(!runtime.backoff.parked.contains_key(&selected));
+        assert_eq!(runtime.backoff.timed.get(&sibling), Some(&instant(30)));
+        assert_eq!(
+            runtime.backoff.parked.get(&sibling),
+            Some(&Trigger::HeldClaim)
+        );
+    }
+
+    #[test]
+    fn backoff_drops_lanes_absent_from_the_current_projection() {
+        let retained = lane(1);
+        let removed = lane(2);
+        let mut backoff = Backoff {
+            timed: BTreeMap::from([(retained, instant(30)), (removed, instant(30))]),
+            parked: BTreeMap::from([
+                (retained, Trigger::AvailableWork),
+                (removed, Trigger::HeldClaim),
+            ]),
+        };
+
+        backoff.retain_targets(&[target(1)]);
+
+        assert_eq!(backoff.timed.len(), 1);
+        assert_eq!(backoff.parked.len(), 1);
+        assert!(backoff.timed.contains_key(&retained));
+        assert!(backoff.parked.contains_key(&retained));
     }
 
     fn instant_after_minutes(minutes: u8) -> Instant {

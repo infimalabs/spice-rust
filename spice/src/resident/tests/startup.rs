@@ -498,8 +498,9 @@ async fn control_dispatch_waits_until_the_socket_response_is_attempted() {
         read_requested
             .send(())
             .expect("client response read is released");
+        let dispatched = dispatch.await.expect("lane read keeps resident seated");
         assert!(
-            !dispatch.await.expect("lane read keeps resident seated"),
+            !dispatched.reached_dark,
             "lane read must not request resident shutdown"
         );
     }
@@ -523,9 +524,7 @@ async fn socket_dispatch_publishes_three_lane_fanout_before_any_restart_or_ack()
         load_startup_surface(&repository).expect("startup surface loads");
     let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
     let bus = Bus::start(journal).expect("fixture bus starts");
-    let epoch = test_uuid(91);
-    let lineage = test_uuid(92);
-    let fanout = test_uuid(93);
+    let (epoch, lineage, fanout) = (test_uuid(91), test_uuid(92), test_uuid(93));
     commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
     let lanes = [
         (test_uuid(94), test_uuid(95)),
@@ -618,7 +617,8 @@ async fn socket_dispatch_publishes_three_lane_fanout_before_any_restart_or_ack()
                     Some(request),
                 )
                 .await
-                .expect("socket steering dispatch completes"),
+                .expect("socket steering dispatch completes")
+                .reached_dark,
                 "steering send must not request resident shutdown"
             );
         }

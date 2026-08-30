@@ -271,14 +271,16 @@ impl<'a> Surface<'a> {
         &self,
         lifecycle: &mut lifecycle::Runtime,
         command: &wire::AdmittedCommand,
-    ) -> super::CommandResult<()> {
+    ) -> super::CommandResult<bool> {
+        let mut released = lifecycle.observe_command(command.actor());
         if let Intent::LaneState(state) = command.body()
             && command.actor() == &Actor::Operator
             && state.action == wire::intent::LaneAction::Wake
             && state.worktree.is_none()
         {
             lifecycle.operator_wake(self.bus, self.epoch, state.lane)?;
+            released = true;
         }
-        Ok(())
+        Ok(released)
     }
 }

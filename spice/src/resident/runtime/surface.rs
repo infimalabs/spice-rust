@@ -365,12 +365,18 @@ pub(super) async fn drive_surface(
     loop {
         tokio::select! {
             request = control.recv() => {
-                if dispatch_control(
+                let dispatched = dispatch_control(
                     command_surface, seats, &mut lifecycle, &mut control, request,
-                ).await? {
+                ).await?;
+                if dispatched.reached_dark {
                     let refresh = timers.synchronize(bus)?;
                     refresh_warning_inboxes(bus, command_surface.paths, refresh)?;
                     return stop_surface(publication, shutdown, server_task).await;
+                }
+                if dispatched.lifecycle_released {
+                    reconcile_wakes(
+                        bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
+                    )?;
                 }
             }
             record = records.recv() => accept_record(
@@ -691,17 +697,23 @@ pub(in crate::resident) fn refresh_warning_inboxes(
     }
     Ok(())
 }
+pub(in crate::resident) struct ControlDispatch {
+    pub(in crate::resident) reached_dark: bool,
+    pub(in crate::resident) lifecycle_released: bool,
+}
+
 pub(in crate::resident) async fn dispatch_control(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
     control: &mut canvas::axum::Control,
     request: Option<canvas::axum::ControlRequest>,
-) -> CommandResult<bool> {
+) -> CommandResult<ControlDispatch> {
     let request = request.ok_or_else(|| {
         environment_fault("canvas::control-closed", "canvas control receiver closed")
     })?;
-    command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?;
+    let lifecycle_released =
+        command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?;
     let dark = is_dark_command(request.command());
     let outcome = command_surface.dispatch(seats, request.command());
     let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
@@ -712,7 +724,10 @@ pub(in crate::resident) async fn dispatch_control(
     if reached_dark {
         control.close();
     }
-    Ok(reached_dark)
+    Ok(ControlDispatch {
+        reached_dark,
+        lifecycle_released,
+    })
 }
 
 fn is_dark_command(command: &wire::AdmittedCommand) -> bool {

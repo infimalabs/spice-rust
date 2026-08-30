@@ -11,7 +11,7 @@ use wire::{
 };
 
 use super::materialization::Projection;
-use super::{Resolution, project_targets, resolve};
+use super::{Backoff, Resolution, project_targets, resolve};
 
 const PROJECT: &str = "lifecycle.work";
 const TASK_MOMENT: &str = "1kKRRsDP";
@@ -99,7 +99,7 @@ fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
     let now = instant(50);
     let targets = project_targets(&snapshot, &incremental, now, &holds)
         .expect("wake targets project from incremental state");
-    let resolution = resolve(&targets, &BTreeMap::new(), now);
+    let resolution = resolve(&targets, &Backoff::default(), now);
     let residency = incremental
         .project_residency(
             snapshot

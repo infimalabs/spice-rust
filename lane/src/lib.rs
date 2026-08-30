@@ -22,8 +22,9 @@
 //! - `LC-05`, `LC-06`, and `LC-07`: the lifecycle resolver counts selectable
 //!   unclaimed tasks and derives the two-READY, lone-task starvation, and burst
 //!   settling deadlines from the durable workflow-head transition facts.
-//! - `LC-16` and `LC-17`: all three ordered arms share one per-lane retry map;
-//!   cheap declines precede it and every refusal reports its closed trigger.
+//! - `LC-16` and `LC-17`: all three ordered arms share one per-lane backoff;
+//!   authority movement gets a bounded retry, permanent local preconditions
+//!   park until same-lane activity, and every refusal reports its closed trigger.
 //! - `LC-18`: every arm enters the same resident launch path. Rapid-death hold
 //!   decisions remain pure here in [`hold`], while the resident supplies their
 //!   observed deaths, current instants, and durable hold deadlines.
