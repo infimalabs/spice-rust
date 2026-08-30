@@ -42,6 +42,45 @@ fn appliance_generation_fence_is_canonical_bound_or_explicitly_unbound() {
 }
 
 #[test]
+fn mixed_path_resolution_authority_uses_the_complete_selection_surface() {
+    let source = Digest::compute(wire::Domain::GateTree, b"mixed resolution authority");
+    let paths = vec!["README.md".to_owned(), "spice/src/lib.rs".to_owned()];
+    let selection = gate::select_current_source_change_gates(source.clone(), &paths)
+        .expect("mixed Rust and non-Rust paths select policy gates");
+    let tests = gate::TestEvidenceGraph::select_tests(
+        source.clone(),
+        vec!["spice/src/lib.rs".to_owned()],
+        vec!["spice::lib:spice".to_owned()],
+        vec![
+            gate::TestSelectionEdge::new("spice/src/lib.rs", "spice::lib:spice")
+                .expect("the fixture edge is canonical"),
+        ],
+        gate::CoverageCompleteness::Complete,
+    )
+    .expect("the Rust path selects the test-relevant subset");
+
+    assert_eq!(selection.changed_sources(), paths);
+    assert_eq!(tests.changed_sources(), ["spice/src/lib.rs"]);
+    let expected_source = source.to_string();
+    assert!(resolution_selection_authority_matches(
+        &selection,
+        &expected_source,
+        &paths,
+    ));
+    assert!(!resolution_selection_authority_matches(
+        &selection,
+        &expected_source,
+        tests.changed_sources(),
+    ));
+    let moved_source = Digest::compute(wire::Domain::GateTree, b"moved authority").to_string();
+    assert!(!resolution_selection_authority_matches(
+        &selection,
+        &moved_source,
+        &paths,
+    ));
+}
+
+#[test]
 fn run_enters_supervision_with_only_private_worker_artifacts() {
     let phase = Cell::new(0);
     let answer = run_with(|files| {
