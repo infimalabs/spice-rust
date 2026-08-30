@@ -30,6 +30,7 @@ pub(super) const SOURCE_VARIABLE: &str = wire::SpiceVariable::PreCommitSource.as
 // bounds resident and serialized failure evidence; it does not bound how much
 // legitimate output a configured command may produce.
 const OUTPUT_LIMIT: usize = 256 * 1024;
+const SOURCE_GATE_OUTPUT_LIMIT: usize = 1024 * 1024;
 const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
@@ -233,6 +234,14 @@ impl ExecutionBounds {
             reap: REAP_DEADLINE,
             grace: TERMINATION_GRACE,
             output_limit: OUTPUT_LIMIT,
+        }
+    }
+
+    const fn stderr_capture_limit(self, source_gate: bool) -> usize {
+        if source_gate && self.output_limit < SOURCE_GATE_OUTPUT_LIMIT {
+            SOURCE_GATE_OUTPUT_LIMIT
+        } else {
+            self.output_limit
         }
     }
 }
@@ -768,8 +777,9 @@ fn execute_steps_with_progress(
             break;
         }
         let environment = command_environment(base_environment, source, &selected_paths)?;
+        let source_gate = is_source_gate_contract(command);
         let spec = command_spec(
-            command.label(),
+            command,
             &process_argv,
             root,
             environment,
@@ -777,7 +787,7 @@ fn execute_steps_with_progress(
             bounds,
             cancellation.clone(),
         )?;
-        let findings = match spawn_step(spec, is_source_gate_contract(command), progress.as_ref()) {
+        let findings = match spawn_step(spec, source_gate, progress.as_ref()) {
             Ok(running) => match running.wait() {
                 Ok(waited) => classify_wait(&waited),
                 Err(error) => vec![finding(StepFindingKind::Cleanup, error.to_string())],
@@ -949,7 +959,7 @@ fn scoped_paths(
 }
 
 fn command_spec(
-    label: &str,
+    command: &PreCommitStep,
     argv: &[OsString],
     root: &Path,
     environment: Environment,
@@ -960,8 +970,11 @@ fn command_spec(
     let (program, arguments) = argv
         .split_first()
         .expect("typed pre-commit argv is nonempty");
-    let capture = StreamPolicy::CaptureTail {
+    let stdout = StreamPolicy::CaptureTail {
         limit: bounds.output_limit,
+    };
+    let stderr = StreamPolicy::CaptureTail {
+        limit: bounds.stderr_capture_limit(is_source_gate_contract(command)),
     };
     Ok(Spec {
         argv: Argv::new(program.clone(), arguments.iter().cloned()).map_err(|error| {
@@ -974,14 +987,14 @@ fn command_spec(
             ConfiguredFailure::fault("gate::pre-commit-command-invalid", error.to_string())
         })?,
         wait: WaitPolicy::new(
-            format!("configured pre-commit step {label}"),
+            format!("configured pre-commit step {}", command.label()),
             cancellation,
             RestartDisposition::Never,
         )
         .map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-command-invalid", error.to_string())
         })?,
-        output: Output::new(StdinPolicy::Null, capture, capture),
+        output: Output::new(StdinPolicy::Null, stdout, stderr),
         redaction: Redaction::All,
         grace: bounds.grace,
     })
