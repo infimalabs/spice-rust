@@ -649,6 +649,27 @@ fn change_deferral<B: serde::Serialize + Clone>(
     };
     let mut workflow = entry.workflow().clone();
     workflow.deferral = deferral;
+    let next = if deferral.is_none() {
+        let post = match Entry::new(
+            entry.statement().clone(),
+            workflow.clone(),
+            entry.claim().cloned(),
+            entry.lease().cloned(),
+            projects,
+        ) {
+            Ok(post) => post,
+            Err(error) => {
+                return refusal(
+                    "task::deferral-refused",
+                    Some(error.to_string()),
+                    "wake a task into a valid pending state",
+                );
+            }
+        };
+        next_action(&snapshot, &post, false)
+    } else {
+        None
+    };
     write.workflow_head(entry.born().clone(), fact, move |_| workflow);
     let status = if deferral.is_some() {
         "deferred"
@@ -661,7 +682,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         guidance: None,
         completion: None,
         learning: None,
-        next: None,
+        next,
     };
     if let Err(error) =
         write.command_result(request(command, intent), command.epoch(), answer.clone())
@@ -750,6 +771,8 @@ pub(super) fn task_delete(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
+    let post = projected_deleted_entry(entry, at, claimed.is_some(), projects);
+    let next = next_action(&snapshot, &post, false);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     let deleted = match write.fact(
@@ -763,29 +786,25 @@ pub(super) fn task_delete(
         Ok(fact) => fact,
         Err(error) => return store_fault("task::delete-build", &error.to_string()),
     };
-    let mut workflow = entry.workflow().clone();
-    workflow.status = "deleted".to_owned();
-    workflow.completion = Some(at);
-    workflow.assignment = None;
+    let workflow = post.workflow().clone();
     write.workflow_head(entry.born().clone(), deleted, move |_| workflow);
     if claimed.is_some() {
-        let mut claim = entry.claim().expect("a held claim was just read").clone();
-        claim.disposition = ClaimDisposition::Freed;
+        let claim = post
+            .claim()
+            .expect("a held claim remains as freed history")
+            .clone();
         write.claim_head(entry.born().clone(), deleted, move |fact| ClaimHead {
             fact,
             ..claim
         });
     }
     let answer = wire::intent::TaskAnswer {
-        // A withdrawn task admits no further transition, so it offers no next
-        // action. Naming one would point the caller at a row that can never
-        // advance; the work goes on somewhere else, not here.
         task: delete.task.clone(),
         status: "deleted".to_owned(),
         guidance: None,
         completion: None,
         learning: None,
-        next: None,
+        next,
     };
     if let Err(error) = write.command_result(
         request(command, delete.clone()),
@@ -795,6 +814,32 @@ pub(super) fn task_delete(
         return store_fault("task::delete-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
+}
+
+fn projected_deleted_entry(
+    entry: &Entry,
+    at: Instant,
+    release_claim: bool,
+    projects: &ProjectPolicy,
+) -> Entry {
+    let mut workflow = entry.workflow().clone();
+    workflow.status = "deleted".to_owned();
+    workflow.completion = Some(at);
+    workflow.assignment = None;
+    let mut claim = entry.claim().cloned();
+    if let Some(claim) = claim.as_mut()
+        && release_claim
+    {
+        claim.disposition = ClaimDisposition::Freed;
+    }
+    Entry::new(
+        entry.statement().clone(),
+        workflow,
+        claim,
+        entry.lease().cloned(),
+        projects,
+    )
+    .expect("withdrawing an admitted task preserves a valid historical entry")
 }
 
 pub(super) fn task_depends(

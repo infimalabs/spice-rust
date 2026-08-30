@@ -47,6 +47,24 @@ pub(super) fn claim_free(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
+    let mut post_claim = claim.clone();
+    post_claim.disposition = ClaimDisposition::Freed;
+    let mut post_workflow = entry.workflow().clone();
+    let review_released = post_workflow.phase.as_str() == "review"
+        && post_workflow.assignment.as_ref() == Some(command.actor());
+    if review_released {
+        post_workflow.assignment = None;
+        post_workflow.review = "unassigned".to_owned();
+    }
+    let post = Entry::new(
+        entry.statement().clone(),
+        post_workflow,
+        Some(post_claim),
+        entry.lease().cloned(),
+        projects,
+    )
+    .expect("releasing a claim preserves a valid task entry");
+    let next = next_action(&snapshot, &post, false);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     let freed = match write.fact(
@@ -59,18 +77,16 @@ pub(super) fn claim_free(
         Ok(fact) => fact,
         Err(error) => return store_fault("claim::free-build", &error.to_string()),
     };
-    let mut next = claim.clone();
-    next.disposition = ClaimDisposition::Freed;
+    let next_claim = post
+        .claim()
+        .expect("released task retains its claim history")
+        .clone();
     write.claim_head(entry.born().clone(), freed, move |fact| ClaimHead {
         fact,
-        ..next
+        ..next_claim
     });
-    if entry.workflow().phase.as_str() == "review"
-        && entry.workflow().assignment.as_ref() == Some(command.actor())
-    {
-        let mut workflow = entry.workflow().clone();
-        workflow.assignment = None;
-        workflow.review = "unassigned".to_owned();
+    if review_released {
+        let workflow = post.workflow().clone();
         write.workflow_head(entry.born().clone(), freed, move |_| workflow);
     }
     let answer = wire::intent::ClaimAnswer {
@@ -78,7 +94,7 @@ pub(super) fn claim_free(
         holder: command.actor().clone(),
         expiry: None,
         warnings: Box::default(),
-        next: None,
+        next,
     };
     if let Err(error) = write.command_result(
         request(command, task.clone()),
@@ -672,12 +688,21 @@ pub(super) fn task_review(
         body::Verdict::Finding => "finding",
     }
     .to_owned();
-    write.workflow_head(entry.born().clone(), reviewed, move |_| workflow);
     let mut claim = entry
         .claim()
         .expect("Active proof requires a claim head")
         .clone();
     claim.disposition = ClaimDisposition::Freed;
+    let post = Entry::new(
+        entry.statement().clone(),
+        workflow.clone(),
+        Some(claim.clone()),
+        entry.lease().cloned(),
+        projects,
+    )
+    .expect("an admitted review preserves a valid task entry");
+    let next = next_action(&snapshot, &post, false);
+    write.workflow_head(entry.born().clone(), reviewed, move |_| workflow);
     write.claim_head(entry.born().clone(), reviewed, move |fact| ClaimHead {
         fact,
         ..claim
@@ -694,7 +719,7 @@ pub(super) fn task_review(
         guidance: None,
         completion: None,
         learning: None,
-        next: None,
+        next,
     };
     if let Err(error) = write.command_result(
         request(command, review.clone()),

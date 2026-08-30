@@ -2,6 +2,19 @@
 
 This repository develops and self-hosts the Rust Spice appliance.
 
+## Allocator loop
+
+- Handle current operator direction before allocator work. When that direction
+  describes durable work, capture it with `spice task add` before returning to
+  `spice task next`; task creation does not claim or switch work.
+- In drain mode, keep pulling allocator-selected work with `spice task next`
+  until it reports `allocator-empty` or a real blocker. Complete only the phase
+  the allocator assigned; after `spice task done` or `spice task review`, run
+  `spice task next` again because the next phase may go to another lane.
+- An `allocator-empty` result successfully ends only the current drain pass. It
+  does not discharge uncaptured operator direction or other obligations from
+  the current turn.
+
 ## Cargo isolation
 
 Resident lanes receive a private admitted `CARGO_HOME`. When a development

@@ -96,6 +96,8 @@ pub struct ClaimObservation {
 pub struct WorkingState {
     /// Pending steering messages for this lane.
     pub pending_inbox_count: usize,
+    /// Whether this lane continuously drains allocator-selected work.
+    pub drain_queue: bool,
     /// Current process actor's claim, if one is active in this worktree.
     pub claim: Option<ClaimState>,
     /// Most recently fired taste bag.
@@ -107,6 +109,7 @@ impl WorkingState {
     #[must_use]
     pub fn has_signal(&self) -> bool {
         self.pending_inbox_count > 0
+            || (self.drain_queue && self.claim.is_none())
             || self
                 .claim
                 .as_ref()
@@ -136,6 +139,7 @@ pub fn collect_working_state(
     });
     WorkingState {
         pending_inbox_count,
+        drain_queue: false,
         claim,
         last_taste: last_taste.into(),
     }
@@ -361,6 +365,7 @@ impl LeaseTier {
 #[serde(deny_unknown_fields)]
 struct StateKey {
     pending_inbox_count: u64,
+    drain_queue: bool,
     claim_handle: String,
     claim_phase: String,
     last_taste: String,
@@ -372,6 +377,7 @@ impl From<&WorkingState> for StateKey {
         let claim = snapshot.claim.as_ref();
         Self {
             pending_inbox_count: u64::try_from(snapshot.pending_inbox_count).unwrap_or(u64::MAX),
+            drain_queue: snapshot.drain_queue,
             claim_handle: claim.map_or_else(String::new, |claim| clean(&claim.handle)),
             claim_phase: claim.map_or_else(String::new, |claim| clean(&claim.phase)),
             last_taste: clean(&snapshot.last_taste),
@@ -397,6 +403,14 @@ fn render(snapshot: &WorkingState) -> String {
             "inboxes"
         };
         parts.push(format!("{} pending {noun}", snapshot.pending_inbox_count));
+    }
+    if snapshot.drain_queue && snapshot.claim.is_none() {
+        let direction = if snapshot.pending_inbox_count > 0 {
+            "handle operator direction first, then DRAIN QUEUE ASAP: spice task next"
+        } else {
+            "DRAIN QUEUE ASAP: spice task next"
+        };
+        parts.push(direction.to_owned());
     }
     if let Some(claim) = snapshot.claim.as_ref() {
         let handle = clean(&claim.handle);
@@ -501,6 +515,7 @@ mod tests {
     fn state(remaining: Option<u64>) -> WorkingState {
         WorkingState {
             pending_inbox_count: 1,
+            drain_queue: false,
             claim: Some(ClaimState {
                 handle: "METER-00000001".to_owned(),
                 phase: "todo".to_owned(),
@@ -528,6 +543,55 @@ mod tests {
         assert!(!line.contains('\n'));
         assert_eq!(line.matches('.').count(), 1);
         assert!(line.len() < WORKING_STATE_LINE_LIMIT);
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn idle_drain_guidance_orders_operator_direction_and_stops_while_claimed() {
+        let root = fixture("drain-guidance");
+        let path = root.join("working-state.json");
+        let idle = WorkingState {
+            drain_queue: true,
+            ..WorkingState::default()
+        };
+        let idle_line = Meter::new(&path)
+            .evaluate(&idle, Duration::from_secs(1))
+            .expect("idle drain state evaluates")
+            .announcement
+            .expect("idle drain state speaks");
+        let directed = WorkingState {
+            pending_inbox_count: 1,
+            ..idle.clone()
+        };
+        let directed_line = Meter::new(&path)
+            .evaluate(&directed, Duration::from_secs(2))
+            .expect("directed drain state evaluates")
+            .announcement
+            .expect("new operator direction speaks");
+        let claimed = WorkingState {
+            claim: Some(ClaimState {
+                handle: "DRAIN-00000001".to_owned(),
+                phase: "todo".to_owned(),
+                ..ClaimState::default()
+            }),
+            ..idle
+        };
+        let claimed_line = Meter::new(&path)
+            .evaluate(&claimed, Duration::from_secs(3))
+            .expect("claimed drain state evaluates")
+            .announcement
+            .expect("claim acquisition speaks");
+
+        assert!(idle_line.contains("DRAIN QUEUE ASAP: spice task next"));
+        assert_eq!(
+            directed_line,
+            "🌶️ Working state: 1 pending inbox; handle operator direction first, then \
+             DRAIN QUEUE ASAP: spice task next."
+        );
+        assert!(!claimed_line.contains("spice task next"));
+        for line in [&idle_line, &directed_line, &claimed_line] {
+            assert!(line.len() < WORKING_STATE_LINE_LIMIT);
+        }
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

@@ -1,5 +1,6 @@
 use super::*;
 
+mod drain_guidance;
 mod plan_advance;
 
 #[test]
@@ -88,6 +89,7 @@ fn task_completion_terminal_replays_once_after_claim_release_and_restart() {
     };
     assert_eq!(terminal.status, "completed");
     assert!(terminal.completion.is_none());
+    assert_eq!(terminal.next.as_deref(), Some("spice task next"));
     assert_eq!(
         at(&board(&bus, epoch, lane.clone()), &task)
             .claim
@@ -310,7 +312,7 @@ pub(super) fn advance_task_to_review(
     ));
     let held = board(bus, epoch, lane.clone());
     let held_heads = at(&held, task);
-    assert_committed(issue(
+    let released = assert_committed(issue(
         bus,
         epoch,
         lane.clone(),
@@ -325,6 +327,10 @@ pub(super) fn advance_task_to_review(
         ],
         &TaskRef { task: task.clone() },
     ));
+    let CommandAnswer::Claim(released) = released else {
+        panic!("claim release did not return a claim answer");
+    };
+    assert_eq!(released.next.as_deref(), Some("spice task next"));
     claim_and_complete_task(bus, epoch, seat, lane, task);
 }
 
@@ -566,7 +572,7 @@ fn an_unclean_review_needs_follow_up_tracking_and_clean_does_not() {
     // The predecessor default and its allocator hint both spell the
     // verdict this way, so it has to settle the task clean rather than
     // demand follow-up tracking for a review that asked for nothing.
-    assert_committed(issue(
+    let clean_review = assert_committed(issue(
         &bus,
         epoch,
         lane_two,
@@ -580,6 +586,10 @@ fn an_unclean_review_needs_follow_up_tracking_and_clean_does_not() {
             followup: Vec::new(),
         },
     ));
+    let CommandAnswer::Task(clean_review) = clean_review else {
+        panic!("clean review did not return a task answer");
+    };
+    assert_eq!(clean_review.next.as_deref(), Some("spice task next"));
     let settled = board(&bus, epoch, Actor::Operator);
     let heads = at(&settled, &task);
     assert_eq!(heads.workflow.body.status, "completed");
