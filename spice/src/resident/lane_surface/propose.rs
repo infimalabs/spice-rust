@@ -1,5 +1,6 @@
 //! Intent proposals for seating, drain, wake, removal, and restart commitment.
 
+use super::restart_claim::{append_restored_claim, guard_restored_claim, observe_restored_claim};
 use super::*;
 
 /// Propose the lane, capability, and first occupant one seat admits.
@@ -223,6 +224,7 @@ pub(super) fn commit_restored(
     let group = proven.group;
     let session = &proven.session;
     let observed = current_residency(bus, epoch)?;
+    let carried = observe_restored_claim(bus, durable)?;
     let mut next = observed.body().clone();
     let row = next
         .lanes
@@ -236,7 +238,10 @@ pub(super) fn commit_restored(
         })?;
     let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
     guard_residency(&mut write, &observed);
-    let fact = if let Some(ancestor) = row.occupant {
+    if let Some(carried) = &carried {
+        guard_restored_claim(&mut write, carried);
+    }
+    let mut fact = if let Some(ancestor) = row.occupant {
         let degraded = write
             .fact(
                 wire::body::LaneDegraded {
@@ -280,6 +285,9 @@ pub(super) fn commit_restored(
             )
             .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?
     };
+    if let Some(carried) = &carried {
+        fact = append_restored_claim(&mut write, carried, durable, occupant, epoch, fact)?;
+    }
     row.occupant = Some(occupant);
     row.lineage.push(occupant);
     row.session = Some(session.clone());
@@ -287,3 +295,7 @@ pub(super) fn commit_restored(
     write.residency_head(fact, move |_| next);
     commit(bus, write).map(|_| ())
 }
+
+#[cfg(test)]
+#[path = "propose_tests.rs"]
+mod tests;

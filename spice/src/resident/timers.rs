@@ -372,14 +372,9 @@ fn desired_claims(
         let Some(claim) = heads.claim().map(journal::JournalHead::body) else {
             continue;
         };
-        if claim.disposition != ClaimDisposition::Active || claim.epoch != residency.body().epoch {
-            continue;
-        }
-        if !residency.body().lanes.iter().any(|seat| {
-            seat.lane == claim.lane
-                && seat.disposition == "occupied"
-                && seat.occupant == Some(claim.occupant)
-        }) {
+        // A restart may move residency before carrying live authority. Keep the
+        // old exact heads armed so an expired claim cannot remain active forever.
+        if claim.disposition != ClaimDisposition::Active {
             continue;
         }
         let lease = heads.lease().ok_or_else(|| {

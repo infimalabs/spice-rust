@@ -28,6 +28,7 @@ mod launch;
 mod lineage;
 mod propose;
 mod reply;
+mod restart_claim;
 mod session;
 
 use automatic::wake;

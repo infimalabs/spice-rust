@@ -693,62 +693,35 @@ fn a_board_that_seated_no_residency_refuses_and_a_seated_one_lapses() {
     lapse(&mut seated, lapse_request(58, 20)).expect("a seated board lapses");
 }
 
-/// One residency drift and the refusal the drifted head must produce.
-type ResidencyCase = (u8, fn(&mut ResidencyHead), Refusal);
-
 #[test]
-fn residency_refusals_name_the_seat_they_read_and_write_nothing() {
-    let cases: [ResidencyCase; 5] = [
-        (
-            59,
-            |head| head.state = ResidentState::Draining,
-            Refusal::ResidentState(ResidentState::Draining),
-        ),
-        (
-            60,
-            |head| head.epoch = uuid(28),
-            Refusal::StaleResidentEpoch {
-                seated: uuid(28),
-                named: uuid(22),
-            },
-        ),
-        (
-            61,
-            |head| head.lanes.clear(),
-            Refusal::MissingLane(uuid(20)),
-        ),
-        (
-            62,
-            |head| head.lanes[0].disposition = "released".to_owned(),
-            Refusal::LaneDisposition {
-                lane: uuid(20),
-                disposition: "released".to_owned(),
-            },
-        ),
-        (
-            63,
-            |head| head.lanes[0].occupant = Some(uuid(29)),
-            Refusal::Displaced {
-                lane: uuid(20),
-                seated: Some(uuid(29)),
-                named: uuid(21),
-            },
-        ),
+fn moved_residency_identity_does_not_strand_an_expired_claim() {
+    let cases: [fn(&mut ResidencyHead); 4] = [
+        |head| head.epoch = uuid(28),
+        |head| head.lanes.clear(),
+        |head| head.lanes[0].disposition = "released".to_owned(),
+        |head| head.lanes[0].occupant = Some(uuid(29)),
     ];
-    for (command, drift, expected) in cases {
+    for (index, drift) in cases.into_iter().enumerate() {
         let mut journal = claimed();
         drift_residency(&mut journal, drift);
-        refuses(&mut journal, lapse_request(command, 20), &expected);
+        lapse(
+            &mut journal,
+            lapse_request(60 + u8::try_from(index).expect("fixture index fits"), 20),
+        )
+        .expect("stale claim authority lapses after residency identity moves");
+        let snapshot = Snapshot::read(&journal, &projects()).expect("lapsed snapshot");
+        assert_eq!(
+            snapshot.entries()[0]
+                .claim()
+                .expect("claim remains")
+                .disposition,
+            ClaimDisposition::Lapsed
+        );
     }
 }
 
-/// A residency that fails two guards reports the first, not the worst.
-///
-/// `admit_residency` is four early returns, so a head both off its seat and
-/// missing the claimed lane reports only one. The state is the honest answer:
-/// the lane is gone because the resident is draining, not because of the seat.
 #[test]
-fn the_residency_chain_reports_the_first_guard_that_fires() {
+fn nonseated_residency_refuses_before_identity_is_considered() {
     let mut journal = claimed();
     drift_residency(&mut journal, |head| {
         head.state = ResidentState::Draining;

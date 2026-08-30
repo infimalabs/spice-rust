@@ -84,17 +84,7 @@ fn lapse_covering_test(refusal: &Refusal) -> &'static str {
         Refusal::MissingResidency => {
             "a_board_that_seated_no_residency_refuses_and_a_seated_one_lapses"
         }
-        Refusal::ResidentState(..) => {
-            "residency_refusals_name_the_seat_they_read_and_write_nothing"
-        }
-        Refusal::StaleResidentEpoch { .. } => {
-            "residency_refusals_name_the_seat_they_read_and_write_nothing"
-        }
-        Refusal::MissingLane(..) => "residency_refusals_name_the_seat_they_read_and_write_nothing",
-        Refusal::LaneDisposition { .. } => {
-            "residency_refusals_name_the_seat_they_read_and_write_nothing"
-        }
-        Refusal::Displaced { .. } => "residency_refusals_name_the_seat_they_read_and_write_nothing",
+        Refusal::ResidentState(..) => "nonseated_residency_refuses_before_identity_is_considered",
         Refusal::Changed(..) => "expiry_changed_after_observation_refuses_before_a_second_fact",
     }
 }
