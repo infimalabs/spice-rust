@@ -70,6 +70,8 @@ mod task_artifact_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod task_migration_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod task_next_delivery;
+#[cfg(not(target_arch = "wasm32"))]
 mod taste_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod trust_command;
@@ -372,7 +374,6 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "list"]
         | ["task", "status"]
         | ["task", "show"]
-        | ["task", "next"]
         | ["task", "recover"]
         | ["task", "reclaim"]
         | ["task", "add"]
@@ -389,6 +390,11 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "delete"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
+        ["task", "next"] => task_next_delivery::deliver(
+            &board_command::run(leaf, contract),
+            form,
+            bootstrap_environment(steer::hook::INBOX).is_some(),
+        ),
         ["steer"]
         | ["steer", "cancel"]
         | ["steer", "resend"]
