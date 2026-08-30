@@ -727,13 +727,15 @@ fn execute_selected_tests(
         } else {
             policy.shared_outputs = true;
         }
-        let partitions = if selection::routine_selection(changed_sources) {
-            policy.concurrency.min(ROUTINE_PARTITIONS_PER_TARGET)
-        } else {
-            policy.concurrency
-        };
-        let prebuilt =
-            partition_largest_prebuilt_tests(prebuilt, &environment, partitions, output)?;
+        let partitions_per_target =
+            selected_partitions_per_target(changed_sources, policy.concurrency);
+        let prebuilt = partition_largest_prebuilt_tests(
+            prebuilt,
+            &environment,
+            partitions_per_target,
+            policy.concurrency,
+            output,
+        )?;
         if selection::routine_selection(changed_sources)
             && prebuilt.len() > ROUTINE_TEST_SHARD_LIMIT
         {
@@ -777,6 +779,17 @@ fn execute_selected_tests(
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
     Ok(())
+}
+
+fn selected_partitions_per_target(
+    changed_sources: &[String],
+    execution_concurrency: usize,
+) -> usize {
+    if selection::routine_selection(changed_sources) {
+        ROUTINE_PARTITIONS_PER_TARGET
+    } else {
+        execution_concurrency
+    }
 }
 
 fn write_selected_test_units(
