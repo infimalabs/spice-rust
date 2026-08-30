@@ -15,6 +15,7 @@ use super::{CommandResult, environment_fault, new_uuid, steering, store_fault};
 
 const CLAIM_WARNING_SECONDS: i64 = 299;
 const WARNING_COMMIT_RETRIES: usize = 4;
+const TIMER_FACT_PAGE_ROWS: usize = 1024;
 
 /// Process-local waits mirror durable claim, steering, and lifecycle authority.
 /// Each fired event re-proves its captured durable state before appending, so
@@ -30,14 +31,20 @@ pub(super) struct Runtime {
     warnings: BTreeMap<TaskHandle, ArmedWarning>,
     directives: BTreeMap<CanonicalUuid, ArmedDirective>,
     wake: Option<ArmedWake>,
-    synchronized: Option<wire::Seq>,
+    facts: TimerFacts,
 }
 
 struct TimerSnapshot {
     tasks: Vec<journal::TaskHeads>,
     residency: Option<journal::JournalHead<wire::ResidencyHead>>,
     steering: Vec<journal::JournalHead<wire::SteeringHead>>,
-    facts: journal::FactSnapshot,
+    horizon: Option<wire::Seq>,
+}
+
+#[derive(Default)]
+struct TimerFacts {
+    rows: Vec<wire::Envelope<wire::AnyFact>>,
+    horizon: Option<wire::Seq>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -260,7 +267,7 @@ impl Runtime {
             warnings: BTreeMap::new(),
             directives: BTreeMap::new(),
             wake: None,
-            synchronized: None,
+            facts: TimerFacts::default(),
         })
     }
 
@@ -312,21 +319,22 @@ impl Runtime {
     /// Make process-local waits exactly match current lapse-capable claim heads.
     pub(super) fn synchronize(&mut self, bus: &Bus) -> CommandResult<BTreeSet<CanonicalUuid>> {
         let mut snapshot = timer_snapshot(bus)?;
-        let (refresh, changed) = cancel_stale_warnings(bus, &snapshot)?;
+        self.facts.synchronize(bus, snapshot.horizon)?;
+        let (refresh, changed) = cancel_stale_warnings(bus, &snapshot, self.facts.rows.as_slice())?;
         if changed {
             snapshot = timer_snapshot(bus)?;
+            self.facts.synchronize(bus, snapshot.horizon)?;
         }
-        let synchronized = snapshot.facts.horizon();
         let desired = desired_claims(&snapshot.tasks, snapshot.residency.as_ref())?;
         let desired_renewals = desired_renewals(
             &snapshot.tasks,
             snapshot.residency.as_ref(),
-            snapshot.facts.facts(),
+            &self.facts.rows,
         )?;
         let desired_warnings = desired_warnings(
             &snapshot.tasks,
             snapshot.residency.as_ref(),
-            snapshot.facts.facts(),
+            &self.facts.rows,
         )?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
         let stale = self
@@ -388,7 +396,6 @@ impl Runtime {
             self.directives
                 .insert(directive, ArmedDirective { id, authority });
         }
-        self.synchronized = synchronized;
         Ok(refresh)
     }
 
@@ -399,7 +406,8 @@ impl Runtime {
     /// Replaying each of those notifications would decode the complete fact
     /// stream again without observing any newer authority.
     pub(super) fn covers(&self, commit: bus::JournalCommit) -> bool {
-        self.synchronized
+        self.facts
+            .horizon
             .is_some_and(|horizon| horizon.get() >= commit.last())
     }
 
@@ -785,12 +793,46 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
             tasks: read.task_heads()?,
             residency: read.residency_head()?,
             steering: read.pending_steering(None)?,
-            facts: read.fact_snapshot().map_err(|error| {
-                GuardError::Invalid(format!("timer fact snapshot is invalid: {error}"))
-            })?,
+            horizon: read.cursor()?,
         })
     })
     .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))
+}
+
+impl TimerFacts {
+    /// Extend the timer's immutable authority stream only through one captured
+    /// cursor. Full history is decoded once at startup; every later fold reads
+    /// only facts appended since the last synchronized cursor.
+    fn synchronize(&mut self, bus: &Bus, target: Option<wire::Seq>) -> CommandResult<()> {
+        let Some(target) = target else {
+            return Ok(());
+        };
+        if self
+            .horizon
+            .is_some_and(|horizon| horizon.get() >= target.get())
+        {
+            return Ok(());
+        }
+        let reader = bus.reader();
+        while self.horizon.is_none_or(|horizon| horizon < target) {
+            let page = reader
+                .canvas_facts(
+                    journal::FactPageStart::After(self.horizon),
+                    target,
+                    TIMER_FACT_PAGE_ROWS,
+                )
+                .map_err(|error| store_fault("bus::timer-facts-failed", &error.to_string()))?;
+            let Some(last) = page.rows.last().map(|fact| fact.seq) else {
+                return Err(store_fault(
+                    "bus::timer-facts-incomplete",
+                    &format!("fact page ended before captured timer horizon {target}"),
+                ));
+            };
+            self.rows.extend(page.rows);
+            self.horizon = Some(last);
+        }
+        Ok(())
+    }
 }
 
 impl Drop for Runtime {
@@ -1018,6 +1060,7 @@ struct StaleWarning {
 fn cancel_stale_warnings(
     bus: &Bus,
     snapshot: &TimerSnapshot,
+    facts: &[wire::Envelope<wire::AnyFact>],
 ) -> CommandResult<(BTreeSet<CanonicalUuid>, bool)> {
     let at = Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("claim::warning-clock-invalid", &error.to_string()))?;
@@ -1025,7 +1068,7 @@ fn cancel_stale_warnings(
         &snapshot.tasks,
         snapshot.residency.as_ref(),
         &snapshot.steering,
-        snapshot.facts.facts(),
+        facts,
         at,
     )?;
     let mut refresh = BTreeSet::new();
