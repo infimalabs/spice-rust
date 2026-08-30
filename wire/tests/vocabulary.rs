@@ -450,6 +450,7 @@ fn producer_assignment_follows_the_specified_enumeration() {
     let bus_timers = [
         FactKind::ClaimLapsed,
         FactKind::ClaimRenewed,
+        FactKind::ClaimLeaseWarned,
         FactKind::SteerLapsed,
         FactKind::LaneHeld,
         FactKind::LaneResumed,

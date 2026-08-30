@@ -20,9 +20,9 @@ use std::error::Error;
 use std::fmt;
 
 use wire::body::{
-    DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed,
-    SteerMissed, SteerRecovered, SteerSent, SteeringStage, SteeringTransition, TasteDecision,
-    TasteJudged, TasteReminded,
+    ClaimLeaseWarned, DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined,
+    SteerEscalated, SteerLapsed, SteerMissed, SteerRecovered, SteerSent, SteeringStage,
+    SteeringTransition, TasteDecision, TasteJudged, TasteReminded,
 };
 use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Disposition, Instant};
@@ -189,6 +189,8 @@ pub enum Steering<'a> {
     /// also carries is read by the taste plane from the same row, and never by
     /// anything here.
     Reminded(&'a TasteReminded),
+    /// A claim lease crossed its warning horizon and opened a directive.
+    ClaimWarned(&'a ClaimLeaseWarned),
     /// A judge-confirmed taste candidate opened a directive.
     ///
     /// Cleared judgments are also replayed through this arm but deliberately
@@ -534,6 +536,13 @@ impl Ledger {
                 true,
                 None,
             )
+        } else if let Some(body) = fact.read::<ClaimLeaseWarned>() {
+            (
+                self.absorb_recorded(Steering::ClaimWarned(&body), Some(envelope.at)),
+                Some(body.directive),
+                true,
+                None,
+            )
         } else if let Some(body) = fact.read::<TasteJudged>() {
             let affected = match &body.decision {
                 TasteDecision::Confirmed { directive, .. } => Some(*directive),
@@ -685,6 +694,21 @@ impl Ledger {
             .to_head(origin, created))
     }
 
+    /// Build one new claim-warning directive head without unrelated history.
+    pub fn claim_warned_head(
+        body: &ClaimLeaseWarned,
+        origin: wire::Origin,
+        published: Instant,
+        created: wire::Seq,
+    ) -> Result<wire::SteeringHead, Refusal> {
+        let mut ledger = Self::new();
+        ledger.absorb_recorded(Steering::ClaimWarned(body), Some(published))?;
+        Ok(ledger
+            .directive(body.directive)
+            .expect("claim warning fact created its directive")
+            .to_head(origin, created))
+    }
+
     /// Build one judge-confirmed taste directive without unrelated history.
     pub fn judged_head(
         body: &TasteJudged,
@@ -736,6 +760,7 @@ impl Ledger {
         match steering {
             Steering::Sent(body) => self.send(body, at),
             Steering::Reminded(body) => self.remind(body, at),
+            Steering::ClaimWarned(body) => self.claim_warn(body, at),
             Steering::Judged(body) => self.judged(body, at),
             Steering::Escalated(body) => self.escalate(body, at),
             Steering::Recovered(body) => self.recover(body),
@@ -852,6 +877,28 @@ impl Ledger {
             expires: body.expires,
             published,
             stage: SteeringStage::Published,
+            escalations: Vec::new(),
+            disposition: Disposition::Live,
+        })
+    }
+
+    fn claim_warn(
+        &mut self,
+        body: &ClaimLeaseWarned,
+        published: Option<Instant>,
+    ) -> Result<(), Refusal> {
+        let key = read("key", &body.key)?;
+        self.open(Directive {
+            directive: body.directive,
+            fanout: None,
+            key,
+            lane: body.lane,
+            text: body.text.clone(),
+            control: None,
+            attachments: Vec::new(),
+            expires: body.expiry,
+            published,
+            stage: SteeringStage::Overdue,
             escalations: Vec::new(),
             disposition: Disposition::Live,
         })
@@ -1082,6 +1129,9 @@ fn transaction_key(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Key> {
             .and_then(|body| body.key.parse().ok()),
         wire::FactKind::TasteReminded => fact
             .read::<TasteReminded>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::ClaimLeaseWarned => fact
+            .read::<ClaimLeaseWarned>()
             .and_then(|body| body.key.parse().ok()),
         wire::FactKind::TasteJudged => fact.read::<TasteJudged>().and_then(|body| {
             let TasteDecision::Confirmed { key, .. } = &body.decision else {
