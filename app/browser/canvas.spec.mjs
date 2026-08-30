@@ -483,7 +483,7 @@ table holds ${JSON.stringify(surface.withheld)}`,
   assert.equal(spanned.counters, 0, `no sizing cell reaches ${mixed}`);
 }
 
-async function assertMosaicComposer(page, fixture, seeded) {
+async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   await chooseCanvasView(page, "Agents");
   const team = page.locator('[data-pane="agent-console"]');
   await team.getByRole("tab", { name: /^Compose/ }).click();
@@ -493,7 +493,10 @@ async function assertMosaicComposer(page, fixture, seeded) {
   const quoteActivity = team.locator(
     `.mosaic-message-card[data-agent-lane="${seeded.quoteLane}"]`,
   );
-  await activity.filter({ hasText: "browser direction survives streaming" }).waitFor();
+  const quoteSource = team.locator(
+    `.mosaic-message-card[data-card-kind="agent-message"][data-agent-lane="${seeded.lane}"]`,
+  ).first();
+  await quoteSource.waitFor();
 
   await assertComposerShards({
     page,
@@ -506,25 +509,25 @@ async function assertMosaicComposer(page, fixture, seeded) {
     nestedQuoteMessage,
     entirelyQuotedMessage,
     latestPrimaryProse: seeded.quoteProse,
+    activityReplay,
   });
 
-  await assertCompactionBoundary(page, fixture, team, seeded, artifacts);
+  await assertCompactionBoundary(page, fixture, team, seeded, artifacts, activityReplay);
 
-  await activity
-    .filter({ hasText: "browser direction survives streaming" })
-    .first()
-    .getByRole("button", { name: "Quote this message" })
-    .click();
+  const quoteSourceBody = (await quoteSource.locator(".message-body").innerText()).trim();
+  await quoteSource.getByRole("button", { name: "Quote this message" }).click();
   const composer = lane.locator(".composer-shard--primary");
   const quotedComposer = lane.locator(".composer-shard--quote");
   const siblingComposer = quoteLane.locator(".composer-shard--primary");
   await quotedComposer.waitFor();
   // Quoting still carries its context, but on the shard that owns it rather
   // than inside a rendered copy of the draft.
+  const quotedTitle = await quotedComposer.getAttribute("title");
+  assert.ok(quotedTitle, "the quoted message remains attached to the shard it minted");
   assert.equal(
-    await quotedComposer.getAttribute("title"),
-    "browser direction survives streaming",
-    "the quoted message stays reachable from the shard it minted",
+    quotedTitle.replaceAll("`", "").trim(),
+    quoteSourceBody,
+    "the quote shard preserves the selected assistant card's content",
   );
   await assertComposerTypingDoesNotRemeasureActivity(
     page,
@@ -541,6 +544,8 @@ async function assertMosaicComposer(page, fixture, seeded) {
     seeded,
     composer,
     quotedComposer,
+    quoteSource,
+    quoteSourceTitle: quotedTitle,
     artifactPath: join(artifacts, "canvas-light-mosaic-composer.png"),
   });
 
@@ -553,9 +558,6 @@ async function assertMosaicComposer(page, fixture, seeded) {
       dataTransfer: transfer,
     }));
   });
-  await activity.filter({ hasText: "dragged card direction" }).waitFor({
-    timeout: 10_000,
-  });
   const dropped = await reply(fixture, ["inbox", seeded.lane]);
   assert.ok(
     dropped.body.lanes[0].pending.some(
@@ -563,6 +565,9 @@ async function assertMosaicComposer(page, fixture, seeded) {
     ),
     "dropping text on a lane sends quoted steering",
   );
+  assert.equal(await activity.filter({ hasText: "dragged card direction" }).count(), 0);
+  assert.equal(await team.locator('[data-card-kind="operator-message"]').count(), 0);
+  await activityReplay.restoreProseSnapshot(page);
 }
 
 async function renderedFactSequences(page) {
@@ -900,7 +905,7 @@ try {
         await reference.close();
         seeded.extent = await journalExtent(fixture);
         await assertAuthoritySurface(lightPage, seeded);
-        await assertMosaicComposer(lightPage, fixture, seeded);
+        await assertMosaicComposer(lightPage, fixture, seeded, activityReplay);
         await assertComposerRecovery(lightPage, fixture, seeded, lightMonitor);
         await assertVacantWakeSubmission(lightPage, fixture, seeded);
         await assertRetainedHistory(lightPage, fixture);
@@ -1065,7 +1070,7 @@ try {
           browser, resident.discovery.endpoint, resident.discovery.epoch, fixture, seeded,
         );
         await assertAgesTickWhileTheResidentIsSilent(
-          browser, resident.discovery.endpoint, fixture, seeded.lane,
+          browser, resident.discovery.endpoint, seeded.lane,
         );
       });
       await run.scenario("team-lifecycle", async () => {

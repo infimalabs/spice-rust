@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { chooseCanvasView, monitorPage, reply } from "./canvas-fixture.mjs";
+import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
 import { installSocketControl } from "./canvas-speech.mjs";
 
 /// The shared clock's period, mirroring `TICK_MILLIS` in
@@ -43,11 +43,9 @@ const PLACEMENT_ATTRIBUTES = ["data-track", "data-span", "data-base", "data-row"
 /// before it even probes (`LIVENESS_PROBE_MILLIS`), and this window is a few
 /// seconds, so the stall stays well inside what the socket considers healthy.
 ///
-/// Watching an operator message rather than a composer heading is deliberate:
-/// an operator message is the only aged thing that is also a Mosaic card, which is
-/// what lets one observation answer both halves of the clause — the label moved
-/// and the lattice did not.
-export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, fixture, lane) {
+/// One observation watches the composer's shared age and one stable assistant
+/// card together, proving the label moved while the lattice did not.
+export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, lane) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   // The page-side frame counter below reads the socket the client actually
   // constructed, which only exists as a capturable object because this init
@@ -70,20 +68,20 @@ export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, 
     });
   });
 
-  const directive = "Age ticker witness: watch this card advance without me.";
-  await reply(fixture, ["steer", lane, directive]);
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
   await chooseCanvasView(page, "Agents");
   const card = page
-    .locator('.mosaic-message-card[data-card-kind="operator-message"][data-layout-phase="committed"]')
-    .filter({ hasText: "Age ticker witness" })
+    .locator(
+      `.mosaic-message-card[data-card-kind="agent-message"]`
+        + `[data-agent-lane="${lane}"][data-layout-phase="committed"]`,
+    )
     .first();
   await card.waitFor({ timeout: 15_000 });
 
   await countInboundFrames(page);
   gate.open = false;
   await settleIntoSilence(page);
-  const advance = await observeOneBoundary(card);
+  const advance = await observeOneBoundary(card, lane);
   const delivered = await page.evaluate(() => window.__ageTickInbound);
   await releaseHeldFrames(gate);
   assertAdvancedLocally(advance, delivered);
@@ -150,10 +148,12 @@ async function settleIntoSilence(page) {
 /// snapshots come from the same element instance: re-locating between them
 /// would let a replaced card pass as a surviving one, which is exactly the
 /// substitution the placement half of the clause is meant to catch.
-async function observeOneBoundary(card) {
+async function observeOneBoundary(card, lane) {
   return card.evaluate(async (element, config) => {
-    const age = element.querySelector("[data-age-slot]");
-    if (!age) throw new Error("the operator message renders no age slot");
+    const age = document.querySelector(
+      `.team-agent[data-agent-lane="${config.lane}"] .composer-shard-age-label[data-age-slot]`,
+    );
+    if (!age) throw new Error("the agent composer renders no age slot");
     const authored = Number(age.dataset.ageAuthored);
     if (!Number.isFinite(authored)) throw new Error("the age slot carries no authored instant");
     const snapshot = () => ({
@@ -237,7 +237,12 @@ async function observeOneBoundary(card) {
       const days = Math.trunc(seconds / 86_400);
       return days <= 99 ? `${days}d` : "99d+";
     }
-  }, { attributes: PLACEMENT_ATTRIBUTES, waitMs: BOUNDARY_WAIT_MS, tickMs: TICK_MS });
+  }, {
+    attributes: PLACEMENT_ATTRIBUTES,
+    waitMs: BOUNDARY_WAIT_MS,
+    tickMs: TICK_MS,
+    lane,
+  });
 }
 
 /// Let the stalled frames through and put the socket back in pass-through mode.
