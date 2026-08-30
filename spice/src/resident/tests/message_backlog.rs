@@ -200,9 +200,9 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     );
     let record = mixed_acknowledgement_record(lane, author);
     let expected = concat!(
-        "> ACK 1kQwPZtK: First direction.\n\n",
-        "ACK nope 1kQwPZtM: One response.\n",
-        "> NACK 1kQwPZtL: Second direction.\n\n",
+        "> First direction.\n\n",
+        "Nope 1kQwPZtM: One response.\n",
+        "> Second direction.\n\n",
         "Unsafe."
     );
 
@@ -324,9 +324,11 @@ fn assert_mixed_acknowledgement_message(
     };
     assert_eq!(messages.len(), 1, "one event remains one card");
     assert_eq!(messages[0].text, expected);
-    assert_eq!(messages[0].text.matches("> ACK ").count(), 1);
-    assert_eq!(messages[0].text.matches("> NACK ").count(), 1);
-    assert_eq!(messages[0].text.matches("nope").count(), 1);
+    assert!(!messages[0].text.contains("ACK 1kQwPZtK"));
+    assert!(!messages[0].text.contains("NACK 1kQwPZtL"));
+    assert_eq!(messages[0].text.matches("> First direction.").count(), 1);
+    assert_eq!(messages[0].text.matches("> Second direction.").count(), 1);
+    assert_eq!(messages[0].text.matches("Nope").count(), 1);
     assert_eq!(messages[0].text.matches("1kQwPZtM").count(), 1);
     assert_eq!(messages[0].text.matches("One response.").count(), 1);
     assert_eq!(messages[0].text.matches("Unsafe.").count(), 1);

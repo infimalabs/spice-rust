@@ -325,7 +325,9 @@ async function assertStableOperatorAuthorship(page, fixture, console, lane, acti
 }
 
 async function assertExternalOperatorReplay(page, fixture, console, lane, worktree) {
-  const text = `external operator replay ${crypto.randomUUID()}`;
+  const quotedText = `external operator premise ${crypto.randomUUID()}`;
+  const replyText = `approved ${crypto.randomUUID()}`;
+  const text = `> ${quotedText}\n\n${replyText}`;
   await page.evaluate(() => {
     const socket = window.__canvasSockets.at(-1);
     if (!socket) throw new Error("canvas WebSocket was not captured");
@@ -353,28 +355,39 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   ), sent.body.directive);
   assert.equal(streamed.actor, "operator", `external steer retains operator authorship: ${JSON.stringify(streamed)}`);
   assert.equal(streamed.fact.lane, lane, "external steer fact retains its target lane");
-  await assertOperatorProseHidden(console, text, "external live steering");
+  await assertOperatorProseHidden(console, replyText, "external live steering");
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Compose/ }).click();
-  await assertOperatorProseHidden(console, text, "pre-acknowledgement replay");
+  await assertOperatorProseHidden(console, replyText, "pre-acknowledgement replay");
 
   await writeFile(join(worktree, ".spice-ack-trigger"), `${sent.body.key}\n`);
   const acknowledgedCard = console.locator(
     `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
-  ).filter({ hasText: text });
+  ).filter({ hasText: replyText });
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "acknowledgement renders one assistant card");
   assert.equal(await acknowledgedCard.getAttribute("data-message-role"), "agent");
+  const outerQuote = acknowledgedCard.locator("blockquote").first();
   assert.equal(
-    (await acknowledgedCard.locator("blockquote").innerText()).trim(),
-    `ACK ${sent.body.key}: ${text}`,
-    "the assistant card quotes the acknowledged operator direction",
+    (await outerQuote.locator("blockquote").innerText()).trim(),
+    quotedText,
+    "the acknowledged operator quote remains nested",
+  );
+  assert.match(
+    (await outerQuote.innerText()).trim(),
+    new RegExp(`${replyText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+    "the operator reply follows its nested quote",
+  );
+  assert.doesNotMatch(
+    (await acknowledgedCard.locator(".message-body").innerText()).trim(),
+    new RegExp(`(?:ACK|NACK)\\s+${sent.body.key}`),
+    "recognized protocol framing is absent from visible prose",
   );
   assert.match(
     (await acknowledgedCard.locator(".message-body").innerText()).trim(),
-    /\napplied$/,
+    /\nApplied$/,
     "the assistant response follows its acknowledgement quote",
   );
   assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
@@ -395,9 +408,14 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
   assert.equal(
-    (await acknowledgedCard.locator("blockquote").innerText()).trim(),
-    `ACK ${sent.body.key}: ${text}`,
-    "durable replay restores the operator direction only as an inline quote",
+    (await acknowledgedCard.locator("blockquote blockquote").innerText()).trim(),
+    quotedText,
+    "durable replay restores the nested operator quote",
+  );
+  assert.doesNotMatch(
+    (await acknowledgedCard.locator(".message-body").innerText()).trim(),
+    new RegExp(`(?:ACK|NACK)\\s+${sent.body.key}`),
+    "durable replay keeps protocol framing hidden",
   );
   assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
 }
