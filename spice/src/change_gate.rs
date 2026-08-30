@@ -1,5 +1,6 @@
 //! One fail-closed ordinary gate over exact staged-change evidence.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
@@ -8,7 +9,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gate::{
     ArmDisposition, ArmFamily, BatteryArmResult, BatteryManifest, BatteryState, ChangeReachObject,
@@ -20,6 +21,7 @@ use sill::Environment;
 use crate::repository::Repository;
 
 mod cargo_budget;
+mod policy_schedule;
 mod progress;
 mod test_execution;
 mod worker_scheduler;
@@ -420,7 +422,11 @@ fn run_with_selection(
     publish_phase(progress, "capture", None)?;
     let capture_started = Instant::now();
     let budget = CargoBudget::detect(gate::WORKSPACE_TEST_CONCURRENCY_CAP);
-    publish_budget(progress, budget, "overlapped-policy-tests")?;
+    publish_budget(
+        progress,
+        budget,
+        "prioritized-bounded-policy-overlapped-tests",
+    )?;
     let mut anchor = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
     publish_phase_terminal(progress, "capture", capture_started, "success")?;
     publish_phase(progress, "selection", Some(anchor.changes().len()))?;
@@ -833,6 +839,15 @@ struct FocusedPolicyExecution {
     summaries: Vec<PolicyArmSummary>,
 }
 
+#[derive(Clone, Copy)]
+struct ParallelPolicyContext<'a, 'prepared> {
+    anchor: &'a crate::gate::PreparedArm<'prepared>,
+    selection: &'a ChangeSelectionReport,
+    source: &'a wire::Digest,
+    budget: CargoBudget,
+    scheduler: &'a WorkerScheduler,
+}
+
 struct PreexecutedPolicy {
     reports: BTreeMap<GateId, gate::FocusedArmReport>,
     rust_workspace: Option<gate::RustAnalysisWorkspace>,
@@ -933,46 +948,29 @@ fn run_focused_policy(
     mut preexecuted: BTreeMap<GateId, gate::FocusedArmReport>,
     progress: &mut impl Write,
 ) -> Result<FocusedPolicyExecution, ChangeGateError> {
-    let mut policy = Vec::with_capacity(selection.reach().len());
-    let mut reaches = selection.reach().iter().peekable();
-    while let Some(reach) = reaches.next() {
+    let mut reports = BTreeMap::new();
+    let mut parallel = Vec::new();
+    for reach in selection.reach() {
         let gate_id = reach.gate_id();
         if let Some(report) = preexecuted.remove(&gate_id) {
-            record_policy_report(&mut policy, report, source)?;
+            insert_policy_report(&mut reports, report)?;
             continue;
         }
-        publish_policy_start(progress, gate_id)?;
-        let started = Instant::now();
-        if gate_id == GateId::RustTypecheck
-            && reaches
-                .peek()
-                .is_some_and(|next| next.gate_id() == GateId::CanvasWebTypecheck)
-        {
-            let rust = prepare_policy_arm(anchor, selection, reach, budget, progress)?;
-            let canvas_reach = reaches
-                .next()
-                .expect("the adjacent Canvas reach was observed above");
-            publish_policy_start(progress, GateId::CanvasWebTypecheck)?;
-            let canvas = prepare_policy_arm(anchor, selection, canvas_reach, budget, progress)?;
-            let (rust, canvas) = std::thread::scope(|scope| {
-                let canvas = scope.spawn(|| execute_prepared_policy_arm(canvas, scheduler));
-                let rust = execute_prepared_policy_arm(rust, scheduler);
-                let canvas = canvas.join().map_err(|_| {
-                    ChangeGateError::protocol(
-                        "change-gate-policy-panicked",
-                        "focused Canvas policy arm panicked",
-                    )
-                })?;
-                Ok::<_, ChangeGateError>((rust?, canvas?))
-            })?;
-            publish_policy_terminal(progress, GateId::RustTypecheck, started, "completed")?;
-            publish_policy_terminal(progress, GateId::CanvasWebTypecheck, started, "completed")?;
-            record_policy_report(&mut policy, rust, source)?;
-            record_policy_report(&mut policy, canvas, source)?;
-            continue;
-        }
-
-        let report = if gate_id == GateId::Staging {
+        if gate_id == GateId::Staging {
+            execute_parallel_policy_segment(
+                ParallelPolicyContext {
+                    anchor,
+                    selection,
+                    source,
+                    budget,
+                    scheduler,
+                },
+                &mut parallel,
+                &mut reports,
+                progress,
+            )?;
+            publish_policy_start(progress, gate_id)?;
+            let started = Instant::now();
             let _permit = scheduler.acquire()?;
             anchor
                 .bind_cargo_jobs(budget.policy_jobs())
@@ -983,21 +981,156 @@ fn run_focused_policy(
                 reach.objects(),
                 &[ChangeReachObject::Repository],
             )?;
-            anchor.execute().map_err(ChangeGateError::gate)
-        } else {
-            let prepared = prepare_policy_arm(anchor, selection, reach, budget, progress)?;
-            execute_prepared_policy_arm(prepared, scheduler)
-        };
-        let disposition = if report.is_ok() {
-            "completed"
-        } else {
-            "failed"
-        };
-        publish_policy_terminal(progress, gate_id, started, disposition)?;
-        let report = report?;
+            let report = anchor.execute().map_err(ChangeGateError::gate);
+            let disposition = if report.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            };
+            publish_policy_terminal(progress, gate_id, started, disposition)?;
+            insert_policy_report(&mut reports, report?)?;
+            continue;
+        }
+        parallel.push(reach);
+    }
+    execute_parallel_policy_segment(
+        ParallelPolicyContext {
+            anchor,
+            selection,
+            source,
+            budget,
+            scheduler,
+        },
+        &mut parallel,
+        &mut reports,
+        progress,
+    )?;
+    let mut policy = Vec::with_capacity(selection.reach().len());
+    for reach in selection.reach() {
+        let gate_id = reach.gate_id();
+        let report = reports.remove(&gate_id).ok_or_else(|| {
+            ChangeGateError::protocol(
+                "change-gate-policy-incomplete",
+                format!(
+                    "focused policy scheduler returned no {} report",
+                    gate_id.as_str()
+                ),
+            )
+        })?;
         record_policy_report(&mut policy, report, source)?;
     }
     Ok(FocusedPolicyExecution { summaries: policy })
+}
+
+fn execute_parallel_policy_segment(
+    context: ParallelPolicyContext<'_, '_>,
+    reaches: &mut Vec<&gate::ChangeArmReach>,
+    reports: &mut BTreeMap<GateId, gate::FocusedArmReport>,
+    progress: &mut impl Write,
+) -> Result<(), ChangeGateError> {
+    if reaches.is_empty() {
+        return Ok(());
+    }
+    let reaches = std::mem::take(reaches);
+    let mut scheduled = reaches.iter().copied().enumerate().collect::<Vec<_>>();
+    scheduled.sort_by_key(|(index, reach)| (policy_schedule_rank(reach.gate_id()), *index));
+    publish_policy_schedule(progress, context.budget.worker_processes(), &scheduled)?;
+    let progress = RefCell::new(progress);
+    let completions = policy_schedule::run(
+        scheduled,
+        context.budget.worker_processes(),
+        |reach| {
+            let mut progress = progress.borrow_mut();
+            publish_policy_start(&mut **progress, reach.gate_id())?;
+            prepare_policy_arm(
+                context.anchor,
+                context.selection,
+                reach,
+                context.budget,
+                &mut **progress,
+            )
+        },
+        |prepared| execute_prepared_policy_arm(prepared, context.scheduler),
+        |index, elapsed, outcome| {
+            let gate_id = reaches[index].gate_id();
+            let disposition = if matches!(outcome, policy_schedule::Outcome::Returned(Ok(_))) {
+                "completed"
+            } else {
+                "failed"
+            };
+            publish_policy_terminal_elapsed(
+                &mut **progress.borrow_mut(),
+                gate_id,
+                elapsed,
+                disposition,
+            )
+        },
+    );
+
+    let mut first_error = None;
+    for completion in completions {
+        let gate_id = reaches[completion.index].gate_id();
+        let result = match completion.outcome {
+            policy_schedule::Outcome::Returned(result) => result,
+            policy_schedule::Outcome::Panicked => Err(ChangeGateError::protocol(
+                "change-gate-policy-panicked",
+                format!("focused {} policy arm panicked", gate_id.as_str()),
+            )),
+        };
+        if first_error.is_none() {
+            match result {
+                Ok(report) => {
+                    validate_focused_policy_source(&report, context.source)?;
+                    insert_policy_report(reports, report)?;
+                }
+                Err(error) => first_error = Some(error),
+            }
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
+fn insert_policy_report(
+    reports: &mut BTreeMap<GateId, gate::FocusedArmReport>,
+    report: gate::FocusedArmReport,
+) -> Result<(), ChangeGateError> {
+    let gate_id = report.gate_id();
+    if reports.insert(gate_id, report).is_some() {
+        return Err(ChangeGateError::protocol(
+            "change-gate-policy-duplicate",
+            format!("focused policy scheduler repeated {}", gate_id.as_str()),
+        ));
+    }
+    Ok(())
+}
+
+fn publish_policy_schedule(
+    progress: &mut impl Write,
+    concurrency: usize,
+    scheduled: &[(usize, &gate::ChangeArmReach)],
+) -> Result<(), ChangeGateError> {
+    let order = scheduled
+        .iter()
+        .map(|(_, reach)| reach.gate_id().as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    writeln!(
+        progress,
+        "[change-gate-policy-schedule] concurrency={concurrency} order={order}",
+    )
+    .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
+    progress
+        .flush()
+        .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
+}
+
+const fn policy_schedule_rank(gate_id: GateId) -> u8 {
+    match gate_id {
+        GateId::RustTypecheck | GateId::CanvasWebTypecheck | GateId::Complexity => 0,
+        GateId::EnvNameLedger | GateId::MarkdownLinks | GateId::Formatters => 1,
+        GateId::MagicNumbers | GateId::JavascriptUnused => 2,
+        _ => 3,
+    }
 }
 
 fn publish_policy_start(progress: &mut impl Write, gate_id: GateId) -> Result<(), ChangeGateError> {
@@ -1018,11 +1151,20 @@ fn publish_policy_terminal(
     started: Instant,
     disposition: &str,
 ) -> Result<(), ChangeGateError> {
+    publish_policy_terminal_elapsed(progress, gate_id, started.elapsed(), disposition)
+}
+
+fn publish_policy_terminal_elapsed(
+    progress: &mut impl Write,
+    gate_id: GateId,
+    elapsed: Duration,
+    disposition: &str,
+) -> Result<(), ChangeGateError> {
     writeln!(
         progress,
         "[change-gate-policy] gate={} stage=terminal elapsed_ms={} disposition={disposition}",
         gate_id.as_str(),
-        started.elapsed().as_millis(),
+        elapsed.as_millis(),
     )
     .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))?;
     progress
