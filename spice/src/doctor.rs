@@ -1,4 +1,4 @@
-//! Side-effect-free acquisition for the daemonless Doctor report.
+//! Bounded acquisition for the daemonless Doctor report.
 
 mod subsystems;
 
@@ -21,7 +21,8 @@ use wire::{
 use crate::cli::{self, ExternalTool};
 
 /// Inspect the repository containing `working` without opening authority or
-/// launching any declared tool.
+/// launching any required command tool. The optional configured RTK executable
+/// crosses its bounded health contract because availability alone is unsafe.
 pub(crate) fn inspect(
     working: &Path,
     environment: &[(SpiceVariable, bool)],
@@ -237,17 +238,10 @@ fn tool_observation(
         },
         DoctorToolSource::WorktreeConfiguration => {
             let executable = configuration.rtk().executable();
-            let observed = if Path::new(executable).is_absolute() {
-                probe.exact(Path::new(executable))
-            } else {
-                probe.named(executable)
-            };
-            match observed {
+            match probe.rtk(executable) {
                 Ok(()) => DoctorObservation::Ready {},
                 Err(reason) => DoctorObservation::Unavailable {
-                    reason: format!(
-                        "configured RTK executable {executable:?} is unavailable: {reason}"
-                    ),
+                    reason: format!("configured RTK executable {executable:?} is native: {reason}"),
                 },
             }
         }
@@ -297,6 +291,14 @@ fn configuration_refusal(error: &config::LoadError) -> Refusal {
 trait ExecutableProbe {
     fn named(&self, name: &str) -> Result<(), String>;
     fn exact(&self, path: &Path) -> Result<(), String>;
+
+    fn rtk(&self, executable: &str) -> Result<(), String> {
+        if Path::new(executable).is_absolute() {
+            self.exact(Path::new(executable))
+        } else {
+            self.named(executable)
+        }
+    }
 }
 
 struct FilesystemProbe<'a> {
@@ -339,6 +341,20 @@ impl ExecutableProbe for FilesystemProbe<'_> {
 
     fn exact(&self, path: &Path) -> Result<(), String> {
         executable(path)
+    }
+
+    fn rtk(&self, executable: &str) -> Result<(), String> {
+        let health = spice::rtk::probe_health(OsStr::new(executable), self.working);
+        if health.active() {
+            Ok(())
+        } else {
+            Err(format!(
+                "state={} version={} detail={}",
+                health.state().as_str(),
+                health.version().unwrap_or("unknown"),
+                health.detail()
+            ))
+        }
     }
 }
 

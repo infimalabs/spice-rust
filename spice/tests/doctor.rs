@@ -133,7 +133,6 @@ fn non_ready_reason(observation: &DoctorObservation) -> Option<&str> {
 struct HealthyFixture {
     repository: Scratch,
     bin: PathBuf,
-    marker: PathBuf,
     journal: PathBuf,
     install: PathBuf,
     canvas: PathBuf,
@@ -178,15 +177,34 @@ fn healthy_fixture() -> HealthyFixture {
 
     let bin = repository.path().join("fixture-bin");
     fs::create_dir(&bin).expect("create fixture executable directory");
-    let marker = repository.path().join("rtk-was-started");
     let rtk = bin.join("rtk");
     fs::write(
         &rtk,
-        format!("#!/bin/sh\nprintf started > '{}'\n", marker.display()),
+        concat!(
+            "#!/bin/sh\n",
+            "case \"$1\" in\n",
+            "  --version) printf 'rtk 0.45.0\\n' ;;\n",
+            "  rewrite)\n",
+            "    shift 2\n",
+            "    case \"$1\" in\n",
+            "      git) printf 'rtk git status --short\\n' ;;\n",
+            "      rg) printf 'rtk rg --count al+pha -\\n' ;;\n",
+            "      *) exit 9 ;;\n",
+            "    esac\n",
+            "    ;;\n",
+            "  rg) cat >/dev/null; printf '1\\n' ;;\n",
+            "  *) exit 9 ;;\n",
+            "esac\n",
+        ),
     )
-    .expect("write mutation-probe executable");
+    .expect("write healthy RTK executable");
     fs::set_permissions(&rtk, fs::Permissions::from_mode(0o755))
-        .expect("make mutation-probe executable");
+        .expect("make healthy RTK executable");
+    let rg = bin.join("rg");
+    fs::write(&rg, b"#!/bin/sh\ncat >/dev/null\nprintf '1\\n'\n")
+        .expect("write fidelity-search executable");
+    fs::set_permissions(&rg, fs::Permissions::from_mode(0o755))
+        .expect("make fidelity-search executable");
     repository.local(&format!(
         "[listen]\nwindow = \"45s\"\n[proof]\ncontainer = \"{}\"\n",
         rtk.display()
@@ -196,7 +214,6 @@ fn healthy_fixture() -> HealthyFixture {
     HealthyFixture {
         repository,
         bin,
-        marker,
         journal,
         install,
         canvas,
@@ -504,7 +521,7 @@ fn assert_tool_posture_and_text(report: &DoctorReport<Root>, text: &[u8]) {
 
 #[cfg(unix)]
 #[test]
-fn both_forms_report_the_same_read_only_state_without_executing_rtk_or_leaking_environment() {
+fn both_forms_report_the_same_read_only_state_without_leaking_environment() {
     let fixture = healthy_fixture();
 
     let environment = [(SpiceVariable::Lane, SECRET)];
@@ -565,10 +582,6 @@ fn both_forms_report_the_same_read_only_state_without_executing_rtk_or_leaking_e
         DoctorObservation::Unavailable { .. }
     ));
 
-    assert!(
-        !fixture.marker.exists(),
-        "Doctor started the observed RTK executable"
-    );
     assert_eq!(
         fs::read(&fixture.journal).expect("read authority sentinel"),
         b"not an opened journal\n"
@@ -731,15 +744,66 @@ fn missing_optional_rtk_is_an_unhealthy_row_inside_a_direct_reply() {
 }
 
 #[test]
-fn doctor_observes_the_exact_configured_rtk_path_without_executing_it() {
+fn doctor_runs_the_health_contract_against_the_exact_configured_rtk_path() {
     use std::os::unix::fs::PermissionsExt;
 
     let repository = Scratch::repository("configured-rtk");
     repository.tracked("");
     let executable = repository.path().join("alternate-rtk");
-    fs::write(&executable, b"not executed\n").expect("write configured RTK fixture");
+    fs::write(
+        &executable,
+        concat!(
+            "#!/bin/sh\n",
+            "case \"$1\" in\n",
+            "  --version) printf 'rtk 0.45.0\\n' ;;\n",
+            "  rewrite) shift 2; printf 'rtk %s\\n' \"$*\" ;;\n",
+            "  rg) cat >/dev/null; printf '1\\n' ;;\n",
+            "  *) exit 9 ;;\n",
+            "esac\n",
+        ),
+    )
+    .expect("write configured RTK fixture");
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
         .expect("make configured RTK fixture executable");
+    repository.local(&format!(
+        "[rtk]\nexecutable = {:?}\n",
+        executable.display().to_string()
+    ));
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+    let rg = empty_path.join("rg");
+    fs::write(&rg, b"#!/bin/sh\ncat >/dev/null\nprintf '1\\n'\n")
+        .expect("write fidelity-search executable");
+    fs::set_permissions(&rg, fs::Permissions::from_mode(0o700))
+        .expect("make fidelity-search executable");
+
+    let report = reply(&invoke(
+        repository.path(),
+        &["doctor", "--json"],
+        empty_path.as_os_str(),
+        &[],
+    ))
+    .body;
+    let rtk = command(&report, "doctor")
+        .tools
+        .iter()
+        .find(|tool| tool.name == "rtk")
+        .expect("RTK tool row");
+
+    assert!(matches!(rtk.observation, DoctorObservation::Ready {}));
+}
+
+#[test]
+fn doctor_reports_an_actionable_native_verdict_for_obsolete_rtk() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repository = Scratch::repository("obsolete-rtk");
+    repository.tracked("");
+    let executable = repository.path().join("obsolete-rtk");
+    fs::write(&executable, b"#!/bin/sh\nprintf 'rtk 0.44.9\\n'\n")
+        .expect("write obsolete RTK fixture");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("make obsolete RTK fixture executable");
     repository.local(&format!(
         "[rtk]\nexecutable = {:?}\n",
         executable.display().to_string()
@@ -760,10 +824,16 @@ fn doctor_observes_the_exact_configured_rtk_path_without_executing_it() {
         .find(|tool| tool.name == "rtk")
         .expect("RTK tool row");
 
-    assert!(matches!(rtk.observation, DoctorObservation::Ready {}));
-    assert_eq!(
-        fs::read(&executable).expect("fixture remains"),
-        b"not executed\n"
+    assert!(
+        matches!(
+            rtk.observation,
+            DoctorObservation::Unavailable { ref reason }
+                if reason.contains("state=obsolete")
+                    && reason.contains("version=0.44.9")
+                    && reason.contains("required 0.45.0")
+        ),
+        "unexpected RTK observation: {:?}",
+        rtk.observation
     );
 }
 
