@@ -298,23 +298,19 @@ impl CanvasRuntime {
         limit: usize,
         directions: &[wire::OperatorDirection],
     ) -> StreamApplication {
-        let mut projected = directions
-            .iter()
-            .map(|direction| OperatorMessage {
-                authored: direction.authored,
-                directive: direction.directive,
-                key: direction.key.clone(),
-                lane: direction.lane,
-                text: direction.text.clone(),
-                attachments: direction.attachments.clone(),
-            })
-            .collect::<Vec<_>>();
-        trim_operator_messages(&mut projected, limit);
-        let changed = self.operator_messages != projected;
-        if changed {
-            self.operator_messages = projected;
+        let before = self.operator_messages.clone();
+        for direction in directions {
+            self.retain_operator_message(
+                direction.authored,
+                direction.directive,
+                direction.key.clone(),
+                direction.lane,
+                direction.text.clone(),
+                direction.attachments.clone(),
+            );
         }
-        StreamApplication::new(Vec::new(), changed)
+        trim_operator_messages(&mut self.operator_messages, limit);
+        StreamApplication::new(Vec::new(), self.operator_messages != before)
     }
 
     fn apply_fact_page(
