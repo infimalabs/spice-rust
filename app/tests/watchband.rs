@@ -554,15 +554,32 @@ fn a_pill_wears_no_badge_at_zero() {
 }
 
 #[test]
-fn authored_prose_reports_each_canonical_task_once_through_markdown_punctuation() {
+fn authored_prose_reports_only_canonical_base52_tasks_once_through_punctuation() {
+    for candidate in [
+        "APP-a1",
+        "OVERFLOW-000000000",
+        "WRONG-1kKAC3j4",
+        "SHAPED-abcdefgh",
+    ] {
+        let broad = candidate
+            .parse::<wire::TaskHandle>()
+            .expect("fixture deliberately matches the compatibility handle shape");
+        assert!(
+            broad.born().is_err(),
+            "{candidate} must fail canonical task-stamp admission"
+        );
+    }
+
     let tasks = reported_tasks(
-        "Settled `CONTROL-1kKbC3j4`; follow APP-a1 (CONTROL-1kKbC3j4 again). \
-         lower-a1 TASK- TASK-a-b and ordinary-hyphenated-prose are not handles.",
+        "Settled `CONTROL-1kKbC3j4` (CONTROL-1kKbC3j4 again). APP-a1 is short; \
+         OVERFLOW-000000000 is wide; WRONG-1kKAC3j4 uses the wrong alphabet; \
+         SHAPED-abcdefgh only matches the broad shape; lower-a1 TASK- TASK-a-b \
+         and ordinary-hyphenated-prose are not handles.",
     );
 
     assert_eq!(
         tasks.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        ["CONTROL-1kKbC3j4", "APP-a1"],
+        ["CONTROL-1kKbC3j4"],
     );
 }
 
