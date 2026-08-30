@@ -79,6 +79,11 @@ pub(super) fn wake(
         from: row.disposition.clone(),
         to: OCCUPIED.to_owned(),
         git: Some(proven.git.clone().into_boxed_str()),
+        rtk: proven
+            .session
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.rtk.clone()),
     };
     let proposal = propose_wake(command, request, &observed, epoch, &proven, answer.clone());
     let proposal = match proposal {

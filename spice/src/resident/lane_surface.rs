@@ -294,6 +294,7 @@ pub(super) fn seat(
         from: "absent".to_owned(),
         to: VACANT.to_owned(),
         git: None,
+        rtk: None,
     };
     let proposal = propose_seat(
         command,
@@ -683,6 +684,7 @@ pub(super) fn remove(
         from: row.disposition.clone(),
         to: "removed".to_owned(),
         git: None,
+        rtk: None,
     };
     let proposal = match propose_remove(command, request, &observed, &row, answer.clone()) {
         Ok(proposal) => proposal,

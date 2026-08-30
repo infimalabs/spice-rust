@@ -46,7 +46,7 @@ pub(in crate::resident) fn occupant_launch(
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
-    let plan = launch_plan(paths, &repository, &resolved, name, lane, resume)?;
+    let (plan, rtk) = launch_plan(paths, &repository, &resolved, name, lane, resume)?;
     let model = plan.launch().model.clone();
     let effort = plan.launch().effort.as_str().to_owned();
     let record = plan
@@ -74,6 +74,7 @@ pub(in crate::resident) fn occupant_launch(
         model,
         effort,
         git: git.clone(),
+        rtk,
         epoch,
         stream,
         expected,
@@ -136,7 +137,7 @@ fn launch_plan(
     name: &wire::Name,
     lane: CanonicalUuid,
     resume: vendor::Resume,
-) -> CommandResult<spice::agent_launch::Plan> {
+) -> CommandResult<(spice::agent_launch::Plan, wire::body::RtkHealth)> {
     let skill = required_skill(repository)?;
     let wrapper = resolved
         .root()
@@ -153,7 +154,7 @@ fn launch_plan(
     let wrapper_command = wrapper
         .as_ref()
         .map(spice::agent_wrapper::Resolved::command);
-    let environment = launch_environment(
+    let (environment, rtk) = launch_environment(
         paths,
         repository,
         &executable,
@@ -180,7 +181,7 @@ fn launch_plan(
         )));
     };
     let prompt = vendor.neutral_launch_prompt(&skill);
-    spice::agent_launch::compose(
+    let plan = spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
             worktree: repository.worktree_root().to_path_buf(),
@@ -210,7 +211,8 @@ fn launch_plan(
             )))
         }
         other => store_fault("lane::launch-invalid", &other.to_string()),
-    })
+    })?;
+    Ok((plan, rtk))
 }
 
 /// Require the initialized Git-common skill before composing any vendor argv.
@@ -297,7 +299,7 @@ fn launch_environment(
     wrapper_command: Option<&Path>,
     rtk_executable: &str,
     lane: CanonicalUuid,
-) -> CommandResult<Environment> {
+) -> CommandResult<(Environment, wire::body::RtkHealth)> {
     let inbox = paths.inbox_for_repository(repository)?;
     let cargo_host = crate::cargo_command::host(repository)
         .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
@@ -396,11 +398,12 @@ fn launch_environment(
         repository.worktree_root(),
         &environment,
     );
-    Ok(rtk_environment(environment, health.active()))
+    let environment = rtk_environment(environment, &health);
+    Ok((environment, health))
 }
 
-fn rtk_environment(environment: Environment, active: bool) -> Environment {
-    if active {
+fn rtk_environment(environment: Environment, health: &spice::rtk::Health) -> Environment {
+    if health.active() {
         return environment;
     }
     Environment::new(
@@ -430,7 +433,12 @@ mod rtk_environment_tests {
 
     #[test]
     fn only_an_active_health_verdict_exports_rtk_to_the_lane() {
-        let active = rtk_environment(fixture(), true);
+        let active_health = spice::rtk::Health::new(
+            spice::rtk::HealthState::Active,
+            Some("0.45.0".to_owned()),
+            "fixture active",
+        );
+        let active = rtk_environment(fixture(), &active_health);
         assert!(
             active
                 .entries()
@@ -438,7 +446,12 @@ mod rtk_environment_tests {
                 .any(|(name, _)| { name == spice::rtk::EXECUTABLE_VARIABLE })
         );
 
-        let native = rtk_environment(fixture(), false);
+        let native_health = spice::rtk::Health::new(
+            spice::rtk::HealthState::Obsolete,
+            Some("0.44.9".to_owned()),
+            "fixture native",
+        );
+        let native = rtk_environment(fixture(), &native_health);
         assert_eq!(native.entries(), [("PATH".into(), "/fixture/bin".into())]);
     }
 }

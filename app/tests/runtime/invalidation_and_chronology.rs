@@ -583,6 +583,7 @@ fn a_seating_receipt_names_the_lane_and_the_dispositions_it_moved_between() {
                 from: "absent".to_owned(),
                 to: "occupied".to_owned(),
                 git: Some("current".into()),
+                rtk: None,
             },
         }),
     );

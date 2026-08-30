@@ -10,6 +10,8 @@ use sill::{
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 
+pub use wire::body::{RtkHealth as Health, RtkHealthState as HealthState};
+
 /// Exact configured RTK identity carried into supervised shell wrappers.
 pub const EXECUTABLE_VARIABLE: &str = wire::SpiceVariable::RtkExecutable.as_str();
 /// RTK's upstream history database override.
@@ -22,6 +24,7 @@ const REAP_DEADLINE: Duration = Duration::from_millis(500);
 const TERMINATE_GRACE: Duration = Duration::from_millis(100);
 const MAX_SELECTOR_OUTPUT: usize = 64 * 1024;
 const MAX_DIAGNOSTIC_EXECUTABLE_CHARS: usize = 160;
+const MAX_HEALTH_DETAIL_CHARS: usize = 1024;
 // Earlier RTK rewrote `rg` through a basic-dialect grep path and changed valid
 // extended-regex answers. 0.45.0 is the first source release that routes this
 // probe through its answer-preserving `rtk rg` protocol.
@@ -33,64 +36,6 @@ const PROTOCOL_PROBE: [&str; 2] = ["git", "status"];
 const FIDELITY_PROBE: [&str; 4] = ["rg", "--count", "al+pha", "-"];
 const FIDELITY_SUBJECT: &[u8] = b"alpha\nbeta\n";
 const EXTENDED_REGEX_OPERATORS: &str = "|+?(){}";
-
-/// Admission state shared by Doctor and supervised-lane launch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HealthState {
-    Active,
-    Missing,
-    Obsolete,
-    ProtocolInvalid,
-    RewriteUnfaithful,
-}
-
-impl HealthState {
-    /// Stable status vocabulary for actionable diagnostics.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Missing => "missing",
-            Self::Obsolete => "obsolete",
-            Self::ProtocolInvalid => "protocol-invalid",
-            Self::RewriteUnfaithful => "rewrite-unfaithful",
-        }
-    }
-}
-
-/// One fail-native verdict for the exact configured RTK executable.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Health {
-    state: HealthState,
-    version: Option<String>,
-    detail: String,
-}
-
-impl Health {
-    /// Whether supervised shells may enable RTK rewriting.
-    #[must_use]
-    pub const fn active(&self) -> bool {
-        matches!(self.state, HealthState::Active)
-    }
-
-    /// Stable admission state.
-    #[must_use]
-    pub const fn state(&self) -> HealthState {
-        self.state
-    }
-
-    /// Validated RTK version, when version admission reached that far.
-    #[must_use]
-    pub fn version(&self) -> Option<&str> {
-        self.version.as_deref()
-    }
-
-    /// Source-grounded reason for this verdict.
-    #[must_use]
-    pub fn detail(&self) -> &str {
-        &self.detail
-    }
-}
 
 /// Command selected for execution and an optional non-blocking degradation notice.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -367,11 +312,15 @@ where
 }
 
 fn health(state: HealthState, version: Option<String>, detail: impl Into<String>) -> Health {
-    Health {
-        state,
-        version,
-        detail: detail.into(),
+    let mut detail = detail.into();
+    if detail.chars().count() > MAX_HEALTH_DETAIL_CHARS {
+        detail = detail
+            .chars()
+            .take(MAX_HEALTH_DETAIL_CHARS - 3)
+            .collect::<String>();
+        detail.push_str("...");
     }
+    Health::new(state, version, detail)
 }
 
 fn rewrite_arguments(probe: &[&str]) -> Vec<OsString> {
@@ -862,6 +811,17 @@ mod tests {
         assert_eq!(observed.state(), HealthState::RewriteUnfaithful);
         assert!(observed.detail().contains("counted 1"));
         assert!(observed.detail().contains("counted 0"));
+    }
+
+    #[test]
+    fn health_publishes_one_bounded_actionable_detail() {
+        let observed = probe_health_with(OsStr::new("missing-rtk"), |_, _, _| {
+            Err("x".repeat(MAX_HEALTH_DETAIL_CHARS * 2))
+        });
+
+        assert_eq!(observed.state(), HealthState::Missing);
+        assert_eq!(observed.detail().chars().count(), MAX_HEALTH_DETAIL_CHARS);
+        assert!(observed.detail().ends_with("..."));
     }
 
     #[test]

@@ -71,6 +71,11 @@ fn answer_at(
                     .as_ref()
                     .and_then(|session| session.launch.as_ref())
                     .and_then(|launch| launch.git.clone()),
+                rtk: row
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.launch.as_ref())
+                    .and_then(|launch| launch.rtk.clone()),
                 occupant: row.occupant,
                 lineage: row.lineage.clone(),
                 session: row.session.as_ref().map(|session| session.identity.clone()),
@@ -530,7 +535,13 @@ mod tests {
                 worktree: "/worktrees/main-a".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
                 launch: Some(
-                    wire::body::LaneLaunchIdentity::new("sonnet", "high").with_git("current"),
+                    wire::body::LaneLaunchIdentity::new("sonnet", "high")
+                        .with_git("current")
+                        .with_rtk(wire::body::RtkHealth::new(
+                            wire::body::RtkHealthState::Active,
+                            Some("0.45.0".to_owned()),
+                            "fixture active",
+                        )),
                 ),
                 epoch: uuid(4),
                 stream: "stdout".to_owned(),
@@ -631,6 +642,13 @@ mod tests {
         assert_eq!(answer.lanes[0].model.as_deref(), Some("sonnet"));
         assert_eq!(answer.lanes[0].effort.as_deref(), Some("high"));
         assert_eq!(answer.lanes[0].git.as_deref(), Some("current"));
+        let rtk = answer.lanes[0]
+            .rtk
+            .as_ref()
+            .expect("recorded RTK health projects");
+        assert_eq!(rtk.state(), wire::body::RtkHealthState::Active);
+        assert_eq!(rtk.version(), Some("0.45.0"));
+        assert_eq!(rtk.detail(), "fixture active");
         assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
         assert!(!encoded.contains(&capability));
         assert!(!encoded.contains("capabilities"));
@@ -658,6 +676,7 @@ mod tests {
         assert_eq!(answer.lanes[0].model, None);
         assert_eq!(answer.lanes[0].effort, None);
         assert_eq!(answer.lanes[0].git, None);
+        assert_eq!(answer.lanes[0].rtk, None);
         assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
     }
 
