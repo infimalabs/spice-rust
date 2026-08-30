@@ -47,6 +47,19 @@ async function inbox(fixture, lane) {
   return (await reply(fixture, ["inbox", lane])).body.lanes[0].pending;
 }
 
+async function assertPendingPlaceholder(primary, expected, label) {
+  const placeholder = await primary.getByRole("textbox").getAttribute("placeholder");
+  assert.ok(placeholder, `${label}: the composer has a placeholder`);
+  const pendingLine = placeholder.split("\n").find((line) => line.includes(" pending, "));
+  assert.ok(pendingLine, `${label}: the composer placeholder carries pending state`);
+  assert.equal(pendingLine.split(", ")[0], `${expected} pending`, label);
+  assert.equal(
+    await primary.locator(".composer-shard-standing").count(),
+    0,
+    `${label}: pending state does not mint a separate composer banner`,
+  );
+}
+
 async function waitForInbox(fixture, lane, text) {
   const deadline = Date.now() + CONNECT_MS;
   while (Date.now() < deadline) {
@@ -159,9 +172,9 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   await textbox.fill(second);
   await textbox.press("Control+Enter");
   await unsafeState(page, true, 2);
-  assert.equal(
-    await primary.locator(".composer-shard-standing span").first().innerText(),
-    `${before.length + 2} pending`,
+  await assertPendingPlaceholder(
+    primary,
+    before.length + 2,
     "queued submissions are an immediate pending floor",
   );
   await chooseCanvasView(page, "Chronology");
@@ -183,9 +196,9 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   assert.equal(secondInbox.pending.filter((directive) => directive.text.includes(first)).length, 1);
   assert.equal(secondInbox.pending.filter((directive) => directive.text.includes(second)).length, 1);
   await unsafeState(page, false, 0);
-  assert.equal(
-    await primary.locator(".composer-shard-standing span").first().innerText(),
-    `${secondInbox.pending.length} pending`,
+  await assertPendingPlaceholder(
+    primary,
+    secondInbox.pending.length,
     "settled predictions render exactly the backend pending count",
   );
 
@@ -235,9 +248,9 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   );
   assert.equal(recovered.found.directive, committed.found.directive);
   await unsafeState(page, false, 0);
-  assert.equal(
-    await primary.locator(".composer-shard-standing span").first().innerText(),
-    `${recovered.pending.length} pending`,
+  await assertPendingPlaceholder(
+    primary,
+    recovered.pending.length,
     "idempotent replay leaves one exact backend-derived pending count",
   );
   assert.equal(

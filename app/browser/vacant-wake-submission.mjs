@@ -62,7 +62,8 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     (laneId) => {
       const member = document.querySelector(`.team-agent[data-agent-lane="${laneId}"]`);
       return member?.dataset.wakeAndSend === "true"
-        && member.querySelector(".composer-shard-standing")?.textContent?.includes("vacant");
+        && member.querySelector("textarea")?.placeholder.includes("vacant")
+        && !member.querySelector(".composer-shard-standing");
     },
     targetLane,
     {
@@ -71,10 +72,78 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
           lane: member.dataset.agentLane,
           wake: member.dataset.wakeAndSend,
           classes: member.className,
-          standing: member.querySelector(".composer-shard-standing")?.textContent,
+          placeholder: member.querySelector("textarea")?.placeholder,
+          standingBanners: member.querySelectorAll(".composer-shard-standing").length,
         }))),
     },
   );
+
+  const assertVacantLayout = async (label) => {
+    const geometry = await form.evaluate((node, laneId) => {
+      const rect = (element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          top: box.top,
+          bottom: box.bottom,
+          width: box.width,
+          height: box.height,
+        };
+      };
+      const agent = node.querySelector(`.team-agent[data-agent-lane="${laneId}"]`);
+      const stack = agent.querySelector(".agent-composer-stack");
+      const primary = stack.querySelector(".composer-shard--primary");
+      const controls = node.querySelector(".team-composer-controls");
+      return {
+        bodyWidth: document.body.scrollWidth,
+        viewportWidth: innerWidth,
+        form: rect(node),
+        agent: rect(agent),
+        stack: rect(stack),
+        primary: rect(primary),
+        controls: rect(controls),
+        placeholder: primary.querySelector("textarea")?.placeholder,
+        standingBanners: agent.querySelectorAll(".composer-shard-standing").length,
+      };
+    }, targetLane);
+    assert.equal(
+      geometry.standingBanners,
+      0,
+      `${label}: vacancy renders no separate state banner`,
+    );
+    assert.ok(
+      geometry.placeholder.split("\n").includes("0 pending, vacant"),
+      `${label}: the placeholder communicates pending and vacant state: ${JSON.stringify(geometry)}`,
+    );
+    assert.ok(
+      Math.abs(geometry.agent.top - geometry.controls.top) < 1 &&
+        Math.abs(geometry.agent.bottom - geometry.controls.bottom) < 1 &&
+        Math.abs(geometry.agent.height - geometry.controls.height) < 1,
+      `${label}: composer and controls close on the same frame: ${JSON.stringify(geometry)}`,
+    );
+    assert.ok(
+      Math.abs(geometry.stack.height - geometry.agent.height) < 1 &&
+        Math.abs(geometry.primary.height - geometry.agent.height) < 1 &&
+        geometry.primary.top >= geometry.stack.top - 1 &&
+        geometry.primary.bottom <= geometry.stack.bottom + 1 &&
+        geometry.controls.bottom <= geometry.form.bottom + 1,
+      `${label}: the composer stack stays contained without shift or overlap: ${JSON.stringify(geometry)}`,
+    );
+    assert.ok(
+      geometry.bodyWidth <= geometry.viewportWidth,
+      `${label}: composer geometry does not widen the document: ${JSON.stringify(geometry)}`,
+    );
+  };
+
+  await assertVacantLayout("desktop vacant composer");
+  const viewport = page.viewportSize();
+  assert.ok(viewport, "the vacant composer fixture has a viewport to restore");
+  try {
+    await page.setViewportSize({ width: 520, height: viewport.height });
+    await lane.scrollIntoViewIfNeeded();
+    await assertVacantLayout("narrow vacant composer");
+  } finally {
+    await page.setViewportSize(viewport);
+  }
 
   const vacantChronology = await lane.locator(".composer-shard-age").evaluate((age) => {
     const href = age.getAttribute("href");
@@ -116,13 +185,34 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
 
   const exactDraft = `wake and steer exact draft ${crypto.randomUUID()}`;
   await textbox.fill(exactDraft);
-  const wakeAndSteer = form.getByRole("button", { name: "Wake & Steer", exact: true });
-  assert.equal(await wakeAndSteer.isEnabled(), true, "a nonempty vacant draft enables wake");
-  assert.match(
-    await wakeAndSteer.getAttribute("title"),
-    /confirm fresh residency/i,
-    "the action explains that steering follows a fresh residency check",
+  const steer = form.getByRole("button", { name: "Steer", exact: true });
+  assert.equal(await steer.isEnabled(), true, "a nonempty vacant draft enables Steer");
+  assert.equal(
+    await steer.getAttribute("title"),
+    "Send with Steer: Manual task filters",
+    "the vacant action keeps the established Steer title",
   );
+  const composerActions = await form.locator(".team-send").evaluateAll((buttons) =>
+    buttons.map((button) => ({
+      text: button.textContent.trim(),
+      ariaLabel: button.getAttribute("aria-label"),
+      title: button.getAttribute("title"),
+    })));
+  for (const action of composerActions) {
+    assert.ok(
+      ["Steer", "Drive", "Drain"].includes(action.text),
+      `composer action text uses an established label: ${JSON.stringify(action)}`,
+    );
+    assert.ok(
+      action.ariaLabel === null || action.ariaLabel === action.text,
+      `composer action accessible names use the same label: ${JSON.stringify(action)}`,
+    );
+    assert.match(
+      action.title,
+      new RegExp(`^Send with ${action.text}: `),
+      `composer action titles begin with the same established label: ${JSON.stringify(action)}`,
+    );
+  }
   await page.evaluate(({ laneId, text }) => {
     const socket = window.__canvasSockets.at(-1);
     if (!socket) throw new Error("canvas WebSocket was not captured");
@@ -143,7 +233,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
       });
     });
   }, { laneId: targetLane, text: exactDraft });
-  await wakeAndSteer.click();
+  await steer.click();
 
   const sent = await page.evaluate((timeout) => Promise.race([
     window.__wakeDirectionFact,
@@ -156,7 +246,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   const durable = durableInbox.body.lanes[0].pending.find(
     (candidate) => candidate.directive === sent.directive,
   );
-  assert.ok(durable, "wake-and-steer durably preserves the exact authored draft");
+  assert.ok(durable, "vacant Steer durably preserves the exact authored draft");
   assert.equal(durable.text, exactDraft, "the durable direction retains the submitted text");
   const directive = durable.directive;
   assert.equal(
