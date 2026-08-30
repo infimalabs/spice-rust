@@ -390,6 +390,14 @@ fn live_progress_selects_only_the_exact_unscoped_source_gate_contract() {
 }
 
 #[test]
+fn exact_source_gate_alone_raises_the_configured_capture_floor() {
+    let bounds = ExecutionBounds::production(Duration::from_secs(1));
+
+    assert_eq!(bounds.stderr_capture_limit(false), OUTPUT_LIMIT);
+    assert_eq!(bounds.stderr_capture_limit(true), 1024 * 1024);
+}
+
+#[test]
 fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_environment() {
     let scratch = Scratch::new("ordered-environment");
     let log = scratch.root.join("commands.log");
@@ -673,6 +681,39 @@ fn truncated_failure_reports_exit_with_a_retention_marker() {
     assert!(
         detail.contains("capture truncated to retained suffix"),
         "{detail}"
+    );
+}
+
+#[test]
+fn source_gate_retains_a_terminal_refusal_beyond_the_ordinary_capture_bound() {
+    let report = source_gate_failure_report("source-gate-large-progress", OUTPUT_LIMIT + 1024);
+
+    assert!(!report.admits());
+    let detail = report.steps()[0].findings()[0].detail();
+    assert!(detail.contains("initial-progress"), "{detail}");
+    assert!(detail.contains("distinctive-terminal-refusal"), "{detail}");
+    assert!(!detail.contains("capture truncated"), "{detail}");
+}
+
+#[test]
+fn overflowing_source_gate_retains_one_bounded_terminal_suffix() {
+    let report = source_gate_failure_report(
+        "source-gate-overflowing-progress",
+        SOURCE_GATE_OUTPUT_LIMIT + 1024,
+    );
+
+    assert!(!report.admits());
+    let detail = report.steps()[0].findings()[0].detail();
+    assert!(!detail.contains("initial-progress"), "{detail}");
+    assert!(detail.contains("distinctive-terminal-refusal"), "{detail}");
+    assert!(
+        detail.contains("capture truncated to retained suffix"),
+        "{detail}"
+    );
+    assert!(
+        detail.len() <= SOURCE_GATE_OUTPUT_LIMIT + 256,
+        "retained evidence exceeded its bounded suffix: {} bytes",
+        detail.len(),
     );
 }
 
@@ -1097,4 +1138,32 @@ fn process_exists(pid: u32) -> bool {
     };
     // SAFETY: signal zero changes no process state and probes this exact pid.
     unsafe { libc::kill(pid, 0) == 0 }
+}
+
+fn source_gate_failure_report(label: &str, progress_bytes: usize) -> ConfiguredReport {
+    let scratch = Scratch::new(label);
+    let executable = scratch.root.join("source-gate");
+    let script = format!(
+        "#!/bin/sh\n\
+         printf 'initial-progress' >&2\n\
+         printf '%*s' {progress_bytes} '' | tr ' ' x >&2\n\
+         printf 'distinctive-terminal-refusal' >&2\n\
+         exit 7\n"
+    );
+    publish_executable(&executable, script.as_bytes());
+    let commands = parsed_commands(&[row("Spice source gate", &SOURCE_GATE_ARGV, &[])]);
+
+    execute_steps(
+        &commands,
+        &source(),
+        &["src/lib.rs".to_owned()],
+        &scratch.root,
+        &base_environment(),
+        Some(&executable),
+        ExecutionBounds::production(Duration::from_secs(5)),
+        Cancellation::Never,
+        ExecutionMode::Ordinary,
+        &mut || Ok(()),
+    )
+    .expect("source gate failure remains classified process evidence")
 }
