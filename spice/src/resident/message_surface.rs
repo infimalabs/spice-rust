@@ -470,7 +470,7 @@ impl steer::Standing for PresentationDirectives {
 #[derive(Debug, Default)]
 struct LineAcknowledgements {
     recognized: Vec<(steer::Key, wire::Disposition)>,
-    missed: bool,
+    missed: Vec<String>,
 }
 
 fn present_steering_acknowledgements_with_directives(
@@ -490,7 +490,7 @@ fn present_steering_acknowledgements_with_directives(
                     line.recognized.push((key, disposition));
                 }
             }
-            steer::ack::scan::Outcome::Missed { .. } => line.missed = true,
+            steer::ack::scan::Outcome::Missed { token, .. } => line.missed.push(token),
         }
     }
     if lines.is_empty() {
@@ -516,7 +516,7 @@ fn render_acknowledgement_line(
     acknowledgements: &LineAcknowledgements,
     directives: &PresentationDirectives,
 ) -> Result<String, String> {
-    if acknowledgements.missed || acknowledgements.recognized.is_empty() {
+    if acknowledgements.recognized.is_empty() {
         return Ok(source.to_owned());
     }
     let colon = source.find(':').ok_or_else(|| {
@@ -537,11 +537,38 @@ fn render_acknowledgement_line(
         .get(colon + 1..)
         .ok_or_else(|| "acknowledgment body crossed a non-character boundary".to_owned())?
         .trim_start();
-    if !prose.is_empty() {
+    if acknowledgements.missed.is_empty() {
+        if !prose.is_empty() {
+            rendered.push_str("\n\n");
+            rendered.push_str(prose);
+        }
+    } else {
         rendered.push_str("\n\n");
-        rendered.push_str(prose);
+        rendered.push_str(acknowledgement_marker(acknowledgements.recognized[0].1)?);
+        for token in &acknowledgements.missed {
+            rendered.push(' ');
+            rendered.push_str(token);
+        }
+        rendered.push(':');
+        if !prose.is_empty() {
+            rendered.push(' ');
+            rendered.push_str(prose);
+        }
     }
     Ok(rendered)
+}
+
+fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str, String> {
+    match disposition {
+        wire::Disposition::Acked => Ok("ACK"),
+        wire::Disposition::Declined => Ok("NACK"),
+        wire::Disposition::Live
+        | wire::Disposition::Lapsed
+        | wire::Disposition::DeadLettered
+        | wire::Disposition::Canceled => Err(format!(
+            "acknowledgment scanner returned nonterminal disposition {disposition:?}"
+        )),
+    }
 }
 
 fn append_acknowledgement_quote(
@@ -550,18 +577,7 @@ fn append_acknowledgement_quote(
     disposition: wire::Disposition,
     directive: &str,
 ) -> Result<(), String> {
-    let marker = match disposition {
-        wire::Disposition::Acked => "ACK",
-        wire::Disposition::Declined => "NACK",
-        wire::Disposition::Live
-        | wire::Disposition::Lapsed
-        | wire::Disposition::DeadLettered
-        | wire::Disposition::Canceled => {
-            return Err(format!(
-                "acknowledgment scanner returned nonterminal disposition {disposition:?}"
-            ));
-        }
-    };
+    let marker = acknowledgement_marker(disposition)?;
     rendered.push_str("> ");
     rendered.push_str(marker);
     rendered.push(' ');
@@ -645,6 +661,28 @@ mod tests {
                 "One response covers both directions."
             ),
         );
+    }
+
+    #[test]
+    fn recognized_acknowledgement_disposition_renders_beside_each_missed_sibling() {
+        let directives = directives(&[("1kQwPZtK", "Keep the recognized direction visible.")]);
+        for marker in ["ACK", "NACK"] {
+            let text = format!(
+                "{marker} 1kQwPZtK nope 1kQwPZtM: Shared prose remains attached to the attempt."
+            );
+            let expected = format!(
+                "> {marker} 1kQwPZtK: Keep the recognized direction visible.\n\n\
+                 {marker} nope 1kQwPZtM: Shared prose remains attached to the attempt."
+            );
+
+            let rendered = present_steering_acknowledgements_with_directives(&text, &directives)
+                .expect("mixed acknowledgment presents");
+            assert_eq!(rendered, expected);
+            assert_eq!(rendered.matches("1kQwPZtK").count(), 1);
+            assert_eq!(rendered.matches("nope").count(), 1);
+            assert_eq!(rendered.matches("1kQwPZtM").count(), 1);
+            assert_eq!(rendered.matches("Shared prose").count(), 1);
+        }
     }
 
     #[test]
