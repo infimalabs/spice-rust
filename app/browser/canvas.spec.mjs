@@ -9,10 +9,7 @@ import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
   nestedQuoteMessage, nestedQuotePreview, seatAgentTeam, seatLeaseAgent,
 } from "./agent-conversation.mjs";
-import {
-  assertCompactionBoundary,
-  installPersistedMosaicImageRoutes,
-} from "./agent-conversation-mosaic.mjs";
+import { assertCompactionBoundary, assertCompactionBoundaryPersistence, installPersistedMosaicImageRoutes } from "./agent-conversation-mosaic.mjs";
 import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
 import {
   assertComposerPointerSelection,
@@ -498,7 +495,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     activityReplay,
   });
 
-  await assertCompactionBoundary(page, fixture, team, seeded, artifacts, activityReplay);
+  const compactionBoundary = await assertCompactionBoundary(page, fixture, team, seeded, artifacts, activityReplay);
 
   const quoteSourceBody = (await quoteSource.locator(".message-body").innerText()).trim();
   await quoteSource.getByRole("button", { name: "Quote this message" }).click();
@@ -534,6 +531,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     quoteSourceTitle: quotedTitle,
     artifactPath: join(artifacts, "canvas-light-mosaic-composer.png"),
   });
+  await assertCompactionBoundaryPersistence(page, seeded, compactionBoundary);
 
   await lane.evaluate((target) => {
     const transfer = new DataTransfer();

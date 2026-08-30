@@ -499,19 +499,8 @@ impl CanvasRuntime {
             return activity_changed;
         }
         self.messages.push(message.clone());
-        if let Some(limit) = self.message_limit
-            && self
-                .messages
-                .iter()
-                .filter(|existing| existing.lane == message.lane)
-                .count()
-                > limit
-            && let Some(oldest) = self
-                .messages
-                .iter()
-                .position(|existing| existing.lane == message.lane)
-        {
-            self.messages.remove(oldest);
+        if let Some(limit) = self.message_limit {
+            trim_agent_message_lane(&mut self.messages, message.lane, limit);
         }
         true
     }
@@ -647,6 +636,23 @@ fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {
     }
 }
 
+fn trim_agent_message_lane(messages: &mut Vec<AgentMessage>, lane: CanonicalUuid, limit: usize) {
+    let activities = messages
+        .iter()
+        .filter(|message| message.lane == lane)
+        .map(|message| message.activity)
+        .collect::<Vec<_>>();
+    let mut discard = AgentActivityKind::retention_start(&activities, limit);
+    messages.retain(|message| {
+        if message.lane != lane || discard == 0 {
+            true
+        } else {
+            discard -= 1;
+            false
+        }
+    });
+}
+
 fn trim_operator_lane(messages: &mut Vec<OperatorMessage>, lane: CanonicalUuid, limit: usize) {
     while messages
         .iter()
@@ -753,5 +759,71 @@ fn push_bounded_page<T>(pages: &mut Vec<BrowserState<T>>, page: BrowserState<T>,
     pages.push(page);
     if pages.len() > limit {
         pages.remove(0);
+    }
+}
+
+#[cfg(test)]
+mod message_retention_tests {
+    use super::*;
+
+    const QUIET_HISTORY_LENGTH: u64 = 40;
+
+    fn message(lane: CanonicalUuid, offset: u64) -> AgentMessage {
+        AgentMessage {
+            lane,
+            author: "018f82d4-6f59-7d06-92e3-bce9131163ef"
+                .parse()
+                .expect("fixture author"),
+            locus: MessageLocus {
+                member: 1,
+                offset,
+                length: 1,
+                event: 0,
+            },
+            authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+            authored_synthetic: false,
+            observed: None,
+            activity: AgentActivityKind::Prose,
+            text: offset.to_string(),
+            media: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn browser_retention_uses_the_same_compaction_floor_as_the_snapshot() {
+        let busy_lane = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("busy lane");
+        let quiet_lane = "018f82d4-6f59-7d06-92e3-bce9131163e6"
+            .parse()
+            .expect("quiet lane");
+        let mut messages = Vec::new();
+        for offset in 0..300 {
+            let mut activity = message(busy_lane, offset);
+            if matches!(offset, 20 | 80 | 220) {
+                activity.activity = AgentActivityKind::Compaction;
+            }
+            messages.push(activity);
+            if offset < QUIET_HISTORY_LENGTH {
+                messages.push(message(quiet_lane, offset));
+            }
+            trim_agent_message_lane(&mut messages, busy_lane, 256);
+        }
+
+        let busy = messages
+            .iter()
+            .filter(|message| message.lane == busy_lane)
+            .collect::<Vec<_>>();
+        assert_eq!(busy.len(), 220);
+        assert_eq!(busy[0].locus.offset, 80);
+        assert_eq!(busy[0].activity, AgentActivityKind::Compaction);
+        assert_eq!(busy.last().expect("busy tail").locus.offset, 299);
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message.lane == quiet_lane)
+                .count(),
+            usize::try_from(QUIET_HISTORY_LENGTH).expect("quiet history length fits"),
+        );
     }
 }

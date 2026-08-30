@@ -3,7 +3,9 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  chooseCanvasView,
   reply,
+  RECONNECT_MS,
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
@@ -179,15 +181,21 @@ export async function assertCompactionBoundary(
   artifacts,
   activityReplay,
 ) {
-  const before = await committedPlacementSnapshot(team);
   const plane = team.locator(".lane-mosaic-plane");
   const viewport = page.viewportSize();
-  if (viewport && viewport.height > 360) {
-    await page.setViewportSize({ width: viewport.width, height: 360 });
+  const compactViewport = viewport && {
+    width: Math.min(viewport.width, 390),
+    height: Math.min(viewport.height, 360),
+  };
+  if (compactViewport
+    && (compactViewport.width !== viewport.width || compactViewport.height !== viewport.height)) {
+    await page.setViewportSize(compactViewport);
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
       () => requestAnimationFrame(resolve),
     )));
+    await settleMosaicActivity(page, plane);
   }
+  const before = await committedPlacementSnapshot(team);
   const scrolled = await scrollMosaicAwayFromTop(page, plane);
   await writeFile(join(seeded.teamWorktrees[0], ".spice-compaction-trigger"), "");
   const divider = team.locator(
@@ -206,7 +214,8 @@ export async function assertCompactionBoundary(
         && card.dataset.track === "0"
         && card.dataset.span === "12"
         && card.querySelectorAll(".mosaic-compaction-rule").length === 2
-        && card.querySelector(".message-key")?.textContent?.trim().endsWith("compacted context")
+        && card.querySelector(".message-key")?.textContent?.trim() === "Context compacted"
+        && card.querySelector(".mosaic-compaction-agent")?.textContent?.trim().length > 0
         && card.querySelectorAll(".message-actions button").length === 0;
     },
     seeded.lane,
@@ -219,12 +228,22 @@ export async function assertCompactionBoundary(
     accent: card.dataset.accent,
     aria: card.getAttribute("aria-label"),
     label: card.querySelector(".message-key")?.textContent?.trim(),
+    agent: card.querySelector(".mosaic-compaction-agent")?.textContent?.trim(),
+    age: card.querySelector(".mosaic-compaction-age")?.textContent?.trim(),
+    borderStyle: getComputedStyle(card).borderStyle,
+    background: getComputedStyle(card).backgroundColor,
+    overflow: card.scrollWidth - card.clientWidth,
     lineColors: [...card.querySelectorAll(".mosaic-compaction-rule")]
       .map((line) => getComputedStyle(line).backgroundColor),
   }));
   assert.equal(boundaryChrome.accent, laneAccent, "the boundary keeps the compacting lane accent");
-  assert.equal(boundaryChrome.label, `${seeded.agentName} compacted context`);
-  assert.match(boundaryChrome.aria, /Compaction divider from/);
+  assert.equal(boundaryChrome.label, "Context compacted");
+  assert.equal(boundaryChrome.agent, seeded.agentName);
+  assert.ok(boundaryChrome.age, "the boundary carries its authored time");
+  assert.match(boundaryChrome.aria, /Context compacted by/);
+  assert.notEqual(boundaryChrome.borderStyle, "none", "the boundary keeps regular card chrome");
+  assert.notEqual(boundaryChrome.background, "rgba(0, 0, 0, 0)", "the boundary has a card surface");
+  assert.ok(boundaryChrome.overflow <= 1, `the boundary fits its width: ${JSON.stringify(boundaryChrome)}`);
   assert.equal(new Set(boundaryChrome.lineColors).size, 1, "both boundary rules share one accent");
   assert.ok(
     boundaryChrome.lineColors.every((color) => color !== "rgba(0, 0, 0, 0)"),
@@ -248,6 +267,8 @@ export async function assertCompactionBoundary(
     await mosaicScrollSnapshot(plane),
     "a compaction epoch while scrolled",
   );
+  const boundaryKey = await divider.getAttribute("data-mosaic-card-key");
+  assert.ok(boundaryKey, "the compaction boundary has one stable source identity");
 
   const beforeKeys = await team.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => card.dataset.mosaicCardKey),
@@ -279,7 +300,7 @@ export async function assertCompactionBoundary(
         <= Number(boundary.dataset.base);
     },
     {
-      boundaryKey: await divider.getAttribute("data-mosaic-card-key"),
+      boundaryKey,
       cardKey: afterKey,
     },
   );
@@ -296,11 +317,49 @@ export async function assertCompactionBoundary(
     "post-compaction activity while scrolled",
   );
   await divider.scrollIntoViewIfNeeded();
-  if (viewport && viewport.height > 360) await page.setViewportSize(viewport);
+  if (viewport && compactViewport
+    && (compactViewport.width !== viewport.width || compactViewport.height !== viewport.height)) {
+    await page.setViewportSize(viewport);
+  }
   await page.screenshot({
     path: join(artifacts, "canvas-compaction-boundary.png"),
     fullPage: true,
   });
+  return boundaryKey;
+}
+
+export async function assertCompactionBoundaryPersistence(page, seeded, boundaryKey) {
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  const restoredTeam = page.locator('[data-pane="agent-console"]');
+  await restoredTeam.getByRole("tab", { name: /^Compose/ }).click();
+  const restored = restoredTeam.locator(`[data-mosaic-card-key="${boundaryKey}"]`);
+  await restored.waitFor({ timeout: RECONNECT_MS });
+  assert.equal(
+    await restoredTeam.locator(
+      `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
+    ).count(),
+    1,
+    "reload restores the compaction boundary exactly once",
+  );
+  assert.equal(await restored.getAttribute("data-span"), "12");
+  assert.equal((await restored.locator(".message-key").innerText()).trim(), "Context compacted");
+
+  const socketCount = await page.evaluate(() => window.__canvasSockets?.length ?? 0);
+  assert.ok(socketCount > 0, "the browser fixture captures the active Canvas socket");
+  await page.evaluate(() => window.__canvasSockets.at(-1).close(4000, "compaction reconnect"));
+  await waitForPage(
+    page,
+    "compaction boundary survives an in-place reconnect",
+    RECONNECT_MS,
+    ({ expectedKey, previousSockets }) => (
+      (window.__canvasSockets?.length ?? 0) > previousSockets
+      && document.querySelectorAll(`[data-mosaic-card-key="${expectedKey}"]`).length === 1
+      && document.querySelector(`[data-mosaic-card-key="${expectedKey}"]`)
+        ?.dataset.layoutPhase === "committed"
+    ),
+    { expectedKey: boundaryKey, previousSockets: socketCount },
+  );
 }
 
 export async function assertInitiallyDeferredMosaicIsReadable(page, console) {
