@@ -157,21 +157,21 @@ pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
             report: Box::new(report),
         }),
         Ok(report) => {
-            progress.extend_from_slice(report.refusal_fold().as_bytes());
+            let terminal = format!("{}selected gate regressed", report.refusal_fold(),);
             Outcome::Refusal(Refusal::evidence(
                 "gate::selection-regressed",
-                selection_detail(progress.buffered(), "selected gate regressed"),
+                progress.failure_detail(&terminal),
                 "repair the selected change before committing it",
             ))
         }
         Err(error) if error.is_fault() => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: error.reason().to_owned(),
-            detail: selection_detail(progress.buffered(), error.detail()),
+            detail: progress.failure_detail(error.detail()),
         }),
         Err(error) => Outcome::Refusal(Refusal::evidence(
             error.reason(),
-            selection_detail(progress.buffered(), error.detail()),
+            progress.failure_detail(error.detail()),
             "repair the named selection input, then rerun the source gate",
         )),
     }
@@ -190,12 +190,11 @@ impl SelectionProgress {
         }
     }
 
-    fn buffered(&self) -> &[u8] {
-        &self.buffered
-    }
-
-    fn extend_from_slice(&mut self, bytes: &[u8]) {
-        self.buffered.extend_from_slice(bytes);
+    fn failure_detail(&self, terminal: &str) -> String {
+        if self.live.is_some() {
+            return terminal.to_owned();
+        }
+        selection_detail(&self.buffered, terminal)
     }
 }
 
@@ -226,6 +225,38 @@ fn selection_detail(progress: &[u8], detail: &str) -> String {
         return detail.to_owned();
     }
     format!("{}{detail}", String::from_utf8_lossy(progress))
+}
+
+#[cfg(test)]
+mod selection_progress_tests {
+    use super::*;
+
+    const OVERSIZED_PROGRESS: usize = 70 * 1024;
+    const TERMINAL: &str =
+        "gate=complexity state=failed reason=structural bound exceeded\nselected gate regressed";
+
+    #[test]
+    fn supervised_failure_keeps_only_terminal_evidence_after_oversized_progress() {
+        let progress = SelectionProgress {
+            buffered: vec![b'x'; OVERSIZED_PROGRESS],
+            live: Some(io::stderr()),
+        };
+
+        assert_eq!(progress.failure_detail(TERMINAL), TERMINAL);
+    }
+
+    #[test]
+    fn direct_failure_keeps_progress_before_terminal_evidence() {
+        let progress = SelectionProgress {
+            buffered: b"[change-gate-phase] stage=capture\n".to_vec(),
+            live: None,
+        };
+
+        assert_eq!(
+            progress.failure_detail(TERMINAL),
+            format!("[change-gate-phase] stage=capture\n{TERMINAL}"),
+        );
+    }
 }
 
 pub(crate) use commit_message::Run as CommitMessageRun;
