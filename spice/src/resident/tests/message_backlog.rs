@@ -46,7 +46,6 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
             residency.body(),
             &publisher,
             &mut reader,
-            None,
             &mut diagnostic,
         )
         .expect("durable backlog restores");
@@ -121,7 +120,6 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
         residency.body(),
         &publisher,
         &mut reader,
-        None,
         &mut diagnostic,
     )
     .expect("initial backlog restores");
@@ -131,7 +129,6 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
         residency.body(),
         &publisher,
         &mut reader,
-        None,
         &mut diagnostic,
     )
     .expect("appended backlog resumes");

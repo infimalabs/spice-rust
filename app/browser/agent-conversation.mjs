@@ -180,6 +180,10 @@ export async function seatAgentTeam(
   await console.getByRole("tab", { name: /^Info/ }).click();
   await waitForElement(page, "seated agents render after reload", CONNECT_MS,
     console.locator(".team-detail-card").nth(3));
+  await waitForPage(page, "seated agents publish their session identities", CONNECT_MS, () => {
+    const cards = [...document.querySelectorAll(".team-detail-card")];
+    return cards.length >= 4 && cards.every((card) => !card.title.includes("thread: unbound"));
+  });
 
   const lanes = await reply(fixture, ["lane"]);
   const seated = teamWorktrees.map(
@@ -214,6 +218,59 @@ export async function seatAgentTeam(
         : agentProse(teamWorktrees[index]),
     })),
   };
+}
+
+async function assertStableOperatorAuthorship(page, fixture, console, lane, activityReplay) {
+  const text = `stable operator authorship ${crypto.randomUUID()}`;
+  const composer = console.locator(`.team-agent[data-agent-lane="${lane}"]`);
+  await composer.getByRole("textbox").fill(text);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+
+  const operator = console.locator(
+    `[data-card-kind="operator-message"][data-agent-lane="${lane}"]`,
+  ).filter({ hasText: text });
+  await operator.waitFor({ timeout: 10_000 });
+  const source = await operator.getAttribute("data-mosaic-card-key");
+  assert.match(source, /^message-operator-/);
+  assert.equal(await operator.getAttribute("data-message-role"), "operator");
+  assert.equal((await operator.locator(".message-author").innerText()).trim(), "Operator");
+  assert.equal(
+    await console.locator('[data-card-kind="agent-message"]').filter({ hasText: text }).count(),
+    0,
+    "operator prose never appears in an agent-authored card before acknowledgement",
+  );
+  assert.notEqual(
+    (await composer.locator(".composer-shard-prose").innerText()).trim(),
+    text,
+    "operator prose never occupies the agent header before acknowledgement",
+  );
+
+  const beforeAgents = await console.locator('[data-card-kind="agent-message"]').count();
+  const agentText = `agent acknowledgement ${crypto.randomUUID()}`;
+  await activityReplay.injectAgentProse(page, lane, agentText);
+  assert.equal(
+    await console.locator('[data-card-kind="agent-message"]').count(),
+    beforeAgents + 1,
+    "one deterministic agent record follows the operator record",
+  );
+  const response = console.locator('[data-card-kind="agent-message"]')
+    .filter({ hasText: agentText }).last();
+  await response.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await response.getAttribute("data-message-role"), "agent");
+  assert.notEqual(await response.getAttribute("data-mosaic-card-key"), source);
+
+  const inbox = await reply(fixture, ["inbox", lane]);
+  const directive = inbox.body.lanes[0].pending.find((row) => row.text === text);
+  assert.ok(directive, "the focused operator record has durable steering identity");
+  await reply(fixture, ["steer", "cancel", directive.directive]);
+  await operator.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await operator.getAttribute("data-mosaic-card-key"), source);
+  assert.equal(await operator.count(), 1, "reconciliation neither replaces nor duplicates operator prose");
+  assert.equal(
+    await console.locator('[data-card-kind="agent-message"]').filter({ hasText: text }).count(),
+    0,
+    "agent acknowledgement never relabels the retained operator record",
+  );
 }
 
 export async function assertAgentConversation(
@@ -253,6 +310,13 @@ export async function assertAgentConversation(
   const producerNames = new Set(await authored.locator(".message-author").allTextContents());
   assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
   assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
+  await assertStableOperatorAuthorship(
+    page,
+    fixture,
+    console,
+    seated[0].lane,
+    activityReplay,
+  );
   await assertInitiallyDeferredMosaicIsReadable(page, console);
   await assertRosterPips(page, console, seated);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
@@ -302,12 +366,14 @@ export async function assertAgentConversation(
     .filter({ hasText: "Measured lattice witness" })
     .waitFor({ timeout: 10_000 });
   const orderedInbox = await reply(fixture, ["inbox", seated[1].lane]);
+  const pendingOrder = orderedInbox.body.lanes[0].pending.map((directive) => directive.directive);
+  const renderedOperatorOrder = await console
+    .locator(`[data-card-kind="operator-message"][data-agent-lane="${seated[1].lane}"]`)
+    .evaluateAll((cards) => cards.map((card) => card.dataset.directive));
   assert.deepEqual(
-    await console
-      .locator(`[data-card-kind="directive"][data-agent-lane="${seated[1].lane}"]`)
-      .evaluateAll((cards) => cards.map((card) => card.dataset.directive)),
-    orderedInbox.body.lanes[0].pending.map((directive) => directive.directive),
-    "pending directives reach the lattice in durable journal order",
+    renderedOperatorOrder.filter((directive) => pendingOrder.includes(directive)),
+    pendingOrder,
+    "pending direction retains its durable order among stable operator history",
   );
   assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
   assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
@@ -326,7 +392,7 @@ export async function assertAgentConversation(
   );
   await plane.waitFor();
   const placements = await assertMosaicLattice(page, true);
-  assert.ok(placements.length > seated.length, "the lane packs agent and directive cards");
+  assert.ok(placements.length > seated.length, "the lane packs agent and operator cards");
   assert.ok(placements.every((card) => card.span >= 1 && card.track + card.span <= 12));
   assert.ok(placements.every((card) => card.rows >= 3));
   assert.ok(placements.every((card) => card.columnStart === card.track + 1));
@@ -338,7 +404,7 @@ export async function assertAgentConversation(
   }
   await assertPersistentMosaic(page, fixture, console, plane, seated[0]);
 
-  const directiveChrome = await console.locator('[data-card-kind="directive"]').evaluateAll(
+  const operatorChrome = await console.locator('[data-card-kind="operator-message"]').evaluateAll(
     (cards) => cards.map((card) => ({
       lane: card.dataset.agentLane,
       accent: card.dataset.accent,
@@ -346,11 +412,11 @@ export async function assertAgentConversation(
     })),
   );
   const repeatedLane = seated[1].lane;
-  const repeatedChrome = directiveChrome.filter((card) => card.lane === repeatedLane);
+  const repeatedChrome = operatorChrome.filter((card) => card.lane === repeatedLane);
   assert.ok(repeatedChrome.length >= 2, "the accent probe has two cards from one lane");
   assert.ok(repeatedChrome.every((card) => card.accent === repeatedChrome[0].accent));
   assert.ok(repeatedChrome.every((card) => card.edge === repeatedChrome[0].edge));
-  const distinctChrome = directiveChrome.find(
+  const distinctChrome = operatorChrome.find(
     (card) => card.lane !== repeatedLane && card.accent !== repeatedChrome[0].accent,
   );
   assert.ok(distinctChrome, "the fixture exposes a different lane accent slot");
@@ -360,8 +426,8 @@ export async function assertAgentConversation(
   // teamLaneIds explains. That is the ordinary case for a lineage, so the
   // colour is decoration and the assertions below are what an operator and a
   // test actually read to tell the two apart. A message card names its producer
-  // as the worktree leaf beside the short author; a directive card names only
-  // the short lane, which is why the pairing is asserted on message cards.
+  // as the worktree leaf beside the short author; operator records use their
+  // explicit role label, which is why the pairing is asserted on agent cards.
   const messageChrome = await console.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => ({
       lane: card.dataset.agentLane,
@@ -383,7 +449,7 @@ export async function assertAgentConversation(
     "the producer name is what stays distinct when the colour does not",
   );
   const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
-  for (const kind of ["agent-message", "directive"]) {
+  for (const kind of ["agent-message", "operator-message"]) {
     const card = console.locator(`[data-card-kind="${kind}"]`).first();
     assert.ok((await card.locator(".message-author").innerText()).trim());
     assert.deepEqual(
@@ -432,7 +498,7 @@ export async function assertAgentConversation(
   );
   assert.ok(topDirective, "the at-top follow probe reached the real inbox");
   await reply(fixture, ["steer", "cancel", topDirective.directive]);
-  await topCard.waitFor({ state: "detached", timeout: 10_000 });
+  await topCard.waitFor({ timeout: TRANSITION_MS });
 
   await assertMosaicScrollInputs(page, scroller);
   const beforeCompensation = await scrollMosaicAwayFromTop(page, scroller);
@@ -498,7 +564,7 @@ export async function assertAgentConversation(
   );
   assert.ok(compensationDirective, "the compensation probe reached the real inbox");
   await reply(fixture, ["steer", "cancel", compensationDirective.directive]);
-  await compensationCard.waitFor({ state: "detached", timeout: 10_000 });
+  await compensationCard.waitFor({ timeout: TRANSITION_MS });
   await page.locator('.task-pill[data-task-stem="app"]').waitFor();
   await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
   assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
@@ -513,7 +579,7 @@ export async function assertAgentConversation(
   assert.equal(pendingDirective.text, messages[0]);
   assert.equal(
     await outgoing.locator(".message-key").innerText(),
-    `${pendingDirective.key} · ${pendingDirective.stage}`,
+    pendingDirective.key,
   );
   await assertQueuedRosterPip(page, console, seated[0]);
   const age = outgoing.locator(".message-age");
@@ -525,9 +591,9 @@ export async function assertAgentConversation(
     accepted.includes(renderedAge),
     `the card shows authored age: ${JSON.stringify({ renderedAge, accepted })}`,
   );
-  assert.equal(
+  assert.match(
     await age.getAttribute("title"),
-    `stage ${pendingDirective.stage}; authored ${pendingDirective.authored}; expires ${pendingDirective.expires}`,
+    new RegExp(`^operator direction ${pendingDirective.key}; authored .+$`),
   );
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 

@@ -17,7 +17,7 @@ const WAKE_MS = 15_000;
 /// operator encounters after an agent exits. The browser then crosses its
 /// visible refresh boundary before using the discoverable team action. Pending
 /// directions are cleared first so lifecycle auto-wake cannot consume the
-/// vacancy under test. The resulting directive card proves durable steering,
+/// vacancy under test. The resulting operator card proves durable steering,
 /// while a new agent-authored card proves the wake launched a replacement
 /// occupant rather than sending against the departed one.
 export async function assertVacantWakeSubmission(page, fixture, seeded) {
@@ -127,7 +127,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
 
   const directiveCard = console_
     .locator(
-      `.mosaic-message-card[data-card-kind="directive"]`
+      `.mosaic-message-card[data-card-kind="operator-message"]`
         + `[data-agent-lane="${targetLane}"]`,
     )
     .filter({ hasText: exactDraft });
@@ -163,5 +163,5 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   assert.equal(durable?.text, exactDraft, "wake-and-steer preserves the exact authored draft");
 
   await reply(fixture, ["steer", "cancel", directive]);
-  await directiveCard.waitFor({ state: "detached", timeout: TRANSITION_MS });
+  await directiveCard.waitFor({ timeout: TRANSITION_MS });
 }

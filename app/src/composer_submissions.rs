@@ -350,7 +350,7 @@ impl SubmissionQueue {
         directive: CanonicalUuid,
         key: String,
         disposition: Disposition,
-    ) -> Result<(), String> {
+    ) -> Result<Option<Submission>, String> {
         if directive != id {
             return Err(format!(
                 "composer submission {id} received mismatched directive {directive}"
@@ -361,14 +361,19 @@ impl SubmissionQueue {
                 "composer submission {id} received a result before it was sent"
             ));
         }
-        let observed = self.1.get(&directive);
-        if let Some(backend_key) = observed
+        let observed = self.1.get(&directive).cloned();
+        if let Some(backend_key) = &observed
             && backend_key != &key
         {
             return Err(format!(
                 "composer submission {id} received key {key} after backend key {backend_key}"
             ));
         }
+        let accepted = if disposition == Disposition::Live {
+            Some(self.submission_mut(id)?.clone())
+        } else {
+            None
+        };
         if disposition != Disposition::Live || observed.is_some() {
             self.remove(id);
         } else {
@@ -378,7 +383,7 @@ impl SubmissionQueue {
                 disposition,
             };
         }
-        Ok(())
+        Ok(accepted)
     }
 
     /// Restore the refused write and every later write that never became durable.

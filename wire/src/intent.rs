@@ -412,6 +412,8 @@ pub struct DirectiveAnswer {
     pub directive: CanonicalUuid,
     /// Human-sized key quoted by inbox and acknowledgment prose.
     pub key: String,
+    /// Commit instant of the original operator publication.
+    pub authored: Instant,
     /// Its disposition after the transaction.
     pub disposition: Disposition,
     /// Current standing of the disposable inbox delivery after the command.
