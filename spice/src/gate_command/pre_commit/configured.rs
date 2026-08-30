@@ -520,19 +520,24 @@ impl Dispatch {
         let repository = Repository::discover(&current).map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-repository-unresolved", error.to_string())
         })?;
+        Self::capture_at(repository)
+    }
+
+    pub(super) fn capture_at(repository: Repository) -> Result<Self, ConfiguredFailure> {
         let state = repository.admit_state().map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-state-unavailable", error.to_string())
         })?;
         fs::create_dir_all(state.locks()).map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-state-unavailable", error.to_string())
         })?;
-        let anchor = spice::gate::prepare_arm(gate::Selector::staged(), gate::GateId::Staging)
-            .map_err(|error| {
-                ConfiguredFailure::refusal(
-                    "gate::pre-commit-staged-source-refused",
-                    error.to_string(),
-                )
-            })?;
+        let anchor = spice::gate::prepare_arm_at(
+            repository.worktree_root(),
+            gate::Selector::staged(),
+            gate::GateId::Staging,
+        )
+        .map_err(|error| {
+            ConfiguredFailure::refusal("gate::pre-commit-staged-source-refused", error.to_string())
+        })?;
         let policy = DispatchPolicy::load(&repository)?;
         policy.verify_selected(anchor.root())?;
         let authority = DispatchAuthority::capture(&anchor)?;
@@ -578,17 +583,21 @@ impl Dispatch {
     }
 
     fn refresh_anchor(&mut self, trigger: &str) -> Result<(), ConfiguredFailure> {
-        let anchor = spice::gate::prepare_arm(gate::Selector::staged(), gate::GateId::Staging)
-            .map_err(|error| {
-                ConfiguredFailure::refusal(
-                    "gate::pre-commit-staged-source-moved",
-                    format!(
-                        "trigger={}; staged semantic recapture refused: {}",
-                        json(trigger),
-                        error.detail(),
-                    ),
-                )
-            })?;
+        let anchor = spice::gate::prepare_arm_at(
+            self.repository.worktree_root(),
+            gate::Selector::staged(),
+            gate::GateId::Staging,
+        )
+        .map_err(|error| {
+            ConfiguredFailure::refusal(
+                "gate::pre-commit-staged-source-moved",
+                format!(
+                    "trigger={}; staged semantic recapture refused: {}",
+                    json(trigger),
+                    error.detail(),
+                ),
+            )
+        })?;
         let observed = DispatchAuthority::capture(&anchor)?;
         if let Some(movement) = self.authority.movement(&observed) {
             return Err(ConfiguredFailure::refusal(

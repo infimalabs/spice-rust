@@ -91,6 +91,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
                 ReplyPositionLaw::Committed,
             )
             | (JournalAccess::Command, ReplyPositionLaw::SnapshotOrCommitted) => {}
+            (JournalAccess::Command, ReplyPositionLaw::DirectOrCommitted) => {}
             _ => panic!("reply position does not match the leaf's journal authority: {contract:?}"),
         }
         if contract.result == ResultClass::Plan {
@@ -751,6 +752,14 @@ fn reference_transaction_contract_names_early_conditional_git() {
         .clone();
     let help = gate.render_help().to_string();
     assert!(help.contains("reference-transaction"), "{help}");
+}
+
+#[test]
+fn task_done_contract_admits_durable_handoff_before_terminal_commit() {
+    let contract =
+        contract_at(CONTRACTS, &["task", "done"]).expect("task done has one registered contract");
+    assert_eq!(contract.journal, JournalAccess::Command);
+    assert_eq!(contract.reply_position, ReplyPositionLaw::DirectOrCommitted);
 }
 
 #[test]

@@ -290,7 +290,12 @@ pub(super) fn task_done(
             ),
         );
     }
-    let (at, lane, transition) = match done_transition(&snapshot, entry, command) {
+    let resume_epoch = match resumable_task_completion(repository, &snapshot, command, entry, done)
+    {
+        Ok(resume) => resume,
+        Err(outcome) => return outcome,
+    };
+    let (at, lane, transition) = match done_transition(&snapshot, entry, command, resume_epoch) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
@@ -357,6 +362,7 @@ fn done_transition(
     snapshot: &ValidatedSnapshot,
     entry: &Entry,
     command: &wire::AdmittedCommand,
+    resume_epoch: bool,
 ) -> Result<(Instant, wire::CanonicalUuid, board::Transition), Outcome<CommandAnswer>> {
     let at = current_instant()?;
     let active = board::Active::admit(entry, command.actor(), at).map_err(|error| {
@@ -369,7 +375,7 @@ fn done_transition(
             ),
         )
     })?;
-    if active.epoch() != command.epoch() {
+    if active.epoch() != command.epoch() && !resume_epoch {
         return Err(refusal(
             "claim::epoch-moved",
             Some(active.epoch().to_string()),
@@ -530,6 +536,7 @@ fn append_done(
     Ok(wire::intent::TaskAnswer {
         task: done.task.clone(),
         status: transition.next().status.clone(),
+        completion: None,
         learning: None,
         next,
     })
@@ -713,6 +720,7 @@ pub(super) fn task_review(
     let answer = wire::intent::TaskAnswer {
         task: review.task.clone(),
         status: "completed".to_owned(),
+        completion: None,
         learning: None,
         next: None,
     };

@@ -562,6 +562,13 @@ pub struct TaskAnswer {
     pub task: TaskHandle,
     /// Its status after the transaction.
     pub status: String,
+    /// Durable completion operation still running before this task may move.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub completion: Option<TaskCompletionAnswer>,
     /// Best-effort learning continuation run after a successful completion.
     #[serde(
         default,
@@ -576,6 +583,24 @@ pub struct TaskAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub next: Option<Box<str>>,
+}
+
+/// One durable long-running task completion handoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCompletionAnswer {
+    /// Identity minted by the first command and retained by every retry.
+    pub operation: CanonicalUuid,
+    /// Closed operation state returned before terminal task publication.
+    pub state: TaskCompletionState,
+}
+
+/// Non-terminal states a task command may return for durable completion work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TaskCompletionState {
+    /// Mandatory evidence is executing outside the resident command loop.
+    Running,
 }
 
 /// Bounded task-completion learning distillation report.

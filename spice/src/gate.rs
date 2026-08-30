@@ -385,6 +385,30 @@ pub fn prepare_arm(selector: Selector, gate_id: GateId) -> Result<PreparedArm<'s
     prepare_arm_with_mode(selector, gate_id, InputMode::Generic)
 }
 
+/// Capture one selected arm from an explicitly admitted repository directory.
+pub fn prepare_arm_at(
+    directory: &Path,
+    selector: Selector,
+    gate_id: GateId,
+) -> Result<PreparedArm<'static>, RunError> {
+    let compiler_environment = compiler_environment();
+    capture::capture_at_inner(
+        directory,
+        selector,
+        InputMode::Generic,
+        Some(gate_id),
+        None,
+        None,
+        None,
+    )
+    .map(|capture| PreparedArm {
+        capture,
+        gate_id,
+        compiler_environment,
+        cargo_jobs: None,
+    })
+}
+
 /// Capture one current-source arm under the strict self-hosting contract.
 pub fn prepare_arm_strict(
     selector: Selector,

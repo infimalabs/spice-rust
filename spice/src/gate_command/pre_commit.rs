@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use gate::{ArmFamily, GateId};
 use serde::{Deserialize, Serialize};
 use sill::{
-    Acquisition, Argv, Cancellation, Completion, Deadlines, Environment, LockFile, LockName,
-    Output, Possession, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy,
+    Acquisition, Argv, Availability, Cancellation, Completion, Deadlines, Environment, LockFile,
+    LockName, Output, Possession, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy,
     StreamPolicy, WaitOutcome, WaitPolicy,
 };
 use spice::repository::Repository;
@@ -20,16 +20,21 @@ use wire::{Digest, Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply
 
 mod configured;
 mod dispatch;
+mod resolution_operation;
 mod terminal;
+
+pub(crate) use resolution_operation::Authority as ResolutionAuthority;
 
 use dispatch::{dispatch, dispatch_resolution};
 #[cfg(test)]
 use terminal::report_outcome;
-use terminal::{classify, classify_resolution};
+use terminal::{classify, classify_resolution, resolution_terminal};
 
 const WORKER_ARGUMENT: &str = "__gate-pre-commit-worker";
 const RESOLUTION_WORKER_ARGUMENT: &str = "__gate-resolution-worker";
 const RESOLUTION_SELECTION_WORKER_ARGUMENT: &str = "__gate-resolution-selection-worker";
+const RESOLUTION_OPERATION_WORKER_ARGUMENT: &str = "__gate-resolution-operation-worker";
+pub(super) const RESOLUTION_PENDING_REASON: &str = "gate::resolution-in-progress";
 const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const HARD_DEADLINE: Duration = Duration::from_secs(600);
@@ -453,7 +458,21 @@ pub(super) fn run() -> Outcome<Report> {
     clippy::disallowed_methods,
     reason = "the resolution binary rim rejects configured-command recursion before supervision"
 )]
-pub(super) fn run_resolution(repository: &Repository) -> Outcome<()> {
+pub(super) fn run_resolution(
+    repository: &Repository,
+    authority: resolution_operation::Authority<'_>,
+) -> Outcome<()> {
+    if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
+        return configured::recursion_refusal(&source);
+    }
+    resolution_operation::run(repository, authority)
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the resolution binary rim rejects configured-command recursion before supervision"
+)]
+pub(super) fn run_resolution_blocking(repository: &Repository) -> Outcome<()> {
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
         return configured::recursion_refusal(&source);
     }
@@ -462,6 +481,20 @@ pub(super) fn run_resolution(repository: &Repository) -> Outcome<()> {
         Err(outcome) => return outcome,
     };
     run_with_resolution(|files| supervise_resolution(files, repository.worktree_root()))
+}
+
+pub(super) fn has_resolution_operation(
+    repository: &Repository,
+    authority: resolution_operation::Authority<'_>,
+) -> Result<bool, Outcome<()>> {
+    resolution_operation::exists(repository, authority)
+}
+
+pub(super) fn resolution_terminal_path(
+    repository: &Repository,
+    claim: wire::Seq,
+) -> std::io::Result<PathBuf> {
+    resolution_operation::terminal_path(repository, claim)
 }
 
 #[derive(Debug)]
@@ -497,6 +530,16 @@ impl DispatchGuard {
             ))),
             Err(error) => Err(fault("gate::pre-commit-lock-unavailable", error)),
         }
+    }
+
+    fn wait_in(repository: &Repository) -> io::Result<Self> {
+        let state = repository.admit_state().map_err(io::Error::other)?;
+        fs::create_dir_all(state.worktree_locks())?;
+        let name = LockName::new("pre-commit").expect("pre-commit is a valid fixed lock name");
+        let lock = LockFile::new(name, state.worktree_locks().join(DISPATCH_LOCK));
+        lock.acquire().map(|possession| Self {
+            _possession: possession,
+        })
     }
 }
 
@@ -534,8 +577,26 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
     if worker.as_os_str() != OsStr::new(WORKER_ARGUMENT)
         && worker.as_os_str() != OsStr::new(RESOLUTION_WORKER_ARGUMENT)
         && worker.as_os_str() != OsStr::new(RESOLUTION_SELECTION_WORKER_ARGUMENT)
+        && worker.as_os_str() != OsStr::new(RESOLUTION_OPERATION_WORKER_ARGUMENT)
     {
         return None;
+    }
+    if worker.as_os_str() == OsStr::new(RESOLUTION_OPERATION_WORKER_ARGUMENT) {
+        let Some(root) = arguments.next() else {
+            eprintln!("resolution operation worker requires its durable root");
+            return Some(1);
+        };
+        if arguments.next().is_some() {
+            eprintln!("resolution operation worker received trailing arguments");
+            return Some(1);
+        }
+        return Some(match resolution_operation::worker(Path::new(&root)) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("resolution operation worker failed: {error}");
+                1
+            }
+        });
     }
     if worker.as_os_str() == OsStr::new(RESOLUTION_SELECTION_WORKER_ARGUMENT) {
         if arguments.next().is_some() {

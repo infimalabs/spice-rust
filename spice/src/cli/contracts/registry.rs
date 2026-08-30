@@ -505,7 +505,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["task", "done"],
         "task done [--validation TEXT]",
         Lane,
-        Command,
+        Command => DirectOrCommitted,
         [TaskDone, TaskPhased],
         [Resident, LaneCapability, Toolful],
         TASK_DONE_TOOLS,

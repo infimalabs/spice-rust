@@ -122,6 +122,10 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         r#"{
   "task": "SPICE-aBcD",
   "status": "done",
+  "completion": {
+    "operation": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+    "state": "running"
+  },
   "learning": {
     "stored": 1,
     "candidates": 2,

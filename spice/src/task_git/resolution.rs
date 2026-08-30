@@ -7,6 +7,7 @@ use super::landing::require_tree_within_footprint;
 use super::transaction::{git_state_path, materialize_resolution};
 use super::*;
 
+#[derive(Debug, Eq, PartialEq)]
 struct Seal {
     agent: String,
     upstream: String,
@@ -16,9 +17,12 @@ struct Seal {
     message: String,
 }
 
+pub(super) struct Preflight(Seal);
+
 pub(super) struct Parents<'a> {
     pub(super) agent: &'a str,
     pub(super) upstream: &'a str,
+    pub(super) preflight: Preflight,
 }
 
 pub(super) fn has_state(root: &Path) -> Result<bool, Error> {
@@ -49,9 +53,13 @@ pub(super) fn complete(
     message: &str,
     evidence: ResolutionEvidence<'_>,
 ) -> Result<String, Error> {
-    let Parents { agent, upstream } = parents;
+    let Parents {
+        agent,
+        upstream,
+        preflight,
+    } = parents;
     require_claim(meta, active)?;
-    let seal = Seal::capture(root, target, agent, upstream, message)?;
+    let seal = preflight.complete(root, target, agent, upstream, message)?;
     require_tree_within_footprint(root, meta.label, upstream, &seal.tree, agent)?;
     evidence().map_err(evidence_error)?;
     require_claim(meta, active)?;
@@ -79,6 +87,61 @@ pub(super) fn complete(
     seal.verify(root, target)?;
     materialize_resolution(root, &commit, &seal.agent, &seal.tree, meta.label)?;
     Ok(commit)
+}
+
+impl Preflight {
+    pub(super) fn capture(root: &Path) -> Result<Self, Error> {
+        let upstream = read_state_value(root, "MERGE_HEAD")?;
+        let agent = read_state_value(root, "ORIG_HEAD")?;
+        require_state_file(root, "MERGE_MODE", "no-ff\n")?;
+        let message = read_state_text(root, "MERGE_MSG")?
+            .strip_suffix('\n')
+            .ok_or_else(|| {
+                Error::refusal(
+                    "git::resolution-state-mismatch",
+                    "MERGE_MSG has no canonical final newline",
+                    "do not edit Git merge control files; abort and retry from the current baseline",
+                )
+            })?
+            .to_owned();
+        require_resolved_index(root)?;
+        require_equal_read(root, &["rev-parse", "HEAD"], "HEAD", &agent)?;
+        let tree = required_read(root, &["write-tree"], "seal resolved index tree")?;
+        let head_ref = required_read(
+            root,
+            &["symbolic-ref", "--quiet", "HEAD"],
+            "read resolution HEAD ref",
+        )?;
+        let configuration = configuration(root)?;
+        Ok(Self(Seal {
+            agent,
+            upstream,
+            tree,
+            head_ref,
+            configuration,
+            message,
+        }))
+    }
+
+    fn complete(
+        self,
+        root: &Path,
+        target: &Target,
+        agent: &str,
+        upstream: &str,
+        message: &str,
+    ) -> Result<Seal, Error> {
+        let seal = Seal::capture(root, target, agent, upstream, message)?;
+        if seal == self.0 {
+            Ok(seal)
+        } else {
+            Err(Error::refusal(
+                "git::resolution-state-moved",
+                "resolution controls, index, HEAD, or Git configuration moved while evidence was running",
+                "restore the exact sealed resolution and retry task completion",
+            ))
+        }
+    }
 }
 
 impl Seal {
@@ -173,6 +236,18 @@ fn require_claim(meta: Metadata<'_>, active: &board::Active<'_>) -> Result<(), E
 }
 
 fn require_state_file(root: &Path, name: &str, expected: &str) -> Result<(), Error> {
+    let observed = read_state_text(root, name)?;
+    if observed == expected {
+        return Ok(());
+    }
+    Err(Error::refusal(
+        "git::resolution-state-mismatch",
+        format!("{name} does not match the allocator-materialized merge state"),
+        "do not edit Git merge control files; abort and retry from the current baseline",
+    ))
+}
+
+fn read_state_text(root: &Path, name: &str) -> Result<String, Error> {
     let path = git_state_path(root, name)?;
     let observed = match fs::read_to_string(&path) {
         Ok(observed) => observed,
@@ -190,14 +265,26 @@ fn require_state_file(root: &Path, name: &str, expected: &str) -> Result<(), Err
             ));
         }
     };
-    if observed == expected {
-        return Ok(());
+    Ok(observed)
+}
+
+fn read_state_value(root: &Path, name: &str) -> Result<String, Error> {
+    let text = read_state_text(root, name)?;
+    let Some(value) = text.strip_suffix('\n') else {
+        return Err(Error::refusal(
+            "git::resolution-state-mismatch",
+            format!("{name} is not one canonical line"),
+            "do not edit Git merge control files; abort and retry from the current baseline",
+        ));
+    };
+    if value.is_empty() || value.contains('\n') {
+        return Err(Error::refusal(
+            "git::resolution-state-mismatch",
+            format!("{name} is not one canonical line"),
+            "do not edit Git merge control files; abort and retry from the current baseline",
+        ));
     }
-    Err(Error::refusal(
-        "git::resolution-state-mismatch",
-        format!("{name} does not match the allocator-materialized merge state"),
-        "do not edit Git merge control files; abort and retry from the current baseline",
-    ))
+    Ok(value.to_owned())
 }
 
 fn require_resolved_index(root: &Path) -> Result<(), Error> {
@@ -267,11 +354,119 @@ fn moved(name: &str, expected: &str, observed: &str) -> Error {
     )
 }
 
-fn evidence_error(error: ResolutionEvidenceError) -> Error {
+pub(super) fn evidence_error(error: ResolutionEvidenceError) -> Error {
+    if error.reason == "gate::resolution-in-progress" {
+        return Error {
+            class: error.class,
+            reason: "git::resolution-in-progress",
+            detail: error.detail,
+            remedy: "retry task completion to read the durable terminal result".to_owned(),
+        };
+    }
     Error {
         class: error.class,
         reason: "git::resolution-evidence-refused",
         detail: format!("{}: {}", error.reason, error.detail),
         remedy: error.remedy,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{env, path::PathBuf};
+
+    use super::*;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            let root = env::temp_dir().join(format!(
+                "spice-resolution-preflight-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4().simple(),
+            ));
+            fs::create_dir(&root).expect("create resolution scratch");
+            Self(root)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("remove resolution scratch");
+        }
+    }
+
+    fn git(root: &Path, arguments: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(arguments)
+            .current_dir(root)
+            .output()
+            .expect("run Git fixture command");
+        assert!(
+            output.status.success(),
+            "git {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        String::from_utf8(output.stdout)
+            .expect("Git fixture output is UTF-8")
+            .trim()
+            .to_owned()
+    }
+
+    fn preflight_repository() -> (Scratch, String) {
+        let scratch = Scratch::new();
+        git(&scratch.0, &["init", "--quiet"]);
+        git(&scratch.0, &["config", "user.name", "Spice Test"]);
+        git(
+            &scratch.0,
+            &["config", "user.email", "spice-test@example.invalid"],
+        );
+        fs::write(scratch.0.join("tracked.txt"), b"resolved\n").expect("write tracked fixture");
+        git(&scratch.0, &["add", "tracked.txt"]);
+        git(&scratch.0, &["commit", "--quiet", "-m", "seed"]);
+        let head = git(&scratch.0, &["rev-parse", "HEAD"]);
+        for (name, value) in [
+            ("MERGE_HEAD", format!("{head}\n")),
+            ("ORIG_HEAD", format!("{head}\n")),
+            ("MERGE_MODE", "no-ff\n".to_owned()),
+            ("MERGE_MSG", "resolved task\n".to_owned()),
+        ] {
+            fs::write(scratch.0.join(".git").join(name), value).expect("write merge-state fixture");
+        }
+        (scratch, head)
+    }
+
+    #[test]
+    fn pending_evidence_preserves_the_operation_identity_for_the_command_reply() {
+        let operation = "00000000-0000-4000-8000-000000000051";
+        let error = evidence_error(ResolutionEvidenceError::refusal(
+            "gate::resolution-in-progress",
+            operation,
+            "retry",
+        ));
+        assert_eq!(error.reason(), "git::resolution-in-progress");
+        assert_eq!(error.detail(), operation);
+        assert_eq!(error.class(), ErrorClass::Refusal);
+    }
+
+    #[test]
+    fn preflight_refuses_configuration_movement_during_evidence() {
+        let (scratch, head) = preflight_repository();
+        let preflight = Preflight::capture(&scratch.0).expect("capture exact preflight");
+        git(
+            &scratch.0,
+            &["config", "spice.fixture-moved", "during-evidence"],
+        );
+        let target = Target {
+            remote: "origin".to_owned(),
+            baseline: "HEAD".to_owned(),
+            branch: "main".to_owned(),
+        };
+
+        let error = preflight
+            .complete(&scratch.0, &target, &head, &head, "resolved task")
+            .expect_err("moved configuration is refused");
+        assert_eq!(error.reason(), "git::resolution-state-moved");
     }
 }
