@@ -685,7 +685,7 @@ fn inline_task_chips<'a>(
     match event {
         MarkdownEvent::Text(text) => inline_task_text(text, rendered),
         MarkdownEvent::Code(code) => {
-            let Ok(task) = code.parse::<wire::TaskHandle>() else {
+            let Some(task) = watchband::canonical_task_handle(&code) else {
                 return vec![MarkdownEvent::Code(code)];
             };
             if rendered.contains(&task) {

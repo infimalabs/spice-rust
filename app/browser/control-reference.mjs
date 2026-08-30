@@ -324,7 +324,7 @@ function assertReferenceGuardRejectsPerturbation(geometry) {
   );
 }
 
-async function assertInlineTaskChip(surface) {
+export async function assertCanonicalInlineTaskCode(surface) {
   assert.equal(
     await surface.locator(".message-meta .message-task-chip").count(),
     0,
@@ -333,7 +333,11 @@ async function assertInlineTaskChip(surface) {
   const chip = surface.locator(".message-body .message-task-chip").first();
   await chip.waitFor();
   const handle = await chip.getAttribute("data-task-handle");
-  assert.ok(handle, "the reported-task chip carries its canonical handle");
+  assert.equal(
+    handle,
+    "CONTROL-1kKbC3j4",
+    "canonical inline code becomes the reported-task chip",
+  );
   assert.equal(await chip.innerText(), handle, "the task chip visibly names the reported handle");
   assert.equal(
     await chip.getAttribute("aria-label"),
@@ -351,14 +355,18 @@ async function assertInlineTaskChip(surface) {
     0,
     "the inline identifier has no duplicate footer chip",
   );
-  const chiplessCard = surface
-    .locator('.mosaic-message-card[data-card-kind="agent-message"]:not(:has(.message-task-chip))')
-    .first();
-  await chiplessCard.waitFor();
   assert.equal(
-    await chiplessCard.locator(".message-task-chip").count(),
+    await card.locator('.message-task-chip[data-task-handle="APP-a1"]').count(),
     0,
-    "a card with no useful inline identifier omits the chip entirely",
+    "a broadly compatible legacy handle does not become a task affordance",
+  );
+  const legacyCode = card.locator(".message-body code").filter({ hasText: "APP-a1" });
+  assert.equal(await legacyCode.count(), 1, "the legacy handle remains ordinary inline code");
+  assert.equal(await legacyCode.innerText(), "APP-a1", "ordinary code preserves legacy prose");
+  assert.equal(
+    await card.locator(".message-body code").filter({ hasText: handle }).count(),
+    0,
+    "canonical inline code is replaced by its single task affordance",
   );
   const geometry = await chip.evaluate((element) => {
     const box = element.getBoundingClientRect();
@@ -374,6 +382,19 @@ async function assertInlineTaskChip(surface) {
   assert.ok(geometry.borderRadius >= geometry.height / 2 - 1, "the task marker is a chip");
   assert.equal(geometry.border, darkPalette.green, "the task chip uses the live green accent");
   assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, "the reported handle is not clipped");
+}
+
+async function assertInlineTaskChip(surface) {
+  await assertCanonicalInlineTaskCode(surface);
+  const chiplessCard = surface
+    .locator('.mosaic-message-card[data-card-kind="agent-message"]:not(:has(.message-task-chip))')
+    .first();
+  await chiplessCard.waitFor();
+  assert.equal(
+    await chiplessCard.locator(".message-task-chip").count(),
+    0,
+    "a card with no useful inline identifier omits the chip entirely",
+  );
 }
 
 /// The operator agent card carries its own control: renewing this agent has to

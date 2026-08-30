@@ -8,6 +8,7 @@ const EXPECTED_SCENARIOS = [
   "launch-boundaries",
   "fixture-reaping",
   "light-readiness",
+  "inline-task-chip",
   "agent-conversation",
   "firefox-restored-mosaic",
   "reference-composer",
@@ -27,6 +28,10 @@ export const CANVAS_SHARDS = Object.freeze([
   Object.freeze({
     name: "readiness",
     scenarios: Object.freeze(["light-readiness"]),
+  }),
+  Object.freeze({
+    name: "task-chip",
+    scenarios: Object.freeze(["inline-task-chip"]),
   }),
   Object.freeze({
     name: "interaction",

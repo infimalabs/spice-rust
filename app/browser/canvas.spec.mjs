@@ -39,6 +39,7 @@ import {
 } from "./canvas-endpoint-probes.mjs";
 import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
 import { assertLineageDrainFailureTeardown } from "./canvas-lineage-teardown.mjs";
+import { assertCanonicalInlineTaskCode } from "./control-reference.mjs";
 import { assertLiveThreadCoalescing } from "./live-thread-coalescing.mjs";
 import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
 import { assertBoundaryLoadReading, withLoadReading } from "./canvas-load.mjs";
@@ -828,6 +829,24 @@ try {
         await assertCanvas(lightPage, "light");
         await assertDistinctWaitCallSites(lightPage);
         await assertWaitReporting(lightPage, resident);
+        lightMonitor.assertClean();
+        await light.close();
+      });
+    } else if (run.owns("task-chip")) {
+      await run.scenario("inline-task-chip", async () => {
+        light = await browser.newContext({ colorScheme: "dark", viewport: { width: 1000, height: 568 } });
+        await installBrowserSpeech(light);
+        await installSocketControl(light);
+        lightPage = await light.newPage();
+        lightMonitor = monitorPage(lightPage);
+        await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+        await assertCanvas(lightPage, "task-chip");
+        const team = await seatAgentTeam(lightPage, fixture, worktrees);
+        await team.console.getByRole("tab", { name: /^Compose/ }).click();
+        const surface = team.console.locator(
+          `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
+        );
+        await assertCanonicalInlineTaskCode(surface);
         lightMonitor.assertClean();
         await light.close();
       });

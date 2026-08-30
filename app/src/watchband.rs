@@ -498,13 +498,19 @@ pub fn task_mentions(text: &str) -> Vec<(std::ops::Range<usize>, TaskHandle)> {
         if character.is_ascii_alphanumeric() || character == '-' {
             start.get_or_insert(index);
         } else if let Some(start) = start.take()
-            && let Ok(task) = text[start..index].parse::<TaskHandle>()
-            && task.born().is_ok()
+            && let Some(task) = canonical_task_handle(&text[start..index])
         {
             mentions.push((start..index, task));
         }
     }
     mentions
+}
+
+/// Admit one current task identity from a broadly parseable handle.
+pub(crate) fn canonical_task_handle(text: &str) -> Option<TaskHandle> {
+    let task = text.parse::<TaskHandle>().ok()?;
+    task.born().ok()?;
+    Some(task)
 }
 
 /// Fold authored text onto one line, spelling the breaks it had.

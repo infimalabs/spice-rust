@@ -688,7 +688,7 @@ export async function assertAgentConversation(
 // so this is a different string per lane and seeded operator messages cannot
 // masquerade as the producer's own prose.
 function agentProse(worktree) {
-  return `Canvas message reports CONTROL-1kKbC3j4 from ${basename(worktree)}`;
+  return `Canvas message reports \`CONTROL-1kKbC3j4\` and \`APP-a1\` from ${basename(worktree)}`;
 }
 
 // Mirrors `app::watchband::elapsed_label`, including the saturating day arm
