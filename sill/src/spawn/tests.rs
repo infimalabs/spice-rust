@@ -1,4 +1,4 @@
-use super::capture::{CaptureWorker, FailureContext, start_capture};
+use super::capture::{CaptureRetention, CaptureWorker, FailureContext, start_capture};
 use super::guardian::{group_probe_state, group_state};
 use super::launch::spawn_inner_refusing_descriptor_setup;
 use super::{
@@ -380,6 +380,7 @@ fn opaque_capture_interrupts_and_joins_before_foreign_writer_eof() {
         let capture = start_capture(
             reader,
             64,
+            CaptureRetention::Prefix,
             CaptureWorker {
                 stream,
                 observation: None,
@@ -460,6 +461,7 @@ fn an_observer_still_working_at_the_drain_deadline_is_named_rather_than_read_as_
             ended,
         },
         64,
+        CaptureRetention::Prefix,
         CaptureWorker {
             stream: OutputStream::Stderr,
             observation: Some(
@@ -715,6 +717,7 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
     let _capture = start_capture(
         failing_reader(),
         32,
+        CaptureRetention::Prefix,
         CaptureWorker {
             stream: OutputStream::Stdout,
             observation: Some(observation),
@@ -775,6 +778,7 @@ fn opaque_reader_failure_uses_the_selected_observer_cleanup_path() {
     running.stderr = Some(start_capture(
         failing_reader(),
         32,
+        CaptureRetention::Prefix,
         CaptureWorker {
             stream: OutputStream::Stderr,
             observation: None,
@@ -879,6 +883,30 @@ fn output_capture_is_bounded_and_environment_is_explicit() {
     assert_eq!(stdout.bytes(), b"1234");
     assert!(stdout.truncated());
     assert!(stdout.complete());
+    assert!(!stdout.retains_suffix());
+}
+
+#[test]
+fn output_tail_capture_retains_the_terminal_evidence() {
+    let spec = test_spec(
+        "/bin/sh",
+        ["-c", "printf '123456789'"],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(1),
+        StreamPolicy::CaptureTail { limit: 4 },
+    );
+    let outcome = spawn(spec)
+        .expect("spawn bounded output child")
+        .wait()
+        .expect("wait for bounded output child");
+
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    let stdout = outcome.stdout().expect("stdout was captured");
+    assert_eq!(stdout.bytes(), b"6789");
+    assert!(stdout.truncated());
+    assert!(stdout.complete());
+    assert!(stdout.retains_suffix());
 }
 
 #[test]

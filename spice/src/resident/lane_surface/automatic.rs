@@ -48,7 +48,7 @@ pub(super) fn wake(
         Err(outcome) => return typed_outcome(outcome),
     };
     let occupant = new_uuid();
-    let launch = match occupant_launch(
+    let launch = match super::super::supervisor::launch(
         paths,
         OccupantLaunchRequest {
             worktree: &row.worktree,
@@ -63,25 +63,16 @@ pub(super) fn wake(
         Ok(launch) => launch,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let git = launch.git;
-    let session_proof = launch.session;
-    let group = match seats.seat_observed(request.lane, occupant, launch.spec, launch.observation) {
-        Ok(occupant) => occupant.group(),
-        Err(error) => return typed_environment_fault("lane::wake-failed", &error.to_string()),
-    };
-    let session = match await_session(session_proof) {
-        Ok(session) => session,
-        Err(error) => {
-            stop_lane(seats, request.lane);
-            return error.outcome();
-        }
-    };
     let proven = ProvenOccupant {
-        occupant,
-        group,
-        session,
-        git,
+        occupant: launch.occupant,
+        group: launch.group,
+        session: launch.session,
+        git: launch.git,
     };
+    match seats.seat_detached(request.lane, occupant, launch.process) {
+        Ok(_) => {}
+        Err(error) => return typed_environment_fault("lane::wake-failed", &error.to_string()),
+    }
     let answer = LaneChangeAnswer {
         lane: request.lane,
         topology_revision,
@@ -198,7 +189,7 @@ pub(in crate::resident) fn wake_automatic(
         ));
     }
     let resume = launch_resume(paths, &row)?;
-    let launch = match occupant_launch(
+    let launch = match super::super::supervisor::launch(
         paths,
         OccupantLaunchRequest {
             worktree: &row.worktree,
@@ -213,30 +204,21 @@ pub(in crate::resident) fn wake_automatic(
         Ok(launch) => launch,
         Err(outcome) => return Ok(AutomaticWake::Unstarted(outcome)),
     };
-    let git = launch.git;
-    let session_proof = launch.session;
-    let group = match seats.seat_observed(lane, occupant, launch.spec, launch.observation) {
-        Ok(occupant) => occupant.group(),
+    let proven = ProvenOccupant {
+        occupant: launch.occupant,
+        group: launch.group,
+        session: launch.session,
+        git: launch.git,
+    };
+    match seats.seat_detached(lane, occupant, launch.process) {
+        Ok(_) => {}
         Err(error) => {
             return Ok(AutomaticWake::Unstarted(super::super::environment_fault(
                 "lifecycle::wake-launch-failed",
                 &error.to_string(),
             )));
         }
-    };
-    let session = match await_session(session_proof) {
-        Ok(session) => session,
-        Err(error) => {
-            stop_lane(seats, lane);
-            return Ok(AutomaticWake::Unstarted(Outcome::Refusal(error.refusal())));
-        }
-    };
-    let proven = ProvenOccupant {
-        occupant,
-        group,
-        session,
-        git,
-    };
+    }
     if let Err(outcome) = commit_automatic_wake(
         bus,
         epoch,

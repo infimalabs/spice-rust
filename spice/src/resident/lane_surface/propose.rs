@@ -286,13 +286,56 @@ pub(super) fn commit_restored(
             .map_err(|error| store_fault("lane::restart-fact-invalid", &error.to_string()))?
     };
     if let Some(carried) = &carried {
-        fact = append_restored_claim(&mut write, carried, durable, occupant, epoch, fact)?;
+        fact = append_restored_claim(
+            &mut write,
+            carried,
+            durable,
+            occupant,
+            epoch,
+            FactCause::Pending(fact),
+        )?;
     }
     row.occupant = Some(occupant);
     row.lineage.push(occupant);
     row.session = Some(session.clone());
     row.disposition = OCCUPIED.to_owned();
     write.residency_head(fact, move |_| next);
+    commit(bus, write).map(|_| ())
+}
+
+/// Carry only epoch-bound claim authority when the same detached supervisor
+/// and occupant remain live across resident replacement.
+///
+/// The startup transaction already retained the lane row while advancing the
+/// residency epoch. No lane-start or session fact is owed here: neither the
+/// process nor its vendor session restarted. An active claim is the sole piece
+/// of authority that is resident-generation-bound, so it alone is rewritten.
+pub(super) fn commit_adopted(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    durable: &wire::LaneResidency,
+) -> CommandResult<()> {
+    let Some(occupant) = durable.occupant else {
+        return Err(store_fault(
+            "lane::restart-adoption-vacant",
+            "a detached supervisor cannot be adopted into a vacant lane",
+        ));
+    };
+    let Some(carried) = observe_restored_claim(bus, durable)? else {
+        return Ok(());
+    };
+    let observed = current_residency(bus, epoch)?;
+    let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    guard_residency(&mut write, &observed);
+    guard_restored_claim(&mut write, &carried);
+    append_restored_claim(
+        &mut write,
+        &carried,
+        durable,
+        occupant,
+        epoch,
+        FactCause::Existing(observed.position()),
+    )?;
     commit(bus, write).map(|_| ())
 }
 

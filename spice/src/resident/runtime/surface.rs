@@ -182,6 +182,7 @@ pub(super) async fn run_surface(
         failures,
         exits,
     } = capture::channels();
+    let supervisor_reports = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let residency = current_residency(bus, epoch)?;
@@ -232,6 +233,7 @@ pub(super) async fn run_surface(
         records,
         failures,
         exits,
+        supervisor_reports,
         progress,
         timers,
         timer_commits,
@@ -338,6 +340,7 @@ pub(super) async fn drive_surface(
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
     mut exits: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureExit>,
+    mut supervisor_reports: capture::SupervisorReports,
     diagnostic: &mut dyn io::Write,
     mut timers: timers::Runtime,
     mut timer_commits: bus::BroadcastSubscriber,
@@ -393,6 +396,11 @@ pub(super) async fn drive_surface(
             exit = exits.recv() => accept_exit(
                 bus, epoch, seats, command_surface, &mut lifecycle, exit,
             )?,
+            report = supervisor_reports.recv() => accept_supervisor_report(
+                bus, epoch, seats, command_surface, &message_publisher,
+                taste_submitter.as_deref_mut(), &mut lifecycle, report,
+                &mut tool_previews, diagnostic,
+            )?,
             timer = timers.recv() => {
                 let timer = timer.ok_or_else(|| environment_fault(
                     "bus::timer-events-closed",
@@ -411,6 +419,72 @@ pub(super) async fn drive_surface(
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one supervisor notice crosses the same live capture surfaces as an in-process record"
+)]
+fn accept_supervisor_report(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    message_publisher: &canvas::stream::MessagePublisher,
+    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
+    lifecycle: &mut lifecycle::Runtime,
+    report: io::Result<super::supervisor::Notice>,
+    tool_previews: &mut CallPreviews,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let notice = match report {
+        Ok(notice) => notice,
+        Err(error) => {
+            let _ = writeln!(diagnostic, "lane supervisor notice refused: {error}");
+            return Ok(());
+        }
+    };
+    if let super::supervisor::Notice::Exited { lane, occupant } = notice {
+        return accept_exit(
+            bus,
+            epoch,
+            seats,
+            command_surface,
+            lifecycle,
+            Some(lane::capture::CaptureExit { lane, occupant }),
+        );
+    }
+    if let super::supervisor::Notice::Failed {
+        lane,
+        occupant,
+        failure,
+    } = notice
+    {
+        command_surface.observe_lifecycle_death(lifecycle, seats, lane, occupant)?;
+        if seats
+            .occupant(lane)
+            .is_some_and(|sitting| sitting.occupant() == occupant)
+        {
+            let _detached = seats.vacate(lane);
+        }
+        return lane_surface::supervisor_failed(bus, epoch, lane, occupant, &failure);
+    }
+    let residency = current_residency(bus, epoch)?;
+    let Some(record) = capture::materialize(command_surface.paths, residency.body(), notice)?
+    else {
+        return Ok(());
+    };
+    accept_record(
+        bus,
+        epoch,
+        seats,
+        command_surface,
+        message_publisher,
+        taste_judge,
+        Some(record),
+        tool_previews,
+        diagnostic,
+    )
 }
 
 async fn receive_judgment(

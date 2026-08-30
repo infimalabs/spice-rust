@@ -74,6 +74,8 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             failures,
             exits,
         } = capture::channels();
+        let supervisor_reports =
+            capture::SupervisorReports::bind(paths).expect("supervisor capture endpoint binds");
         let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
             .expect("fixture read materializations start");
         let command_surface = command_surface::Surface::new(
@@ -121,6 +123,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             records,
             failures,
             exits,
+            supervisor_reports,
             progress,
             timers,
             timer_commits,

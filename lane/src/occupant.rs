@@ -6,9 +6,11 @@
 //! the door is where argv, environment, deadlines, and redaction are already
 //! decided; a second place deciding them would be a second policy.
 //!
-//! The law here is arithmetic. A seat holds one occupant or none, and seating
-//! is refused *before* the door is opened, so a lane that is already occupied
-//! cannot leave a stray process group behind as the cost of finding out.
+//! A process may be owned directly for a bounded local operation or through a
+//! detached supervisor that outlives the resident holding this seat handle.
+//! The law here is arithmetic: a seat holds one occupant or none, and seating
+//! is refused *before* the door is opened, so an occupied lane cannot leave a
+//! stray process group behind as the cost of finding out.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -22,11 +24,55 @@ use sill::{
     spawn_observed,
 };
 
+/// Non-owning resident handle to a process owned by a detached supervisor.
+///
+/// Dropping this handle must never signal the process. Explicit lane lifecycle
+/// operations call the signal methods; resident replacement only drops the
+/// handle and lets the supervisor continue.
+pub trait DetachedProcess: Send + 'static {
+    /// Agent process-group identity owned by the supervisor.
+    fn group(&self) -> u32;
+
+    /// Remaining configured agent runtime, independent of resident lifetime.
+    fn runtime_remaining(&self) -> Duration;
+
+    /// Grace after an explicit lane termination request.
+    fn termination_grace(&self) -> Duration;
+
+    /// Reap bound after an explicit lane kill request.
+    fn reap_bound(&self) -> Duration;
+
+    /// Passively observe the supervisor-owned process for a bounded interval.
+    fn wait_for(self: Box<Self>, duration: Duration) -> Result<DetachedWait, WaitError>;
+
+    /// Explicitly request graceful termination of the agent process group.
+    fn terminate(&self) -> Result<(), WaitError>;
+
+    /// Explicitly force termination of the agent process group.
+    fn kill(&self) -> Result<(), WaitError>;
+
+    /// Wait until the supervisor reports the process's exact ending.
+    fn wait(self: Box<Self>) -> Result<WaitOutcome, WaitError>;
+}
+
+/// One bounded passive observation of a detached supervisor handle.
+pub enum DetachedWait {
+    /// The supervisor published the process's terminal status.
+    Exited(WaitOutcome),
+    /// The bound elapsed while the process remained live.
+    Running(Box<dyn DetachedProcess>),
+}
+
+enum OccupantProcess {
+    Direct(Running),
+    Detached(Box<dyn DetachedProcess>),
+}
+
 /// One process group supervised under a lane.
 pub struct Occupant {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    running: Running,
+    process: OccupantProcess,
 }
 
 /// Latest liveness baseline for one supervised occupant.
@@ -75,31 +121,37 @@ impl Occupant {
     /// The process group the door opened.
     #[must_use]
     pub fn group(&self) -> u32 {
-        self.running.id()
-    }
-
-    /// The spec the door opened this group under.
-    #[must_use]
-    pub fn spec(&self) -> &Spec {
-        self.running.spec()
+        match &self.process {
+            OccupantProcess::Direct(running) => running.id(),
+            OccupantProcess::Detached(process) => process.group(),
+        }
     }
 
     /// Remaining configured runtime available for graceful drain.
     #[must_use]
     pub fn drain_remaining(&self) -> Duration {
-        self.running.runtime_remaining()
+        match &self.process {
+            OccupantProcess::Direct(running) => running.runtime_remaining(),
+            OccupantProcess::Detached(process) => process.runtime_remaining(),
+        }
     }
 
     /// Configured grace after a termination signal.
     #[must_use]
     pub fn termination_grace(&self) -> Duration {
-        self.running.spec().grace
+        match &self.process {
+            OccupantProcess::Direct(running) => running.spec().grace,
+            OccupantProcess::Detached(process) => process.termination_grace(),
+        }
     }
 
     /// Configured reap bound after forced termination.
     #[must_use]
     pub fn reap_bound(&self) -> Duration {
-        self.running.spec().deadlines.reap()
+        match &self.process {
+            OccupantProcess::Direct(running) => running.spec().deadlines.reap(),
+            OccupantProcess::Detached(process) => process.reap_bound(),
+        }
     }
 
     /// Passively waits for this group to exit within `duration`.
@@ -111,19 +163,33 @@ impl Occupant {
         let Self {
             lane,
             occupant,
-            running,
+            process,
         } = self;
-        match running.wait_for(duration)? {
-            WaitStep::Exited(outcome) => Ok(OccupantWait::Exited {
-                lane,
-                occupant,
-                outcome,
-            }),
-            WaitStep::Running(running) => Ok(OccupantWait::Running(Box::new(Self {
-                lane,
-                occupant,
-                running: *running,
-            }))),
+        match process {
+            OccupantProcess::Direct(running) => match running.wait_for(duration)? {
+                WaitStep::Exited(outcome) => Ok(OccupantWait::Exited {
+                    lane,
+                    occupant,
+                    outcome,
+                }),
+                WaitStep::Running(running) => Ok(OccupantWait::Running(Box::new(Self {
+                    lane,
+                    occupant,
+                    process: OccupantProcess::Direct(*running),
+                }))),
+            },
+            OccupantProcess::Detached(process) => match process.wait_for(duration)? {
+                DetachedWait::Exited(outcome) => Ok(OccupantWait::Exited {
+                    lane,
+                    occupant,
+                    outcome,
+                }),
+                DetachedWait::Running(process) => Ok(OccupantWait::Running(Box::new(Self {
+                    lane,
+                    occupant,
+                    process: OccupantProcess::Detached(process),
+                }))),
+            },
         }
     }
 
@@ -133,7 +199,10 @@ impl Occupant {
     ///
     /// Returns the SILL signalling failure with this occupant's owner evidence.
     pub fn terminate(&self) -> Result<(), WaitError> {
-        self.running.signal_terminate()
+        match &self.process {
+            OccupantProcess::Direct(running) => running.signal_terminate(),
+            OccupantProcess::Detached(process) => process.terminate(),
+        }
     }
 
     /// Forces termination of the whole process group.
@@ -142,7 +211,10 @@ impl Occupant {
     ///
     /// Returns the SILL signalling failure with this occupant's owner evidence.
     pub fn kill(&self) -> Result<(), WaitError> {
-        self.running.signal_kill()
+        match &self.process {
+            OccupantProcess::Direct(running) => running.signal_kill(),
+            OccupantProcess::Detached(process) => process.kill(),
+        }
     }
 
     /// Waits for the process group to end.
@@ -151,7 +223,10 @@ impl Occupant {
     ///
     /// Returns [`WaitError`] as the sill door reports it.
     pub fn wait(self) -> Result<WaitOutcome, WaitError> {
-        self.running.wait()
+        match self.process {
+            OccupantProcess::Direct(running) => running.wait(),
+            OccupantProcess::Detached(process) => process.wait(),
+        }
     }
 }
 
@@ -177,7 +252,7 @@ impl fmt::Debug for Occupant {
             .debug_struct("Occupant")
             .field("lane", &self.lane)
             .field("occupant", &self.occupant)
-            .field("group", &self.running.id())
+            .field("group", &self.group())
             .finish()
     }
 }
@@ -342,6 +417,37 @@ impl Seats {
         })
     }
 
+    /// Admit a process already owned by a detached lane supervisor.
+    ///
+    /// Dropping the returned resident seat never signals the process; only an
+    /// explicit lane lifecycle operation reaches the supervisor handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SeatError::Occupied`] when the lane already has an occupant.
+    pub fn seat_detached(
+        &mut self,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        process: Box<dyn DetachedProcess>,
+    ) -> Result<&Occupant, SeatError> {
+        if let Some(sitting) = self.occupied.get(&lane) {
+            return Err(SeatError::Occupied {
+                lane,
+                sitting: sitting.occupant,
+            });
+        }
+        let occupant = self.occupied.entry(lane).or_insert(Occupant {
+            lane,
+            occupant,
+            process: OccupantProcess::Detached(process),
+        });
+        let seated = Activity::new(occupant.occupant, Monotonic::now());
+        self.started.insert(lane, seated);
+        self.activity.insert(lane, seated);
+        Ok(occupant)
+    }
+
     fn seat_with<F>(
         &mut self,
         lane: CanonicalUuid,
@@ -365,7 +471,7 @@ impl Seats {
         let occupant = self.occupied.entry(lane).or_insert(Occupant {
             lane,
             occupant,
-            running,
+            process: OccupantProcess::Direct(running),
         });
         let seated = Activity::new(occupant.occupant, Monotonic::now());
         self.started.insert(lane, seated);
@@ -378,6 +484,24 @@ impl Seats {
         self.started.remove(&lane);
         self.activity.remove(&lane);
         self.occupied.remove(&lane)
+    }
+
+    /// Release every resident handle without signalling any process.
+    ///
+    /// Detached supervisors need only have their lightweight handles dropped.
+    /// A directly owned legacy process must be deliberately forgotten because
+    /// [`Running`]'s drop contract kills its process group. This method is used
+    /// only when the coordinator itself is going away; explicit lane drain
+    /// continues through [`Self::vacate`] and the normal signal sequence.
+    pub fn release_all(&mut self) {
+        for (_, occupant) in std::mem::take(&mut self.occupied) {
+            match occupant.process {
+                OccupantProcess::Direct(running) => std::mem::forget(running),
+                OccupantProcess::Detached(process) => drop(process),
+            }
+        }
+        self.started.clear();
+        self.activity.clear();
     }
 }
 

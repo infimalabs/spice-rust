@@ -345,24 +345,25 @@ pub struct ClaimWon {
     pub source: SourceBoundary,
 }
 
-/// Possession passed to a successor with ancestor lineage preserved.
+/// Possession rebound to current coordination authority with lineage preserved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimCarried {
     /// Carried task.
     pub task: TaskStamp,
     /// Lane the possession stays bound to.
     pub lane: CanonicalUuid,
-    /// Successor occupant.
+    /// Current occupant; it may be unchanged across resident replacement.
     pub occupant: CanonicalUuid,
-    /// Occupant the possession came from.
+    /// Occupant the possession came from; equal when only the epoch changed.
     pub ancestor: CanonicalUuid,
     /// Resident epoch that carried it.
     pub epoch: CanonicalUuid,
-    /// Accounted transcript the successor occupant takes over at.
+    /// Accounted transcript the current authority takes over at.
     ///
     /// Carrying the possession does not end the phase, so this is a boundary
     /// *within* one interval rather than a closing one: it names the exact
-    /// source locus where one occupant's spend stops and its successor's begins.
+    /// source locus where the preceding authority's accounting stops and the
+    /// current authority's begins.
     #[serde(
         default = "SourceBoundary::unrecorded",
         skip_serializing_if = "SourceBoundary::is_unrecorded"

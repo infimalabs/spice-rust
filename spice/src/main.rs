@@ -132,6 +132,10 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
 
 fn main() {
     #[cfg(not(target_arch = "wasm32"))]
+    if let Some(code) = resident::supervisor::entry(std::env::args_os()) {
+        terminate_code(code);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(code) = gate_command::pre_commit_worker_entry(std::env::args_os()) {
         terminate_code(code);
     }

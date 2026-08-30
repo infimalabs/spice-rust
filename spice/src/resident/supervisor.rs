@@ -1,0 +1,1039 @@
+//! Detached lane supervisors that may outlive any resident generation.
+
+use std::ffi::{OsStr, OsString};
+use std::fs::File;
+#[cfg(not(test))]
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
+#[cfg(not(test))]
+use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant as Monotonic, SystemTime, UNIX_EPOCH};
+
+use lane::capture::{
+    CaptureExit, CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter,
+};
+use lane::occupant::{DetachedProcess, DetachedWait};
+use serde::{Deserialize, Serialize};
+use sill::{WaitError, WaitOutcome};
+use spice::repository::Repository;
+use wire::CanonicalUuid;
+
+use super::lane_surface::{
+    OccupantLaunchRequest, SessionProofError, await_session, occupant_launch,
+};
+use super::{CommandResult, RuntimePaths, environment_fault, store_fault};
+
+#[cfg(all(unix, not(test)))]
+use std::os::unix::fs::OpenOptionsExt as _;
+#[cfg(all(unix, not(test)))]
+use std::os::unix::process::CommandExt as _;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt as _;
+
+const ENTRY: &str = "__lane-supervisor";
+const CONTRACT_VERSION: u32 = 1;
+const REQUEST_BYTES: u64 = 64 * 1024;
+const STATE_BYTES: u64 = 64 * 1024;
+#[cfg(not(test))]
+const START_HORIZON: Duration = Duration::from_secs(15);
+const WAIT_QUANTUM: Duration = Duration::from_millis(25);
+
+/// Minimal best-effort notification projected from already-durable tape.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(super) enum Notice {
+    Record {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        stream: String,
+        boundary: String,
+        locus: wire::TapeLocus,
+    },
+    Exited {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    },
+    Failed {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        failure: String,
+    },
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    version: u32,
+    worktree: String,
+    vendor: String,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    resume: Option<String>,
+    state: PathBuf,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct State {
+    version: u32,
+    supervisor: u32,
+    worktree: String,
+    vendor: String,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    phase: Phase,
+    group: Option<u32>,
+    session: Option<wire::LaneSession>,
+    git: Option<String>,
+    started_millis: Option<u64>,
+    runtime_millis: Option<u64>,
+    grace_millis: Option<u64>,
+    reap_millis: Option<u64>,
+    status_raw: Option<i32>,
+    failure: Option<String>,
+}
+
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Phase {
+    Starting,
+    Running,
+    Exited,
+    Failed,
+}
+
+/// Session and process evidence returned after a detached launch is proven.
+pub(super) struct Launch {
+    pub(super) occupant: CanonicalUuid,
+    pub(super) group: u32,
+    pub(super) session: wire::LaneSession,
+    pub(super) git: String,
+    pub(super) process: Box<dyn DetachedProcess>,
+}
+
+/// Durable supervisor state found for an occupied lane during replacement.
+pub(super) enum Adoption {
+    /// The same supervisor and agent remain live.
+    Running(Launch),
+    /// The supervisor reaped the agent while no resident was listening.
+    Exited(Launch),
+    /// The supervisor could not preserve a safely adoptable agent.
+    Failed(String),
+}
+
+/// Dispatch the hidden supervisor entry before normal CLI parsing.
+pub(crate) fn entry(arguments: impl IntoIterator<Item = OsString>) -> Option<i32> {
+    let mut arguments = arguments.into_iter();
+    let _executable = arguments.next()?;
+    if arguments.next().as_deref() != Some(OsStr::new(ENTRY)) {
+        return None;
+    }
+    let Some(request) = arguments.next() else {
+        eprintln!("lane supervisor request path is missing");
+        return Some(2);
+    };
+    if arguments.next().is_some() {
+        eprintln!("lane supervisor received unexpected arguments");
+        return Some(2);
+    }
+    Some(match run(Path::new(&request)) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("lane supervisor failed: {error}");
+            1
+        }
+    })
+}
+
+/// Launch a new detached supervisor from this exact executable generation.
+#[cfg(not(test))]
+pub(super) use launch_detached as launch;
+
+#[cfg(not(test))]
+pub(super) fn launch_detached(
+    paths: &RuntimePaths,
+    request: OccupantLaunchRequest<'_>,
+    _reporter: Arc<dyn CaptureReporter>,
+) -> CommandResult<Launch> {
+    #[cfg(not(unix))]
+    {
+        let _ = (paths, request);
+        return Err(environment_fault(
+            "lane::supervisor-unsupported",
+            "detached lane supervision requires Unix process groups",
+        ));
+    }
+    #[cfg(unix)]
+    launch_unix(paths, request)
+}
+
+#[cfg(test)]
+pub(super) use launch_direct as launch;
+
+#[cfg(test)]
+pub(super) fn launch_direct(
+    paths: &RuntimePaths,
+    request: OccupantLaunchRequest<'_>,
+    reporter: Arc<dyn CaptureReporter>,
+) -> CommandResult<Launch> {
+    let occupant = request.occupant;
+    let launch = occupant_launch(paths, request, reporter)?;
+    let git = launch.git;
+    let proof = launch.session;
+    let running = sill::spawn_observed(launch.spec, launch.observation)
+        .map_err(|error| environment_fault("lane::supervisor-launch-failed", &error.to_string()))?;
+    let group = running.id();
+    let session = await_session(proof).map_err(|error| wire::Outcome::Refusal(error.refusal()))?;
+    Ok(Launch {
+        occupant,
+        group,
+        session,
+        git,
+        process: Box::new(DirectHandle(running)),
+    })
+}
+
+#[cfg(all(unix, not(test)))]
+fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> CommandResult<Launch> {
+    let directory = supervisor_directory(paths, request.lane, request.occupant);
+    fs::create_dir_all(&directory).map_err(|error| {
+        environment_fault("lane::supervisor-state-unavailable", &error.to_string())
+    })?;
+    let state = directory.join("state.json");
+    let request_path = directory.join("request.json");
+    let encoded = Request {
+        version: CONTRACT_VERSION,
+        worktree: request.worktree.to_owned(),
+        vendor: request.vendor.as_str().to_owned(),
+        epoch: request.epoch,
+        lane: request.lane,
+        occupant: request.occupant,
+        resume: request.resume.session_id().map(str::to_owned),
+        state: state.clone(),
+    };
+    publish_json(&request_path, &encoded).map_err(|error| {
+        environment_fault("lane::supervisor-request-unavailable", &error.to_string())
+    })?;
+    let executable = std::env::current_exe().map_err(|error| {
+        environment_fault(
+            "lane::supervisor-executable-unavailable",
+            &error.to_string(),
+        )
+    })?;
+    let log = supervisor_log(&directory).map_err(|error| {
+        environment_fault("lane::supervisor-log-unavailable", &error.to_string())
+    })?;
+    let stdout = log.try_clone().map_err(|error| {
+        environment_fault("lane::supervisor-log-unavailable", &error.to_string())
+    })?;
+    let mut supervisor = ProcessCommand::new(executable)
+        .arg(ENTRY)
+        .arg(&request_path)
+        .current_dir(request.worktree)
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(log)
+        .process_group(0)
+        .spawn()
+        .map_err(|error| environment_fault("lane::supervisor-launch-failed", &error.to_string()))?;
+    let _reaper = thread::Builder::new()
+        .name("spice-supervisor-reaper".to_owned())
+        .spawn(move || {
+            let _ = supervisor.wait();
+        });
+    await_running(&state, request.lane, request.occupant)
+}
+
+/// Adopt the exact live supervisor already naming a durable lane occupant.
+pub(super) fn adopt(
+    paths: &RuntimePaths,
+    row: &wire::LaneResidency,
+) -> CommandResult<Option<Adoption>> {
+    let Some(occupant) = row.occupant else {
+        return Ok(None);
+    };
+    let path = supervisor_directory(paths, row.lane, occupant).join("state.json");
+    let state = match read_state(&path) {
+        Ok(state) => state,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(environment_fault(
+                "lane::supervisor-state-unavailable",
+                &error.to_string(),
+            ));
+        }
+    };
+    if !matches_state(&state, row.lane, occupant) {
+        return Err(store_fault(
+            "lane::supervisor-state-mismatched",
+            "detached supervisor state names another lane or occupant",
+        ));
+    }
+    match state.phase {
+        Phase::Running if process_exists(state.supervisor)? => {
+            state_launch(path, state).map(Adoption::Running).map(Some)
+        }
+        Phase::Running => Ok(Some(Adoption::Failed(
+            "detached supervisor disappeared while its agent was running".to_owned(),
+        ))),
+        Phase::Exited => state_launch(path, state).map(Adoption::Exited).map(Some),
+        Phase::Failed => {
+            Ok(Some(Adoption::Failed(state.failure.unwrap_or_else(|| {
+                "detached supervisor failed without detail".to_owned()
+            }))))
+        }
+        Phase::Starting => Ok(Some(Adoption::Failed(
+            "detached supervisor did not finish starting".to_owned(),
+        ))),
+    }
+}
+
+#[cfg(not(test))]
+fn await_running(
+    path: &Path,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> CommandResult<Launch> {
+    let started = Monotonic::now();
+    loop {
+        match read_state(path) {
+            Ok(state) if !matches_state(&state, lane, occupant) => {
+                return Err(store_fault(
+                    "lane::supervisor-state-mismatched",
+                    "detached supervisor published another lane or occupant",
+                ));
+            }
+            Ok(state) if matches!(state.phase, Phase::Running | Phase::Exited) => {
+                // A short-lived agent can publish its session and end between
+                // two parent observations. The terminal state still carries
+                // the complete launch authority; returning its handle lets the
+                // resident commit the start and then observe the exact ending
+                // instead of turning a harmless race into resident failure.
+                return state_launch(path.to_path_buf(), state);
+            }
+            Ok(state) if state.phase == Phase::Failed => {
+                return Err(store_fault(
+                    "lane::supervisor-start-failed",
+                    state
+                        .failure
+                        .as_deref()
+                        .unwrap_or("supervisor failed without detail"),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(environment_fault(
+                    "lane::supervisor-state-unavailable",
+                    &error.to_string(),
+                ));
+            }
+        }
+        if started.elapsed() >= START_HORIZON {
+            return Err(environment_fault(
+                "lane::supervisor-start-timeout",
+                "detached supervisor did not publish a proven session before its start horizon",
+            ));
+        }
+        thread::sleep(WAIT_QUANTUM);
+    }
+}
+
+fn state_launch(path: PathBuf, state: State) -> CommandResult<Launch> {
+    let group = state.group.ok_or_else(|| {
+        store_fault(
+            "lane::supervisor-state-invalid",
+            "running supervisor has no process group",
+        )
+    })?;
+    let session = state.session.clone().ok_or_else(|| {
+        store_fault(
+            "lane::supervisor-state-invalid",
+            "running supervisor has no session proof",
+        )
+    })?;
+    let git = state.git.clone().ok_or_else(|| {
+        store_fault(
+            "lane::supervisor-state-invalid",
+            "running supervisor has no launch Git identity",
+        )
+    })?;
+    let handle = Handle::new(path, &state)?;
+    Ok(Launch {
+        occupant: state.occupant,
+        group,
+        session,
+        git,
+        process: Box::new(handle),
+    })
+}
+
+fn run(request_path: &Path) -> io::Result<()> {
+    let request: Request = read_json(request_path, REQUEST_BYTES)?;
+    if request.version != CONTRACT_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unsupported supervisor request version {}", request.version),
+        ));
+    }
+    let starting = State {
+        version: CONTRACT_VERSION,
+        supervisor: std::process::id(),
+        worktree: request.worktree.clone(),
+        vendor: request.vendor.clone(),
+        lane: request.lane,
+        occupant: request.occupant,
+        phase: Phase::Starting,
+        group: None,
+        session: None,
+        git: None,
+        started_millis: None,
+        runtime_millis: None,
+        grace_millis: None,
+        reap_millis: None,
+        status_raw: None,
+        failure: None,
+    };
+    publish_json(&request.state, &starting)?;
+    if let Err(error) = run_agent(&request, starting.clone()) {
+        let mut failed = read_state(&request.state).unwrap_or(starting);
+        failed.phase = Phase::Failed;
+        failed.failure = Some(error.to_string());
+        publish_json(&request.state, &failed)?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
+    let repository = Repository::discover(&request.worktree).map_err(io::Error::other)?;
+    let paths = RuntimePaths::from_repository(&repository).map_err(outcome_error)?;
+    let vendor = request
+        .vendor
+        .parse::<wire::Name>()
+        .map_err(io::Error::other)?;
+    let resume = request
+        .resume
+        .as_ref()
+        .map(|identity| vendor::SessionId::new(identity.clone()).map(vendor::Resume::Session))
+        .transpose()
+        .map_err(io::Error::other)?
+        .unwrap_or(vendor::Resume::Fresh);
+    let reporter = Arc::new(DurableReporter::new(&paths)?);
+    let capture_reporter: Arc<dyn CaptureReporter> = reporter.clone();
+    let launch = occupant_launch(
+        &paths,
+        OccupantLaunchRequest {
+            worktree: &request.worktree,
+            vendor: &vendor,
+            epoch: request.epoch,
+            lane: request.lane,
+            occupant: request.occupant,
+            resume,
+        },
+        capture_reporter,
+    )
+    .map_err(outcome_error)?;
+    let git = launch.git;
+    let proof = launch.session;
+    let started_millis = now_millis()?;
+    let running = sill::spawn_observed(launch.spec, launch.observation)?;
+    let group = running.id();
+    let runtime = running.spec().deadlines.runtime();
+    let grace = running.spec().grace;
+    let reap = running.spec().deadlines.reap();
+    let session = await_session(proof).map_err(session_error)?;
+    state.phase = Phase::Running;
+    state.group = Some(group);
+    state.session = Some(session);
+    state.git = Some(git);
+    state.started_millis = Some(started_millis);
+    state.runtime_millis = Some(duration_millis(runtime)?);
+    state.grace_millis = Some(duration_millis(grace)?);
+    state.reap_millis = Some(duration_millis(reap)?);
+    publish_json(&request.state, &state)?;
+    let outcome = match running.wait() {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let failure = error.to_string();
+            state.phase = Phase::Failed;
+            state.failure = Some(failure.clone());
+            publish_json(&request.state, &state)?;
+            reporter.send(&Notice::Failed {
+                lane: request.lane,
+                occupant: request.occupant,
+                failure,
+            });
+            return Ok(());
+        }
+    };
+    if let Some(observation_failure) = outcome.observation_failure() {
+        let failure = observation_failure.to_string();
+        state.phase = Phase::Failed;
+        state.status_raw = Some(status_raw(outcome.completion().status()));
+        state.failure = Some(failure.clone());
+        publish_json(&request.state, &state)?;
+        reporter.send(&Notice::Failed {
+            lane: request.lane,
+            occupant: request.occupant,
+            failure,
+        });
+        return Ok(());
+    }
+    state.phase = Phase::Exited;
+    state.status_raw = Some(status_raw(outcome.completion().status()));
+    publish_json(&request.state, &state)?;
+    reporter.send(&Notice::Exited {
+        lane: request.lane,
+        occupant: request.occupant,
+    });
+    Ok(())
+}
+
+struct DurableReporter {
+    #[cfg(unix)]
+    socket: std::os::unix::net::UnixDatagram,
+    path: PathBuf,
+}
+
+impl DurableReporter {
+    fn new(paths: &RuntimePaths) -> io::Result<Self> {
+        #[cfg(not(unix))]
+        {
+            Ok(Self {
+                path: capture_path(paths),
+            })
+        }
+        #[cfg(unix)]
+        {
+            Ok(Self {
+                socket: std::os::unix::net::UnixDatagram::unbound()?,
+                path: capture_path(paths),
+            })
+        }
+    }
+
+    fn send(&self, notice: &Notice) {
+        let Ok(bytes) = serde_json::to_vec(notice) else {
+            return;
+        };
+        #[cfg(unix)]
+        let _sent = self.socket.send_to(&bytes, &self.path);
+        #[cfg(not(unix))]
+        let _ = (&bytes, &self.path);
+    }
+}
+
+impl CaptureReporter for DurableReporter {
+    fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
+        // The lane observer committed the bytes to tape before this callback.
+        // Resident notification is best effort; durability never depends on a
+        // resident generation being present.
+        self.send(&Notice::Record {
+            lane: record.lane,
+            occupant: record.occupant,
+            stream: match record.stream {
+                vendor::RecordStream::Stdout => "stdout",
+                vendor::RecordStream::Stderr => "stderr",
+            }
+            .to_owned(),
+            boundary: match record.boundary {
+                sill::RecordBoundary::Complete => "complete",
+                sill::RecordBoundary::Terminal => "terminal",
+                sill::RecordBoundary::Truncated => "truncated",
+            }
+            .to_owned(),
+            locus: wire::TapeLocus {
+                member: record.locus.member,
+                offset: record.locus.offset,
+                length: record.locus.length,
+            },
+        });
+        Ok(())
+    }
+
+    fn failed(&self, _failure: CaptureFailure) {}
+
+    fn exited(&self, _exit: CaptureExit) {
+        // SILL reports capture completion before `Running::wait` publishes the
+        // exact exit status. `run_agent` emits this notice only after the final
+        // supervisor state is durable, so a resident never blocks on the race.
+    }
+}
+
+struct Handle {
+    path: PathBuf,
+    owner: String,
+    supervisor: u32,
+    group: u32,
+    started_millis: u64,
+    runtime: Duration,
+    grace: Duration,
+    reap: Duration,
+}
+
+impl Handle {
+    fn new(path: PathBuf, state: &State) -> CommandResult<Self> {
+        let required = |value: Option<u64>, name: &str| {
+            value.ok_or_else(|| {
+                store_fault(
+                    "lane::supervisor-state-invalid",
+                    &format!("running supervisor has no {name}"),
+                )
+            })
+        };
+        Ok(Self {
+            path,
+            owner: format!("lane {} detached supervisor", state.lane),
+            supervisor: state.supervisor,
+            group: state.group.ok_or_else(|| {
+                store_fault(
+                    "lane::supervisor-state-invalid",
+                    "running supervisor has no group",
+                )
+            })?,
+            started_millis: required(state.started_millis, "start instant")?,
+            runtime: Duration::from_millis(required(state.runtime_millis, "runtime")?),
+            grace: Duration::from_millis(required(state.grace_millis, "termination grace")?),
+            reap: Duration::from_millis(required(state.reap_millis, "reap bound")?),
+        })
+    }
+
+    fn state(&self) -> Result<State, WaitError> {
+        read_state(&self.path).map_err(|source| self.wait_error("reading supervisor state", source))
+    }
+
+    fn wait_error(&self, operation: &'static str, source: io::Error) -> WaitError {
+        WaitError::Io {
+            owner: self.owner.clone(),
+            operation,
+            source,
+        }
+    }
+
+    fn terminal(&self) -> Result<Option<WaitOutcome>, WaitError> {
+        let state = self.state()?;
+        match state.phase {
+            Phase::Exited => state
+                .status_raw
+                .map(status_from_raw)
+                .map(|status| {
+                    status
+                        .map(WaitOutcome::externally_reaped)
+                        .map_err(|error| self.wait_error("decoding supervisor exit", error))
+                })
+                .transpose(),
+            Phase::Failed => Err(self.wait_error(
+                "observing supervisor",
+                io::Error::other(
+                    state
+                        .failure
+                        .unwrap_or_else(|| "supervisor failed".to_owned()),
+                ),
+            )),
+            Phase::Starting | Phase::Running => {
+                if process_exists_wait(self.supervisor, self)? {
+                    Ok(None)
+                } else {
+                    Err(self.wait_error(
+                        "observing supervisor",
+                        io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "supervisor disappeared before publishing an ending",
+                        ),
+                    ))
+                }
+            }
+        }
+    }
+
+    fn signal(&self, signal: i32, operation: &'static str) -> Result<(), WaitError> {
+        signal_group(self.group, signal).map_err(|error| self.wait_error(operation, error))
+    }
+}
+
+impl DetachedProcess for Handle {
+    fn group(&self) -> u32 {
+        self.group
+    }
+
+    fn runtime_remaining(&self) -> Duration {
+        let elapsed = now_millis()
+            .ok()
+            .and_then(|now| now.checked_sub(self.started_millis))
+            .map(Duration::from_millis)
+            .unwrap_or_default();
+        self.runtime.saturating_sub(elapsed)
+    }
+
+    fn termination_grace(&self) -> Duration {
+        self.grace
+    }
+
+    fn reap_bound(&self) -> Duration {
+        self.reap
+    }
+
+    fn wait_for(self: Box<Self>, duration: Duration) -> Result<DetachedWait, WaitError> {
+        let started = Monotonic::now();
+        loop {
+            if let Some(outcome) = self.terminal()? {
+                return Ok(DetachedWait::Exited(outcome));
+            }
+            let remaining = duration.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Ok(DetachedWait::Running(self));
+            }
+            thread::sleep(remaining.min(WAIT_QUANTUM));
+        }
+    }
+
+    fn terminate(&self) -> Result<(), WaitError> {
+        self.signal(libc::SIGTERM, "terminating supervisor-owned process group")
+    }
+
+    fn kill(&self) -> Result<(), WaitError> {
+        self.signal(libc::SIGKILL, "killing supervisor-owned process group")
+    }
+
+    fn wait(self: Box<Self>) -> Result<WaitOutcome, WaitError> {
+        loop {
+            if let Some(outcome) = self.terminal()? {
+                return Ok(outcome);
+            }
+            thread::sleep(WAIT_QUANTUM);
+        }
+    }
+}
+
+#[cfg(test)]
+struct DirectHandle(sill::Running);
+
+#[cfg(test)]
+impl DetachedProcess for DirectHandle {
+    fn group(&self) -> u32 {
+        self.0.id()
+    }
+
+    fn runtime_remaining(&self) -> Duration {
+        self.0.runtime_remaining()
+    }
+
+    fn termination_grace(&self) -> Duration {
+        self.0.spec().grace
+    }
+
+    fn reap_bound(&self) -> Duration {
+        self.0.spec().deadlines.reap()
+    }
+
+    fn wait_for(self: Box<Self>, duration: Duration) -> Result<DetachedWait, WaitError> {
+        match self.0.wait_for(duration)? {
+            sill::WaitStep::Exited(outcome) => Ok(DetachedWait::Exited(outcome)),
+            sill::WaitStep::Running(running) => Ok(DetachedWait::Running(Box::new(Self(*running)))),
+        }
+    }
+
+    fn terminate(&self) -> Result<(), WaitError> {
+        self.0.signal_terminate()
+    }
+
+    fn kill(&self) -> Result<(), WaitError> {
+        self.0.signal_kill()
+    }
+
+    fn wait(self: Box<Self>) -> Result<WaitOutcome, WaitError> {
+        self.0.wait()
+    }
+}
+
+fn supervisor_directory(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> PathBuf {
+    paths
+        .runtime
+        .join("supervisors")
+        .join(lane.to_string())
+        .join(occupant.to_string())
+}
+
+pub(super) fn capture_path(paths: &RuntimePaths) -> PathBuf {
+    #[cfg(unix)]
+    {
+        // `sockaddr_un.sun_path` is only 104 bytes on Darwin. Repository and
+        // worktree roots are not bounded that tightly, so the ephemeral notice
+        // door uses one content-addressed leaf beneath the canonical short
+        // system temporary path. Durable state remains repository-local.
+        let identity = blake3::hash(paths.common.as_os_str().as_encoded_bytes());
+        PathBuf::from("/tmp").join(format!("spice-s-{identity}.sock"))
+    }
+    #[cfg(not(unix))]
+    {
+        paths.runtime.join("supervisor-capture.sock")
+    }
+}
+
+#[cfg(not(test))]
+fn supervisor_log(directory: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(directory.join("supervisor.log"))
+}
+
+fn publish_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
+    let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
+    atomic::Destination::new(path)
+        .map_err(io::Error::other)?
+        .publish(|file| file.write_all(&bytes))
+        .map_err(io::Error::other)
+}
+
+fn read_state(path: &Path) -> io::Result<State> {
+    let state: State = read_json(path, STATE_BYTES)?;
+    if state.version != CONTRACT_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unsupported supervisor state version {}", state.version),
+        ));
+    }
+    Ok(state)
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, limit: u64) -> io::Result<T> {
+    let mut file = File::open(path)?;
+    if file.metadata()?.len() > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "supervisor document exceeds its bound",
+        ));
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    serde_json::from_slice(&bytes).map_err(io::Error::other)
+}
+
+fn matches_state(state: &State, lane: CanonicalUuid, occupant: CanonicalUuid) -> bool {
+    state.lane == lane && state.occupant == occupant
+}
+
+fn now_millis() -> io::Result<u64> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_millis();
+    u64::try_from(millis).map_err(io::Error::other)
+}
+
+fn duration_millis(duration: Duration) -> io::Result<u64> {
+    u64::try_from(duration.as_millis()).map_err(io::Error::other)
+}
+
+fn session_error(error: SessionProofError) -> io::Error {
+    let refusal = error.refusal();
+    io::Error::other(format!("session proof refused as {refusal:?}"))
+}
+
+fn outcome_error(outcome: wire::Outcome<()>) -> io::Error {
+    io::Error::other(format!("{outcome:?}"))
+}
+
+#[cfg(unix)]
+fn status_raw(status: ExitStatus) -> i32 {
+    status.into_raw()
+}
+
+#[cfg(not(unix))]
+fn status_raw(_status: ExitStatus) -> i32 {
+    1
+}
+
+#[cfg(unix)]
+fn status_from_raw(raw: i32) -> io::Result<ExitStatus> {
+    Ok(ExitStatus::from_raw(raw))
+}
+
+#[cfg(not(unix))]
+fn status_from_raw(_raw: i32) -> io::Result<ExitStatus> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "external exit status requires Unix",
+    ))
+}
+
+#[cfg(unix)]
+fn signal_group(group: u32, signal: i32) -> io::Result<()> {
+    let group = i32::try_from(group).map_err(io::Error::other)?;
+    // SAFETY: a negative PID addresses the exact process group named by the
+    // detached supervisor state; the conversion above excludes overflow.
+    if unsafe { libc::kill(-group, signal) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn signal_group(_group: u32, _signal: i32) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "process-group signals require Unix",
+    ))
+}
+
+fn process_exists(pid: u32) -> CommandResult<bool> {
+    process_exists_raw(pid).map_err(|error| {
+        environment_fault("lane::supervisor-liveness-unavailable", &error.to_string())
+    })
+}
+
+fn process_exists_wait(pid: u32, handle: &Handle) -> Result<bool, WaitError> {
+    process_exists_raw(pid).map_err(|error| handle.wait_error("probing supervisor", error))
+}
+
+#[cfg(unix)]
+fn process_exists_raw(pid: u32) -> io::Result<bool> {
+    let pid = i32::try_from(pid).map_err(io::Error::other)?;
+    // SAFETY: signal zero changes no process state and only probes this exact PID.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ESRCH) => Ok(false),
+        Some(libc::EPERM) => Ok(true),
+        _ => Err(error),
+    }
+}
+
+#[cfg(not(unix))]
+fn process_exists_raw(_pid: u32) -> io::Result<bool> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "process probes require Unix",
+    ))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    fn uuid(last: u8) -> CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131165{last:02}")
+            .parse()
+            .expect("fixture UUID")
+    }
+
+    fn paths(root: &Path) -> RuntimePaths {
+        RuntimePaths {
+            worktree: root.to_path_buf(),
+            common: root.join("common"),
+            runtime: root.join("runtime"),
+            data: root.join("data"),
+            journal: root.join("journal"),
+            folds: root.join("folds"),
+            resident: root.join("resident"),
+            canvas: root.join("canvas"),
+            lane_canvas: root.join("lane-canvas"),
+            inbox: root.join("inbox"),
+            legacy_inbox: root.join("legacy-inbox"),
+            degraded: root.join("degraded"),
+            tape: root.join("tape"),
+            stage: root.join("stage"),
+        }
+    }
+
+    #[test]
+    fn replacement_adopts_a_terminal_supervisor_without_relaunching() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-terminal-supervisor-{}-{}",
+            std::process::id(),
+            now_millis().expect("fixture time")
+        ));
+        let paths = paths(&root);
+        let lane = uuid(1);
+        let occupant = uuid(2);
+        let directory = supervisor_directory(&paths, lane, occupant);
+        fs::create_dir_all(&directory).expect("supervisor directory");
+        let session = wire::LaneSession {
+            lane,
+            occupant,
+            worktree: root.to_string_lossy().into_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            launch: None,
+            epoch: uuid(3),
+            stream: "stdout".to_owned(),
+            identity: "terminal-session".to_owned(),
+            locus: wire::TapeLocus {
+                member: 0,
+                offset: 0,
+                length: 1,
+            },
+        };
+        publish_json(
+            &directory.join("state.json"),
+            &State {
+                version: CONTRACT_VERSION,
+                supervisor: std::process::id(),
+                worktree: root.to_string_lossy().into_owned(),
+                vendor: "codex".to_owned(),
+                lane,
+                occupant,
+                phase: Phase::Exited,
+                group: Some(412),
+                session: Some(session.clone()),
+                git: Some("fixture-head".to_owned()),
+                started_millis: Some(now_millis().expect("fixture time")),
+                runtime_millis: Some(4 * 60 * 60 * 1_000),
+                grace_millis: Some(20_000),
+                reap_millis: Some(20_000),
+                status_raw: Some(0),
+                failure: None,
+            },
+        )
+        .expect("terminal state publishes");
+        let row = wire::LaneResidency {
+            lane,
+            lineage_id: lane,
+            name: None,
+            worktree: root.to_string_lossy().into_owned(),
+            life: "drive".to_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            occupant: Some(occupant),
+            lineage: vec![occupant],
+            capabilities: vec![uuid(4)],
+            session: Some(session),
+            disposition: "occupied".to_owned(),
+        };
+
+        let adopted = adopt(&paths, &row)
+            .expect("terminal state reads")
+            .expect("terminal supervisor is adoptable");
+        let Adoption::Exited(adopted) = adopted else {
+            panic!("terminal supervisor was mistaken for a live launch");
+        };
+        assert_eq!(adopted.occupant, occupant);
+        assert_eq!(adopted.group, 412);
+        assert!(
+            adopted
+                .process
+                .wait()
+                .expect("terminal status reads")
+                .completion()
+                .status()
+                .success()
+        );
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+}

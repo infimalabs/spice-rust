@@ -104,7 +104,7 @@ impl Fixture {
                 "printf '%s\\n' '",
                 "{\"type\":\"system\",\"subtype\":\"init\",",
                 "\"session_id\":\"018f7777-7777-7444-8888-999999999999\"}'\n",
-                "while :; do sleep 1; done\n",
+                "while [ -d .git ]; do sleep 1; done\n",
             ),
         )
         .expect("fixture vendor writes");
@@ -115,7 +115,7 @@ impl Fixture {
             root.join("spice-rust.toml"),
             format!(
                 concat!(
-                    "[lane]\nlease = \"1s\"\n\n",
+                    "[lane]\nlease = \"20s\"\n\n",
                     "[tasks]\nstems = [\"taste\"]\n\n",
                     "[policy]\ntaste_mining_threshold = 3\n\n",
                     "[vendor.claude]\nbinary = {:?}\n",

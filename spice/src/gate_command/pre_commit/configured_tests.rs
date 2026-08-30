@@ -639,7 +639,7 @@ fn truncated_failure_reports_exit_with_a_retention_marker() {
         &[
             "/bin/sh",
             "-c",
-            "yes overflow | head -c 1024; exit 7",
+            "printf 'discarded-prefix'; yes overflow | head -c 1024; printf 'terminal-error'; exit 7",
             "fixture",
         ],
         &[],
@@ -667,10 +667,12 @@ fn truncated_failure_reports_exit_with_a_retention_marker() {
         report.steps()[0].findings()[0].kind(),
         StepFindingKind::Exit
     );
+    let detail = report.steps()[0].findings()[0].detail();
+    assert!(detail.contains("terminal-error"), "{detail}");
+    assert!(!detail.contains("discarded-prefix"), "{detail}");
     assert!(
-        report.steps()[0].findings()[0]
-            .detail()
-            .contains("capture truncated after retained prefix")
+        detail.contains("capture truncated to retained suffix"),
+        "{detail}"
     );
 }
 

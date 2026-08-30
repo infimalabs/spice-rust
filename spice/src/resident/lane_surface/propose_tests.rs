@@ -93,6 +93,70 @@ fn restart_carries_live_claim_to_the_restored_occupant_and_epoch() {
     bus.shutdown().expect("fixture bus stops");
 }
 
+#[test]
+fn adoption_rebinds_claim_epoch_without_restarting_the_occupant() {
+    let lane = uuid(20);
+    let occupant = uuid(21);
+    let old_epoch = uuid(22);
+    let new_epoch = uuid(23);
+    let task: wire::TaskStamp = "1kQpV9Gt".parse().expect("fixture task");
+    let now = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let start = shifted(now, -60);
+    let expiry = shifted(now, 60 * 60);
+    let maximum = shifted(now, 2 * 60 * 60);
+    let durable = wire::LaneResidency {
+        lane,
+        lineage_id: lane,
+        name: Some("Adopted lane".to_owned()),
+        worktree: "/worktrees/adopted".to_owned(),
+        life: "drive".to_owned(),
+        vendor: "codex".parse().expect("fixture vendor"),
+        occupant: Some(occupant),
+        lineage: vec![occupant],
+        capabilities: vec![uuid(24)],
+        session: None,
+        disposition: OCCUPIED.to_owned(),
+    };
+    let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+        .expect("fixture bus starts");
+    seed_restart_claim(
+        &bus, &task, &durable, old_epoch, new_epoch, start, expiry, maximum,
+    );
+    let residency_position = bus
+        .residency_head()
+        .expect("residency reads")
+        .expect("residency exists")
+        .position();
+
+    commit_adopted(&bus, new_epoch, &durable).expect("adopted claim commits");
+
+    let snapshot = bus.task_snapshot().expect("adopted heads read");
+    let heads = snapshot.tasks().first().expect("fixture task remains");
+    let claim = heads.claim().expect("claim remains active");
+    let lease = heads.lease().expect("lease remains present");
+    let residency = snapshot.residency().expect("residency remains present");
+    assert_eq!(claim.position(), lease.position());
+    assert_ne!(claim.position(), residency.position());
+    assert_eq!(residency.position(), residency_position);
+    assert_eq!(claim.body().occupant, occupant);
+    assert_eq!(claim.body().epoch, new_epoch);
+    assert_eq!(lease.body().epoch, new_epoch);
+    assert_eq!(residency.body().lanes[0], durable);
+    let carried = bus
+        .fact_snapshot()
+        .expect("adopted facts read")
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::ClaimCarried)
+        .expect("adoption records the authority carry")
+        .fact
+        .body()
+        .clone();
+    assert_eq!(carried.get("occupant"), carried.get("ancestor"));
+    bus.verify().expect("adopted authority verifies");
+    bus.shutdown().expect("fixture bus stops");
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the fixture seeds one exact claim and residency boundary"

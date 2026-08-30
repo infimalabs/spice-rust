@@ -26,10 +26,10 @@ use crate::trust_command::Surface;
 pub(super) const PATHS_VARIABLE: &str = wire::SpiceVariable::PreCommitPaths.as_str();
 pub(super) const SOURCE_VARIABLE: &str = wire::SpiceVariable::PreCommitSource.as_str();
 
-// Sill keeps draining each stream after this retained prefix fills. The limit
+// Sill keeps draining each stream after this retained suffix fills. The limit
 // bounds resident and serialized failure evidence; it does not bound how much
 // legitimate output a configured command may produce.
-const OUTPUT_LIMIT: usize = 64 * 1024;
+const OUTPUT_LIMIT: usize = 256 * 1024;
 const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
@@ -960,7 +960,7 @@ fn command_spec(
     let (program, arguments) = argv
         .split_first()
         .expect("typed pre-commit argv is nonempty");
-    let capture = StreamPolicy::Capture {
+    let capture = StreamPolicy::CaptureTail {
         limit: bounds.output_limit,
     };
     Ok(Spec {
@@ -1076,7 +1076,12 @@ fn captured(output: Option<&sill::CapturedOutput>) -> String {
         |output| {
             let retained = json(&String::from_utf8_lossy(output.bytes()));
             if output.truncated() {
-                format!("{retained} (capture truncated after retained prefix)")
+                let retained_end = if output.retains_suffix() {
+                    "suffix"
+                } else {
+                    "prefix"
+                };
+                format!("{retained} (capture truncated to retained {retained_end})")
             } else {
                 retained
             }

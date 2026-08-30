@@ -88,10 +88,6 @@ impl SessionProofError {
             .with_detail(detail),
         )
     }
-
-    pub(in crate::resident) fn outcome(&self) -> Outcome<CommandAnswer> {
-        Outcome::Refusal(self.refusal())
-    }
 }
 
 pub(in crate::resident) struct DeclarationState {

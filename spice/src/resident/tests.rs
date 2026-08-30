@@ -30,8 +30,8 @@ mod startup;
 mod startup_window;
 
 use canvas_announcement::{
-    fact_u64, process_spec, resident_fixture, seed_lane, seed_lane_in_lineage,
-    seed_lane_in_worktree, test_uuid,
+    process_spec, resident_fixture, seed_lane, seed_lane_in_lineage, seed_lane_in_worktree,
+    test_uuid,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -221,146 +221,56 @@ fn effort_ingestion() -> JournalWrite {
     write
 }
 
-#[test]
-fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
-    let (root, paths) = resident_fixture("groups");
-    let repository = Repository::discover(&root).expect("fixture repository resolves");
-    let surface =
-        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
-    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
-    let bus = Bus::start(journal).expect("fixture bus starts");
-    let epoch = test_uuid(1);
-    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    let mut seats = Seats::new();
-
-    let drained_lane = test_uuid(2);
-    let drained_occupant = test_uuid(3);
-    seats
-        .seat(
-            drained_lane,
-            drained_occupant,
-            process_spec("sleep 0.05", Duration::from_secs(5)),
-        )
-        .expect("cooperative group starts");
-    seed_lane(&bus, epoch, drained_lane, drained_occupant, &root);
-
-    let killed_lane = test_uuid(4);
-    let killed_occupant = test_uuid(5);
-    seats
-        .seat(
-            killed_lane,
-            killed_occupant,
-            process_spec(
-                "trap '' TERM; while :; do sleep 1; done",
-                Duration::from_millis(100),
-            ),
-        )
-        .expect("non-cooperative group starts");
-    seed_lane(&bus, epoch, killed_lane, killed_occupant, &root);
-
-    fs::create_dir_all(&paths.degraded).expect("degraded directory");
-    fs::write(
-        paths.degraded.join(drained_lane.to_string()),
-        "offline run\n",
-    )
-    .expect("degraded marker");
-    fs::create_dir_all(&paths.tape).expect("tape directory");
-    let tape_lane = test_uuid(6);
-    fs::write(paths.tape.join(tape_lane.to_string()), "not a tape")
-        .expect("malformed tape residue");
-    let sealed_lane = test_uuid(8);
-    let tape = tape::Tape::open(paths.tape.join(sealed_lane.to_string()).join("claude"))
-        .expect("live tape opens");
-    let locus = tape
-        .tee(b"resident shutdown evidence")
-        .expect("tape captures");
-
-    let shutdown_started = Monotonic::now();
-    assert!(matches!(
-        drive_shutdown(&bus, &paths, epoch, &mut seats),
-        Outcome::Reply(_)
-    ));
-    assert!(
-        shutdown_started.elapsed() < Duration::from_secs(2),
-        "one group's unused runtime extended another group's drain bound"
-    );
-    assert!(seats.is_empty());
-    bus.verify().expect("Dark authority verifies");
-    let snapshot = bus.fact_snapshot().expect("facts read through bus");
-    assert_shutdown_ladder_and_endings(&snapshot);
-    let head = bus
-        .residency_head()
-        .expect("head read")
-        .expect("head exists")
-        .into_body();
-    assert_eq!(head.state, ResidentState::Dark);
-    assert_eq!(head.lanes.len(), 2);
-    assert!(head.lanes.iter().all(|lane| lane.occupant.is_none()));
-    assert!(!paths.degraded.join(drained_lane.to_string()).exists());
-    assert_eq!(
-        tape.read(locus).expect("sealed tape remains readable"),
-        b"resident shutdown evidence"
-    );
-    assert!(matches!(
-        tape.seal().expect("tape was sealed"),
-        tape::Seal::Empty
-    ));
-    bus.shutdown().expect("fixture bus stops");
-    fs::remove_dir_all(root).expect("fixture cleanup");
+struct DetachedFixture {
+    dropped: Arc<AtomicU64>,
 }
 
-/// Every fact one two-group shutdown is required to leave behind.
-///
-/// Held apart from the drive so the ladder counts and the endings can be read
-/// as one statement of what the shutdown recorded, rather than as a tail on the
-/// fixture that produced it.
-fn assert_shutdown_ladder_and_endings(snapshot: &journal::FactSnapshot) {
-    assert_eq!(
-        fact_u64(snapshot, wire::FactKind::UpDraining, "occupants"),
-        2
-    );
-    assert_eq!(
-        fact_u64(snapshot, wire::FactKind::UpTerminating, "occupants"),
-        1
-    );
-    assert_eq!(
-        fact_u64(snapshot, wire::FactKind::UpKilling, "occupants"),
-        1
-    );
-    let holds = |kind| snapshot.facts().iter().any(|fact| fact.fact.kind() == kind);
-    assert!(holds(wire::FactKind::LaneDrained));
-    // The forced group is the one that outlived TERM and reached the kill
-    // stage, so it is recorded as killed. Requiring the absence of an exit
-    // keeps the two groups distinguishable in the ledger: publishing both
-    // would leave a reader unable to say which group ended which way.
-    assert!(holds(wire::FactKind::LaneKilled));
-    assert!(
-        !holds(wire::FactKind::LaneExited),
-        "a group this resident killed is not also recorded as an exit it chose"
-    );
-    let degraded = snapshot
-        .facts()
-        .iter()
-        .filter(|fact| fact.fact.kind() == wire::FactKind::LaneDegraded)
-        .count();
-    assert_eq!(degraded, 2, "disk residue was not named once per lane");
+impl Drop for DetachedFixture {
+    fn drop(&mut self) {
+        self.dropped.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
-/// A group that never trapped TERM ends at the terminate stage, and the ledger
-/// says this resident ended it rather than crediting it with an exit.
-///
-/// Held apart from the two-group drive because the ending under test is the one
-/// that drive cannot reach: its forced group traps TERM, so it always survives to
-/// the kill stage. Terminate is the only mixed stage — an occupant that trapped
-/// the signal chose a status, one that did not has none — and so the only stage
-/// where reading the ending off the status can name the wrong ending.
-///
-/// `UpKilling` carrying no occupants is what makes this a statement about the
-/// terminate stage. Without it the kill stage could have produced the same
-/// `LaneKilled`, and the test would claim nothing the sibling does not.
+impl lane::occupant::DetachedProcess for DetachedFixture {
+    fn group(&self) -> u32 {
+        411
+    }
+
+    fn runtime_remaining(&self) -> Duration {
+        Duration::from_secs(4 * 60 * 60)
+    }
+
+    fn termination_grace(&self) -> Duration {
+        Duration::from_secs(20)
+    }
+
+    fn reap_bound(&self) -> Duration {
+        Duration::from_secs(20)
+    }
+
+    fn wait_for(
+        self: Box<Self>,
+        _duration: Duration,
+    ) -> Result<lane::occupant::DetachedWait, sill::WaitError> {
+        panic!("resident shutdown must not wait for a detached supervisor")
+    }
+
+    fn terminate(&self) -> Result<(), sill::WaitError> {
+        panic!("resident shutdown must not terminate a detached supervisor")
+    }
+
+    fn kill(&self) -> Result<(), sill::WaitError> {
+        panic!("resident shutdown must not kill a detached supervisor")
+    }
+
+    fn wait(self: Box<Self>) -> Result<sill::WaitOutcome, sill::WaitError> {
+        panic!("resident shutdown must not reap a detached supervisor")
+    }
+}
+
 #[test]
-fn a_group_that_never_trapped_termination_is_not_credited_with_an_exit() {
-    let (root, paths) = resident_fixture("terminated");
+fn resident_shutdown_releases_handles_without_ending_lane_work() {
+    let (root, paths) = resident_fixture("resident-detach");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface =
         crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
@@ -372,36 +282,72 @@ fn a_group_that_never_trapped_termination_is_not_credited_with_an_exit() {
 
     let lane = test_uuid(2);
     let occupant = test_uuid(3);
+    let dropped = Arc::new(AtomicU64::new(0));
     seats
-        .seat(
+        .seat_detached(
             lane,
             occupant,
-            process_spec("while :; do sleep 1; done", Duration::from_millis(100)),
+            Box::new(DetachedFixture {
+                dropped: Arc::clone(&dropped),
+            }),
         )
-        .expect("untrapped group starts");
+        .expect("supervisor handle seats");
     seed_lane(&bus, epoch, lane, occupant, &root);
 
+    fs::create_dir_all(&paths.tape).expect("tape directory");
+    let tape =
+        tape::Tape::open(paths.tape.join(lane.to_string()).join("codex")).expect("live tape opens");
+    tape.tee(b"before resident replacement")
+        .expect("supervisor tape captures before shutdown");
+
+    let shutdown_started = Monotonic::now();
     assert!(matches!(
         drive_shutdown(&bus, &paths, epoch, &mut seats),
         Outcome::Reply(_)
     ));
-    let snapshot = bus.fact_snapshot().expect("facts read through bus");
-    assert_eq!(
-        fact_u64(&snapshot, wire::FactKind::UpTerminating, "occupants"),
-        1,
-        "the group outlived the drain bound and reached the terminate stage"
-    );
-    assert_eq!(
-        fact_u64(&snapshot, wire::FactKind::UpKilling, "occupants"),
-        0,
-        "the terminate stage, not the kill stage, is what ended this group"
-    );
-    let holds = |kind| snapshot.facts().iter().any(|fact| fact.fact.kind() == kind);
-    assert!(holds(wire::FactKind::LaneKilled));
     assert!(
-        !holds(wire::FactKind::LaneExited),
-        "a group that never trapped the signal chose no status to publish"
+        shutdown_started.elapsed() < Duration::from_secs(1),
+        "resident replacement waited on the supervisor's four-hour runtime"
     );
+    assert!(seats.is_empty());
+    assert_eq!(
+        dropped.load(Ordering::Relaxed),
+        1,
+        "the resident released its lightweight supervisor handle"
+    );
+    bus.verify().expect("Dark authority verifies");
+    let snapshot = bus.fact_snapshot().expect("facts read through bus");
+    let holds = |kind| snapshot.facts().iter().any(|fact| fact.fact.kind() == kind);
+    assert!(holds(wire::FactKind::UpDark));
+    for kind in [
+        wire::FactKind::UpQuiescing,
+        wire::FactKind::UpDraining,
+        wire::FactKind::UpTerminating,
+        wire::FactKind::UpKilling,
+        wire::FactKind::UpVerifying,
+        wire::FactKind::LaneDrained,
+        wire::FactKind::LaneKilled,
+        wire::FactKind::LaneExited,
+    ] {
+        assert!(!holds(kind), "resident detach fabricated {kind:?}");
+    }
+    let head = bus
+        .residency_head()
+        .expect("head read")
+        .expect("head exists")
+        .into_body();
+    assert_eq!(head.state, ResidentState::Dark);
+    assert_eq!(head.lanes.len(), 1);
+    assert_eq!(head.lanes[0].lane, lane);
+    assert_eq!(head.lanes[0].occupant, Some(occupant));
+    let after = tape
+        .tee(b"after resident replacement")
+        .expect("supervisor tape remains writable while resident is dark");
+    assert_eq!(
+        tape.read(after).expect("replacement bytes remain readable"),
+        b"after resident replacement"
+    );
+    drop(tape);
     bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }

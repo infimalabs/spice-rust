@@ -102,7 +102,7 @@ pub(super) fn append_restored_claim(
     durable: &wire::LaneResidency,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
-    cause: PendingFact,
+    cause: FactCause,
 ) -> CommandResult<PendingFact> {
     let ancestor = durable
         .occupant
@@ -117,7 +117,7 @@ pub(super) fn append_restored_claim(
                 epoch,
                 source: restored.source.clone(),
             },
-            FactCause::Pending(cause),
+            cause,
         )
         .map_err(|error| store_fault("lane::restart-claim-carry-invalid", &error.to_string()))?;
     let mut claim = restored.claim.body().clone();

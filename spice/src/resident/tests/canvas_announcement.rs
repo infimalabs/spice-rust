@@ -150,16 +150,6 @@ fn seed_lane_in_lineage_at(
     commit(bus, write).expect("fixture lane commits");
 }
 
-pub(super) fn fact_u64(snapshot: &journal::FactSnapshot, kind: wire::FactKind, field: &str) -> u64 {
-    snapshot
-        .facts()
-        .iter()
-        .find(|fact| fact.fact.kind() == kind)
-        .and_then(|fact| fact.fact.body().get(field))
-        .and_then(|value| value.as_u64())
-        .expect("fact carries numeric fixture field")
-}
-
 pub(super) fn test_uuid(last: u8) -> CanonicalUuid {
     format!("018f82d4-6f59-7d06-92e3-bce9131163{last:02}")
         .parse()

@@ -36,14 +36,16 @@ pub(super) use automatic::{AutomaticWake, wake_automatic};
 use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
 pub(super) use lineage::{arrange as arrange_lineages, configure};
-use propose::{commit_restored, propose_drain, propose_remove, propose_seat, propose_wake};
+use propose::{
+    commit_adopted, commit_restored, propose_drain, propose_remove, propose_seat, propose_wake,
+};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
     missing_lane, next_topology_revision, recall_provenance, relevant, typed_environment_fault,
 };
 pub(super) use session::{
-    DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, await_session,
-    launch_resume, record_stream, resume_session, session_fact,
+    DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, SessionProofError,
+    await_session, launch_resume, record_stream, resume_session, session_fact,
 };
 
 use super::shutdown::{current_residency, guard_residency};
@@ -138,7 +140,7 @@ fn admit_manual_projects(
 }
 
 impl<'a> Runtime<'a> {
-    pub(super) const fn new(
+    pub(super) fn new(
         capabilities: &'a canvas::axum::Capabilities,
         discovery: &'a canvas::Discovery,
         capture: Arc<dyn CaptureReporter>,
@@ -161,9 +163,9 @@ pub(super) fn restore_seats(
 ) -> CommandResult<()> {
     let durable = current_residency(bus, epoch)?.body().lanes.clone();
     for row in durable {
-        if row.occupant.is_none() {
+        let Some(durable_occupant) = row.occupant else {
             continue;
-        }
+        };
         super::steering::lane_capability(&row)?;
         if super::is_simulated_lane(&row) {
             if row.session.is_some() {
@@ -174,9 +176,49 @@ pub(super) fn restore_seats(
             }
             continue;
         }
+        if let Some(adopted) = super::supervisor::adopt(paths, &row)? {
+            match adopted {
+                super::supervisor::Adoption::Running(adopted) => {
+                    seats
+                        .seat_detached(row.lane, adopted.occupant, adopted.process)
+                        .map_err(|error| {
+                            store_fault("lane::restart-adoption-failed", &error.to_string())
+                        })?;
+                    if let Err(outcome) = commit_adopted(bus, epoch, &row) {
+                        let _detached = seats.vacate(row.lane);
+                        return Err(outcome);
+                    }
+                }
+                super::supervisor::Adoption::Exited(adopted) => {
+                    seats
+                        .seat_detached(row.lane, adopted.occupant, adopted.process)
+                        .map_err(|error| {
+                            store_fault("lane::restart-adoption-failed", &error.to_string())
+                        })?;
+                    if let Err(outcome) = commit_adopted(bus, epoch, &row) {
+                        let _detached = seats.vacate(row.lane);
+                        return Err(outcome);
+                    }
+                    occupant_exited(
+                        bus,
+                        epoch,
+                        seats,
+                        CaptureExit {
+                            lane: row.lane,
+                            occupant: adopted.occupant,
+                        },
+                    )?;
+                }
+                super::supervisor::Adoption::Failed(failure) => {
+                    commit_adopted(bus, epoch, &row)?;
+                    supervisor_failed(bus, epoch, row.lane, durable_occupant, &failure)?;
+                }
+            }
+            continue;
+        }
         let resume = resume_session(paths, &row)?;
         let occupant = new_uuid();
-        let launch = occupant_launch(
+        let launch = super::supervisor::launch(
             paths,
             OccupantLaunchRequest {
                 worktree: &row.worktree,
@@ -188,25 +230,16 @@ pub(super) fn restore_seats(
             },
             Arc::clone(capture),
         )?;
-        let git = launch.git;
-        let session_proof = launch.session;
-        let group = seats
-            .seat_observed(row.lane, occupant, launch.spec, launch.observation)
+        let proven = ProvenOccupant {
+            occupant: launch.occupant,
+            group: launch.group,
+            session: launch.session,
+            git: launch.git,
+        };
+        let _group = seats
+            .seat_detached(row.lane, occupant, launch.process)
             .map_err(|error| store_fault("lane::restart-launch-failed", &error.to_string()))?
             .group();
-        let session = match await_session(session_proof) {
-            Ok(session) => session,
-            Err(error) => {
-                stop_lane(seats, row.lane);
-                return Err(Outcome::Refusal(error.refusal()));
-            }
-        };
-        let proven = ProvenOccupant {
-            occupant,
-            group,
-            session,
-            git,
-        };
         if let Err(outcome) = commit_restored(bus, epoch, &row, &proven) {
             stop_lane(seats, row.lane);
             return Err(outcome);
@@ -807,25 +840,62 @@ pub(super) fn capture_failed(
     {
         drop(seats.vacate(failure.lane));
     }
+    degrade_occupant(
+        bus,
+        epoch,
+        &observed,
+        failure.lane,
+        format!(
+            "occupant {} capture failed: {}",
+            failure.occupant, failure.failure
+        ),
+    )
+}
+
+/// Durably degrade an occupant whose detached supervisor could not be adopted.
+pub(super) fn supervisor_failed(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    failure: &str,
+) -> CommandResult<()> {
+    let observed = current_residency(bus, epoch)?;
+    let Some(row) = observed.body().lanes.iter().find(|row| row.lane == lane) else {
+        return Ok(());
+    };
+    if row.occupant != Some(occupant) {
+        return Ok(());
+    }
+    degrade_occupant(
+        bus,
+        epoch,
+        &observed,
+        lane,
+        format!("occupant {occupant} supervisor failed: {failure}"),
+    )
+}
+
+fn degrade_occupant(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    observed: &journal::JournalHead<wire::ResidencyHead>,
+    lane: CanonicalUuid,
+    marker: String,
+) -> CommandResult<()> {
     let mut next = observed.body().clone();
     let row = next
         .lanes
         .iter_mut()
-        .find(|row| row.lane == failure.lane)
-        .expect("observed capture lane remains in its cloned head");
+        .find(|row| row.lane == lane)
+        .expect("observed degraded lane remains in its cloned head");
     row.occupant = None;
     row.disposition = DEGRADED.to_owned();
     let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
     guard_residency(&mut write, &observed);
     let fact = write
         .fact(
-            wire::body::LaneDegraded {
-                lane: failure.lane,
-                marker: format!(
-                    "occupant {} capture failed: {}",
-                    failure.occupant, failure.failure
-                ),
-            },
+            wire::body::LaneDegraded { lane, marker },
             FactCause::Existing(observed.position()),
         )
         .map_err(|error| store_fault("lane::capture-fact-invalid", &error.to_string()))?;

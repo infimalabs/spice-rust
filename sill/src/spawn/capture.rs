@@ -99,7 +99,18 @@ pub(super) struct CaptureWorker {
     pub(super) observer_wake: Option<std::os::unix::net::UnixDatagram>,
 }
 
-pub(super) fn start_capture<R>(mut reader: R, limit: usize, worker: CaptureWorker) -> CaptureHandle
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CaptureRetention {
+    Prefix,
+    Suffix,
+}
+
+pub(super) fn start_capture<R>(
+    mut reader: R,
+    limit: usize,
+    retention: CaptureRetention,
+    worker: CaptureWorker,
+) -> CaptureHandle
 where
     R: Read + AsRawFd + Send + 'static,
 {
@@ -127,6 +138,7 @@ where
             bytes: Vec::with_capacity(limit.min(8 * 1024)),
             truncated: false,
             complete: false,
+            retains_suffix: retention == CaptureRetention::Suffix,
         },
         failure: None,
         observer_complete: !selected,
@@ -176,10 +188,7 @@ where
                 }
                 Ok(read) => {
                     if let Ok(mut state) = worker_state.lock() {
-                        let available = limit.saturating_sub(state.output.bytes.len());
-                        let retained = available.min(read);
-                        state.output.bytes.extend_from_slice(&buffer[..retained]);
-                        state.output.truncated |= retained < read;
+                        retain(&mut state.output, &buffer[..read], limit, retention);
                     }
                     if let Some(framer) = &mut framer
                         && !framer.push(&buffer[..read])
@@ -213,6 +222,34 @@ where
         // deliberately prevent it from bounding process cleanup.
         worker: (!selected).then_some(worker),
     }
+}
+
+fn retain(output: &mut CapturedOutput, bytes: &[u8], limit: usize, retention: CaptureRetention) {
+    if retention == CaptureRetention::Prefix {
+        let available = limit.saturating_sub(output.bytes.len());
+        let retained = available.min(bytes.len());
+        output.bytes.extend_from_slice(&bytes[..retained]);
+        output.truncated |= retained < bytes.len();
+        return;
+    }
+    if bytes.len() >= limit {
+        output.truncated |= !output.bytes.is_empty() || bytes.len() > limit;
+        output.bytes.clear();
+        output
+            .bytes
+            .extend_from_slice(&bytes[bytes.len().saturating_sub(limit)..]);
+        return;
+    }
+    let overflow = output
+        .bytes
+        .len()
+        .saturating_add(bytes.len())
+        .saturating_sub(limit);
+    if overflow > 0 {
+        output.bytes.drain(..overflow);
+        output.truncated = true;
+    }
+    output.bytes.extend_from_slice(bytes);
 }
 
 fn wait_to_read(reader_descriptor: RawFd, interrupt: Option<&UnixDatagram>) -> io::Result<bool> {

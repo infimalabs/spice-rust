@@ -232,7 +232,7 @@ fn authority_only_backup_v1_uses_the_sole_current_restore_path() {
 }
 
 #[test]
-fn restored_authority_refuses_ahead_effort_generation_before_publish() {
+fn restored_authority_defers_ahead_effort_refusal_until_demand() {
     let fixture = Fixture::new();
     fixture.reply::<JournalBackup>(&[
         "backup",
@@ -266,22 +266,32 @@ fn restored_authority_refuses_ahead_effort_generation_before_publish() {
     assert_eq!(restored_cursor, Seq::new(3).expect("restored position"));
     assert!(restored_cursor < ahead_cursor);
 
-    let refused = fixture.invoke(&["up", "--foreground", "--port", "0"]);
-    assert_eq!(refused.status.code(), Some(1));
-    assert!(refused.stdout.is_empty(), "a fault carried answer bytes");
-    let Outcome::<serde_json::Value>::Fault(fault) =
-        wire::decode(&refused.stderr).expect("startup fault decodes")
+    // Startup no longer derives unused current reads. The restored resident is
+    // healthy until task effort is actually demanded, at which point the
+    // ahead generation is refused without being replaced.
+    let restored_resident = fixture.start();
+    let refused = fixture.invoke(&["task", "effort"]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(refused.stdout.is_empty(), "a refusal carried answer bytes");
+    let Outcome::<EffortAnswer>::Refusal(refusal) =
+        wire::decode(&refused.stderr).expect("effort refusal decodes")
     else {
-        panic!("resident startup did not fault on its ahead generation")
+        panic!("task effort did not refuse its ahead generation")
     };
-    assert_eq!(fault.reason, "resident::read-materialization-failed");
+    let diagnostic = refusal
+        .diagnostic()
+        .expect("ahead effort refusal carries its diagnostic");
+    assert_eq!(diagnostic.reason(), "fold::materialization-refused");
     assert!(
-        fault.detail.contains("GenerationAheadSnapshot"),
-        "{fault:?}"
+        diagnostic
+            .observed()
+            .is_some_and(|observed| observed.contains("GenerationAheadSnapshot")),
+        "{refusal:?}"
     );
+    restored_resident.stop(&fixture);
     assert!(
         !fixture.root.join(".git/.spice-rs/canvas").exists(),
-        "an invalid read generation became discoverable"
+        "stopped restored resident left its discovery behind"
     );
 }
 
@@ -327,6 +337,11 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
         vec![1, 2]
     );
 
+    // Current reads are derived on demand. Ask for task effort before
+    // inspecting its persisted fold generation; the generic fold report is a
+    // read of what already exists, not permission to derive every fold.
+    let live = fixture.reply::<EffortAnswer>(&["task", "effort"]);
+    assert_eq!(live.position, wire::ReplyPosition::Snapshot(position));
     let materialized = fixture.reply::<FoldReport>(&["fold"]).body;
     assert!(
         fixture.folds.exists(),
@@ -365,8 +380,6 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
     let replay_answer: EffortAnswer =
         serde_json::from_value(effort.payload.clone().expect("typed task effort payload"))
             .expect("replay payload decodes as task effort");
-    let live = fixture.reply::<EffortAnswer>(&["task", "effort"]);
-    assert_eq!(live.position, wire::ReplyPosition::Snapshot(position));
     let live_answer = live.body;
     assert_eq!(
         replay_answer, live_answer,

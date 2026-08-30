@@ -14,9 +14,9 @@ use wire::{
     Actor, CanonicalUuid, Command, Outcome, Producer, Refusal, Reply, ReplyPosition, SeqRange,
 };
 
-use super::lane_surface::{
-    OccupantLaunchRequest, await_session, occupant_launch, resume_session, session_fact,
-};
+#[cfg(test)]
+use super::lane_surface::await_session;
+use super::lane_surface::{OccupantLaunchRequest, resume_session, session_fact};
 use super::shutdown::{current_residency, guard_residency};
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome, write,
@@ -30,7 +30,7 @@ pub(super) struct Runtime {
 }
 
 impl Runtime {
-    pub(super) const fn new(capture: Arc<dyn CaptureReporter>) -> Self {
+    pub(super) fn new(capture: Arc<dyn CaptureReporter>) -> Self {
         Self { capture }
     }
 }
@@ -215,7 +215,7 @@ fn launch_import(
     context: &ImportContext,
 ) -> CommandResult<ProvenOccupant> {
     let occupant = new_uuid();
-    let launch = occupant_launch(
+    let launch = super::supervisor::launch(
         paths,
         OccupantLaunchRequest {
             worktree: &context.worktree,
@@ -227,25 +227,17 @@ fn launch_import(
         },
         Arc::clone(&runtime.capture),
     )?;
-    let git = launch.git;
-    let proof = launch.session;
-    let group = seats
-        .seat_observed(context.row.lane, occupant, launch.spec, launch.observation)
+    let proven = ProvenOccupant {
+        occupant: launch.occupant,
+        group: launch.group,
+        session: launch.session,
+        git: launch.git,
+    };
+    let _group = seats
+        .seat_detached(context.row.lane, occupant, launch.process)
         .map_err(|error| store_fault("lane::import-launch-failed", &error.to_string()))?
         .group();
-    let session = match await_session(proof) {
-        Ok(session) => session,
-        Err(error) => {
-            stop_lane(seats, context.row.lane);
-            return Err(Outcome::Refusal(error.refusal()));
-        }
-    };
-    Ok(ProvenOccupant {
-        occupant,
-        group,
-        session,
-        git,
-    })
+    Ok(proven)
 }
 
 fn propose_import(

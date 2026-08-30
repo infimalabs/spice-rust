@@ -359,7 +359,14 @@ pub enum StdinPolicy {
 pub enum StreamPolicy {
     Inherit,
     Null,
-    Capture { limit: usize },
+    /// Drain the whole stream while retaining only its bounded prefix.
+    Capture {
+        limit: usize,
+    },
+    /// Drain the whole stream while retaining only its bounded suffix.
+    CaptureTail {
+        limit: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

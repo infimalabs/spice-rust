@@ -1,4 +1,4 @@
-use super::capture::{CaptureWorker, FailureContext, start_capture};
+use super::capture::{CaptureRetention, CaptureWorker, FailureContext, start_capture};
 use super::guardian::PendingGuardian;
 use super::{ProcessCompletion, ProcessState, Running, start_exit_watcher};
 use crate::observe::{Observation, OutputStream};
@@ -106,17 +106,19 @@ fn spawn_inner_with_guardian(
         sink_deadline: spec.deadlines.output_drain(),
         failure,
     };
-    let stdout = pipes.stdout.map(|(reader, limit)| {
+    let stdout = pipes.stdout.map(|(reader, limit, retention)| {
         start_capture(
             reader,
             limit,
+            retention,
             captures.worker(OutputStream::Stdout, wakes.stdout),
         )
     });
-    let stderr = pipes.stderr.map(|(reader, limit)| {
+    let stderr = pipes.stderr.map(|(reader, limit, retention)| {
         start_capture(
             reader,
             limit,
+            retention,
             captures.worker(OutputStream::Stderr, wakes.stderr),
         )
     });
@@ -144,7 +146,10 @@ fn validate_observation(spec: &Spec, observation: Option<&Observation>) -> io::R
         OutputStream::Stdout => spec.output.stdout(),
         OutputStream::Stderr => spec.output.stderr(),
     };
-    if matches!(selected, StreamPolicy::Capture { .. }) {
+    if matches!(
+        selected,
+        StreamPolicy::Capture { .. } | StreamPolicy::CaptureTail { .. }
+    ) {
         return Ok(());
     }
     Err(io::Error::new(
@@ -173,12 +178,18 @@ impl SpawnWakes {
         let cancellation = waiter.try_clone()?;
         let exit = waiter.try_clone()?;
         let failure = waiter.try_clone()?;
-        let stdout = matches!(spec.output.stdout(), StreamPolicy::Capture { .. })
-            .then(|| waiter.try_clone())
-            .transpose()?;
-        let stderr = matches!(spec.output.stderr(), StreamPolicy::Capture { .. })
-            .then(|| waiter.try_clone())
-            .transpose()?;
+        let stdout = matches!(
+            spec.output.stdout(),
+            StreamPolicy::Capture { .. } | StreamPolicy::CaptureTail { .. }
+        )
+        .then(|| waiter.try_clone())
+        .transpose()?;
+        let stderr = matches!(
+            spec.output.stderr(),
+            StreamPolicy::Capture { .. } | StreamPolicy::CaptureTail { .. }
+        )
+        .then(|| waiter.try_clone())
+        .transpose()?;
         let selected_stream = observation.map(Observation::stream);
         let observer = selected_stream.map(|_| waiter.try_clone()).transpose()?;
         receiver.set_nonblocking(true)?;
@@ -196,8 +207,8 @@ impl SpawnWakes {
 }
 
 struct CapturePipes {
-    stdout: Option<(ChildStdout, usize)>,
-    stderr: Option<(ChildStderr, usize)>,
+    stdout: Option<(ChildStdout, usize, CaptureRetention)>,
+    stderr: Option<(ChildStderr, usize, CaptureRetention)>,
 }
 
 fn capture_pipes(child: &mut Child, spec: &Spec) -> io::Result<CapturePipes> {
@@ -271,7 +282,7 @@ fn configure_stream(command: &mut Command, stdout: bool, policy: StreamPolicy) {
     let stdio = match policy {
         StreamPolicy::Inherit => Stdio::inherit(),
         StreamPolicy::Null => Stdio::null(),
-        StreamPolicy::Capture { .. } => Stdio::piped(),
+        StreamPolicy::Capture { .. } | StreamPolicy::CaptureTail { .. } => Stdio::piped(),
     };
     if stdout {
         command.stdout(stdio);
@@ -283,14 +294,21 @@ fn configure_stream(command: &mut Command, stdout: bool, policy: StreamPolicy) {
 fn take_stdout(
     child: &mut Child,
     policy: StreamPolicy,
-) -> io::Result<Option<(ChildStdout, usize)>> {
+) -> io::Result<Option<(ChildStdout, usize, CaptureRetention)>> {
     match policy {
         StreamPolicy::Capture { limit } => {
             let reader = child
                 .stdout
                 .take()
                 .ok_or_else(|| io::Error::other("captured stdout pipe is absent"))?;
-            Ok(Some((reader, limit)))
+            Ok(Some((reader, limit, CaptureRetention::Prefix)))
+        }
+        StreamPolicy::CaptureTail { limit } => {
+            let reader = child
+                .stdout
+                .take()
+                .ok_or_else(|| io::Error::other("captured stdout pipe is absent"))?;
+            Ok(Some((reader, limit, CaptureRetention::Suffix)))
         }
         StreamPolicy::Inherit | StreamPolicy::Null => Ok(None),
     }
@@ -299,14 +317,21 @@ fn take_stdout(
 fn take_stderr(
     child: &mut Child,
     policy: StreamPolicy,
-) -> io::Result<Option<(ChildStderr, usize)>> {
+) -> io::Result<Option<(ChildStderr, usize, CaptureRetention)>> {
     match policy {
         StreamPolicy::Capture { limit } => {
             let reader = child
                 .stderr
                 .take()
                 .ok_or_else(|| io::Error::other("captured stderr pipe is absent"))?;
-            Ok(Some((reader, limit)))
+            Ok(Some((reader, limit, CaptureRetention::Prefix)))
+        }
+        StreamPolicy::CaptureTail { limit } => {
+            let reader = child
+                .stderr
+                .take()
+                .ok_or_else(|| io::Error::other("captured stderr pipe is absent"))?;
+            Ok(Some((reader, limit, CaptureRetention::Suffix)))
         }
         StreamPolicy::Inherit | StreamPolicy::Null => Ok(None),
     }

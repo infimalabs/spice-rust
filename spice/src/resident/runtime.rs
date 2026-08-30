@@ -25,7 +25,7 @@ struct ResidentClientPaths {
 }
 
 impl ResidentClientPaths {
-    fn from_repository(repository: &Repository) -> CommandResult<Self> {
+    pub(super) fn from_repository(repository: &Repository) -> CommandResult<Self> {
         let canvas = repository
             .admit_resident_client()
             .map_err(|error| crate::state_failure(&error).outcome())?;
@@ -114,7 +114,7 @@ impl RuntimePaths {
         Self::from_repository(&repository)
     }
 
-    fn from_repository(repository: &Repository) -> CommandResult<Self> {
+    pub(super) fn from_repository(repository: &Repository) -> CommandResult<Self> {
         let state = repository
             .admit_resident_state()
             .map_err(|error| crate::state_failure(&error).outcome())?;

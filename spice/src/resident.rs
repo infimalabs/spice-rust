@@ -38,6 +38,7 @@ mod policy_surface;
 mod read_materializations;
 mod shutdown;
 mod steering;
+pub(crate) mod supervisor;
 mod taste_surface;
 mod timers;
 

@@ -388,7 +388,7 @@ pub enum ResidentState {
     Killing,
     /// Claims, seals, and residue are being verified.
     Verifying,
-    /// Terminal state committed before authority release.
+    /// Coordination authority released; detached lane supervisors may remain live.
     Dark,
 }
 

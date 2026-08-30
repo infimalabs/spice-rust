@@ -479,7 +479,7 @@ pub struct UpVerifying {
     pub epoch: CanonicalUuid,
 }
 
-/// The resident committed the verified terminal state immediately before releasing authority.
+/// The resident released coordination authority without ending detached lane work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpDark {
     /// Resident epoch releasing authority.

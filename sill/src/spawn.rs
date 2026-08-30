@@ -39,6 +39,7 @@ pub struct CapturedOutput {
     bytes: Vec<u8>,
     truncated: bool,
     complete: bool,
+    retains_suffix: bool,
 }
 
 impl CapturedOutput {
@@ -52,6 +53,11 @@ impl CapturedOutput {
 
     pub fn complete(&self) -> bool {
         self.complete
+    }
+
+    /// Whether truncated bytes retain the end rather than the beginning.
+    pub fn retains_suffix(&self) -> bool {
+        self.retains_suffix
     }
 }
 
@@ -134,6 +140,25 @@ pub enum WaitStep {
 }
 
 impl WaitOutcome {
+    /// Reconstruct one externally supervised exit with no local capture or
+    /// resource-accounting evidence.
+    ///
+    /// A process that outlives its coordinator is reaped by the detached
+    /// supervisor that still owns it. The replacement coordinator can retain
+    /// the exact exit status, but it cannot truthfully manufacture the usage
+    /// and pipe evidence that belonged to the other process.
+    #[must_use]
+    pub fn externally_reaped(status: ExitStatus) -> Self {
+        Self {
+            completion: Completion::Exited(status),
+            usage: ProcessUsage::default(),
+            observation_failure: None,
+            stdout: None,
+            stderr: None,
+            outputs_drained: true,
+        }
+    }
+
     pub fn completion(&self) -> &Completion {
         &self.completion
     }
