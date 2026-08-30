@@ -94,21 +94,19 @@ fn budget_publication_warns_only_above_the_exact_advisory_share() {
 }
 
 #[test]
-fn measured_twelve_cpu_overlapping_budget_is_process_observable_and_unchanged() {
+fn measured_twelve_cpu_budget_caps_one_gate_at_three_direct_workers() {
     let budget = CargoBudget::from_capacity(12, 4);
     let published = published_budget(budget);
 
-    assert_eq!(budget.policy_jobs(), 12);
-    assert_eq!(budget.test_concurrency(), 3);
-    assert_eq!(budget.shard_jobs(), 4);
+    assert_eq!(budget.worker_processes(), 3);
+    assert_eq!(budget.policy_jobs(), 1);
+    assert_eq!(budget.test_concurrency(), 1);
+    assert_eq!(budget.shard_jobs(), 1);
     assert!(published.contains(
-        "cpus=12 ordinary_lanes=4 advisory_share=3 policy_jobs=12 test_concurrency=3 shard_jobs=4"
+        "cpus=12 ordinary_lanes=4 advisory_share=3 worker_process_cap=3 policy_jobs=1 test_concurrency=1 shard_jobs=1"
     ));
-    assert_eq!(published.matches("[change-gate-budget-warning]").count(), 1);
-    assert!(published.contains("requested_slots=24"));
-    assert!(published.contains(
-        "allocations=policy_jobs:12+test_prebuild_shards:3x4=12 action=continue-unchanged"
-    ));
+    assert!(published.contains("worker_scope=direct-roots nested_children=inherit-parent-slot"));
+    assert!(!published.contains("change-gate-budget-warning"));
 }
 
 fn published_budget(budget: CargoBudget) -> String {

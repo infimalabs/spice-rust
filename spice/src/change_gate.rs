@@ -22,10 +22,12 @@ use crate::repository::Repository;
 mod cargo_budget;
 mod progress;
 mod test_execution;
+mod worker_scheduler;
 
 use cargo_budget::CargoBudget;
 use progress::{SharedProgress, publish_test_selection};
 use test_execution::{TestExecution, TestRun, run_selected_tests};
+use worker_scheduler::WorkerScheduler;
 
 /// Current combined ordinary-change-gate report schema.
 pub const CHANGE_GATE_REPORT_VERSION: u64 = 4;
@@ -532,11 +534,13 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
                         "staged source or selected policy changed while retrying state publication",
                     ));
                 }
+                let scheduler = WorkerScheduler::new(context.budget.worker_processes());
                 let focused = run_focused_policy(
                     &mut retry,
                     context.selection,
                     context.source,
                     context.budget,
+                    &scheduler,
                     BTreeMap::new(),
                     progress,
                 )?;
@@ -664,12 +668,14 @@ fn publish_budget(
     writeln!(
         progress,
         concat!(
-            "[change-gate-budget] cpus={} ordinary_lanes={} advisory_share={} policy_jobs={} ",
-            "test_concurrency={} shard_jobs={} test_threads={} scheduling={}"
+            "[change-gate-budget] cpus={} ordinary_lanes={} advisory_share={} worker_process_cap={} ",
+            "policy_jobs={} test_concurrency={} shard_jobs={} test_threads={} ",
+            "worker_scope=direct-roots nested_children=inherit-parent-slot scheduling={}"
         ),
         budget.cpus(),
         budget.ordinary_lanes(),
         budget.advisory_lane_share(),
+        budget.worker_processes(),
         budget.policy_jobs(),
         budget.test_concurrency(),
         budget.shard_jobs(),
@@ -768,7 +774,9 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         budget,
         environment,
     } = execution;
-    let preexecuted = preexecute_policy_screen(anchor, selection, source, budget, progress)?;
+    let scheduler = WorkerScheduler::new(budget.worker_processes());
+    let preexecuted =
+        preexecute_policy_screen(anchor, selection, source, budget, &scheduler, progress)?;
     let test_run = TestRun::new(
         &selected_root,
         &writable_root,
@@ -782,8 +790,10 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         None => test_run,
     };
     let mut test_progress = progress.clone();
+    let test_scheduler = scheduler.clone();
     let (focused, tests) = std::thread::scope(|scope| {
         let tests = scope.spawn(move || {
+            let _permit = test_scheduler.acquire()?;
             let started = Instant::now();
             let result = run_selected_tests(test_run, test_execution, &mut test_progress);
             let disposition = if result.is_ok() { "success" } else { "failed" };
@@ -796,6 +806,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
             selection,
             source,
             budget,
+            &scheduler,
             preexecuted.reports,
             progress,
         );
@@ -832,6 +843,7 @@ fn preexecute_policy_screen<W: Write + Send + ?Sized>(
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     budget: CargoBudget,
+    scheduler: &WorkerScheduler,
     progress: &mut SharedProgress<'_, W>,
 ) -> Result<PreexecutedPolicy, ChangeGateError> {
     let mut prepared = Vec::new();
@@ -852,6 +864,7 @@ fn preexecute_policy_screen<W: Write + Send + ?Sized>(
             .into_iter()
             .map(|(gate_id, started, mut arm)| {
                 let handle = scope.spawn(move || {
+                    let _permit = scheduler.acquire()?;
                     let report = arm.execute().map_err(ChangeGateError::gate)?;
                     let workspace = (gate_id == GateId::RustTypecheck)
                         .then(|| arm.reusable_rust_workspace().cloned())
@@ -916,6 +929,7 @@ fn run_focused_policy(
     selection: &ChangeSelectionReport,
     source: &wire::Digest,
     budget: CargoBudget,
+    scheduler: &WorkerScheduler,
     mut preexecuted: BTreeMap<GateId, gate::FocusedArmReport>,
     progress: &mut impl Write,
 ) -> Result<FocusedPolicyExecution, ChangeGateError> {
@@ -941,8 +955,8 @@ fn run_focused_policy(
             publish_policy_start(progress, GateId::CanvasWebTypecheck)?;
             let canvas = prepare_policy_arm(anchor, selection, canvas_reach, budget, progress)?;
             let (rust, canvas) = std::thread::scope(|scope| {
-                let canvas = scope.spawn(|| execute_prepared_policy_arm(canvas));
-                let rust = execute_prepared_policy_arm(rust);
+                let canvas = scope.spawn(|| execute_prepared_policy_arm(canvas, scheduler));
+                let rust = execute_prepared_policy_arm(rust, scheduler);
                 let canvas = canvas.join().map_err(|_| {
                     ChangeGateError::protocol(
                         "change-gate-policy-panicked",
@@ -959,6 +973,7 @@ fn run_focused_policy(
         }
 
         let report = if gate_id == GateId::Staging {
+            let _permit = scheduler.acquire()?;
             anchor
                 .bind_cargo_jobs(budget.policy_jobs())
                 .map_err(ChangeGateError::gate)?;
@@ -971,7 +986,7 @@ fn run_focused_policy(
             anchor.execute().map_err(ChangeGateError::gate)
         } else {
             let prepared = prepare_policy_arm(anchor, selection, reach, budget, progress)?;
-            execute_prepared_policy_arm(prepared)
+            execute_prepared_policy_arm(prepared, scheduler)
         };
         let disposition = if report.is_ok() {
             "completed"
@@ -1044,7 +1059,9 @@ fn prepare_policy_arm(
 
 fn execute_prepared_policy_arm(
     mut prepared: crate::gate::PreparedArm<'static>,
+    scheduler: &WorkerScheduler,
 ) -> Result<gate::FocusedArmReport, ChangeGateError> {
+    let _permit = scheduler.acquire()?;
     prepared.execute().map_err(ChangeGateError::gate)
 }
 

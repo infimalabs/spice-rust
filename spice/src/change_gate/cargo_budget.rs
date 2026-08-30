@@ -11,6 +11,7 @@ use super::ChangeGateError;
 
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 const CONCURRENT_ORDINARY_GATE_SLICES: usize = 4;
+const MAX_GATE_WORKER_PROCESSES: usize = 3;
 const TEST_HARNESS_THREADS_PER_SHARD: usize = 1;
 
 /// Exact host share available to one of the ordinary concurrent gate lanes.
@@ -43,8 +44,12 @@ impl fmt::Display for AdvisoryLaneShare {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Direct gate roots share at most `worker_processes` permits. Compiler and
+/// test descendants inherit that root permit and are narrowed to one execution
+/// lane each, so nested fanout cannot recreate the removed branch multipliers.
 pub(super) struct CargoBudget {
     cpus: usize,
+    worker_processes: usize,
     slice_jobs: usize,
     test_concurrency: usize,
     shard_jobs: usize,
@@ -57,15 +62,15 @@ impl CargoBudget {
         Self::from_capacity(cpus, test_concurrency_cap)
     }
 
-    pub(super) fn from_capacity(cpus: usize, test_concurrency_cap: usize) -> Self {
+    pub(super) fn from_capacity(cpus: usize, _test_concurrency_cap: usize) -> Self {
         let cpus = cpus.max(1);
-        let slice_jobs = cpus;
-        let test_concurrency = slice_jobs
-            .div_ceil(CONCURRENT_ORDINARY_GATE_SLICES)
-            .min(test_concurrency_cap.max(1));
-        let shard_jobs = (slice_jobs / test_concurrency).max(1);
+        let worker_processes = cpus.min(MAX_GATE_WORKER_PROCESSES);
+        let slice_jobs = 1;
+        let test_concurrency = 1;
+        let shard_jobs = 1;
         Self {
             cpus,
+            worker_processes,
             slice_jobs,
             test_concurrency,
             shard_jobs,
@@ -75,6 +80,10 @@ impl CargoBudget {
 
     pub(super) const fn policy_jobs(self) -> usize {
         self.slice_jobs
+    }
+
+    pub(super) const fn worker_processes(self) -> usize {
+        self.worker_processes
     }
 
     pub(super) const fn test_concurrency(self) -> usize {
@@ -118,7 +127,7 @@ impl CargoBudget {
     }
 
     #[cfg(test)]
-    pub(super) const fn from_allocations(
+    pub(super) fn from_allocations(
         cpus: usize,
         policy_jobs: usize,
         test_concurrency: usize,
@@ -126,6 +135,7 @@ impl CargoBudget {
     ) -> Self {
         Self {
             cpus,
+            worker_processes: cpus.min(MAX_GATE_WORKER_PROCESSES),
             slice_jobs: policy_jobs,
             test_concurrency,
             shard_jobs,
@@ -159,15 +169,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn budget_reserves_four_ordinary_gate_slices_and_single_threads_each_shard() {
+    fn budget_caps_direct_workers_and_each_nested_execution_lane() {
         let budget = CargoBudget::from_capacity(12, 4);
-        assert_eq!(budget.policy_jobs(), 12);
-        assert_eq!(budget.test_concurrency(), 3);
-        assert_eq!(budget.shard_jobs(), 4);
+        assert_eq!(budget.worker_processes(), 3);
+        assert_eq!(budget.policy_jobs(), 1);
+        assert_eq!(budget.test_concurrency(), 1);
+        assert_eq!(budget.shard_jobs(), 1);
         assert_eq!(budget.test_threads(), 1);
 
         let minimum = CargoBudget::from_capacity(0, 4);
         assert_eq!(minimum.policy_jobs(), 1);
+        assert_eq!(minimum.worker_processes(), 1);
         assert_eq!(minimum.test_concurrency(), 1);
         assert_eq!(minimum.shard_jobs(), 1);
         assert_eq!(minimum.test_threads(), 1);
@@ -213,7 +225,7 @@ mod tests {
                 .iter()
                 .find(|(name, _)| name == OsStr::new(CARGO_BUILD_JOBS))
                 .map(|(_, value)| value),
-            Some(&OsString::from("4"))
+            Some(&OsString::from("1"))
         );
     }
 }

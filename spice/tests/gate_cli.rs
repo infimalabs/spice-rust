@@ -33,6 +33,7 @@ fn commit_worker_executes_known_and_authority_targets_but_refuses_unknown_source
     repository.add("src/lib.rs");
 
     let known = run_commit_worker(repository.path());
+    assert_worker_process_cap(&known);
     let Some((kind, document)) = known.terminal.split_first() else {
         panic!("known staged source produced no terminal record");
     };
@@ -96,6 +97,26 @@ fn commit_worker_executes_known_and_authority_targets_but_refuses_unknown_source
         fs::read_to_string(&authority_marker).expect("read authority selected-test marker"),
         "canonical selected target executed\n",
     );
+}
+
+fn assert_worker_process_cap(boundary: &WorkerBoundary) {
+    let budget = boundary
+        .progress
+        .lines()
+        .find(|line| line.starts_with("[change-gate-budget]"))
+        .expect("executable boundary publishes its worker budget");
+    let cap = budget
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("worker_process_cap="))
+        .expect("budget names direct worker cap")
+        .parse::<usize>()
+        .expect("worker cap is numeric");
+    assert!(
+        (1..=3).contains(&cap),
+        "one gate admits at most three roots: {budget}"
+    );
+    assert!(budget.contains("policy_jobs=1 test_concurrency=1 shard_jobs=1 test_threads=1"));
+    assert!(budget.contains("worker_scope=direct-roots nested_children=inherit-parent-slot"));
 }
 
 #[test]
