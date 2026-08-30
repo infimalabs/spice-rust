@@ -19,7 +19,6 @@ pub(super) struct RunPolicy {
     pub(super) cargo_jobs: Option<usize>,
     pub(super) test_threads: Option<usize>,
     pub(super) shard_deadline: Duration,
-    pub(super) coordinator_deadline: Duration,
     pub(super) progress_interval: Duration,
     pub(super) output_drain: Duration,
     pub(super) reap: Duration,
@@ -57,7 +56,6 @@ impl RunPolicy {
             cargo_jobs: None,
             test_threads: None,
             shard_deadline: SHARD_DEADLINE,
-            coordinator_deadline: COORDINATOR_DEADLINE,
             progress_interval: PROGRESS_INTERVAL,
             output_drain: OUTPUT_DRAIN_DEADLINE,
             reap: REAP_DEADLINE,
@@ -72,7 +70,6 @@ impl RunPolicy {
             cargo_jobs: Some(budget.cargo_jobs),
             test_threads: Some(budget.test_threads),
             shard_deadline: SHARD_DEADLINE,
-            coordinator_deadline: COORDINATOR_DEADLINE,
             progress_interval: PROGRESS_INTERVAL,
             output_drain: OUTPUT_DRAIN_DEADLINE,
             reap: REAP_DEADLINE,
@@ -100,7 +97,6 @@ impl RunPolicy {
             cargo_jobs: Some(budget.cargo_jobs),
             test_threads: Some(test_threads),
             shard_deadline: SHARD_DEADLINE,
-            coordinator_deadline: COORDINATOR_DEADLINE,
             progress_interval: PROGRESS_INTERVAL,
             output_drain: OUTPUT_DRAIN_DEADLINE,
             reap: REAP_DEADLINE,
@@ -288,7 +284,6 @@ impl<'a, W: Write> Coordinator<'a, W> {
         self.start_available()?;
         let mut next_progress = self.started + self.policy.progress_interval;
         while !self.active.is_empty() {
-            self.enforce_coordinator_deadline();
             let wait = self.next_wait(next_progress);
             match self.receiver.recv_timeout(wait) {
                 Ok(result) => {
@@ -404,21 +399,10 @@ impl<'a, W: Write> Coordinator<'a, W> {
         );
     }
 
-    fn enforce_coordinator_deadline(&mut self) {
-        if self.failure.is_none() && self.started.elapsed() >= self.policy.coordinator_deadline {
-            self.fail(format!(
-                "coordinator exceeded its {} ms deadline",
-                self.policy.coordinator_deadline.as_millis()
-            ));
-        }
-    }
-
     fn next_wait(&self, next_progress: Instant) -> Duration {
         let now = Instant::now();
         let progress = next_progress.saturating_duration_since(now);
-        let deadline =
-            (self.started + self.policy.coordinator_deadline).saturating_duration_since(now);
-        progress.min(deadline).min(Duration::from_secs(1))
+        progress.min(Duration::from_secs(1))
     }
 
     fn accept_result(&mut self, result: ShardResult) -> Result<(), WorkspaceTestError> {
@@ -1128,10 +1112,77 @@ mod tests {
     use std::process::Command;
 
     const DESCENDANT_FIXTURE_ROOT: &str = "SPICE_WORKSPACE_TEST_DESCENDANT_FIXTURE_ROOT"; // env-policy: allow
+    const AFTER_RETIRED_COORDINATOR_DEADLINE: Duration = Duration::from_secs(256);
     const REEXEC_TEST: &str = concat!(
         "workspace_tests::coordinator::tests::",
         "cancelled_shard_reaps_nested_fixture_group_before_root_removal"
     );
+
+    #[test]
+    fn healthy_shard_completes_after_the_retired_aggregate_deadline() {
+        let environment = Environment::new(std::iter::empty::<(OsString, OsString)>())
+            .expect("empty fixture environment is valid");
+        let mut output = Vec::new();
+        let mut coordinator = Coordinator::from_execution_shards(
+            Vec::new(),
+            PathBuf::from("."),
+            environment,
+            OsString::from("cargo"),
+            fixture_policy(),
+            &mut output,
+        );
+        coordinator.started = Instant::now()
+            .checked_sub(AFTER_RETIRED_COORDINATOR_DEADLINE)
+            .expect("fixture can represent a run beyond the retired 255-second deadline");
+        coordinator.total = 1;
+        coordinator.available_lanes.clear();
+        coordinator.active.insert(
+            0,
+            ActiveShard {
+                package: "healthy".to_owned(),
+                targets: "test healthy".to_owned(),
+                output_lane: 0,
+                started: Instant::now(),
+                observer: Arc::new(LastTest::default()),
+                exclusive: false,
+                thread: thread::spawn(|| {}),
+            },
+        );
+        coordinator
+            .sender
+            .send(ShardResult {
+                index: 0,
+                package: "healthy".to_owned(),
+                targets: "test healthy".to_owned(),
+                elapsed: Duration::from_secs(1),
+                disposition: "success".to_owned(),
+                binary: "healthy-test".to_owned(),
+                last_test: "test healthy ... ok".to_owned(),
+                stdout_tail: String::new(),
+                stderr_tail: String::new(),
+                success: true,
+            })
+            .expect("healthy shard result is delivered");
+
+        coordinator
+            .run()
+            .expect("aggregate elapsed time does not cancel a healthy shard");
+
+        let report = String::from_utf8(output).expect("coordinator report is UTF-8");
+        let elapsed = report
+            .lines()
+            .find(|line| line.contains("coordinator disposition=success"))
+            .and_then(|line| {
+                line.split_ascii_whitespace()
+                    .find_map(|field| field.strip_prefix("elapsed_ms="))
+            })
+            .and_then(|elapsed| elapsed.parse::<u128>().ok())
+            .expect("successful coordinator report carries numeric elapsed time");
+        assert!(
+            elapsed >= AFTER_RETIRED_COORDINATOR_DEADLINE.as_millis(),
+            "{report}"
+        );
+    }
 
     #[test]
     #[allow(
@@ -1224,7 +1275,6 @@ mod tests {
             cargo_jobs: None,
             test_threads: Some(1),
             shard_deadline: Duration::from_secs(10),
-            coordinator_deadline: Duration::from_secs(10),
             progress_interval: Duration::from_secs(1),
             output_drain: Duration::from_secs(2),
             reap: Duration::from_secs(2),

@@ -76,9 +76,9 @@ const FULL_VERIFIER_TARGETS_PER_SHARD: usize = 4;
 /// target cardinality, so these tail batches retain stable metadata order.
 const CARGO_STARTUP_DOMINATED_TARGET_LIMIT: usize = 2;
 /// No individual test shard may cross its local three-minute stall ceiling.
+/// The finite inventory and this per-shard bound compose the coordinator bound;
+/// a separate aggregate cutoff could cancel healthy shards in later waves.
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
-/// The aggregate coordinator may outlive one shard while bounded siblings finish.
-const COORDINATOR_DEADLINE: Duration = Duration::from_secs(255);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const METADATA_DEADLINE: Duration = Duration::from_secs(30);
 const OUTPUT_DRAIN_DEADLINE: Duration = Duration::from_secs(5);
