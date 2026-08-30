@@ -53,7 +53,7 @@ fn add_actor_route_rows(
     answer: &mut BoardAnswer,
     public: &TaskHandle,
 ) -> ([TaskHandle; 3], TaskHandle) {
-    let template = at(&answer, &public).clone();
+    let template = at(answer, public).clone();
     answer
         .tasks
         .iter_mut()
