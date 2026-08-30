@@ -190,11 +190,13 @@ pub(super) fn publish_agent_messages(
             .map_err(|error| store_fault("canvas::message-locus-invalid", &error.to_string()))?;
         publish_agent_event(
             publisher,
-            record.lane,
-            record.occupant,
-            event,
-            decoded,
-            authored,
+            AgentEvent {
+                lane: record.lane,
+                author: record.occupant,
+                ordinal: event,
+                decoded,
+                authored,
+            },
             previews,
             steering,
         )?;
@@ -202,17 +204,28 @@ pub(super) fn publish_agent_messages(
     Ok(())
 }
 
-/// Project one typed tape event through the sole live/restored message policy.
-pub(super) fn publish_agent_event(
-    publisher: &impl AgentMessagePublisher,
+struct AgentEvent<'a> {
     lane: CanonicalUuid,
     author: CanonicalUuid,
-    event: u32,
-    decoded: &listen::Event,
-    authored: Option<&str>,
+    ordinal: u32,
+    decoded: &'a listen::Event,
+    authored: Option<&'a str>,
+}
+
+/// Project one typed tape event through the sole live/restored message policy.
+fn publish_agent_event(
+    publisher: &impl AgentMessagePublisher,
+    event: AgentEvent<'_>,
     previews: &mut CallPreviews,
     steering: Option<&steer::Ledger>,
 ) -> CommandResult<()> {
+    let AgentEvent {
+        lane,
+        author,
+        ordinal,
+        decoded,
+        authored,
+    } = event;
     let (activity, locus, text, media) = match decoded {
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => (
             AgentActivityKind::Prose,
@@ -241,7 +254,7 @@ pub(super) fn publish_agent_event(
         ),
         _ => return Ok(()),
     };
-    let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, event)?;
+    let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, ordinal)?;
     wire::media::admit_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
     publisher
@@ -252,7 +265,7 @@ pub(super) fn publish_agent_event(
                 member: locus.member,
                 offset: locus.offset,
                 length: locus.length,
-                event,
+                event: ordinal,
             },
             authored,
             authored_synthetic,

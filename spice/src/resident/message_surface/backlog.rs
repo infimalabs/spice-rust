@@ -136,11 +136,13 @@ fn publish_scan(
             })?;
             if let Err(outcome) = publish_agent_event(
                 publisher,
-                lane,
-                author,
-                event,
-                &sourced.event,
-                sourced.context.timestamp.as_deref(),
+                AgentEvent {
+                    lane,
+                    author,
+                    ordinal: event,
+                    decoded: &sourced.event,
+                    authored: sourced.context.timestamp.as_deref(),
+                },
                 &mut reader.previews,
                 steering,
             ) {
