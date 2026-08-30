@@ -468,17 +468,19 @@ pub fn badge(count: usize) -> Option<String> {
 ///
 /// Markdown punctuation is a boundary rather than part of a handle, so prose
 /// may name one in backticks, parentheses, or at the end of a sentence. The
-/// wire parser remains the authority for the handle grammar, and repeated
-/// mentions produce one chip rather than turning emphasis into a count.
+/// The wire handle parser admits the outer stem/key shape, then `born` admits
+/// the fixed-width base-52 task stamp. Repeated mentions produce one chip
+/// rather than turning emphasis into a count.
 #[must_use]
 pub fn reported_tasks(text: &str) -> Vec<TaskHandle> {
     let mut tasks = Vec::new();
     for token in
         text.split(|character: char| !character.is_ascii_alphanumeric() && character != '-')
     {
-        if let Ok(task) = token.parse::<TaskHandle>()
-            && !tasks.contains(&task)
-        {
+        let Ok(task) = token.parse::<TaskHandle>() else {
+            continue;
+        };
+        if task.born().is_ok() && !tasks.contains(&task) {
             tasks.push(task);
         }
     }
