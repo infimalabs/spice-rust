@@ -73,3 +73,35 @@ fn pretest_screen_covers_reusable_and_cheap_static_policy() {
         ],
     );
 }
+
+#[test]
+fn policy_schedule_starts_known_long_arms_before_short_remainder_work() {
+    assert!(policy_schedule_rank(GateId::EnvNameLedger) < policy_schedule_rank(GateId::RepoDocs));
+    assert!(policy_schedule_rank(GateId::MarkdownLinks) < policy_schedule_rank(GateId::RepoShape));
+    assert!(policy_schedule_rank(GateId::Formatters) < policy_schedule_rank(GateId::LocalPaths));
+    assert!(policy_schedule_rank(GateId::MagicNumbers) < policy_schedule_rank(GateId::Taste));
+
+    let source = wire::Digest::compute(wire::Domain::GateTree, b"policy schedule order");
+    let selection =
+        gate::select_current_source_change_gates(source, &["spice/src/change_gate.rs".to_owned()])
+            .expect("select the benchmark policy inventory");
+    let mut scheduled = selection
+        .reach()
+        .iter()
+        .filter(|reach| !pretest_screen_gate(reach.gate_id()) && reach.gate_id() != GateId::Staging)
+        .enumerate()
+        .collect::<Vec<_>>();
+    scheduled.sort_by_key(|(index, reach)| (policy_schedule_rank(reach.gate_id()), *index));
+    assert_eq!(
+        scheduled
+            .into_iter()
+            .map(|(_, reach)| reach.gate_id())
+            .take(3)
+            .collect::<Vec<_>>(),
+        [
+            GateId::Formatters,
+            GateId::EnvNameLedger,
+            GateId::MarkdownLinks,
+        ],
+    );
+}
