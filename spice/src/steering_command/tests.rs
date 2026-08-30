@@ -5,15 +5,24 @@
 //! [`SelectedCommand`] reds this module rather than reaching the resident.
 
 use std::ffi::OsString;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Barrier};
 
 use clap::ArgMatches;
+use wire::intent::{CommandAnswer, InboxAnswer};
 use wire::{CanonicalUuid, Disposition, FaultClass, Outcome};
 
-use super::{SelectedCommand, select};
+use super::{SelectedCommand, hook_document_at, select};
 
 const LANE: &str = "0a2f5b6c-1d3e-4f50-8a91-b2c3d4e5f607";
 const DIRECTIVE: &str = "1b3f6c7d-2e4f-4051-9b02-c3d4e5f60718";
 const KEY: &str = "1kL5y53c";
+const EPOCH: &str = "2c4f7d8e-3f50-4162-ac13-d4e5f6071829";
+const OCCUPANT: &str = "3d508e9f-4051-4273-bd24-e5f60718293a";
+const OTHER_OCCUPANT: &str = "4e619fa0-5162-4384-8e35-f60718293a4b";
+static NEXT_HOOK_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 /// Parse one argv the way the binary does, keeping the leaf matches owned.
 fn parse(argv: &[&str]) -> (&'static crate::cli::Contract, ArgMatches) {
@@ -180,4 +189,188 @@ fn acknowledgment_key_parses_only_for_the_ack_contract() {
         super::acknowledgment_key(&inbox_leaf, inbox).ok().flatten(),
         None
     );
+}
+
+#[test]
+fn distinct_keys_with_identical_rendered_content_publish_once_per_agent_epoch() {
+    let scratch = HookScratch::new();
+    let first = inbox_answer(
+        OCCUPANT,
+        10,
+        &[("1kFirst1", "published", "hold the exact boundary")],
+    );
+    let repeated = inbox_answer(
+        OCCUPANT,
+        10,
+        &[("1kSecond", "published", "hold the exact boundary")],
+    );
+
+    let document = deliver(&scratch, &first).expect("first exact content publishes");
+    let context = additional_context(&document);
+    assert!(context.contains("key=1kFirst1"));
+    assert_eq!(deliver(&scratch, &repeated), None);
+}
+
+#[test]
+fn a_new_compaction_epoch_reopens_identical_content_for_the_same_agent() {
+    let scratch = HookScratch::new();
+    let first = inbox_answer(
+        OCCUPANT,
+        20,
+        &[("1kBefore", "reminded", "recheck the invariant")],
+    );
+    let compacted = inbox_answer(
+        OCCUPANT,
+        21,
+        &[("1kAfter1", "reminded", "recheck the invariant")],
+    );
+
+    assert!(deliver(&scratch, &first).is_some());
+    assert_eq!(deliver(&scratch, &first), None);
+    let after = deliver(&scratch, &compacted).expect("compaction reopens delivery");
+    assert!(additional_context(&after).contains("key=1kAfter1"));
+}
+
+#[test]
+fn a_different_agent_and_materially_different_output_remain_deliverable() {
+    let scratch = HookScratch::new();
+    let original = inbox_answer(OCCUPANT, 30, &[("1kOrigin", "published", "inspect alpha")]);
+    let changed = inbox_answer(OCCUPANT, 30, &[("1kChange", "published", "inspect beta")]);
+    let successor = inbox_answer(
+        OTHER_OCCUPANT,
+        30,
+        &[("1kNext11", "published", "inspect alpha")],
+    );
+
+    assert!(deliver(&scratch, &original).is_some());
+    assert!(deliver(&scratch, &changed).is_some());
+    assert_eq!(deliver(&scratch, &changed), None);
+    assert!(deliver(&scratch, &successor).is_some());
+}
+
+#[test]
+fn concurrent_hook_invocations_share_one_durable_delivery_decision() {
+    let scratch = Arc::new(HookScratch::new());
+    let answer = Arc::new(inbox_answer(
+        OCCUPANT,
+        40,
+        &[("1kRace11", "overdue", "serialize this publication")],
+    ));
+    let barrier = Arc::new(Barrier::new(3));
+    let workers = (0..2)
+        .map(|_| {
+            let scratch = Arc::clone(&scratch);
+            let answer = Arc::clone(&answer);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                deliver(&scratch, &answer)
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    let delivered = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("hook worker completes").is_some())
+        .filter(|delivered| *delivered)
+        .count();
+
+    assert_eq!(delivered, 1);
+}
+
+#[test]
+fn a_delayed_pre_compaction_snapshot_cannot_reopen_an_older_epoch() {
+    let scratch = HookScratch::new();
+    let before = inbox_answer(
+        OCCUPANT,
+        50,
+        &[("1kOlder1", "published", "keep this monotone")],
+    );
+    let after = inbox_answer(
+        OCCUPANT,
+        51,
+        &[("1kNewer1", "published", "keep this monotone")],
+    );
+
+    assert!(deliver(&scratch, &before).is_some());
+    assert!(deliver(&scratch, &after).is_some());
+    assert_eq!(deliver(&scratch, &before), None);
+    assert_eq!(deliver(&scratch, &after), None);
+}
+
+fn inbox_answer(
+    occupant: &str,
+    compaction: u64,
+    directives: &[(&str, &str, &str)],
+) -> CommandAnswer {
+    let pending = directives
+        .iter()
+        .enumerate()
+        .map(|(index, (key, stage, text))| {
+            serde_json::json!({
+                "directive": if index == 0 {
+                    "5f72a0b1-6273-4495-9f46-0718293a4b5c"
+                } else {
+                    "6073b1c2-7384-45a6-8057-18293a4b5c6d"
+                },
+                "key": key,
+                "text": text,
+                "authored": "2026-08-30T09:00:00.000Z",
+                "stage": stage,
+                "expires": "2026-08-30T10:00:00.000Z",
+            })
+        })
+        .collect::<Vec<_>>();
+    let inbox: InboxAnswer = serde_json::from_value(serde_json::json!({
+        "epoch": EPOCH,
+        "lanes": [{
+            "lane": LANE,
+            "occupant": occupant,
+            "compaction": compaction,
+            "pending": pending,
+        }],
+    }))
+    .expect("hook inbox fixture admits");
+    CommandAnswer::Inbox(inbox)
+}
+
+fn deliver(scratch: &HookScratch, answer: &CommandAnswer) -> Option<Vec<u8>> {
+    hook_document_at(answer, "claude", &scratch.state, &scratch.lock)
+        .expect("hook delivery succeeds")
+}
+
+fn additional_context(document: &[u8]) -> String {
+    let value: serde_json::Value = serde_json::from_slice(document).expect("hook document decodes");
+    value["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .expect("hook context is text")
+        .to_owned()
+}
+
+struct HookScratch {
+    root: PathBuf,
+    state: PathBuf,
+    lock: PathBuf,
+}
+
+impl HookScratch {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "spice-hook-delivery-{}-{}",
+            std::process::id(),
+            NEXT_HOOK_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("locks")).expect("create hook scratch");
+        Self {
+            state: root.join("steering-delivery.json"),
+            lock: root.join("locks/steering-delivery"),
+            root,
+        }
+    }
+}
+
+impl Drop for HookScratch {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove hook scratch");
+    }
 }

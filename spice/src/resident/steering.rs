@@ -510,9 +510,21 @@ pub(super) fn inbox(
         if selected.is_some_and(|selected| selected != lane.lane) {
             continue;
         }
+        let compaction = match lane.occupant {
+            Some(occupant) => {
+                match super::taste_surface::context_anchor(&snapshot.facts, lane.lane, occupant) {
+                    Ok(anchor) => Some(anchor.get()),
+                    Err(error) => {
+                        return typed_store_fault("steer::compaction-anchor-missing", &error);
+                    }
+                }
+            }
+            None => None,
+        };
         lanes.push(LaneInbox {
             lane: lane.lane,
             occupant: lane.occupant,
+            compaction,
             pending: snapshot
                 .ledger
                 .pending(lane.lane)
@@ -598,14 +610,23 @@ pub(super) fn repair(
 struct SteeringSnapshot {
     ledger: steer::Ledger,
     position: Seq,
+    facts: journal::FactSnapshot,
 }
 
 fn pending_snapshot(
     bus: &Bus,
     lane: Option<CanonicalUuid>,
 ) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
-    let (cursor, heads) = bus
-        .read(move |read| Ok((read.cursor()?, read.pending_steering(lane)?)))
+    let (cursor, heads, facts) = bus
+        .read(move |read| {
+            Ok((
+                read.cursor()?,
+                read.pending_steering(lane)?,
+                read.fact_snapshot().map_err(|error| {
+                    GuardError::Invalid(format!("steering fact snapshot is invalid: {error}"))
+                })?,
+            ))
+        })
         .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))?;
     let position = cursor.ok_or_else(|| {
         typed_store_fault(
@@ -615,7 +636,11 @@ fn pending_snapshot(
     })?;
     let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
         .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
-    Ok(SteeringSnapshot { ledger, position })
+    Ok(SteeringSnapshot {
+        ledger,
+        position,
+        facts,
+    })
 }
 
 fn directive_head(

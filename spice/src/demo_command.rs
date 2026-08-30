@@ -724,9 +724,9 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
         Producer::ResidentRecognition,
     );
     let mut cause = FactCause::Root;
-    let mut seated = None;
+    let mut lifecycle = None;
     for seed in DEMO_LANES {
-        let fact = write
+        let seated = write
             .fact(
                 body::LaneSeated {
                     lane: uuid(seed.lane),
@@ -742,12 +742,24 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                 cause,
             )
             .map_err(build_failure)?;
-        cause = FactCause::Pending(fact);
-        seated = Some(fact);
+        let started = write
+            .fact(
+                body::LaneStarted {
+                    lane: uuid(seed.lane),
+                    occupant: uuid(seed.occupant),
+                    epoch,
+                    group: 0,
+                },
+                FactCause::Pending(seated),
+            )
+            .map_err(build_failure)?;
+        cause = FactCause::Pending(started);
+        lifecycle = Some(started);
     }
     let worktree = root.display().to_string();
-    write.residency_head(seated.expect("the demo always seeds lanes"), move |_| {
-        ResidencyHead {
+    write.residency_head(
+        lifecycle.expect("the demo always seeds lane lifecycles"),
+        move |_| ResidencyHead {
             epoch,
             state: ResidentState::Dark,
             topology_revision: 0,
@@ -775,8 +787,8 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                 manual_projects: Vec::new(),
                 auto_projects: Vec::new(),
             }],
-        }
-    });
+        },
+    );
     journal.apply(write).map_err(commit_failure)?;
     Ok(())
 }
@@ -810,6 +822,18 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
                     == Some(seed.lane)
         })
     });
+    let starts = DEMO_LANES.iter().all(|seed| {
+        snapshot.facts().iter().any(|envelope| {
+            envelope
+                .fact
+                .read::<body::LaneStarted>()
+                .is_some_and(|started| {
+                    started.lane == uuid(seed.lane)
+                        && started.occupant == uuid(seed.occupant)
+                        && started.epoch == uuid(DEMO_EPOCH)
+                })
+        })
+    });
     let residency = reader
         .read(|read| read.residency_head())
         .map_err(|error| environment_fault("demo::journal-invalid", error.to_string()))?;
@@ -833,12 +857,12 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
         .iter()
         .filter(|envelope| envelope.fact.kind() == wire::FactKind::TaskNoted)
         .count();
-    if !task || !lanes || !simulated || notes < CANNED_TRANSCRIPT.len() {
+    if !task || !lanes || !starts || !simulated || notes < CANNED_TRANSCRIPT.len() {
         return Err(refusal(
             "demo::seed-moved",
             Some("the seeded task, two simulated lanes, and four canned turns"),
             Some(&format!(
-                "task={task}, lanes={lanes}, simulated={simulated}, turns={notes}"
+                "task={task}, lanes={lanes}, starts={starts}, simulated={simulated}, turns={notes}"
             )),
             "restore the seeded journal or remove this disposable root",
         )

@@ -1117,7 +1117,7 @@ fn judgment_guard(
     })
 }
 
-fn context_anchor(
+pub(super) fn context_anchor(
     snapshot: &journal::FactSnapshot,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
