@@ -17,9 +17,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    agent_message_source_id, directive_source_id, drop_on_lane, focus_after_render,
-    keyboard_submit, paste_images, primary_textarea_id, render_agent_message_card,
-    render_directive_card, render_image_indicators, render_quote_shards, update_body,
+    agent_message_source_id, drop_on_lane, focus_after_render, keyboard_submit,
+    operator_message_source_id, paste_images, primary_textarea_id, render_agent_message_card,
+    render_image_indicators, render_operator_message_card, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -217,18 +217,17 @@ fn render_compose(
     }
 }
 
-/// Every activity the lineage can render, messages first and pending
-/// directives after.
+/// Every stable authored record the lineage can render in source chronology.
 ///
 /// That order reaches the plane only as the order *unseen* keys are offered:
 /// the plane keeps its own creation order and `render_activity_cards` renders
 /// from that, so this chain is not the order an operator sees. A message
-/// arriving while a directive is pending therefore appends to the lattice tail
-/// rather than displacing the directive, which is decided behavior — see the
+/// arriving while operator direction is visible therefore appends to the lattice
+/// tail rather than displacing it, which is decided behavior — see the
 /// tail-by-decision case in `app/tests/mosaic_plane.rs` for why honoring this
 /// order instead would repack the plane on its ordinary path.
 fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
-    runtime
+    let mut cards = runtime
         .messages()
         .iter()
         .filter_map(|message| {
@@ -239,18 +238,16 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
                 message: message.clone(),
             })
         })
-        .chain(lineage.members.iter().flat_map(|member| {
-            let lane = member.lane;
-            runtime
-                .inbox()
-                .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == lane))
-                .map(|row| row.pending.as_slice())
-                .unwrap_or(&[])
-                .iter()
-                .cloned()
-                .map(move |directive| ActivityCard::Directive { lane, directive })
+        .chain(runtime.operator_messages().iter().filter_map(|message| {
+            lineage
+                .member(message.lane())
+                .map(|_| ActivityCard::Operator {
+                    message: message.clone(),
+                })
         }))
-        .collect()
+        .collect::<Vec<_>>();
+    cards.sort_by_key(ActivityCard::chronology_key);
+    cards
 }
 
 fn render_activity(
@@ -486,7 +483,7 @@ fn visible_agent_prose(
         {
             watchband::first_nonquoted_prose(&message.text).map(|prose| (message, prose))
         }
-        ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
+        ActivityCard::Agent { .. } | ActivityCard::Operator { .. } => None,
     }
 }
 

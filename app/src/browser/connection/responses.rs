@@ -254,7 +254,7 @@ fn apply_submission_response(
 ) -> Result<bool, String> {
     let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
         admit_response(session, bytes)?;
-    match &admitted.get().outcome {
+    let accepted = match &admitted.get().outcome {
         wire::Outcome::Reply(reply) => handles.submissions.queue.borrow_mut().accept(
             id,
             reply.body.directive,
@@ -266,10 +266,15 @@ fn apply_submission_response(
             let issue = outcome_issue("Message was not sent", &admitted.get().outcome)
                 .expect("the refused or faulted steering outcome has an issue");
             restore_lane_submissions(handles, lane, restored, &issue);
+            None
         }
-    }
+    };
     handles.submissions.publish();
-    runtime.apply_steer(&admitted, lane);
+    if let Some(submission) = accepted {
+        runtime.apply_steer_submission(&admitted, lane, submission.message, submission.attachments);
+    } else {
+        runtime.apply_steer(&admitted, lane);
+    }
     Ok(true)
 }
 

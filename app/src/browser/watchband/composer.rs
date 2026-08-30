@@ -71,8 +71,8 @@ pub(super) fn agent_message_source_id(message: &wire::AgentMessage) -> String {
     format!("message-{}", agent_message_quote_identity(message))
 }
 
-pub(super) fn directive_source_id(directive: &wire::intent::PendingDirective) -> String {
-    format!("message-directive-{}", directive.directive)
+pub(super) fn operator_message_source_id(message: &crate::runtime::OperatorMessage) -> String {
+    format!("message-operator-{}", message.directive())
 }
 
 pub(super) fn focus_after_render(id: String) {
@@ -136,6 +136,7 @@ pub(super) fn render_agent_message_card(
                 format!("Agent message from {producer}")
             }}
             data-card-kind={agent_card_kind(is_compaction)}
+            data-message-role="agent"
             data-mosaic-card-key={source_id}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
@@ -310,26 +311,25 @@ fn render_agent_message_footer(
     }
 }
 
-pub(super) fn render_directive_card(
-    lane: CanonicalUuid,
-    directive: &wire::intent::PendingDirective,
+pub(super) fn render_operator_message_card(
+    message: &crate::runtime::OperatorMessage,
     lane_key: &str,
     quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
     speak: &Callback<String>,
     order: u64,
     layout: &CardLayout,
 ) -> Html {
-    let quote_preview = directive.preview.clone();
-    let quote_text = directive.text.clone();
-    let quote_identity = format!("directive-{}", directive.directive);
-    let source_id = directive_source_id(directive);
+    let quote_preview = watchband::first_nonquoted_prose(message.text());
+    let quote_text = message.text().to_owned();
+    let quote_identity = format!("operator-{}", message.directive());
+    let source_id = operator_message_source_id(message);
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.to_owned();
     let quote_lane = lane_key.to_owned();
     let quote_dispatcher = quote_dispatcher.clone();
     let correspondent = view::chrome::Correspondent {
-        name: watchband::short(lane),
-        accent: watchband::accent(lane),
+        name: "Operator".to_owned(),
+        accent: watchband::accent(message.lane()),
         speak: speak.clone(),
         quote: Callback::from(move |()| {
             quote_dispatcher.dispatch(ComposerAction::AddQuote {
@@ -342,31 +342,19 @@ pub(super) fn render_directive_card(
             focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
         }),
     };
-    let authored = directive.authored.get().as_millisecond();
-    let audit = directive
-        .escalations
-        .iter()
-        .map(|transition| format!("{} {}", transition.stage, transition.at))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let chronology = if audit.is_empty() {
-        format!(
-            "stage {}; authored {}; expires {}",
-            directive.stage, directive.authored, directive.expires
-        )
-    } else {
-        format!(
-            "stage {}; authored {}; transitions [{}]; expires {}",
-            directive.stage, directive.authored, audit, directive.expires
-        )
-    };
-    let unlinked_attachments = directive
-        .attachments
+    let authored = message.authored().get().as_millisecond();
+    let chronology = format!(
+        "operator direction {}; authored {}",
+        message.key(),
+        message.authored()
+    );
+    let unlinked_attachments = message
+        .attachments()
         .iter()
         .filter(|attachment| {
             !attachment
-                .is_embedded_in(&directive.text)
-                .expect("directive media passed admission before browser rendering")
+                .is_embedded_in(message.text())
+                .expect("operator message media passed admission before browser rendering")
         })
         .collect::<Vec<_>>();
     html! {
@@ -374,12 +362,13 @@ pub(super) fn render_directive_card(
             key={source_id.clone()}
             id={source_id.clone()}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
-            data-directive={directive.directive.to_string()}
-            data-directive-stage={directive.stage.to_string()}
-            data-card-kind="directive"
+            aria-label="Operator message"
+            data-directive={message.directive().to_string()}
+            data-card-kind="operator-message"
+            data-message-role="operator"
             data-mosaic-card-key={source_id}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
-            data-agent-lane={lane.to_string()}
+            data-agent-lane={message.lane().to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
             data-state={layout.lifecycle.as_str()}
@@ -395,7 +384,7 @@ pub(super) fn render_directive_card(
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
         >
-            <div class="message-body markdown-body">{render_markdown(&directive.text)}</div>
+            <div class="message-body markdown-body">{render_markdown(message.text())}</div>
             if !unlinked_attachments.is_empty() {
                 <div class="message-attachments">
                     {for unlinked_attachments.into_iter().map(|attachment| html! {
@@ -409,11 +398,11 @@ pub(super) fn render_directive_card(
             }
             <footer class="message-meta">
                 <span class="message-key">
-                    {format!("{} · {}", directive.key, directive.stage)}
+                    {message.key().to_owned()}
                 </span>
                 <Age {authored} class="message-age" title={chronology} />
                 <span class="message-author">{correspondent.name.clone()}</span>
-                {view::chrome::render_card_actions(&directive.text, &correspondent)}
+                {view::chrome::render_card_actions(message.text(), &correspondent)}
             </footer>
         </article>
     }

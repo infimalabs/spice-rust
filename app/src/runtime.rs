@@ -1,8 +1,8 @@
 //! Capability-scoped state used by the real Wasm canvas runtime.
 //!
 //! Every mutation enters through an admitted acceptance, response, or stream
-//! frame. Stream facts are already credential-free; the canvas projects only
-//! the envelope metadata its panes render and retains no kind-specific body.
+//! frame. Stream facts contribute credential-free envelope metadata; accepted
+//! steering replies contribute the operator records rendered by conversation.
 
 use std::collections::BTreeMap;
 
@@ -25,7 +25,7 @@ mod publication;
 mod stream;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use publication::CanvasSurface;
-pub use stream::{FactRow, StreamApplication, StreamDirective, StreamTerminal};
+pub use stream::{FactRow, OperatorMessage, StreamApplication, StreamDirective, StreamTerminal};
 
 const EVENT_LIMIT: usize = 32;
 
@@ -445,6 +445,7 @@ pub struct CanvasRuntime {
     trust_pages: Vec<BrowserState<TrustView>>,
     trust_resume: Option<StreamCursor>,
     messages: Vec<AgentMessage>,
+    operator_messages: Vec<OperatorMessage>,
     /// Absent until the retained message page announces its exact capacity.
     message_limit: Option<usize>,
     thread_pages: Vec<BrowserState<FactRow>>,
@@ -475,6 +476,7 @@ impl CanvasRuntime {
             trust_pages: Vec::new(),
             trust_resume: None,
             messages: Vec::new(),
+            operator_messages: Vec::new(),
             message_limit: None,
             thread_pages: Vec::new(),
             facts: BrowserState::new(accepted),
@@ -641,6 +643,12 @@ impl CanvasRuntime {
             .collect()
     }
 
+    /// Durable operator-authored direction retained in command acceptance order.
+    #[must_use]
+    pub fn operator_messages(&self) -> &[OperatorMessage] {
+        &self.operator_messages
+    }
+
     #[must_use]
     pub fn trust_pages(&self) -> Vec<ReadPane<'_, TrustView>> {
         self.trust_pages
@@ -803,6 +811,30 @@ impl CanvasRuntime {
                 ),
             )
         });
+    }
+
+    /// Retain one accepted operator submission and its steering receipt atomically.
+    pub fn apply_steer_submission(
+        &mut self,
+        admitted: &Admitted<Response<DirectiveAnswer>>,
+        lane: CanonicalUuid,
+        text: String,
+        attachments: Vec<wire::Media>,
+    ) {
+        if admitted.scope() == self.accepted.scope()
+            && let Outcome::Reply(reply) = &admitted.get().outcome
+            && reply.body.disposition == wire::Disposition::Live
+        {
+            self.retain_operator_submission(
+                reply.body.authored,
+                reply.body.directive,
+                reply.body.key.clone(),
+                lane,
+                text,
+                attachments,
+            );
+        }
+        self.apply_steer(admitted, lane);
     }
 
     /// Record one response and hand back the chronology row it produced.

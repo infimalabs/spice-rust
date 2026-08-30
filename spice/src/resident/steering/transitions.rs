@@ -110,6 +110,7 @@ pub(in crate::resident) fn send(
     let answer = DirectiveAnswer {
         directive: command.id(),
         key: key.to_string(),
+        authored: at,
         disposition: Disposition::Live,
         delivery: Box::new(DeliveryStanding::Unknown),
     };
@@ -171,8 +172,7 @@ pub(in crate::resident) fn cancel(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = directive.body().origin.clone();
-    let cause = directive.body().created;
+    let (origin, cause) = (directive.body().origin.clone(), directive.body().created);
     let mut proposal =
         JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     proposal.guard(live_guard(cancel.directive, directive.position()));
@@ -196,6 +196,7 @@ pub(in crate::resident) fn cancel(
     let answer = DirectiveAnswer {
         directive: cancel.directive,
         key: directive.body().key.clone(),
+        authored: directive.body().published,
         disposition: Disposition::Canceled,
         delivery: Box::new(DeliveryStanding::Unknown),
     };
@@ -268,6 +269,7 @@ pub(in crate::resident) fn resend(
     let answer = DirectiveAnswer {
         directive: directive.body().directive,
         key: directive.body().key.clone(),
+        authored: published,
         disposition: Disposition::Live,
         delivery: Box::new(DeliveryStanding::Unknown),
     };
@@ -430,8 +432,7 @@ pub(in crate::resident) fn recover(
             "recover only a durable directive that lapsed or was deadlettered",
         );
     }
-    // The caller binds the stable directive identity and the resident binds
-    // the concrete failed disposition in the journal guard below.
+    // The caller binds identity; the journal guard below binds the failed disposition.
     let witness = Witness::Recoverable {
         steer: recover.directive,
     };
@@ -490,6 +491,7 @@ pub(in crate::resident) fn recover(
     let answer = DirectiveAnswer {
         directive: recover.directive,
         key: key.to_string(),
+        authored: directive.body().published,
         disposition: Disposition::Live,
         delivery: Box::new(DeliveryStanding::Unknown),
     };
@@ -682,6 +684,7 @@ fn record_disposition(
     let answer = DirectiveAnswer {
         directive: directive.body().directive,
         key: key.to_string(),
+        authored: directive.body().published,
         disposition,
         delivery: Box::new(DeliveryStanding::Unknown),
     };

@@ -43,8 +43,8 @@ const PLACEMENT_ATTRIBUTES = ["data-track", "data-span", "data-base", "data-row"
 /// before it even probes (`LIVENESS_PROBE_MILLIS`), and this window is a few
 /// seconds, so the stall stays well inside what the socket considers healthy.
 ///
-/// Watching a directive card rather than a composer heading is deliberate: a
-/// directive card is the only aged thing that is also a Mosaic card, which is
+/// Watching an operator message rather than a composer heading is deliberate:
+/// an operator message is the only aged thing that is also a Mosaic card, which is
 /// what lets one observation answer both halves of the clause — the label moved
 /// and the lattice did not.
 export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, fixture, lane) {
@@ -75,7 +75,7 @@ export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, 
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
   await chooseCanvasView(page, "Agents");
   const card = page
-    .locator('.mosaic-message-card[data-card-kind="directive"][data-layout-phase="committed"]')
+    .locator('.mosaic-message-card[data-card-kind="operator-message"][data-layout-phase="committed"]')
     .filter({ hasText: "Age ticker witness" })
     .first();
   await card.waitFor({ timeout: 15_000 });
@@ -153,7 +153,7 @@ async function settleIntoSilence(page) {
 async function observeOneBoundary(card) {
   return card.evaluate(async (element, config) => {
     const age = element.querySelector("[data-age-slot]");
-    if (!age) throw new Error("the directive card renders no age slot");
+    if (!age) throw new Error("the operator message renders no age slot");
     const authored = Number(age.dataset.ageAuthored);
     if (!Number.isFinite(authored)) throw new Error("the age slot carries no authored instant");
     const snapshot = () => ({

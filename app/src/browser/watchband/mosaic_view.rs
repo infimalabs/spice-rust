@@ -16,9 +16,8 @@ pub(super) enum ActivityCard {
         quote_lane: CanonicalUuid,
         message: wire::AgentMessage,
     },
-    Directive {
-        lane: CanonicalUuid,
-        directive: wire::intent::PendingDirective,
+    Operator {
+        message: crate::runtime::OperatorMessage,
     },
 }
 
@@ -26,7 +25,21 @@ impl ActivityCard {
     fn key(&self) -> String {
         match self {
             Self::Agent { message, .. } => agent_message_source_id(message),
-            Self::Directive { directive, .. } => directive_source_id(directive),
+            Self::Operator { message } => operator_message_source_id(message),
+        }
+    }
+
+    pub(super) fn chronology_key(&self) -> (i64, u8, String) {
+        match self {
+            Self::Agent { message, .. } => (
+                source_authored_millis(message)
+                    .unwrap_or_else(|| message.authored.get().as_millisecond()),
+                1,
+                self.key(),
+            ),
+            Self::Operator { message } => {
+                (message.authored().get().as_millisecond(), 0, self.key())
+            }
         }
     }
 
@@ -38,8 +51,12 @@ impl ActivityCard {
                 "agent\0{}\0{}\0{}\0{}",
                 member.worktree, message.author, message.locus.event, message.text
             ),
-            Self::Directive { directive, .. } => serde_json::to_string(directive)
-                .expect("an admitted pending directive serializes for measurement identity"),
+            Self::Operator { message } => format!(
+                "operator\0{}\0{}\0{}",
+                message.directive(),
+                message.key(),
+                message.text()
+            ),
         }
     }
 
@@ -50,7 +67,7 @@ impl ActivityCard {
             {
                 crate::mosaic::TRACK_COUNT
             }
-            Self::Agent { .. } | Self::Directive { .. } => geometry.base_span,
+            Self::Agent { .. } | Self::Operator { .. } => geometry.base_span,
         }
     }
 
@@ -521,7 +538,7 @@ fn use_narration(
                 ),
                 text: message.text.clone(),
             }),
-            ActivityCard::Directive { .. } => None,
+            ActivityCard::Operator { .. } => None,
         })
         .collect::<Vec<_>>();
     use_effect_with((speech, messages), move |(speech, messages)| {
@@ -995,10 +1012,9 @@ fn render_activity_cards(
                     quote_order,
                     &layout,
                 ),
-                ActivityCard::Directive { lane, directive } => render_directive_card(
-                    *lane,
-                    directive,
-                    &lane.to_string(),
+                ActivityCard::Operator { message } => render_operator_message_card(
+                    message,
+                    &message.lane().to_string(),
                     &properties.quote_dispatcher,
                     &speak,
                     quote_order,

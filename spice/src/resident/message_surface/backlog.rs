@@ -47,11 +47,10 @@ pub(in crate::resident) fn restore_agent_messages(
     residency: &wire::ResidencyHead,
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
-    steering: Option<&steer::Ledger>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     for row in &residency.lanes {
-        restore_lane(paths, row, publisher, reader, steering, diagnostic)?;
+        restore_lane(paths, row, publisher, reader, diagnostic)?;
     }
     Ok(())
 }
@@ -61,7 +60,6 @@ fn restore_lane(
     row: &wire::LaneResidency,
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
-    steering: Option<&steer::Ledger>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let Some(author) = row
@@ -88,9 +86,7 @@ fn restore_lane(
             return Ok(());
         }
     };
-    publish_scan(
-        scan, row.lane, author, publisher, reader, steering, diagnostic,
-    )
+    publish_scan(scan, row.lane, author, publisher, reader, diagnostic)
 }
 
 fn tape_available(tape: &Path, lane: CanonicalUuid, diagnostic: &mut dyn io::Write) -> bool {
@@ -137,7 +133,6 @@ fn publish_scan(
     author: CanonicalUuid,
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
-    steering: Option<&steer::Ledger>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let checkpoint = scan.checkpoint.clone();
@@ -161,7 +156,6 @@ fn publish_scan(
                     observations: &reader.state.observations,
                 },
                 &mut reader.state.previews,
-                steering,
             ) {
                 match outcome {
                     Outcome::Fault(fault) => {

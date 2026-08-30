@@ -72,6 +72,53 @@ fn task_fact(position: u64, cause: Option<u64>) -> serde_json::Value {
     value
 }
 
+fn operator_message_fact(position: u64, kind: &str, text: Option<&str>) -> serde_json::Value {
+    let mut fact = serde_json::json!({
+        "kind": kind,
+        "key": "1kQnrzNZ",
+        "lane": LANE,
+    });
+    if kind == "steer::sent" {
+        fact["directive"] = serde_json::json!(REQUEST);
+        fact["text"] = serde_json::json!(text.expect("sent fixture carries operator prose"));
+        fact["expires"] = serde_json::json!("2030-04-12T19:44:09.271Z");
+    }
+    serde_json::json!({
+        "v": 1,
+        "seq": position,
+        "at": "2030-04-12T18:44:09.271Z",
+        "actor": "operator",
+        "origin": "steer:1kQnrzNZ",
+        "fact": fact,
+    })
+}
+
+fn operator_submission_response(
+    session: &Session,
+) -> app::Admitted<Response<wire::intent::DirectiveAnswer>> {
+    let response = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(wire::SeqRange {
+                first: seq(41),
+                last: seq(42),
+            }),
+            body: wire::intent::DirectiveAnswer {
+                directive: uuid(REQUEST),
+                key: "1kQnrzNZ".to_owned(),
+                authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+                disposition: wire::Disposition::Live,
+                delivery: Box::new(wire::intent::DeliveryStanding::Unknown),
+            },
+        }),
+    );
+    session
+        .admit_frame(&response)
+        .expect("operator submission response is admitted")
+}
+
 fn journal_ingested_fact(position: u64, cause: Option<u64>) -> serde_json::Value {
     let mut value = serde_json::json!({
         "v": 1,
@@ -456,6 +503,81 @@ fn stream_application_invalidates_only_observable_runtime_changes() {
     assert!(
         !trust_runtime.apply_stream_frame(&stale_trust).changed(),
         "a stale trust page does not invalidate the rendered surface"
+    );
+}
+
+#[test]
+fn operator_direction_and_agent_response_retain_separate_source_identity() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let operator_text = "Keep the operator role from first render.";
+    let submission = operator_submission_response(&session);
+
+    runtime.apply_steer_submission(
+        &submission,
+        uuid(LANE),
+        operator_text.to_owned(),
+        Vec::new(),
+    );
+    assert_eq!(runtime.operator_messages().len(), 1);
+
+    runtime.apply_steer_submission(
+        &submission,
+        uuid(LANE),
+        operator_text.to_owned(),
+        Vec::new(),
+    );
+    let operator = runtime.operator_messages();
+    assert_eq!(
+        operator.len(),
+        1,
+        "a repeated command response cannot duplicate its operator record"
+    );
+    assert_eq!(operator[0].directive(), uuid(REQUEST));
+    assert_eq!(operator[0].text(), operator_text);
+
+    runtime.apply_stream(&admitted_stream(
+        &session,
+        &message_frame_at(
+            LANE,
+            LANE_CAPABILITY,
+            80,
+            0,
+            "2030-04-12T18:44:10.271Z",
+            None,
+            "Agent acknowledgement remains its own record.",
+        ),
+    ));
+    assert_eq!(runtime.operator_messages()[0].text(), operator_text);
+    assert_eq!(runtime.messages().len(), 1);
+    assert_eq!(
+        runtime.messages()[0].text,
+        "Agent acknowledgement remains its own record."
+    );
+
+    runtime.apply_stream(&admitted_stream(
+        &session,
+        &fact_frame(operator_message_fact(42, "steer::canceled", None)),
+    ));
+    assert_eq!(
+        runtime.operator_messages()[0].directive(),
+        uuid(REQUEST),
+        "later steering reconciliation does not replace the operator record"
+    );
+    assert_eq!(runtime.messages().len(), 1);
+
+    for position in 43..=(43 + app::FACT_PAGE_LIMIT as u64) {
+        runtime.apply_stream(&admitted_stream(
+            &session,
+            &fact_frame(task_fact(position, None)),
+        ));
+    }
+    assert_eq!(runtime.fact_pages().len(), app::FACT_PAGE_LIMIT);
+    assert_eq!(
+        runtime.operator_messages()[0].text(),
+        operator_text,
+        "unrelated chronology retention never turns operator history temporary"
     );
 }
 

@@ -540,6 +540,7 @@ fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_dispos
             body: wire::intent::DirectiveAnswer {
                 directive: uuid(LANE),
                 key: "1kKQtLsP".to_owned(),
+                authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
                 disposition: wire::Disposition::Acked,
                 delivery: Box::new(wire::intent::DeliveryStanding::Unknown),
             },
@@ -687,6 +688,7 @@ fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
             body: wire::intent::DirectiveAnswer {
                 directive: uuid(LANE),
                 key: "1kQTest".to_owned(),
+                authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
                 disposition: wire::Disposition::Live,
                 delivery: Box::new(wire::intent::DeliveryStanding::Unknown),
             },

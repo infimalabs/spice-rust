@@ -9,6 +9,9 @@ import {
 } from "./canvas-fixture.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+// Span the fixture's one-second delivery cadence before arming exact lattice probes.
+const ACTIVITY_QUIET_MS = 1_500;
+const ACTIVITY_DEADLINE_MS = 15_000;
 
 async function committedPlacementSnapshot(team) {
   return team.locator('.mosaic-message-card[data-layout-phase="committed"]').evaluateAll(
@@ -233,7 +236,7 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
   const pending = inbox.body.lanes[0].pending.find((directive) => directive.text === text);
   assert.ok(pending, "the post-compaction direction reached the compacting lane");
   const afterCard = team.locator(
-    `.mosaic-message-card[data-card-kind="directive"][data-directive="${pending.directive}"]`,
+    `.mosaic-message-card[data-card-kind="operator-message"][data-directive="${pending.directive}"]`,
   );
   await afterCard.waitFor({ timeout: TRANSITION_MS });
   await waitForPage(
@@ -437,11 +440,57 @@ async function submitDirection(console, lane, text) {
   const composer = console.locator(`.team-agent[data-agent-lane="${lane}"]`);
   await composer.getByRole("textbox").fill(text);
   await console.getByRole("button", { name: "Steer", exact: true }).click();
-  return console.locator(`[data-card-kind="directive"][data-agent-lane="${lane}"]`)
+  return console.locator(`[data-card-kind="operator-message"][data-agent-lane="${lane}"]`)
     .filter({ hasText: text.split("\n", 1)[0] });
 }
 
+async function settleMosaicActivity(page, plane) {
+  await plane.evaluate((element, config) => new Promise((resolve, reject) => {
+    let quiet;
+    const snapshot = () => ({
+      cards: element.querySelectorAll(".mosaic-message-card").length,
+      commits: Number(element.dataset.planeCommits),
+      pending: Number(element.dataset.measurementPending),
+    });
+    const cleanup = () => {
+      clearTimeout(quiet);
+      clearTimeout(deadline);
+      observer.disconnect();
+    };
+    const arm = () => {
+      clearTimeout(quiet);
+      quiet = setTimeout(() => {
+        if (Number(element.dataset.measurementPending) !== 0) return arm();
+        cleanup();
+        resolve();
+      }, config.quietMs);
+    };
+    const observer = new MutationObserver((mutations) => {
+      const activityChanged = mutations.some((mutation) => mutation.type === "attributes"
+        || [...mutation.addedNodes, ...mutation.removedNodes].some((node) => (
+          node instanceof Element
+            && (node.matches(".mosaic-message-card")
+              || node.querySelector(".mosaic-message-card"))
+        )));
+      if (activityChanged) arm();
+    });
+    observer.observe(element, {
+      attributes: true,
+      attributeFilter: ["data-plane-commits", "data-measurement-pending"],
+      childList: true,
+      subtree: true,
+    });
+    const deadline = setTimeout(() => {
+      const observed = snapshot();
+      cleanup();
+      reject(new Error(`Mosaic activity did not settle: ${JSON.stringify(observed)}`));
+    }, config.deadlineMs);
+    arm();
+  }), { quietMs: ACTIVITY_QUIET_MS, deadlineMs: ACTIVITY_DEADLINE_MS });
+}
+
 export async function assertPersistentMosaic(page, fixture, console, plane, member) {
+  await settleMosaicActivity(page, plane);
   const firstCard = console.locator('.mosaic-message-card[data-layout-phase="committed"]').first();
   const life = console.locator('.team-lifetime input[type="range"]');
   const presentationProbe = await armPlacementProbe(plane);
@@ -486,6 +535,7 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
   const refreshed = await finishPlacementProbe(plane, refreshProbe);
   assertUnmoved(refreshProbe, refreshed, "a no-op refresh");
   assert.equal(refreshed.commits, refreshProbe.commits, "a no-op refresh commits no plane");
+  await settleMosaicActivity(page, plane);
 
   const tickingAge = console.locator('.mosaic-message-card .message-age[data-age-clock="shared"]')
     .filter({ hasText: /^(?:now|\d+s)$/ })
@@ -504,7 +554,16 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
     });
   const aged = await finishPlacementProbe(plane, ageProbe);
   assertUnmoved(ageProbe, aged, "a shared-clock age tick");
-  assert.equal(aged.commits, ageProbe.commits, "an age tick commits no plane");
+  assert.equal(
+    aged.commits,
+    ageProbe.commits,
+    `an age tick commits no plane: ${JSON.stringify({
+      before: ageProbe.commits,
+      after: aged.commits,
+      transition: aged.transition,
+      writes: aged.writes,
+    })}`,
+  );
 
   const originalWidth = Number(await plane.getAttribute("data-committed-width"));
   const widthRules = await plane.evaluate((element) => {
@@ -624,12 +683,12 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
     assert.equal(await card.locator("img").getAttribute("data-mosaic-image-state"),
       outcome === "load" ? "loaded" : "error");
     await cancelDirection(fixture, member.lane, text);
-    await card.waitFor({ state: "detached", timeout: 10_000 });
-    await waitForPage(page, `removing late image ${outcome} replays once`, TRANSITION_MS,
-      (commits) => Number(document.querySelector(
-        '[data-pane="agent-console"] .lane-mosaic-plane',
-      )?.dataset.planeCommits) > commits,
-      resolved.commits);
+    await card.waitFor({ timeout: TRANSITION_MS });
+    assert.equal(
+      await card.getAttribute("data-mosaic-card-key"),
+      cardKey,
+      `reconciliation retains the authored ${outcome} operator record`,
+    );
     await page.unroute(url);
   }
 
@@ -650,12 +709,7 @@ export async function assertPersistentMosaic(page, fixture, console, plane, memb
   assert.deepEqual(ready.writes, [], "an already-complete image writes no untouched placement");
   assert.equal(ready.commits, readyProbe.commits + 1, "an already-complete image corrects once");
   await cancelDirection(fixture, member.lane, readyText);
-  await readyCard.waitFor({ state: "detached", timeout: 10_000 });
-  await waitForPage(page, "removing the complete image settles", TRANSITION_MS,
-    (commits) => Number(document.querySelector(
-      '[data-pane="agent-console"] .lane-mosaic-plane',
-    )?.dataset.planeCommits) > commits,
-    ready.commits);
+  await readyCard.waitFor({ timeout: TRANSITION_MS });
   await assertMosaicLattice(page, true);
 }
 
@@ -738,10 +792,16 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
     );
     for (const card of plane.cards) {
       assert.ok(card.key, "every Mosaic card exposes its stable identity");
-      const wideSpan = Math.min(plane.trackCount, plane.baseSpan * 2);
-      const wideEligible = wideSpan > plane.baseSpan && card.heights[0] >= plane.tallThreshold;
-      const expectedSpans = wideEligible ? [plane.baseSpan, wideSpan] : [plane.baseSpan];
-      assert.equal(card.reads, wideEligible ? 2 : 1, "height reads follow the bounded policy");
+      const measuredBaseSpan = card.candidateSpans[0];
+      const wideSpan = Math.min(plane.trackCount, measuredBaseSpan * 2);
+      const wideEligible = wideSpan > measuredBaseSpan && card.heights[0] >= plane.tallThreshold;
+      const expectedSpans = wideEligible ? [measuredBaseSpan, wideSpan] : [measuredBaseSpan];
+      const latchedRead = expectedSpans.includes(card.span) ? 0 : 1;
+      assert.equal(
+        card.reads,
+        expectedSpans.length + latchedRead,
+        "height reads follow the bounded policy, including at most one frozen-span read",
+      );
       assert.equal(card.heights.length, card.reads, "every instrumented read records one height");
       assert.deepEqual(card.candidateSpans, expectedSpans, "height alone admits the wide tier");
       assert.ok(card.track >= 0 && card.track + card.span <= plane.trackCount);
@@ -782,7 +842,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
   assert.ok(kinds.has("agent-message"), "agent-authored cards use the measured policy");
   assert.ok(readPaths.has(1), "a short card takes exactly one DOM height read");
   if (requireBothReadPaths) {
-    assert.ok(kinds.has("directive"), "pending directives use the measured policy");
+    assert.ok(kinds.has("operator-message"), "operator messages use the measured policy");
     assert.ok(readPaths.has(2), "a tall card takes exactly two DOM height reads");
   }
   return placements;

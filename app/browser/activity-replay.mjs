@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 
 import { TOOL_ACTIVITY_TEXT, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
@@ -12,10 +13,13 @@ function decodeServerFrame(message) {
 /// frame that the assertion can redeliver to the same browser connection.
 export async function installActivityReplay(context) {
   let captured;
+  let activeSocket;
   let replayed = false;
   let withheldBootstrap = false;
   const observedProse = [];
+  const proseFrames = new Map();
   await context.routeWebSocket(/.*/, (socket) => {
+    activeSocket = socket;
     const server = socket.connectToServer();
     server.onMessage((message) => {
       const frame = decodeServerFrame(message);
@@ -34,6 +38,7 @@ export async function installActivityReplay(context) {
           author: frame.message?.author,
           text: frame.message?.text,
         });
+        proseFrames.set(frame.message?.lane, frame);
       }
       if (captured) return;
       if (
@@ -47,6 +52,27 @@ export async function installActivityReplay(context) {
   });
 
   return {
+    async injectAgentProse(page, lane, text) {
+      const source = proseFrames.get(lane);
+      assert.ok(source, `the route captured an agent prose frame for ${lane}`);
+      assert.ok(activeSocket, "the route retains the current browser WebSocket");
+      const frame = JSON.parse(JSON.stringify(source));
+      frame.message.text = text;
+      frame.message.authored = new Date().toISOString();
+      frame.message.authored_synthetic = false;
+      delete frame.message.observed;
+      frame.message.locus.event += 10_000;
+      activeSocket.send(Buffer.from(JSON.stringify(frame)));
+      await waitForPageFunction(
+        page,
+        "deterministic agent prose reaches the browser",
+        TRANSITION_MS,
+        ({ expectedLane, expectedText }) => [...document.querySelectorAll(
+          `[data-card-kind="agent-message"][data-agent-lane="${expectedLane}"]`,
+        )].some((card) => card.textContent?.includes(expectedText)),
+        { expectedLane: lane, expectedText: text },
+      );
+    },
     async assertBootstrapLiveMessages(console) {
       assert.equal(withheldBootstrap, true, "the route withheld the initial message snapshot");
       await console.getByRole("tab", { name: /^Compose/ }).click();

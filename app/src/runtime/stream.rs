@@ -2,6 +2,51 @@
 
 use super::*;
 
+const OPERATOR_MESSAGE_LIMIT: usize = 256;
+
+/// One operator-authored direction projected from durable steering authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OperatorMessage {
+    pub(crate) authored: wire::Instant,
+    pub(crate) directive: CanonicalUuid,
+    pub(crate) key: String,
+    pub(crate) lane: CanonicalUuid,
+    pub(crate) text: String,
+    pub(crate) attachments: Vec<wire::Media>,
+}
+
+impl OperatorMessage {
+    #[must_use]
+    pub const fn authored(&self) -> &wire::Instant {
+        &self.authored
+    }
+
+    #[must_use]
+    pub const fn directive(&self) -> CanonicalUuid {
+        self.directive
+    }
+
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    #[must_use]
+    pub const fn lane(&self) -> CanonicalUuid {
+        self.lane
+    }
+
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    #[must_use]
+    pub fn attachments(&self) -> &[wire::Media] {
+        &self.attachments
+    }
+}
+
 /// One fact envelope projected to fields that are safe and useful to render.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FactRow {
@@ -424,6 +469,51 @@ impl CanvasRuntime {
                 .position(|existing| existing.lane == message.lane)
         {
             self.messages.remove(oldest);
+        }
+        true
+    }
+
+    pub(crate) fn retain_operator_submission(
+        &mut self,
+        authored: wire::Instant,
+        directive: CanonicalUuid,
+        key: String,
+        lane: CanonicalUuid,
+        text: String,
+        attachments: Vec<wire::Media>,
+    ) -> bool {
+        let message = OperatorMessage {
+            authored,
+            directive,
+            key,
+            lane,
+            text,
+            attachments,
+        };
+        if self
+            .operator_messages
+            .iter()
+            .any(|existing| existing.directive == message.directive)
+        {
+            return false;
+        }
+        let lane = message.lane;
+        self.operator_messages.push(message);
+        if self
+            .operator_messages
+            .iter()
+            .filter(|message| message.lane == lane)
+            .count()
+            > OPERATOR_MESSAGE_LIMIT
+            && let Some(oldest) = self
+                .operator_messages
+                .iter()
+                .enumerate()
+                .filter(|(_, message)| message.lane == lane)
+                .min_by_key(|(_, message)| message.authored.get().as_millisecond())
+                .map(|(index, _)| index)
+        {
+            self.operator_messages.remove(oldest);
         }
         true
     }

@@ -63,7 +63,7 @@ async function appendPrimaryDestinationProbe(team, fixture, lane, ordinal) {
   const pending = inbox.body.lanes[0].pending.find((directive) => directive.text === text);
   assert.ok(pending, `the primary destination probe reached ${lane}`);
   const card = team.locator(
-    `.mosaic-message-card[data-card-kind="directive"][data-agent-lane="${lane}"]`
+    `.mosaic-message-card[data-card-kind="operator-message"][data-agent-lane="${lane}"]`
       + `[data-directive="${pending.directive}"]`,
   );
   await card.waitFor({ timeout: TRANSITION_MS });
@@ -656,7 +656,7 @@ export async function assertComposerShards({
   for (const lane of seatedLanes) await primaryDestination(team, lane);
   for (const probe of destinationProbes) {
     await reply(fixture, ["steer", "cancel", probe.directive]);
-    await probe.card.waitFor({ state: "detached", timeout: TRANSITION_MS });
+    await probe.card.waitFor({ timeout: TRANSITION_MS });
   }
 
   await nestedCard.click();

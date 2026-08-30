@@ -1,6 +1,5 @@
 //! Durable taste recognition and fallible Canvas views over admitted lane capture.
 
-use std::collections::BTreeMap;
 use std::io;
 
 use bus::Bus;
@@ -211,8 +210,7 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
             )?;
         }
     }
-    let steering = steering_ledger(bus, record);
-    match publish_agent_messages(surfaces.publisher, record, views.state, steering.as_ref()) {
+    match publish_agent_messages(surfaces.publisher, record, views.state) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(
@@ -230,7 +228,6 @@ pub(super) fn publish_agent_messages(
     publisher: &impl AgentMessagePublisher,
     record: &lane::capture::CaptureRecord,
     state: &mut MessageState,
-    steering: Option<&steer::Ledger>,
 ) -> CommandResult<()> {
     let authored = record
         .decoded
@@ -250,7 +247,6 @@ pub(super) fn publish_agent_messages(
                 observations: &state.observations,
             },
             &mut state.previews,
-            steering,
         )?;
     }
     Ok(())
@@ -270,7 +266,6 @@ fn publish_agent_event(
     publisher: &impl AgentMessagePublisher,
     event: AgentEvent<'_>,
     previews: &mut CallPreviews,
-    steering: Option<&steer::Ledger>,
 ) -> CommandResult<()> {
     let AgentEvent {
         lane,
@@ -284,7 +279,7 @@ fn publish_agent_event(
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => (
             AgentActivityKind::Prose,
             prose.locus,
-            present_steering_acknowledgement(&prose.text, steering),
+            present_steering_acknowledgement(&prose.text),
             prose.media.clone(),
         ),
         listen::Event::Tool(tool) => (
@@ -401,84 +396,20 @@ fn synthetic_agent_message_authored(
     })
 }
 
-fn steering_ledger(bus: &Bus, record: &lane::capture::CaptureRecord) -> Option<steer::Ledger> {
-    record
-        .decoded
-        .events()
-        .iter()
-        .any(|event| {
-            matches!(
-                event,
-                listen::Event::Prose(prose)
-                    if prose.role == listen::ProseRole::Assistant
-                        && steering_acknowledgement(&prose.text).is_some()
-            )
-        })
-        .then(|| bus.fact_snapshot().ok())
-        .flatten()
-        .and_then(|snapshot| steer::Ledger::from_snapshot(&snapshot).ok())
-}
-
-fn present_steering_acknowledgement(text: &str, steering: Option<&steer::Ledger>) -> String {
-    let Some(steering) = steering else {
+fn present_steering_acknowledgement(text: &str) -> String {
+    let Some(acknowledgement) = steering_acknowledgement(text) else {
         return text.to_owned();
     };
-    let directives = directive_text_by_key(steering);
-    present_steering_acknowledgement_with_directives(text, &directives)
-        .unwrap_or_else(|| text.to_owned())
-}
-
-fn present_steering_acknowledgement_with_directives(
-    text: &str,
-    directives: &BTreeMap<String, String>,
-) -> Option<String> {
-    let acknowledgement = steering_acknowledgement(text)?;
-    if !acknowledgement
-        .keys
-        .iter()
-        .all(|key| directives.contains_key(*key))
-    {
-        return None;
-    }
-
-    let mut rendered = String::new();
-    for key in &acknowledgement.keys {
-        if !rendered.is_empty() {
-            rendered.push_str("\n\n");
-        }
-        append_quote(&mut rendered, &directives[*key]);
-    }
     let prose = acknowledgement.prose.trim_start();
-    if !prose.is_empty() {
-        if !rendered.is_empty() {
-            rendered.push_str("\n\n");
-        }
-        rendered.push_str(prose);
-    }
-    Some(rendered)
-}
-
-fn directive_text_by_key(steering: &steer::Ledger) -> BTreeMap<String, String> {
-    steering
-        .directives()
-        .into_iter()
-        .map(|directive| (directive.key().to_string(), directive.text().to_owned()))
-        .collect()
-}
-
-fn append_quote(rendered: &mut String, directive: &str) {
-    for (index, line) in directive.lines().enumerate() {
-        if index > 0 {
-            rendered.push('\n');
-        }
-        rendered.push_str("> ");
-        rendered.push_str(line);
+    if prose.is_empty() {
+        text.to_owned()
+    } else {
+        prose.to_owned()
     }
 }
 
 #[derive(Debug, Clone)]
 struct SteeringAcknowledgement<'a> {
-    keys: Vec<&'a str>,
     prose: &'a str,
 }
 
@@ -497,7 +428,6 @@ fn steering_acknowledgement(text: &str) -> Option<SteeringAcknowledgement<'_>> {
     }
     let prefix_len = leading + marker_len + 1 + colon + 1;
     Some(SteeringAcknowledgement {
-        keys,
         prose: text.get(prefix_len..)?,
     })
 }
@@ -507,54 +437,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn steering_acknowledgement_quotes_directive_and_strips_transport_clause() {
-        let directives = BTreeMap::from([(
-            "1kQnrzNZ".to_owned(),
-            "Keep one tested, visible current path.".to_owned(),
-        )]);
-
+    fn steering_acknowledgement_keeps_only_agent_authored_prose() {
         assert_eq!(
-            present_steering_acknowledgement_with_directives(
-                "ACK 1kQnrzNZ: Landed in the stream presentation path.",
-                &directives,
-            )
-            .as_deref(),
-            Some(
-                "> Keep one tested, visible current path.\n\nLanded in the stream presentation path."
+            present_steering_acknowledgement(
+                "ACK 1kQnrzNZ: Landed in the stream presentation path."
             ),
+            "Landed in the stream presentation path.",
         );
     }
 
     #[test]
-    fn steering_acknowledgement_expands_keys_in_presentation_order() {
-        let directives = BTreeMap::from([
-            ("1kQnrzNZ".to_owned(), "First directive.".to_owned()),
-            (
-                "1kQnqLHc".to_owned(),
-                "Second directive.\nPreserve remaining prose.".to_owned(),
-            ),
-        ]);
-
+    fn steering_acknowledgement_never_repeats_operator_direction() {
         assert_eq!(
-            present_steering_acknowledgement_with_directives(
-                "ACK 1kQnrzNZ 1kQnqLHc: Done.",
-                &directives,
-            )
-            .as_deref(),
-            Some("> First directive.\n\n> Second directive.\n> Preserve remaining prose.\n\nDone."),
+            present_steering_acknowledgement("ACK 1kQnrzNZ 1kQnqLHc: Done."),
+            "Done.",
         );
     }
 
     #[test]
-    fn steering_acknowledgement_without_directive_context_is_not_rewritten() {
-        let directives = BTreeMap::new();
-
+    fn empty_steering_acknowledgement_remains_visible() {
         assert_eq!(
-            present_steering_acknowledgement_with_directives(
-                "ACK 1kQnrzNZ: The original key stays visible when context is unavailable.",
-                &directives,
-            ),
-            None,
+            present_steering_acknowledgement("ACK 1kQnrzNZ:"),
+            "ACK 1kQnrzNZ:",
         );
     }
 }
