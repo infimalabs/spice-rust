@@ -10,7 +10,7 @@ const CODEX_COMPACTION_WITHOUT_TIME: &[u8] = br#"{"type":"compacted"}
 "#;
 const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
 "#;
-const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK 1kQwPZtK 1kQwPZtL: One response."}}
+const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK 1kQwPZtK nope 1kQwPZtL 1kQwPZtM: One response."}}
 "#;
 
 #[test]
@@ -173,7 +173,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
 }
 
 #[test]
-fn distributed_acknowledgements_replay_once_with_stable_directive_context() {
+fn mixed_acknowledgements_publish_live_and_replay_with_stable_context() {
     let (root, paths) = resident_fixture("message-backlog-acknowledgements");
     let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
         .expect("backlog bus starts");
@@ -198,61 +198,131 @@ fn distributed_acknowledgements_replay_once_with_stable_directive_context() {
         "1kQwPZtL",
         "Second direction.",
     );
+    let record = mixed_acknowledgement_record(lane, author);
+    let expected = concat!(
+        "> ACK 1kQwPZtK: First direction.\n\n",
+        "> ACK 1kQwPZtL: Second direction.\n\n",
+        "ACK nope 1kQwPZtM: One response."
+    );
+
+    let live = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let publisher = live.message_publisher();
+    let steering =
+        steer::Ledger::from_snapshot(&bus.fact_snapshot().expect("live steering context reads"))
+            .expect("live steering context reduces");
+    message_surface::publish_agent_messages(
+        &publisher,
+        &record,
+        &mut MessageState::default(),
+        Some(&steering),
+    )
+    .expect("mixed acknowledgements publish live");
+    assert_mixed_acknowledgement_message(&live, epoch, test_uuid(30), expected);
+    drop(live);
+
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
         .expect("the backlog tape opens");
     tape.tee(CODEX_DISTRIBUTED_ACK)
         .expect("distributed acknowledgements are captured");
-    let expected = concat!(
-        "> ACK 1kQwPZtK: First direction.\n\n",
-        "> ACK 1kQwPZtL: Second direction.\n\n",
-        "One response."
-    );
 
     for generation in 0..2 {
-        let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
-        let publisher = source.message_publisher();
-        let snapshot = bus.fact_snapshot().expect("steering context reads");
-        let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot)
-            .expect("steering context reduces");
-        let residency = current_residency(&bus, epoch).expect("residency reads");
-        let mut diagnostic = Vec::new();
-        message_surface::restore_agent_messages(
+        restore_mixed_acknowledgement_message(
+            &bus,
             &paths,
-            residency.body(),
-            &publisher,
-            &mut reader,
-            &mut diagnostic,
-        )
-        .expect("distributed acknowledgements restore");
-        assert!(diagnostic.is_empty());
-
-        let accepted = wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor: Actor::Operator,
             epoch,
-        };
-        let request = wire::StreamRequest::Subscribe {
-            v: wire::WireVersion::CURRENT,
-            id: test_uuid(30 + generation),
-            epoch,
-            subjects: vec![wire::ViewSubject::Messages],
-            after: None,
-        };
-        let (_, frames) = source
-            .begin(&accepted, &request)
-            .expect("Canvas subscription begins");
-        let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
-            panic!("expected message snapshot")
-        };
-        assert_eq!(messages.len(), 1, "one transcript event remains one card");
-        assert_eq!(messages[0].text, expected);
-        assert_eq!(messages[0].text.matches("> ACK ").count(), 2);
-        assert_eq!(messages[0].text.matches("One response.").count(), 1);
-        drop(source);
+            test_uuid(31 + generation),
+            expected,
+        );
     }
 
     bus.shutdown().expect("backlog bus stops");
     fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+fn mixed_acknowledgement_record(
+    lane: CanonicalUuid,
+    author: CanonicalUuid,
+) -> lane::capture::CaptureRecord {
+    let locus = listen::Locus::new(1, 0, 1);
+    lane::capture::CaptureRecord {
+        lane,
+        occupant: author,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events {
+            context: listen::RecordContext {
+                timestamp: Some("2030-04-12T18:46:09.271Z".to_owned()),
+                ..listen::RecordContext::default()
+            },
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: "ACK 1kQwPZtK nope 1kQwPZtL 1kQwPZtM: One response.".to_owned(),
+                phase: None,
+                media: Vec::new(),
+                locus,
+            })],
+        },
+    }
+}
+
+fn restore_mixed_acknowledgement_message(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    request: CanonicalUuid,
+    expected: &str,
+) {
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let publisher = source.message_publisher();
+    let snapshot = bus.fact_snapshot().expect("steering context reads");
+    let mut reader =
+        message_surface::BacklogReader::from_snapshot(&snapshot).expect("steering context reduces");
+    let residency = current_residency(bus, epoch).expect("residency reads");
+    let mut diagnostic = Vec::new();
+    message_surface::restore_agent_messages(
+        paths,
+        residency.body(),
+        &publisher,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("mixed acknowledgements restore");
+    assert!(diagnostic.is_empty());
+    assert_mixed_acknowledgement_message(&source, epoch, request, expected);
+}
+
+fn assert_mixed_acknowledgement_message(
+    source: &canvas::stream::Source,
+    epoch: CanonicalUuid,
+    request: CanonicalUuid,
+    expected: &str,
+) {
+    let accepted = wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    };
+    let request = wire::StreamRequest::Subscribe {
+        v: wire::WireVersion::CURRENT,
+        id: request,
+        epoch,
+        subjects: vec![wire::ViewSubject::Messages],
+        after: None,
+    };
+    let (_, frames) = source
+        .begin(&accepted, &request)
+        .expect("Canvas subscription begins");
+    let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected message snapshot")
+    };
+    assert_eq!(messages.len(), 1, "one event remains one card");
+    assert_eq!(messages[0].text, expected);
+    assert_eq!(messages[0].text.matches("> ACK ").count(), 2);
+    assert_eq!(messages[0].text.matches("nope").count(), 1);
+    assert_eq!(messages[0].text.matches("1kQwPZtM").count(), 1);
+    assert_eq!(messages[0].text.matches("One response.").count(), 1);
 }
 
 fn seed_steering(
