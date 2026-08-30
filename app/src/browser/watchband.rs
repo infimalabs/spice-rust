@@ -425,14 +425,17 @@ fn primary_stream_link(
     lane: CanonicalUuid,
     standing: &Standing,
 ) -> ComposerStreamLink {
-    let source = cards.iter().rev().find_map(|card| match card {
+    let own_source = cards.iter().rev().find_map(|card| match card {
         ActivityCard::Agent {
             member, message, ..
-        } if member.lane == lane => Some((
-            agent_message_source_id(message),
-            source_authored_millis(message),
-        )),
+        } if member.lane == lane => Some(message),
         ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
+    });
+    let source = own_source.or_else(|| {
+        cards.iter().rev().find_map(|card| match card {
+            ActivityCard::Agent { message, .. } => Some(message),
+            ActivityCard::Directive { .. } => None,
+        })
     });
     source.map_or_else(
         || ComposerStreamLink {
@@ -440,16 +443,20 @@ fn primary_stream_link(
             label: "Jump to lineage activity".to_owned(),
             authored: None,
         },
-        |(target, authored)| ComposerStreamLink {
-            target,
-            label: format!("Jump to latest {} activity", standing.label),
-            authored,
+        |message| ComposerStreamLink {
+            target: agent_message_source_id(message),
+            label: if own_source.is_some() {
+                format!("Jump to latest {} activity", standing.label)
+            } else {
+                "Jump to latest lineage message".to_owned()
+            },
+            authored: Some(source_authored_millis(message)),
         },
     )
 }
 
-fn source_authored_millis(message: &wire::AgentMessage) -> Option<i64> {
-    (!message.authored_synthetic).then(|| message.authored.get().as_millisecond())
+fn source_authored_millis(message: &wire::AgentMessage) -> i64 {
+    message.authored.get().as_millisecond()
 }
 
 fn latest_agent_prose(cards: &[ActivityCard], lane: CanonicalUuid) -> String {

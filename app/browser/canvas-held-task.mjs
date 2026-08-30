@@ -15,6 +15,14 @@ import { TOOL_ACTIVITY_TEXT, toolCallId } from "./canvas-activity-records.mjs";
 // the held handle off the card, which is the same third placeholder line the
 // reference shows a card wearing.
 export async function assertHeldTaskCount(team, fixture, lane, replyAsLane) {
+  const composerAge = team.locator(
+    `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+  );
+  const composerProvenance = () => composerAge.evaluate((link) => ({
+    href: link.getAttribute("href"),
+    authored: link.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+  }));
+  const beforeClaim = await composerProvenance();
   const badge = team.getByRole("tab", { name: /^Filters/ }).locator(".team-mode-badge");
   assert.equal(await badge.count(), 0, "Filters wears no badge while no lane holds a task");
   // Three independent things gate a held task and every one of them refuses as
@@ -37,6 +45,7 @@ export async function assertHeldTaskCount(team, fixture, lane, replyAsLane) {
   const lifetime = team.locator('.team-lifetime input[type="range"]');
   await lifetime.fill("1");
   await team.getByRole("button", { name: "Drive", exact: true }).waitFor();
+  assert.deepEqual(await composerProvenance(), beforeClaim, "Drive cannot replace provenance");
   await replyAsLane(fixture, lane, [
     "task",
     "add",
@@ -60,10 +69,14 @@ export async function assertHeldTaskCount(team, fixture, lane, replyAsLane) {
   const [handle, phase] = placeholder.split("\n").at(-1).split(", ");
   assert.equal(handle, won.body.task, `the held card names the claimed task: ${placeholder}`);
   assert.ok(phase, `the held card names the phase it holds: ${placeholder}`);
+  assert.deepEqual(await composerProvenance(), beforeClaim, "claim creation preserves provenance");
   await replyAsLane(fixture, lane, ["task", "free", handle]);
   await badge.waitFor({ state: "detached" });
+  // Lapse and release both remove the active claim from the browser standing.
+  assert.deepEqual(await composerProvenance(), beforeClaim, "claim release preserves provenance");
   await lifetime.fill("0");
   await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  assert.deepEqual(await composerProvenance(), beforeClaim, "Steer cannot replace provenance");
 
   // The status strip follows one chronology across unlike transcript shapes.
   // The first one-shot fixture record is a real Claude tool_use block decoded

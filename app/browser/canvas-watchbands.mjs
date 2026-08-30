@@ -266,6 +266,13 @@ export async function assertPerTeamWatchbands(
     () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
   await triggerAgentProse(secondary.worktree, secondaryNarrationCards);
   await triggerAgentProse(secondary.worktree, secondaryNarrationCards);
+  const messageBackedDestination = await primaryDestination(secondarySurface, secondary.lane);
+  assert.equal(messageBackedDestination.rendered.length, 2);
+  assert.equal(
+    messageBackedDestination.href,
+    `#${messageBackedDestination.rendered.at(-1)}`,
+    "the former dash retargets to that agent's latest message card",
+  );
   assert.equal(
     await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
     1,

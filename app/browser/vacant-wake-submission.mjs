@@ -32,6 +32,10 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     `.mosaic-message-card[data-card-kind="agent-message"]`
       + `[data-agent-lane="${targetLane}"]`,
   );
+  const chronologyBeforeDrain = await lane.locator(".composer-shard-age").evaluate((age) => ({
+    href: age.getAttribute("href"),
+    authored: age.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+  }));
   const before = await reply(fixture, ["lane"]);
   const departed = before.body.lanes.find((candidate) => candidate.lane === targetLane);
   assert.ok(departed?.occupant, "the wake scenario starts from an occupied bound lane");
@@ -77,14 +81,20 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
     const headingAge = age.querySelector(".composer-shard-age-label");
     return {
+      href,
       status: age.getAttribute("data-lane-status"),
       headerAuthored: headingAge?.dataset.ageAuthored,
-      cardAuthored: card?.querySelector(".message-age")?.dataset.ageAuthored,
+      cardAuthored: card?.querySelector("[data-age-authored]")?.dataset.ageAuthored,
       cardKind: card?.dataset.cardKind,
       clock: headingAge?.dataset.ageClock,
     };
   });
   assert.equal(vacantChronology.status, "bound", "the retained chronology is read while vacant");
+  assert.deepEqual(
+    { href: vacantChronology.href, authored: vacantChronology.headerAuthored },
+    chronologyBeforeDrain,
+    "draining the lane cannot replace the selected message or timestamp",
+  );
   assert.ok(
     ["agent-message", "compaction"].includes(vacantChronology.cardKind),
     `the vacant composer still links to its latest user-facing agent card: ${
