@@ -2,8 +2,8 @@
 //!
 //! Acknowledgment is a narrow protocol at the assistant-output boundary, not an
 //! interpretation of what a turn seems to have meant. A clause retires a
-//! directive only when it leads its line, spells a marker, names a key-shaped
-//! token, and that key belongs to a directive still live. Everything else —
+//! directive only when it begins a placed clause, spells a marker, names a
+//! key-shaped token, and that key belongs to a directive still live. Everything else —
 //! unknown, malformed, quoted, or historical — alters nothing and is reported
 //! by name, because a silent non-recognition and a refusal look identical to an
 //! operator waiting on an answer.
@@ -21,8 +21,8 @@ use crate::ack::keys::{Key, MARKERS, Marker};
 
 /// The characters that quote a clause instead of speaking it.
 ///
-/// Emphasis is not among them: the protocol asks for a plain-text header, so
-/// decorated prose is misplaced rather than quoted.
+/// Emphasis is not among them because it decorates a protocol header without
+/// quoting it.
 const QUOTING: [char; 4] = ['`', '"', '\'', '>'];
 
 /// Where in the scanned prose a recognition sits.
@@ -120,28 +120,56 @@ pub trait Standing {
     fn disposition(&self, key: &Key) -> Option<Disposition>;
 }
 
-/// Reads every acknowledgment outcome in one assistant turn.
-///
-/// At most one clause is read per line: an acknowledgment header leads its
-/// line, so a second marker further along the same line is prose about the
-/// first.
-pub fn scan(prose: &str, standing: &impl Standing) -> Vec<Recognition> {
-    let mut recognitions = Vec::new();
-    let _ = visit_acknowledgement_clauses(prose, |line, clause| {
-        clause.judge(line, standing, &mut recognitions);
-        ControlFlow::Continue(())
-    });
-    recognitions
+/// One structured acknowledgment packet in assistant prose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Acknowledgement {
+    /// Zero-based byte offset where the marker begins in the complete prose.
+    pub start: usize,
+    /// Zero-based byte offset immediately after the complete header.
+    pub end: usize,
+    /// Optional punctuation separating the key list from response prose.
+    pub separator: Option<char>,
+    /// Outcomes for every token named by this one header.
+    pub recognitions: Vec<Recognition>,
 }
 
-/// Whether prose contains an acknowledgement attempt that leads its line.
+/// Reads every acknowledgment outcome in one assistant turn.
+pub fn scan(prose: &str, standing: &impl Standing) -> Vec<Recognition> {
+    scan_acknowledgements(prose, standing)
+        .into_iter()
+        .flat_map(|acknowledgement| acknowledgement.recognitions)
+        .collect()
+}
+
+/// Reads acknowledgment packets with their source header boundaries.
+///
+/// A packet may lead a line or follow sentence punctuation. The latter is the
+/// compact form agents use when several independently keyed responses share
+/// one physical line. Markers buried in ordinary narration remain misses.
+pub fn scan_acknowledgements(prose: &str, standing: &impl Standing) -> Vec<Acknowledgement> {
+    let mut acknowledgements = Vec::new();
+    let _ = visit_acknowledgement_clauses(prose, |line, line_start, clause| {
+        let mut recognitions = Vec::new();
+        clause.judge(line, standing, &mut recognitions);
+        acknowledgements.push(Acknowledgement {
+            start: line_start + clause.start,
+            end: line_start + clause.end,
+            separator: clause.separator,
+            recognitions,
+        });
+        ControlFlow::Continue(())
+    });
+    acknowledgements
+}
+
+/// Whether prose contains a placed acknowledgement attempt.
 ///
 /// This is the standing-independent preflight for callers that need to load
 /// standing before they can run [`scan`]. It deliberately shares the canonical
 /// clause parser, including horizontal whitespace, quoting, and fence rules.
 #[must_use]
 pub fn has_acknowledgement(prose: &str) -> bool {
-    visit_acknowledgement_clauses(prose, |_, clause| {
+    visit_acknowledgement_clauses(prose, |_, _, clause| {
         if clause.position == Position::Placed {
             ControlFlow::Break(())
         } else {
@@ -153,23 +181,28 @@ pub fn has_acknowledgement(prose: &str) -> bool {
 
 fn visit_acknowledgement_clauses(
     prose: &str,
-    mut visit: impl FnMut(usize, Clause) -> ControlFlow<()>,
+    mut visit: impl FnMut(usize, usize, Clause) -> ControlFlow<()>,
 ) -> ControlFlow<()> {
     let mut fence = None;
-    for (index, line) in prose.lines().enumerate() {
+    let mut line_start = 0;
+    for (index, terminated) in prose.split_inclusive('\n').enumerate() {
+        let line = terminated.strip_suffix('\n').unwrap_or(terminated);
         if fence.is_some_and(|open: Fence| open.closes(line)) {
             fence = None;
+            line_start += terminated.len();
             continue;
         }
         if fence.is_none()
             && let Some(open) = Fence::opens(line)
         {
             fence = Some(open);
+            line_start += terminated.len();
             continue;
         }
-        if let Some(clause) = Clause::read(line, fence.is_some()) {
-            visit(index + 1, clause)?;
+        for clause in Clause::read_all(line, fence.is_some()) {
+            visit(index + 1, line_start, clause)?;
         }
+        line_start += terminated.len();
     }
     ControlFlow::Continue(())
 }
@@ -225,41 +258,49 @@ enum Position {
     Buried,
 }
 
-/// One well-formed `MARKER token[ token...]:` clause found on a line.
+/// One well-formed `MARKER key[ key...][separator]` clause found on a line.
 struct Clause {
     marker: Marker,
     position: Position,
+    start: usize,
+    end: usize,
+    separator: Option<char>,
     /// Each named token with the byte offset it begins at.
     tokens: Vec<(usize, String)>,
 }
 
 impl Clause {
-    /// Reads the first clause on a line that is an acknowledgment attempt.
+    /// Reads every clause on a line that is an acknowledgment attempt.
     ///
     /// A clause is an attempt when it leads its line or names something
     /// key-shaped. Leading is how an acknowledgment is written; a key-shaped
     /// token is how a misplaced or quoted one still gets diagnosed. Prose that
     /// merely uses the word does neither, so it stays silent instead of
     /// reporting every colon-terminated sentence as a missed acknowledgment.
-    fn read(line: &str, fenced: bool) -> Option<Self> {
+    fn read_all(line: &str, fenced: bool) -> Vec<Self> {
+        let mut clauses = Vec::new();
         for start in 0..line.len() {
             let Some(marker) = marker_at(line, start) else {
                 continue;
             };
-            let Some(tokens) = tokens_after(line, start + marker.as_str().len()) else {
+            let decorated_start = emphasis_start(line, start);
+            let Some(header) = tokens_after(line, start + marker.as_str().len()) else {
                 continue;
             };
-            let position = position(line, start, fenced);
-            let keylike = tokens.iter().any(|(_, token)| keylike(token));
+            let position = position(line, decorated_start, fenced);
+            let keylike = header.tokens.iter().any(|(_, token)| keylike(token));
             if position == Position::Placed || keylike {
-                return Some(Self {
+                clauses.push(Self {
                     marker,
                     position,
-                    tokens,
+                    start: decorated_start,
+                    end: header.end,
+                    separator: header.separator,
+                    tokens: header.tokens,
                 });
             }
         }
-        None
+        clauses
     }
 
     /// Judges every token this clause named.
@@ -317,35 +358,110 @@ fn marker_at(line: &str, start: usize) -> Option<Marker> {
         .find(|marker| rest.starts_with(marker.as_str()))
 }
 
-/// The tokens a clause names, or `None` when no clause is formed here.
-///
-/// The marker must be followed by horizontal space, at least one token, and the
-/// colon that closes the clause. A tab separates as well as a space does;
-/// refusing one would drop a real acknowledgment over whitespace.
-fn tokens_after(line: &str, marker_end: usize) -> Option<Vec<(usize, String)>> {
-    let rest = line.get(marker_end..)?;
-    if !rest.starts_with([' ', '\t']) {
+struct Header {
+    tokens: Vec<(usize, String)>,
+    end: usize,
+    separator: Option<char>,
+}
+
+/// The leading key run and optional separator after one marker.
+fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
+    let marker_boundary = skip_emphasis(line, marker_end);
+    let mut cursor = skip_horizontal(line, marker_boundary);
+    if cursor == marker_boundary {
         return None;
     }
-    let colon = rest.find(':')?;
-    let segment = rest.get(..colon)?;
 
     let mut tokens = Vec::new();
-    let mut begun: Option<usize> = None;
-    for (offset, character) in segment.char_indices() {
-        if character.is_whitespace() {
-            if let Some(begin) = begun.take() {
-                tokens.push((marker_end + begin, segment[begin..offset].to_owned()));
-            }
-        } else if begun.is_none() {
-            begun = Some(offset);
-        }
+    let mut header_end = cursor;
+    loop {
+        let token_start = skip_emphasis(line, cursor);
+        let Some(end) = key_token_end(line, token_start, !tokens.is_empty()) else {
+            break;
+        };
+        tokens.push((token_start, line[token_start..end].to_owned()));
+        header_end = skip_emphasis(line, end);
+        cursor = skip_horizontal(line, header_end);
     }
-    if let Some(begin) = begun {
-        tokens.push((marker_end + begin, segment[begin..].to_owned()));
+    if tokens.is_empty() {
+        return None;
     }
 
-    (!tokens.is_empty()).then_some(tokens)
+    let mut probe = skip_emphasis(line, header_end);
+    probe = skip_horizontal(line, probe);
+    let separator = line
+        .get(probe..)?
+        .chars()
+        .next()
+        .filter(|character| matches!(character, ':' | '.' | ',' | ';' | '!' | '?'));
+    if let Some(separator) = separator {
+        probe += separator.len_utf8();
+        probe = skip_emphasis(line, probe);
+        header_end = probe;
+    } else if probe != cursor {
+        header_end = probe;
+    }
+
+    Some(Header {
+        tokens,
+        end: header_end,
+        separator,
+    })
+}
+
+fn key_token_end(line: &str, start: usize, current_shape: bool) -> Option<usize> {
+    let end = start.checked_add(Key::WIDTH)?;
+    let token = line.get(start..end)?;
+    if !(if current_shape {
+        Key::shaped(token)
+    } else {
+        Key::admitted(token)
+    }) {
+        return None;
+    }
+    if line
+        .as_bytes()
+        .get(end)
+        .is_some_and(u8::is_ascii_alphanumeric)
+    {
+        return None;
+    }
+    Some(end)
+}
+
+fn skip_horizontal(line: &str, mut cursor: usize) -> usize {
+    while line
+        .as_bytes()
+        .get(cursor)
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+    {
+        cursor += 1;
+    }
+    cursor
+}
+
+/// Markdown emphasis touching the front of a protocol header.
+fn emphasis_start(line: &str, marker_start: usize) -> usize {
+    let mut start = marker_start;
+    while line
+        .as_bytes()
+        .get(start.wrapping_sub(1))
+        .is_some_and(|byte| matches!(byte, b'*' | b'_'))
+    {
+        start -= 1;
+    }
+    start
+}
+
+fn skip_emphasis(line: &str, mut cursor: usize) -> usize {
+    while line
+        .as_bytes()
+        .get(cursor)
+        .is_some_and(|byte| matches!(byte, b'*' | b'_'))
+    {
+        cursor += 1;
+    }
+    cursor
 }
 
 /// Whether a token is worth diagnosing as an intended key.
@@ -373,18 +489,23 @@ fn position(line: &str, start: usize, fenced: bool) -> Position {
         return Position::Quoted;
     }
     let leading = line.get(..start).unwrap_or(line);
+    let line_leading = line.trim_start();
+    let indentation = line
+        .get(..line.len() - line_leading.len())
+        .unwrap_or_default();
+    if line_leading.starts_with(QUOTING) || indentation_width(indentation) >= 4 {
+        return Position::Quoted;
+    }
     let trimmed = leading.trim();
     if trimmed.is_empty() {
-        if indentation_width(leading) >= 4 {
-            Position::Quoted
-        } else {
-            Position::Placed
-        }
+        Position::Placed
     } else if trimmed
         .chars()
         .all(|character| QUOTING.contains(&character))
     {
         Position::Quoted
+    } else if trimmed.ends_with(['.', '!', '?']) {
+        Position::Placed
     } else {
         Position::Buried
     }

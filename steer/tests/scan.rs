@@ -9,7 +9,9 @@
 use std::collections::BTreeMap;
 
 use steer::ack::keys::Key;
-use steer::ack::scan::{Miss, Outcome, Recognition, Standing, has_acknowledgement, scan};
+use steer::ack::scan::{
+    Miss, Outcome, Recognition, Standing, has_acknowledgement, scan, scan_acknowledgements,
+};
 use wire::Disposition;
 
 const ACKNOWLEDGED: &str = include_str!("prose/acknowledged.md");
@@ -49,6 +51,9 @@ fn acknowledgement_preflight_uses_the_canonical_clause_grammar() {
         "ACK 1kJK6N3R: spaced.",
         "ACK\t1kJK6N3R: tabbed.",
         "NACK\t1kJK7Sqy: declined.",
+        "ACK 1kJK6N3R. period separated.",
+        "ACK 1kJK6N3R separatorless.",
+        "**ACK 1kJK6N3R:** emphasized.",
     ] {
         assert!(has_acknowledgement(prose), "missed {prose:?}");
     }
@@ -60,6 +65,35 @@ fn acknowledgement_preflight_uses_the_canonical_clause_grammar() {
         "ACK\n1kJK6N3R: no horizontal separator.",
     ] {
         assert!(!has_acknowledgement(prose), "accepted {prose:?}");
+    }
+}
+
+/// Separator punctuation and emphasis are presentation around one key grammar.
+#[test]
+fn current_header_forms_share_one_packet_grammar() {
+    for (prose, expected, separator) in [
+        ("ACK 1kJK6N3R: applied.", "1:5 1kJK6N3R acked", Some(':')),
+        ("ACK 1kJK6N3R. applied.", "1:5 1kJK6N3R acked", Some('.')),
+        ("ACK 1kJK6N3R applied.", "1:5 1kJK6N3R acked", None),
+        (
+            "**ACK 1kJK6N3R:** applied.",
+            "1:7 1kJK6N3R acked",
+            Some(':'),
+        ),
+        (
+            "**ACK** **1kJK6N3R**:** applied.",
+            "1:11 1kJK6N3R acked",
+            Some(':'),
+        ),
+    ] {
+        let packets = scan_acknowledgements(prose, &board());
+        assert_eq!(packets.len(), 1, "missed {prose:?}");
+        assert_eq!(
+            packets[0].separator, separator,
+            "wrong separator for {prose:?}"
+        );
+        assert_eq!(report(&packets[0].recognitions), [expected]);
+        assert!(!prose[packets[0].start..packets[0].end].ends_with(' '));
     }
 }
 
@@ -93,9 +127,8 @@ fn a_refusal_retires_the_directive_as_declined() {
     );
 }
 
-/// Unknown, malformed, quoted, historical, and buried keys alter nothing and
-/// are each reported by name. A silent non-recognition would be
-/// indistinguishable from a refusal to an operator waiting on an answer.
+/// Unknown, quoted, historical, and buried keys alter nothing and are each
+/// reported by name. A malformed non-key is not a packet and remains silent.
 #[test]
 fn every_way_a_clause_fails_to_land_is_reported_by_name() {
     let board = board();
@@ -103,7 +136,6 @@ fn every_way_a_clause_fails_to_land_is_reported_by_name() {
     assert_eq!(
         report(&scan(MISSED, &board)),
         vec![
-            "3:5 1kJK6N3 malformed".to_owned(),
             "5:5 1kJKZZZZ unknown".to_owned(),
             "7:5 1kJK8KcW historical".to_owned(),
             "9:7 1kJK6N3R quoted".to_owned(),
@@ -174,29 +206,45 @@ fn prose_about_acknowledging_is_silent() {
     }
 }
 
-/// A clause carrying one key-shaped token is diagnosed even when the token
-/// beside it is not a key.
+/// A key run ends when response prose begins, regardless of separator choice.
 #[test]
-fn a_leading_clause_judges_each_token_on_its_own() {
+fn a_leading_clause_stops_before_non_key_response_prose() {
     let board = board();
 
     assert_eq!(
         report(&scan("ACK 1kJK6N3R nope: partly named.", &board)),
-        vec![
-            "1:5 1kJK6N3R acked".to_owned(),
-            "1:14 nope malformed".to_owned(),
-        ]
+        vec!["1:5 1kJK6N3R acked".to_owned()]
     );
 }
 
-/// One clause per line: a marker further along is prose about the first.
+/// A marker buried in the first response remains diagnostic prose.
 #[test]
-fn only_the_first_clause_on_a_line_speaks() {
+fn an_unseparated_second_clause_on_a_line_remains_buried() {
     let board = board();
 
     assert_eq!(
         report(&scan("ACK 1kJK6N3R: and then ACK 1kJK6M0V: again.", &board)),
-        vec!["1:5 1kJK6N3R acked".to_owned()]
+        vec![
+            "1:5 1kJK6N3R acked".to_owned(),
+            "1:28 1kJK6M0V buried".to_owned(),
+        ]
+    );
+}
+
+/// Sentence punctuation starts another authentic packet on the same line.
+#[test]
+fn sentence_delimited_packets_on_one_line_each_speak() {
+    let board = board();
+
+    assert_eq!(
+        report(&scan(
+            "ACK 1kJK6N3R: first handled. ACK 1kJK6M0V: second handled.",
+            &board,
+        )),
+        vec![
+            "1:5 1kJK6N3R acked".to_owned(),
+            "1:34 1kJK6M0V acked".to_owned(),
+        ]
     );
 }
 

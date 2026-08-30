@@ -17,15 +17,15 @@ const INITIAL_WINDOW_BYTES: u64 = 256 * 1024;
 pub(in crate::resident) struct BacklogReader {
     cursors: BTreeMap<CanonicalUuid, listen::Checkpoint>,
     state: MessageState,
-    steering: steer::Ledger,
+    steering: PresentationDirectives,
 }
 
 impl BacklogReader {
     pub(in crate::resident) fn from_snapshot(
         snapshot: &journal::FactSnapshot,
     ) -> CommandResult<Self> {
-        let steering = steer::Ledger::from_snapshot(snapshot)
-            .map_err(|error| store_fault("canvas::message-steering-invalid", &error.to_string()))?;
+        let steering = PresentationDirectives::from_snapshot(snapshot)
+            .map_err(|error| store_fault("canvas::message-steering-invalid", &error))?;
         Ok(Self {
             cursors: BTreeMap::new(),
             state: MessageState {
@@ -142,6 +142,12 @@ fn publish_scan(
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let checkpoint = scan.checkpoint.clone();
+    let source = scan
+        .checkpoint
+        .source
+        .as_str()
+        .parse::<CanonicalUuid>()
+        .map_err(|error| store_fault("canvas::message-source-invalid", &error.to_string()))?;
     let mut published = true;
     for record in scan.records {
         let listen::RecordPayload::Events(events) = record.payload else {
@@ -156,6 +162,7 @@ fn publish_scan(
                 AgentEvent {
                     lane,
                     author,
+                    source: Some(source),
                     ordinal: event,
                     decoded: &sourced.event,
                     authored: sourced.context.timestamp.as_deref(),
