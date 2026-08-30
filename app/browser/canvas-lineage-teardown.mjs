@@ -62,7 +62,12 @@ export async function assertLineageDrainFailureTeardown() {
   const requests = [];
   const drain = await teardownWhilePrimaryFails(async (_fixture, args) => {
     requests.push(args);
-    if (requests.length === 1) return { body: { lanes: [{ lane: "first" }, { lane: "second" }] } };
+    if (requests.length === 1) {
+      return { body: { lanes: [
+        { lane: "first", occupant: "first-occupant" },
+        { lane: "second", occupant: "second-occupant" },
+      ] } };
+    }
     if (requests.length === 2) return { body: {} };
     throw drainFailure;
   });
@@ -77,6 +82,29 @@ export async function assertLineageDrainFailureTeardown() {
     `canvas lineage teardown could not drain lanes: ${drainFailure}\n`,
     "a lane drain failure retains its original error",
   );
+
+  const vacancyRequests = [];
+  let vacancyCleanupCalls = 0;
+  await cleanupLineageFixture({
+    fixture: "vacant-lineage-fixture",
+    resident: liveResident(),
+    owner: { async cleanup() { vacancyCleanupCalls += 1; } },
+    request: async (_fixture, args) => {
+      vacancyRequests.push(args);
+      return vacancyRequests.length === 1
+        ? { body: { lanes: [
+          { lane: "vacant", occupant: null },
+          { lane: "live", occupant: "live-occupant" },
+        ] } }
+        : { body: {} };
+    },
+  });
+  assert.deepEqual(
+    vacancyRequests,
+    [["lane"], ["lane", "drain", "live"]],
+    "cleanup skips a seat that is already vacant and drains the remaining live seat",
+  );
+  assert.equal(vacancyCleanupCalls, 1, "vacant-seat cleanup still reaches the fixture owner");
 
   let cleanupCalls = 0;
   let queries = 0;
