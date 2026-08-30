@@ -1,5 +1,34 @@
 use super::*;
 
+fn reclaim_at(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+    held_task: &TaskHandle,
+    expected: Vec<Witness>,
+    at: Instant,
+) -> Outcome<CommandAnswer> {
+    let renew = ClaimRenew {
+        task: held_task.clone(),
+        lease_seconds: 90 * 60,
+    };
+    let command = fixture_command(
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimRenew,
+        expected,
+        &renew,
+    );
+    claim_reclaim_with_clock(
+        bus,
+        &command,
+        &renew,
+        &guard_projects(),
+        &board::NextConfig::default(),
+        || Ok(at),
+    )
+}
+
 pub(super) fn renew_and_assert(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -9,16 +38,14 @@ pub(super) fn renew_and_assert(
     expected: Vec<Witness>,
 ) -> BoardTask {
     let lease = before.lease.as_ref().expect("active lease");
-    assert_committed(issue(
+    let first_at = fixture_instant_after(lease.body.start, 1);
+    assert_committed(reclaim_at(
         bus,
         epoch,
-        lane.clone(),
-        CommandKind::ClaimRenew,
+        lane,
+        held_task,
         expected.clone(),
-        &ClaimRenew {
-            task: held_task.clone(),
-            lease_seconds: 90 * 60,
-        },
+        first_at,
     ));
 
     let renewed = board(bus, epoch, lane.clone());
@@ -31,17 +58,24 @@ pub(super) fn renew_and_assert(
     assert_eq!(renewed_lease.body.maximum, lease.body.maximum);
     assert!(renewed_lease.body.expiry > lease.body.expiry);
     assert!(renewed_lease.body.expiry <= renewed_lease.body.maximum);
+    let mut current = expected.clone();
+    for witness in &mut current {
+        if let Witness::Lease { head, .. } = witness {
+            *head = renewed_lease.position;
+        }
+    }
     assert!(matches!(
-        issue(
+        reclaim_at(bus, epoch, lane, held_task, current, first_at),
+        Outcome::Refusal(ref refusal) if refusal.reason() == "claim::lease-nonextending"
+    ));
+    assert!(matches!(
+        reclaim_at(
             bus,
             epoch,
-            lane.clone(),
-            CommandKind::ClaimRenew,
+            lane,
+            held_task,
             expected,
-            &ClaimRenew {
-                task: held_task.clone(),
-                lease_seconds: 90 * 60,
-            },
+            fixture_instant_after(first_at, 1),
         ),
         Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"
     ));
