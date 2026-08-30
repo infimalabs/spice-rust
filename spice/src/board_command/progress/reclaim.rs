@@ -21,6 +21,10 @@ enum ReclaimResidency {
 }
 
 impl ReclaimWindow {
+    pub(super) const fn expiry(&self) -> Instant {
+        self.until
+    }
+
     pub(super) const fn producer(&self) -> Producer {
         match &self.residency {
             ReclaimResidency::Exact => Producer::BusTimer,

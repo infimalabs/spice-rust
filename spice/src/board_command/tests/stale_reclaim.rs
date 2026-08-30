@@ -316,11 +316,26 @@ fn current_task(fixture: &StaleFixture) -> BoardTask {
 }
 
 fn reclaim_stale(fixture: &StaleFixture, before: &BoardTask) {
-    assert_committed(issue_repository(
+    let answer = assert_committed(issue_repository(
         &fixture.bus,
         &reclaim_command(fixture, before),
         &fixture.repository,
     ));
+    let CommandAnswer::Claim(answer) = answer else {
+        panic!("stale reclaim returned a non-claim answer")
+    };
+    let after = current_task(fixture);
+    assert_eq!(
+        answer.expiry.as_deref(),
+        Some(
+            &after
+                .lease
+                .as_ref()
+                .expect("rebound lease exists")
+                .body
+                .expiry
+        )
+    );
 }
 
 fn reclaim_command(fixture: &StaleFixture, before: &BoardTask) -> wire::AdmittedCommand {
