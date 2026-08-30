@@ -8,7 +8,7 @@ Rust never opens predecessor task state to deliver a warning.
 The inspected sources were clean at these revisions:
 
 - Python Spice: `8119859e21eaff5058274473eaa8b56a144eea3a`.
-- Rust Spice: `8037bd652e2cb40f2323f51332a8ccb5cef8d404`.
+- Rust Spice: `a640d7cf637763c65e40ae33043c6b9569994fa4`.
 
 Python citations begin with `spice-z/` and are relative to that pinned sibling
 tree. Rust citations are relative to this repository. A citation has the form
@@ -89,7 +89,7 @@ and 15 seconds respectively.
 tier, remaining seconds, and the exact action
 `spice task reclaim HANDLE` to one stderr working-state sentence. The tier and
 message shape are pinned by
-`spice-z/tests/test_agentcli.py#def test_working_state_claim_lease_warnings`.
+`spice-z/tests/test_agentcli.py#def test_working_state_claim_lease_warnings_cross_thresholds_and_repeat`.
 
 ### Suppression and deadline wake-up
 
@@ -114,7 +114,8 @@ injector per connected command. It emits once after the hello, emits again when
 claim or inbox activity wakes the socket pair, and passes the injector's next
 deadline to `select`. A quiet long-running command therefore receives tier
 crossings and repeats without running another shell command. The focused proof
-is `spice-z/tests/test_sidechannel.py#def test_side_channel_repeats_critical_claim_warning`.
+is
+`spice-z/tests/test_sidechannel.py#def test_side_channel_repeats_critical_claim_warning_on_lease_timer`.
 
 `spice-z/spice/agent/supervisorwatch.py#def renew_supervised_claim(` performs
 best-effort renewal for the supervised thread. Success clears prior failure
@@ -122,8 +123,23 @@ state and notifies contract streams; their next collection observes the new
 `claim_until`. Completion, unclaim, expiry, actor or worktree movement, and
 terminal renewal results remove the matching active observation. A wrapper or
 supervisor restart creates new process-local injectors, but the persisted key
-continues repeat suppression. Collection and persistence failures decorate
-nothing and never change the child command's output or exit status.
+continues repeat suppression.
+
+Failure ordering is narrower than a blanket failure-to-silence rule. Snapshot
+collection is attempted first and its exceptions are caught by
+`spice-z/spice/agent/wrap.py#class AgentWorkingStateInjector`, before any current
+working-state row is rendered. The suppression check then calls
+`spice-z/spice/agent/wrap.py#def read_working_state_state(`: a missing file or
+malformed JSON is an empty key and permits normal delivery, while another read
+error escapes before the current row is written. After a successful read,
+rendering writes and flushes stderr before
+`spice-z/spice/agent/wrap.py#def write_working_state_state(` runs; the injector
+also updates its process-local displayed key and timestamp before that durable
+write. A persisted-key write failure can therefore occur after streaming output
+is already visible and local suppression has advanced. The side-channel server
+catches that `OSError` and closes that delivery stream. These meter failures do
+not replace the supervised child command's output or exit status, but a
+state-write failure is not retroactive silence.
 
 ## Rust resident warning
 
@@ -160,17 +176,29 @@ warnable; replaying the same generation is not.
 ### Exact-lane publication
 
 After commit, `spice/src/resident/timers.rs#pub(super) struct WarningDelivery`
-retains the complete generation. The runtime branch at
+retains the complete generation. Its
+`spice/src/resident/timers.rs#impl WarningDelivery` re-reads the current
+generation before the runtime branch at
 `spice/src/resident/runtime/surface.rs#timers::Fired::ClaimWarning(delivery) => {`
-re-proves current residency before publishing the lane inbox. The steering
-projection recognizes the warning fact at
+publishes the lane inbox. This is the immediate post-commit check: if authority
+moved after commit but before this branch, no immediate publication occurs. The
+steering projection recognizes the warning fact at
 `spice/src/resident/lane_surface/reply.rs#wire::FactKind::ClaimLeaseWarned => {`.
 
-Durable pending steering must remain generation-aware after this immediate
-publication check as well. Authority retirement is owned by the resident
-warning path, not by this documentation and not by a predecessor fallback. Its
-invariant is that restart or an unrelated inbox publication cannot resurrect a
-warning whose claim, lease, expiry, lane occupant, or epoch has moved.
+Durable suppression is separately shipped at the pinned Rust revision.
+`spice/src/resident/timers.rs#fn cancel_stale_warnings(` scans pending steering
+at every timer synchronization, and
+`spice/src/resident/timers.rs#fn stale_warnings(` excludes a warning unless its
+exact task stamp, claim and lease heads, expiry, lane and occupant, and seated
+resident epoch are still current. The cancellation owner commits a
+`SteerCanceled` transition under guards that re-prove both the pending steering
+head and the obsolete generation. It returns affected lanes to
+`spice/src/resident/runtime/surface.rs#pub(in crate::resident) fn refresh_warning_inboxes(`,
+which rematerializes their current inboxes. Startup performs the same
+synchronization before initial publication, and later journal commits reconcile
+again, so restart and unrelated publication cannot resurrect the canceled head.
+The documentation owns only this record; the resident timer and runtime surface
+own retirement and exclusion.
 
 ## Rust command meter
 

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 const RECORD: &str = "spice/CLAIM_WARNING_PROVENANCE.md";
 const PREDECESSOR_PREFIX: &str = "spice-z/";
 const PREDECESSOR_REVISION: &str = "8119859e21eaff5058274473eaa8b56a144eea3a";
-const RUST_REVISION: &str = "8037bd652e2cb40f2323f51332a8ccb5cef8d404";
+const RUST_REVISION: &str = "a640d7cf637763c65e40ae33043c6b9569994fa4";
 const SOURCE_SUFFIXES: &[&str] = &[".rs", ".py"];
 const CITATION_FLOOR: usize = 8;
 
@@ -58,18 +58,32 @@ fn predecessor_evidence_is_pinned_without_becoming_a_runtime_input() {
     );
 
     for required in [
-        "spice-z/spice/agent/wrap.py#class AgentWorkingStateInjector",
+        "spice-z/spice/agent/wrap.py#def run_agent_command(",
+        "spice-z/spice/agent/wrap.py#def collect_working_state_snapshot(",
         "spice-z/spice/agent/wrap.py#def _working_state_claim(",
+        "spice-z/spice/agent/wrap.py#def _claim_lease_warning_level(",
+        "spice-z/spice/agent/wrap.py#def _claim_lease_warning_repeat_seconds(",
+        "spice-z/spice/agent/wrap.py#def render_working_state_snapshot(",
+        "spice-z/spice/agent/wrap.py#class AgentWorkingStateInjector",
+        "spice-z/spice/agent/wrap.py#def read_working_state_state(",
+        "spice-z/spice/agent/wrap.py#def write_working_state_state(",
+        "spice-z/spice/agent/wrap.py#def working_state_key(",
+        "spice-z/spice/agent/wrap.py#def _seconds_until_claim_lease_boundary(",
         "spice-z/spice/agent/sidechannel.py#class AgentSideChannelServer",
         "spice-z/spice/agent/supervisorwatch.py#def renew_supervised_claim(",
-        "spice-z/tests/test_agentcli.py#def test_working_state_claim_lease_warnings",
-        "spice-z/tests/test_sidechannel.py#def test_side_channel_repeats_critical_claim_warning",
+        "spice-z/tests/test_agentcli.py#def test_working_state_claim_lease_warnings_cross_thresholds_and_repeat",
+        "spice-z/tests/test_sidechannel.py#def test_side_channel_repeats_critical_claim_warning_on_lease_timer",
     ] {
         assert!(
             text.contains(required),
             "record retains predecessor citation {required}"
         );
     }
+
+    assert!(
+        text.contains("+ACTIVE"),
+        "record retains the predecessor active-row selector"
+    );
 
     assert!(
         !root.join(PREDECESSOR_PREFIX.trim_end_matches('/')).exists(),
