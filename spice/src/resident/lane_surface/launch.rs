@@ -517,4 +517,6 @@ pub(super) fn configuration_refusal(error: &spice::config::LoadError) -> Outcome
 }
 
 #[cfg(test)]
+pub(in crate::resident) mod test_support;
+#[cfg(test)]
 mod tests;

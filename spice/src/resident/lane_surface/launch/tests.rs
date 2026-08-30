@@ -1,9 +1,40 @@
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::test_support::{InactiveRtkFixture, assert_obsolete_health};
 use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn inactive_configured_rtk_is_removed_from_the_occupant_and_published_by_launch() {
+    let fixture = InactiveRtkFixture::new();
+    let launch = occupant_launch(
+        &fixture.paths,
+        fixture.request(vendor::Resume::Fresh),
+        fixture.reporter(),
+    )
+    .expect("inactive RTK does not block occupant launch");
+    let proof = launch.session;
+    let running = sill::spawn_observed(launch.spec, launch.observation)
+        .expect("fixture occupant starts under the composed process contract");
+    let session = await_session(proof).expect("fixture occupant declares its session");
+    let outcome = running.wait().expect("fixture occupant is reaped");
+
+    assert!(
+        matches!(outcome.completion(), sill::Completion::Exited(status) if status.success()),
+        "fixture occupant ended as {:?}",
+        outcome.completion()
+    );
+    fixture.assert_occupant_started_without_rtk();
+    fixture.assert_one_configured_probe_from_launch_worktree();
+    let health = session
+        .launch
+        .as_ref()
+        .and_then(|launch| launch.rtk.as_ref())
+        .expect("launch result publishes inactive RTK health");
+    assert_obsolete_health(health);
+}
 
 #[test]
 fn launch_skill_comes_only_from_initialized_git_common_state() {
