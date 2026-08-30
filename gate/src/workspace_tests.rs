@@ -68,6 +68,12 @@ const SELECTED_TARGETS_PER_SHARD: usize = 24;
 /// recreating a four-way Cargo lock wave over their shared graph and output
 /// authority.
 const SELECTED_PREBUILD_CONCURRENCY: usize = 2;
+/// Routine selected runs may split one already-built target across at most two
+/// process lanes. Combined with the target budget, this caps routine execution
+/// at 64 shards, below both the observed 75-shard change and the 169-shard sweep.
+const ROUTINE_PARTITIONS_PER_TARGET: usize = 2;
+const ROUTINE_TEST_SHARD_LIMIT: usize =
+    selection::ROUTINE_TEST_TARGET_LIMIT * ROUTINE_PARTITIONS_PER_TARGET;
 /// Retain finer work units inside the full verifier so a constrained two-lane
 /// schedule can rebalance long test targets without paying one Cargo launch
 /// for every target.
@@ -436,9 +442,10 @@ fn policy_from_environment(
 }
 
 /// Select and run only test targets reached by staged build sources according
-/// to canonical Cargo metadata. A reached library target expands to every
-/// test-enabled target in that package because those targets may link the
-/// library. A non-library target reaches only its root and exact `#[path]`
+/// to canonical Cargo metadata. An ordinary library change reaches its own
+/// unit harness and the library/binary unit harnesses of reverse dependents;
+/// process-heavy integration targets run when changed directly or through the
+/// full verifier. A non-library target reaches only its root and exact `#[path]`
 /// module declarations. Package manifests and build scripts reach their whole
 /// package; workspace/toolchain and gate-policy authorities reach the complete
 /// workspace because their effect cannot be narrowed further.
@@ -519,12 +526,25 @@ fn run_selected_at_mode(
     let environment = selected_run_environment(roots, environment)?;
     let inventory = acquire_selected_inventory(root, &environment, changed_sources, output)?;
     let report = selected_report(&inventory, root, source, changed_sources, output)?;
+    let routine = selection::routine_selection(changed_sources);
+    let (selection_class, target_limit, shard_limit) = if routine {
+        (
+            "routine",
+            selection::ROUTINE_TEST_TARGET_LIMIT.to_string(),
+            ROUTINE_TEST_SHARD_LIMIT.to_string(),
+        )
+    } else {
+        ("authority", "exempt".to_owned(), "exempt".to_owned())
+    };
     writeln!(
         output,
-        "[rust-test-selection] detail=canonical-report sources={} tests={} edges={}",
+        "[rust-test-selection] detail=canonical-report class={} sources={} tests={} edges={} target_limit={} shard_limit={}",
+        selection_class,
         report.changed_sources().len(),
         report.tests().len(),
         report.edges().len(),
+        target_limit,
+        shard_limit,
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
@@ -535,6 +555,7 @@ fn run_selected_at_mode(
             environment,
             &inventory,
             report.tests(),
+            changed_sources,
             &mut policy,
             prebuild_budget,
             output,
@@ -645,6 +666,7 @@ fn execute_selected_tests(
     environment: Environment,
     inventory: &Inventory,
     tests: &[String],
+    changed_sources: &[String],
     policy: &mut RunPolicy,
     prebuild_budget: Option<WorkspaceTestBudget>,
     output: &mut impl Write,
@@ -674,8 +696,21 @@ fn execute_selected_tests(
         } else {
             policy.shared_outputs = true;
         }
+        let partitions = if selection::routine_selection(changed_sources) {
+            policy.concurrency.min(ROUTINE_PARTITIONS_PER_TARGET)
+        } else {
+            policy.concurrency
+        };
         let prebuilt =
-            partition_largest_prebuilt_tests(prebuilt, &environment, policy.concurrency, output)?;
+            partition_largest_prebuilt_tests(prebuilt, &environment, partitions, output)?;
+        if selection::routine_selection(changed_sources)
+            && prebuilt.len() > ROUTINE_TEST_SHARD_LIMIT
+        {
+            return Err(WorkspaceTestError::new(format!(
+                "routine Rust test selection produced {} shards, exceeding the repository limit of {ROUTINE_TEST_SHARD_LIMIT}",
+                prebuilt.len(),
+            )));
+        }
         Some(prebuilt)
     } else {
         None
