@@ -655,16 +655,24 @@ fn import_refuses_a_vacant_row_whose_lane_seat_is_still_live() {
 }
 
 #[test]
-fn import_refuses_a_lane_whose_life_already_ended_in_drain() {
+fn explicit_import_admits_an_already_seated_drain_lane() {
     let fixture = fixture();
     let row = wire::LaneResidency {
         life: "drain".into(),
         ..vacant_row(&fixture)
     };
-    assert_eq!(
-        admit_row_reason(&fixture, std::slice::from_ref(&row), &row, SUCCESSOR),
-        "lane::life-ended"
-    );
+    let (successor, common) = real_worktree(&fixture);
+    let paths = runtime_paths(&fixture, common);
+    let residency = wire::ResidencyHead {
+        epoch: fixture.old_epoch,
+        state: wire::ResidentState::Seated,
+        topology_revision: 0,
+        lanes: vec![row.clone()],
+        subscriptions: Vec::new(),
+    };
+
+    admit_row(&paths, &Seats::new(), &residency, &row, &successor)
+        .expect("operator import may relocate an already seated Drain lane");
     finish(fixture);
 }
 
