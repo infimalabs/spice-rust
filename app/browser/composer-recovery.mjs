@@ -192,14 +192,21 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   for (const directive of [firstDirective, secondInbox.found]) {
     await reply(fixture, ["steer", "cancel", directive.directive]);
   }
-  await activity.filter({ hasText: first }).waitFor({
-    state: "detached",
-    timeout: TRANSITION_MS,
-  });
-  await activity.filter({ hasText: second }).waitFor({
-    state: "detached",
-    timeout: TRANSITION_MS,
-  });
+  for (const [directive, text] of [
+    [firstDirective, first],
+    [secondInbox.found, second],
+  ]) {
+    const retained = page.locator(
+      `.mosaic-message-card[data-agent-lane="${seeded.lane}"]`
+        + `[data-directive="${directive.directive}"]`,
+    ).filter({ hasText: text });
+    await retained.waitFor({ timeout: TRANSITION_MS });
+    assert.equal(await retained.count(), 1, "cancellation retains one stable operator record");
+    assert.equal(
+      await retained.getAttribute("data-mosaic-card-key"),
+      `message-operator-${directive.directive}`,
+    );
+  }
 
   const durable = "composer recovery after durability";
   await suppressIncoming(page);

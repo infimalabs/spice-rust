@@ -306,7 +306,8 @@ impl Session {
                 admit_wire(fact.wire())?;
                 (*v, *epoch)
             }
-            StreamFrame::Trust { v, epoch, .. }
+            StreamFrame::Directions { v, epoch, .. }
+            | StreamFrame::Trust { v, epoch, .. }
             | StreamFrame::Messages { v, epoch, .. }
             | StreamFrame::Message { v, epoch, .. }
             | StreamFrame::Refusal { v, epoch, .. }

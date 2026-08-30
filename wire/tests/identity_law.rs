@@ -56,13 +56,13 @@ use wire::{
     DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, Domain,
     DurationWord, Envelope, Fact, FactKind, Fault, FaultClass, FindingHead, FindingState, FoldName,
     FoldState, Hello, Instant, JournalReport, JournalRestore, LaneResidency, LaneSession,
-    LeaseHead, LineageSubscription, MessageLocus, Name, Origin, Outcome, Overflow, Packed, Phase,
-    Producer, ProofEvidence, Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry,
-    ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, ResidencyHead,
-    ResidentState, Response, RestoreVerification, Seq, SeqRange, SpiceVariable, SteeringHead,
-    StreamCursor, StreamFact, StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead,
-    TaskStamp, TrustHead, TrustState, TrustView, ViewSubject, WireVersion, Witness, WitnessClass,
-    WitnessHead, WitnessKind, WorkflowHead, body,
+    LeaseHead, LineageSubscription, MessageLocus, Name, OperatorDirection, Origin, Outcome,
+    Overflow, Packed, Phase, Producer, ProofEvidence, Provenance, Refusal, ReleaseNotes,
+    ReleaseNotesEntry, ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition,
+    ResidencyHead, ResidentState, Response, RestoreVerification, Seq, SeqRange, SpiceVariable,
+    SteeringHead, StreamCursor, StreamFact, StreamFrame, StreamRequest, TapeLocus, TaskHandle,
+    TaskHead, TaskStamp, TrustHead, TrustState, TrustView, ViewSubject, WireVersion, Witness,
+    WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
 
 #[path = "identity_law/laws.rs"]

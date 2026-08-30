@@ -21,6 +21,7 @@ mod runtime {
     const BROADCAST_CAPACITY: usize = 64;
     type FactPage =
         journal::crossing::Packed<journal::crossing::Envelope<journal::crossing::AnyFact>>;
+    type DirectionHeads = Vec<JournalHead<journal::crossing::SteeringHead>>;
 
     mod task_snapshot;
     pub use task_snapshot::TaskFacts;
@@ -272,6 +273,18 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
+        /// Read newest durable operator directions per lane at one queued barrier.
+        pub fn canvas_directions(&self, limit: usize) -> Result<DirectionHeads, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::CanvasDirections { limit, answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Read one bounded causal page directly through the thread index.
         pub fn canvas_thread(
             &self,
@@ -445,6 +458,11 @@ mod runtime {
             self.reader().canvas_facts(start, horizon, limit)
         }
 
+        /// Read newest durable operator directions per lane through the writer queue.
+        pub fn canvas_directions(&self, limit: usize) -> Result<DirectionHeads, BusReadError> {
+            self.reader().canvas_directions(limit)
+        }
+
         /// Read one bounded causal page directly through the thread index.
         pub fn canvas_thread(
             &self,
@@ -602,6 +620,10 @@ mod runtime {
             limit: usize,
             answer: SyncSender<Result<FactPage, GuardError>>,
         },
+        CanvasDirections {
+            limit: usize,
+            answer: SyncSender<Result<DirectionHeads, GuardError>>,
+        },
         CanvasThread {
             position: journal::crossing::Seq,
             limit: usize,
@@ -685,6 +707,9 @@ mod runtime {
                     answer,
                 } => {
                     let _ = answer.send(journal.read(|read| read.fact_page(start, horizon, limit)));
+                }
+                Request::CanvasDirections { limit, answer } => {
+                    let _ = answer.send(journal.read(|read| read.operator_steering(limit)));
                 }
                 Request::CanvasThread {
                     position,

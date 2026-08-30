@@ -9,9 +9,21 @@ import {
 } from "./canvas-fixture.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const PERSISTED_IMAGE_ROUTE = /\/mosaic-(?:load|error)-[0-9a-f-]+\.png$/;
 // Span the fixture's one-second delivery cadence before arming exact lattice probes.
 const ACTIVITY_QUIET_MS = 1_500;
 const ACTIVITY_DEADLINE_MS = 15_000;
+
+/// Keep test-owned image probe URLs resolvable when durable cards reach a new client.
+export async function installPersistedMosaicImageRoutes(context) {
+  await context.route(PERSISTED_IMAGE_ROUTE, async (route) => {
+    const loads = route.request().url().includes("/mosaic-load-");
+    await route.fulfill({
+      contentType: "image/png",
+      body: loads ? Buffer.from(PIXEL_PNG, "base64") : "not an image",
+    });
+  });
+}
 
 async function committedPlacementSnapshot(team) {
   return team.locator('.mosaic-message-card[data-layout-phase="committed"]').evaluateAll(

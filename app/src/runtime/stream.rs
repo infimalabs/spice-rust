@@ -194,6 +194,9 @@ impl CanvasRuntime {
         let epoch = self.principal.epoch();
         match admitted.get() {
             StreamFrame::Facts { packed, .. } => self.apply_fact_page(admitted, packed, epoch),
+            StreamFrame::Directions {
+                limit, directions, ..
+            } => self.apply_direction_snapshot(*limit as usize, directions),
             StreamFrame::Trust { packed, .. } => self.apply_trust_page(admitted, packed, epoch),
             StreamFrame::Messages {
                 limit, messages, ..
@@ -212,11 +215,12 @@ impl CanvasRuntime {
             }
             StreamFrame::Thread { packed, .. } => self.apply_thread_page(admitted, packed, epoch),
             StreamFrame::Fact { fact, .. } => {
+                let operator_changed = self.observe_operator_rows(std::slice::from_ref(fact));
                 if self
                     .resume
                     .is_some_and(|resume| resume.epoch == epoch && resume.seq >= fact.seq())
                 {
-                    return StreamApplication::new(Vec::new(), false);
+                    return StreamApplication::new(Vec::new(), operator_changed);
                 }
                 self.observe_fact_rows(admitted, std::slice::from_ref(fact), false);
                 self.resume = Some(StreamCursor {
@@ -289,12 +293,37 @@ impl CanvasRuntime {
         }
     }
 
+    fn apply_direction_snapshot(
+        &mut self,
+        limit: usize,
+        directions: &[wire::OperatorDirection],
+    ) -> StreamApplication {
+        let mut projected = directions
+            .iter()
+            .map(|direction| OperatorMessage {
+                authored: direction.authored,
+                directive: direction.directive,
+                key: direction.key.clone(),
+                lane: direction.lane,
+                text: direction.text.clone(),
+                attachments: direction.attachments.clone(),
+            })
+            .collect::<Vec<_>>();
+        trim_operator_messages(&mut projected, limit);
+        let changed = self.operator_messages != projected;
+        if changed {
+            self.operator_messages = projected;
+        }
+        StreamApplication::new(Vec::new(), changed)
+    }
+
     fn apply_fact_page(
         &mut self,
         admitted: &Admitted<StreamFrame>,
         packed: &Packed<wire::StreamFact>,
         epoch: CanonicalUuid,
     ) -> StreamApplication {
+        let operator_changed = self.observe_operator_rows(&packed.rows);
         let page_cursor = packed
             .overflow
             .and_then(|_| packed.rows.last().map(wire::StreamFact::seq))
@@ -305,7 +334,10 @@ impl CanvasRuntime {
             .resume
             .is_some_and(|resume| resume.epoch == epoch && resume.seq >= page_cursor)
         {
-            return StreamApplication::new(continuation(ViewSubject::Facts, epoch, packed), false);
+            return StreamApplication::new(
+                continuation(ViewSubject::Facts, epoch, packed),
+                operator_changed,
+            );
         }
         let page = project_page(packed);
         let visible_tail = page.rows.last().map(FactRow::seq);
@@ -411,14 +443,33 @@ impl CanvasRuntime {
         rows: &[wire::StreamFact],
         thread: bool,
     ) {
-        let state = if thread {
-            &mut self.thread
-        } else {
-            &mut self.facts
-        };
         for row in rows {
+            let state = if thread {
+                &mut self.thread
+            } else {
+                &mut self.facts
+            };
             state.observe_stream(admitted, row.seq(), row.origin().clone(), row.cause());
         }
+    }
+
+    fn observe_operator_rows(&mut self, rows: &[wire::StreamFact]) -> bool {
+        let mut changed = false;
+        for row in rows {
+            if row.actor() == &Actor::Operator
+                && let Some(sent) = row.read::<wire::body::SteerSent>()
+            {
+                changed |= self.retain_operator_message(
+                    *row.at(),
+                    sent.directive,
+                    sent.key,
+                    sent.lane,
+                    sent.text,
+                    sent.attachments,
+                );
+            }
+        }
+        changed
     }
 
     fn observe_message(&mut self, message: &AgentMessage) -> bool {
@@ -469,7 +520,7 @@ impl CanvasRuntime {
         true
     }
 
-    pub(crate) fn retain_operator_submission(
+    pub(crate) fn retain_operator_message(
         &mut self,
         authored: wire::Instant,
         directive: CanonicalUuid,
@@ -495,22 +546,7 @@ impl CanvasRuntime {
         }
         let lane = message.lane;
         self.operator_messages.push(message);
-        if self
-            .operator_messages
-            .iter()
-            .filter(|message| message.lane == lane)
-            .count()
-            > OPERATOR_MESSAGE_LIMIT
-            && let Some(oldest) = self
-                .operator_messages
-                .iter()
-                .enumerate()
-                .filter(|(_, message)| message.lane == lane)
-                .min_by_key(|(_, message)| message.authored.get().as_millisecond())
-                .map(|(index, _)| index)
-        {
-            self.operator_messages.remove(oldest);
-        }
+        trim_operator_lane(&mut self.operator_messages, lane, OPERATOR_MESSAGE_LIMIT);
         true
     }
 
@@ -602,6 +638,34 @@ impl CanvasRuntime {
             retain_first_for_lane(&mut self.activities, lane, limit, |activity| activity.lane);
         }
         true
+    }
+}
+
+fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {
+    let lanes = messages
+        .iter()
+        .map(|message| message.lane)
+        .collect::<BTreeSet<_>>();
+    for lane in lanes {
+        trim_operator_lane(messages, lane, limit);
+    }
+}
+
+fn trim_operator_lane(messages: &mut Vec<OperatorMessage>, lane: CanonicalUuid, limit: usize) {
+    while messages
+        .iter()
+        .filter(|message| message.lane == lane)
+        .count()
+        > limit
+    {
+        let oldest = messages
+            .iter()
+            .enumerate()
+            .filter(|(_, message)| message.lane == lane)
+            .min_by_key(|(_, message)| message.authored.get().as_millisecond())
+            .map(|(index, _)| index)
+            .expect("a lane above its bound has an oldest operator message");
+        messages.remove(oldest);
     }
 }
 

@@ -193,6 +193,24 @@ fn packed_frame(
     .expect("stream fixture serializes")
 }
 
+fn directions_frame(text: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "stream": "directions",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "limit": 256,
+        "directions": [{
+            "authored": "2030-04-12T18:44:09.271Z",
+            "directive": REQUEST,
+            "key": "1kQnrzNZ",
+            "lane": LANE,
+            "text": text,
+        }],
+    }))
+    .expect("direction snapshot serializes")
+}
+
 fn message_frame(
     lane: &str,
     author: &str,
@@ -539,6 +557,20 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
 
     runtime.apply_stream(&admitted_stream(
         &session,
+        &fact_frame(operator_message_fact(
+            42,
+            "steer::sent",
+            Some(operator_text),
+        )),
+    ));
+    assert_eq!(
+        runtime.operator_messages().len(),
+        1,
+        "the durable fact for a local submission reuses its directive identity"
+    );
+
+    runtime.apply_stream(&admitted_stream(
+        &session,
         &message_frame_at(
             LANE,
             LANE_CAPABILITY,
@@ -558,7 +590,7 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
 
     runtime.apply_stream(&admitted_stream(
         &session,
-        &fact_frame(operator_message_fact(42, "steer::canceled", None)),
+        &fact_frame(operator_message_fact(43, "steer::canceled", None)),
     ));
     assert_eq!(
         runtime.operator_messages()[0].directive(),
@@ -567,7 +599,7 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
     );
     assert_eq!(runtime.messages().len(), 1);
 
-    for position in 43..=(43 + app::FACT_PAGE_LIMIT as u64) {
+    for position in 44..=(44 + app::FACT_PAGE_LIMIT as u64) {
         runtime.apply_stream(&admitted_stream(
             &session,
             &fact_frame(task_fact(position, None)),
@@ -579,6 +611,65 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
         operator_text,
         "unrelated chronology retention never turns operator history temporary"
     );
+}
+
+#[test]
+fn external_operator_direction_replays_once_before_and_after_disposition() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let operator_text = "External direction keeps its durable identity.";
+    let sent = operator_message_fact(41, "steer::sent", Some(operator_text));
+    let canceled = operator_message_fact(42, "steer::canceled", None);
+    let mut live = CanvasRuntime::new(&accepted);
+
+    live.apply_stream(&admitted_stream(&session, &fact_frame(sent.clone())));
+    live.apply_stream(&admitted_stream(&session, &fact_frame(sent.clone())));
+    let messages = live.operator_messages().to_vec();
+    assert_eq!(
+        messages.len(),
+        1,
+        "a repeated live fact cannot duplicate prose"
+    );
+    assert_eq!(messages[0].directive(), uuid(REQUEST));
+    assert_eq!(messages[0].lane(), uuid(LANE));
+    assert_eq!(messages[0].key(), "1kQnrzNZ");
+    assert_eq!(messages[0].text(), operator_text);
+
+    live.apply_stream(&admitted_stream(&session, &fact_frame(canceled.clone())));
+    assert_eq!(
+        live.operator_messages(),
+        messages,
+        "a later disposition does not relabel or retire operator history"
+    );
+
+    let mut reloaded = CanvasRuntime::new(&accepted);
+    let snapshot = admitted_stream(&session, &directions_frame(operator_text));
+    assert!(reloaded.apply_stream_frame(&snapshot).changed());
+    assert_eq!(
+        reloaded.operator_messages(),
+        messages,
+        "bootstrap replay restores the same directive-keyed operator record"
+    );
+    assert!(
+        !reloaded.apply_stream_frame(&snapshot).changed(),
+        "an identical durable snapshot is a render no-op"
+    );
+
+    let mut out_of_order = CanvasRuntime::new(&accepted);
+    out_of_order.apply_stream(&admitted_stream(&session, &fact_frame(task_fact(43, None))));
+    let delayed = admitted_stream(
+        &session,
+        &fact_frame(operator_message_fact(
+            41,
+            "steer::sent",
+            Some(operator_text),
+        )),
+    );
+    assert!(
+        out_of_order.apply_stream_frame(&delayed).changed(),
+        "an unseen directive remains visible below an advanced chronology cursor"
+    );
+    assert_eq!(out_of_order.operator_messages(), messages);
 }
 
 #[test]
@@ -617,6 +708,7 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
         operator.subjects(),
         vec![
             ViewSubject::Facts,
+            ViewSubject::Directions,
             ViewSubject::Trust,
             ViewSubject::Messages,
         ]

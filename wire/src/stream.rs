@@ -10,8 +10,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Actor, AnyFact, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name, Origin,
-    Packed, Refusal, RefusalDiagnostic, Seq, TrustHead, WireVersion,
+    Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,
+    Origin, Packed, Refusal, RefusalDiagnostic, Seq, TrustHead, WireVersion,
 };
 
 /// Stable source position of one decoded event in a lane transcript tape.
@@ -125,10 +125,31 @@ pub struct StreamCursor {
 pub enum ViewSubject {
     /// Canonical fact envelopes in durable journal order.
     Facts,
+    /// Bounded operator-authored direction history from durable steering authority.
+    Directions,
     /// Current executable-surface trust heads.
     Trust,
     /// Agent-authored prose and tool moments projected from transcript capture.
     Messages,
+}
+
+/// One durable operator direction projected independently of its current standing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorDirection {
+    /// Original journal instant retained across clients and resident restarts.
+    pub authored: Instant,
+    /// Stable directive identity.
+    pub directive: CanonicalUuid,
+    /// Human-sized acknowledgement key.
+    pub key: String,
+    /// Lane the direction addressed.
+    pub lane: CanonicalUuid,
+    /// Operator-authored prose.
+    pub text: String,
+    /// Admitted media carried by the direction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::Media>,
 }
 
 /// One strict client-to-resident stream request.
@@ -348,6 +369,21 @@ impl StreamFact {
     pub const fn body(&self) -> &serde_json::Map<String, serde_json::Value> {
         &self.0.fact.body
     }
+
+    /// Decode this row through the DTO registered for `F`, when its kind agrees.
+    ///
+    /// Stream facts validate their complete body during admission, so a
+    /// matching kind must read back through the same registered DTO.
+    #[must_use]
+    pub fn read<F: Body>(&self) -> Option<F> {
+        if self.kind() != F::KIND {
+            return None;
+        }
+        Some(
+            crate::fact::decode_registered_body(self.body())
+                .expect("a stream body validated on decode reads through its registered DTO"),
+        )
+    }
 }
 
 impl From<Envelope<AnyFact>> for StreamFact {
@@ -486,6 +522,15 @@ pub enum StreamFrame {
         id: CanonicalUuid,
         epoch: CanonicalUuid,
         packed: Packed<StreamFact>,
+    },
+    /// Current bounded operator-direction history.
+    Directions {
+        v: WireVersion,
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
+        /// Maximum number of newest records retained for each lane.
+        limit: u32,
+        directions: Vec<OperatorDirection>,
     },
     /// Initial, continued, or refreshed trust-head page.
     Trust {

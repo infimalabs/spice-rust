@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bus::{BusReader, CanvasHeads, JournalCommit};
 use wire::{
-    Accepted, AgentMessage, Fault, FaultClass, Packed, Refusal, Seq, StreamCursor, StreamFact,
-    StreamFrame, StreamRequest, ViewSubject, WireVersion,
+    Accepted, AgentMessage, Fault, FaultClass, OperatorDirection, Packed, Refusal, Seq,
+    StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject, WireVersion,
 };
 
 mod message;
@@ -22,6 +22,9 @@ use policy::{
     admit_subject, admit_subjects, canvas_visible_fact, pack_unique, present_facts, protocol_fault,
     refusal, required_horizon, thread_fault, trust_rows,
 };
+
+/// Maximum newest durable operator directions restored for each lane.
+pub const OPERATOR_DIRECTION_CAPACITY: usize = 256;
 
 /// Generation-owned source for every streamed canvas answer.
 #[derive(Clone, Debug)]
@@ -128,17 +131,26 @@ impl Source {
         };
         let mut frames = Vec::new();
         for subject in subscription.subjects.iter().copied().collect::<Vec<_>>() {
-            let frame = if subject == ViewSubject::Messages {
-                StreamFrame::Messages {
+            let frame = match subject {
+                ViewSubject::Directions => StreamFrame::Directions {
+                    v: WireVersion::CURRENT,
+                    id: *id,
+                    epoch: self.epoch,
+                    limit: u32::try_from(OPERATOR_DIRECTION_CAPACITY)
+                        .expect("the fixed direction capacity fits in the wire field"),
+                    directions: self.directions()?,
+                },
+                ViewSubject::Messages => StreamFrame::Messages {
                     v: WireVersion::CURRENT,
                     id: *id,
                     epoch: self.epoch,
                     limit: u32::try_from(MESSAGE_CAPACITY)
                         .expect("the fixed message capacity fits in the wire field"),
                     messages: self.messages.snapshot().map_err(message_snapshot_fault)?,
+                },
+                ViewSubject::Facts | ViewSubject::Trust => {
+                    subscription.page(self, subject, None, *id)?
                 }
-            } else {
-                subscription.page(self, subject, None, *id)?
             };
             frames.push(frame);
         }
@@ -193,6 +205,31 @@ impl Source {
                     reason: "stream::fact-page-failed".to_owned(),
                     detail: error.to_string(),
                 })
+            })
+    }
+
+    fn directions(&self) -> Result<Vec<OperatorDirection>, Failure> {
+        self.bus
+            .canvas_directions(OPERATOR_DIRECTION_CAPACITY)
+            .map_err(|error| {
+                Failure::Fault(Fault {
+                    class: FaultClass::Store,
+                    reason: "stream::direction-snapshot-failed".to_owned(),
+                    detail: error.to_string(),
+                })
+            })
+            .map(|heads| {
+                heads
+                    .into_iter()
+                    .map(|head| OperatorDirection {
+                        authored: head.body().published,
+                        directive: head.body().directive,
+                        key: head.body().key.clone(),
+                        lane: head.body().lane,
+                        text: head.body().text.clone(),
+                        attachments: head.body().attachments.clone(),
+                    })
+                    .collect()
             })
     }
 
@@ -522,6 +559,12 @@ impl Subscription {
                     "message snapshots never carry a journal continuation",
                 )));
             }
+            ViewSubject::Directions => {
+                return Err(Failure::Refusal(refusal(
+                    "stream::direction-continuation-invalid",
+                    "direction snapshots never carry a journal continuation",
+                )));
+            }
         };
         Ok(frame)
     }
@@ -557,7 +600,7 @@ mod tests {
     use super::*;
     use bus::{Bus, CommitOutcome};
     use journal::{FactCause, Journal, JournalWrite};
-    use wire::{Actor, Domain, Producer, TrustHead, TrustState, body};
+    use wire::{Actor, Disposition, Domain, Producer, SteeringHead, TrustHead, TrustState, body};
 
     fn uuid(value: &str) -> wire::CanonicalUuid {
         value.parse().expect("canonical fixture uuid")
@@ -760,6 +803,81 @@ mod tests {
         }
     }
 
+    fn commit_operator_direction(bus: &Bus) -> SteeringHead {
+        let directive = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
+        let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
+        let key = "1kQnrzNZ".to_owned();
+        let at = "2030-04-12T18:45:09.271Z".parse().expect("fixture instant");
+        let expires = "2030-04-12T19:45:09.271Z".parse().expect("fixture expiry");
+        let origin: wire::Origin = "steer:1kQnrzNZ".parse().expect("fixture origin");
+        let sent = body::SteerSent {
+            directive,
+            fanout: None,
+            key: key.clone(),
+            lane,
+            text: "direction survives standing changes".to_owned(),
+            control: None,
+            attachments: Vec::new(),
+            expires,
+        };
+        let mut write =
+            JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+        let pending = write
+            .fact(sent.clone(), FactCause::Root)
+            .expect("direction fact builds");
+        let expected = sent.clone();
+        write.steering_head(pending, move |created| SteeringHead {
+            directive,
+            fanout: None,
+            key,
+            lane,
+            text: expected.text,
+            control: None,
+            attachments: Vec::new(),
+            published: at,
+            expires,
+            stage: body::SteeringStage::Published,
+            escalations: Vec::new(),
+            disposition: Disposition::Live,
+            origin,
+            created,
+            minted_millis: None,
+        });
+        match bus.commit(write).expect("direction commit answers") {
+            CommitOutcome::Committed(_) => {}
+            other => panic!("direction fixture failed: {other:?}"),
+        }
+        bus.read(move |read| read.steering_head(directive))
+            .expect("direction head reads")
+            .expect("direction head exists")
+            .into_body()
+    }
+
+    fn cancel_operator_direction(bus: &Bus, current: &SteeringHead) {
+        let mut write = JournalWrite::new(
+            Actor::Operator,
+            current.origin.clone(),
+            "2030-04-12T18:46:09.271Z".parse().expect("fixture instant"),
+            Producer::CommandDoor,
+        );
+        let pending = write
+            .fact(
+                body::SteerCanceled {
+                    key: current.key.clone(),
+                    lane: current.lane,
+                },
+                FactCause::Existing(current.created),
+            )
+            .expect("cancellation fact builds");
+        let mut retired = current.clone();
+        retired.disposition = Disposition::Canceled;
+        write.steering_head(pending, move |_| retired);
+        match bus.commit(write).expect("cancellation commit answers") {
+            CommitOutcome::Committed(_) => {}
+            other => panic!("cancellation fixture failed: {other:?}"),
+        }
+    }
+
     fn commit_trust_heads(bus: &Bus, surfaces: &[&[u8]]) -> JournalCommit {
         let mut write = JournalWrite::new(
             Actor::Operator,
@@ -926,6 +1044,38 @@ mod tests {
         assert!(facts(&frames[0]).overflow.is_none());
         assert_eq!(facts(&frames[0]).horizon, seq(6));
         assert_eq!(subscription.cursor(), Some(seq(6)));
+        assert!(subscription.is_live());
+        drop(source);
+        bus.shutdown().expect("bus shuts down");
+    }
+
+    #[test]
+    fn fresh_operator_direction_snapshot_restores_retired_identity() {
+        let bus = fixture(1);
+        let current = commit_operator_direction(&bus);
+        cancel_operator_direction(&bus, &current);
+        let source = Source::new(bus.reader(), epoch(), 2);
+        let (subscription, frames) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(0xc4, vec![ViewSubject::Directions], None),
+            )
+            .expect("direction subscription begins");
+
+        let StreamFrame::Directions {
+            limit, directions, ..
+        } = &frames[0]
+        else {
+            panic!("expected direction snapshot")
+        };
+        assert_eq!(*limit as usize, OPERATOR_DIRECTION_CAPACITY);
+        assert_eq!(directions.len(), 1);
+        let direction = &directions[0];
+        assert_eq!(direction.authored, current.published);
+        assert_eq!(direction.directive, current.directive);
+        assert_eq!(direction.key, current.key);
+        assert_eq!(direction.lane, current.lane);
+        assert_eq!(direction.text, current.text);
         assert!(subscription.is_live());
         drop(source);
         bus.shutdown().expect("bus shuts down");
@@ -1281,7 +1431,11 @@ mod tests {
         let bus = fixture(1);
         let source = Source::new(bus.reader(), epoch(), 10);
         let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
-        for subject in [ViewSubject::Trust, ViewSubject::Messages] {
+        for subject in [
+            ViewSubject::Directions,
+            ViewSubject::Trust,
+            ViewSubject::Messages,
+        ] {
             let failure = source
                 .begin(
                     &accepted(Actor::Lane(lane)),

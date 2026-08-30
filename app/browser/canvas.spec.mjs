@@ -10,7 +10,10 @@ import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
   nestedQuoteMessage, nestedQuotePreview, seatAgentTeam, seatLeaseAgent,
 } from "./agent-conversation.mjs";
-import { assertCompactionBoundary } from "./agent-conversation-mosaic.mjs";
+import {
+  assertCompactionBoundary,
+  installPersistedMosaicImageRoutes,
+} from "./agent-conversation-mosaic.mjs";
 import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
 import {
   assertComposerPointerSelection,
@@ -802,7 +805,10 @@ try {
     owner = ownFixture({ fixture, linkedRoot });
     await mkdir(artifacts, { recursive: true });
     const worktrees = await configureFixture(fixture, linkedRoot, 6, {
-      laneLease: run.owns("lease") ? "5m" : "5s",
+      // Interaction owns several reload-sensitive agent workflows and tests no
+      // lease deadline. Keep those occupants stable just as the dedicated
+      // lease shard does; short expiry remains covered by the other shards.
+      laneLease: run.owns("lease") || run.owns("interaction") ? "5m" : "5s",
       noCardMember: 5,
     });
     resident = owner.ownResident(await startResident(fixture));
@@ -852,6 +858,7 @@ try {
       });
     } else if (run.owns("interaction")) {
       light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
+      await installPersistedMosaicImageRoutes(light);
       const activityReplay = await installActivityReplay(light);
       await installBrowserSpeech(light);
       await installSocketControl(light);
@@ -883,6 +890,7 @@ try {
       });
       await run.scenario("reference-composer", async () => {
         const reference = await browser.newContext({ colorScheme: "dark", viewport: { width: 1000, height: 568 } });
+        await installPersistedMosaicImageRoutes(reference);
         await installBrowserSpeech(reference);
         const page = await reference.newPage();
         const monitor = monitorPage(page);

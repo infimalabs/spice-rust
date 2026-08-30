@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import {
@@ -16,6 +17,7 @@ import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertSyntheticComposerObservation } from "./composer-shards.mjs";
 import {
   chooseCanvasView,
+  journalExtent,
   reply,
   replyAsLane,
   CONNECT_MS,
@@ -184,6 +186,10 @@ export async function seatAgentTeam(
   await waitForPage(page, "seated agents publish their session identities", CONNECT_MS, () => {
     const cards = [...document.querySelectorAll(".team-detail-card")];
     return cards.length >= 4 && cards.every((card) => !card.title.includes("thread: unbound"));
+  }, undefined, {
+    observed: () => console.locator(".team-detail-card").evaluateAll((cards) => (
+      cards.map((card) => card.title)
+    )),
   });
 
   const lanes = await reply(fixture, ["lane"]);
@@ -328,6 +334,114 @@ async function assertStableOperatorAuthorship(page, fixture, console, lane, acti
   );
 }
 
+async function assertExternalOperatorReplay(page, fixture, console, lane, worktree) {
+  const text = `external operator replay ${crypto.randomUUID()}`;
+  await page.evaluate(() => {
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    window.__externalOperatorFacts = [];
+    socket.addEventListener("message", async (event) => {
+      const text = typeof event.data === "string"
+        ? event.data
+        : event.data instanceof Blob
+          ? await event.data.text()
+          : new TextDecoder().decode(event.data);
+      const frame = JSON.parse(text);
+      if (frame.stream === "fact" && frame.fact?.fact?.kind === "steer::sent") {
+        window.__externalOperatorFacts.push(frame.fact);
+      }
+    });
+  });
+  const sent = await reply(fixture, ["steer", lane, text]);
+  await waitForPage(page, "external steer fact reaches Canvas", TRANSITION_MS, (directive) => (
+    window.__externalOperatorFacts.some((fact) => fact.fact.directive === directive)
+  ), sent.body.directive, {
+    observed: () => page.evaluate(() => window.__externalOperatorFacts),
+  });
+  const streamed = await page.evaluate((directive) => (
+    window.__externalOperatorFacts.find((fact) => fact.fact.directive === directive)
+  ), sent.body.directive);
+  assert.equal(streamed.actor, "operator", `external steer retains operator authorship: ${JSON.stringify(streamed)}`);
+  assert.equal(streamed.fact.lane, lane, "external steer fact retains its target lane");
+  const source = `message-operator-${sent.body.directive}`;
+  const card = console.locator(
+    `[data-card-kind="operator-message"][data-directive="${sent.body.directive}"]`,
+  );
+  await waitForPage(page, "external operator card renders", TRANSITION_MS, (directive) => (
+    [...document.querySelectorAll('[data-card-kind="operator-message"]')].some((candidate) => (
+      candidate.dataset.directive === directive && candidate.checkVisibility()
+    ))
+  ), sent.body.directive, {
+    observed: async () => ({
+      fact: streamed,
+      cards: await console.locator('[data-card-kind="operator-message"]').evaluateAll((cards) => (
+        cards.map((candidate) => ({
+          directive: candidate.dataset.directive,
+          phase: candidate.dataset.layoutPhase,
+          visible: candidate.checkVisibility(),
+        }))
+      )),
+    }),
+  });
+  assert.equal(await card.count(), 1, "an external direction renders once on the live client");
+  assert.equal(await card.getAttribute("data-mosaic-card-key"), source);
+  assert.equal(await card.getAttribute("data-message-role"), "operator");
+  assert.equal((await card.locator(".message-author").innerText()).trim(), "Operator");
+
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  await card.waitFor({ timeout: CONNECT_MS });
+  assert.equal(await card.count(), 1, "bootstrap restores one live external direction");
+  assert.equal(await card.getAttribute("data-mosaic-card-key"), source);
+
+  const plane = console.locator(".lane-mosaic-plane");
+  const beforeEvidence = await journalExtent(fixture);
+  await writeFile(join(worktree, ".spice-ack-trigger"), `${sent.body.key}\n`);
+  await console.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+  ).filter({ hasText: `ACK ${sent.body.key}` }).waitFor({ timeout: CONNECT_MS });
+  const evidenceDeadline = Date.now() + CONNECT_MS;
+  let evidence = beforeEvidence;
+  while (evidence.facts <= beforeEvidence.facts && Date.now() < evidenceDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    evidence = await journalExtent(fixture);
+  }
+  assert.ok(
+    evidence.facts > beforeEvidence.facts,
+    `ACK transcript evidence becomes durable: before=${JSON.stringify(beforeEvidence)} after=${JSON.stringify(evidence)}`,
+  );
+  await waitForPage(page, "external operator replay Mosaic settles", TRANSITION_MS, () => {
+    const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+    return element?.dataset.measurementPhase === "ready"
+      && element.dataset.measurementPending === "0";
+  });
+  const commits = Number(await plane.getAttribute("data-plane-commits"));
+  const acknowledged = await replyAsLane(worktree, lane, ["ack", sent.body.key]);
+  await waitForPage(page, "external acknowledgement reaches Canvas", TRANSITION_MS, (cursor) => (
+    document.querySelector(".bar-meta")?.textContent === cursor
+  ), `cursor ${acknowledged.seq.last}`);
+  await waitForPage(page, "acknowledgement refresh leaves Mosaic settled", TRANSITION_MS, () => (
+    document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')
+      ?.dataset.measurementPending === "0"
+  ));
+  assert.equal(await card.count(), 1, "acknowledgement retains one operator record");
+  assert.equal(await card.getAttribute("data-mosaic-card-key"), source);
+  assert.equal(
+    Number(await plane.getAttribute("data-plane-commits")),
+    commits,
+    "an acknowledgement-only refresh is a Mosaic no-op",
+  );
+
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  await card.waitFor({ timeout: CONNECT_MS });
+  assert.equal(await card.count(), 1, "bootstrap restores one acknowledged external direction");
+  assert.equal(await card.getAttribute("data-mosaic-card-key"), source);
+  assert.equal((await card.locator(".message-author").innerText()).trim(), "Operator");
+}
+
 export async function assertAgentConversation(
   page,
   fixture,
@@ -379,6 +493,17 @@ export async function assertAgentConversation(
     seated[0].lane,
     activityReplay,
   );
+  await assertExternalOperatorReplay(
+    page,
+    fixture,
+    console,
+    seated[0].lane,
+    teamWorktrees[0],
+  );
+  await Promise.all([
+    writeFile(join(teamWorktrees[0], ".spice-tool-trigger"), "emit\n"),
+    writeFile(join(teamWorktrees[0], ".spice-prose-trigger"), "emit\n"),
+  ]);
   await assertInitiallyDeferredMosaicIsReadable(page, console);
   await assertRosterPips(page, console, seated);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();

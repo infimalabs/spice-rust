@@ -95,8 +95,8 @@ pub use reply::{
     RestoreVerification, SeqRange, SeqRangeError, SpiceCommand, ThreadReport, Version,
 };
 pub use stream::{
-    AgentActivityKind, AgentMessage, MessageLocus, StreamAdmissionError, StreamCursor, StreamFact,
-    StreamFrame, StreamRequest, TrustView, ViewSubject,
+    AgentActivityKind, AgentMessage, MessageLocus, OperatorDirection, StreamAdmissionError,
+    StreamCursor, StreamFact, StreamFrame, StreamRequest, TrustView, ViewSubject,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,
