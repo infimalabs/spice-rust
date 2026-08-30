@@ -9,14 +9,22 @@ fn handle_stream_frame(
     surface: &UseStateHandle<SurfaceData>,
     data: &SurfaceData,
     bytes: &[u8],
-) -> Result<(Vec<StreamDirective>, bool, Option<wire::StreamCursor>), String> {
+) -> Result<
+    (
+        Vec<StreamDirective>,
+        bool,
+        crate::Stale,
+        Option<wire::StreamCursor>,
+    ),
+    String,
+> {
     let admitted = session
         .admit_stream(bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
     if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
-        return Ok((Vec::new(), false, None));
+        return Ok((Vec::new(), false, crate::Stale::default(), None));
     }
-    let refresh = stale_reads(&admitted).any();
+    let stale = stale_reads(&admitted);
     let live_fact = matches!(admitted.get(), wire::StreamFrame::Fact { .. });
     let (directives, refresh_thread, changed) = {
         let mut data = data.write();
@@ -33,7 +41,7 @@ fn handle_stream_frame(
     if changed {
         surface.set(data.publication());
     }
-    Ok((directives, refresh, refresh_thread))
+    Ok((directives, false, stale, refresh_thread))
 }
 
 pub(super) fn handle_incoming(
@@ -42,7 +50,15 @@ pub(super) fn handle_incoming(
     data: &SurfaceData,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
-) -> Result<(Vec<StreamDirective>, bool, Option<wire::StreamCursor>), String> {
+) -> Result<
+    (
+        Vec<StreamDirective>,
+        bool,
+        crate::Stale,
+        Option<wire::StreamCursor>,
+    ),
+    String,
+> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
         return handle_stream_frame(session, &handles.surface, data, bytes);
@@ -58,7 +74,7 @@ pub(super) fn handle_incoming(
     let refresh = apply_command_response(session, handles, runtime, identity.id, kind, bytes)?;
     drop(runtime_slot);
     handles.surface.set(data.publication());
-    Ok((Vec::new(), refresh, None))
+    Ok((Vec::new(), refresh, crate::Stale::default(), None))
 }
 
 fn apply_command_response(

@@ -193,12 +193,16 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
                     {for [Axis::Magnitude, Axis::Flow].map(|candidate| {
                         let axis = render.axis.clone();
                         let mosaic = render.mosaic.clone();
+                        let sender = render.sender.clone();
                         render_pill(
                             &title(candidate.as_str()),
                             candidate.question(),
                             !**render.mosaic && candidate == render.active_axis,
                             watchband::badge(axis_count(candidate, runtime)),
                             Callback::from(move |_| {
+                                if candidate == Axis::Magnitude {
+                                    send_action(&sender, ClientAction::Effort);
+                                }
                                 axis.set(candidate);
                                 mosaic.set(false);
                             }),

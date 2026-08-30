@@ -164,7 +164,7 @@ async fn pump_session(
                     .ok_or_else(|| "resident closed the socket".to_owned())?
                     .map_err(websocket_error)?;
                 let bytes = binary_message(frame)?;
-                let (directives, refresh, refresh_thread) =
+                let (directives, refresh, stale, refresh_thread) =
                     handle_incoming(
                         &session,
                         handles,
@@ -182,15 +182,15 @@ async fn pump_session(
                     });
                 }
                 relay_directives(&principal, &mut writer, directives).await?;
-                if refresh {
-                    send_refresh(
-                        &principal,
-                        &mut writer,
-                        &mut pending,
-                        &handles.submissions,
-                    )
-                    .await?;
-                }
+                send_after_frame(
+                    &principal,
+                    &mut writer,
+                    &mut pending,
+                    &handles.submissions,
+                    refresh,
+                    stale,
+                )
+                .await?;
                 drain_submissions(
                     &principal,
                     &mut writer,
@@ -386,6 +386,7 @@ async fn dispatch_action(
             drain_submissions(principal, writer, pending, submissions).await
         }
         ClientAction::Refresh => send_refresh(principal, writer, pending, submissions).await,
+        ClientAction::Effort => send_effort(principal, writer, pending).await,
         ClientAction::Seat {
             topology_revision,
             name,
@@ -782,102 +783,6 @@ fn bounded_speech_error(error: &str) -> String {
     error[..end].to_owned()
 }
 
-async fn send_refresh(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    submissions: &SubmissionHandle,
-) -> Result<(), String> {
-    send_if_offered(
-        principal,
-        writer,
-        pending,
-        PendingKind::Board,
-        CommandKind::BoardRead,
-        vec![],
-        BoardRead { family: None },
-    )
-    .await?;
-    let awaiting_residency = submissions.queue.borrow().awaiting_residency();
-    send_if_offered(
-        principal,
-        writer,
-        pending,
-        PendingKind::Lanes {
-            wakes: awaiting_residency,
-        },
-        CommandKind::LaneRead,
-        vec![],
-        LaneRead {},
-    )
-    .await?;
-    let covered = submissions.queue.borrow().accepted();
-    send_if_offered(
-        principal,
-        writer,
-        pending,
-        PendingKind::Inbox { covered },
-        CommandKind::SteerInbox,
-        vec![],
-        SteerInbox { lane: None },
-    )
-    .await?;
-    send_if_offered(
-        principal,
-        writer,
-        pending,
-        PendingKind::Consent,
-        CommandKind::ConsentRead,
-        vec![],
-        ConsentRead {},
-    )
-    .await?;
-    send_if_offered(
-        principal,
-        writer,
-        pending,
-        PendingKind::Policy,
-        CommandKind::ConsentPolicy,
-        vec![],
-        ConsentPolicy {},
-    )
-    .await?;
-    send_if_offered(
-        principal,
-        writer,
-        pending,
-        PendingKind::Effort,
-        CommandKind::EffortRead,
-        vec![],
-        EffortRead { task: None },
-    )
-    .await
-}
-
-async fn send_if_offered<B: Serialize>(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    pending_kind: PendingKind,
-    kind: CommandKind,
-    expected: Vec<Witness>,
-    body: B,
-) -> Result<(), String> {
-    if !SteerPane::over(principal).offers(kind) {
-        return Ok(());
-    }
-    send_typed(
-        principal,
-        writer,
-        pending,
-        pending_kind,
-        kind,
-        expected,
-        body,
-    )
-    .await
-}
-
 async fn send_typed<B: Serialize>(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -1005,5 +910,7 @@ async fn send_stream_request(
         .map_err(websocket_error)
 }
 
+mod refresh;
 mod responses;
+use refresh::{send_after_frame, send_effort, send_refresh};
 use responses::handle_incoming;

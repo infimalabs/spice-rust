@@ -353,6 +353,8 @@ enum ClientAction {
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
     Refresh,
+    /// Derive the expensive task-effort answer on explicit Magnitude demand.
+    Effort,
     Seat {
         topology_revision: u64,
         name: Option<String>,
@@ -452,6 +454,38 @@ enum PendingKind {
     ConsentDecision,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CurrentRead {
+    Board,
+    Lanes,
+    Inbox,
+    Consent,
+    Policy,
+    Effort,
+}
+
+impl PendingKind {
+    const fn current_read(&self) -> Option<CurrentRead> {
+        match self {
+            Self::Board => Some(CurrentRead::Board),
+            Self::Lanes { .. } => Some(CurrentRead::Lanes),
+            Self::Inbox { .. } => Some(CurrentRead::Inbox),
+            Self::Consent => Some(CurrentRead::Consent),
+            Self::Policy => Some(CurrentRead::Policy),
+            Self::Effort => Some(CurrentRead::Effort),
+            Self::LaneSeat
+            | Self::LaneArrange
+            | Self::WakeSubmission { .. }
+            | Self::LineageConfigure { .. }
+            | Self::LineageArrange
+            | Self::Steer { .. }
+            | Self::SteerSubmission { .. }
+            | Self::Note(_)
+            | Self::ConsentDecision => None,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct ResponseIdentity {
     id: CanonicalUuid,
@@ -508,7 +542,7 @@ fn canvas_app() -> Html {
     use_lineage_speech_abandonment(&surface, speech_runtime.clone());
     use_speech_reset(speech.clone(), speech_runtime.clone());
 
-    let refresh = refresh_callback(sender.clone());
+    let refresh = refresh_callback(sender.clone(), axis.clone());
     let submit_note = note_submit_callback(
         sender.clone(),
         note_task.clone(),
@@ -623,9 +657,12 @@ fn note_submit_callback(
     })
 }
 
-fn refresh_callback(sender: SenderHandle) -> Callback<MouseEvent> {
+fn refresh_callback(sender: SenderHandle, axis: UseStateHandle<Axis>) -> Callback<MouseEvent> {
     Callback::from(move |_| {
         send_action(&sender, ClientAction::Refresh);
+        if *axis == Axis::Magnitude {
+            send_action(&sender, ClientAction::Effort);
+        }
     })
 }
 
