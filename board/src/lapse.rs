@@ -93,20 +93,6 @@ pub enum Refusal {
     },
     MissingResidency,
     ResidentState(wire::ResidentState),
-    StaleResidentEpoch {
-        seated: CanonicalUuid,
-        named: CanonicalUuid,
-    },
-    MissingLane(CanonicalUuid),
-    LaneDisposition {
-        lane: CanonicalUuid,
-        disposition: String,
-    },
-    Displaced {
-        lane: CanonicalUuid,
-        seated: Option<CanonicalUuid>,
-        named: CanonicalUuid,
-    },
     Changed(String),
 }
 
@@ -147,19 +133,6 @@ impl fmt::Display for Refusal {
             Self::ResidentState(state) => {
                 write!(formatter, "resident state {state:?} refuses lapse")
             }
-            Self::StaleResidentEpoch { seated, named } => {
-                write!(formatter, "resident epoch is {seated}, not {named}")
-            }
-            Self::MissingLane(lane) => write!(formatter, "resident has no lane {lane}"),
-            Self::LaneDisposition { lane, disposition } => write!(
-                formatter,
-                "lane {lane} disposition {disposition:?} refuses lapse"
-            ),
-            Self::Displaced {
-                lane,
-                seated,
-                named,
-            } => write!(formatter, "lane {lane} holds {seated:?}, not {named}"),
             Self::Changed(detail) => write!(formatter, "{CHANGED}: {detail}"),
         }
     }
@@ -294,7 +267,11 @@ fn observe(
     .map_err(|error| GuardError::Invalid(format!("task {task} is invalid: {error}")))?;
     admit_expiry(claim.body(), lease.body(), request)?;
     let residency = read.residency_head()?.ok_or(Refusal::MissingResidency)?;
-    admit_residency(residency.body(), claim.body().lane, request)?;
+    // Exact claim and lease heads invalidate superseded timers. Residency only
+    // gates whether a resident may write; its identity can move before expiry.
+    if residency.body().state != wire::ResidentState::Seated {
+        return Err(Refusal::ResidentState(residency.body().state).into());
+    }
     Ok(Observation {
         statement,
         workflow,
@@ -346,41 +323,6 @@ fn admit_expiry(
         return Err(Refusal::Early {
             at: request.at,
             expiry: lease.expiry,
-        });
-    }
-    Ok(())
-}
-
-fn admit_residency(
-    head: &wire::ResidencyHead,
-    lane: CanonicalUuid,
-    request: &Request,
-) -> Result<(), Refusal> {
-    if head.state != wire::ResidentState::Seated {
-        return Err(Refusal::ResidentState(head.state));
-    }
-    if head.epoch != request.epoch {
-        return Err(Refusal::StaleResidentEpoch {
-            seated: head.epoch,
-            named: request.epoch,
-        });
-    }
-    let seat = head
-        .lanes
-        .iter()
-        .find(|seat| seat.lane == lane)
-        .ok_or(Refusal::MissingLane(lane))?;
-    if seat.disposition != "occupied" {
-        return Err(Refusal::LaneDisposition {
-            lane,
-            disposition: seat.disposition.clone(),
-        });
-    }
-    if seat.occupant != Some(request.occupant) {
-        return Err(Refusal::Displaced {
-            lane,
-            seated: seat.occupant,
-            named: request.occupant,
         });
     }
     Ok(())

@@ -65,8 +65,41 @@ fn expired_commit_bearing_claim_lapses_and_returns_to_allocation() {
     assert_eq!(committed.first(), committed.last());
     let heads = lapsed_heads(&fixture);
     assert_lapsed_and_eligible(&fixture, &heads);
-    capture_lapsed_task(&fixture, &heads);
+    capture_lapsed_task(
+        &fixture,
+        &heads,
+        fixture.authority.epoch,
+        fixture.authority.occupant,
+    );
     assert_commit_history(&fixture.bus);
+    drop(timers);
+    fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn expired_claim_lapses_after_resident_epoch_and_occupant_move() {
+    let fixture = fixture();
+    let successor = uuid(32);
+    let successor_epoch = uuid(33);
+    move_residency(&fixture, successor_epoch, successor);
+    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&fixture.bus)
+        .expect("stale expired claim still arms");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let fired = runtime
+        .block_on(timers.recv())
+        .expect("expired stale claim timer fires");
+    timers
+        .consume(&fixture.bus, fired)
+        .expect("expired stale claim lapses");
+
+    let heads = lapsed_heads(&fixture);
+    assert_lapsed_and_eligible(&fixture, &heads);
+    capture_lapsed_task(&fixture, &heads, successor_epoch, successor);
     drop(timers);
     fixture.bus.shutdown().expect("fixture bus stops");
 }
@@ -561,12 +594,17 @@ fn assert_lapsed_and_eligible(fixture: &Fixture, heads: &TaskHeads) {
     );
 }
 
-fn capture_lapsed_task(fixture: &Fixture, heads: &TaskHeads) {
+fn capture_lapsed_task(
+    fixture: &Fixture,
+    heads: &TaskHeads,
+    epoch: CanonicalUuid,
+    occupant: CanonicalUuid,
+) {
     let capture = "capture".parse::<wire::Name>().expect("capture rule");
     let capture_command = Command {
         v: WireVersion::CURRENT,
         id: uuid(31),
-        epoch: fixture.authority.epoch,
+        epoch,
         kind: CommandKind::ClaimWin,
         expected: vec![
             Witness::Task {
@@ -587,8 +625,8 @@ fn capture_lapsed_task(fixture: &Fixture, heads: &TaskHeads) {
             },
             Witness::Residency {
                 lane: fixture.authority.lane,
-                occupant: fixture.authority.occupant,
-                epoch: fixture.authority.epoch,
+                occupant,
+                epoch,
             },
         ],
         body: serde_json::to_value(wire::intent::ClaimWin {
@@ -600,7 +638,7 @@ fn capture_lapsed_task(fixture: &Fixture, heads: &TaskHeads) {
     .admit(&Accepted {
         wire: WireVersion::CURRENT,
         actor: Actor::Lane(fixture.authority.lane),
-        epoch: fixture.authority.epoch,
+        epoch,
     })
     .expect("capture command admits");
     let capture = crate::board_command::dispatch_with_repository(
@@ -621,6 +659,35 @@ fn capture_lapsed_task(fixture: &Fixture, heads: &TaskHeads) {
         ),
         "commit capture did not acquire the lapsed task: {capture:?}"
     );
+}
+
+fn move_residency(fixture: &Fixture, epoch: CanonicalUuid, occupant: CanonicalUuid) {
+    let observed = fixture
+        .bus
+        .residency_head()
+        .expect("residency reads")
+        .expect("residency exists");
+    let mut next = observed.body().clone();
+    next.epoch = epoch;
+    next.lanes[0].occupant = Some(occupant);
+    next.lanes[0].lineage.push(occupant);
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{epoch}").parse().expect("fixture origin"),
+        fixture.authority.expiry,
+        Producer::CommandDoor,
+    );
+    let seated = write
+        .fact(body::UpSeated { epoch }, FactCause::Root)
+        .expect("successor resident fact builds");
+    write.residency_head(seated, move |_| next);
+    assert!(matches!(
+        fixture
+            .bus
+            .commit(write)
+            .expect("successor resident commits"),
+        bus::CommitOutcome::Committed(_)
+    ));
 }
 
 fn assert_commit_history(bus: &Bus) {
