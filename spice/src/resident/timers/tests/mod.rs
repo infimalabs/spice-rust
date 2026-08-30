@@ -14,6 +14,8 @@ use wire::{
 
 use super::*;
 
+mod warnings;
+
 struct Fixture {
     bus: Bus,
     projects: ProjectPolicy,
@@ -25,6 +27,7 @@ struct Authority {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
+    worktree: String,
     start: Instant,
     expiry: Instant,
     maximum: Instant,
@@ -482,6 +485,7 @@ fn concurrent_claim_warnings_remain_isolated_to_their_exact_lanes() {
         lane: uuid(20),
         occupant: uuid(21),
         epoch,
+        worktree: format!("/fixture/{}", uuid(20)),
         start: shifted(now, -2),
         expiry: shifted(now, 60),
         maximum: shifted(now, 600),
@@ -494,6 +498,7 @@ fn concurrent_claim_warnings_remain_isolated_to_their_exact_lanes() {
         lane: uuid(25),
         occupant: uuid(26),
         epoch,
+        worktree: format!("/fixture/{}", uuid(25)),
         start: shifted(now, -2),
         expiry: shifted(now, 60),
         maximum: shifted(now, 600),
@@ -891,12 +896,17 @@ fn fixture() -> Fixture {
 }
 
 fn fixture_with_expiry(expiry_seconds: i64) -> Fixture {
+    fixture_with_expiry_at(expiry_seconds, format!("/fixture/{}", uuid(20)))
+}
+
+fn fixture_with_expiry_at(expiry_seconds: i64, worktree: String) -> Fixture {
     let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
     let authority = Authority {
         task: task(),
         lane: uuid(20),
         occupant: uuid(21),
         epoch: uuid(22),
+        worktree,
         start: shifted(now, -2),
         expiry: shifted(now, expiry_seconds),
         maximum: shifted(now, 600),
@@ -925,6 +935,7 @@ fn automatic_fixture_with_age(age_seconds: i64) -> Fixture {
         lane: uuid(20),
         occupant: uuid(21),
         epoch: uuid(22),
+        worktree: format!("/fixture/{}", uuid(20)),
         start,
         expiry,
         maximum: expiry,
@@ -1232,12 +1243,12 @@ fn lane_residency(authority: &Authority) -> LaneResidency {
         lane: authority.lane,
         lineage_id: authority.lane,
         name: None,
-        worktree: format!("/fixture/{}", authority.lane),
+        worktree: authority.worktree.clone(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
         occupant: Some(authority.occupant),
         lineage: vec![authority.occupant],
-        capabilities: Vec::new(),
+        capabilities: vec![authority.occupant],
         session: None,
         disposition: "occupied".to_owned(),
     }

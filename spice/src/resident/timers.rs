@@ -1,6 +1,6 @@
 //! Resident-owned fold of durable deadlines into process-local waits.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::thread::{self, JoinHandle};
 
 use board::ProjectPolicy;
@@ -120,6 +120,89 @@ pub(super) struct WarningDelivery {
     expiry: Instant,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WarningGeneration {
+    stamp: wire::TaskStamp,
+    claim: wire::Seq,
+    lease: wire::Seq,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    expiry: Instant,
+}
+
+impl From<&WarningDelivery> for WarningGeneration {
+    fn from(delivery: &WarningDelivery) -> Self {
+        Self {
+            stamp: delivery.stamp.clone(),
+            claim: delivery.claim,
+            lease: delivery.lease,
+            lane: delivery.lane,
+            occupant: delivery.occupant,
+            epoch: delivery.epoch,
+            expiry: delivery.expiry,
+        }
+    }
+}
+
+impl From<&wire::body::ClaimLeaseWarned> for WarningGeneration {
+    fn from(warning: &wire::body::ClaimLeaseWarned) -> Self {
+        Self {
+            stamp: warning.task.clone(),
+            claim: warning.claim,
+            lease: warning.lease,
+            lane: warning.lane,
+            occupant: warning.occupant,
+            epoch: warning.epoch,
+            expiry: warning.expiry,
+        }
+    }
+}
+
+impl WarningGeneration {
+    fn current(
+        &self,
+        heads: Option<&journal::TaskHeads>,
+        residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
+        at: Instant,
+    ) -> bool {
+        if at >= self.expiry {
+            return false;
+        }
+        let Some(heads) = heads else {
+            return false;
+        };
+        let (Some(claim), Some(lease), Some(residency)) = (heads.claim(), heads.lease(), residency)
+        else {
+            return false;
+        };
+        claim.position() == self.claim
+            && lease.position() == self.lease
+            && claim.body().disposition == ClaimDisposition::Active
+            && claim.body().lane == self.lane
+            && claim.body().occupant == self.occupant
+            && claim.body().epoch == self.epoch
+            && lease.body().epoch == self.epoch
+            && lease.body().expiry == self.expiry
+            && residency.body().state == ResidentState::Seated
+            && residency.body().epoch == self.epoch
+            && current_claim_occupant(residency.body(), claim.body())
+    }
+
+    fn current_residency(
+        &self,
+        read: &journal::JournalRead<'_>,
+        at: Instant,
+    ) -> Result<Option<journal::JournalHead<wire::ResidencyHead>>, GuardError> {
+        let heads = read.task_heads_for(&self.stamp)?;
+        let residency = read.residency_head()?;
+        Ok(self
+            .current(heads.as_ref(), residency.as_ref(), at)
+            .then_some(residency)
+            .flatten())
+    }
+}
+
 impl WarningDelivery {
     pub(super) const fn lane(&self) -> CanonicalUuid {
         self.lane
@@ -129,33 +212,9 @@ impl WarningDelivery {
         &self,
         read: &journal::JournalRead<'_>,
     ) -> Result<Option<journal::JournalHead<wire::ResidencyHead>>, GuardError> {
-        let Some(heads) = read.task_heads_for(&self.stamp)? else {
-            return Ok(None);
-        };
-        let Some(claim) = heads.claim() else {
-            return Ok(None);
-        };
-        let Some(lease) = heads.lease() else {
-            return Ok(None);
-        };
-        if claim.position() != self.claim
-            || lease.position() != self.lease
-            || claim.body().disposition != ClaimDisposition::Active
-            || claim.body().lane != self.lane
-            || claim.body().occupant != self.occupant
-            || claim.body().epoch != self.epoch
-            || lease.body().epoch != self.epoch
-            || lease.body().expiry != self.expiry
-        {
-            return Ok(None);
-        }
-        let Some(residency) = read.residency_head()? else {
-            return Ok(None);
-        };
-        Ok((residency.body().state == ResidentState::Seated
-            && residency.body().epoch == self.epoch
-            && current_claim_occupant(residency.body(), claim.body()))
-        .then_some(residency))
+        let at = Instant::new(jiff::Timestamp::now())
+            .map_err(|error| GuardError::Invalid(format!("warning clock is invalid: {error}")))?;
+        WarningGeneration::from(self).current_residency(read, at)
     }
 }
 
@@ -242,7 +301,8 @@ impl Runtime {
     }
 
     /// Make process-local waits exactly match current lapse-capable claim heads.
-    pub(super) fn synchronize(&mut self, bus: &Bus) -> CommandResult<()> {
+    pub(super) fn synchronize(&mut self, bus: &Bus) -> CommandResult<BTreeSet<CanonicalUuid>> {
+        let refresh = cancel_stale_warnings(bus)?;
         let snapshot = bus
             .read(|read| {
                 Ok((
@@ -320,7 +380,7 @@ impl Runtime {
             self.directives
                 .insert(directive, ArmedDirective { id, authority });
         }
-        Ok(())
+        Ok(refresh)
     }
 
     fn synchronize_warnings(
@@ -915,6 +975,142 @@ fn current_claim_occupant(residency: &wire::ResidencyHead, claim: &wire::ClaimHe
         .any(|lane| lane.lane == claim.lane && lane.occupant == Some(claim.occupant))
 }
 
+#[derive(Clone)]
+struct StaleWarning {
+    head: journal::JournalHead<wire::SteeringHead>,
+    body: wire::body::ClaimLeaseWarned,
+}
+
+fn cancel_stale_warnings(bus: &Bus) -> CommandResult<BTreeSet<CanonicalUuid>> {
+    let at = Instant::new(jiff::Timestamp::now())
+        .map_err(|error| environment_fault("claim::warning-clock-invalid", &error.to_string()))?;
+    let snapshot = bus
+        .read(|read| {
+            Ok((
+                read.task_heads()?,
+                read.residency_head()?,
+                read.pending_steering(None)?,
+                read.fact_snapshot().map_err(|error| {
+                    GuardError::Invalid(format!("warning fact snapshot is invalid: {error}"))
+                })?,
+            ))
+        })
+        .map_err(|error| store_fault("claim::warning-snapshot-failed", &error.to_string()))?;
+    let stale = stale_warnings(
+        &snapshot.0,
+        snapshot.1.as_ref(),
+        &snapshot.2,
+        snapshot.3.facts(),
+        at,
+    )?;
+    let mut refresh = BTreeSet::new();
+    for stale in stale {
+        let directive = stale.head.body().directive;
+        let lane = stale.head.body().lane;
+        let expected = stale.head.clone();
+        let generation = WarningGeneration::from(&stale.body);
+        let mut proposal = JournalWrite::new(
+            Actor::Spice,
+            stale.head.body().origin.clone(),
+            at,
+            Producer::CommandDoor,
+        );
+        proposal.guard(JournalGuard::new(move |read| {
+            if read.steering_head(directive)?.as_ref() != Some(&expected) {
+                return Err(GuardError::refused("claim::warning-standing-moved"));
+            }
+            if generation.current_residency(read, at)?.is_some() {
+                return Err(GuardError::refused("claim::warning-authority-current"));
+            }
+            Ok(())
+        }));
+        let canceled = wire::body::SteerCanceled {
+            key: stale.head.body().key.clone(),
+            lane,
+        };
+        let pending = proposal
+            .fact(
+                canceled.clone(),
+                FactCause::Existing(stale.head.body().created),
+            )
+            .map_err(|error| store_fault("claim::warning-cancel-invalid", &error.to_string()))?;
+        let next = steer::Ledger::transition_head(
+            stale.head.body(),
+            steer::Steering::Canceled(&canceled),
+            at,
+        )
+        .map_err(|error| store_fault("claim::warning-index-invalid", &error.to_string()))?;
+        proposal.steering_head(pending, move |_| next);
+        match bus
+            .commit(proposal)
+            .map_err(|error| store_fault("bus::commit-failed", &error.to_string()))?
+        {
+            CommitOutcome::Committed(_) => {
+                refresh.insert(lane);
+            }
+            CommitOutcome::Refused(refusal) if refusal.reason().starts_with("claim::warning-") => {}
+            CommitOutcome::Refused(refusal) => {
+                return Err(store_fault(
+                    "claim::warning-cancel-refused",
+                    refusal.reason(),
+                ));
+            }
+            CommitOutcome::Fault(fault) => {
+                return Err(store_fault("journal::commit-failed", fault.detail()));
+            }
+        }
+    }
+    Ok(refresh)
+}
+
+fn stale_warnings(
+    tasks: &[journal::TaskHeads],
+    residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
+    steering: &[journal::JournalHead<wire::SteeringHead>],
+    facts: &[wire::Envelope<wire::AnyFact>],
+    at: Instant,
+) -> CommandResult<Vec<StaleWarning>> {
+    let mut stale = Vec::new();
+    for head in steering {
+        let created = head.body().created;
+        let Ok(index) = facts.binary_search_by_key(&created, |envelope| envelope.seq) else {
+            return Err(store_fault(
+                "claim::warning-cause-missing",
+                &format!(
+                    "steering directive {} has no creating fact",
+                    head.body().directive
+                ),
+            ));
+        };
+        let Some(body) = facts[index].fact.read::<wire::body::ClaimLeaseWarned>() else {
+            continue;
+        };
+        if body.directive != head.body().directive
+            || body.key != head.body().key
+            || body.lane != head.body().lane
+        {
+            return Err(store_fault(
+                "claim::warning-cause-moved",
+                &format!(
+                    "claim warning cause disagrees with steering directive {}",
+                    head.body().directive
+                ),
+            ));
+        }
+        let generation = WarningGeneration::from(&body);
+        let task = tasks
+            .iter()
+            .find(|heads| heads.statement().body().born == generation.stamp);
+        if !generation.current(task, residency, at) {
+            stale.push(StaleWarning {
+                head: head.clone(),
+                body,
+            });
+        }
+    }
+    Ok(stale)
+}
+
 fn warning_recorded(facts: &[wire::Envelope<wire::AnyFact>], authority: &WarningAuthority) -> bool {
     facts.iter().any(|envelope| {
         envelope
@@ -1059,5 +1255,4 @@ fn shifted(at: Instant, duration: std::time::Duration) -> CommandResult<Instant>
 }
 
 #[cfg(test)]
-#[path = "timers/tests.rs"]
 mod tests;
