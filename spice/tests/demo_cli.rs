@@ -295,6 +295,7 @@ fn staged_app_seed_callers_are_fully_inventoried() {
             "release_publish.rs",
             "steering.rs",
             "task_artifact_cli.rs",
+            "task_completion_cli.rs",
             "taste_cli.rs",
         ]
         .map(std::ffi::OsString::from)

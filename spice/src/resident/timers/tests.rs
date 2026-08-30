@@ -807,6 +807,7 @@ fn settle_task(fixture: &Fixture) {
             body::TaskDone {
                 task: stamp.clone(),
                 validation: "fixture settlement".to_owned(),
+                terminal: None,
                 git: None,
                 source: body::SourceBoundary::Proven { heads: Vec::new() },
             },

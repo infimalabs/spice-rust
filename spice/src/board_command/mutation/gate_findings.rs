@@ -1042,6 +1042,7 @@ fn write_gate_finding_recovery(
             body::TaskDone {
                 task: task.clone(),
                 validation,
+                terminal: None,
                 git: None,
                 source: source.clone(),
             },

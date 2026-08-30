@@ -8,7 +8,12 @@ use wire::{Outcome, Refusal, Reply, ReplyPosition};
 
 mod authority;
 mod dataset;
-pub(crate) mod learnings;
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "completion learning is retained only for its focused extraction tests"
+)]
+mod learnings;
 mod model;
 mod project;
 mod source;

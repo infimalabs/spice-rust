@@ -280,6 +280,21 @@ pub(super) fn task_done(
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
+    let operation = match done.operation {
+        Some(operation) => operation,
+        None => {
+            return refusal(
+                "task::completion-operation-required",
+                Some(done.task.to_string()),
+                "retry with a current client that supplies one durable completion operation",
+            );
+        }
+    };
+    match replay_task_completion(bus, command, done, entry, operation) {
+        Ok(Some(replayed)) => return replayed,
+        Ok(None) => {}
+        Err(outcome) => return outcome,
+    }
     if is_oops(entry) {
         return refusal(
             "task::promotion-required",
@@ -356,6 +371,52 @@ fn done_entry<'a>(
                 ),
             )
         })
+}
+
+fn replay_task_completion(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    done: &TaskDone,
+    entry: &Entry,
+    operation: wire::CanonicalUuid,
+) -> Result<Option<Outcome<CommandAnswer>>, Outcome<CommandAnswer>> {
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| store_fault("task::completion-replay-unavailable", &error.to_string()))?;
+    let facts = snapshot.facts();
+    let terminal = facts
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, envelope)| {
+            let completed = envelope.fact.read::<body::TaskDone>()?;
+            let terminal = completed.terminal?;
+            (envelope.actor == *command.actor()
+                && completed.task == *entry.born()
+                && completed.validation == done.validation
+                && terminal.operation == operation)
+                .then_some((index, envelope.seq, terminal))
+        });
+    Ok(terminal.map(|(index, first, terminal)| {
+        let last = facts
+            .get(index + 1)
+            .and_then(|following| {
+                let phased = following.fact.read::<body::TaskPhased>()?;
+                (following.cause == Some(first) && phased.task == *entry.born())
+                    .then_some(following.seq)
+            })
+            .unwrap_or(first);
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange { first, last }),
+            body: CommandAnswer::Task(wire::intent::TaskAnswer {
+                task: entry.handle().clone(),
+                status: terminal.status,
+                completion: None,
+                learning: None,
+                next: terminal.next,
+            }),
+        })
+    }))
 }
 
 fn done_transition(
@@ -499,11 +560,19 @@ fn append_done(
     source: body::SourceBoundary,
     next: Option<Box<str>>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
+    let status = transition.next().status.clone();
     let completed = write
         .fact(
             body::TaskDone {
                 task: entry.born().clone(),
                 validation: done.validation.clone(),
+                terminal: Some(body::TaskCompletionTerminal {
+                    operation: done
+                        .operation
+                        .expect("live task completion requires an operation"),
+                    status: status.clone(),
+                    next: next.clone(),
+                }),
                 git: published,
                 source,
             },
@@ -535,7 +604,7 @@ fn append_done(
     });
     Ok(wire::intent::TaskAnswer {
         task: done.task.clone(),
-        status: transition.next().status.clone(),
+        status,
         completion: None,
         learning: None,
         next,

@@ -319,6 +319,7 @@ fn a_forced_withdrawal_stops_the_lane_it_displaced() {
         &TaskDone {
             task: task.clone(),
             validation: "work the operator withdrew".to_owned(),
+            operation: Some(completion_operation()),
         },
     );
     assert_eq!(

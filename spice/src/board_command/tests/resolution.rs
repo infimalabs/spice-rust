@@ -21,6 +21,211 @@ fn lane_claim_free_done_and_review_finding_survive_restart() {
 }
 
 #[test]
+fn task_completion_terminal_replays_once_after_claim_release_and_restart() {
+    let (root, bus, epoch, seats) = fixture("completion-terminal-replay", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "DONE-replay001",
+        "Replay one durable completion terminal",
+        Some("todo"),
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &task);
+    let held = board(&bus, epoch, lane.clone());
+    let operation = TaskDone::operation_for_claim(
+        at(&held, &task)
+            .claim
+            .as_ref()
+            .expect("held task has a claim")
+            .body
+            .claimed,
+    );
+    let done = TaskDone {
+        task: task.clone(),
+        validation: "one focused evidence execution passed".to_owned(),
+        operation: Some(operation),
+    };
+    let expected = progress_witnesses(
+        &held,
+        at(&held, &task),
+        seats[0].lane,
+        seats[0].occupant,
+        false,
+    )
+    .expect("held task has completion witnesses");
+    assert_refusal(
+        issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::TaskDone,
+            expected.clone(),
+            &TaskDone {
+                operation: None,
+                ..done.clone()
+            },
+        ),
+        "task::completion-operation-required",
+    );
+    let outcome = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        expected,
+        &done,
+    );
+    let Outcome::Reply(Reply {
+        position: terminal_position @ ReplyPosition::Committed(_),
+        body: CommandAnswer::Task(terminal),
+    }) = outcome
+    else {
+        panic!("completion did not return one committed task answer: {outcome:?}");
+    };
+    assert_eq!(terminal.status, "completed");
+    assert!(terminal.completion.is_none());
+    assert_eq!(
+        at(&board(&bus, epoch, lane.clone()), &task)
+            .claim
+            .as_ref()
+            .expect("freed claim remains durable")
+            .body
+            .disposition,
+        ClaimDisposition::Freed
+    );
+
+    assert_concurrent_terminal_retries(
+        &bus,
+        epoch,
+        &seats[0],
+        &lane,
+        &task,
+        &done,
+        &terminal_position,
+        &terminal,
+    );
+    assert_terminal_replay_after_restart(
+        &root,
+        bus,
+        epoch,
+        &seats[0],
+        lane,
+        &task,
+        &done,
+        &terminal_position,
+        &terminal,
+    );
+}
+
+fn assert_concurrent_terminal_retries(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    lane: &Actor,
+    task: &TaskHandle,
+    done: &TaskDone,
+    terminal_position: &ReplyPosition,
+    terminal: &wire::intent::TaskAnswer,
+) {
+    let settled = board(bus, epoch, lane.clone());
+    let expected = progress_witnesses(
+        &settled,
+        at(&settled, task),
+        seat.lane,
+        seat.occupant,
+        false,
+    )
+    .expect("freed task retains replay witnesses");
+    std::thread::scope(|scope| {
+        let retries = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    let outcome = issue(
+                        bus,
+                        epoch,
+                        lane.clone(),
+                        CommandKind::TaskDone,
+                        expected.clone(),
+                        done,
+                    );
+                    let Outcome::Reply(Reply {
+                        position,
+                        body: CommandAnswer::Task(replayed),
+                    }) = outcome
+                    else {
+                        panic!("terminal retry did not replay: {outcome:?}");
+                    };
+                    assert_eq!(&position, terminal_position);
+                    assert_eq!(&replayed, terminal);
+                })
+            })
+            .collect::<Vec<_>>();
+        for retry in retries {
+            retry.join().expect("terminal retry joins");
+        }
+    });
+    assert_eq!(task_done_fact_count(bus, task), 1);
+}
+
+fn assert_terminal_replay_after_restart(
+    root: &std::path::Path,
+    bus: Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    lane: Actor,
+    task: &TaskHandle,
+    done: &TaskDone,
+    terminal_position: &ReplyPosition,
+    terminal: &wire::intent::TaskAnswer,
+) {
+    bus.verify().expect("terminal replay authority verifies");
+    bus.shutdown().expect("terminal replay bus stops");
+    let reopened = journal::Journal::open(root.join("authority.sqlite3"))
+        .expect("terminal replay journal reopens");
+    let reopened = Bus::start(reopened).expect("terminal replay bus restarts");
+    let settled = board(&reopened, epoch, lane.clone());
+    let expected = progress_witnesses(
+        &settled,
+        at(&settled, task),
+        seat.lane,
+        seat.occupant,
+        false,
+    )
+    .expect("restarted task retains replay witnesses");
+    let Outcome::Reply(Reply {
+        position,
+        body: CommandAnswer::Task(replayed),
+    }) = issue(
+        &reopened,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        expected,
+        done,
+    )
+    else {
+        panic!("restart retry did not replay its terminal answer");
+    };
+    assert_eq!(&position, terminal_position);
+    assert_eq!(&replayed, terminal);
+    assert_eq!(task_done_fact_count(&reopened, task), 1);
+    clean(root, reopened);
+}
+
+fn task_done_fact_count(bus: &Bus, task: &TaskHandle) -> usize {
+    let born = task.born().expect("fixture task has a stamp");
+    bus.fact_snapshot()
+        .expect("completion facts read")
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<body::TaskDone>())
+        .filter(|done| done.task == born)
+        .count()
+}
+
+#[test]
 fn one_captured_band_drives_board_answer_server_selection_and_guard_replay() {
     let (root, bus, epoch, seats) = fixture("allocation-band", 1);
     let lane = Actor::Lane(seats[0].lane);
@@ -167,6 +372,7 @@ pub(super) fn claim_and_complete_task(
         &TaskDone {
             task: task.clone(),
             validation: "implementation and focused checks complete".to_owned(),
+            operation: Some(completion_operation()),
         },
     ));
 }
@@ -782,6 +988,7 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
         &TaskDone {
             task: task.clone(),
             validation: "plan is not accepted".to_owned(),
+            operation: Some(completion_operation()),
         },
     );
     assert_refusal(refused, "task::plan-incomplete");
@@ -819,6 +1026,7 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
         &TaskDone {
             task: task.clone(),
             validation: "acceptance exists on the task".to_owned(),
+            operation: Some(completion_operation()),
         },
     ));
     let advanced = board(&bus, epoch, Actor::Operator);
@@ -866,6 +1074,7 @@ fn wk_plan_phase_uses_connected_child_acceptance_with_atomic_witnesses() {
         &TaskDone {
             task: parent.clone(),
             validation: "child proof was not guarded".to_owned(),
+            operation: Some(completion_operation()),
         },
     );
     assert_refusal(refused, "task::plan-witness-missing");
@@ -887,6 +1096,7 @@ fn wk_plan_phase_uses_connected_child_acceptance_with_atomic_witnesses() {
         &TaskDone {
             task: parent.clone(),
             validation: "accepted child is connected".to_owned(),
+            operation: Some(completion_operation()),
         },
     ));
     let advanced = board(&bus, epoch, Actor::Operator);
@@ -924,6 +1134,7 @@ fn wk_plan_only_flow_completes_only_with_connected_accepted_child() {
         &TaskDone {
             task: own_acceptance.clone(),
             validation: "own acceptance does not create implementation work".to_owned(),
+            operation: Some(completion_operation()),
         },
     );
     assert_refusal(refused, "task::plan-incomplete");
@@ -976,6 +1187,7 @@ fn wk_plan_only_flow_completes_only_with_connected_accepted_child() {
         &TaskDone {
             task: parent.clone(),
             validation: "accepted child is connected".to_owned(),
+            operation: Some(completion_operation()),
         },
     ));
     let completed = board(&bus, epoch, Actor::Operator);

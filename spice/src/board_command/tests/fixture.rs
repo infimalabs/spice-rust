@@ -15,6 +15,10 @@ pub(super) fn uuid(value: u64) -> CanonicalUuid {
         .expect("fixture UUID is canonical")
 }
 
+pub(super) fn completion_operation() -> CanonicalUuid {
+    uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed))
+}
+
 pub(super) fn stamp(text: &str) -> wire::TaskStamp {
     let value = text.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000

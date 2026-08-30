@@ -760,6 +760,33 @@ fn task_done_contract_admits_durable_handoff_before_terminal_commit() {
         contract_at(CONTRACTS, &["task", "done"]).expect("task done has one registered contract");
     assert_eq!(contract.journal, JournalAccess::Command);
     assert_eq!(contract.reply_position, ReplyPositionLaw::DirectOrCommitted);
+
+    let operation = "018f82d4-6f59-7d06-92e3-bce913116302";
+    let parsed = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "done",
+            "TASK-1k4Q5gJw",
+            "--validation",
+            "focused checks passed",
+            "--operation",
+            operation,
+        ])
+        .expect("terminal completion retry parses");
+    let leaf = selected_matches(&parsed);
+    assert_eq!(
+        leaf.get_one::<String>("HANDLE").map(String::as_str),
+        Some("TASK-1k4Q5gJw")
+    );
+    assert_eq!(
+        leaf.get_one::<String>("operation").map(String::as_str),
+        Some(operation)
+    );
+
+    command()
+        .try_get_matches_from(["spice", "task", "done", "TASK-1k4Q5gJw"])
+        .expect("default claim operation replay parses");
 }
 
 #[test]

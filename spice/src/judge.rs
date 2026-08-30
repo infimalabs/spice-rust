@@ -82,10 +82,12 @@ pub(crate) struct Error {
 }
 
 impl Error {
+    #[cfg(test)]
     pub(crate) const fn reason(&self) -> &'static str {
         self.reason
     }
 
+    #[cfg(test)]
     pub(crate) fn detail(&self) -> &str {
         &self.detail
     }

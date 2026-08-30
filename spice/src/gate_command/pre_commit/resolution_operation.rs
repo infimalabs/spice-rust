@@ -61,7 +61,8 @@ impl Manifest {
     }
 
     fn admits(&self, authority: &Authority<'_>) -> bool {
-        self.task == authority.task
+        self.operation == authority.operation
+            && self.task == authority.task
             && self.actor == *authority.actor
             && self.epoch == authority.epoch
             && self.claim == authority.claim
@@ -176,10 +177,6 @@ fn operation_root(repository: &Repository, claim: wire::Seq) -> io::Result<PathB
         .worktree_runtime()
         .join(ROOT)
         .join(claim.get().to_string()))
-}
-
-pub(super) fn terminal_path(repository: &Repository, claim: wire::Seq) -> io::Result<PathBuf> {
-    Ok(operation_root(repository, claim)?.join(TERMINAL))
 }
 
 fn initialize(root: &Path, manifest: &Manifest) -> io::Result<()> {
@@ -595,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_binds_claim_source_and_validation_but_not_retry_command_id() {
+    fn manifest_binds_operation_claim_source_and_validation() {
         let actor: wire::Actor = "lane:00000000-0000-4000-8000-000000000044"
             .parse()
             .expect("lane actor");
@@ -608,7 +605,7 @@ mod tests {
         retry.operation = "00000000-0000-4000-8000-000000000045"
             .parse()
             .expect("retry UUID");
-        assert!(manifest.admits(&retry));
+        assert!(!manifest.admits(&retry));
 
         let moved = authority("TASK-1", &actor, "different validation");
         assert!(!manifest.admits(&moved));
@@ -861,20 +858,31 @@ mod tests {
         assert_eq!(pending.reason(), RESOLUTION_PENDING_REASON);
         assert_eq!(pending.complete_explanation(), first.operation.to_string());
 
-        let mut retry = first.clone();
-        retry.operation = "00000000-0000-4000-8000-000000000049"
+        let mut mismatched = first.clone();
+        mismatched.operation = "00000000-0000-4000-8000-000000000049"
             .parse()
             .expect("retry UUID");
-        let Outcome::Refusal(retrying) = run_with(&repository, retry, source.clone(), |_, root| {
-            let name = LockName::new("task-completion").expect("completion lock name");
-            assert!(matches!(
-                LockFile::new(name, root.join(LOCK))
-                    .availability()
-                    .expect("inspect delayed worker"),
-                Availability::Held
-            ));
-            Ok(())
-        }) else {
+        let Outcome::Refusal(ref mismatch) =
+            run_with(&repository, mismatched, source.clone(), |_, _| {
+                panic!("mismatched operation must not launch")
+            })
+        else {
+            panic!("a different operation joined the running completion");
+        };
+        assert_eq!(mismatch.reason(), "gate::resolution-operation-mismatch");
+
+        let Outcome::Refusal(retrying) =
+            run_with(&repository, first.clone(), source.clone(), |_, root| {
+                let name = LockName::new("task-completion").expect("completion lock name");
+                assert!(matches!(
+                    LockFile::new(name, root.join(LOCK))
+                        .availability()
+                        .expect("inspect delayed worker"),
+                    Availability::Held
+                ));
+                Ok(())
+            })
+        else {
             panic!("running completion remains pending");
         };
         assert_eq!(retrying.complete_explanation(), first.operation.to_string());

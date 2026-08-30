@@ -443,6 +443,7 @@ fn assert_claimed_oops_cannot_finish(
         &TaskDone {
             task: parked.clone(),
             validation: "triage is understood".to_owned(),
+            operation: Some(completion_operation()),
         },
     );
     assert!(matches!(
@@ -668,6 +669,7 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
         &TaskDone {
             task: promoted.clone(),
             validation: "public dependency captures the implementation contract".to_owned(),
+            operation: Some(completion_operation()),
         },
     ));
     assert_eq!(

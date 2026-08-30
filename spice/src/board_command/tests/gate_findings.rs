@@ -1073,6 +1073,7 @@ fn complete(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
             body::TaskDone {
                 task: born.clone(),
                 validation: "fixture completion".to_owned(),
+                terminal: None,
                 git: None,
                 source: body::SourceBoundary::unrecorded(),
             },

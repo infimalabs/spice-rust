@@ -168,13 +168,6 @@ pub(crate) fn has_resolution_operation(
     )
 }
 
-pub(crate) fn resolution_terminal_path(
-    repository: &Repository,
-    claim: wire::Seq,
-) -> std::io::Result<std::path::PathBuf> {
-    pre_commit::resolution_terminal_path(repository, claim)
-}
-
 /// Run the current source repository's strict ordinary change selection.
 ///
 /// This leaf is the policy-free destination for source-development delegates:
