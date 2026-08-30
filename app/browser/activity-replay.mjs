@@ -73,6 +73,66 @@ export async function installActivityReplay(context) {
         { expectedLane: lane, expectedText: text },
       );
     },
+    async injectSyntheticSnapshot(page, lane, text) {
+      const source = proseFrames.get(lane);
+      assert.ok(source, `the route captured an agent prose frame for ${lane}`);
+      assert.ok(activeSocket, "the route retains the current browser WebSocket");
+      const message = JSON.parse(JSON.stringify(source.message));
+      message.text = text;
+      message.authored = new Date().toISOString();
+      message.authored_synthetic = true;
+      delete message.observed;
+      message.locus.event += 20_000;
+      assert.equal(
+        Object.hasOwn(message, "observed"),
+        false,
+        "the synthetic browser fixture carries no Spice observation time",
+      );
+      activeSocket.send(Buffer.from(JSON.stringify({
+        stream: "messages",
+        v: source.v,
+        id: source.id,
+        epoch: source.epoch,
+        limit: 256,
+        messages: [message],
+      })));
+      await waitForPageFunction(
+        page,
+        "the timestamp-free synthetic snapshot reaches the browser",
+        TRANSITION_MS,
+        ({ expectedLane, expectedText }) => {
+          const cards = [...document.querySelectorAll('[data-card-kind="agent-message"]')];
+          return cards.length === 1
+            && cards[0].dataset.agentLane === expectedLane
+            && cards[0].textContent?.includes(expectedText);
+        },
+        { expectedLane: lane, expectedText: text },
+      );
+      return { authored: message.authored, text };
+    },
+    async restoreProseSnapshot(page) {
+      const frames = [...proseFrames.values()];
+      assert.ok(frames.length > 1, "the route retained the lineage prose snapshot");
+      assert.ok(activeSocket, "the route retains the current browser WebSocket");
+      const source = frames[0];
+      activeSocket.send(Buffer.from(JSON.stringify({
+        stream: "messages",
+        v: source.v,
+        id: source.id,
+        epoch: source.epoch,
+        limit: 256,
+        messages: frames.map((frame) => frame.message),
+      })));
+      await waitForPageFunction(
+        page,
+        "the original lineage prose snapshot is restored",
+        TRANSITION_MS,
+        (expected) => document.querySelectorAll(
+          '[data-card-kind="agent-message"]',
+        ).length === expected,
+        frames.length,
+      );
+    },
     async assertBootstrapLiveMessages(console) {
       assert.equal(withheldBootstrap, true, "the route withheld the initial message snapshot");
       await console.getByRole("tab", { name: /^Compose/ }).click();

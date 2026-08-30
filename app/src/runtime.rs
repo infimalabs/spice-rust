@@ -384,7 +384,7 @@ pub fn effort_is_zero(usage: &EffortUsage, wall_ms: u64) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneActivity {
     lane: CanonicalUuid,
-    authored: Option<i64>,
+    display_millis: i64,
     class: &'static str,
     title: String,
     detail: String,
@@ -398,9 +398,15 @@ impl LaneActivity {
         self.lane
     }
 
+    /// Instant used only to place and age this activity on Canvas surfaces.
+    ///
+    /// A synthetic source instant remains an ordering identity rather than a
+    /// vendor-authored claim. The retained [`wire::AgentMessage`] carries that
+    /// provenance distinction; this projection is deliberately total so every
+    /// visible activity can participate in one display chronology.
     #[must_use]
-    pub const fn authored(&self) -> Option<i64> {
-        self.authored
+    pub const fn display_millis(&self) -> i64 {
+        self.display_millis
     }
 
     #[must_use]
@@ -417,6 +423,23 @@ impl LaneActivity {
     pub fn detail(&self) -> &str {
         &self.detail
     }
+}
+
+/// Total display chronology for one admitted agent message.
+///
+/// Spice observation time is preferred when it exists. Otherwise the source
+/// instant supplies a stable display and ordering value, including when that
+/// instant was synthesized. This fallback does not mutate `observed` or claim
+/// that a synthetic instant came from the vendor; those facts remain explicit
+/// on the retained wire message.
+#[must_use]
+pub(crate) fn agent_message_display_millis(message: &wire::AgentMessage) -> i64 {
+    message
+        .observed
+        .as_ref()
+        .unwrap_or(&message.authored)
+        .get()
+        .as_millisecond()
 }
 
 /// Durable identity used to ignore a repeated live activity without moving it

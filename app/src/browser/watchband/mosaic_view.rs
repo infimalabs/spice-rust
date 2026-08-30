@@ -32,8 +32,7 @@ impl ActivityCard {
     pub(super) fn chronology_key(&self) -> (i64, u8, String) {
         match self {
             Self::Agent { message, .. } => (
-                source_authored_millis(message)
-                    .unwrap_or_else(|| message.authored.get().as_millisecond()),
+                crate::runtime::agent_message_display_millis(message),
                 1,
                 self.key(),
             ),

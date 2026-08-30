@@ -417,7 +417,7 @@ fn render_agent_details(
 struct ComposerStreamLink {
     target: String,
     label: String,
-    authored: Option<i64>,
+    display_millis: Option<i64>,
 }
 
 struct ComposerHeader {
@@ -452,7 +452,7 @@ fn primary_composer_header(
             stream: ComposerStreamLink {
                 target: format!("lineage-stream-{}", lineage.lane),
                 label: "Jump to lineage activity".to_owned(),
-                authored: None,
+                display_millis: None,
             },
             prose: "No agent prose yet".to_owned(),
         },
@@ -464,7 +464,7 @@ fn primary_composer_header(
                 } else {
                     "Jump to latest lineage message".to_owned()
                 },
-                authored: source_authored_millis(message),
+                display_millis: Some(crate::runtime::agent_message_display_millis(message)),
             },
             prose,
         },
@@ -485,14 +485,6 @@ fn visible_agent_prose(
         }
         ActivityCard::Agent { .. } | ActivityCard::Operator { .. } => None,
     }
-}
-
-fn source_authored_millis(message: &wire::AgentMessage) -> Option<i64> {
-    message
-        .observed
-        .as_ref()
-        .or_else(|| (!message.authored_synthetic).then_some(&message.authored))
-        .map(|instant| instant.get().as_millisecond())
 }
 
 fn renewal_callback(
@@ -811,7 +803,7 @@ fn render_composer_heading(
     let ComposerStreamLink {
         target,
         label,
-        authored,
+        display_millis,
     } = stream;
     html! {
         <header class="composer-shard-heading">
@@ -824,7 +816,7 @@ fn render_composer_heading(
                 href={format!("#{target}")}
                 aria-label={label}
                 data-lane-status={status.key()}
-            >{lease_age(authored, "composer-shard-age-label", "—")}</a>
+            >{lease_age(display_millis, "composer-shard-age-label", "—")}</a>
             <strong
                 class="composer-shard-prose"
                 title={prose.clone()}
