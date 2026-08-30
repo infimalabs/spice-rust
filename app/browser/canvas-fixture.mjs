@@ -245,6 +245,9 @@ export async function configureFixture(
     "a no-card fixture member names one linked worktree",
   );
   const noCardWorktree = noCardMember === null ? "" : `lane-${noCardMember}`;
+  const triggeredActivity = JSON.parse(triggeredActivityRecord);
+  delete triggeredActivity.timestamp;
+  const triggeredActivityTail = JSON.stringify(triggeredActivity).slice(1);
   await execute("git", ["init", "--quiet"], { cwd: fixture });
   await writeFile(join(fixture, "Cargo.toml"), [
     "[package]",
@@ -288,7 +291,8 @@ export async function configureFixture(
     "  fi",
     "  if [ -f .spice-prose-trigger ]; then",
     "    rm -f .spice-prose-trigger",
-    `    printf '%s\\n' '${triggeredActivityRecord}'`,
+    "    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')",
+    `    printf '{"timestamp":"%s",%s\\n' "$timestamp" '${triggeredActivityTail}'`,
     "  fi",
     "  if [ -f .spice-compaction-trigger ]; then",
     "    rm -f .spice-compaction-trigger",

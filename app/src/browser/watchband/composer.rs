@@ -166,7 +166,7 @@ pub(super) fn render_agent_message_card(
                     message,
                     &correspondent,
                     reported_tasks,
-                    source_authored_millis(message),
+                    Some(source_authored_millis(message)),
                     false,
                     producer,
                 )}
@@ -189,10 +189,8 @@ fn render_compaction_boundary(
         <>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
             <span class="mosaic-compaction-label">
-                if let Some(authored) = authored {
-                    <Age {authored} class="mosaic-compaction-age" />
-                    <span aria-hidden="true">{"\u{b7}"}</span>
-                }
+                <Age {authored} class="mosaic-compaction-age" />
+                <span aria-hidden="true">{"\u{b7}"}</span>
                 <span class="message-key" title={label.clone()}>{label}</span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>

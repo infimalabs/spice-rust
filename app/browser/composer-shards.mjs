@@ -1,32 +1,47 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import {
+  reply,
+  TRANSITION_MS,
+  waitForPageFunction,
+} from "./canvas-fixture.mjs";
 
 /// Production resolves one destination per primary shard, in one order
 /// (`primary_stream_link` in app/src/browser/watchband.rs): the last rendered
-/// agent-message card owned by that exact lane, and only when the lane has
-/// rendered no message card at all the explicitly named lineage-stream
-/// default. Both branches are read back off the live DOM rather than spelled
-/// out here, because a hand-written anchor id is precisely what went stale
-/// when that resolver landed.
+/// message card owned by that exact lane, then the lineage's last message card,
+/// and only for a lineage with no message card the named stream default. Every
+/// branch is read back off the live DOM because a hand-written anchor id is
+/// precisely what went stale when that resolver landed.
 export async function primaryDestination(team, lane) {
-  const link = team.locator(
-    `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-link`,
-  );
+  const member = team.locator(`.team-agent[data-agent-lane="${lane}"]`);
+  const surface = member.locator("xpath=ancestor::*[contains(@class, 'team-surface')][1]");
+  const link = member.locator(".composer-shard--primary .composer-shard-link");
   const href = await link.getAttribute("href");
   const label = await link.getAttribute("aria-label");
-  const rendered = await team
+  const rendered = await surface
     .locator(
-      `.team-activity-grid .mosaic-message-card[data-card-kind="agent-message"]`
-        + `[data-agent-lane="${lane}"]`,
+      `.team-activity-grid .mosaic-message-card[data-agent-lane="${lane}"]`
+        + ':is([data-card-kind="agent-message"], [data-card-kind="compaction"])',
     )
     .evaluateAll((cards) => cards.map((card) => card.id));
+  const lineageMessages = await surface.locator(
+    ".team-activity-grid .mosaic-message-card"
+      + ':is([data-card-kind="agent-message"], [data-card-kind="compaction"])',
+  ).evaluateAll((cards) => cards.map((card) => card.id));
   if (rendered.length === 0) {
-    const stream = await team.locator(".team-activity-grid").getAttribute("id");
-    assert.match(stream, /^lineage-stream-/, "the no-message default names the lineage stream");
-    assert.equal(href, `#${stream}`, `${lane} renders no message and takes the lineage default`);
-    assert.equal(label, "Jump to lineage activity", `${lane} announces the lineage default`);
-    return { link, href, rendered };
+    if (lineageMessages.length === 0) {
+      const stream = await surface.locator(".team-activity-grid").getAttribute("id");
+      assert.equal(href, `#${stream}`);
+      assert.equal(label, "Jump to lineage activity");
+      assert.equal((await link.innerText()).trim(), "—", "only an empty stream renders a dash");
+      return { link, href, rendered, lineageMessages };
+    }
+    assert.equal(href, `#${lineageMessages.at(-1)}`);
+    assert.equal(label, "Jump to latest lineage message");
+    assert.notEqual((await link.innerText()).trim(), "—");
+    return { link, href, rendered, lineageMessages };
   }
   assert.equal(
     href,
@@ -38,7 +53,8 @@ export async function primaryDestination(team, lane) {
     /^Jump to latest .+ activity$/,
     `${lane} announces its own latest activity, not the lineage default`,
   );
-  return { link, href, rendered };
+  assert.notEqual((await link.innerText()).trim(), "—");
+  return { link, href, rendered, lineageMessages };
 }
 
 async function appendPrimaryDestinationProbe(team, fixture, lane, ordinal) {
@@ -530,20 +546,20 @@ export async function assertComposerShards({
     }));
   assert.ok(activityChrome.length >= 2, "multiple composer activity ages are visible");
   assert.ok(
-    activityChrome.every((age) => /^(?:—|\d+[smhd])$/.test(age.label)),
-    `every composer activity age is source-authored or explicitly absent: ${
+    activityChrome.every((age) => /^(?:now|\d+[smhd]|99d\+)$/.test(age.label)),
+    `every composer activity age comes from a selected message card: ${
       JSON.stringify(activityChrome)
     }`,
   );
   assert.ok(
-    activityChrome.some((age) => age.label !== "—" && Number.isFinite(Number(age.authored))),
-    `at least one composer activity age carries an authored instant: ${
+    activityChrome.every((age) => age.label !== "—" && Number.isFinite(Number(age.authored))),
+    `every composer in the nonempty lineage carries a message instant: ${
       JSON.stringify(activityChrome)
     }`,
   );
   assert.ok(
-    activityChrome.every((age) => age.authored === undefined || age.clock === "shared"),
-    `every source-authored composer age advances on the shared browser clock: ${
+    activityChrome.every((age) => age.clock === "shared"),
+    `every message-backed composer age advances on the shared browser clock: ${
       JSON.stringify(activityChrome)
     }`,
   );
@@ -555,7 +571,7 @@ export async function assertComposerShards({
       return {
         href,
         headerAuthored: age.querySelector(".composer-shard-age-label")?.dataset.ageAuthored,
-        cardAuthored: card?.querySelector(".message-age")?.dataset.ageAuthored,
+        cardAuthored: card?.querySelector("[data-age-authored]")?.dataset.ageAuthored,
         cardKind: card?.getAttribute("data-card-kind"),
       };
     }).filter((age) => ["agent-message", "compaction"].includes(age.cardKind)));
@@ -750,6 +766,86 @@ export async function assertComposerShards({
     await linkedSource.evaluate((card) => card.matches(":target")),
     true,
     "following the draft deep link targets the quoted message card",
+  );
+
+  const arrivalPrimary = team.locator(
+    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary`,
+  );
+  const previousArrival = await arrivalPrimary.locator(".composer-shard-age").evaluate((link) => ({
+    href: link.getAttribute("href"),
+    authored: link.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+  }));
+  await arrivalPrimary.evaluate((primary) => {
+    window.__composerProvenanceStates = [];
+    const capture = () => {
+      const link = primary.querySelector(".composer-shard-age");
+      const href = link?.getAttribute("href");
+      const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+      window.__composerProvenanceStates.push({
+        href,
+        headerAuthored: link?.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+        cardAuthored: card?.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+      });
+    };
+    capture();
+    new MutationObserver(capture).observe(primary, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+  });
+  const arrivalCards = team.locator(
+    `.mosaic-message-card[data-agent-lane="${seeded.lane}"]`
+      + '[data-card-kind="agent-message"]',
+  );
+  const arrivalOrdinal = await arrivalCards.count();
+  await writeFile(join(seeded.teamWorktrees[0], ".spice-prose-trigger"), "emit\n");
+  const arrivalCard = arrivalCards.nth(arrivalOrdinal);
+  await arrivalCard.waitFor({ timeout: 10_000 });
+  assert.match(await arrivalCard.innerText(), /newest lane prose witness/);
+  await waitForPageFunction(
+    page,
+    "the primary composer atomically retargets to the new message provenance",
+    TRANSITION_MS,
+    ({ lane, previous }) => {
+      const link = document.querySelector(
+        `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+      );
+      const href = link?.getAttribute("href");
+      const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+      return href !== previous
+        && link?.querySelector("[data-age-authored]")?.dataset.ageAuthored
+          === card?.querySelector("[data-age-authored]")?.dataset.ageAuthored;
+    },
+    { lane: seeded.lane, previous: previousArrival.href },
+  );
+  const arrived = await arrivalPrimary.locator(".composer-shard-age").evaluate((link) => {
+    const href = link.getAttribute("href");
+    const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+    const age = link.querySelector("[data-age-authored]");
+    return {
+      href,
+      label: age?.textContent?.trim(),
+      headerAuthored: age?.dataset.ageAuthored,
+      cardAuthored: card?.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+    };
+  });
+  assert.ok(Number(arrived.headerAuthored) > Number(previousArrival.authored));
+  assert.equal(arrived.headerAuthored, arrived.cardAuthored);
+  assert.ok(
+    (await page.evaluate(() => window.__composerProvenanceStates))
+      .every((state) => state.headerAuthored === state.cardAuthored),
+    "no observed render mixes an old link with a new age",
+  );
+  assert.equal(await sourceLink.getAttribute("href"), sourceHref, "the quoted source stays pinned");
+  await waitForPageFunction(
+    page,
+    "the new primary message age advances on the shared browser clock",
+    5_000,
+    ({ lane, label }) => document.querySelector(
+      `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary [data-age-authored]`,
+    )?.textContent?.trim() !== label,
+    { lane: seeded.lane, label: arrived.label },
   );
 
   const drawerToggle = quotePrimary.locator(".agent-action-menu > summary");
