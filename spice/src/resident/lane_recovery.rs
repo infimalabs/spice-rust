@@ -181,14 +181,6 @@ fn admit_row(
             "drain the predecessor before importing",
         ));
     }
-    if row.life == "drain" {
-        return Err(lane_refusal_unit(
-            "lane::life-ended",
-            Some("steer or drive".into()),
-            Some(row.life.clone()),
-            "seat a new lane because drain life is terminal",
-        ));
-    }
     if worktree == row.worktree {
         return Err(lane_refusal_unit(
             "lane::import-unmoved",

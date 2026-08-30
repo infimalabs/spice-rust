@@ -32,14 +32,6 @@ pub(super) fn wake(
             "drain the current occupant before waking a successor",
         );
     }
-    if row.life == "drain" {
-        return lane_refusal(
-            "lane::life-ended",
-            Some("steer or drive".to_owned()),
-            Some(row.life.clone()),
-            "seat a new lane because drain life is terminal",
-        );
-    }
     if let Err(outcome) = super::super::steering::lane_capability(row) {
         return typed_outcome(outcome);
     }
@@ -475,7 +467,7 @@ mod tests {
         let fixture = InactiveRtkFixture::new();
         let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
             .expect("fixture bus starts");
-        seed_vacant_lane(&bus, &fixture);
+        seed_vacant_lane(&bus, &fixture, "drive");
         let capabilities = canvas::axum::Capabilities::default();
         let discovery = canvas::Discovery {
             endpoint: "http://127.0.0.1:1".to_owned(),
@@ -522,7 +514,111 @@ mod tests {
         bus.shutdown().expect("fixture bus stops");
     }
 
-    fn seed_vacant_lane(bus: &Bus, fixture: &InactiveRtkFixture) {
+    #[test]
+    fn explicit_wake_starts_an_already_seated_drain_lane() {
+        let fixture = InactiveRtkFixture::new();
+        let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        seed_vacant_lane(&bus, &fixture, "drain");
+        let capabilities = canvas::axum::Capabilities::default();
+        let discovery = canvas::Discovery {
+            endpoint: "http://127.0.0.1:1".to_owned(),
+            capability: fixture.capability,
+            epoch: fixture.epoch,
+        };
+        let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+        let request = LaneState {
+            lane: fixture.lane,
+            action: LaneAction::Wake,
+            worktree: None,
+        };
+        let command = admitted_operator_wake(&fixture, &request);
+        let mut seats = Seats::new();
+
+        let outcome = wake(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &mut seats,
+            &runtime,
+            &command,
+            &request,
+        );
+
+        assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
+        let residency = current_residency(&bus, fixture.epoch).expect("committed residency reads");
+        let row = residency
+            .body()
+            .lanes
+            .first()
+            .expect("explicit lane remains seated");
+        assert_eq!(row.life, "drain");
+        let occupant = row.occupant.expect("explicit wake records its occupant");
+        assert_eq!(row.lineage.last(), Some(&occupant));
+        assert!(seats.occupied(fixture.lane));
+        stop_lane(&mut seats, fixture.lane);
+        bus.verify().expect("explicit wake authority verifies");
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    #[test]
+    fn automatic_wake_refuses_an_already_seated_drain_lane() {
+        let fixture = InactiveRtkFixture::new();
+        let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        seed_vacant_lane(&bus, &fixture, "drain");
+        let capabilities = canvas::axum::Capabilities::default();
+        let discovery = canvas::Discovery {
+            endpoint: "http://127.0.0.1:1".to_owned(),
+            capability: fixture.capability,
+            epoch: fixture.epoch,
+        };
+        let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+
+        let outcome = wake_automatic(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &mut Seats::new(),
+            &runtime,
+            fixture.lane,
+            fixture.occupant,
+            None,
+            None,
+        );
+
+        match outcome {
+            Err(Outcome::Refusal(refusal)) => {
+                assert_eq!(refusal.reason(), "lifecycle::wake-life-ended");
+            }
+            Err(Outcome::Fault(fault)) => panic!("automatic wake faulted: {fault:?}"),
+            Err(Outcome::Reply(_)) | Ok(_) => panic!("automatic wake started a Drain lane"),
+        }
+        bus.verify().expect("automatic refusal verifies");
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    fn admitted_operator_wake(
+        fixture: &InactiveRtkFixture,
+        request: &LaneState,
+    ) -> wire::AdmittedCommand {
+        Command {
+            v: wire::WireVersion::CURRENT,
+            id: fixture.capability,
+            epoch: fixture.epoch,
+            kind: wire::CommandKind::LaneState,
+            expected: Vec::new(),
+            body: serde_json::to_value(request).expect("lane intent encodes"),
+        }
+        .admit(&wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: fixture.epoch,
+        })
+        .expect("operator wake intent admits")
+    }
+
+    fn seed_vacant_lane(bus: &Bus, fixture: &InactiveRtkFixture, life: &str) {
         let mut write = write(Actor::Spice, fixture.epoch, Producer::CommandDoor)
             .expect("fixture write starts");
         let seated = write
@@ -538,6 +634,7 @@ mod tests {
         let epoch = fixture.epoch;
         let lane = fixture.lane;
         let capability = fixture.capability;
+        let life = life.to_owned();
         write.residency_head(seated, move |_| wire::ResidencyHead {
             epoch,
             state: ResidentState::Seated,
@@ -547,7 +644,7 @@ mod tests {
                 lineage_id: lane,
                 name: None,
                 worktree: root,
-                life: "drive".to_owned(),
+                life,
                 vendor,
                 occupant: None,
                 lineage: Vec::new(),
