@@ -745,11 +745,10 @@ fn acknowledgment_paths(
 
 /// Both admitted harnesses, and one that is not, over the same pending inbox.
 ///
-/// The two admitted spellings take byte-identical documents today, so the only
-/// thing the operand decides is whether the command runs at all. Pinning the
-/// equality is what will notice the day one harness needs its own shape, and
-/// pinning the refusal is what keeps an unrecognised harness from being handed
-/// a document written for someone else.
+/// The two admitted spellings render byte-identical content today, so the first
+/// process publishes and the second process shares its durable suppression
+/// decision. The refusal keeps an unrecognised harness from being handed a
+/// document written for someone else even after content was recorded.
 fn hook_harness_paths(fixture: &Fixture, lane: &str, codex: &[u8]) {
     let claude = invoke_as_lane(fixture, lane, &["hook", "claude"], false);
     assert!(
@@ -761,9 +760,10 @@ fn hook_harness_paths(fixture: &Fixture, lane: &str, codex: &[u8]) {
         claude.stderr.is_empty(),
         "claude hook inbox spoke on stderr"
     );
-    assert_eq!(
-        claude.stdout, codex,
-        "the admitted harnesses no longer take one document"
+    assert!(
+        claude.stdout.is_empty(),
+        "byte-identical hook content escaped durable suppression after {:?}",
+        String::from_utf8_lossy(codex)
     );
 
     let unsupported = invoke_as_lane(fixture, lane, &["hook", "nushell"], false);

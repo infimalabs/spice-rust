@@ -1,11 +1,13 @@
 //! CLI acquisition for the resident steering command family.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::fs;
+use std::io::{self, Write as _};
+use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use spice::repository::Repository;
-use wire::intent::CommandAnswer;
+use wire::intent::{CommandAnswer, InboxAnswer, LaneInbox};
 use wire::{CanonicalUuid, Disposition, Fault, FaultClass, Outcome, Refusal};
 
 use crate::command_client::{SelectedCommand, execute_steering};
@@ -27,10 +29,88 @@ struct HookSpecificOutput {
     additional_context: String,
 }
 
+const HOOK_DELIVERY_LOCK: &str = "steering-delivery";
+
+/// Durable equivalent of spice-z's `MaximReminderGate` publish boundary.
+///
+/// The predecessor keeps a process-local content-key-to-compaction-index map in
+/// the one watchdog stdout thread. Rust hook commands are separate processes,
+/// so this record and its kernel lock preserve the same content/epoch invariant
+/// across invocations. Directive keys remain transport identities and are
+/// deliberately absent from the rendered-content digest.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HookDeliveryState {
+    lanes: Vec<LaneDeliveryState>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LaneDeliveryState {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    compaction: u64,
+    contents: Vec<String>,
+}
+
 pub(crate) fn hook_document(
     answer: &CommandAnswer,
     harness: &str,
 ) -> Result<Option<Vec<u8>>, String> {
+    validate_hook_answer(answer, harness)?;
+    let CommandAnswer::Inbox(inbox) = answer else {
+        unreachable!("validated hook answer is an inbox");
+    };
+    if inbox.lanes.iter().all(|lane| lane.pending.is_empty()) {
+        return Ok(None);
+    }
+    let current = std::env::current_dir()
+        .map_err(|error| format!("inbox hook working directory unavailable: {error}"))?;
+    let repository = Repository::discover(&current)
+        .map_err(|error| format!("inbox hook repository unavailable: {error}"))?;
+    let delivery = repository
+        .admit_steering_delivery()
+        .map_err(|error| format!("inbox hook state unavailable: {error}"))?;
+    let lock_parent = delivery
+        .lock()
+        .parent()
+        .expect("the admitted hook lock has a parent");
+    fs::create_dir_all(lock_parent)
+        .map_err(|error| format!("inbox hook lock directory unavailable: {error}"))?;
+    hook_document_at(answer, harness, delivery.state(), delivery.lock())
+}
+
+fn hook_document_at(
+    answer: &CommandAnswer,
+    harness: &str,
+    state_path: &Path,
+    lock_path: &Path,
+) -> Result<Option<Vec<u8>>, String> {
+    validate_hook_answer(answer, harness)?;
+    let CommandAnswer::Inbox(inbox) = answer else {
+        unreachable!("validated hook answer is an inbox");
+    };
+    if inbox.lanes.iter().all(|lane| lane.pending.is_empty()) {
+        return Ok(None);
+    }
+    let name = sill::LockName::new(HOOK_DELIVERY_LOCK).expect("fixed hook lock name is valid");
+    let _possession = sill::LockFile::new(name, lock_path)
+        .acquire()
+        .map_err(|error| format!("inbox hook delivery lock unavailable: {error}"))?;
+    let mut state = read_hook_delivery_state(state_path)?;
+    let (filtered, changed) = filter_hook_inbox(inbox, &mut state)?;
+    let document = filtered
+        .as_ref()
+        .map(render_hook_document)
+        .transpose()?
+        .flatten();
+    if changed {
+        write_hook_delivery_state(state_path, &state)?;
+    }
+    Ok(document)
+}
+
+fn validate_hook_answer(answer: &CommandAnswer, harness: &str) -> Result<(), String> {
     if spice::extension::vendor(harness).is_none() {
         let expected = spice::extension::registry()
             .map_err(|error| error.to_string())?
@@ -43,12 +123,13 @@ pub(crate) fn hook_document(
             "unsupported hook harness {harness:?}; expected {expected}"
         ));
     }
-    let CommandAnswer::Inbox(inbox) = answer else {
+    let CommandAnswer::Inbox(_) = answer else {
         return Err("inbox hook received a non-inbox command answer".to_owned());
     };
-    if inbox.lanes.iter().all(|lane| lane.pending.is_empty()) {
-        return Ok(None);
-    }
+    Ok(())
+}
+
+fn render_hook_document(inbox: &InboxAnswer) -> Result<Option<Vec<u8>>, String> {
     let executable = std::env::current_exe()
         .map(PathBuf::into_os_string)
         .map_err(|error| format!("inbox hook executable unavailable: {error}"))?;
@@ -78,6 +159,102 @@ pub(crate) fn hook_document(
     .map_err(|error| error.to_string())?;
     document.push(b'\n');
     Ok(Some(document))
+}
+
+fn read_hook_delivery_state(path: &Path) -> Result<HookDeliveryState, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(HookDeliveryState::default());
+        }
+        Err(error) => return Err(format!("inbox hook delivery state unreadable: {error}")),
+    };
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("inbox hook delivery state invalid: {error}"))
+}
+
+fn write_hook_delivery_state(path: &Path, state: &HookDeliveryState) -> Result<(), String> {
+    let bytes = serde_json::to_vec(state)
+        .map_err(|error| format!("inbox hook delivery state unencodable: {error}"))?;
+    atomic::Destination::new(path)
+        .map_err(|error| format!("inbox hook delivery state unavailable: {error}"))?
+        .publish(|staged| staged.write_all(&bytes))
+        .map_err(|error| format!("inbox hook delivery state unpublished: {error}"))
+}
+
+fn filter_hook_inbox(
+    inbox: &InboxAnswer,
+    state: &mut HookDeliveryState,
+) -> Result<(Option<InboxAnswer>, bool), String> {
+    let mut changed = false;
+    let mut lanes = Vec::new();
+    for lane in &inbox.lanes {
+        if lane.pending.is_empty() {
+            continue;
+        }
+        let occupant = lane.occupant.ok_or_else(|| {
+            format!(
+                "inbox hook lane {} has pending steering without an occupant",
+                lane.lane
+            )
+        })?;
+        let compaction = lane.compaction.ok_or_else(|| {
+            format!(
+                "inbox hook lane {} has pending steering without a compaction anchor",
+                lane.lane
+            )
+        })?;
+        let row = match state.lanes.iter().position(|row| row.lane == lane.lane) {
+            Some(index) => &mut state.lanes[index],
+            None => {
+                state.lanes.push(LaneDeliveryState {
+                    lane: lane.lane,
+                    occupant,
+                    compaction,
+                    contents: Vec::new(),
+                });
+                changed = true;
+                state.lanes.last_mut().expect("the lane row was appended")
+            }
+        };
+        if compaction < row.compaction {
+            continue;
+        }
+        if row.occupant != occupant || row.compaction < compaction {
+            row.occupant = occupant;
+            row.compaction = compaction;
+            row.contents.clear();
+            changed = true;
+        }
+        let mut filtered = LaneInbox {
+            pending: Vec::new(),
+            ..lane.clone()
+        };
+        for directive in &lane.pending {
+            let identity = rendered_content_identity(lane.lane, directive);
+            if !row.contents.contains(&identity) {
+                row.contents.push(identity);
+                filtered.pending.push(directive.clone());
+                changed = true;
+            }
+        }
+        if !filtered.pending.is_empty() {
+            lanes.push(filtered);
+        }
+    }
+    let filtered = (!lanes.is_empty()).then_some(InboxAnswer {
+        epoch: inbox.epoch,
+        lanes,
+    });
+    Ok((filtered, changed))
+}
+
+fn rendered_content_identity(
+    lane: CanonicalUuid,
+    directive: &wire::intent::PendingDirective,
+) -> String {
+    let rendered = format!("lane={lane} stage={}\n{}", directive.stage, directive.text);
+    blake3::hash(rendered.as_bytes()).to_hex().to_string()
 }
 
 pub(crate) fn run(

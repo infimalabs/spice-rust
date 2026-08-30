@@ -27,6 +27,19 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
     assert_eq!(state.runtime(), common.join(".spice-rs"));
     assert_eq!(state.worktree_runtime(), common.join(".spice-rs"));
     assert_eq!(state.worktree_locks(), common.join(".spice-rs/locks"));
+    assert_eq!(
+        state.steering_delivery(),
+        common.join(".spice-rs/steering-delivery.json")
+    );
+    assert_eq!(
+        state.steering_delivery_lock(),
+        common.join(".spice-rs/locks/steering-delivery")
+    );
+    let delivery = repository
+        .admit_steering_delivery()
+        .expect("admit absent hook delivery state");
+    assert_eq!(delivery.state(), state.steering_delivery());
+    assert_eq!(delivery.lock(), state.steering_delivery_lock());
     assert_eq!(state.data(), common.join(".spice-rs/data"));
     assert_eq!(
         state.journal(),
@@ -163,6 +176,21 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
         absolute_state.journal(),
         "linked worktrees share one durable ACK authority"
     );
+}
+
+#[test]
+fn hook_delivery_admission_does_not_depend_on_disposable_inbox_shape() {
+    let scratch = Scratch::new();
+    let (repository, runtime) = state_case(&scratch, "parked hook inbox");
+    fs::create_dir_all(runtime.join("locks")).expect("create worktree state directories");
+    fs::write(runtime.join("inbox"), b"parked").expect("park disposable inbox");
+
+    let delivery = repository
+        .admit_steering_delivery()
+        .expect("hook delivery state admits independently");
+    assert_eq!(delivery.state(), runtime.join("steering-delivery.json"));
+    assert_eq!(delivery.lock(), runtime.join("locks/steering-delivery"));
+    assert!(repository.admit_state().is_err());
 }
 
 #[test]

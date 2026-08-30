@@ -96,6 +96,7 @@ fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
     serde_json::from_value(serde_json::json!({
         "lane": id,
         "occupant": OCCUPANT,
+        "compaction": 1,
         "pending": pending,
     }))
     .expect("the fixture spells a lane inbox")

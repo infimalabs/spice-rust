@@ -102,6 +102,8 @@ pub struct StatePaths {
     runtime: PathBuf,
     worktree_runtime: PathBuf,
     worktree_locks: PathBuf,
+    steering_delivery: PathBuf,
+    steering_delivery_lock: PathBuf,
     data: PathBuf,
     journal: PathBuf,
     folds: PathBuf,
@@ -122,6 +124,27 @@ pub struct StatePaths {
     inbox: PathBuf,
     learnings: PathBuf,
     install_rollback_blobs: PathBuf,
+}
+
+/// Worktree-local files admitted for one steering hook delivery decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SteeringDeliveryPaths {
+    state: PathBuf,
+    lock: PathBuf,
+}
+
+impl SteeringDeliveryPaths {
+    /// Durable exact-output suppression record.
+    #[must_use]
+    pub fn state(&self) -> &Path {
+        &self.state
+    }
+
+    /// Cross-process possession serializing delivery decisions.
+    #[must_use]
+    pub fn lock(&self) -> &Path {
+        &self.lock
+    }
 }
 
 impl StatePaths {
@@ -146,6 +169,8 @@ impl StatePaths {
             local_configuration: runtime.join("config.toml"),
             lane_canvas: runtime.join("canvas-lanes"),
             inbox: worktree_runtime.join("inbox"),
+            steering_delivery: worktree_runtime.join("steering-delivery.json"),
+            steering_delivery_lock: worktree_locks.join("steering-delivery"),
             install_rollback_blobs: runtime.join("install-rollback"),
             learnings: runtime.join("learnings"),
             artifact_data,
@@ -172,6 +197,18 @@ impl StatePaths {
     #[must_use]
     pub fn worktree_locks(&self) -> &Path {
         &self.worktree_locks
+    }
+
+    /// Durable exact-output suppression record for worktree hook delivery.
+    #[must_use]
+    pub fn steering_delivery(&self) -> &Path {
+        &self.steering_delivery
+    }
+
+    /// Cross-process possession serializing worktree hook delivery decisions.
+    #[must_use]
+    pub fn steering_delivery_lock(&self) -> &Path {
+        &self.steering_delivery_lock
     }
 
     /// Repository-common content-addressed install rollback bodies.
@@ -362,7 +399,7 @@ impl StatePaths {
     }
 
     /// Files whose shape this runtime admits before it does any work.
-    fn admitted_files(&self) -> [&Path; 7] {
+    fn admitted_files(&self) -> [&Path; 8] {
         [
             self.journal(),
             self.folds(),
@@ -371,6 +408,7 @@ impl StatePaths {
             self.resident(),
             self.resident_log(),
             self.canvas(),
+            self.steering_delivery(),
         ]
     }
 
@@ -381,7 +419,7 @@ impl StatePaths {
     /// an operator repairing a bad `config.toml` needs the runtime to reach the
     /// refusal that names it rather than stop at a shape check.
     #[must_use]
-    pub fn owned_files(&self) -> [&Path; 9] {
+    pub fn owned_files(&self) -> [&Path; 10] {
         let [
             journal,
             folds,
@@ -390,6 +428,7 @@ impl StatePaths {
             resident,
             resident_log,
             canvas,
+            steering_delivery,
         ] = self.admitted_files();
         [
             journal,
@@ -399,6 +438,7 @@ impl StatePaths {
             resident,
             resident_log,
             canvas,
+            steering_delivery,
             self.install_record(),
             self.local_configuration(),
         ]
@@ -546,6 +586,31 @@ impl Repository {
             admit(path, StateShape::RegularFile)?;
         }
         Ok(paths.canvas().to_path_buf())
+    }
+
+    /// Admit only the state components needed to suppress duplicate hook output.
+    ///
+    /// This deliberately excludes the disposable inbox: a parked inbox is a
+    /// steering repair concern and cannot prevent the authenticated resident
+    /// answer from reaching the agent hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact malformed or unavailable delivery-state component.
+    pub fn admit_steering_delivery(&self) -> Result<SteeringDeliveryPaths, StateError> {
+        refuse_retired_state(&self.common)?;
+        let paths = StatePaths::new(
+            self.common.join(STATE_DIRECTORY),
+            self.git.join(STATE_DIRECTORY),
+        );
+        for path in [paths.worktree_runtime(), paths.worktree_locks()] {
+            admit(path, StateShape::Directory)?;
+        }
+        admit(paths.steering_delivery(), StateShape::RegularFile)?;
+        Ok(SteeringDeliveryPaths {
+            state: paths.steering_delivery().to_path_buf(),
+            lock: paths.steering_delivery_lock().to_path_buf(),
+        })
     }
 
     /// Admit resident startup state while retaining a blocked inbox for repair.

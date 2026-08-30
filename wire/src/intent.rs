@@ -505,6 +505,13 @@ pub struct LaneInbox {
         deserialize_with = "crate::optional::present"
     )]
     pub occupant: Option<CanonicalUuid>,
+    /// Latest start, renewal, or compaction position for the current occupant.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub compaction: Option<u64>,
     /// Pending directives in journal order.
     pub pending: Vec<PendingDirective>,
     /// Current durable progress or degradation record for the lane rendering.

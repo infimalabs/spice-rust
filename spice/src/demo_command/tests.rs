@@ -118,7 +118,7 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
             .count(),
         CANNED_TRANSCRIPT.len()
     );
-    assert_eq!(kinds.last(), Some(&wire::FactKind::LaneSeated));
+    assert_eq!(kinds.last(), Some(&wire::FactKind::LaneStarted));
     assert_eq!(
         kinds
             .iter()
@@ -126,6 +126,25 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
             .count(),
         DEMO_LANES.len()
     );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == wire::FactKind::LaneStarted)
+            .count(),
+        DEMO_LANES.len()
+    );
+    for seed in DEMO_LANES {
+        assert!(facts.facts().iter().any(|envelope| {
+            envelope
+                .fact
+                .read::<body::LaneStarted>()
+                .is_some_and(|started| {
+                    started.lane == uuid(seed.lane)
+                        && started.occupant == uuid(seed.occupant)
+                        && started.epoch == uuid(DEMO_EPOCH)
+                })
+        }));
+    }
     for pair in facts.facts()[..=CANNED_TRANSCRIPT.len()].windows(2) {
         assert_eq!(pair[1].cause, Some(pair[0].seq));
     }
