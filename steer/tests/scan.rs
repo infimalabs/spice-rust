@@ -40,6 +40,25 @@ fn a_leading_clause_retires_every_key_it_names() {
     );
 }
 
+/// One assistant message may distribute acknowledgements across separate
+/// paragraphs. Each header remains an independent disposition rather than the
+/// first header consuming the rest of the message as its body.
+#[test]
+fn one_distributed_message_extracts_every_acknowledgement_once() {
+    let prose = concat!(
+        "ACK 1kQwPZtK: The current completion path is singular and visible.\n\n",
+        "ACK 1kQwPZtL: Historical TaskDone records are compatibility evidence only.",
+    );
+
+    assert_eq!(
+        report(&scan(prose, &board())),
+        vec![
+            "1:5 1kQwPZtK acked".to_owned(),
+            "3:5 1kQwPZtL acked".to_owned(),
+        ]
+    );
+}
+
 /// A refusal is a disposition, not an absence of one.
 #[test]
 fn a_refusal_retires_the_directive_as_declined() {
@@ -232,6 +251,8 @@ fn board() -> Board {
             ("1kJK7Sqy", Disposition::Live),
             ("1kJKB307", Disposition::Live),
             ("1kJK8KcW", Disposition::Acked),
+            ("1kQwPZtK", Disposition::Live),
+            ("1kQwPZtL", Disposition::Live),
         ]
         .into_iter()
         .map(|(key, disposition)| (key.parse::<Key>().expect("fixture key"), disposition))
