@@ -523,7 +523,10 @@ fn accept_timer_fired(
             }
             Ok(())
         }
-        timers::Fired::Stale | timers::Fired::ClaimLapse | timers::Fired::TaskWake(_) => Ok(()),
+        timers::Fired::Stale
+        | timers::Fired::ClaimLapse
+        | timers::Fired::ClaimRenew
+        | timers::Fired::TaskWake(_) => Ok(()),
     }
 }
 

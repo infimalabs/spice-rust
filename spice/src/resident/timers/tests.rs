@@ -53,6 +53,217 @@ fn claim_warning_horizon_is_strictly_below_three_hundred_seconds() {
 }
 
 #[test]
+fn automatic_claim_heartbeat_rolls_one_hundred_seconds_and_rearms_lapse() {
+    let fixture = automatic_fixture();
+    let initial_expiry = fixture.authority.expiry;
+    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&fixture.bus)
+        .expect("automatic heartbeat arms");
+    assert_eq!(timers.renewals.len(), 1);
+    assert!(
+        timers.warnings.is_empty(),
+        "rolling automatic leases use the agent meter rather than durable steering warnings"
+    );
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(timers.recv())
+        .expect("due automatic heartbeat fires");
+    assert_eq!(event.kind(), TimerKind::ClaimRenew);
+    assert_eq!(timers.consume(&fixture.bus, event), Ok(Fired::ClaimRenew));
+    timers
+        .synchronize(&fixture.bus)
+        .expect("renewed heartbeat re-arms");
+
+    let lease = fixture
+        .bus
+        .read({
+            let stamp = fixture.authority.born();
+            move |read| Ok(read.lease_head(&stamp)?.expect("lease head exists"))
+        })
+        .expect("renewed lease reads");
+    assert!(lease.body().renewal > fixture.authority.start);
+    assert!(lease.body().expiry > initial_expiry);
+    assert_eq!(
+        lease.body().expiry,
+        shifted(
+            lease.body().renewal,
+            crate::board_command::AUTOMATIC_ROLLING_SECONDS,
+        )
+    );
+    assert_eq!(lease.body().maximum, lease.body().expiry);
+    assert_eq!(
+        timers
+            .claims
+            .get(&fixture.authority.task)
+            .expect("renewed lapse timer exists")
+            .authority
+            .expiry,
+        lease.body().expiry,
+    );
+    assert_eq!(
+        timers
+            .renewals
+            .get(&fixture.authority.task)
+            .expect("next heartbeat exists")
+            .authority
+            .deadline,
+        shifted(
+            lease.body().renewal,
+            crate::board_command::AUTOMATIC_HEARTBEAT_SECONDS,
+        ),
+    );
+    assert_eq!(
+        fixture
+            .bus
+            .fact_snapshot()
+            .expect("renewal facts read")
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed)
+            .count(),
+        1,
+    );
+
+    drop(timers);
+    fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn automatic_claim_heartbeat_refuses_moved_occupant_authority() {
+    let fixture = automatic_fixture();
+    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&fixture.bus)
+        .expect("automatic heartbeat arms");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(timers.recv())
+        .expect("due automatic heartbeat fires");
+    move_residency(&fixture, fixture.authority.epoch, uuid(24));
+
+    assert_eq!(timers.consume(&fixture.bus, event), Ok(Fired::Stale));
+    timers
+        .synchronize(&fixture.bus)
+        .expect("moved occupant disarms heartbeat");
+    assert!(timers.renewals.is_empty());
+    assert!(
+        fixture
+            .bus
+            .fact_snapshot()
+            .expect("facts read")
+            .facts()
+            .iter()
+            .all(|fact| fact.fact.kind() != wire::FactKind::ClaimRenewed)
+    );
+
+    drop(timers);
+    fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn automatic_claim_heartbeat_refuses_a_moved_lease_head() {
+    let fixture = automatic_fixture();
+    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&fixture.bus)
+        .expect("automatic heartbeat arms");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(timers.recv())
+        .expect("due automatic heartbeat fires");
+    renew_claim(&fixture, fixture.authority.expiry);
+
+    assert_eq!(timers.consume(&fixture.bus, event), Ok(Fired::Stale));
+    assert_eq!(
+        fixture
+            .bus
+            .fact_snapshot()
+            .expect("facts read")
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed)
+            .count(),
+        1,
+        "only the competing lease-head movement committed"
+    );
+
+    drop(timers);
+    fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn automatic_claim_release_cancels_heartbeat_without_a_renewal() {
+    let fixture = automatic_fixture();
+    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&fixture.bus)
+        .expect("automatic heartbeat arms");
+    assert_eq!(timers.renewals.len(), 1);
+
+    free_claim(&fixture);
+    timers
+        .synchronize(&fixture.bus)
+        .expect("released automatic claim disarms heartbeat");
+    assert!(timers.renewals.is_empty());
+    assert!(
+        fixture
+            .bus
+            .fact_snapshot()
+            .expect("facts read")
+            .facts()
+            .iter()
+            .all(|fact| fact.fact.kind() != wire::FactKind::ClaimRenewed)
+    );
+
+    drop(timers);
+    fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn expired_automatic_claim_lapses_without_arming_a_renewal_loop() {
+    let fixture = automatic_fixture_with_age(61);
+    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&fixture.bus)
+        .expect("expired automatic claim folds");
+    assert!(timers.renewals.is_empty());
+    assert_eq!(timers.claims.len(), 1);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(timers.recv())
+        .expect("expired claim lapse fires");
+
+    assert_eq!(event.kind(), TimerKind::ClaimLapse);
+    assert_eq!(timers.consume(&fixture.bus, event), Ok(Fired::ClaimLapse));
+    assert_eq!(
+        lapsed_heads(&fixture)
+            .claim()
+            .expect("lapsed claim head remains")
+            .body()
+            .disposition,
+        ClaimDisposition::Lapsed,
+    );
+
+    drop(timers);
+    fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
 fn due_claim_warning_opens_once_and_restart_keeps_it_suppressed() {
     let fixture = fixture_with_expiry(60);
     let other_lane = uuid(23);
@@ -694,6 +905,34 @@ fn fixture_with_expiry(expiry_seconds: i64) -> Fixture {
     journal
         .apply(seed_write(&authority))
         .expect("fixture authority seeds");
+    Fixture {
+        bus: Bus::start(journal).expect("fixture bus starts"),
+        projects: projects(),
+        authority,
+    }
+}
+
+fn automatic_fixture() -> Fixture {
+    automatic_fixture_with_age(crate::board_command::AUTOMATIC_HEARTBEAT_SECONDS + 1)
+}
+
+fn automatic_fixture_with_age(age_seconds: i64) -> Fixture {
+    let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let start = shifted(now, -age_seconds);
+    let expiry = shifted(start, crate::board_command::AUTOMATIC_PROVISIONAL_SECONDS);
+    let authority = Authority {
+        task: task(),
+        lane: uuid(20),
+        occupant: uuid(21),
+        epoch: uuid(22),
+        start,
+        expiry,
+        maximum: expiry,
+    };
+    let mut journal = Journal::in_memory().expect("fixture journal opens");
+    journal
+        .apply(seed_write(&authority))
+        .expect("fixture automatic authority seeds");
     Fixture {
         bus: Bus::start(journal).expect("fixture bus starts"),
         projects: projects(),

@@ -601,8 +601,8 @@ fn claims_warn_on_shared_acceptance_surface_not_shared_project_stem() {
 
     let overlap_answer = capture_for(&bus, epoch, &seats[1], &overlapping);
     assert_eq!(
-        overlap_answer.warnings,
-        [wire::intent::ClaimWarning {
+        overlap_answer.warnings.as_ref(),
+        &[wire::intent::ClaimWarning {
             task: first,
             lane: seats[0].lane,
             surface: vec!["mosaic".to_owned(), "watchband".to_owned()],

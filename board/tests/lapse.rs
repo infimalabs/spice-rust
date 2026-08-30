@@ -150,7 +150,8 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
             intent::ClaimAnswer {
                 task: task(),
                 holder: actor,
-                warnings: Vec::new(),
+                expiry: None,
+                warnings: Box::default(),
                 next: None,
             },
         )
@@ -232,7 +233,8 @@ fn free(journal: &mut Journal, command: u8) {
             intent::ClaimAnswer {
                 task: task(),
                 holder: actor,
-                warnings: Vec::new(),
+                expiry: None,
+                warnings: Box::default(),
                 next: None,
             },
         )
@@ -286,7 +288,8 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
             intent::ClaimAnswer {
                 task: task(),
                 holder: actor,
-                warnings: Vec::new(),
+                expiry: None,
+                warnings: Box::default(),
                 next: None,
             },
         )
@@ -937,7 +940,8 @@ fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
             intent::ClaimAnswer {
                 task: task(),
                 holder,
-                warnings: Vec::new(),
+                expiry: None,
+                warnings: Box::default(),
                 next: None,
             },
         )

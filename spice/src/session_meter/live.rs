@@ -1,0 +1,292 @@
+//! Read-only live-board collection for the native command wrapper.
+
+use std::fs;
+use std::io::{self, Write as _};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use journal::JournalReader;
+use serde::{Deserialize, Serialize};
+use wire::{Actor, ClaimDisposition, ResidentState, TaskHandle};
+
+use super::{ClaimState, Decision, Meter, WorkingState};
+
+const METER_STATE: &str = "session-meter.json";
+const OWNER_STATE: &str = "session-meter-owner.json";
+const LOSS_STATE: &str = "session-meter-loss.json";
+
+/// One read-only live meter bound to the current worktree and process identity.
+#[derive(Clone, Debug)]
+pub struct LiveMeter {
+    journal: PathBuf,
+    meter: Meter,
+    owner_path: PathBuf,
+    loss_path: PathBuf,
+    actor: ProcessActor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProcessActor {
+    vendor: String,
+    identity: String,
+}
+
+#[derive(Clone, Debug)]
+struct BoardObservation {
+    state: WorkingState,
+    current: Option<StoredOwner>,
+    prior_active: Option<AuthorityKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredOwner {
+    vendor: String,
+    identity: String,
+    authority: AuthorityKey,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityKey {
+    handle: String,
+    claim: u64,
+    lane: String,
+    occupant: String,
+    epoch: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredLoss {
+    owner: StoredOwner,
+    observed: AuthorityKey,
+}
+
+impl LiveMeter {
+    /// Discover one repository and bind the sole ambient vendor identity.
+    ///
+    /// Values must be captured by the binary rim before this call. Missing,
+    /// non-Unicode, or ambiguous identities disable the meter.
+    pub fn open(
+        root: &Path,
+        identities: Vec<(&'static crate::extension::Vendor, Option<String>)>,
+    ) -> Result<Self, String> {
+        let mut actors = identities.into_iter().filter_map(|(vendor, identity)| {
+            identity
+                .filter(|identity| !identity.trim().is_empty())
+                .map(|identity| ProcessActor {
+                    vendor: vendor.name().to_owned(),
+                    identity,
+                })
+        });
+        let actor = actors
+            .next()
+            .filter(|_| actors.next().is_none())
+            .ok_or_else(|| "the current process does not prove one vendor identity".to_owned())?;
+        let repository = crate::repository::Repository::discover(root)
+            .map_err(|error| format!("working-state repository is unavailable: {error}"))?;
+        let state = repository
+            .admit_state()
+            .map_err(|error| format!("working-state paths are unavailable: {error}"))?;
+        let runtime = state.worktree_runtime();
+        Ok(Self {
+            journal: state.journal().to_path_buf(),
+            meter: Meter::new(runtime.join(METER_STATE)),
+            owner_path: runtime.join(OWNER_STATE),
+            loss_path: runtime.join(LOSS_STATE),
+            actor,
+        })
+    }
+
+    /// Collect and reduce one current board observation.
+    ///
+    /// Every error is intended to become silence at the wrapper boundary.
+    pub fn evaluate(&self) -> Result<Decision, String> {
+        let prior = read_json::<StoredOwner>(&self.owner_path)?;
+        let reader = JournalReader::open(&self.journal)
+            .map_err(|error| format!("working-state journal is unavailable: {error}"))?;
+        let actor = self.actor.clone();
+        let prior_handle = prior
+            .as_ref()
+            .filter(|owner| owner.vendor == actor.vendor && owner.identity == actor.identity)
+            .map(|owner| owner.authority.handle.clone());
+        let observation = reader
+            .read(move |read| collect(read, &actor, prior_handle.as_deref()))
+            .map_err(|error| format!("working-state board is unavailable: {error}"))?;
+
+        if let Some(current) = observation.current.as_ref() {
+            write_json(&self.owner_path, current)?;
+        }
+        let loss = match (prior, observation.prior_active) {
+            (Some(owner), Some(observed))
+                if owner.vendor == self.actor.vendor
+                    && owner.identity == self.actor.identity
+                    && observation.current.is_none() =>
+            {
+                self.loss_announcement(StoredLoss { owner, observed })?
+            }
+            _ => None,
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("working-state clock is unavailable: {error}"))?;
+        let mut decision = self
+            .meter
+            .evaluate(&observation.state, now)
+            .map_err(|error| error.to_string())?;
+        if loss.is_some() {
+            decision.announcement = loss;
+            decision.refresh_after = None;
+        }
+        Ok(decision)
+    }
+
+    fn loss_announcement(&self, loss: StoredLoss) -> Result<Option<String>, String> {
+        if read_json::<StoredLoss>(&self.loss_path)?.as_ref() == Some(&loss) {
+            return Ok(None);
+        }
+        write_json(&self.loss_path, &loss)?;
+        Ok(Some(format!(
+            "CLAIM LOST: {} moved away from this process; run spice task status",
+            loss.owner.authority.handle
+        )))
+    }
+}
+
+fn collect(
+    read: &journal::JournalRead<'_>,
+    actor: &ProcessActor,
+    prior_handle: Option<&str>,
+) -> Result<BoardObservation, journal::GuardError> {
+    let residency = read.residency_head()?;
+    let tasks = read.task_heads()?;
+    let prior_active = prior_handle.and_then(|handle| active_authority(&tasks, handle));
+    let Some(residency) = residency.filter(|head| head.body().state == ResidentState::Seated)
+    else {
+        return Ok(BoardObservation {
+            state: WorkingState::default(),
+            current: None,
+            prior_active,
+        });
+    };
+    let mut matching = residency.body().lanes.iter().filter(|lane| {
+        lane.session.as_ref().is_some_and(|session| {
+            session.vendor.to_string() == actor.vendor && session.identity == actor.identity
+        })
+    });
+    let Some(lane) = matching.next().filter(|_| matching.next().is_none()) else {
+        return Ok(BoardObservation {
+            state: WorkingState::default(),
+            current: None,
+            prior_active,
+        });
+    };
+    let pending_inbox_count = read.pending_steering(Some(lane.lane))?.len();
+    let heads = read.active_claim_for_actor(&Actor::Lane(lane.lane))?;
+    let current = heads
+        .as_ref()
+        .and_then(|heads| current_owner(heads, residency.body().epoch, lane.occupant, actor));
+    let claim = heads.as_ref().and_then(|heads| {
+        current.as_ref()?;
+        let lease = heads.lease()?.body();
+        let now = jiff::Timestamp::now();
+        Some(ClaimState {
+            handle: TaskHandle::for_project(
+                &heads.statement().body().project,
+                &heads.statement().body().born,
+            )
+            .to_string(),
+            phase: heads.workflow().body().phase.to_string(),
+            elapsed: duration_since(now, lease.start.get()),
+            remaining: duration_since(lease.expiry.get(), now).or(Some(Duration::ZERO)),
+        })
+    });
+    Ok(BoardObservation {
+        state: WorkingState {
+            pending_inbox_count,
+            claim,
+            last_taste: String::new(),
+        },
+        current,
+        prior_active,
+    })
+}
+
+fn current_owner(
+    heads: &journal::TaskHeads,
+    residency_epoch: wire::CanonicalUuid,
+    seated_occupant: Option<wire::CanonicalUuid>,
+    actor: &ProcessActor,
+) -> Option<StoredOwner> {
+    let claim = heads.claim()?;
+    let lease = heads.lease()?;
+    if claim.body().disposition != ClaimDisposition::Active
+        || claim.body().epoch != residency_epoch
+        || lease.body().epoch != residency_epoch
+        || seated_occupant != Some(claim.body().occupant)
+    {
+        return None;
+    }
+    Some(StoredOwner {
+        vendor: actor.vendor.clone(),
+        identity: actor.identity.clone(),
+        authority: authority(heads, claim),
+    })
+}
+
+fn active_authority(tasks: &[journal::TaskHeads], handle: &str) -> Option<AuthorityKey> {
+    tasks.iter().find_map(|heads| {
+        let candidate = TaskHandle::for_project(
+            &heads.statement().body().project,
+            &heads.statement().body().born,
+        );
+        let claim = heads.claim()?;
+        let _lease = heads.lease()?;
+        (candidate.to_string() == handle && claim.body().disposition == ClaimDisposition::Active)
+            .then(|| authority(heads, claim))
+    })
+}
+
+fn authority(
+    heads: &journal::TaskHeads,
+    claim: &journal::JournalHead<wire::ClaimHead>,
+) -> AuthorityKey {
+    AuthorityKey {
+        handle: TaskHandle::for_project(
+            &heads.statement().body().project,
+            &heads.statement().body().born,
+        )
+        .to_string(),
+        claim: claim.position().get(),
+        lane: claim.body().lane.to_string(),
+        occupant: claim.body().occupant.to_string(),
+        epoch: claim.body().epoch.to_string(),
+    }
+}
+
+fn duration_since(later: jiff::Timestamp, earlier: jiff::Timestamp) -> Option<Duration> {
+    (later >= earlier).then(|| later.duration_since(earlier).unsigned_abs())
+}
+
+fn read_json<T>(path: &Path) -> Result<Option<T>, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("working-state record is unreadable: {error}")),
+    };
+    Ok(serde_json::from_slice(&bytes).ok())
+}
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|error| format!("working-state record is unencodable: {error}"))?;
+    let destination = atomic::Destination::new(path)
+        .map_err(|error| format!("working-state record is unpublished: {error}"))?;
+    destination
+        .publish(|staged| staged.write_all(&bytes))
+        .map_err(|error| format!("working-state record is unpublished: {error}"))
+}

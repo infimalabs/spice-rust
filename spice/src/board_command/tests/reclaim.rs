@@ -39,7 +39,7 @@ pub(super) fn renew_and_assert(
 ) -> BoardTask {
     let lease = before.lease.as_ref().expect("active lease");
     let first_at = fixture_instant_after(lease.body.start, 1);
-    assert_committed(reclaim_at(
+    let answer = assert_committed(reclaim_at(
         bus,
         epoch,
         lane,
@@ -54,6 +54,10 @@ pub(super) fn renew_and_assert(
     assert_eq!(after.workflow, before.workflow);
     assert_eq!(after.claim, before.claim);
     let renewed_lease = after.lease.as_ref().expect("renewed lease");
+    let CommandAnswer::Claim(answer) = answer else {
+        panic!("reclaim returned a non-claim answer")
+    };
+    assert_eq!(answer.expiry.as_deref(), Some(&renewed_lease.body.expiry));
     assert_ne!(renewed_lease.position, lease.position);
     assert_eq!(renewed_lease.body.maximum, lease.body.maximum);
     assert!(renewed_lease.body.expiry > lease.body.expiry);

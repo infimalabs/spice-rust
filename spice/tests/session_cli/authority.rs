@@ -304,6 +304,267 @@ fn seed_retired_peer_steering(path: &Path) {
         .expect("peer steering retirement commits");
 }
 
+fn renew_held_claim_for_meter(path: &Path, seconds: i64) {
+    let task = stamp("SESSION-held");
+    let journal = Journal::open(path).expect("fixture journal reopens");
+    let lease = journal
+        .read({
+            let task = task.clone();
+            move |read| Ok(read.lease_head(&task)?.expect("held lease exists"))
+        })
+        .expect("held lease reads");
+    let now = Instant::new(jiff::Timestamp::now()).expect("meter clock is canonical");
+    let deadline = now
+        .get()
+        .checked_add(jiff::SignedDuration::from_secs(seconds))
+        .expect("meter deadline shifts");
+    let until = Instant::new(deadline).expect("meter deadline is canonical");
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        "task:SESSION-fixture"
+            .parse()
+            .expect("fixture claim origin"),
+        now,
+        Producer::BusTimer,
+    );
+    let renewed = write
+        .fact(
+            body::ClaimRenewed {
+                task: task.clone(),
+                epoch: lease.body().epoch,
+                until,
+                maximum: until,
+            },
+            FactCause::Root,
+        )
+        .expect("meter renewal builds");
+    let mut next = lease.body().clone();
+    next.renewal = now;
+    next.expiry = until;
+    next.maximum = until;
+    write.lease_head(task, renewed, move |_| next);
+    let mut journal = journal;
+    journal.apply(write).expect("meter renewal commits");
+}
+
+fn move_meter_occupant(path: &Path) {
+    let mut journal = Journal::open(path).expect("fixture journal reopens");
+    let observed = journal
+        .read(|read| Ok(read.residency_head()?.expect("residency exists")))
+        .expect("residency reads");
+    let mut next = observed.body().clone();
+    let row = next
+        .lanes
+        .iter_mut()
+        .find(|row| row.lane == uuid(0xaa))
+        .expect("meter lane exists");
+    let successor = uuid(0xf1);
+    row.occupant = Some(successor);
+    row.lineage.push(successor);
+    row.session
+        .as_mut()
+        .expect("meter lane has a session")
+        .identity = "successor-thread".to_owned();
+    let epoch = next.epoch;
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{epoch}")
+            .parse()
+            .expect("resident origin"),
+        Instant::new(jiff::Timestamp::now()).expect("meter clock is canonical"),
+        Producer::CommandDoor,
+    );
+    let seated = write
+        .fact(body::UpSeated { epoch }, FactCause::Root)
+        .expect("successor seating builds");
+    write.residency_head(seated, move |_| next);
+    journal.apply(write).expect("successor seating commits");
+}
+
+fn free_held_claim(path: &Path) {
+    let task = stamp("SESSION-held");
+    let mut journal = Journal::open(path).expect("fixture journal reopens");
+    let claim = journal
+        .read({
+            let task = task.clone();
+            move |read| Ok(read.claim_head(&task)?.expect("held claim exists"))
+        })
+        .expect("held claim reads");
+    let actor = Actor::Lane(uuid(0xaa));
+    let mut write = JournalWrite::new(
+        actor.clone(),
+        "task:SESSION-fixture"
+            .parse()
+            .expect("fixture claim origin"),
+        Instant::new(jiff::Timestamp::now()).expect("meter clock is canonical"),
+        Producer::CommandDoor,
+    );
+    let freed = write
+        .fact(
+            body::ClaimFreed {
+                task: task.clone(),
+                actor,
+            },
+            FactCause::Root,
+        )
+        .expect("claim release builds");
+    let mut next = claim.body().clone();
+    next.disposition = wire::ClaimDisposition::Freed;
+    write.claim_head(task, freed, move |fact| wire::ClaimHead { fact, ..next });
+    journal.apply(write).expect("claim release commits");
+}
+
+fn invoke_meter_child(root: &Path, thread: &str) -> super::Spoken {
+    let arguments = [
+        "run".to_owned(),
+        "--".to_owned(),
+        "/bin/sh".to_owned(),
+        "-c".to_owned(),
+        "printf child-output; exit 7".to_owned(),
+    ];
+    super::invoke_in(
+        Some(root),
+        &arguments,
+        &[("CODEX_THREAD_ID", thread.to_owned())], // env-policy: allow
+    )
+}
+
+#[test]
+#[cfg(unix)]
+fn real_run_stream_reports_working_state_and_wakes_at_warning_boundary() {
+    let scratch = Scratch::new("run-meter-boundary");
+    fake_repository(scratch.path());
+    let thread = uuid(0xf0).to_string();
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &thread);
+    renew_held_claim_for_meter(&authority, 604);
+    let arguments = ["run", "--", "/bin/sh", "-c", "sleep 6; printf child-output"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    let spoken = super::invoke_in(
+        Some(scratch.path()),
+        &arguments,
+        &[("CODEX_THREAD_ID", thread)], // env-policy: allow
+    );
+
+    assert_eq!(spoken.code, Some(0));
+    assert_eq!(spoken.out, b"child-output");
+    let stderr = String::from_utf8(spoken.err).expect("run meter stderr is UTF-8");
+    let lines = stderr.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines.len(),
+        2,
+        "initial state and one boundary warning speak: {stderr:?}"
+    );
+    assert!(lines[0].starts_with("🌶️ Working state: 1 pending inbox; claim "));
+    assert!(!lines[0].contains("CLAIM LEASE"));
+    assert!(lines[1].contains("CLAIM LEASE WARNING"));
+    let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
+    assert!(lines[1].contains(&format!("run spice task reclaim {handle}")));
+
+    scratch.remove();
+}
+
+#[test]
+#[cfg(unix)]
+fn short_run_processes_share_suppression_and_tier_changes_speak() {
+    let scratch = Scratch::new("run-meter-processes");
+    fake_repository(scratch.path());
+    let thread = uuid(0xf2).to_string();
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &thread);
+    renew_held_claim_for_meter(&authority, 599);
+
+    let first = invoke_meter_child(scratch.path(), &thread);
+    let second = invoke_meter_child(scratch.path(), &thread);
+    renew_held_claim_for_meter(&authority, 299);
+    let urgent = invoke_meter_child(scratch.path(), &thread);
+
+    for spoken in [&first, &second, &urgent] {
+        assert_eq!(spoken.code, Some(7));
+        assert_eq!(spoken.out, b"child-output");
+    }
+    assert!(
+        String::from_utf8(first.err)
+            .expect("warning stderr")
+            .contains("CLAIM LEASE WARNING")
+    );
+    assert!(second.err.is_empty(), "same tier is durably suppressed");
+    assert!(
+        String::from_utf8(urgent.err)
+            .expect("urgent stderr")
+            .contains("CLAIM LEASE URGENT")
+    );
+
+    scratch.remove();
+}
+
+#[test]
+#[cfg(unix)]
+fn ownership_loss_speaks_once_while_terminal_release_stays_silent() {
+    let scratch = Scratch::new("run-meter-loss");
+    fake_repository(scratch.path());
+    let thread = uuid(0xf3).to_string();
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &thread);
+    renew_held_claim_for_meter(&authority, 599);
+    let _initial = invoke_meter_child(scratch.path(), &thread);
+    move_meter_occupant(&authority);
+
+    let lost = invoke_meter_child(scratch.path(), &thread);
+    renew_held_claim_for_meter(&authority, 100);
+    let deduplicated = invoke_meter_child(scratch.path(), &thread);
+
+    let loss_stderr = String::from_utf8(lost.err).expect("loss stderr");
+    assert_eq!(loss_stderr.lines().count(), 1);
+    assert!(loss_stderr.contains("CLAIM LOST:"));
+    assert!(loss_stderr.contains("run spice task status"));
+    assert!(
+        deduplicated.err.is_empty(),
+        "successor lease heads do not repeat one ownership loss"
+    );
+
+    let terminal = Scratch::new("run-meter-terminal");
+    fake_repository(terminal.path());
+    let terminal_thread = uuid(0xf4).to_string();
+    let terminal_authority = authority_path(terminal.path());
+    seed_recall_authority(&terminal_authority, &terminal_thread);
+    renew_held_claim_for_meter(&terminal_authority, 599);
+    let _initial = invoke_meter_child(terminal.path(), &terminal_thread);
+    free_held_claim(&terminal_authority);
+    let freed = invoke_meter_child(terminal.path(), &terminal_thread);
+    assert!(!String::from_utf8_lossy(&freed.err).contains("CLAIM LOST:"));
+
+    terminal.remove();
+    scratch.remove();
+}
+
+#[test]
+#[cfg(unix)]
+fn meter_persistence_failure_is_silent_and_preserves_child_outcome() {
+    let scratch = Scratch::new("run-meter-persistence-failure");
+    fake_repository(scratch.path());
+    let thread = uuid(0xf5).to_string();
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &thread);
+    renew_held_claim_for_meter(&authority, 599);
+    fs::create_dir(
+        scratch
+            .path()
+            .join(".git/.spice-rs/session-meter-owner.json"),
+    )
+    .expect("owner record is made unwritable");
+
+    let spoken = invoke_meter_child(scratch.path(), &thread);
+
+    assert_eq!(spoken.code, Some(7));
+    assert_eq!(spoken.out, b"child-output");
+    assert!(spoken.err.is_empty());
+    scratch.remove();
+}
+
 fn recall_lanes(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,

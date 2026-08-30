@@ -240,6 +240,7 @@ struct AutomaticClaimAuthority {
     claim: journal::JournalHead<wire::ClaimHead>,
     lease: journal::JournalHead<wire::LeaseHead>,
     source: wire::body::SourceBoundary,
+    automatic: bool,
 }
 
 fn automatic_claim_authority(
@@ -257,6 +258,7 @@ fn automatic_claim_authority(
     let snapshot = decision
         .or(current.as_ref())
         .expect("automatic claim authority has a supplied or current snapshot");
+    let facts = snapshot.facts().iter().cloned().collect::<Vec<_>>();
     let mut authority = None;
     for heads in snapshot.tasks() {
         let Some(claim) = heads.claim() else { continue };
@@ -288,6 +290,7 @@ fn automatic_claim_authority(
             source: bus.source_boundary(&lane).map_err(|error| {
                 store_fault("lifecycle::claim-boundary-unreadable", &error.to_string())
             })?,
+            automatic: crate::board_command::is_automatic_claim(claim.body(), &facts),
         });
     }
     Ok(authority)
@@ -342,10 +345,47 @@ fn carry_automatic_claim(
         claim.fact = position;
         claim
     });
-    let mut lease = authority.lease.body().clone();
-    lease.epoch = epoch;
-    write.lease_head(task, carried, move |_| lease);
     Ok(carried)
+}
+
+fn update_automatic_lease(
+    write: &mut JournalWrite,
+    authority: &AutomaticClaimAuthority,
+    epoch: CanonicalUuid,
+    at: wire::Instant,
+    cause: PendingFact,
+) -> CommandResult<PendingFact> {
+    let lease = promoted_lease(authority.lease.body(), epoch, at)?;
+    let task = authority.task.clone();
+    write.lease_head(task, cause, move |_| lease);
+    Ok(cause)
+}
+
+fn promoted_lease(
+    observed: &wire::LeaseHead,
+    epoch: CanonicalUuid,
+    at: wire::Instant,
+) -> CommandResult<wire::LeaseHead> {
+    if at >= observed.expiry {
+        return Err(store_fault(
+            "lifecycle::claim-promotion-expired",
+            "the automatic claim expired before startup became ready",
+        ));
+    }
+    let deadline = at
+        .get()
+        .checked_add(jiff::SignedDuration::from_secs(
+            crate::board_command::AUTOMATIC_ROLLING_SECONDS,
+        ))
+        .map_err(|error| store_fault("lifecycle::claim-promotion-invalid", &error.to_string()))?;
+    let until = wire::Instant::new(deadline)
+        .map_err(|error| store_fault("lifecycle::claim-promotion-invalid", &error.to_string()))?;
+    let mut lease = observed.clone();
+    lease.epoch = epoch;
+    lease.renewal = at;
+    lease.expiry = until;
+    lease.maximum = until;
+    Ok(lease)
 }
 
 fn commit_automatic_wake(
@@ -357,6 +397,8 @@ fn commit_automatic_wake(
     expected_cursor: Option<wire::Seq>,
     claim: Option<&AutomaticClaimAuthority>,
 ) -> CommandResult<()> {
+    let at = wire::Instant::new(jiff::Timestamp::now())
+        .map_err(|error| store_fault("lifecycle::claim-promotion-clock", &error.to_string()))?;
     let mut next = observed.body().clone();
     let next_row = next
         .lanes
@@ -398,12 +440,100 @@ fn commit_automatic_wake(
             FactCause::Pending(declared),
         )
         .map_err(|error| store_fault("lifecycle::wake-fact-invalid", &error.to_string()))?;
-    let head = match claim {
+    let mut head = match claim {
         Some(claim) if claim.claim.body().occupant != proven.occupant => {
             carry_automatic_claim(&mut write, claim, row.lane, proven.occupant, epoch, started)?
         }
         _ => started,
     };
+    if let Some(claim) = claim {
+        if claim.automatic {
+            head = update_automatic_lease(&mut write, claim, epoch, at, head)?;
+        } else if claim.claim.body().occupant != proven.occupant {
+            let mut lease = claim.lease.body().clone();
+            lease.epoch = epoch;
+            let task = claim.task.clone();
+            write.lease_head(task, head, move |_| lease);
+        }
+    }
     write.residency_head(head, move |_| next);
     commit(bus, write).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_ready_promotes_provisional_lease_to_one_hundred_seconds() {
+        let epoch = "018f82d4-6f59-7d06-92e3-bce9131163aa"
+            .parse()
+            .expect("fixture epoch");
+        let prior_epoch = "018f82d4-6f59-7d06-92e3-bce9131163ab"
+            .parse()
+            .expect("fixture prior epoch");
+        let start: wire::Instant = "2026-08-30T08:00:00.000Z".parse().expect("fixture start");
+        let provisional = wire::Instant::new(
+            start
+                .get()
+                .checked_add(jiff::SignedDuration::from_secs(
+                    crate::board_command::AUTOMATIC_PROVISIONAL_SECONDS,
+                ))
+                .expect("provisional deadline shifts"),
+        )
+        .expect("provisional deadline");
+        let ready: wire::Instant = "2026-08-30T08:00:10.000Z"
+            .parse()
+            .expect("fixture ready time");
+        let promoted = promoted_lease(
+            &wire::LeaseHead {
+                start,
+                renewal: start,
+                maximum: provisional,
+                expiry: provisional,
+                epoch: prior_epoch,
+            },
+            epoch,
+            ready,
+        )
+        .expect("startup promotion succeeds");
+
+        assert_eq!(promoted.start, start);
+        assert_eq!(promoted.renewal, ready);
+        assert_eq!(promoted.epoch, epoch);
+        assert_eq!(promoted.expiry, promoted.maximum);
+        assert_eq!(
+            promoted.expiry,
+            wire::Instant::new(
+                ready
+                    .get()
+                    .checked_add(jiff::SignedDuration::from_secs(
+                        crate::board_command::AUTOMATIC_ROLLING_SECONDS,
+                    ))
+                    .expect("rolling deadline shifts")
+            )
+            .expect("rolling deadline")
+        );
+    }
+
+    #[test]
+    fn startup_ready_cannot_revive_an_expired_provisional_lease() {
+        let epoch = "018f82d4-6f59-7d06-92e3-bce9131163aa"
+            .parse()
+            .expect("fixture epoch");
+        let start: wire::Instant = "2026-08-30T08:00:00.000Z".parse().expect("fixture start");
+        let expiry: wire::Instant = "2026-08-30T08:01:00.000Z".parse().expect("fixture expiry");
+        let observed = wire::LeaseHead {
+            start,
+            renewal: start,
+            maximum: expiry,
+            expiry,
+            epoch,
+        };
+
+        let refusal = promoted_lease(&observed, epoch, expiry)
+            .expect_err("an expired provisional lease cannot be promoted");
+
+        assert!(format!("{refusal:?}").contains("lifecycle::claim-promotion-expired"));
+    }
 }

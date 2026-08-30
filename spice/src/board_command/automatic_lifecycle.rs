@@ -225,9 +225,30 @@ fn prepare_git(
 
 fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswer>> {
     let at = current_instant()?;
-    let expiry = instant_after(at, 15 * 60)?;
-    let maximum = instant_after(at, 60 * 60)?;
+    let expiry = instant_after(at, AUTOMATIC_PROVISIONAL_SECONDS)?;
+    let maximum = expiry;
     Ok((at, expiry, maximum))
+}
+
+pub(crate) fn is_automatic_claim(
+    claim: &ClaimHead,
+    facts: &[wire::Envelope<wire::AnyFact>],
+) -> bool {
+    facts.iter().any(|envelope| {
+        if envelope.seq != claim.claimed {
+            return false;
+        }
+        let Some(won) = envelope.fact.read::<body::ClaimWon>() else {
+            return false;
+        };
+        envelope
+            .at
+            .get()
+            .checked_add(jiff::SignedDuration::from_secs(
+                AUTOMATIC_PROVISIONAL_SECONDS,
+            ))
+            .is_ok_and(|expiry| won.until.get() == expiry)
+    })
 }
 
 fn claim_source_boundary(
@@ -294,6 +315,7 @@ fn automatic_answer(
     wire::intent::ClaimAnswer {
         task,
         holder: actor,
+        expiry: None,
         warnings: board::claim_overlaps(selected, entries)
             .into_iter()
             .map(|overlap| wire::intent::ClaimWarning {
@@ -301,7 +323,8 @@ fn automatic_answer(
                 lane: overlap.lane,
                 surface: overlap.surface,
             })
-            .collect(),
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
         next: None,
     }
 }
@@ -338,7 +361,8 @@ pub(crate) fn release_automatic(
     let answer = wire::intent::ClaimAnswer {
         task: handle,
         holder: actor,
-        warnings: Vec::new(),
+        expiry: None,
+        warnings: Box::default(),
         next: None,
     };
     match committed(bus, write, CommandAnswer::Claim(answer)) {
