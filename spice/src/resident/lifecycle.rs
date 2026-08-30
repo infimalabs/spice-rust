@@ -137,18 +137,11 @@ impl Runtime {
         let targets = project_targets(&snapshot, &self.projection, now, &self.holds)?;
         let task = match resolve(&targets, &self.retry, now) {
             Resolution::Idle => None,
-            Resolution::Wait {
-                trigger,
-                lane,
-                deadline,
-            } => {
-                let _ = writeln!(
-                    diagnostic,
-                    "lifecycle waiting trigger={} lane={} deadline={}",
-                    trigger.as_str(),
-                    lane,
-                    deadline
-                );
+            Resolution::Wait { lane, deadline, .. } => {
+                // A wait is unchanged process-local scheduler state, not a
+                // lifecycle event. Durable commits can reconcile the same
+                // deadline thousands of times while a transcript is active;
+                // the timer runtime already coalesces that identical arm.
                 Some(WakeDeadline {
                     lane,
                     at: deadline,
