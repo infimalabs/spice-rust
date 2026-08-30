@@ -250,6 +250,43 @@ impl Fixture {
         }
     }
 
+    /// Replace resident authority while preserving this lane's occupant and claim.
+    fn carry_into(mut self, epoch: CanonicalUuid) -> Self {
+        let observed = current_residency(&self.bus, self.epoch).expect("predecessor residency");
+        let mut next = observed.body().clone();
+        next.epoch = epoch;
+        let mut startup =
+            write(Actor::Spice, epoch, Producer::CommandDoor).expect("successor proposal begins");
+        let seated = startup
+            .fact(wire::body::UpSeated { epoch }, FactCause::Root)
+            .expect("successor resident seats");
+        startup.residency_head(seated, move |_| next);
+        let seated = Seq::new(
+            commit(&self.bus, startup)
+                .expect("successor startup commits")
+                .last(),
+        )
+        .expect("nonzero successor seat");
+        let mut carry = write(Actor::Spice, epoch, Producer::ResidentRecognition)
+            .expect("claim carry proposal begins");
+        carry
+            .fact(
+                wire::body::ClaimCarried {
+                    task: "1kKRRsDP".parse().expect("fixture task stamp"),
+                    lane: self.lane,
+                    occupant: self.occupant,
+                    ancestor: self.occupant,
+                    epoch,
+                    source: wire::body::SourceBoundary::unrecorded(),
+                },
+                FactCause::Existing(seated),
+            )
+            .expect("claim carries into successor epoch");
+        commit(&self.bus, carry).expect("claim carry commits");
+        self.epoch = epoch;
+        self
+    }
+
     fn finish(self) {
         self.bus.shutdown().expect("bus stops");
         fs::remove_dir_all(self.root).expect("fixture cleanup");
@@ -358,6 +395,40 @@ fn distinct_contents_in_separate_records_both_commit_in_one_suppression_epoch() 
             .iter()
             .all(|body| body.compaction == fixture.anchor.get())
     );
+    fixture.finish();
+}
+
+#[test]
+fn a_carried_claim_retains_the_occupants_taste_epoch_across_resident_replacement() {
+    let predecessor = Fixture::new("carried-anchor");
+    let predecessor_anchor = predecessor.anchor;
+    let fixture = predecessor.carry_into(uuid(40));
+    let snapshot = fixture.bus.fact_snapshot().expect("snapshot reads");
+
+    let carried = snapshot.facts().last().expect("claim carry is present");
+    assert_eq!(carried.fact.kind(), wire::FactKind::ClaimCarried);
+    assert_ne!(carried.seq, predecessor_anchor);
+    assert_eq!(
+        context_anchor(&snapshot, fixture.lane, fixture.occupant)
+            .expect("continued occupant retains its context anchor"),
+        predecessor_anchor,
+    );
+
+    let bag = bag(&[("polling", &["polling"], "Wait for completion.")]);
+    let mut judge = FunctionAdjudicator(|_: &Candidate| {
+        Ok(judgment(
+            false,
+            vec![attempt(0, "NO", wire::body::TasteJudgeReply::No)],
+        ))
+    });
+    fixture.adjudicate(
+        &bag,
+        &mut judge,
+        &prose_record(fixture.lane, fixture.occupant, "polling now"),
+    );
+    let judgments = fixture.judgments();
+    assert_eq!(judgments.len(), 1);
+    assert_eq!(judgments[0].compaction, predecessor_anchor.get());
     fixture.finish();
 }
 

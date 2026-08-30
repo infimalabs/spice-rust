@@ -416,6 +416,8 @@ where
             .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
         let anchor = context_anchor(&snapshot, record.lane, record.occupant)
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
+        let origin = context_anchor_origin(&snapshot, anchor)
+            .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
         let unsuppressed = unsuppressed_candidates(&candidates, &snapshot, anchor);
         if unsuppressed.is_empty() {
             return Ok(());
@@ -429,6 +431,7 @@ where
         let proposal = if let Some(adjudicator) = judge.as_deref_mut() {
             judged_recognition_proposal(
                 epoch,
+                origin,
                 record,
                 anchor,
                 unsuppressed,
@@ -441,6 +444,7 @@ where
         } else {
             Some(reminder_proposal(
                 epoch,
+                origin,
                 record.lane,
                 record.occupant,
                 anchor,
@@ -497,6 +501,7 @@ fn unsuppressed_candidates(
 )]
 fn judged_recognition_proposal(
     epoch: CanonicalUuid,
+    origin: wire::Origin,
     record: &lane::capture::CaptureRecord,
     anchor: Seq,
     unsuppressed: Vec<Candidate>,
@@ -512,6 +517,7 @@ fn judged_recognition_proposal(
     }
     judged_proposal(
         epoch,
+        origin,
         record.lane,
         record.occupant,
         anchor,
@@ -529,6 +535,7 @@ fn judged_recognition_proposal(
 )]
 fn judged_proposal(
     epoch: CanonicalUuid,
+    origin: wire::Origin,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     anchor: Seq,
@@ -546,7 +553,6 @@ fn judged_proposal(
         minted_millis,
         at,
     )?;
-    let origin = resident_origin(epoch)?;
     let mut proposal = JournalWrite::new(Actor::Spice, origin.clone(), at, Producer::Judge);
 
     proposal.guard(judgment_guard(
@@ -614,6 +620,7 @@ fn taste_decision(
 )]
 fn reminder_proposal(
     epoch: CanonicalUuid,
+    origin: wire::Origin,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     anchor: Seq,
@@ -623,7 +630,6 @@ fn reminder_proposal(
     expires: Instant,
 ) -> CommandResult<(Vec<Opening>, JournalWrite)> {
     let openings = openings(candidates, minted_millis, at)?;
-    let origin = resident_origin(epoch)?;
     let mut proposal = JournalWrite::new(
         Actor::Spice,
         origin.clone(),
@@ -660,12 +666,6 @@ fn reminder_proposal(
         });
     }
     Ok((openings, proposal))
-}
-
-fn resident_origin(epoch: CanonicalUuid) -> CommandResult<wire::Origin> {
-    format!("resident:{epoch}")
-        .parse::<wire::Origin>()
-        .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))
 }
 
 fn prepare_judgment(
@@ -736,6 +736,8 @@ pub(super) fn complete_judgment(
         if current_anchor != completed.prepared.anchor {
             return Ok(());
         }
+        let origin = context_anchor_origin(&snapshot, current_anchor)
+            .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
         let decisions = completed
             .decisions
             .iter()
@@ -765,6 +767,7 @@ pub(super) fn complete_judgment(
         let expires = expiry(at, steering_config.expiry().get())?;
         let (openings, proposal) = judged_proposal(
             epoch,
+            origin,
             completed.prepared.lane,
             completed.prepared.occupant,
             completed.prepared.anchor,
@@ -1148,6 +1151,23 @@ pub(super) fn context_anchor_from<'a>(
     Err(format!(
         "lane {lane} occupant {occupant} has no start, renewal, or compaction fact"
     ))
+}
+
+/// Origin of the fact opening one context epoch.
+///
+/// A replacement resident may continue an occupant whose context began under
+/// its predecessor. New taste facts extend that same causal chain until a lane
+/// renewal or compaction opens a new context, so their write origin belongs to
+/// the anchor rather than necessarily to the current resident epoch.
+fn context_anchor_origin(
+    snapshot: &journal::FactSnapshot,
+    anchor: Seq,
+) -> Result<wire::Origin, String> {
+    snapshot
+        .facts()
+        .binary_search_by_key(&anchor, |envelope| envelope.seq)
+        .map(|index| snapshot.facts()[index].origin.clone())
+        .map_err(|_| format!("context anchor {anchor} is absent from its fact snapshot"))
 }
 
 fn was_reminded(snapshot: &journal::FactSnapshot, content: &Digest, anchor: Seq) -> bool {
