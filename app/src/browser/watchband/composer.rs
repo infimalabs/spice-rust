@@ -292,13 +292,7 @@ fn render_agent_message_footer(
             <span class="message-classifiers">
                 <span class="message-key">{if is_compaction { "compaction" } else { "agent" }}</span>
             </span>
-            <span
-                class="message-age"
-                title={locus.clone()}
-                data-age-authored={display_millis.to_string()}
-            >
-                {locus}
-            </span>
+            <Age authored={display_millis} class="message-age" title={locus} />
             <span class="message-author">{producer}</span>
             {card_actions}
         </footer>

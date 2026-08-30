@@ -697,10 +697,11 @@ export async function assertAgentConversation(
   assert.equal(pendingDirective.text, messages[0]);
   assert.equal(await outgoing.getAttribute("data-card-kind"), "agent-message");
   await assertQueuedRosterPip(page, console, seated[0]);
-  const locus = outgoing.locator(".message-age");
-  assert.match((await locus.innerText()).trim(), /^tape \d+:\d+\+\d+#\d+$/);
-  assert.equal(await locus.getAttribute("title"), (await locus.innerText()).trim());
-  assert.equal(await locus.getAttribute("data-age-clock"), null);
+  const age = outgoing.locator(".message-age");
+  assert.match((await age.innerText()).trim(), /^(?:now|\d+[smhd])$/);
+  assert.match(await age.getAttribute("title"), /^tape \d+:\d+\+\d+#\d+$/);
+  assert.equal(await age.getAttribute("data-age-clock"), "shared");
+  assert.match(await age.getAttribute("data-age-authored"), /^\d+$/);
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
   for (const mode of ["Filters", "Metrics", "Info"]) {

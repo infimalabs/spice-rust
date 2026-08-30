@@ -562,7 +562,7 @@ export async function assertPersistentMosaic(
   assert.equal(refreshed.commits, refreshProbe.commits, "a no-op refresh commits no plane");
   await settleMosaicActivity(page, plane);
 
-  const tickingAge = console.locator('.composer-shard-age-label[data-age-clock="shared"]')
+  const tickingAge = console.locator('.message-age[data-age-clock="shared"]')
     .filter({ hasText: /^(?:now|\d+s)$/ })
     .last();
   await tickingAge.waitFor();
