@@ -368,6 +368,8 @@ pub(super) async fn drive_surface(
                 if dispatch_control(
                     command_surface, seats, &mut lifecycle, &mut control, request,
                 ).await? {
+                    let refresh = timers.synchronize(bus)?;
+                    refresh_warning_inboxes(bus, command_surface.paths, refresh)?;
                     return stop_surface(publication, shutdown, server_task).await;
                 }
             }
@@ -658,9 +660,29 @@ fn reconcile_wakes(
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
 ) -> CommandResult<()> {
-    timers.synchronize(bus)?;
+    let refresh = timers.synchronize(bus)?;
+    refresh_warning_inboxes(bus, command_surface.paths, refresh)?;
     let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
     timers.synchronize_wake(wake)
+}
+
+pub(in crate::resident) fn refresh_warning_inboxes(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    refresh: impl IntoIterator<Item = CanonicalUuid>,
+) -> CommandResult<()> {
+    let residency = bus
+        .residency_head()
+        .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
+    let Some(residency) = residency else {
+        return Ok(());
+    };
+    for lane in refresh {
+        if residency.body().lanes.iter().any(|row| row.lane == lane) {
+            steering::publish_inbox(bus, paths, residency.body(), lane)?;
+        }
+    }
+    Ok(())
 }
 pub(in crate::resident) async fn dispatch_control(
     command_surface: &command_surface::Surface<'_>,
