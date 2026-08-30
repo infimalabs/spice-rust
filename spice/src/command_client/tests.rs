@@ -304,16 +304,36 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
     }
 }
 
-/// Every current command declares the widened resident answer bound.
+/// Task completion restores its handoff bound without narrowing other work.
 #[test]
 fn the_answer_bound_registry_declares_the_current_resident_answer_bound() {
     for kind in CommandKind::ALL {
         assert_eq!(
             crate::cli::answer_bound(*kind),
-            Duration::from_secs(20),
+            if *kind == CommandKind::TaskDone {
+                Duration::from_secs(3)
+            } else {
+                Duration::from_secs(20)
+            },
             "{kind} declares the wrong answer bound",
         );
     }
+}
+
+#[test]
+fn task_completion_position_law_admits_only_handoff_or_terminal_commit() {
+    assert!(position_matches(
+        ReplyPositionLaw::DirectOrCommitted,
+        ReplyPosition::Direct {},
+    ));
+    assert!(position_matches(
+        ReplyPositionLaw::DirectOrCommitted,
+        committed(),
+    ));
+    assert!(!position_matches(
+        ReplyPositionLaw::DirectOrCommitted,
+        ReplyPosition::Snapshot(wire::Seq::new(1).expect("snapshot sequence")),
+    ));
 }
 
 #[test]

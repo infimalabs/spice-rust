@@ -555,6 +555,7 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
             body: wire::intent::TaskAnswer {
                 task: "SPICE-1kKRRsDP".parse().expect("fixture task handle"),
                 status: "done".to_owned(),
+                completion: None,
                 learning: None,
                 next: None,
             },

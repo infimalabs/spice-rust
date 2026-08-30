@@ -342,6 +342,41 @@ pub(super) fn publish_task_boundary(
     publish_task_boundary_inner(repository, snapshot, command, entry)
 }
 
+pub(super) fn resumable_task_completion(
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+    done: &TaskDone,
+) -> Result<bool, Outcome<CommandAnswer>> {
+    let claim = entry
+        .claim()
+        .expect("task completion checks an admitted claim");
+    if claim.epoch == command.epoch() {
+        return Ok(false);
+    }
+    let Some(resident) = repository else {
+        return Ok(false);
+    };
+    let lane = task_repository(snapshot, command, resident)?;
+    match crate::gate_command::has_resolution_operation(
+        &lane,
+        crate::gate_command::ResolutionAuthority {
+            operation: command.id(),
+            task: entry.handle().as_str(),
+            actor: command.actor(),
+            epoch: claim.epoch,
+            claim: claim.claimed,
+            validation: &done.validation,
+        },
+    ) {
+        Ok(found) => Ok(found),
+        Err(Outcome::Refusal(refusal)) => Err(Outcome::Refusal(refusal)),
+        Err(Outcome::Fault(fault)) => Err(Outcome::Fault(fault)),
+        Err(Outcome::Reply(_)) => unreachable!("completion inspection never replies"),
+    }
+}
+
 fn publish_task_boundary_inner(
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
@@ -368,8 +403,31 @@ fn publish_task_boundary_inner(
         phase: entry.workflow().phase.as_str(),
         actor: &actor,
     };
+    let claim = entry
+        .claim()
+        .expect("an admitted task boundary has a claim");
+    let validation = match command.body() {
+        wire::intent::Intent::TaskDone(done) => done.validation.as_str(),
+        wire::intent::Intent::TaskReview(review) => review.finding.as_str(),
+        _ => "task boundary",
+    };
     let resolution = || {
-        match crate::gate_command::resolution_evidence(&lane) {
+        let evidence = if command.kind() == CommandKind::TaskDone {
+            crate::gate_command::resolution_evidence(
+                &lane,
+                crate::gate_command::ResolutionAuthority {
+                    operation: command.id(),
+                    task: entry.handle().as_str(),
+                    actor: command.actor(),
+                    epoch: claim.epoch,
+                    claim: claim.claimed,
+                    validation,
+                },
+            )
+        } else {
+            crate::gate_command::resolution_evidence_blocking(&lane)
+        };
+        match evidence {
             Outcome::Reply(_) => {}
             Outcome::Refusal(refusal) => {
                 let reason = refusal.reason().to_owned();
@@ -405,9 +463,34 @@ fn publish_task_boundary_inner(
         }
         Ok(())
     };
-    spice::task_git::publish_claimed(&lane, metadata, &active, resolution)
-        .map(Some)
-        .map_err(task_git_outcome)
+    match spice::task_git::publish_claimed(&lane, metadata, &active, resolution) {
+        Ok(boundary) => Ok(Some(boundary)),
+        Err(error) if error.reason() == "git::resolution-in-progress" => {
+            let operation = match error.detail().parse::<wire::CanonicalUuid>() {
+                Ok(operation) => operation,
+                Err(parse) => {
+                    return Err(protocol_fault(
+                        "task::completion-operation-invalid",
+                        &parse.to_string(),
+                    ));
+                }
+            };
+            Err(Outcome::Reply(Reply {
+                position: ReplyPosition::Direct {},
+                body: CommandAnswer::Task(wire::intent::TaskAnswer {
+                    task: entry.handle().clone(),
+                    status: entry.workflow().status.clone(),
+                    completion: Some(wire::intent::TaskCompletionAnswer {
+                        operation,
+                        state: wire::intent::TaskCompletionState::Running,
+                    }),
+                    learning: None,
+                    next: None,
+                }),
+            }))
+        }
+        Err(error) => Err(task_git_outcome(error)),
+    }
 }
 
 pub(super) fn task_git_outcome(error: spice::task_git::Error) -> Outcome<CommandAnswer> {

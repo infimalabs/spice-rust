@@ -443,6 +443,18 @@ fn publish_inner<'a>(
     if !resolution_state {
         require_clean(root, "task completion")?;
     }
+    let resolution = match (resolution_state, resolution) {
+        (true, Some((active, evidence))) => {
+            let preflight = resolution::Preflight::capture(root)?;
+            evidence().map_err(resolution::evidence_error)?;
+            Some((
+                active,
+                Box::new(|| Ok(())) as ResolutionEvidence<'_>,
+                preflight,
+            ))
+        }
+        _ => None,
+    };
     let observed_head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let Some(target) = resolve_target(root)? else {
         return Ok(boundary(
@@ -455,7 +467,7 @@ fn publish_inner<'a>(
     };
     fetch(root, &target)?;
     let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
-    if let Some((active, evidence)) = resolution.filter(|_| resolution_state) {
+    if let Some((active, evidence, preflight)) = resolution {
         let local_commits = ahead_count(root, &target.baseline)?;
         let message = compose_message(meta);
         let integrated = resolution::complete(
@@ -466,6 +478,7 @@ fn publish_inner<'a>(
             resolution::Parents {
                 agent: &observed_head,
                 upstream: &upstream_head,
+                preflight,
             },
             &message,
             evidence,

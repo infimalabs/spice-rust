@@ -17,7 +17,7 @@ pub(super) fn capture_inner_with_reach<'trace>(
     )
 }
 
-fn capture_at_inner<'trace>(
+pub(super) fn capture_at_inner<'trace>(
     directory: &Path,
     selector: Selector,
     input_mode: InputMode,

@@ -52,7 +52,7 @@ pub(super) fn classify_resolution(files: &WorkerFiles, waited: &WaitOutcome) -> 
     }
 }
 
-fn resolution_terminal(path: &Path, progress: &Path) -> Outcome<()> {
+pub(super) fn resolution_terminal(path: &Path, progress: &Path) -> Outcome<()> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) => {

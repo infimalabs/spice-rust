@@ -981,6 +981,14 @@ fn position_matches(law: ReplyPositionLaw, position: ReplyPosition) -> bool {
                 ReplyPositionLaw::SnapshotOrCommitted,
                 ReplyPosition::Committed(_)
             )
+            | (
+                ReplyPositionLaw::DirectOrCommitted,
+                ReplyPosition::Direct {}
+            )
+            | (
+                ReplyPositionLaw::DirectOrCommitted,
+                ReplyPosition::Committed(_)
+            )
     )
 }
 

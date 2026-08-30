@@ -210,6 +210,7 @@ where
     let answer = wire::intent::TaskAnswer {
         task: prepared.task,
         status: "pending".to_owned(),
+        completion: None,
         learning: None,
         next,
     };
@@ -376,6 +377,7 @@ pub(super) fn task_note(
     let answer = wire::intent::TaskAnswer {
         task: note.task.clone(),
         status: "noted".to_owned(),
+        completion: None,
         learning: None,
         next,
     };
@@ -558,6 +560,7 @@ fn promote_oops(
     let answer = wire::intent::TaskAnswer {
         task: post.handle().clone(),
         status: "promoted".to_owned(),
+        completion: None,
         learning: None,
         next,
     };
@@ -652,6 +655,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     let answer = wire::intent::TaskAnswer {
         task: task.clone(),
         status: status.to_owned(),
+        completion: None,
         learning: None,
         next: None,
     };
@@ -774,6 +778,7 @@ pub(super) fn task_delete(
         // advance; the work goes on somewhere else, not here.
         task: delete.task.clone(),
         status: "deleted".to_owned(),
+        completion: None,
         learning: None,
         next: None,
     };
@@ -874,6 +879,7 @@ pub(super) fn task_depends(
     let answer = wire::intent::TaskAnswer {
         task: depends.task.clone(),
         status: "edited".to_owned(),
+        completion: None,
         learning: None,
         next,
     };
@@ -1173,6 +1179,7 @@ fn publish_correction(
     let answer = wire::intent::TaskAnswer {
         task: rendered,
         status: "edited".to_owned(),
+        completion: None,
         learning: None,
         next,
     };

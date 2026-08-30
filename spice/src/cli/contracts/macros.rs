@@ -2,6 +2,25 @@ macro_rules! row {
     (
         [$($path:literal),+], $syntax:literal, $principal:ident,
         $journal:ident => $position:ident,
+        [$($fact:ident),*], [$($guard:ident),*], $tools:expr, $result:ident, $battery:literal
+    ) => {
+        Contract {
+            path: &[$($path),+],
+            syntax: $syntax,
+            principal: Principal::$principal,
+            journal: JournalAccess::$journal,
+            reply_position: ReplyPositionLaw::$position,
+            facts: &[$(FactKind::$fact),*],
+            guards: &[$(Guard::$guard),*],
+            tools: $tools,
+            result: ResultClass::$result,
+            outcomes: ExitOutcome::ALL,
+            battery: $battery,
+        }
+    };
+    (
+        [$($path:literal),+], $syntax:literal, $principal:ident,
+        $journal:ident => $position:ident,
         [$($fact:ident),*], [$($guard:ident),*], $result:ident, $battery:literal
     ) => {
         Contract {

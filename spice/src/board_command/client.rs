@@ -1,5 +1,6 @@
 use super::*;
 use base64::Engine as _;
+use notify::Watcher as _;
 
 /// Execute one generated board-family CLI leaf.
 pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
@@ -654,8 +655,33 @@ fn client_done(
         expected,
         &body,
     );
+    if let Outcome::Reply(reply) = &outcome
+        && let CommandAnswer::Task(answer) = &reply.body
+        && answer.completion.is_some()
+    {
+        let claim = heads
+            .claim
+            .as_ref()
+            .expect("a completion operation starts only under one claim")
+            .body
+            .claimed;
+        let terminal = match crate::gate_command::resolution_terminal_path(repository, claim) {
+            Ok(path) => path,
+            Err(error) => {
+                return environment_fault(
+                    "task::completion-terminal-unavailable",
+                    &error.to_string(),
+                );
+            }
+        };
+        if let Err(waited) = wait_for_completion_terminal(&terminal) {
+            return waited;
+        }
+        return client_done(repository, contract, matches);
+    }
     if let Outcome::Reply(reply) = &mut outcome
         && let CommandAnswer::Task(answer) = &mut reply.body
+        && answer.completion.is_none()
     {
         let learning = match context {
             Ok(mut context) => match wire::Instant::new(jiff::Timestamp::now()) {
@@ -679,6 +705,66 @@ fn client_done(
         answer.learning = Some(Box::new(learning));
     }
     outcome
+}
+
+fn wait_for_completion_terminal(path: &std::path::Path) -> Result<(), Outcome<CommandAnswer>> {
+    if completion_terminal_ready(path)? {
+        return Ok(());
+    }
+    let parent = path.parent().ok_or_else(|| {
+        environment_fault(
+            "task::completion-terminal-unavailable",
+            "completion terminal has no parent directory",
+        )
+    })?;
+    let (events, receiver) = std::sync::mpsc::channel();
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = events.send(event);
+    })
+    .map_err(|error| environment_fault("task::completion-watch-unavailable", &error.to_string()))?;
+    watcher
+        .watch(parent, notify::RecursiveMode::NonRecursive)
+        .map_err(|error| {
+            environment_fault("task::completion-watch-unavailable", &error.to_string())
+        })?;
+    if completion_terminal_ready(path)? {
+        return Ok(());
+    }
+    loop {
+        match receiver.recv() {
+            Ok(Ok(_)) if completion_terminal_ready(path)? => return Ok(()),
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                return Err(environment_fault(
+                    "task::completion-watch-failed",
+                    &error.to_string(),
+                ));
+            }
+            Err(error) => {
+                return Err(environment_fault(
+                    "task::completion-watch-closed",
+                    &error.to_string(),
+                ));
+            }
+        }
+    }
+}
+
+fn completion_terminal_ready(path: &std::path::Path) -> Result<bool, Outcome<CommandAnswer>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.file_type().is_file() => {
+            Err(environment_fault(
+                "task::completion-terminal-unreadable",
+                "completion terminal is not a real regular file",
+            ))
+        }
+        Ok(metadata) => Ok(metadata.len() != 0),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(environment_fault(
+            "task::completion-terminal-unreadable",
+            &error.to_string(),
+        )),
+    }
 }
 
 fn completion_learning_context(
@@ -1460,4 +1546,46 @@ pub(crate) fn dispatch_with_repository(
         _ => return None,
     };
     Some(outcome)
+}
+
+#[cfg(test)]
+mod completion_watch_tests {
+    use super::*;
+
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "spice-completion-watch-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4().simple(),
+            ));
+            std::fs::create_dir(&root).expect("create completion-watch scratch");
+            Self(root)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).expect("remove completion-watch scratch");
+        }
+    }
+
+    #[test]
+    fn completion_wait_returns_on_the_terminal_publication_event() {
+        let scratch = Scratch::new();
+        let terminal = scratch.0.join("terminal.bin");
+        std::fs::write(&terminal, b"").expect("create empty terminal");
+        let published = terminal.clone();
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let staged = published.with_extension("staged");
+            std::fs::write(&staged, b"terminal").expect("stage terminal");
+            std::fs::rename(staged, published).expect("publish terminal");
+        });
+        wait_for_completion_terminal(&terminal).expect("terminal event wakes completion");
+        worker.join().expect("terminal publisher joins");
+        assert!(completion_terminal_ready(&terminal).expect("terminal remains readable"));
+    }
 }

@@ -120,9 +120,59 @@ pub(crate) fn pre_commit() -> Outcome<pre_commit::Report> {
     pre_commit::run()
 }
 
-/// Run selected evidence for an allocator-authenticated merge resolution.
-pub(crate) fn resolution_evidence(repository: &Repository) -> Outcome<()> {
-    pre_commit::run_resolution(repository)
+pub(crate) struct ResolutionAuthority<'a> {
+    pub(crate) operation: wire::CanonicalUuid,
+    pub(crate) task: &'a str,
+    pub(crate) actor: &'a wire::Actor,
+    pub(crate) epoch: wire::CanonicalUuid,
+    pub(crate) claim: wire::Seq,
+    pub(crate) validation: &'a str,
+}
+
+/// Run or resume selected evidence for one allocator-authenticated merge resolution.
+pub(crate) fn resolution_evidence(
+    repository: &Repository,
+    authority: ResolutionAuthority<'_>,
+) -> Outcome<()> {
+    pre_commit::run_resolution(
+        repository,
+        pre_commit::ResolutionAuthority {
+            operation: authority.operation,
+            task: authority.task,
+            actor: authority.actor,
+            epoch: authority.epoch,
+            claim: authority.claim,
+            validation: authority.validation,
+        },
+    )
+}
+
+pub(crate) fn resolution_evidence_blocking(repository: &Repository) -> Outcome<()> {
+    pre_commit::run_resolution_blocking(repository)
+}
+
+pub(crate) fn has_resolution_operation(
+    repository: &Repository,
+    authority: ResolutionAuthority<'_>,
+) -> Result<bool, Outcome<()>> {
+    pre_commit::has_resolution_operation(
+        repository,
+        pre_commit::ResolutionAuthority {
+            operation: authority.operation,
+            task: authority.task,
+            actor: authority.actor,
+            epoch: authority.epoch,
+            claim: authority.claim,
+            validation: authority.validation,
+        },
+    )
+}
+
+pub(crate) fn resolution_terminal_path(
+    repository: &Repository,
+    claim: wire::Seq,
+) -> std::io::Result<std::path::PathBuf> {
+    pre_commit::resolution_terminal_path(repository, claim)
 }
 
 /// Run the current source repository's strict ordinary change selection.

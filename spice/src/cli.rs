@@ -67,6 +67,8 @@ pub enum ReplyPositionLaw {
     Committed,
     /// The command either re-delivers an unchanged snapshot or commits movement.
     SnapshotOrCommitted,
+    /// The command either hands off durable work or commits its terminal movement.
+    DirectOrCommitted,
 }
 
 impl JournalAccess {
@@ -129,6 +131,9 @@ const HELD_STATE_ANSWER: Duration = Duration::from_secs(20);
 /// other lane on the host.
 const CONTENDED_ANSWER: Duration = Duration::from_secs(20);
 
+/// Bound for handing durable task-completion work to its resolution worker.
+const TASK_COMPLETION_ANSWER: Duration = Duration::from_secs(3);
+
 /// How long the native client blocks for one command's answer.
 ///
 /// This is the registry. The match is exhaustive, so a command added without a
@@ -140,6 +145,7 @@ const CONTENDED_ANSWER: Duration = Duration::from_secs(20);
 #[must_use]
 pub const fn answer_bound(kind: CommandKind) -> Duration {
     match kind {
+        CommandKind::TaskDone => TASK_COMPLETION_ANSWER,
         CommandKind::LaneSeat
         | CommandKind::LaneState
         | CommandKind::ReleasePublish
@@ -160,7 +166,6 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TaskWake
         | CommandKind::TaskDepends
         | CommandKind::TaskPhase
-        | CommandKind::TaskDone
         | CommandKind::TaskReview
         | CommandKind::TaskAssign
         | CommandKind::ClaimWin
