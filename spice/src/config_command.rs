@@ -218,14 +218,14 @@ impl MutationTarget {
         }
     }
 
-    fn current<'a>(self, documents: &'a Documents) -> Option<&'a [u8]> {
+    fn current(self, documents: &Documents) -> Option<&[u8]> {
         match self {
             Self::Worktree => documents.worktree.as_deref(),
             Self::Local => documents.local.as_deref(),
         }
     }
 
-    fn parent<'a>(self, documents: &'a Documents) -> &'a ParentWitness {
+    fn parent(self, documents: &Documents) -> &ParentWitness {
         match self {
             Self::Worktree => &documents.worktree_parent,
             Self::Local => &documents.local_parent,
