@@ -1122,7 +1122,15 @@ pub(super) fn context_anchor(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> Result<Seq, String> {
-    for envelope in snapshot.facts().iter().rev() {
+    context_anchor_from(snapshot.facts().iter().rev(), lane, occupant)
+}
+
+pub(super) fn context_anchor_from<'a>(
+    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> Result<Seq, String> {
+    for envelope in facts {
         let fact = &envelope.fact;
         let matches = if let Some(body) = fact.read::<wire::body::LaneCompacted>() {
             body.lane == lane && body.occupant == occupant

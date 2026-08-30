@@ -479,10 +479,6 @@ pub(super) fn inbox(
     command: &wire::AdmittedCommand,
     request: &wire::intent::SteerInbox,
 ) -> Outcome<CommandAnswer> {
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
     let selected = match command.actor() {
         Actor::Operator => request.lane,
         Actor::Lane(lane) if request.lane.is_none_or(|requested| requested == *lane) => Some(*lane),
@@ -501,18 +497,22 @@ pub(super) fn inbox(
             );
         }
     };
-    let snapshot = match pending_snapshot(bus, selected) {
+    let snapshot = match pending_snapshot(bus, selected, epoch) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
     let mut lanes = Vec::new();
-    for lane in &residency.body().lanes {
+    for lane in &snapshot.residency.body().lanes {
         if selected.is_some_and(|selected| selected != lane.lane) {
             continue;
         }
         let compaction = match lane.occupant {
             Some(occupant) => {
-                match super::taste_surface::context_anchor(&snapshot.facts, lane.lane, occupant) {
+                match super::taste_surface::context_anchor_from(
+                    snapshot.facts.iter().rev(),
+                    lane.lane,
+                    occupant,
+                ) {
                     Ok(anchor) => Some(anchor.get()),
                     Err(error) => {
                         return typed_store_fault("steer::compaction-anchor-missing", &error);
@@ -610,36 +610,42 @@ pub(super) fn repair(
 struct SteeringSnapshot {
     ledger: steer::Ledger,
     position: Seq,
-    facts: journal::FactSnapshot,
+    facts: bus::TaskFacts,
+    residency: journal::JournalHead<ResidencyHead>,
 }
 
 fn pending_snapshot(
     bus: &Bus,
     lane: Option<CanonicalUuid>,
+    epoch: CanonicalUuid,
 ) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
-    let (cursor, heads, facts) = bus
-        .read(move |read| {
-            Ok((
-                read.cursor()?,
-                read.pending_steering(lane)?,
-                read.fact_snapshot().map_err(|error| {
-                    GuardError::Invalid(format!("steering fact snapshot is invalid: {error}"))
-                })?,
-            ))
-        })
+    let snapshot = bus
+        .steering_snapshot(lane)
         .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))?;
-    let position = cursor.ok_or_else(|| {
+    let position = snapshot.authority().cursor().ok_or_else(|| {
         typed_store_fault(
             "steer::journal-empty",
             "a running resident has no durable startup fact",
         )
     })?;
-    let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
-        .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
+    let residency =
+        snapshot.authority().residency().cloned().ok_or_else(|| {
+            typed_store_fault("resident::head-missing", "residency head is absent")
+        })?;
+    if residency.body().epoch != epoch {
+        return Err(typed_store_fault(
+            "resident::epoch-moved",
+            &format!("expected {epoch}, observed {}", residency.body().epoch),
+        ));
+    }
+    let ledger =
+        steer::Ledger::from_authority_heads(snapshot.pending().iter().map(|head| head.body()))
+            .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
     Ok(SteeringSnapshot {
         ledger,
         position,
-        facts,
+        facts: snapshot.authority().facts().clone(),
+        residency,
     })
 }
 

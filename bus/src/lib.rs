@@ -116,6 +116,14 @@ mod runtime {
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
+    /// Incremental resident authority and indexed pending steering observed at
+    /// one writer-queue barrier.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct SteeringSnapshot {
+        authority: TaskSnapshot,
+        pending: Vec<JournalHead<journal::crossing::SteeringHead>>,
+    }
+
     /// Cursor and trust heads observed inside one immutable authority snapshot.
     ///
     /// Fact pages are read separately through bounded primary-key ranges at
@@ -160,6 +168,20 @@ mod runtime {
         #[must_use]
         pub fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
             self.residency.as_ref()
+        }
+    }
+
+    impl SteeringSnapshot {
+        /// Incrementally retained facts, residency, and cursor at this barrier.
+        #[must_use]
+        pub const fn authority(&self) -> &TaskSnapshot {
+            &self.authority
+        }
+
+        /// Live steering heads selected at the same barrier.
+        #[must_use]
+        pub fn pending(&self) -> &[JournalHead<journal::crossing::SteeringHead>] {
+            &self.pending
         }
     }
 
@@ -443,6 +465,24 @@ mod runtime {
             self.reader().task_snapshot()
         }
 
+        /// Read incremental resident authority and pending steering at one barrier.
+        ///
+        /// The retained authority shares already-decoded fact chunks across
+        /// requests. Interactive inbox polling therefore never rebuilds the
+        /// complete journal merely to recover a lane's context anchor.
+        pub fn steering_snapshot(
+            &self,
+            lane: Option<journal::crossing::CanonicalUuid>,
+        ) -> Result<SteeringSnapshot, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Steering { lane, answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+        }
+
         /// Capture the canvas fact and trust planes at one authority barrier.
         pub fn canvas_heads(&self) -> Result<CanvasHeads, BusReadError> {
             self.reader().canvas_heads()
@@ -611,6 +651,10 @@ mod runtime {
         Tasks {
             answer: SyncSender<Result<TaskSnapshot, BusReadError>>,
         },
+        Steering {
+            lane: Option<journal::crossing::CanonicalUuid>,
+            answer: SyncSender<Result<SteeringSnapshot, BusReadError>>,
+        },
         CanvasHeads {
             answer: SyncSender<Result<CanvasHeads, BusReadError>>,
         },
@@ -696,6 +740,16 @@ mod runtime {
                 }
                 Request::Tasks { answer } => {
                     answer_tasks(&journal, &mut task_snapshot, answer);
+                }
+                Request::Steering { lane, answer } => {
+                    let snapshot =
+                        current_task_snapshot(&journal, &mut task_snapshot).and_then(|authority| {
+                            journal
+                                .read(|read| read.pending_steering(lane))
+                                .map_err(BusReadError::Head)
+                                .map(|pending| SteeringSnapshot { authority, pending })
+                        });
+                    let _ = answer.send(snapshot);
                 }
                 Request::CanvasHeads { answer } => {
                     let _ = answer.send(canvas_heads(&journal));
@@ -791,13 +845,21 @@ mod runtime {
         cached: &mut Option<TaskSnapshot>,
         answer: SyncSender<Result<TaskSnapshot, BusReadError>>,
     ) {
+        let snapshot = current_task_snapshot(journal, cached);
+        let _ = answer.send(snapshot);
+    }
+
+    fn current_task_snapshot(
+        journal: &Journal,
+        cached: &mut Option<TaskSnapshot>,
+    ) -> Result<TaskSnapshot, BusReadError> {
         let snapshot = cached
             .clone()
             .map_or_else(|| load_task_snapshot(journal), Ok);
         if let Ok(snapshot) = &snapshot {
             *cached = Some(snapshot.clone());
         }
-        let _ = answer.send(snapshot);
+        snapshot
     }
 
     fn canvas_heads(journal: &Journal) -> Result<CanvasHeads, BusReadError> {
@@ -890,5 +952,6 @@ mod runtime {
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasHeads,
-    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, TaskFacts, TaskSnapshot,
+    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, SteeringSnapshot,
+    TaskFacts, TaskSnapshot,
 };
