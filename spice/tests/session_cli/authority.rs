@@ -476,27 +476,36 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
     renew_held_claim_for_meter(&authority, 599);
+    let warning_generation_facts = fact_count(&authority);
 
     let first = invoke_meter_child(scratch.path(), &thread);
     let second = invoke_meter_child(scratch.path(), &thread);
+    assert_eq!(fact_count(&authority), warning_generation_facts);
     renew_held_claim_for_meter(&authority, 299);
+    let urgent_generation_facts = fact_count(&authority);
     let urgent = invoke_meter_child(scratch.path(), &thread);
 
     for spoken in [&first, &second, &urgent] {
         assert_eq!(spoken.code, Some(7));
         assert_eq!(spoken.out, b"child-output");
     }
-    assert!(
-        String::from_utf8(first.err)
-            .expect("warning stderr")
-            .contains("CLAIM LEASE WARNING")
-    );
+    let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
+    let warning = String::from_utf8(first.err).expect("warning stderr");
+    assert_eq!(warning.lines().count(), 1);
+    assert!(warning.contains("CLAIM LEASE WARNING"));
+    assert!(warning.contains("s remaining"));
+    assert!(warning.contains(&format!("run spice task reclaim {handle}")));
+    assert!(!warning.contains(" ACK"));
+    assert!(!warning.contains(" NACK"));
     assert!(second.err.is_empty(), "same tier is durably suppressed");
-    assert!(
-        String::from_utf8(urgent.err)
-            .expect("urgent stderr")
-            .contains("CLAIM LEASE URGENT")
-    );
+    let urgent = String::from_utf8(urgent.err).expect("urgent stderr");
+    assert_eq!(urgent.lines().count(), 1);
+    assert!(urgent.contains("CLAIM LEASE URGENT"));
+    assert!(urgent.contains("s remaining"));
+    assert!(urgent.contains(&format!("run spice task reclaim {handle}")));
+    assert!(!urgent.contains(" ACK"));
+    assert!(!urgent.contains(" NACK"));
+    assert_eq!(fact_count(&authority), urgent_generation_facts);
 
     scratch.remove();
 }
