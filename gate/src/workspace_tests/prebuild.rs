@@ -370,7 +370,8 @@ pub(super) fn prebuilt_test_plan(
 pub(super) fn partition_largest_prebuilt_tests(
     mut tests: Vec<PrebuiltTest>,
     environment: &Environment,
-    concurrency: usize,
+    partitions_per_target: usize,
+    discovery_concurrency: usize,
     output: &mut impl Write,
 ) -> Result<Vec<PrebuiltTest>, WorkspaceTestError> {
     const CANDIDATES_PER_LANE: usize = 5;
@@ -378,7 +379,7 @@ pub(super) fn partition_largest_prebuilt_tests(
 
     let started = Instant::now();
     let original_count = tests.len();
-    if concurrency <= 1 {
+    if partitions_per_target <= 1 {
         writeln!(
             output,
             "[rust-test] stage=partition artifacts={original_count} candidates=0 shards={original_count}",
@@ -393,7 +394,7 @@ pub(super) fn partition_largest_prebuilt_tests(
         output.flush().map_err(output_error)?;
         return Ok(tests);
     }
-    let candidate_limit = concurrency
+    let candidate_limit = discovery_concurrency
         .saturating_mul(CANDIDATES_PER_LANE)
         .saturating_add(usize::from(
             tests.iter().any(|test| test.target.kind == "bin"),
@@ -401,12 +402,18 @@ pub(super) fn partition_largest_prebuilt_tests(
     let candidate_count = candidate_limit.min(tests.len());
     let remaining = tests.split_off(candidate_count);
     let discovery_started = Instant::now();
-    let discoveries = run_bounded_discovery(&tests, concurrency, |test, cancellation| {
-        prebuilt_test_cases(test, environment, cancellation)
-    })?;
+    let discoveries =
+        run_bounded_discovery(&tests, discovery_concurrency, |test, cancellation| {
+            prebuilt_test_cases(test, environment, cancellation)
+        })?;
     let discovery_elapsed = discovery_started.elapsed();
-    let failure_index =
-        report_prebuilt_discoveries(&tests, &discoveries, discovery_elapsed, concurrency, output)?;
+    let failure_index = report_prebuilt_discoveries(
+        &tests,
+        &discoveries,
+        discovery_elapsed,
+        discovery_concurrency,
+        output,
+    )?;
     if let Some(failure_index) = failure_index {
         writeln!(
             output,
@@ -436,7 +443,7 @@ pub(super) fn partition_largest_prebuilt_tests(
         let partitions = cases
             .len()
             .div_ceil(CASES_PER_PARTITION)
-            .clamp(1, concurrency);
+            .clamp(1, partitions_per_target);
         partitioned.extend(test.into_partitions(&cases, partitions));
     }
     partitioned.extend(remaining);
@@ -1128,13 +1135,53 @@ mod tests {
         let mut output = Vec::new();
 
         let partitioned =
-            partition_largest_prebuilt_tests(Vec::new(), &environment, 1, &mut output)
+            partition_largest_prebuilt_tests(Vec::new(), &environment, 1, 1, &mut output)
                 .expect("single-lane partition succeeds");
 
         assert!(partitioned.is_empty());
         let report = String::from_utf8(output).expect("partition report is UTF-8");
         assert!(report.contains("stage=partition artifacts=0 candidates=0 shards=0"));
         assert!(report.contains("stage=partition-terminal elapsed_ms="));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_discovery_lane_can_produce_multiple_sequential_execution_shards() {
+        let fixture = DiscoveryFixture::new();
+        let executable = fixture.script(
+            "partitionable",
+            "for case in 0 1 2 3 4 5 6 7 8 9; do printf 'case_%s: test\\n' \"$case\"; done\n",
+        );
+        let environment = empty_environment();
+        let mut output = Vec::new();
+
+        let partitioned = partition_largest_prebuilt_tests(
+            vec![fixture.test("partitionable", executable)],
+            &environment,
+            2,
+            1,
+            &mut output,
+        )
+        .expect("one discovery lane partitions the selected artifact");
+
+        assert_eq!(partitioned.len(), 2);
+        assert_eq!(
+            partitioned
+                .iter()
+                .map(PrebuiltTest::partition_count)
+                .collect::<Vec<_>>(),
+            vec![2, 2],
+        );
+        assert_eq!(
+            partitioned
+                .iter()
+                .map(PrebuiltTest::partition_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1],
+        );
+        let report = String::from_utf8(output).expect("partition report is UTF-8");
+        assert!(report.contains("candidates=1 completed=1 lanes=1"));
+        assert!(report.contains("stage=partition artifacts=1 candidates=1 shards=2"));
     }
 
     #[test]
