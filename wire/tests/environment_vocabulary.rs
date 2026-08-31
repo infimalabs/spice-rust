@@ -47,7 +47,8 @@ struct EnvironmentPolicy {
 /// twenty original names. Compiler-receipt admission also observes six
 /// operational launcher and fixture names which remain outside the typed
 /// product-variable vocabulary. RTK's upstream history override is the
-/// twenty-eighth foreign name. All are named here rather than added to
+/// twenty-eighth foreign name. The Bash and zsh startup selectors are the final
+/// two foreign names. All are named here rather than added to
 /// [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
 /// would claim ownership Spice does not have.
@@ -57,6 +58,7 @@ struct EnvironmentPolicy {
 /// proof runner by `option_env!` and has always been reported, and
 /// `SPICE_APP_SOURCE_IDENTITY` is the same construction one target over.
 const FOREIGN_TRACKED_NAMES: &[&str] = &[
+    "BASH_ENV",                                     // env-policy: allow
     "GIT_CONFIG_COUNT",                             // env-policy: allow
     "GIT_CONFIG_SYSTEM",                            // env-policy: allow
     "GIT_DIR",                                      // env-policy: allow
@@ -85,6 +87,7 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",          // env-policy: allow
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",           // env-policy: allow
     "TMPDIR",                                       // env-policy: allow
+    "ZDOTDIR",                                      // env-policy: allow
 ];
 
 /// The tracked vocabulary is Doctor's rows plus the names Spice does not own.

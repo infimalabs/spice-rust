@@ -7,8 +7,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{
-    InstallError, InstallStatus, apply, installed_binary, installed_git_hooks, installed_skill,
-    installed_spice_wrapper, plan, unapply,
+    InstallError, InstallStatus, apply, installed_bash_env, installed_binary, installed_git_hooks,
+    installed_skill, installed_spice_wrapper, installed_zdotdir, plan, unapply,
 };
 use spice::repository::Repository;
 
@@ -43,11 +43,19 @@ fn installed_spice_is_the_one_repository_local_executable() {
     let wrapper = installed_spice_wrapper(&repository);
     assert_eq!(
         fs::read(&wrapper).unwrap(),
-        steer::hook::STAGES[2].bytes().as_bytes()
+        steer::hook::STAGES[4].bytes().as_bytes()
     );
     assert_eq!(
         fs::metadata(&wrapper).unwrap().permissions().mode() & 0o777,
         0o755
+    );
+    assert_eq!(
+        fs::read(installed_zdotdir(&repository).join(".zshenv")).unwrap(),
+        steer::hook::STAGES[2].bytes().as_bytes()
+    );
+    assert_eq!(
+        fs::read(installed_bash_env(&repository)).unwrap(),
+        steer::hook::STAGES[3].bytes().as_bytes()
     );
     let receipt = fs::metadata(scratch.join(".git/.spice-rs/install.json")).unwrap();
     assert!(receipt.len() < MAX_COMPACT_RECORD_BYTES);

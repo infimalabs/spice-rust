@@ -57,22 +57,23 @@ pub use maintenance::{
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
 
-const PLAN_VERSION: u16 = 11;
-const RECORD_VERSION: u16 = 11;
+const PLAN_VERSION: u16 = 12;
+const RECORD_VERSION: u16 = 12;
 const RETIREMENT_WITNESS_MISMATCH: &str =
     "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
 const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
 const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
-const PREVIOUS_RECORD_VERSION: u16 = 10;
+const PREVIOUS_RECORD_VERSION: u16 = 11;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
-const LEGACY_RECORD_VERSIONS: [(u16, &str); 5] = [
+const LEGACY_RECORD_VERSIONS: [(u16, &str); 6] = [
     (2, "SURFACE-1kJRGpf2"),
     (3, "HOOKS-1kJQnmG8"),
     (4, "INSTALL-1kKQTfBp"),
     (5, "INSTALL-1kLW2GVN"),
     (6, "HOOKS-1kMFzkkc"),
+    (10, "WRAPPER-1kNYClbf"),
 ];
 const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice-rs/install.json";
@@ -90,6 +91,8 @@ const GIT_COMMIT_MESSAGE_PATH: &str = ".spice-install/git-hooks/commit-msg";
 const GIT_REFERENCE_TRANSACTION_PATH: &str = ".spice-install/git-hooks/reference-transaction";
 const ENTRY_PATH: &str = ".spice-install/hooks/entry.sh";
 const STATIC_PATH: &str = ".spice-install/hooks/static/stage.sh";
+const ZSH_HOOK_PATH: &str = ".spice-install/hooks/shell/.zshenv";
+const BASH_HOOK_PATH: &str = ".spice-install/hooks/shell/bash_env";
 const WRAPPER_SPICE_PATH: &str = ".spice-install/hooks/wrappers/spice";
 const SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
 const BINARY_PATH: &str = ".spice-install/bin/spice";
@@ -539,6 +542,8 @@ fn build_plan_over(
         Asset::GitReferenceTransaction,
         Asset::HookEntry,
         Asset::HookStatic,
+        Asset::HookZsh,
+        Asset::HookBash,
         Asset::HookWrapperSpice,
         Asset::Skill,
     ] {
@@ -848,7 +853,9 @@ fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>,
         }
         Asset::HookEntry => steer::hook::STAGES[0].bytes().as_bytes().to_vec(),
         Asset::HookStatic => steer::hook::STAGES[1].bytes().as_bytes().to_vec(),
-        Asset::HookWrapperSpice => steer::hook::STAGES[2].bytes().as_bytes().to_vec(),
+        Asset::HookZsh => steer::hook::STAGES[2].bytes().as_bytes().to_vec(),
+        Asset::HookBash => steer::hook::STAGES[3].bytes().as_bytes().to_vec(),
+        Asset::HookWrapperSpice => steer::hook::STAGES[4].bytes().as_bytes().to_vec(),
         Asset::Skill => SKILL.as_bytes().to_vec(),
         Asset::Exclusions | Asset::Binary => return Ok(None),
     };
@@ -913,6 +920,18 @@ pub fn installed_shell(repository: &Repository) -> PathBuf {
 #[must_use]
 pub fn installed_shell_hooks(repository: &Repository) -> PathBuf {
     repository.common_dir().join(".spice-install/hooks")
+}
+
+/// Installed zsh startup directory for direct agent command shells.
+#[must_use]
+pub fn installed_zdotdir(repository: &Repository) -> PathBuf {
+    repository.common_dir().join(".spice-install/hooks/shell")
+}
+
+/// Installed Bash startup file for direct agent command shells.
+#[must_use]
+pub fn installed_bash_env(repository: &Repository) -> PathBuf {
+    repository.common_dir().join(BASH_HOOK_PATH)
 }
 
 /// Installed shell wrapper selected by tracked `wrappers.spice` policy.

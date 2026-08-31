@@ -288,5 +288,5 @@ fn known_extensionless(path: &str) -> bool {
 }
 
 fn known_extensionless_shell(path: &str) -> bool {
-    path.starts_with("steer/hooks/wrappers/")
+    path.starts_with("steer/hooks/shell/") || path.starts_with("steer/hooks/wrappers/")
 }

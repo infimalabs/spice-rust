@@ -605,6 +605,64 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
 
 #[test]
 #[cfg(unix)]
+fn direct_zsh_and_bash_command_shells_cross_the_rtk_wrapper_once() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for (name, shell) in [
+        ("zsh", Path::new("/bin/zsh")),
+        ("bash", Path::new("/bin/bash")),
+    ] {
+        if !shell.is_file() {
+            continue;
+        }
+        let scratch = Scratch::new(&format!("direct-{name}-rtk"));
+        let hooks = steer::hook::Hooks::new(scratch.path().join("hooks"));
+        hooks.install().expect("structural stages install");
+        let history = scratch.path().join("rtk/history.db");
+        fs::create_dir_all(history.parent().expect("history has a parent"))
+            .expect("history parent creates");
+        let rtk = scratch.path().join("fixture-rtk");
+        fs::write(
+            &rtk,
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$*\" >> \"$RTK_DB_PATH\"\n",
+                "printf '%s\\n' 'printf rewritten'\n",
+                "exit 3\n",
+            ),
+        )
+        .expect("RTK fixture writes");
+        fs::set_permissions(&rtk, fs::Permissions::from_mode(0o700))
+            .expect("RTK fixture is executable");
+
+        let output = Command::new(shell)
+            .args(["-c", "/usr/bin/printf native"])
+            .env(steer::hook::ZDOTDIR, hooks.root().join("shell"))
+            .env(steer::hook::BASH_ENV, hooks.root().join("shell/bash_env"))
+            .env(steer::hook::EXECUTABLE, env!("CARGO_BIN_EXE_spice"))
+            .env(steer::hook::HOOKS, hooks.root())
+            .env(steer::hook::NATIVE_SHELL, shell)
+            .env("SHELL", hooks.stage(steer::hook::STAGES[0]))
+            .env(spice::rtk::EXECUTABLE_VARIABLE, &rtk)
+            .env(spice::rtk::HISTORY_VARIABLE, &history)
+            .env_remove(steer::hook::INBOX)
+            .env_remove(steer::hook::LANE)
+            .output()
+            .expect("direct command shell runs");
+
+        assert!(output.status.success(), "{name}: {output:?}");
+        assert_eq!(output.stdout, b"rewritten", "{name}");
+        assert_eq!(
+            fs::read_to_string(&history).expect("RTK history reads"),
+            "rewrite -- /usr/bin/printf native\n",
+            "{name} crossed the RTK selector more than once",
+        );
+        scratch.remove();
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
     use std::os::unix::fs::PermissionsExt;
 

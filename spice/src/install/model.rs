@@ -18,6 +18,8 @@ pub enum Asset {
     GitReferenceTransaction,
     HookEntry,
     HookStatic,
+    HookZsh,
+    HookBash,
     HookWrapperSpice,
     Skill,
     Binary,

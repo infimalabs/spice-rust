@@ -377,22 +377,27 @@ fn repository_documents_do_not_activate_the_excluded_file_shape_arm() {
 }
 
 #[test]
-fn current_source_extensionless_wrappers_select_the_shell_policy_class() {
-    let report =
-        select_current_source_change_gates(source(), &strings(&["steer/hooks/wrappers/spice"]))
-            .expect("the tracked wrapper directory is an extensionless shell class");
+fn current_source_extensionless_hooks_select_the_shell_policy_class() {
+    for path in [
+        "steer/hooks/shell/.zshenv",
+        "steer/hooks/shell/bash_env",
+        "steer/hooks/wrappers/spice",
+    ] {
+        let report = select_current_source_change_gates(source(), &strings(&[path]))
+            .expect("the tracked hook path is an extensionless shell class");
 
-    contains(
-        &report,
-        &[
-            GateId::LocalPaths,
-            GateId::FileShape,
-            GateId::EnvPolicy,
-            GateId::EnvNameLedger,
-            GateId::Complexity,
-            GateId::MagicNumbers,
-        ],
-    );
+        contains(
+            &report,
+            &[
+                GateId::LocalPaths,
+                GateId::FileShape,
+                GateId::EnvPolicy,
+                GateId::EnvNameLedger,
+                GateId::Complexity,
+                GateId::MagicNumbers,
+            ],
+        );
+    }
 }
 
 #[test]
