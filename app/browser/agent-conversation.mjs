@@ -25,6 +25,7 @@ import {
   waitForLocator as waitForElement,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
+import { assertAgentPageBottomSpacing } from "./canvas-readiness.mjs";
 
 const AGENT_SEAT_MS = 15_000;
 
@@ -732,6 +733,7 @@ export async function assertAgentConversation(
   await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
+  await assertAgentPageBottomSpacing(page, "populated desktop Agents page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   await activityReplay.assertOlderToolIgnored(page, console);
   const restoredProse = await activityReplay.restoreProseSnapshot(page);
