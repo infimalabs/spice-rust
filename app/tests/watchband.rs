@@ -571,6 +571,43 @@ fn the_command_bar_is_not_delineated_from_the_canvas() {
 }
 
 #[test]
+fn agent_surfaces_do_not_reserve_unused_viewport_height() {
+    const STYLESHEET: &str = include_str!("../mosaic.css");
+
+    for selector in [
+        ".lineage-fleet {",
+        ".team-surface {",
+        ".team-pane {",
+        ".team-detail-pane {",
+    ] {
+        let rule = STYLESHEET
+            .split_once(selector)
+            .unwrap_or_else(|| panic!("the stylesheet has a {selector} rule"))
+            .1
+            .split_once('}')
+            .unwrap_or_else(|| panic!("the {selector} rule is closed"))
+            .0;
+
+        assert!(
+            !rule.contains("min-height"),
+            "the {selector} rule reserves empty vertical space"
+        );
+    }
+
+    let narrow_team_surface = include_str!("../responsive.css")
+        .split_once(".team-surface {")
+        .expect("responsive.css should define the narrow team surface")
+        .1
+        .split_once('}')
+        .expect("the narrow team surface rule should be closed")
+        .0;
+    assert!(
+        narrow_team_surface.contains("flex: 0 0 auto;"),
+        "stacked narrow team surfaces must size to their content instead of inheriting the desktop zero flex basis"
+    );
+}
+
+#[test]
 fn composer_prose_skips_blank_and_borrowed_lines_at_any_quote_depth() {
     assert_eq!(
         first_nonquoted_prose(

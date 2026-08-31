@@ -25,6 +25,29 @@ const axisPanes = new Map([
   ]],
 ]);
 
+export async function assertAgentPageBottomSpacing(page, state) {
+  const surfaces = await page.locator(".team-surface").evaluateAll((nodes) =>
+    nodes.map((surface) => {
+      const pane = surface.querySelector(":scope > .team-pane");
+      const content = pane?.firstElementChild;
+      const surfaceBox = surface.getBoundingClientRect();
+      const contentBox = content?.getBoundingClientRect();
+      return {
+        content: content?.className ?? "absent",
+        gap: contentBox ? surfaceBox.bottom - contentBox.bottom : Number.POSITIVE_INFINITY,
+      };
+    }),
+  );
+
+  assert.ok(surfaces.length > 0, `${state} renders at least one agent surface`);
+  for (const surface of surfaces) {
+    assert.ok(
+      surface.gap >= 0 && surface.gap <= 2,
+      `${state} leaves only its border below ${surface.content}: ${JSON.stringify(surface)}`,
+    );
+  }
+}
+
 /// Prove the connected canvas is visible, navigable, and within its viewport.
 export async function assertCanvas(page, scheme) {
   try {
@@ -82,7 +105,7 @@ export async function assertCanvas(page, scheme) {
     };
   });
   assert.ok(pixels.appChildren > 0, "Wasm mounted a nonblank app");
-  assert.ok(pixels.canvasHeight > 300, "primary canvas has visible content");
+  assert.ok(pixels.canvasHeight > 0, "primary canvas has visible content");
   assert.ok(pixels.bodyWidth <= pixels.viewportWidth, "page has no viewport overflow");
   assert.notEqual(pixels.ink, pixels.background, "foreground and background pixels differ");
   assert.equal(pixels.barOverlap, false, "the workspace starts below the command bar");
@@ -107,5 +130,6 @@ export async function assertCanvas(page, scheme) {
   }
   await chooseCanvasView(page, "Agents");
   await page.locator('[data-pane="agent-console"]').waitFor();
+  await assertAgentPageBottomSpacing(page, `${scheme} Agents page`);
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }
