@@ -11,9 +11,13 @@ use super::{CommandResult, lane_surface, store_fault};
 use super::{RuntimePaths, taste_surface};
 
 mod backlog;
+mod session_compaction;
 mod tool_preview;
 
 pub(super) use backlog::{BacklogReader, restore_agent_messages};
+pub(super) use session_compaction::{
+    POLL_INTERVAL as SESSION_COMPACTION_POLL_INTERVAL, SessionCompactions,
+};
 pub(super) use tool_preview::CallPreviews;
 
 /// Captured-generation policy and disposable publishers used after one record

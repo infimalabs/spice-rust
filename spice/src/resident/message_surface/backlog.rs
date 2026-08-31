@@ -39,6 +39,10 @@ impl BacklogReader {
     pub(in crate::resident) fn into_state(self) -> MessageState {
         self.state
     }
+
+    pub(in crate::resident) fn state_mut(&mut self) -> &mut MessageState {
+        &mut self.state
+    }
 }
 
 /// Seed each current lane's bounded Canvas backlog before discovery is published.

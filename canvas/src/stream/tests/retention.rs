@@ -120,3 +120,49 @@ fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
+
+#[test]
+fn late_session_boundaries_are_inserted_before_retention_selects_its_floor() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    for offset in 0..HISTORY_LENGTH {
+        if matches!(offset, FIRST_RETAINED_BOUNDARY | SECOND_RETAINED_BOUNDARY) {
+            continue;
+        }
+        publisher
+            .publish(message(0xe5, offset))
+            .expect("stdout history publishes");
+    }
+    for offset in [FIRST_RETAINED_BOUNDARY, SECOND_RETAINED_BOUNDARY] {
+        let mut boundary = message(0xe5, offset);
+        boundary.activity = wire::AgentActivityKind::Compaction;
+        publisher
+            .publish(boundary)
+            .expect("preserved-session boundary publishes late");
+    }
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    let retained = messages
+        .iter()
+        .filter(|row| row.lane == message(0xe5, 0).lane)
+        .collect::<Vec<_>>();
+    assert_eq!(retained[0].locus.offset, FIRST_RETAINED_BOUNDARY);
+    assert_eq!(retained[0].activity, wire::AgentActivityKind::Compaction);
+    assert_eq!(retained[140].locus.offset, SECOND_RETAINED_BOUNDARY);
+    assert_eq!(retained[140].activity, wire::AgentActivityKind::Compaction);
+    assert_eq!(
+        retained.last().expect("retained tail").locus.offset,
+        HISTORY_LENGTH - 1,
+    );
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}

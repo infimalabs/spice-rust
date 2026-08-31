@@ -19,6 +19,39 @@ mod source;
 
 use model::Report;
 
+/// Resolve one known vendor thread to its preserved transcript.
+///
+/// The resident uses this same path law to recover structured events that the
+/// vendor's selected stdout stream does not carry. Keeping resolution here
+/// prevents Canvas from growing a second interpretation of vendor homes,
+/// state indexes, or transcript search precedence.
+pub(crate) fn vendor_thread_transcript(
+    thread: &str,
+    vendor_name: &wire::Name,
+    environment: &Environment,
+) -> Result<(PathBuf, listen::Dialect), String> {
+    let registry = spice::extension::registry()
+        .map_err(|error| format!("extension registry is invalid: {error}"))?;
+    let vendor = registry
+        .vendor(vendor_name.as_str())
+        .ok_or_else(|| format!("vendor {} is not registered", vendor_name.as_str()))?;
+    let canonical = source::canonical_thread(thread)
+        .ok_or_else(|| format!("thread {thread:?} is not a canonical UUID"))?;
+    let path = source::find_thread(&canonical, vendor, environment)?;
+    let metadata =
+        std::fs::symlink_metadata(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!(
+            "{} is not a regular preserved transcript",
+            path.display()
+        ));
+    }
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok((path, vendor.session_gate().dialect()))
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Environment {
     vendors: Vec<VendorEnvironment>,

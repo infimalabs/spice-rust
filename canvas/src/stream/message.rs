@@ -72,7 +72,11 @@ impl MessagePublisher {
         if !visible {
             retained.retain(|existing| existing.lane != message.lane || visible_message(existing));
         }
-        retained.push_back(message.clone());
+        let insertion = retained
+            .iter()
+            .position(|existing| chronology_key(existing) > chronology_key(&message))
+            .unwrap_or(retained.len());
+        retained.insert(insertion, message.clone());
         if visible {
             trim_visible_lane(&mut retained, message.lane, self.feed.capacity);
         }
@@ -80,6 +84,17 @@ impl MessagePublisher {
         let _ = self.feed.updates.send(message);
         Ok(true)
     }
+}
+
+fn chronology_key(message: &AgentMessage) -> (i64, wire::CanonicalUuid, u64, u64, u32) {
+    let displayed = message.observed.as_ref().unwrap_or(&message.authored);
+    (
+        displayed.get().as_millisecond(),
+        message.lane,
+        message.locus.member,
+        message.locus.offset,
+        message.locus.event,
+    )
 }
 
 /// Whether one activity consumes a lane's visible-card retention budget.

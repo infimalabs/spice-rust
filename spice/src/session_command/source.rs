@@ -238,7 +238,7 @@ fn preferred_vendor(
         .expect("thread resolution requires at least one declared vendor")
 }
 
-fn find_thread(
+pub(super) fn find_thread(
     thread: &str,
     vendor: &'static spice::extension::Vendor,
     environment: &Environment,
