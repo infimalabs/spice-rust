@@ -15,9 +15,9 @@ identified by their language and enclosing section.
 
 ### What it is
 
-A fixed, compiled universe of canonical arms. The ordinary commit gate captures
-the staged source once, maps every changed path to the affected arms and Cargo
-targets, and runs only that deterministic selection. The selection policy,
+A fixed, compiled universe of canonical arms. The packaged ordinary commit gate
+captures the staged source once, maps every changed path to the affected arms and
+Cargo targets, and runs only that deterministic selection. Its selection policy,
 settings, tests, and report all bind the same immutable source digest.
 
 ```mermaid
@@ -25,7 +25,7 @@ flowchart TD
   I["staged index"] --> C["capture one immutable source + digest"]
   C --> S{"classify every changed path"}
   S -- "known local impact" --> A["canonical local arms + targets"]
-  S -- "known selection, build,<br/>or toolchain authority" --> E["every applicable arm + target<br/>with exhaustive reach"]
+  S -- "known compiled class" --> E["classification-owned arms + targets<br/>with exact declared reach"]
   S -- "unknown, unclassified,<br/>or outside admitted workspace" --> R["refuse before work starts"]
   E --> T
   E --> P
@@ -35,12 +35,12 @@ flowchart TD
   P --> V
 ```
 
-**Invariant —** Ordinary known paths select exact local arms and Cargo targets.
-A known compiled selection, policy, build, or toolchain authority selects every
-applicable arm and target with explicit repository-exhaustive reach. An unknown
-or unclassified path, or a Rust or manifest path outside the admitted workspace,
-refuses before selected work begins; uncertainty never impersonates exhaustive
-authority.
+**Invariant —** Ordinary known paths select the exact arms, Cargo targets, and
+object reach owned by their compiled classification. Focused reach remains
+focused; exhaustive reach exists only when that exact classification selects an
+enumerated authority. An unknown or unclassified path, or a Rust or manifest
+path outside the admitted workspace, refuses before selected work begins;
+uncertainty never impersonates exhaustive authority.
 
 **Invariant —** The unscoped repository verifier is not an ordinary completion
 surface. Package verification, explicitly named studies, and the staged selector
@@ -50,25 +50,30 @@ are separate bounded commands; none silently escalates into another.
 preserved, while independent selected arms may execute concurrently. Scheduling
 must not change evidence identity or presentation order.
 
-### The verdict is collected, not short-circuited
+### Returned evidence is collected; scheduler faults cut off
 
 ```mermaid
-flowchart LR
-  Selection["selected canonical arms"] --> IntegrityStudy["integrity"]
-  Selection --> ShapeStudy["shape"]
-  Selection --> StagingStudy["staging"]
-  Selection --> ContentStudy["staged content"]
-  IntegrityStudy --> F["collect terminal evidence"]
-  ShapeStudy --> F
-  StagingStudy --> F
-  ContentStudy --> F
-  F --> R["one report, every failure"]
+flowchart TD
+  Selection["selected arms in canonical schedule order"] --> Started["start bounded independent work"]
+  Started --> T{"arm returns a typed report?"}
+  T -- yes --> F["retain that report's complete<br/>typed terminal evidence"]
+  F --> R["canonical complete report<br/>when every selected arm returned"]
+  T -- "prepare / execute / panic / observe error" --> C["lower failure cutoff to<br/>the failed canonical index"]
+  C --> J["join active work and run<br/>still-pending earlier positions"]
+  C --> U["remove pending later positions;<br/>no synthesized rows"]
+  J --> E["first canonical ChangeGateError;<br/>no complete report"]
 ```
 
-**Invariant —** Every captured selected arm reaches a terminal evidence state.
-An inability or prerequisite failure becomes that arm's named refusal rather
-than removing its row. Independent failures are collected, so one commit attempt
-reports the complete selected picture.
+**Invariant —** Every arm that returns a typed report retains that report's
+complete terminal evidence, including named refusals. Already-started independent
+work is joined and observed, and its returned evidence stays in canonical order.
+
+**Invariant —** A scheduler error is not fabricated as an arm row. Failed
+preparation, execution, worker panic, or progress observation lowers the cutoff
+to that canonical index: pending later positions are removed, pending earlier
+positions may still run, and active work is joined. Unstarted later arms receive
+no synthesized evidence; the command returns the first canonical
+`ChangeGateError` and no complete report.
 
 **Invariant —** A clean installed hook emits no terminal diagnostic. A direct
 selection command returns the complete typed report and may expose bounded
@@ -112,22 +117,36 @@ contract-owned absence or exclusion; it never erases the evidence distinctions.
 ```mermaid
 flowchart LR
   G["selected gate runs"] --> D["state changes proposed in memory"]
-  D --> V{"selected run accepts?"}
+  D --> V{"packaged selected run accepts?"}
   V -- yes --> C["publish one typed state transaction"]
   V -- no --> X["discard — state bytes untouched"]
   X --> N["next attempt meets the same limits<br/>this one reported"]
 ```
 
 **Invariant —** Latch creation, hold, healing, rename transfer, and peer-claim
-changes remain proposals until the enclosing selected run accepts. A refused run
-is byte-preserving, so the author's next attempt meets the same durable state.
+changes remain proposals until the packaged selected run accepts. A refused
+packaged selected run is byte-preserving, so the author's next attempt meets the
+same durable state. A later configured-command refusal does not roll back state
+already published by an admitted packaged selected run.
 
-**Invariant —** A selected run reconciles only the state keys it observed.
-Accepting a partial run cannot prune an unrelated latch or claim.
+**Invariant —** A partial packaged selected run limits measurement and result
+reconciliation to the sticky keys it observed, preserving omitted keys that
+remain live. Run-start rename, liveness, and expiry maintenance still applies
+to the complete ledger. Neither class of proposal becomes durable unless the
+packaged selected run accepts.
 
-**Invariant —** A configured repository command runs only after staging accepts,
-and receives paths and bytes from the same staged capture. Configuration cannot
-make that command observe a half-staged or different tree.
+**Invariant —** Configured repository commands run in authored order after any
+packaged dispatch that returns a complete report, including a non-admitting
+Staging report. They receive the captured selection paths and source digest as
+metadata, execute with the live repository root as their working directory, and
+must establish their own source binding before reading bytes when they require
+captured-source semantics. A preexecuted Rust typecheck, Canvas web typecheck, or
+complexity policy refusal returns `change-gate-policy-regressed` before a complete
+report and therefore prevents configured-command execution.
+`pre_commit_builtins = false` omits the packaged battery, not the configured
+commands; a completed non-admitting packaged report still refuses the combined
+verdict and prevents selected-run state publication without suppressing
+configured-command execution.
 
 ---
 
@@ -143,7 +162,9 @@ flowchart TD
   L -- no --> E{"within provenance-seeded<br/>elastic ceiling?"}
   E -- yes --> P["pass; accepted above-base work<br/>enters claim arbitration"]
   E -- no --> F["finding at elastic ceiling"]
-  L -- yes --> B{"within base?"}
+  L -- yes --> U{"rule unlimited?"}
+  U -- yes --> H["pass; propose healing"]
+  U -- no --> B{"within base?"}
   B -- yes --> H["pass; propose healing"]
   B -- no --> R["finding held at base"]
   F --> C["resolve peer contention"]
@@ -152,7 +173,10 @@ flowchart TD
 
 **Invariant —** Elastic headroom is temporary capacity above base, not a second
 normal limit. A durable latch spends that capacity and holds the subject to base
-until an accepted run measures it at or below base.
+until an accepted packaged selected run measures a bounded rule at or below base.
+An `unlimited` rule has no over-base bound and proposes healing for an existing
+latch regardless of its measured value; publication still waits for packaged
+selected-run acceptance.
 
 **Invariant —** Policy compilation resolves every finite multiplier, minimum,
 maximum, and explicit ratchet into one checked integer ceiling. Non-finite input,
@@ -168,26 +192,31 @@ different diagnoses.
 ```mermaid
 flowchart LR
   S["shared state snapshot"] --> M["measure + reconcile in memory"]
-  M --> D{"selected run accepts?"}
+  M --> D{"packaged selected run accepts?"}
   D -- no --> X["discard every proposed change"]
   D -- yes --> P["compare-and-publish one typed transaction"]
   P --> N["new shared state"]
 ```
 
 **Invariant —** Healing is evidence, not a side effect of inspection. It becomes
-durable only with the accepted run that observed it. A run refused for any other
-reason leaves the prior latch intact.
+durable only with the accepted packaged selected run that observed it. A
+packaged selected run refused for any other reason leaves the prior latch intact.
 
-**Invariant —** An emptied ledger is deleted rather than left as an empty file,
-so a fully healed subject leaves no trace.
+**Invariant —** An accepted reconciliation retains the canonical
+`gate-state.json` ledger even when both its latch and claim collections are empty.
+Healing removes the subject from accepted state; it does not remove the shared
+state authority.
 
-**Invariant —** At run start, the complete staged rename map moves every prior
-latch and live claim to its canonical destination before liveness pruning.
-Ambiguous destinations refuse.
+**Invariant —** At run start, the complete staged rename map, liveness
+inventory, and fixed clock reconcile the whole prior ledger: rename transfer
+applies to every prior latch and live claim, non-live paths are pruned, and
+expired claims are dropped. Ambiguous destinations refuse. The result remains
+a proposal until the packaged selected run accepts.
 
-**Invariant —** Partial selected runs reconcile only observed sticky keys.
-Unrelated live state survives; absence from a selected slice is not evidence of
-global absence.
+**Invariant —** Partial packaged selected runs limit measurement and result
+reconciliation to observed sticky keys. Omitted sticky keys that survive
+run-start maintenance remain unchanged; absence from a selected slice is not
+evidence of global absence.
 
 ### Jitter retains its provenance
 
@@ -224,25 +253,27 @@ flowchart LR
   U -->|"peer claimed first"| P["held by peer"]
   P -->|"finding: inform + pass<br/>name holder + expiry"| P
   P -->|"lifetime elapsed at run start"| X
-  X -->|"selected run accepts"| U
-  X -->|"run refuses"| D["durable claim bytes unchanged"]
+  X -->|"packaged selected run accepts"| U
+  X -->|"packaged selected run refuses"| D["durable claim bytes unchanged"]
   D --> X
 ```
 
 **Invariant —** Latches and claims share one repository authority below the Git
 common directory, so every linked worktree sees the same pressure state.
 
-**Invariant —** Claims are time-boxed. A run treats an elapsed claim as absent
-and proposes pruning it, but only an accepted run publishes that removal. A
-refusal leaves the durable claim bytes unchanged for the same reconciliation on
-the next attempt.
+**Invariant —** Claims are time-boxed. A packaged selected run treats an elapsed
+claim as absent and proposes pruning it, but only an accepted packaged selected
+run publishes that removal. A refused packaged selected run leaves the durable
+claim bytes unchanged for the same reconciliation on the next attempt.
 
 **Invariant —** The earliest claimant owns a contested subject, with a
 deterministic tie-break, so ownership never depends on scan order.
 
 **Invariant —** A finding whose subject is held by a peer **informs and passes**.
-Only unclaimed findings block. The redirect names the holder and the expiry, so
-the reader knows whether to wait or to move to another seam.
+Only peer-held findings redirect informationally; an over-limit finding that is
+unclaimed or held by the current actor still blocks. The redirect names the
+holder and the expiry, so the reader knows whether to wait or to move to another
+seam.
 
 **Invariant —** Every run binds one named actor and the run-start claims into
 its verdict semantics. A revision-selected run may observe those claims, but it
@@ -256,7 +287,7 @@ state.
 
 The compiled manifest is the exact authority for instrument membership, stable
 identity, and report order. This document owns the common semantics; it does not
-duplicate that executable inventory. Current instruments fall into these
+duplicate that executable inventory. Instruments fall into these
 families:
 
 | family | contract | representative evidence |
@@ -267,16 +298,12 @@ families:
 | differential quality | compare the selected candidate with admitted baseline or ratchet evidence | baseline identity, candidate identity, additions and removals |
 | test evidence | join executed tests, source reach, mutation disposition, suite seams, and subsumption by one source identity | executed test identities, covered sources, mutation identities, retained comparisons |
 
-The ordinary commit selector runs the arms locally reached by the staged change
-plus its always-on integrity arms. A known compiled authority change is the
-deliberate exception: it selects every applicable arm and target with exhaustive
-reach. Explicit long-running studies consume their own complete test-evidence
-graph; they are not silently folded into an ordinary commit attempt.
-
-**Invariant —** A limit is either a **threshold** (a number a subject must stay
-under), a **set equality** (declared versus observed), a **differential** (this
-change versus a baseline), or **binary** (any occurrence). Nothing else is a
-limit, and a study says which kind it is.
+The ordinary commit selector runs the arms and reach owned by each staged path's
+exact compiled classification, plus its always-on integrity arms. Only a
+classification that explicitly names selection authority escalates its selected
+arms and targets to exhaustive reach. Explicit long-running studies consume
+their own complete test-evidence graph; they are not silently folded into an
+ordinary commit attempt.
 
 **Invariant —** A differential measure fails only on regression. A repository is
 permitted to be imperfect; it is not permitted to get worse.
@@ -289,64 +316,8 @@ quietly turn the rule into an allowance.
 This is the one place where the *unknown is not clear* rule is most easily lost,
 because a missing baseline and an empty baseline produce the same set.
 
-Every instrument declares exactly one kind of limit and returns typed terminal
-evidence. The compiled declaration owns that instrument-to-kind mapping; this
-diagram owns the shared type structure.
-
-```mermaid
-classDiagram
-  direction LR
-
-  class Instrument {
-    +measures
-    +run() TerminalEvidence
-  }
-  class TerminalEvidence {
-    <<enumeration>>
-    passed
-    failed
-    unavailable
-    unsupported
-    unmeasured
-    timed_out
-    explicit_skip
-    not_applicable
-    excluded
-  }
-  class Limit {
-    <<abstract>>
-  }
-  class Threshold {
-    +base
-    +elastic_headroom
-    +provenance_seed
-    +repository_shared_latch
-  }
-  class SetEquality {
-    +declared
-    +observed
-  }
-  class Differential {
-    +baseline_or_ratchet
-    +regression_only
-  }
-  class Binary {
-    +any_occurrence_fails
-  }
-
-  Limit <|-- Threshold
-  Limit <|-- SetEquality
-  Limit <|-- Differential
-  Limit <|-- Binary
-  Instrument "1" *-- "1" Limit : declares
-  Instrument ..> TerminalEvidence : returns
-
-  note for TerminalEvidence "only passed, not-applicable, and excluded admit; every other state retains a named refusal"
-  note for Differential "an unreadable baseline never passes"
-```
-
-A waiver is independent of the limit taxonomy. It is tracked and enumerable,
-and an instrument may admit none or many.
+A waiver is independent of a measure's limit. It is tracked and enumerable, and
+an instrument may admit none or many.
 
 ```mermaid
 classDiagram
@@ -416,8 +387,11 @@ state remains outside the scanned authority. A study can never take the
 appliance's own bookkeeping as repository evidence.
 
 **Invariant —** The fully-staged rule is the intersection of staged and unstaged
-names: a file partly staged is refused, because every other measure would
-otherwise judge a tree that is not the one being committed.
+names. The run captures that core-arm evidence beside the selected source; a
+partly staged file fails the Staging arm and prevents the combined run from
+publishing state. Because Staging returns a complete packaged report, configured
+commands still follow in authored order with captured selection/digest metadata
+and the live repository as their working directory.
 
 ### The forms an exception may take
 
@@ -493,8 +467,10 @@ pre-seed or suppress its own filing.
 
 The one private immutable tree retained by the run is the sole selected-source
 authority. An arm consumes that tree directly or derives a verified exact sealed
-mirror with separate outputs; the caller's checkout is never an execution
-workspace.
+mirror with separate outputs. Selected bytes never come from or overwrite the
+caller's live source paths. Declared mirrors, caches, and outputs may live beneath
+the checkout's `target`, including Canvas's exact `target/xtask-app-source`
+mirror.
 
 ```mermaid
 stateDiagram-v2
@@ -508,7 +484,8 @@ stateDiagram-v2
   Measuring --> Abandoned : owner disappears
   Abandoned --> [*] : a later run acquires the companion lock and reclaims the root
   note right of Sealed
-    the caller's checkout stays read-only for the whole run
+    live source paths never supply or receive selected bytes;
+    verified mirrors, caches, and outputs may use checkout target
   end note
 ```
 
@@ -518,8 +495,12 @@ bound to the run's source identity. Every selected arm consumes that authority
 directly or through a verified exact sealed mirror; a mirror cannot add or
 replace selected source.
 
-**Invariant —** The caller's checkout is read-only for the whole run, so
-concurrent control-plane commands and supervisor probes keep observing reality.
+**Invariant —** The gate neither sources selected bytes from nor writes them over
+the caller's live source paths. Arms consume the private immutable root or an
+exact verified mirror. Declared mirrors, caches, and outputs — including
+`target/xtask-app-source` — may be written beneath the checkout's `target` while
+its live source remains available to concurrent control-plane commands and
+supervisor probes.
 
 **Invariant —** A companion lock is the liveness authority for a private root.
 Cleanup reclaims a root only after acquiring that exact lock; a directory name or
@@ -535,11 +516,12 @@ later safe reclamation.
 ## What is policy and what is shape
 
 **Shape** — exact staged-path selection, one immutable source identity, canonical
-report order, collect-all typed terminal evidence, accepted transactional state,
+report order, complete evidence within each returned typed arm report, canonical
+scheduler-failure cutoff, accepted transactional state,
 base-headroom-latch pressure, provenance-retaining variation, claim-based
-redirection, partial reconciliation, the four kinds of limit, the four forms of
-waiver, idempotent filing, and one retained immutable selected-source authority
-with verified exact sealed execution mirrors.
+redirection, partial reconciliation, the four forms of waiver, idempotent filing,
+and one retained immutable selected-source authority with verified exact sealed
+execution mirrors.
 
 **Policy** — the compiled instrument manifest and the declared values each
 instrument consumes: thresholds, headroom and variation, claim lifetime,

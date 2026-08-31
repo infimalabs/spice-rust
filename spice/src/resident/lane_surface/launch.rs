@@ -387,7 +387,7 @@ fn launch_environment(
             rtk_history.into_os_string(),
         ),
     ]);
-    if let Some(path) = shell_path(wrapper_command)? {
+    if let Some(path) = shell_path(wrapper_command, executable)? {
         values.push(("PATH".into(), path));
     }
     let environment = Environment::new(values)
@@ -458,7 +458,16 @@ mod rtk_environment_tests {
 }
 
 /// Ambient search path, optionally led by one configured wrapper directory.
-fn shell_path(wrapper: Option<&Path>) -> CommandResult<Option<OsString>> {
+fn shell_path(wrapper: Option<&Path>, executable: &Path) -> CommandResult<Option<OsString>> {
+    let ambient = crate::bootstrap_environment("PATH");
+    compose_shell_path(wrapper, executable.parent(), ambient.as_deref())
+}
+
+fn compose_shell_path(
+    wrapper: Option<&Path>,
+    executable_directory: Option<&Path>,
+    ambient: Option<&std::ffi::OsStr>,
+) -> CommandResult<Option<OsString>> {
     let mut entries = Vec::new();
     if let Some(command) = wrapper {
         let Some(directory) = command.parent() else {
@@ -469,8 +478,10 @@ fn shell_path(wrapper: Option<&Path>) -> CommandResult<Option<OsString>> {
         };
         entries.push(directory.to_path_buf());
     }
-    if let Some(ambient) = crate::bootstrap_environment("PATH") {
-        entries.extend(std::env::split_paths(&ambient));
+    if let Some(ambient) = ambient {
+        entries.extend(std::env::split_paths(ambient).filter(|entry| {
+            wrapper.is_none() || executable_directory.is_none_or(|directory| entry != directory)
+        }));
     }
     if entries.is_empty() {
         return Ok(None);
@@ -478,6 +489,53 @@ fn shell_path(wrapper: Option<&Path>) -> CommandResult<Option<OsString>> {
     std::env::join_paths(entries)
         .map(Some)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))
+}
+
+#[cfg(test)]
+mod shell_path_tests {
+    use super::*;
+
+    #[test]
+    fn wrapper_path_excludes_the_separately_carried_executable_directory() {
+        let wrapper = Path::new("/fixture/wrappers/spice");
+        let executable = Path::new("/fixture/bin/spice");
+        let ambient = std::env::join_paths([
+            Path::new("/fixture/bin"),
+            Path::new("/usr/bin"),
+            Path::new("/fixture/bin"),
+        ])
+        .expect("fixture search path");
+
+        let composed = compose_shell_path(
+            Some(wrapper),
+            executable.parent(),
+            Some(ambient.as_os_str()),
+        )
+        .expect("wrapper search path composes")
+        .expect("wrapper supplies a search path");
+        assert_eq!(
+            std::env::split_paths(&composed).collect::<Vec<_>>(),
+            [
+                Path::new("/fixture/wrappers").to_path_buf(),
+                Path::new("/usr/bin").to_path_buf(),
+            ]
+        );
+    }
+
+    #[test]
+    fn absent_wrapper_preserves_the_ambient_search_path() {
+        let ambient = std::env::join_paths([Path::new("/fixture/bin"), Path::new("/usr/bin")])
+            .expect("fixture search path");
+
+        let composed = compose_shell_path(
+            None,
+            Some(Path::new("/fixture/bin")),
+            Some(ambient.as_os_str()),
+        )
+        .expect("ambient search path composes")
+        .expect("ambient search path remains present");
+        assert_eq!(composed, ambient);
+    }
 }
 
 /// Bind the lease, wait policy, and capture bounds this lane launches under.

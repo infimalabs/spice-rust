@@ -51,9 +51,7 @@ fn refused_as(outcome: &Outcome<CommandAnswer>) -> (String, Option<String>) {
 
 /// Reason and overridden holder recorded by each withdrawal of this task.
 fn delete_facts(bus: &Bus, task: &TaskHandle) -> Vec<(String, Option<String>)> {
-    let born = task
-        .born()
-        .expect("fixture handle carries an inception stamp");
+    let born = task.born().expect("fixture handle carries a birth stamp");
     bus.fact_snapshot()
         .expect("withdrawal facts read")
         .facts()

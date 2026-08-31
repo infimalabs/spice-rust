@@ -1,7 +1,7 @@
 //! Task, claim, gate-finding, and effort command contracts.
 //!
 //! Commands may name projected handles for lookup. Creation plans and durable
-//! answers cross the admission boundary with inception stamps, so a later
+//! answers cross the admission boundary with birth stamps, so a later
 //! project edit only changes presentation.
 
 use serde::{Deserialize, Serialize};
@@ -549,7 +549,7 @@ pub struct TaskReview {
     pub followup: Vec<TaskHandle>,
 }
 
-/// One follow-up statement a review creates, paired with its inception stamp.
+/// One follow-up statement a review creates, paired with its birth stamp.
 ///
 /// The caller mints the stamp and witnesses its absence, the way `task add`
 /// does, so the whole batch is decided before the review writes anything.

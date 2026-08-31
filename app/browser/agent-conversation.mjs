@@ -31,6 +31,13 @@ const AGENT_SEAT_MS = 15_000;
 
 export { assertMosaicLattice };
 export const agentNames = ["Ava", "Bex", "Cy", "Dee"];
+
+function canonicalAgentAttribution(member) {
+  assert.ok(member.occupant, `lane ${member.lane} has an occupant identity`);
+  return `${member.occupant.slice(0, 8)}/${member.lane.slice(0, 8)}`
+    + ` · ${basename(member.worktree)} · ${member.name}`;
+}
+
 /// The fourth identity ends in 6 rather than 3 on purpose, and tidying it back
 /// to a run of four consecutive values would silently delete coverage. An
 /// accent slot is the lane identity modulo six, so consecutive identities can
@@ -218,6 +225,7 @@ export async function seatAgentTeam(
     lane: seated[0].lane,
     quoteLane: seated[3].lane,
     agentName: agentNames[0],
+    agentAttribution: canonicalAgentAttribution(seated[0]),
     quoteProse: agentProse(teamWorktrees[3]),
     primaryHeadings: seated.map((lane, index) => ({
       lane: lane.lane,
@@ -602,8 +610,9 @@ export async function assertAgentConversation(
   // The first and fourth lanes hold one slot between them, by the construction
   // teamLaneIds explains. That is the ordinary case for a lineage, so the
   // colour is decoration and the assertions below are what an operator and a
-  // test actually read to tell the two apart. A message card names its
-  // configured producer without exposing the UUID in ordinary reading flow.
+  // test actually read to tell the two apart. A message card leads with short
+  // canonical author/lane identity and a worktree leaf, then keeps the
+  // configured producer name as redundant presentation.
   const messageChrome = await console.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => ({
       lane: card.dataset.agentLane,
@@ -611,6 +620,13 @@ export async function assertAgentConversation(
       producer: card.querySelector(".message-agent-name")?.textContent?.trim() ?? "",
     })),
   );
+  for (const member of seated) {
+    const expected = canonicalAgentAttribution(member);
+    assert.ok(
+      messageChrome.some((card) => card.lane === member.lane && card.producer === expected),
+      `lane ${member.lane} renders its complete canonical attribution`,
+    );
+  }
   const sharedSlot = [seated[0].lane, seated[3].lane].map(
     (lane) => messageChrome.find((card) => card.lane === lane),
   );
@@ -775,6 +791,7 @@ export async function assertAgentConversation(
     lane: team.lane,
     quoteLane: team.quoteLane,
     agentName: team.agentName,
+    agentAttribution: team.agentAttribution,
     quoteProse: restoredQuoteProse,
     primaryHeadings: restoredProse,
     teamWorktrees,

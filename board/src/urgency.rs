@@ -2,7 +2,7 @@ use dialect::Priority;
 
 use crate::task::Entry;
 
-/// Durable queue-age scalar derived from a task's sole inception fact.
+/// Durable queue-age scalar derived from a task's sole birth fact.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Urgency(u64);
 

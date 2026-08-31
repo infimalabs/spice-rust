@@ -1187,4 +1187,5 @@ fn descriptor_setup_failure_refuses_protected_child_admission() {
     fs::remove_file(lock_path).expect("guardian lock fixture removes");
 }
 
-include!("tests/guardian.rs");
+mod guardian;
+use guardian::test_spec;

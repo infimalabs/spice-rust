@@ -964,7 +964,15 @@ impl SystemEffects {
     }
 }
 
-include!("release_execution_tail.rs");
+mod tail;
+#[cfg(test)]
+use tail::effect_outcome;
+use tail::{
+    admitted_local_progress, exact_version_bump, make_executable, manifest_bytes, object_exists,
+    package_preview, package_state, ref_state, run, stable_ref_observation,
+    stable_source_observation,
+};
+pub(crate) use tail::{execute, verify_completed};
 
 #[cfg(test)]
 mod tests {

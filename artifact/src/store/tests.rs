@@ -423,7 +423,7 @@ fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback
     assert_eq!(failure.class(), ErrorClass::Refusal);
     assert!(failure.to_string().contains("artifact store release 1"));
     assert!(failure.to_string().contains("version 2"));
-    assert!(failure.to_string().contains("inception-stamp directory"));
+    assert!(failure.to_string().contains("birth-stamp directory"));
 }
 
 #[test]

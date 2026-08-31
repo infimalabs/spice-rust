@@ -1,12 +1,9 @@
 # Rust development loop
 
-This is the repository-native loop for changing the Rust appliance. It orders
-feedback from the narrowest falsifier to the commit boundary. Package checks
-and staged target selection are completion evidence; unscoped repository-wide
-verification is not admitted.
-
-The inventory is a readable ownership map, not metadata authority. Re-run Cargo
-metadata when manifests change.
+This repository-native Rust loop runs from narrow falsifiers to the commit
+boundary. Package checks and staged selection are completion evidence; unscoped
+verification is refused. The inventory below is only an ownership map, so
+re-run Cargo metadata when manifests change.
 
 Bind and validate the exact Git-common Rust appliance before using any
 developer task command below:
@@ -23,8 +20,8 @@ fi
 ## Find the owner before editing
 
 The workspace crates form five intentional layers. The workspace manifest owns
-membership; `gate/tests/dependency_lattice.rs` is the checked source of truth
-for every local dependency edge and acyclicity.
+membership, each crate manifest owns its local dependency edges, and Cargo
+metadata is the executable resolved graph and acyclicity authority.
 
 | Layer | Crates and ownership |
 | --- | --- |
@@ -34,11 +31,10 @@ for every local dependency edge and acyclicity.
 | Product and artifacts | `app` is the WASM browser body and depends only on `wire`; `canvas` serves the loopback surface and app generations; `artifact` stores task evidence outside the journal; `dist` stages releases; `proof` verifies sealed appliances. |
 | Enforcement and composition | `gate` is hermetic repository enforcement and depends only on `atomic`, `sill`, and `wire`; `spice` composes daemonless CLI/resident surfaces; `xtask` owns repository-local build, verification, cache, and release orchestration. |
 
-Treat these as ownership seams. A wire-shape change crosses browser, journal,
-and resident boundaries. A process-lifecycle change starts at `sill`, not in a
-caller-specific retry. Authority writes belong to `journal`/`bus`; replayable
-views belong to `board`/`fold`. Browser code must not reach server internals.
-Manifest edge changes must update the dependency lattice in the same change.
+These are ownership seams. Wire changes cross browser, journal, and resident;
+process lifecycle starts at `sill`. Authority writes belong to `journal`/`bus`,
+replayable views to `board`/`fold`, and browser code cannot reach server
+internals. Re-observe manifest changes through Cargo metadata.
 
 ## Tracked and generated surfaces
 
@@ -56,11 +52,10 @@ Manifest edge changes must update the dependency lattice in the same change.
 
 ## Test portfolio and overlap law
 
-Cargo unit, integration, doctest, and Canvas surfaces overlap by purpose, not by
-name. Use Cargo metadata for target inventory and `"$spice_rs" dev cargo --
-test --locked -p PACKAGE -- --list` for the selected package's test-binary
-inventory; add the same target selector used by the intended run when narrowing
-to `--lib`, `--test TARGET`, or `--doc`.
+Tests overlap by purpose, not name. Use Cargo metadata for target inventory and
+`"$spice_rs" dev cargo -- test --locked -p PACKAGE -- --list` for a package's
+test binaries; add the intended target selector when narrowing to `--lib`,
+`--test TARGET`, or `--doc`.
 
 | Portfolio | Purpose and scope | Feedback invocation |
 | --- | --- | --- |
@@ -73,14 +68,12 @@ to `--lib`, `--test TARGET`, or `--doc`.
 | Change-local gate, battery, and landing | Staged path-to-test and path-to-policy evidence plus final selected contract admission. | `"$spice_rs" dev cargo -- run --quiet --locked --package spice --bin spice -- gate selection`. |
 
 Metadata selection is conservative target-root reachability, not line coverage.
-Equal names, overlap, or an advisory subsumption finding never authorizes test
-deletion; removal needs a reviewed purpose and clean evidence from the affected
-targets.
+Overlap or an advisory subsumption finding never authorizes deletion; removal
+needs a reviewed purpose and clean evidence from the affected targets.
 
 ## Feedback and completion tiers
 
-Run the narrowest command that can falsify the current edit, then widen at a
-stable checkpoint. The four surfaces have distinct jobs:
+Run the narrowest falsifier, then widen at a stable checkpoint:
 
 | Surface | Run it when | Command and boundary |
 | --- | --- | --- |
@@ -96,7 +89,7 @@ Use that boundary in this order:
 2. During edits, run `"$spice_rs" dev cargo -- check --locked -p PACKAGE` and
    an exact test. Add direct downstream packages for public-seam changes.
 3. At a checkpoint, run formatting and `"$spice_rs" dev xtask -- verify --package PACKAGE`.
-   Add the owning app, Canvas, lattice, proof, or staging command for its seam.
+   Add the owning app, Canvas, proof, or staging command for its seam.
 4. Stage the intended change and run `"$spice_rs" dev cargo -- run --quiet
    --locked --package spice --bin spice -- gate selection` (the installed
    dispatcher invokes that same public leaf through tracked policy). Inspect its
@@ -110,8 +103,7 @@ Use that boundary in this order:
 ## Cost and concurrency
 
 Keep checks scoped while peers compile. The package verifier serializes its
-three Cargo children and grants each one build job; do not widen the slice to
-compete for the same machine.
+three one-job Cargo children; do not widen the slice.
 
 ## Disk budget and safe cleanup
 
@@ -121,10 +113,10 @@ Preview the bounded collector before applying it:
 "$spice_rs" dev xtask -- build-cache --dry-run --max-bytes BYTES --retain-live-worktrees COUNT
 ```
 
-Use `--free-space-floor BYTES` instead when free space is the constraint, then
-repeat the reviewed request with `--apply`. The collector protects current/live
-roots and held `.cargo-build-lock` roots. Clean `target` only after confirming
-no Cargo/rustc owner, and remove retired worktrees without `--force` only after
-preserving wanted changes. Never use `git clean -fdX`: appliance state, the
-generated bootstrap skill, artifacts, generations, dependencies, and compiler
-output do not share one disposal policy.
+Use `--free-space-floor BYTES` when free space is the constraint, then replace
+`--dry-run` with `--apply` after review. The collector protects current/live
+and held `.cargo-build-lock` roots. Clean `target` only with no Cargo/rustc
+owner, and remove retired worktrees without `--force` after preserving wanted
+changes. Never use `git clean -fdX`: appliance state, bootstrap skill,
+artifacts, generations, dependencies, and compiler output have distinct
+lifecycles.

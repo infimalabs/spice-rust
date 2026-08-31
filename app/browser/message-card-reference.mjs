@@ -91,13 +91,31 @@ function assertReferenceGeometry(geometry, agentNames) {
   );
   assert.equal(geometry.classifiers, 0, "the generic agent classifier is absent");
   assert.doesNotMatch(geometry.footerText, /(?:^|\s)agent(?:\s|$)/i);
-  assert.doesNotMatch(geometry.footerText, /\b[0-9a-f]{8}\b/i);
-  assert.ok(agentNames.includes(geometry.agent.text), "the footer prints a configured agent name");
+  assert.match(
+    geometry.agent.text,
+    /^[0-9a-f]{8}\/[0-9a-f]{8} · [^\n·]+ · /i,
+    "the visible footer leads with canonical short author/lane and a worktree leaf",
+  );
+  assert.ok(
+    agentNames.some((name) => geometry.agent.text.endsWith(` · ${name}`)),
+    "a configured name remains redundant presentation at the attribution tail",
+  );
   assert.equal(geometry.agent.fontSize, "12px");
   assert.equal(geometry.agent.fontWeight, "400");
   assert.match(geometry.agent.fontFamily, /system-ui/);
-  assert.match(geometry.agent.ariaLabel, /^Copy agent id for /);
+  assert.equal(
+    geometry.agent.ariaLabel,
+    `Copy agent id for ${geometry.agent.text}`,
+    "the accessible copy control retains the complete unellipsized attribution",
+  );
   assert.match(geometry.agent.title, /^Copy agent id\n[0-9a-f-]{36}$/);
+  assert.equal(geometry.agent.overflow, "hidden");
+  assert.equal(geometry.agent.textOverflow, "ellipsis");
+  assert.equal(geometry.agent.whiteSpace, "nowrap");
+  assert.ok(
+    geometry.agent.scrollWidth > geometry.agent.clientWidth,
+    "the reference footer exercises visible ellipsis without truncating its text alternative",
+  );
   assert.equal(geometry.actions.gap, "6px");
   assert.equal(geometry.actions.buttons.length, 3);
   assert.ok(
@@ -213,8 +231,13 @@ export async function assertReferenceMessageCard(
       agent: {
         ...measured(agent),
         ariaLabel: agent.getAttribute("aria-label"),
+        clientWidth: agent.clientWidth,
+        overflow: getComputedStyle(agent).overflow,
+        scrollWidth: agent.scrollWidth,
         text: agent.innerText,
+        textOverflow: getComputedStyle(agent).textOverflow,
         title: agent.title,
+        whiteSpace: getComputedStyle(agent).whiteSpace,
       },
       actions: {
         ...measured(actions),

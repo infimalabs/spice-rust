@@ -499,6 +499,48 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    named "taste.<name>.enabled" {
+        kind: Boolean,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    named "taste.<name>.scopes.paths" {
+        kind: StringList,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    named "taste.<name>.scopes.extensions" {
+        kind: StringList,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    named "taste.<name>.scopes.vendors" {
+        kind: StringList,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    named "taste.<name>.scopes.models" {
+        kind: StringList,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    named "taste.<name>.scopes.phases" {
+        kind: StringList,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "consent.posture" {
         kind: Answer,
         builtin: Some(Builtin::String("queue")),

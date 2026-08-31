@@ -1021,4 +1021,11 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
     deliver(outcome, form)
 }
 
-include!("main_tail.rs");
+mod main_tail;
+
+#[cfg(test)]
+pub(crate) use main_tail::exit_status;
+pub(crate) use main_tail::terminate_code;
+pub use main_tail::{bootstrap_environment, terminate};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use main_tail::{deliver_task_migration, session_environment, working_directory};

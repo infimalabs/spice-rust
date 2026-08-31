@@ -3,80 +3,100 @@
 [Product model — supporting planes](../planes.md) · [Spice product model](../README.md)
 ## Metrics
 
-### Typed facts with a locus
+### Accounted transcript usage
 
 ```mermaid
 flowchart LR
-  T["transcript line"] --> R["typed reader"]
-  R --> ProseFact["prose fact"]
-  R --> ReasoningFact["reasoning fact"]
-  R --> ToolCallFact["tool-call fact"]
-  ProseFact --> L["each carries byte offset,<br/>event time, producing actor"]
-  ReasoningFact --> L
-  ToolCallFact --> L
+  T["durable transcript tape"] --> R["typed vendor decoder"]
+  R --> U["normalized usage samples<br/>exact spans + event ordinal"]
+  R --> N["complete records<br/>with no usage — count"]
+  R --> X["residue records — count"]
+  U --> B["one JournalIngested batch"]
+  N --> B
+  X --> B
+  B --> H["TranscriptSourceHead<br/>source generation + next position"]
 ```
 
-**Invariant —** One line carrying prose, a reasoning summary, and a tool call
-contributes **all three**. A one-message-per-line projection that collapses to
-whichever block it reached first is wrong by construction.
+**Invariant —** Accounting retains each normalized usage sample beside the
+exact ordered byte spans and event ordinal it was decoded from. A complete
+record carrying no usage and a residue record remain visible as separate
+counts; neither is promoted into an invented activity fact.
 
-**Invariant —** Counting reads the **public typed facts**, never a second
-private parse of provider JSON.
+**Invariant —** Accounting consumes the typed vendor decoder's records and
+events. It does not maintain a second private interpretation of vendor JSON.
 
-**Invariant —** Activity is what the agent *produced*. Operator input, token
-accounting, and undecodable lines are facts about the lane, not work it did, and
-carry no activity.
+**Invariant —** One accounted batch names its lane, vendor, logical stream,
+source generation, starting position, and ending position. Its usage samples,
+non-usage count, and residue count account for every record boundary the batch
+crossed.
 
-### Exactly-once ingestion
+### Exactly-once source accounting
 
 ```mermaid
 flowchart LR
-  S["source identity + offset"] --> C{"identity matches<br/>the stored checkpoint?"}
-  C -- yes --> R["resume at the byte boundary"]
-  C -- no --> Z["restart from byte zero"]
-  R --> W["counted facts AND checkpoint<br/>= ONE write"]
+  S["source generation +<br/>member/offset position"] --> C{"generation matches<br/>the stored source head?"}
+  C -- yes --> R["continue at the exact next position"]
+  C -- no, prior head --> Z["start at member 1, offset 0<br/>and name the superseded generation"]
+  C -- no prior head --> O["start at member 1, offset 0"]
+  R --> W["JournalIngested batch AND<br/>advanced source head = ONE write"]
   Z --> W
+  O --> W
 ```
 
-**Invariant —** Resumption is a **checkpoint, not an offset**. A transcript
-replaced under the same path restarts from its first byte instead of resuming
-into the middle of a different file.
+**Invariant —** Resumption is an exact source-generation and position
+checkpoint, not a path and not an offset alone. A replacement under the same
+path restarts from that generation's origin and explicitly names the generation
+it supersedes.
 
-**Invariant —** The counted facts and the checkpoint they were read to commit
-together. A pass that dies before committing leaves neither — so the next pass
-reads the same bytes **once**, never twice, never stepping over them unread.
+**Invariant —** The accounted batch and the source head it advances commit in
+one guarded journal transaction. A pass that does not commit leaves neither;
+the continuation guard refuses gaps, stale heads, and implicit generation
+changes before either value crosses.
 
-### The three lenses
+### Claim-to-terminal task effort
 
 ```mermaid
 flowchart LR
-  LineageThisAgentAndItsSuccessors["lineage<br/>this agent and its successors"] --> Q[series]
-  PerSessionOneThreadOnly["per-session<br/>one thread only"] --> Q
-  TeamHistoricalTheTeamAcrossMembershipChanges["team-historical<br/>the team across membership changes"] --> Q
+  C["ClaimWon<br/>opening source boundary"] --> P["one workflow-phase attempt"]
+  T["TaskDone or TaskReviewed<br/>closing source boundary"] --> P
+  J["accounted transcript batches"] --> S["verified source-contiguous segments"]
+  P --> S
+  S --> A{"complete, contiguous,<br/>one exact launch identity?"}
+  A -- yes --> V["available usage + wall time"]
+  A -- no --> U["reason-coded unavailable"]
+  V --> G["aggregate by exact<br/>vendor / model / effort + phase"]
 ```
 
-**Invariant —** Work follows the agent across renewal and lane changes, resolved
-through durable membership and renewal history. A renewed agent does not appear
-as a new worker with no past.
+**Invariant —** One phase answer names its opening and closing facts, exact
+recorded source boundaries, renewal count, and every verified segment. Each
+segment retains lane, occupant, lineage, session, source generation, half-open
+positions, launch identity, and usage.
 
-### The effort ledger
+**Invariant —** A missing terminal or source boundary, broken continuity or
+carry, unproved source replacement, attribution disagreement, malformed usage,
+missing or mixed launch identity, interruption, or arithmetic overflow produces
+stable reasons under `Unavailable`. An unavailable phase stays visible but
+enters no numeric aggregate.
+
+**Invariant —** Numeric totals and integer averages partition by exact vendor,
+model, reasoning effort, and workflow phase. Values from different launch
+identities never collapse into one comparable number.
+
+### Canvas standing metrics
 
 ```mermaid
 flowchart LR
-  C["claim"] --> W["phase window"]
-  W --> D["done"]
-  U["transcript usage events"] --> J["joined into the window"]
-  J --> E["effort per task phase"]
-  E --> M{"model-tagged?"}
-  M -- no --> X["refuse to render as comparable spend"]
-  M -- yes --> R["render"]
+  L["selected team"] --> M["one row per member"]
+  M --> P["pending"]
+  M --> C["claim age"]
+  M --> R["renewal age"]
+  M --> V["liveness"]
+  C --> B["Metrics badge<br/>members holding claims"]
 ```
 
-**Invariant —** A partial window is **not sizing evidence**. Incomplete data is
-withheld rather than averaged.
-
-**Invariant —** Untagged spend is never presented as comparable to tagged spend.
-Two numbers from different models are not the same unit.
+**Invariant —** Canvas Metrics mode is current member standing, not an activity
+ledger. It renders pending count, claim age, renewal age, and liveness for every
+member; its mode badge counts members whose standing carries a held claim.
 
 ---
 
@@ -98,7 +118,7 @@ confusion the design specifically resolves.
 
 ```mermaid
 flowchart LR
-  T["agent finishes a tool call"] --> H["post-tool hook"]
+  T["agent finishes a non-shell tool call"] --> H["vendor PostToolUse hook"]
   J["journal standing is LIVE"] --> Q["disposable inbox projection"]
   H --> P{"eligible projected readout?"}
   Q --> P
@@ -108,13 +128,16 @@ flowchart LR
   O --> A["agent may ACK or NACK<br/>(decline) in prose"]
 ```
 
-**Invariant —** Delivery reaches the agent **inside** non-shell tool spans, not
-only at shell boundaries. An agent doing a long edit run is still reachable.
+**Invariant —** Delivery becomes eligible after a non-shell tool call, at its
+vendor `PostToolUse` boundary, not only at shell boundaries. No individual tool
+invocation is interrupted; an agent doing a long edit sequence remains reachable
+between calls.
 
-**Invariant —** The vendor post-tool hook and the next top-level shell-command
-boundary consume the same durable delivery decision and suppression state. The
-readout is suppressed when it would repeat itself; observing it changes neither
-the directive's disposition nor its presentation stage.
+**Invariant —** Vendor post-tool invocations serialize through one durable hook
+delivery record. Already-delivered key and content identities suppress a repeat
+within the same occupant and compaction epoch; a new key remains deliverable
+even when its text was already shown. Advancing this hook-local record changes
+neither the directive's disposition nor its presentation stage.
 
 **Invariant —** The hot path must not query the task database. Steering delivery
 cannot be allowed to cost what a board read costs.
@@ -129,15 +152,17 @@ the whole design.
 flowchart TD
   A["the agent's top-level shell command"] --> R["redirector"]
   R --> W["the wrapper — ONE hop, exactly once"]
-  I["same disposable inbox projection"] --> P{"eligible projected readout?"}
+  I["rendered inbox file"] --> P{"nonempty rendering?"}
   W --> P
-  P -- yes --> S["write one suppressed steering readout"]
-  P -- no --> RW["rewrite routing, worktree environment,<br/>wrapper functions, one steering connection"]
+  P -- yes --> S["read the rendering once;<br/>write it to wrapper stderr"]
+  P -- no --> RW["optional rewrite decision"]
   S --> RW
-  RW --> C["the immediate command shell"]
+  RW --> C["spawn one immediate command shell<br/>over private stdout/stderr relays"]
   C --> SRC["a SOURCED script<br/>shares this shell's functions:<br/>sourcing creates no process"]
   C --> D["an executed script, a child shell"]
-  D --> NAT["starts NATIVELY —<br/>no wrapper functions, no second hop,<br/>no steering connection of its own"]
+  D --> NAT["starts NATIVELY —<br/>the user's shell, no second interception"]
+  C --> X["immediate child exits"]
+  X --> V["revoke descendant relay writers;<br/>drain relays and finish"]
 ```
 
 **Invariant —** Instrumentation is **one-shot, at the agent's own command
@@ -158,10 +183,15 @@ outside the agent, which is what makes leaving the instrumentation on safe.
 shell's functions and options. The boundary being drawn is the **process**
 boundary, and sourcing does not cross it.
 
-**Invariant —** Exactly one steering connection exists per agent command, owned
-by the wrapper and bound to the immediate child's process identity. It survives
-that process forking and waiting, survives it replacing itself, and closes when
-it exits — even if a background descendant outlives it.
+**Invariant —** Shell-boundary steering is one pre-spawn operation: the wrapper
+reads the rendered inbox once and writes those bytes to its own error stream
+before it starts the immediate child. No steering connection follows the child.
+
+**Invariant —** The wrapper waits on that one immediate process identity while
+private relays carry its output. The wait survives the child forking, waiting,
+or replacing itself; when that identity exits, the wrapper revokes inherited
+relay writers, drains committed output, and finishes even if a background
+descendant remains alive.
 
 **Invariant —** Steering is written to the **wrapper's own error stream**, so a
 redirection performed inside a descendant cannot capture or silence it.
@@ -176,18 +206,20 @@ process.
 #### Cadence is reachability
 
 A live directive may be rendered at whichever admitted agent boundary occurs
-next. Vendor post-tool hooks keep non-shell tool spans reachable; the one-shot
-wrapper covers the next top-level shell command. Only a stretch that crosses
-neither boundary offers no delivery opportunity.
+next. Vendor post-tool hooks keep non-shell tool sequences reachable between
+calls; the one-shot wrapper covers the next top-level shell command. Only a
+stretch that crosses neither boundary offers no delivery opportunity.
 
 ```mermaid
 flowchart TD
   D["live steering in the disposable projection"] --> B{"next admitted boundary"}
   B --> T["vendor post-tool hook"]
   B --> C["next top-level shell command"]
-  T --> R["same suppressed readout"]
-  C --> R
-  R --> O["observation only;<br/>durable lifecycle stays live"]
+  T --> HS["locked hook-delivery suppression"]
+  HS --> HR["eligible post-tool readout"]
+  C --> SR["independent pre-spawn file read/write;<br/>may repeat while the rendering is nonempty"]
+  HR --> O["observation only;<br/>durable lifecycle stays live"]
+  SR --> O
   D --> N["neither boundary occurs"]
   N --> W["delivery waits;<br/>durable lifecycle stays live"]
   C --> BG["the agent backgrounds the work<br/>and ends its turn"]
@@ -197,9 +229,15 @@ flowchart TD
 ```
 
 **Invariant —** Boundary cadence is delivery cadence, not command cadence alone.
-Non-shell work remains reachable at vendor post-tool boundaries. If neither a
-post-tool hook nor a top-level shell-command boundary occurs, the directive
-remains live and its delivery waits without fabricating a lifecycle transition.
+Non-shell work remains reachable between calls at vendor post-tool boundaries.
+If neither a post-tool hook nor a top-level shell-command boundary occurs, the
+directive remains live and its delivery waits without fabricating a lifecycle
+transition.
+
+**Invariant —** The two boundaries share the same live directive content, not
+one suppression decision. Post-tool delivery consults its locked durable hook
+record; every top-level shell command independently rereads and rewrites the
+current rendered inbox, so it may repeat while that file remains nonempty.
 
 **Invariant —** Every turn exit vacates the lane, including exit code zero, and
 a backgrounded command's later exit is **not** a wake signal. Long work runs in

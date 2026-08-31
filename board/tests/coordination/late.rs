@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn active_claim_refuses_a_lease_whose_start_has_not_arrived() {
     let entry = claimed_entry("BOARD-a1", "todo");

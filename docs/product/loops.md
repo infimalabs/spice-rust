@@ -49,8 +49,9 @@ same entity.
 ## L-TASK — the unit of work
 
 **Intent.** A task moves through named phases, and every accepted advance is an
-attested journal fact. An advance that changes the tree additionally publishes
-one mutating landing.
+attested journal fact. New task-owned work additionally publishes one
+synthesized mutating landing; when the baseline already contains that work,
+integration advances or fast-forwards without a synthetic merge.
 
 Stored workflow status is one small machine:
 
@@ -107,9 +108,10 @@ flowchart TD
   A["accepted phase advance<br/>journal fact"] --> X{"flow exhausted?"}
   X -- no --> P["next phase;<br/>status remains pending"]
   X -- yes --> C["status becomes completed"]
-  A --> T{"tree changed?"}
-  T -- yes --> L["one attested<br/>landing / merge"]
-  T -- no --> J["no Git merge"]
+  A --> T{"tree consequence?"}
+  T -- "new task-owned tree" --> L["one attested synthesized<br/>baseline-first landing / merge"]
+  T -- "baseline already contains work" --> F["advance / fast-forward;<br/>no synthetic merge"]
+  T -- "no tree change" --> J["no Git merge"]
 ```
 
 **Invariants**
@@ -129,10 +131,12 @@ flowchart TD
    `claim::won`, not a `stolen` disposition.
 - Every phase transition is accepted into the durable task journal and appears
    through the board projection, including a transition that changes no tree.
-- A mutating phase advance publishes exactly one merge whose first parent is the
-   baseline; the tree is computed before the working tree is mutated, so the
-   visible terminal state is either the untouched pre-merge tree or a
-   recoverable merge. Never a half-installed conflict.
+- When integration must synthesize a new mutating landing, it creates exactly one
+   merge whose first parent is the baseline. A baseline that already contains the
+   work instead fast-forwards with no synthetic merge. The tree is computed before
+   the working tree is mutated, so the visible terminal state is either the
+   untouched pre-merge tree or a recoverable merge. Never a half-installed
+   conflict.
 - The publication carries `Task-Key`, `Task-Project`, `Task-Phase`,
    `Task-Session`. First-parent history is the ledger of mutating landings, not
    the authority for every phase transition.
@@ -166,8 +170,9 @@ agent completes a review phase.
 
 ## L-STEER — intent made durable
 
-**Intent.** Operator intent survives every failure between saying it and the
-agent answering it.
+**Intent.** After journal acceptance returns a live durable key, operator intent
+survives failures until the agent answers it. Before that boundary, the
+browser-local queued or sent prediction remains ephemeral.
 
 ```mermaid
 stateDiagram-v2
@@ -176,7 +181,7 @@ stateDiagram-v2
   live --> declined: agent NACK
   live --> canceled: operator cancellation
   live --> lapsed: lapse transaction accepted
-  live --> deadlettered: delivery cannot complete
+  live --> deadlettered: PendingInbox automatic wake is Unstarted or terminal-class failed
   lapsed --> live: recovery retains presentation stage
   deadlettered --> live: recovery retains presentation stage
   acked --> [*]
@@ -189,9 +194,11 @@ flowchart LR
   J["journal standing is live<br/>with retained presentation stage"] --> P["disposable inbox projection"]
   P --> V["vendor post-tool boundary"]
   P --> S["next top-level shell boundary"]
-  V --> O["one readout with shared suppression"]
-  S --> O
-  O --> U["observation only;<br/>journal standing and stage unchanged"]
+  V --> H["locked durable hook suppression"]
+  H --> VR["eligible post-tool readout"]
+  S --> SR["independent rendered-file read;<br/>may repeat while nonempty"]
+  VR --> U["observation only;<br/>journal standing and stage unchanged"]
+  SR --> U
 ```
 
 **Invariants**
@@ -207,24 +214,32 @@ flowchart LR
    everywhere acknowledgement is taught.
 - Unanswered intent escalates on a stable lineage key. A resend
    is the same intent insisting, not a new intent.
-- Any still-live directive may move to `deadlettered` through an accepted
-   transaction; prior delivery is not a prerequisite.
+- Only a `PendingInbox` automatic wake that returns `Unstarted` or a
+   terminal-class start failure moves every pending directive on that lane to
+   `deadlettered` through an accepted transaction. Each retains its live
+   presentation stage; prior delivery is not a prerequisite. Held-claim,
+   capacity, operator-start, nonterminal-error, and arbitrary delivery-failure
+   paths do not deadletter.
 - Delivery is eligible at each admitted agent boundary: the vendor's post-tool
-   hook and the next top-level shell command. Both consume the same durable
-   delivery decision and suppression state; descendant shells remain unmodified
-   and cannot duplicate the wrapper.
+   hook and the next top-level shell command. They share live content, not a
+   suppression decision: the hook consults its locked durable delivery record,
+   while each shell command independently rereads the rendered inbox and may
+   repeat it while nonempty. Descendant shells remain unmodified and cannot
+   duplicate the wrapper.
 - Submit cost is independent of backlog depth; the journal allocates identity
    without reading queued bodies.
 
-**Policy** — 24h lapse threshold; every priority class follows the same named
+**Policy** — 24h lapse threshold; every directive follows the same named
 escalation cadence.
 
 **Incidental** — the inbox projection's file format and the key alphabet.
 
 **Acceptance** — before the authority returns a live durable key, the
-browser-local queued or sent prediction may be lost with the browser. After the
-key returns, kill the browser or the agent: the item survives and remains
-pending. Answer it: the count drops by exactly one.
+browser-local queued or sent prediction may be lost with the browser; durability
+has not crossed. After the key returns, kill the browser or the agent: the item
+survives and remains pending. Answer only that live key: the count drops by one.
+A response that dispositions several live keys drops it by the number
+dispositioned.
 
 ---
 
@@ -233,7 +248,9 @@ pending. Answer it: the count drops by exactly one.
 **Intent.** Capacity follows work. Lifecycle authority may seat one new occupant
 in a vacant lane when derived eligible work warrants it. Every occupant turn
 ends by vacating its lane; only a later serialized lifecycle decision may launch
-another. The operator never manages agent count by hand.
+another. Ordinary capacity therefore needs no hand-managed agent count; the
+explicit operator-authorized lane-wake route remains available, including for a
+Drain lane.
 
 The detached supervisor records the phase of one process turn:
 
@@ -350,6 +367,7 @@ flowchart LR
   F -->|"team split"| OS["occupied"]
   O -.->|"Close team"| H["hidden<br/>(this browser only)"]
   F -.->|"Close team"| H
+  H -.->|"Agents → Open team"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
 ```
 
 **Invariants**
@@ -372,8 +390,9 @@ flowchart LR
    re-entering at the tail.
 - `Close team` only inserts the lineage into that browser reducer's hidden set.
    It sends no authority command, changes no membership, and neither inspects
-   nor erases a draft. A fresh browser mount renders the authoritative
-   subscription set again.
+   nor erases a draft. A closed grouped lineage remains restorable during that
+   mount through **Agents → Open team**; a fresh mount independently renders the
+   authoritative subscription set again.
 - Message order is a pure function of the messages, never of member
    order. Reordering composers must not reorder the stream.
 
@@ -399,7 +418,9 @@ stateDiagram-v2
     composing --> detached: submit detaches the draft
     detached --> pending: optimistic pending +1
     pending --> pending: queue drains serially
-    pending --> reconciled: accepted — retired by backend key
+    pending --> accepted: live durable key returned — prediction remains in floor
+    pending --> reconciled: terminal standing or key already covered
+    accepted --> reconciled: post-acceptance read covers directive and key
     pending --> composing: rejected — drafts restored intact
     reconciled --> [*]
     note right of pending
@@ -411,15 +432,18 @@ stateDiagram-v2
 
 **Invariants**
 
-- One shard per member; each shard is a concrete send address. Nothing
-   is ever broadcast to a team.
+- One horizontal composer column per member, in member order; the strip owns
+   east/west overflow. Each shard is a concrete send address. Nothing is ever
+   broadcast to a team.
 - A draft is detached at submit. A typed wake, residency, or write refusal or
    fault restores it intact — including attachments and quote drafts,
    concatenated newest-last. Transport loss requeues in memory instead.
 - Sends drain serially per lane. A rejection stops the queue and returns
    every undelivered draft.
-- The pending count is a floor over backend truth, retired by key
-   identity — never by decrement, never by timeout.
+- The pending count is a floor over backend truth. A live acceptance retains its
+   prediction in that floor until a post-acceptance read covers the same directive
+   and key; only then does captured identity retire it — never decrement, never
+   timeout.
 - Unsubmitted intent is protected on page exit: an unsafe draft or queued
    submission installs the browser's `beforeunload` confirmation guard.
    Browser-local `Close team` only suppresses rendering and does not erase it.
@@ -431,7 +455,9 @@ stateDiagram-v2
 
 **Policy** — up to 8 attachments per message, 8 MiB each after decoding.
 
-**Incidental** — the strip's geometry, which fields show, truncation, iconography.
+**Incidental** — visual styling, concrete column and track sizing, truncation,
+and iconography. Horizontal ordered columns, strip-owned east/west overflow,
+and the age, run-state, pending-count, and claimed-task field set are fixed.
 
 **Acceptance** — after the browser accepts the submission action, a transport
 loss requeues the submission for socket replay rather than returning it to the
@@ -490,8 +516,8 @@ flowchart TD
    keeps cards readable in ordinary base flow but commits no lattice geometry
    or fingerprint until a measurable width arrives.
 
-**Policy** — 12 tracks, wide tier at twice the width when a card measures tall,
-freeze depth 2, resize debounce 200ms.
+**Policy** — wide tier at twice the width when a card measures tall, freeze
+depth 2, resize debounce 200ms.
 
 **Incidental** — track count, span ladder, the placement key's tie-breakers,
 tween duration, the entire visual style.
@@ -513,16 +539,18 @@ flowchart LR
   J["reader's frame of reference"] --> Movement["motion names real change<br/>off-top reading stays anchored"]
   J --> Overlays["overlays never displace"]
   J --> LiveText["live text never resizes"]
-  J --> Counts["counts never reflow"]
+  J --> FixedCounts["fixed-slot live counts<br/>never reflow"]
+  J --> TaskPill["content-sized task pill<br/>may resize with digits"]
   J --> Identity["identity never re-measures"]
 ```
 
 - **Movement means change.** Any motion the reader sees must correspond to
    something that actually changed. Re-render is not change.
-- **Affordances open out of flow.** Every menu, picker, overlay, and drag
-   ghost is positioned out of the document flow, so opening one cannot reflow
-   the board. This is why they read as *in-place*. The single in-flow menu is
-   bounded to its own shard and can never disturb a sibling.
+- **Affordances open out of flow.** Every revealed menu, picker, overlay, and
+   drag-ghost surface opens out of the document flow, so revealing one cannot
+   reflow the board. This is why they read as *in-place*. The in-flow agent-menu
+   `<details>` control remains bounded to its own shard and cannot disturb a
+   sibling.
 - **Live text lives in fixed slots.** Relative ages schedule only the next
    instant their visible spelling can change: each second while seconds-old,
    then at minute, hour, or day boundaries, and never after saturation. Every
@@ -531,9 +559,11 @@ flowchart LR
 - **Task counts spell all three slots.** A public pill renders one unpadded
    `ready · active · unavailable` string. Its width is content-driven, so a
    digit-width change may resize it.
-- **Presentation changes never touch identity.** Recolouring, attribution
-   toggles, and member-count changes must not enter any fingerprint that would
-   force a re-measure.
+- **Presentation changes do not directly touch card identity or style.**
+   Recolouring and attribution toggles do not force a re-measure. Member count
+   remains outside card identity and style, but it changes lineage weight; when
+   that changes the settled host width, one full geometry replay is the
+   legitimate correction.
 - **Programmatic scroll is not a gesture.** Compensation and restore must
    be excluded from anything that reads user intent, or the surface competes
    with itself.
@@ -581,14 +611,18 @@ block-beta
 - **The team rail's badges are the summary.** Compose shows pending direction, Tasks
    shows active work, Metrics shows held claims, and Info shows member count. A badge is only present when its
    count is non-zero, so an empty rail means a quiet team.
-- **The member shards are the identity layer.** Every question of *who* — which
-   agent, which branch, which task, which vendor, how stale — is answered there,
-   not in the stream.
-- **The mosaic is the evidence layer.** It answers *what happened*, attributed
-  explicitly to the watchband card that owns it; accent is redundant continuity.
+- **The member shards are the identity and composer-address summary.** Across
+   Compose and Info they expose the concrete lane/worktree address, agent label,
+   vendor identity, liveness or age, pending direction, and held task as
+   applicable; no individual pane repeats the whole set.
+- **The mosaic is the evidence layer.** It answers *what happened*. Every agent
+   and compaction card repeats explicit short author/lane plus worktree-leaf
+   attribution, including unnamed members; accent is redundant continuity rather
+   than sole identity.
 - **Autonomy is never implicit.** The submit control carries the lifetime's own
   name, so intent cannot be sent without its autonomy being visible in the same
   gesture.
 
-**Incidental** — orientation, tiling rules, iconography, colour, and member-shard
-orientation.
+**Incidental** — console tiling rules, iconography, colour, and concrete member
+column sizing. The member shards remain horizontal ordered columns with
+strip-owned east/west overflow.

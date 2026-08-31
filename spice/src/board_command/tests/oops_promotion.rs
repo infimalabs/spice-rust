@@ -145,7 +145,7 @@ fn target_oops_dependency_refuses(
         "board.test",
         &claimed_oops
             .born()
-            .expect("parked fixture carries inception"),
+            .expect("parked fixture carries a birth stamp"),
     );
     let known = [prerequisite.clone(), unclaimed_oops.clone()];
     let unknown = TaskHandle::for_project("board.test", &stamp("OOPS-unknown01"));
@@ -191,7 +191,7 @@ fn prerequisite_oops_dependency_refuses(
         "board.test",
         &unclaimed_oops
             .born()
-            .expect("parked fixture carries inception"),
+            .expect("parked fixture carries a birth stamp"),
     );
     let known = [prerequisite.clone()];
     let after = [prerequisite.clone(), forged_oops.clone()];
@@ -534,7 +534,7 @@ fn wake_into_is_the_only_unclaimed_oops_project_exit() {
     };
     let promoted = TaskHandle::for_project(
         "board.test",
-        &parked.born().expect("fixture handle carries inception"),
+        &parked.born().expect("fixture handle carries a birth stamp"),
     );
     assert_eq!(answer.task, promoted);
     assert_eq!(answer.status, "promoted");

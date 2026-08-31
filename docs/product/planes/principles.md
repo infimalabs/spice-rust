@@ -16,8 +16,9 @@ The rules that generate everything else. If you keep one page, keep this.
 - **Semantic retirement.** Nothing is retired by being read. Acceptance and
    refusal are equally first-class and equally terminal.
 - **One visible path.** One tested current command and data vocabulary is visible.
-   Durable data has one ordered forward migration into the current schema, and
-   executable behavior uses that schema directly.
+   Each durable authority gives every admitted historical shape one unambiguous
+   direct or sequential route into the current schema, and executable behavior
+   uses only that current schema.
 - **Fail loudly at authoritative boundaries.** A component reporting authority
    that read nothing must not produce the same output as one that read
    everything. Silence is confined to non-authoritative decoration and
@@ -40,14 +41,14 @@ The rules that generate everything else. If you keep one page, keep this.
 | Layer | Verdict |
 | --- | --- |
 | Language, framework, storage engines | **free** |
-| Visual design, colour, layout, iconography | **free** |
+| Visual styling, colour, concrete sizing, iconography | **free** |
 | Transport framing, serialization | **free** |
-| Track counts, span ladders, tween timings | **free** |
+| Track counts, span ladders, tween timings | **free** where no fixed ordering, overflow, placement, replay, or scroll-ownership rule constrains them |
 | Phase *names*, handle alphabet, key derivation | **free** |
 | One authority per fact; epoch/sequence-bound snapshot and resume freshness | **fixed** |
 | Durable-before-delivered; semantic retirement | **fixed** |
 | Claim exclusivity, accepted lapse, and exact explicit steal with ownership refusal | **fixed** |
-| The three git boundaries; agents never push or pull | **fixed** |
+| The three agent-lane integration git boundaries; agents never push or pull | **fixed** |
 | Landing atomicity and footprint containment | **fixed** |
 | Cross-review preferred, never required | **fixed** |
 | Lane is not agent | **fixed** |

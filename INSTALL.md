@@ -1,9 +1,10 @@
 # Installing Spice
 
-Installation is a digest-bound authority change. Preview observes the complete
-plan without writing. Applying that exact preview publishes the appliance and
-selects its repository-wide Git hooks. Neither operation stops, drains,
-imports, or deletes foreign processes or state.
+Installation is a digest-bound authority change. Preview privately resolves the
+complete receipt-owned plan without writing and prints its ordered byte-free
+public stage summary with a canonical digest. Applying that exact digest
+publishes the appliance and selects its repository-wide Git hooks. Neither
+operation stops, drains, imports, or deletes foreign processes or state.
 
 ## Development task boundary
 
@@ -21,49 +22,123 @@ explicit until activation establishes the bare `spice` identity.
 ## Build and preview
 
 ```sh
-cargo build --locked -p spice || exit
+cargo build --locked --target-dir target -p spice || exit
 target/debug/spice install || exit
 ```
 
 Build immediately before preview so the planner and source agree.
-`cargo run --locked -p spice -- install` is the rebuild-and-preview equivalent.
+`cargo run --locked --target-dir target -p spice -- install` is the
+rebuild-and-preview equivalent.
 
-Preview prints the complete digest-bound plan and changes nothing. The plan
-publishes the executable, bootstrap skill, supervised-shell entry/static/wrapper
-assets, and three Git hooks under the Git common directory's `.spice-install`,
-clears admitted worktree-local hook overrides, and switches the common
-`core.hooksPath` last.
+Preview prints the ordered byte-free public stage summary and canonical digest and
+changes nothing. The private digest-bound plan publishes the executable,
+bootstrap skill, supervised-shell entry/static/wrapper assets, and three Git
+hooks under the Git common directory's `.spice-install`, clears admitted
+worktree-local hook overrides, and switches the common `core.hooksPath` last.
 
 ## Operator-authorized authority switch
 
 Stop unless the operator has explicitly authorized repository-wide activation.
 The operation has two postconditions: every effective `core.hooksPath` names
-the installed hooks, and the first `spice` on the supervised search path is
-`$SPICE_BIN`.
+the installed hooks, and the first `spice` on the supervised search path is the
+admitted installed wrapper, whose selected route executes `$SPICE_BIN`. The
+binary itself remains a separate exact path and never enters supervised
+`PATH`.
 
-Inspect every declaring scope first. A conflicting or foreign hook selection
-refuses without writing. After authorization, replace each selected foreign
-value with the recognized tracked `.githooks` value, preview again, and apply
-only the newly printed digest. Change a worktree-local scope only when that
-worktree already declares an override named by the refusal; never create
-worktree overrides merely to standardize linked worktrees:
+Inspect every declaring scope even when preview succeeds. Repeated identical
+recognized values from several scopes are admissible at preview, but apply
+replaces only the repository-local value; a retained system, global, or command
+value would then make the next preview observe a mixed selection. Require those
+higher scopes to contribute no value. Preserve admitted absence and repeated
+recognized values in common-local and worktree-local scope exactly for reversal;
+replace either only when preview refuses its foreign selection.
+
+Start with observation. Exit status 1 from either `--get-all` means the key is
+absent. The unscoped command exposes every selected origin; the local command
+isolates the repository's common-local declaration:
 
 ```sh
 SPICE_REPO=/absolute/path/to/this/worktree
-SPICE_COMMON=$(git -C "$SPICE_REPO" rev-parse --path-format=absolute --git-common-dir) || exit
+SPICE_COMMON=$(/usr/bin/git -C "$SPICE_REPO" rev-parse --path-format=absolute --git-common-dir) || exit
 SPICE_BIN="$SPICE_COMMON/.spice-install/bin/spice"
+SPICE_HOOKS="$SPICE_COMMON/.spice-install/git-hooks"
 cd "$SPICE_REPO" || exit
-git config --local core.hooksPath .githooks || exit
+if /usr/bin/git config --show-origin --show-scope --get-all core.hooksPath; then
+  :
+else
+  spice_config_status=$?
+  test "$spice_config_status" -eq 1 || exit "$spice_config_status"
+fi
+if /usr/bin/git config --local --show-origin --get-all core.hooksPath; then
+  :
+else
+  spice_config_status=$?
+  test "$spice_config_status" -eq 1 || exit "$spice_config_status"
+fi
 ```
 
-When preview names an existing worktree-local override, normalize that exact
-worktree before producing the final preview. Repeat this pair for every named
-override; do not run it when preview names none:
+Resolve every selected system, global, or command-scope declaration in its own
+authority so it contributes no value; do not retain it after rewriting it to
+`.githooks`, because apply selects `$SPICE_HOOKS` in repository-local scope.
+Only when independent inspection locates the refused foreign value in the
+common-local scope, replace that scope:
 
 ```sh
-SPICE_OVERRIDE_WORKTREE=/absolute/path/to/the/worktree-named-by-preview
-git -C "$SPICE_OVERRIDE_WORKTREE" config --worktree core.hooksPath .githooks || exit
+/usr/bin/git config --local --replace-all core.hooksPath .githooks || exit
 ```
+
+Distinct worktree scopes exist only when common-local
+`extensions.worktreeConfig`, after trailing ASCII whitespace is removed, is
+`true` case-insensitively. No other Git boolean spelling enables this branch.
+In that case, enumerate the paths printed by `/usr/bin/git worktree list
+--porcelain` and repeat the inner inspection for each one.
+The inspection treats an absent flag or override as absence and propagates every
+other Git failure; it does not mutate any scope:
+
+```sh
+if spice_worktree_config=$(/usr/bin/git config --local --get extensions.worktreeConfig); then
+  spice_ascii_tab=$(printf '\011')
+  spice_ascii_cr=$(printf '\015')
+  spice_ascii_vtab=$(printf '\013')
+  spice_ascii_formfeed=$(printf '\014')
+  while :; do
+    case "$spice_worktree_config" in
+      *' '|*"$spice_ascii_tab"|*"$spice_ascii_cr"|*"$spice_ascii_vtab"|*"$spice_ascii_formfeed")
+        spice_worktree_config=${spice_worktree_config%?}
+        ;;
+      *) break ;;
+    esac
+  done
+  case "$spice_worktree_config" in
+    [Tt][Rr][Uu][Ee])
+      SPICE_INSPECT_WORKTREE=/absolute/path/to/an/inspected/worktree
+      if /usr/bin/git -C "$SPICE_INSPECT_WORKTREE" config --worktree --show-origin --get-all core.hooksPath; then
+        :
+      else
+        spice_config_status=$?
+        test "$spice_config_status" -eq 1 || exit "$spice_config_status"
+      fi
+      ;;
+  esac
+else
+  spice_config_status=$?
+  test "$spice_config_status" -eq 1 || exit "$spice_config_status"
+fi
+```
+
+Replace a worktree scope with `.githooks` only when that inspection locates the
+exact refused foreign value in that scope. Leave an absent scope, repeated
+identical `.githooks` values, or repeated identical `$SPICE_HOOKS` values
+untouched; never create an override merely to standardize linked worktrees:
+
+```sh
+SPICE_OVERRIDE_WORKTREE=/absolute/path/to/the-worktree-with-the-refused-value
+/usr/bin/git -C "$SPICE_OVERRIDE_WORKTREE" config --worktree --replace-all core.hooksPath .githooks || exit
+```
+
+After any deliberate scope change, run preview again and apply only its newly
+printed digest. When the initial preview succeeded and inspection changed no
+scope, apply its digest directly.
 
 Now create the final preview, apply its exact digest, and verify the
 repository-wide authority unconditionally:
@@ -74,7 +149,7 @@ target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW || exit
 SPICE_HOOKS="$SPICE_COMMON/.spice-install/git-hooks"
 test -x "$SPICE_BIN" || exit
 /usr/bin/cmp target/debug/spice "$SPICE_BIN" || exit
-test "$(git config --local --get core.hooksPath)" = "$SPICE_HOOKS" || exit
+test "$(/usr/bin/git config --local --get core.hooksPath)" = "$SPICE_HOOKS" || exit
 ```
 
 After apply, verify every worktree that was normalized. Repeat the same pair
@@ -82,7 +157,7 @@ with each exact path; do not run it when no override was normalized:
 
 ```sh
 SPICE_OVERRIDE_WORKTREE=/absolute/path/to/the-worktree-normalized-above
-test "$(git -C "$SPICE_OVERRIDE_WORKTREE" config --get core.hooksPath)" = "$SPICE_HOOKS" || exit
+test "$(/usr/bin/git -C "$SPICE_OVERRIDE_WORKTREE" config --get core.hooksPath)" = "$SPICE_HOOKS" || exit
 ```
 
 Give the operator shell the same executable identity and verify it:
@@ -128,26 +203,33 @@ appliance's discovery and lock authority.
 
 ## Upgrade
 
-Use one freshly built executable for preview and apply:
+Publish the source-bound Canvas generation, then use one freshly built
+executable for preview and apply:
 
 ```sh
-"$SPICE_BIN" dev cargo -- build --locked -p spice || exit
+"$SPICE_BIN" dev xtask -- app || exit
+"$SPICE_BIN" dev cargo -- build --locked --target-dir target -p spice || exit
 target/debug/spice install || exit
 target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW || exit
 ```
 
 Do not unapply first. An intact completed receipt seeds an in-place refresh;
-receipt edits, asset drift, and interrupted operations refuse. Refresh publishes
-assets, activates hooks last, and retains each operation's original pre-install
-image while binding the installed image it supersedes. Ordinary reversal
-therefore restores the filesystem observed by the first install and publishes
-the current terminal receipt. Only migration from the admitted version-7
-receipt carries a compressed rollback snapshot; reversing that migration
-restores the exact pre-migration assets and version-7 receipt. Snapshot blobs
-remain inert unless the receipt authenticates them.
+receipt edits, fixed-asset drift, and interrupted operations refuse. Binary-only
+byte or mode drift beneath the recorded parent is the sole digest-bound
+reconciliation input. Refresh publishes assets, activates hooks last, and
+retains each operation's original pre-install image while binding the installed
+image it supersedes. Ordinary reversal therefore restores the filesystem
+observed by the first install and publishes the current terminal receipt. Only
+migration from the admitted version-7 receipt carries a compressed rollback
+snapshot; reversing that migration restores the exact pre-migration assets and
+version-7 receipt. Snapshot blobs remain inert unless the receipt authenticates
+them.
 
-The supervising shortcut also restores the resident; `--no-resident` omits that
-lifecycle:
+The manual refresh above is complete only when no resident is published. It does
+not replace a running resident's in-memory generation. When one is running, use
+the supervising shortcut: it stops the exact published resident before refresh
+and starts the newly installed executable afterward. `--no-resident` explicitly
+omits that lifecycle:
 
 ```sh
 "$SPICE_BIN" dev xtask -- install --port PORT
@@ -161,9 +243,13 @@ binary before selected-source verification.
 
 ## Ownership and reversal
 
-Preview changes nothing. Apply changes only receipt-owned assets and hook
-authority; it does not delete foreign processes or state. Unapply follows the
-receipt's exact reversal plan:
+Preview changes nothing. After admitting the exact preview digest, apply may
+first run one bounded maintenance pass that reclaims only recognized stale
+install-record publications and unreferenced rollback blobs. Explicit
+`--unapply` admits that same maintenance pass before reversal. Outside that
+Spice-owned pre-plan-effect maintenance, apply changes only receipt-owned assets
+and hook authority, and unapply follows the receipt's exact reversal plan.
+Neither direction deletes foreign processes or state:
 
 ```sh
 "$SPICE_BIN" install --unapply

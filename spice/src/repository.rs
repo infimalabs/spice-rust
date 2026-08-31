@@ -63,7 +63,7 @@
 //!   that neither authority surface opens.
 //! * **Artifacts and dynamically named locks** remain Rust-only because their
 //!   parents are below the common exclusive `.spice-rs` root.
-//!   `artifacts/tasks/<INCEPTION-STAMP>/` uses the board's sole task identity;
+//!   `artifacts/tasks/<BIRTH-STAMP>/` uses the board's sole task identity;
 //!   the rendered handle never becomes a second filesystem authority.
 //! * **Installed hooks, skills, and binaries** stay in the already-disjoint
 //!   `.spice-install` appliance. The install receipt remains runtime state at

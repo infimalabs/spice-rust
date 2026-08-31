@@ -112,6 +112,8 @@ impl Surface {
                     .map(|trigger| trigger.as_str().to_owned())
                     .collect(),
                 message: taste.message().to_owned(),
+                enabled: taste.enabled(),
+                scopes: taste.scopes().clone(),
             })
             .collect();
         let mining_threshold = loaded.resolved().root().policy().taste_mining_threshold();
@@ -139,6 +141,8 @@ struct TasteDefinition {
     name: Name,
     words: Vec<String>,
     message: String,
+    enabled: bool,
+    scopes: gate::ScopeSelector,
 }
 
 /// Bare `spice taste` answer.
@@ -163,6 +167,8 @@ struct TasteRow {
     name: Name,
     words: Vec<String>,
     message: String,
+    enabled: bool,
+    scopes: gate::ScopeSelector,
     fires: Vec<TasteFire>,
     vendors: Vec<VendorTally>,
     recurrence: Vec<Recurrence>,
@@ -358,7 +364,7 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
                     .join(", "),
             ),
             Some(name.to_string()),
-            "read the current tracked taste set and name one active taste",
+            "read the current tracked taste set and name one tracked taste",
         );
     };
     let declines = cited(
@@ -385,10 +391,12 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
     );
     let words = serde_json::to_string(&row.words).expect("taste words encode as JSON");
     let message = serde_json::to_string(&row.message).expect("taste message encodes as JSON");
+    let scopes = render_scopes(&row.scopes);
     let description = format!(
         concat!(
             "Current tracked row:\n",
-            "[taste.{name}]\nwords = {words}\nmessage = {message}\n\n",
+            "[taste.{name}]\nwords = {words}\nmessage = {message}\n",
+            "enabled = {enabled}\nscopes = {scopes}\n\n",
             "Tracked source: {location}\nTracked generation: {digest}\n\n",
             "Recent declined loci:\n{declines}\n\n",
             "Historical cleared loci:\n{clearances}"
@@ -396,6 +404,8 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
         name = row.name,
         words = words,
         message = message,
+        enabled = row.enabled,
+        scopes = scopes,
         location = reply.body.provenance.location,
         digest = reply.body.digest,
         declines = declines,
@@ -424,6 +434,26 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
             depends: Vec::new(),
         },
     )
+}
+
+fn render_scopes(scopes: &gate::ScopeSelector) -> String {
+    let axes = [
+        ("paths", scopes.paths()),
+        ("extensions", scopes.extensions()),
+        ("vendors", scopes.vendors()),
+        ("models", scopes.models()),
+        ("phases", scopes.phases()),
+    ];
+    let entries = axes
+        .into_iter()
+        .filter(|(_, values)| !values.is_empty())
+        .map(|(name, values)| {
+            let values = serde_json::to_string(values).expect("taste scopes encode as JSON");
+            format!("{name} = {values}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{ {entries} }}")
 }
 
 fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), Outcome<B>> {
@@ -508,6 +538,8 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
                 name: taste.name.clone(),
                 words: taste.words.clone(),
                 message: taste.message.clone(),
+                enabled: taste.enabled,
+                scopes: taste.scopes.clone(),
                 vendors: tally(&fires),
                 recurrence: recurrence(&fires),
                 fires,

@@ -3,8 +3,9 @@
 `build.sh` seals the `aarch64-apple-darwin` half of the release appliance: the
 `proof` crate's `spice-proof-darwin-runner` binary, built with one compiled pin
 document naming the exact source commit, the vendored closure of `Cargo.lock`,
-the SDK, developer, and Cargo cache directories, and the path and bytes of
-every tool it will run. Seal the runner from the repository root:
+the SDK, developer, and Cargo cache directories, and the path and bytes of the
+five directly selected boundary tools: Cargo, rustc, cargo-mutants, Git, and
+`sandbox-exec`. Seal the runner from the repository root:
 
 ```sh
 dist/proof-runner/build.sh
@@ -48,11 +49,12 @@ the parent node's metadata and three paths are then read back — the workspace,
 the Git common directory the runner resolved, and the run's own scratch root.
 The literal parent allowance lets Cargo and the compiler resolve those admitted
 descendants without revealing the parent's entries or any peer's metadata or
-bytes. Only reading is given back there. The one path the run may write is the
-scratch root, named by the last rule in the profile, so a scratch root that
-happens to sit in the neighbourhood survives the denial while the workspace and
-its repository stay read-only, which they already were. Denying reads alone
-would have left the sharper half open: a
+bytes. Only reading is given back there. Within that denied workspace,
+Git-common, and workspace-parent neighbourhood, the one restored write
+allowance is the scratch root, named by the last rule in the profile, so a
+scratch root that happens to sit in the neighbourhood survives the denial while
+the workspace and its repository stay read-only, which they already were.
+Denying reads alone would have left the sharper half open: a
 run that cannot see a peer's source can still truncate it, and the receipt would
 name neither. The common directory is read back because a linked worktree
 keeps it beside the workspace rather than inside it, so denying the

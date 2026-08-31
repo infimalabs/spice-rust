@@ -31,4 +31,6 @@ macro_rules! fold_registry {
     };
 }
 
+// Textual inclusion is the contract here: the same declaration-only registry
+// feeds build-time admission and the runtime inventory without a second copy.
 include!("../src/registry.rs");

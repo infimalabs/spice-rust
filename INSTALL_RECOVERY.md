@@ -27,8 +27,8 @@ Inspect the active surface and durable ruling with:
 ```
 
 If the digest is unknown, restart the resident so it pends the exact policy
-surface. Review the reported locations, bytes, and command words, then grant
-only that digest:
+surface. Review the reported locations, inspect their exact bytes and command
+words, then grant only that digest:
 
 ```sh
 "$spice_rs" trust grant DIGEST
@@ -40,19 +40,26 @@ fabricate journal state, guess a digest, or treat a failed command as approval.
 
 ## Damaged appliance
 
-From the selected worktree root, build the selected source and run that exact
-`target/debug/spice install` preview. Apply only its fresh digest when it admits repair. Receipt, binary,
-hook, fixed-asset, and other-build failures are distinct. Drift may refuse
-instead of overwriting evidence; preserve the replacement and restore
-receipt-owned bytes, or reverse with the owning release. Never substitute a
-nearby executable.
+From the selected worktree root, run
+`cargo build --locked --target-dir target -p spice` and then that exact
+`target/debug/spice install` preview. Apply only its fresh digest when it admits
+repair. Receipt, binary, hook, fixed-asset, and other-build failures are
+distinct. Drift may refuse instead of overwriting evidence; preserve the
+replacement and restore receipt-owned bytes, or reverse with the owning
+release. Never substitute a nearby executable.
 
 ## Foreign hook selection
 
-Inspect `git config --show-origin --get-all core.hooksPath` in every linked
-worktree. Preserve each value until the operator chooses one owner for the
-repository, then normalize admitted scopes to `.githooks`, preview, and apply.
-Never clear an unknown value merely to pass admission.
+Use the mandatory scope inspection in
+[INSTALL.md](INSTALL.md#operator-authorized-authority-switch), including
+`--show-scope`, in every linked worktree. System, global, and command scopes must
+contribute no value. Preserve absent or repeated recognized common-local and
+worktree-local vectors exactly; replace only the refused foreign value in its
+actual common-local or worktree-local scope. Inspect distinct worktree-local
+scope only when common-local `extensions.worktreeConfig`, after trailing ASCII
+whitespace is removed, is `true` case-insensitively; no other Git boolean
+spelling enables it. Preview again after any change and apply only the new
+digest. Never clear an unknown value merely to pass admission.
 
 ## Repository relocation
 

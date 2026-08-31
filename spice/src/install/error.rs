@@ -171,7 +171,7 @@ fn fmt_git_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> fm
     match error {
         InstallError::ForeignHookPath { worktree, observed } => write!(
             formatter,
-            "refusing to replace foreign core.hooksPath {observed:?} in {}; keep Spice and predecessor hooks in separate worktrees",
+            "refusing to replace foreign core.hooksPath {observed:?} in {}; one repository must converge on one hook owner",
             worktree.display(),
         ),
         InstallError::GitConfigurationDrift {

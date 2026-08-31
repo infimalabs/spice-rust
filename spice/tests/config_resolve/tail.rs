@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn diagnostics_accumulate_unknown_policy_and_malformed_values() {
     let error = resolve(documents(

@@ -22,8 +22,9 @@ flowchart LR
 ```
 
 **Invariant —** Asks are sourced from the **steering plane**, not from
-transcript user messages. Transcript evidence contributes only what happened
-after directive recovery; it never supplies or backfills the ask.
+transcript user messages. Transcript evidence contributes only the
+what-happened class; it never supplies or backfills the ask, and no cutoff is
+inferred from directive recovery or publication.
 
 **Invariant —** Recovery shows the *recovered ask*, parsed from compaction
 intent — never continuation boilerplate, never an assistant-text fallback
@@ -62,9 +63,10 @@ were the directive.
 carries the key needed to answer it. A directive an agent cannot retire is a
 reminder rather than a request.
 
-**Invariant —** A directive whose time cannot be derived from its own identity
-is **dropped**, not stamped with a substitute. A guessed timestamp sorts, which
-is exactly what makes it dangerous.
+**Invariant —** A pending directive uses the publication instant recorded in its
+authoritative steering head. If the authoritative head set is invalid, the
+steering probe is unknown; the briefing does not silently drop or restamp one
+directive.
 
 **Invariant —** Only the actor's own claim is enumerated; peers' active work is
 a count. The briefing orients one agent, and another agent's task is not this
@@ -74,21 +76,25 @@ agent's business.
 
 ```mermaid
 flowchart TD
-  subgraph SELECT["select the bounded window"]
+  subgraph SELECT["select the window"]
     direction LR
     T["transcript"] --> W["split at compaction<br/>boundaries"]
-    W --> L["keep the most recent,<br/>up to a ceiling"]
+    W --> B["briefing: newest 3<br/>compaction boundaries"]
+    W --> S["sweep: caller --count<br/>normalized to at least 1"]
   end
   subgraph RENDER["shape the readout"]
     direction LR
-    R["rank by declared rule<br/>per class"] --> D["collapse identical rows,<br/>reporting how many"]
-    D --> O["render, declaring<br/>the window"]
+    R["preserve ordered<br/>turn and dialogue rows"] --> O["render the selected<br/>window"]
   end
-  L --> R
+  B --> R
+  S --> R
 ```
 
-**Invariant —** The window is bounded by a fixed maximum number of recent
-boundaries. A larger request is **clamped and says so**, not honoured.
+**Invariant —** A briefing asks for the three most recent compaction boundaries
+and reports that fixed request beside the number actually selected. A sweep has
+a different contract: a syntactically valid nonpositive `--count` normalizes to
+one, and any larger process-representable count is accepted. Rust imposes and
+reports no upper clamp.
 
 **Invariant —** The briefing declares which rule set its window, where the
 window starts, and how many boundaries were requested versus selected. A reader
@@ -98,13 +104,16 @@ who cannot tell what was examined cannot tell what the absence of a fact means.
 observed in the material, not against wall-clock now. A transcript examined a
 day later has the same shape it had when it was written.
 
-**Invariant —** Where several bounds apply to one selection, the **narrowest**
-wins.
+**Invariant —** An explicit `--start` supplies the horizon start and takes
+precedence over the count-derived start, even when it reaches farther back.
+`--end` filters the boundary set before the newest requested count is selected.
+The remaining content filters apply within those temporal bounds.
 
-**Invariant —** Windows **tile contiguously** through the present, so no
-activity falls outside every window. An exchange straddling a boundary belongs
-to both adjacent windows; a session that never compacted still yields exactly
-one window, labelled with why it has none inside it.
+**Invariant —** Windows **tile contiguously** through the selected horizon, so
+matching activity inside that horizon falls in a window. An exchange straddling
+a boundary belongs to both adjacent windows; a session that never compacted
+still yields exactly one window respecting explicit bounds, labelled with why
+it has no compaction anchor.
 
 **Invariant —** Only a compaction that actually severed context is a boundary.
 
@@ -112,51 +121,63 @@ one window, labelled with why it has none inside it.
 is excluded from that window's contents. A window holds the same records however
 much surrounding material the reader had to consult to place it.
 
-**Invariant —** Boundary discovery reads **backward from the end** and stops as
-soon as it has enough, so the cost of recovery scales with the window asked for
-rather than with the length of the session.
+**Invariant —** An uncompressed seekable transcript discovers boundaries
+**backward from the end** and stops as soon as it has enough, so its discovery
+cost scales with the window asked for. A gzip transcript cannot reverse-seek;
+its admitted path scans forward and retains only the newest requested markers.
 
-**Invariant —** Textually identical rows collapse into one that reports how many
-times it occurred, and no class of entry may repeat back-to-back. A rehydration
-that is all one kind of thing has told the agent nothing.
+**Invariant —** Selected turns retain canonical time/source order, and dialogue
+inside each turn retains the decoder-admitted transcript order and text. The
+session report adds no occurrence fold after the decoder has canonicalized
+display and final-answer echoes.
 
 **Invariant —** Unknowns are **loud**. A window the engine could not read must
 not look like a window with nothing in it.
 
 ### The budget
 
-A briefing is read by something with a context limit, which makes truncation a
-certainty and its *direction* a design decision.
+A briefing is read by something with a context limit, so Rust offers estimated
+line and byte thresholds for pruning transcript turns.
 
 ```mermaid
 flowchart LR
-  S["priority, first kept to last pruned<br/>ask, held work, delivered intent<br/>working set, ambient activity + workspace posture"] --> C{"over line or<br/>byte budget?"}
-  C -- yes --> P["prune from the END,<br/>announce the original size"]
-  C -- no --> E[emit]
+  S["selected transcript turns"] --> E["estimate: one line per turn<br/>+ authored-message lines<br/>+ authored-text bytes"]
+  E --> C{"estimate exceeds<br/>max-lines or max-bytes?"}
+  C -- "yes, more than one turn" --> P["remove the oldest whole turn"]
   P --> E
+  C -- "no, or one turn remains" --> O["emit report + before/after<br/>pruning metadata"]
 ```
 
-**Invariant —** Because the budget truncates from the end, section order **is**
-the priority statement. What the agent must not lose comes first.
+**Invariant —** Pruning preserves authority sections and report metadata and
+removes only the oldest whole transcript turns while more than one remains.
 
-**Invariant —** Any list shortened by a limit reports how many rows were
-withheld, and any pruning is announced together with the original size. The
-notice is itself charged against the budget, so the declared limit is never
-exceeded by the act of declaring it.
+**Invariant —** `--max-lines` and `--max-bytes` are transcript-turn pruning
+thresholds, not hard serialized-output limits. The estimate counts one line per
+turn, one per authored message, and authored-message bytes; it does not charge
+sources, authorities, report metadata, serialization overhead, or the optional
+explanation. At least one selected turn is retained even when that turn alone
+exceeds the estimate. The report always carries the requested thresholds and
+turn counts before and after pruning; `--explain-pruning` adds the explanation.
 
-**Invariant —** Sections carrying evidence are omitted when they have no rows.
-Sections establishing *what was examined* — sources, window, workspace posture,
-totals, mailbox depth — are emitted even when every number in them is zero,
-because those are the sections that make an empty answer meaningful.
+**Invariant —** Only `authorities.asks` and `authorities.unknowns` omit when
+empty. The Recall envelope — sources, window, held work, pruning, residues, and
+their nested arrays — remains serialized even when its contents are empty or
+zero.
 
-**Invariant —** Absent facts render as explicit **unknowns**, distinct from
-zero. A pressure scan that failed reports unknown severity carrying its error;
-it never reports clean.
+**Rust profile —** `authorities.priority.order` includes the declarative label
+`ambient-posture`, but the report performs no posture observation and
+emits no posture section. The label alone is not evidence that a probe ran.
 
-**Invariant —** Every external probe is time-bounded, and no single unavailable
-subsystem prevents a briefing from being produced. A briefing that cannot be
-produced is worse than a briefing with a hole in it, provided the hole is
-visible.
+**Invariant —** An unavailable authority value remains absent, distinct from
+numeric zero. Its typed unknown names the authority, probe, and error detail;
+Rust does not invent a clean measurement for an unavailable read.
+
+**Invariant —** A briefing or sweep accepts only a positive finite whole-action
+deadline shared by source discovery and report construction. Recoverable
+authority-read, configuration, journal, and board errors become typed visible
+unknowns and construction continues. If any work hangs past the deadline, the
+action refuses with `session::deadline-exceeded`, names the action, requested or
+resolved inputs, and budget, and returns no partial report.
 
 ### The unit of the record
 
@@ -211,8 +232,10 @@ most recently.
 it **aborts the projection**. A degraded record is worse than no record, because
 it is indistinguishable from a good one.
 
-**Invariant —** A filter the material can never satisfy is refused with the
-workable alternatives named, rather than answered with an empty result.
+**Invariant —** Requesting `--turn-id` against a nonempty dataset whose turns
+uniformly lack identities is capability-refused, naming `--start`, `--end`, and
+`--contains` as workable alternatives. Ordinary nonmatching filters return an
+empty selection.
 
 ### Message-shape classification
 
@@ -256,12 +279,21 @@ flowchart TD
   N --> F["try each compiled vendor,<br/>current context first"]
   F --> R{"resolved?"}
   R -- yes --> T["transcript"]
-  R -- no --> X["refuse, naming EVERY<br/>unresolvable input at once"]
-  Z["no subject named"] --> S["the transcript of the running agent"]
+  R -- no --> X["refuse on the first failing<br/>explicit input in caller order"]
+  Z["no subject named"] --> A{"captured live vendor<br/>identity present?"}
+  A -- yes --> S["first live vendor identity's<br/>running transcript"]
+  A -- no --> C["all sorted admitted .jsonl<br/>and .jsonl.gz in cwd"]
+  C -- none --> X
 ```
 
-**Invariant —** Resolving to nothing is a **loud refusal**, never an empty
-report, and it names every unresolvable input at once rather than one per run.
+**Invariant —** Explicit subjects resolve in caller order. The first failing
+input refuses the request rather than producing an empty report; successfully
+resolved canonical paths contribute once even when named repeatedly.
+
+**Invariant —** With no subject, resolution uses the first captured live vendor
+identity when present. Otherwise it admits every sorted `.jsonl` and
+`.jsonl.gz` in the current directory, refusing only when no admitted source
+resolves.
 
 **Invariant —** An agent identity counts as current only while it is in the
 running process's environment. An identity merely persisted in the tree from an
@@ -275,9 +307,9 @@ form, and a transcript named more than once contributes exactly once.
 ```mermaid
 flowchart LR
   C["agent runs a command"] --> S["snapshot live state"]
-  S --> R{"same as what was last announced?"}
-  R -- yes --> Q[suppress]
-  R -- no --> E["one short sentence on stderr"]
+  S --> R{"state key changed, or current<br/>lease reminder due?"}
+  R -- no --> Q[suppress]
+  R -- yes --> E["one short sentence on stderr"]
   E --> W["record what was announced,<br/>durably"]
 ```
 
@@ -288,8 +320,8 @@ command stderr. It rides a channel the agent already reads.
 than silence: it trains the reader to skip the channel.
 
 **Invariant —** The record of what was last announced survives process exit, so
-a run of short commands in one session does not re-announce the same facts once
-per command.
+identical state remains silent across short commands until the current lease
+tier's reminder cadence is due.
 
 **Invariant —** The urgency tier of an expiring claim is **part of the identity**
 of what was displayed. Command-start evaluation speaks when elapsed time has
@@ -352,7 +384,7 @@ sequenceDiagram
   BR->>ST: outstanding asks — the primary source
   ST-->>BR: durable asks
   BR->>TR: recent windows + recovered compaction intent
-  TR-->>BR: ranked and deduped evidence — unreadable input flagged loudly
+  TR-->>BR: ordered verbatim evidence — unreadable input flagged loudly
   BR-->>AG: briefing — omit the asks section when empty
 ```
 
@@ -365,7 +397,7 @@ sequenceDiagram
   participant MT as Working-state meter
 
   AG->>MT: run a command
-  MT-->>AG: one stderr line, only when live state changed
+  MT-->>AG: one line when state key changes or lease reminder is due
 ```
 
 ---

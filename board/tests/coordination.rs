@@ -703,4 +703,5 @@ fn active_claim_is_only_admitted_from_matching_coherent_live_heads() {
     ));
 }
 
-include!("coordination/late.rs");
+#[path = "coordination/late.rs"]
+mod late;

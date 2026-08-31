@@ -1,4 +1,6 @@
-fn transcript_bytes() -> DemoResult<Vec<u8>> {
+use super::*;
+
+pub(super) fn transcript_bytes() -> DemoResult<Vec<u8>> {
     let mut bytes = Vec::new();
     for (timestamp, text) in CANNED_TRANSCRIPT {
         bytes.extend(
@@ -14,11 +16,11 @@ fn transcript_bytes() -> DemoResult<Vec<u8>> {
     Ok(bytes)
 }
 
-fn expected_head() -> String {
+pub(super) fn expected_head() -> String {
     format!("{SEED_BRANCH} at {SEED_COMMIT}")
 }
 
-fn expected_manifest() -> DemoManifest {
+pub(super) fn expected_manifest() -> DemoManifest {
     DemoManifest {
         schema: 1,
         task: DEMO_TASK.to_owned(),
@@ -27,7 +29,7 @@ fn expected_manifest() -> DemoManifest {
     }
 }
 
-fn environment(
+pub(super) fn environment(
     root: PathBuf,
     transcript: PathBuf,
     state: spice::repository::StatePaths,
@@ -50,7 +52,7 @@ fn environment(
     })
 }
 
-fn canvas_environment_with<F>(
+pub(super) fn canvas_environment_with<F>(
     environment: Environment,
     cleanup: bool,
     signals: bool,
@@ -130,7 +132,7 @@ where
     finish_canvas(&environment, cleanup, endpoint, completion)
 }
 
-fn watch_environment(
+pub(super) fn watch_environment(
     environment: &Environment,
     events: Sender<Event>,
 ) -> DemoResult<notify::PollWatcher> {
@@ -162,7 +164,10 @@ fn watch_environment(
     Ok(watcher)
 }
 
-fn readiness_change(event: notify::Result<notify::Event>, journal: &Path) -> Result<(), String> {
+pub(super) fn readiness_change(
+    event: notify::Result<notify::Event>,
+    journal: &Path,
+) -> Result<(), String> {
     match event {
         Ok(_) => Ok(()),
         Err(error) if is_missing_readiness_transient(&error, journal) => Ok(()),
@@ -170,7 +175,7 @@ fn readiness_change(event: notify::Result<notify::Event>, journal: &Path) -> Res
     }
 }
 
-fn is_missing_readiness_transient(error: &notify::Error, journal: &Path) -> bool {
+pub(super) fn is_missing_readiness_transient(error: &notify::Error, journal: &Path) -> bool {
     let notify::ErrorKind::Io(source) = &error.kind else {
         return false;
     };
@@ -188,7 +193,7 @@ fn is_missing_readiness_transient(error: &notify::Error, journal: &Path) -> bool
         })
 }
 
-fn is_known_journal_sidecar(path: &Path, journal: &Path) -> bool {
+pub(super) fn is_known_journal_sidecar(path: &Path, journal: &Path) -> bool {
     ["-journal", "-wal", "-shm"].into_iter().any(|suffix| {
         let mut sidecar = journal.as_os_str().to_owned();
         sidecar.push(suffix);
@@ -196,7 +201,10 @@ fn is_known_journal_sidecar(path: &Path, journal: &Path) -> bool {
     })
 }
 
-fn signal_relay(signals: bool, events: Sender<Event>) -> DemoResult<Option<SignalRelay>> {
+pub(super) fn signal_relay(
+    signals: bool,
+    events: Sender<Event>,
+) -> DemoResult<Option<SignalRelay>> {
     if signals {
         SignalRelay::install(events).map(Some).map_err(|error| {
             environment_fault("demo::signals-unavailable", error.to_string()).into()
@@ -206,7 +214,10 @@ fn signal_relay(signals: bool, events: Sender<Event>) -> DemoResult<Option<Signa
     }
 }
 
-fn start_resident(environment: &Environment, events: Sender<Event>) -> DemoResult<JoinHandle<()>> {
+pub(super) fn start_resident(
+    environment: &Environment,
+    events: Sender<Event>,
+) -> DemoResult<JoinHandle<()>> {
     let root = environment.root.clone();
     std::thread::Builder::new()
         .name("spice-demo-resident".to_owned())
@@ -222,7 +233,7 @@ fn start_resident(environment: &Environment, events: Sender<Event>) -> DemoResul
         })
 }
 
-fn finish_canvas(
+pub(super) fn finish_canvas(
     environment: &Environment,
     cleanup: bool,
     endpoint: String,
@@ -250,7 +261,10 @@ fn finish_canvas(
     }
 }
 
-fn wait_for_discovery(environment: &Environment, receiver: &Receiver<Event>) -> DemoResult<bool> {
+pub(super) fn wait_for_discovery(
+    environment: &Environment,
+    receiver: &Receiver<Event>,
+) -> DemoResult<bool> {
     let deadline = Monotonic::now() + READY_DEADLINE;
     loop {
         if environment.state.canvas().is_file() {
@@ -289,7 +303,10 @@ fn wait_for_discovery(environment: &Environment, receiver: &Receiver<Event>) -> 
     }
 }
 
-fn wait_for_resident(environment: &Environment, receiver: &Receiver<Event>) -> DemoResult<bool> {
+pub(super) fn wait_for_resident(
+    environment: &Environment,
+    receiver: &Receiver<Event>,
+) -> DemoResult<bool> {
     loop {
         match receiver.recv() {
             Ok(Event::Changed(_)) => {}
@@ -310,7 +327,10 @@ fn wait_for_resident(environment: &Environment, receiver: &Receiver<Event>) -> D
     }
 }
 
-fn stop_resident(environment: &Environment, receiver: &Receiver<Event>) -> DemoResult<()> {
+pub(super) fn stop_resident(
+    environment: &Environment,
+    receiver: &Receiver<Event>,
+) -> DemoResult<()> {
     let contract = crate::cli::contract(&["down"]).expect("down contract is registered");
     // The demo root seats no lanes, so the stop must ride the operator
     // connection: an ambient lane identity names a seat in the repository
@@ -345,7 +365,7 @@ fn stop_resident(environment: &Environment, receiver: &Receiver<Event>) -> DemoR
     }
 }
 
-fn reply(
+pub(super) fn reply(
     environment: &Environment,
     mode: &str,
     lifecycle: &str,
@@ -365,24 +385,24 @@ fn reply(
     })
 }
 
-fn uuid(value: &str) -> CanonicalUuid {
+pub(super) fn uuid(value: &str) -> CanonicalUuid {
     value.parse().expect("demo UUID constants are canonical")
 }
 
-fn instant(value: &str) -> wire::Instant {
+pub(super) fn instant(value: &str) -> wire::Instant {
     wire::Instant::new(value.parse().expect("demo timestamp constants parse"))
         .expect("demo timestamps fit the native instant range")
 }
 
-fn build_failure(error: journal::BuildError) -> Outcome<DemoAnswer> {
+pub(super) fn build_failure(error: journal::BuildError) -> Outcome<DemoAnswer> {
     protocol_fault("demo::journal-proposal-invalid", error.to_string())
 }
 
-fn commit_failure(error: journal::CommitError) -> Outcome<DemoAnswer> {
+pub(super) fn commit_failure(error: journal::CommitError) -> Outcome<DemoAnswer> {
     environment_fault("demo::journal-write-failed", error.to_string())
 }
 
-fn rebody(outcome: Outcome<()>) -> Outcome<DemoAnswer> {
+pub(super) fn rebody(outcome: Outcome<()>) -> Outcome<DemoAnswer> {
     match outcome {
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),
@@ -394,7 +414,7 @@ fn rebody(outcome: Outcome<()>) -> Outcome<DemoAnswer> {
     }
 }
 
-fn refusal(
+pub(super) fn refusal(
     reason: &str,
     expected: Option<&str>,
     observed: Option<&str>,
@@ -411,7 +431,7 @@ fn refusal(
     ))
 }
 
-fn protocol_fault(reason: &str, detail: impl Into<String>) -> Outcome<DemoAnswer> {
+pub(super) fn protocol_fault(reason: &str, detail: impl Into<String>) -> Outcome<DemoAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Protocol,
         reason: reason.to_owned(),
@@ -419,7 +439,7 @@ fn protocol_fault(reason: &str, detail: impl Into<String>) -> Outcome<DemoAnswer
     })
 }
 
-fn environment_fault(reason: &str, detail: impl Into<String>) -> Outcome<DemoAnswer> {
+pub(super) fn environment_fault(reason: &str, detail: impl Into<String>) -> Outcome<DemoAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Environment,
         reason: reason.to_owned(),

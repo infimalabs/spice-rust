@@ -1,3 +1,5 @@
+use super::*;
+
 /// Every declared configuration flag must resolve through the generated parser tree.
 #[test]
 fn configuration_flag_mappings_resolve_in_the_generated_tree() {

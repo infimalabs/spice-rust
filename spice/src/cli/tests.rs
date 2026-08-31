@@ -930,4 +930,4 @@ fn contract_syntax_drives_argument_registration() {
     }
 }
 
-include!("tests/late.rs");
+mod late;

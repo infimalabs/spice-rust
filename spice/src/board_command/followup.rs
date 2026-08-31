@@ -82,7 +82,7 @@ fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
     Ok(add)
 }
 
-/// Mint one inception stamp per `--then` record and witness each intended absence.
+/// Mint one birth stamp per `--then` record and witness each intended absence.
 ///
 /// Every record is parsed before the first stamp is minted, so a malformed
 /// record later in the batch cannot leave earlier ones half-planned.
@@ -97,7 +97,7 @@ pub(super) fn plan_followups(
             .map_err(|error| refusal("review::followup-invalid", Some(spec.clone()), &error))?;
         parsed.push(add);
     }
-    let born = allocate_inceptions(board, jiff::Timestamp::now().as_millisecond(), parsed.len());
+    let born = allocate_task_stamps(board, jiff::Timestamp::now().as_millisecond(), parsed.len());
     let mut planned: Vec<ReviewFollowup> = Vec::new();
     for (add, task) in parsed.into_iter().zip(born) {
         expected.push(Witness::Absence { task: task.clone() });
@@ -184,7 +184,7 @@ fn create_followup(
     if !witnessed {
         return Err(protocol_fault(
             "review::followup-witness-invalid",
-            "each review follow-up requires its own intended absent inception stamp",
+            "each review follow-up requires its own intended absent birth stamp",
         ));
     }
     let requested = followup.add.project.as_deref().unwrap_or("task.private");

@@ -49,18 +49,22 @@ flowchart TD
   S --> K
   K --> T["journal records the typed disposition"]
   T --> E(("settled"))
-  J --> D["lapsed or deadlettered from any live standing<br/>remains explicit and recoverable"]
+  J --> D["lapsed, or PendingInbox terminal-wake<br/>deadlettering from retained live standing,<br/>remains explicit and recoverable"]
   D -->|"recovery transaction accepted"| J
 ```
 
 The directive is accepted in the journal before its disposable inbox projection
 is delivered. Delivery is eligible at both the vendor's post-tool hook and the
-next top-level shell command; both boundaries consume the same durable decision
-and suppression state. A *read* never changes disposition. `acked`, `declined`,
+next top-level shell command. They share the same live content, not a suppression
+decision: vendor hooks consult a locked durable hook-delivery record, while each
+shell command independently rereads the rendered inbox and may repeat it while
+nonempty. A *read* never changes disposition. `acked`, `declined`,
 `canceled`, `lapsed`, `deadlettered`, and recovery are distinct durable facts,
-and any still-live directive may be deadlettered without first becoming
-delivered. That asymmetry makes supervision auditable: "delivered" and "taken"
-are separate facts, and the gap between them remains visible.
+and a `PendingInbox` automatic wake that returns `Unstarted` or a terminal-class
+start failure deadletters every pending directive on that lane from its retained
+live stage without requiring prior delivery. No other wake or arbitrary delivery
+failure does. That asymmetry makes supervision auditable: "delivered" and
+"taken" are separate facts, and the gap between them remains visible.
 
 **Value:** you can walk away mid-instruction. **Without it:** steering becomes
 fire-and-hope, and the operator becomes the durable store.
@@ -96,9 +100,9 @@ flowchart LR
 
 Unanswered steering re-surfaces at an admitted post-tool or top-level shell
 boundary when a named horizon from its publication time has elapsed. Every
-priority follows the same horizons and cadence. Escalation retains one stable
-lineage key, so a resend reads as one thread of insistence rather than a pile of
-duplicates.
+unanswered directive follows the same horizons and cadence. Escalation retains
+one stable lineage key, so a resend reads as one thread of insistence rather
+than a pile of duplicates.
 
 **Value:** the failure mode of a busy agent is *delay*, not *loss*.
 
@@ -146,17 +150,19 @@ parked in `plan` but retains the complete `plan` to `todo` to `review` flow and
 requires explicit promotion.
 
 Every accepted phase transition is a durable journal fact projected by the
-board. A transition that changes the tree additionally lands one attested merge;
-the complete phase history is therefore the journal sequence, not the merge
-sequence. In particular, a review that finds nothing advances the phase without
-producing a commit, so it lands no merge and leaves no trace in a first-parent
-walk.
+board. A new task-owned tree additionally produces one attested synthesized
+baseline-first landing; when the baseline already contains the work, integration
+instead advances or fast-forwards without a synthetic merge. The complete phase
+history is therefore the journal sequence, not the merge sequence. In particular,
+a review that finds nothing advances the phase without producing a commit, so it
+lands no merge and leaves no trace in a first-parent walk.
 
 ```mermaid
 flowchart LR
-  R["review pass"] --> C{"found something?"}
-  C -- yes --> M["review landing<br/>(visible in history)"]
-  C -- no --> A["phase advances in journal and board<br/>(no merge in Git)"]
+  R["review pass"] --> C{"tree consequence?"}
+  C -- "new task-owned tree" --> M["one attested synthesized<br/>baseline-first landing"]
+  C -- "baseline already contains work" --> F["advance / fast-forward;<br/>no synthetic merge"]
+  C -- "no tree change" --> A["phase advances in journal and board<br/>(no merge in Git)"]
 ```
 
 What Git first-parent history measures is therefore the review **change** rate,
@@ -185,29 +191,32 @@ deadlocks.
 progress rather than stalling when it can't. This is the sharpest example of the
 system's general posture: prefer the good property, never let it stop the work.
 
-### Work lands as one attested merge
+### New task-owned work lands as one attested merge
 
 ```mermaid
 gitGraph
-   commit id: "baseline"
+   commit id: "baseline (first parent)"
    branch task
    commit id: "working change Ash, unattributed"
    commit id: "working change Elm, unattributed"
    checkout main
    merge task tag: "Task-Key, Task-Project, Task-Phase, Task-Session"
-   commit id: "baseline advances, first parent"
 ```
 
-Mutating Git integration happens only at task phase boundaries. The merge is
-computed before the checked-out repo is mutated, so the visible terminal state
-is either the untouched pre-merge tree or a recoverable merge — never stranded
-conflict markers. The trailers ride the merge, not the working commits.
+Mutating Git integration happens only at task phase boundaries. When new
+task-owned work requires a synthesized landing, that merge is computed before
+the checked-out repo is mutated, so the visible terminal state is either the
+untouched pre-merge tree or a recoverable merge — never stranded conflict
+markers. The trailers ride the merge, not the working commits. When the
+baseline already contains the work, integration advances or fast-forwards with
+no synthetic merge.
 
-**Value:** `--first-parent` is the ledger of mutating landings. Every landed unit
-of work carries its task, project, phase, and the agent session that did it,
-while the journal and board retain every transition whether or not it produced a
-merge. That division makes release notes, the effort ledger, and fleet forensics
-queries instead of archaeology without pretending a clean review changed Git.
+**Value:** `--first-parent` is the ledger of synthesized mutating landings.
+Every such landing carries its task, project, phase, and the agent session that
+did it, while the journal and board retain every transition whether it produced
+a merge or only advanced to an already-containing baseline. That division makes
+release notes, the effort ledger, and fleet forensics queries instead of
+archaeology without pretending a clean review changed Git.
 
 ### Every task says where it came from
 
@@ -258,16 +267,16 @@ flowchart LR
   M["active tracked maxim bags"] --> F["a trigger matches prose"]
   F --> E{"judge enabled?"}
   E -- no --> S["direct ordinary steering"]
-  E -- yes --> J["one bounded judge process<br/>tries shuffled framings in sequence"]
+  E -- yes --> J["deterministically shuffled framings tried in sequence<br/>one fresh bounded judge child each"]
   J -- "exact normalized YES" --> S2["confirmed ordinary steering"]
   J -- "exact normalized NO" --> C2["cleared judgment fact"]
   J -- "unavailable, error, timeout,<br/>or ambiguity exhausted" --> D["candidate dropped;<br/>no direct publication"]
   S --> T["match, direct decision, recurrence<br/>metrics"]
   S2 --> T2["match, judged decision, recurrence<br/>metrics"]
   C2 --> T2
-  T --> P["report supplies evidence for<br/>per-vendor scoping"]
+  T --> P["report supplies evidence for shared scope<br/>path / extension / vendor / model / phase"]
   T2 --> P
-  S --> C["recurring ACK corrections mined"]
+  S --> C["recurring answered corrections mined"]
   S2 --> C
   C --> H["hidden maxim proposal"]
   P --> O{"operator accepts<br/>a tracked change?"}
@@ -278,8 +287,9 @@ flowchart LR
 ```
 
 Two loops close here. Maxim *effectiveness* is measured per bag per vendor and
-the report supplies evidence for scoping changes; separately, recurring ACK
-corrections are clustered into a proposed new maxim filed on a hidden board.
+the report supplies evidence for scoping changes; separately, recurring
+corrections answered by ACK or decline are clustered into a proposed new maxim
+filed on a hidden board.
 Neither path edits the tracked set. Only operator acceptance of the resulting
 tracked change can add, remove, or rescope an active maxim; a proposal that is
 discarded or deferred leaves the active set unchanged.
@@ -371,7 +381,7 @@ block-beta
   columns 2
   T["team row<br/>member lights, mode rail, team menu"] q1["which lineage is this,<br/>and who is alive?"]
   V["team view<br/>compose | tasks | metrics | info"] q2["what can I do with the team<br/>without leaving?"]
-  S["member shards<br/>age, run state, pending, claimed work"] q3["what is each lane holding<br/>right now?"]
+  S["member surfaces<br/>lane/worktree address identity;<br/>pane-specific standing fields"] q3["where is each lane addressed,<br/>and what does this pane expose?"]
   M["merged message stream<br/>newest first, explicit lane attribution"] q4["what did the team<br/>just say?"]
 ```
 
@@ -379,6 +389,10 @@ The whole strip is scannable top to bottom in about a second, and the order is
 deliberate: liveness before routing, routing before state, state before words.
 An operator sweeping several teams reads the first two rows of each and stops at
 whichever team needs attention.
+
+The member row describes the cross-mode surface, not one field bundle. Compose,
+Metrics, and Info expose lane/worktree identity and their own applicable agent,
+liveness or age, pending, and held-work fields; no pane repeats the whole set.
 
 **Why it's the right unit:** the server-owned team topology is exactly what the
 operator arranged. The team tiles as one surface while each member lane remains
@@ -420,7 +434,8 @@ classDiagram
 Read the two relationships as lifetimes. A lane belongs to exactly one team at
 a time and may move between teams, while the team is the unit that the current
 browser's `Close team` presentation action hides. That action does not alter
-the relationship. The team owns the task policy shared by its members: renewal
+the relationship, and **Agents → Open team** can restore a closed grouped
+lineage during the same mount. The team owns the task policy shared by its members: renewal
 leaves that policy in place because the lineage is unchanged, while a lane moved
 to another lineage takes the destination policy rather than carrying one with
 it. An occupant is held loosely and may be absent entirely —
@@ -564,9 +579,9 @@ content-driven pill may resize as digit widths change.
 
 ```mermaid
 flowchart TD
-  A["assistant message"] --> Q["ACK quote block<br/>(what was asked)"]
+  A["assistant message"] --> Q["ACK / NACK quote block<br/>(what was asked)"]
   Q --> B["the response to it"]
-  B --> NextQuote["next ACK quote"]
+  B --> NextQuote["next ACK / NACK quote"]
   NextQuote --> NextResponse["its response"]
 ```
 
@@ -589,8 +604,9 @@ flowchart LR
   G["GLANCE, badges<br/>pending counts, mode rail"] --> OP
 ```
 
-Deliberately three, with different bandwidth. Manual speech reads the full
-selected message, and narration reads the full text of each newly observed
+Deliberately three, with different bandwidth. Card speech reads the selected
+message's exact full text; topbar speech reads the trimmed visible main-content
+text, up to 32 KiB. Narration reads the full text of each newly cursor-admitted
 message. Nothing present at first materialization auto-plays.
 
 **Value:** the ear is the only channel that works while you are looking
@@ -608,7 +624,7 @@ Each guarantee is cheap alone and compounding together.
 flowchart LR
   DurableSteering["durable steering"] --> WalkAway["walk away mid-instruction"]
   Claims["claims + TTL"] --> AddAgent["add an agent without a conversation"]
-  AttestedMerges["attested merges"] --> TrustOutput["trust output without reading it"]
+  AttestedMerges["attested merges"] --> TrustOutput["attribute landed output without<br/>rereading working commits"]
   DisposableAgents["disposable agents"] --> Renew["renew instead of hoarding context"]
   DerivedMemory["derived memory"] --> Renew
   CalmBoard["calm board"] --> WatchFleet["watch a fleet at once"]
@@ -621,7 +637,9 @@ flowchart LR
 
 The result of that composition is a supervision rate one person cannot reach by
 reading: many tasks a day, independently reviewed whenever an eligible peer
-exists, across a fleet whose size the operator never manages directly.
+exists, across a fleet whose ordinary capacity follows work without a
+hand-managed agent count. Explicit operator-authorized lane wake remains
+available when direct intervention is wanted.
 
 ---
 

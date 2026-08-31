@@ -206,7 +206,7 @@ fn task_origin_threads<'a>(
                     .map_err(|error| {
                         protocol_fault(
                             "board::task-origin-fact-invalid",
-                            &format!("task creation fact has an invalid inception stamp: {error}"),
+                            &format!("task creation fact has an invalid birth stamp: {error}"),
                         )
                     })?;
                 let actor = match fact.actor {
@@ -859,7 +859,7 @@ pub(super) fn task_origin(task: &wire::TaskStamp) -> Result<wire::Origin, Outcom
     format!("task:{task}").parse().map_err(|error| {
         protocol_fault(
             "task::origin-invalid",
-            &format!("validated inception stamp did not form a task origin: {error}"),
+            &format!("validated birth stamp did not form a task origin: {error}"),
         )
     })
 }
@@ -881,7 +881,7 @@ pub(super) fn normalize_task_origin(
         refusal(
             "task::origin-invalid",
             Some(error.to_string()),
-            "name a task origin carrying one canonical inception stamp",
+            "name a task origin carrying one canonical birth stamp",
         )
     })?;
     task_origin(&born)

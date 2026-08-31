@@ -519,7 +519,7 @@ impl Entry {
         &self.statement
     }
 
-    /// Current public handle derived from project and inception.
+    /// Current public handle derived from project and birth stamp.
     #[must_use]
     pub const fn handle(&self) -> &TaskHandle {
         &self.handle

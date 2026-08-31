@@ -260,7 +260,7 @@ fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
     drop(journal);
     let before = legacy_identity_state(&Connection::open(&path).expect("read malformed fixture"));
 
-    let error = Journal::open(&path).expect_err("malformed inception suffix refuses migration");
+    let error = Journal::open(&path).expect_err("malformed birth suffix refuses migration");
 
     assert!(matches!(
         error,
@@ -272,7 +272,7 @@ fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
             ..
         }) if row == "1"
     ));
-    assert!(error.to_string().contains("inception stamp"));
+    assert!(error.to_string().contains("birth stamp"));
     let after = Connection::open(&path).expect("reopen refused authority");
     assert_eq!(legacy_identity_state(&after), before);
 }

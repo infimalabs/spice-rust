@@ -32,9 +32,7 @@ fn edited_status(outcome: Outcome<CommandAnswer>) -> String {
 
 /// Facts recording a correction of this task, in journal order.
 fn edit_facts(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, u64)> {
-    let born = task
-        .born()
-        .expect("fixture handle carries an inception stamp");
+    let born = task.born().expect("fixture handle carries a birth stamp");
     bus.fact_snapshot()
         .expect("edit facts read")
         .facts()
@@ -739,9 +737,7 @@ fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
     let moved = board(&bus, epoch, lane.clone());
     let moved_handle = TaskHandle::for_project(
         "rim.elsewhere",
-        &task
-            .born()
-            .expect("fixture handle carries an inception stamp"),
+        &task.born().expect("fixture handle carries a birth stamp"),
     );
     assert_eq!(
         at(&moved, &moved_handle).statement.body.project,

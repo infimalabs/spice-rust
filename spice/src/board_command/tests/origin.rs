@@ -162,12 +162,8 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
             depends: vec![dependency.clone()],
         },
     ));
-    let causal = task_origin(
-        &parent
-            .born()
-            .expect("parent handle carries an inception stamp"),
-    )
-    .expect("parent origin");
+    let causal = task_origin(&parent.born().expect("parent handle carries a birth stamp"))
+        .expect("parent origin");
     let current = board(&bus, epoch, Actor::Operator);
     assert_eq!(at(&current, &parent).statement.body.provenance, ack);
     assert_eq!(creation_fact_origin(&bus, &parent), ack);
@@ -177,7 +173,7 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
         at(&current, &child).statement.body.dependencies,
         [dependency
             .born()
-            .expect("dependency handle carries an inception stamp")],
+            .expect("dependency handle carries a birth stamp")],
         "causal provenance was inferred from a scheduling edge"
     );
     assert_invalid_creation_origins_refuse(&bus, epoch);

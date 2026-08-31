@@ -864,7 +864,7 @@ pub(super) fn mint_handle_at(project: Option<&str>, _title: &str, epoch_millis: 
     TaskHandle::for_project(project, &stamp)
 }
 
-pub(super) fn allocate_inception(board: &BoardAnswer, mut epoch_millis: i64) -> wire::TaskStamp {
+pub(super) fn allocate_task_stamp(board: &BoardAnswer, mut epoch_millis: i64) -> wire::TaskStamp {
     loop {
         let candidate = wire::TaskStamp::for_millis(epoch_millis)
             .expect("the current epoch millisecond fits the task stamp codec");
@@ -877,21 +877,21 @@ pub(super) fn allocate_inception(board: &BoardAnswer, mut epoch_millis: i64) -> 
         }
         epoch_millis = epoch_millis
             .checked_add(1)
-            .expect("task inception collision increment fits i64");
+            .expect("task birth collision increment fits i64");
     }
 }
 
-pub(super) fn allocate_inceptions(
+pub(super) fn allocate_task_stamps(
     board: &BoardAnswer,
     mut epoch_millis: i64,
     count: usize,
 ) -> Vec<wire::TaskStamp> {
     let mut planned = Vec::with_capacity(count);
     while planned.len() < count {
-        let candidate = allocate_inception(board, epoch_millis);
+        let candidate = allocate_task_stamp(board, epoch_millis);
         epoch_millis = epoch_millis
             .checked_add(1)
-            .expect("task inception collision increment fits i64");
+            .expect("task birth collision increment fits i64");
         if planned.iter().all(|born| born != &candidate) {
             planned.push(candidate);
         }

@@ -457,7 +457,7 @@ pub fn stealable_entry(entries: &[Entry], entry: &Entry, _actor: &Actor) -> bool
         && operational_without_assignment(entry, &satisfied_tasks(entries))
 }
 
-/// Inception stamps that no longer block a dependent, stated once for every caller.
+/// Birth stamps that no longer block a dependent, stated once for every caller.
 ///
 /// A withdrawn prerequisite belongs here beside a completed one. It will never
 /// complete, so leaving it out would let one deletion block every dependent

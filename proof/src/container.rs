@@ -911,4 +911,5 @@ impl From<&sill::CapturedOutput> for Captured {
     }
 }
 
-include!("container/tests.rs");
+#[cfg(test)]
+mod tests;

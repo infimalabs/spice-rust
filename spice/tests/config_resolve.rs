@@ -713,6 +713,8 @@ executable = "tracked-rtk"
 [taste.alpha]
 words = ["done"]
 message = "Done."
+enabled = false
+scopes = { paths = ["src/**"], extensions = [".rs"], vendors = ["codex"], models = ["gpt-current"], phases = ["pre-commit-success"] }
 
 [tasks]
 stems = ["app", "board"]
@@ -1017,4 +1019,5 @@ message = "Done."
     );
 }
 
-include!("config_resolve/tail.rs");
+#[path = "config_resolve/tail.rs"]
+mod tail;

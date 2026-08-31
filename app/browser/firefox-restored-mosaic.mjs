@@ -47,7 +47,7 @@ async function settledMosaicCards(page, label) {
   return assertMosaicLattice(page, false);
 }
 
-export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedAgent) {
+export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedAttribution) {
   const firefox = await launchBrowser("firefox");
   const context = await firefox.newContext({
     colorScheme: "dark",
@@ -67,21 +67,21 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     const boundary = console.locator('[data-card-kind="compaction"]');
     assert.equal(await boundary.count(), 1, "Firefox restores the real compaction exactly once");
     await waitForCompactionReady(page, boundary, "Firefox wide compaction divider");
-    await assertCompactionDivider(boundary, "Firefox wide compaction divider", expectedAgent);
+    await assertCompactionDivider(boundary, "Firefox wide compaction divider", expectedAttribution);
     await resizeCompactionViewport(
       page,
       boundary,
       { width: 390, height: 720 },
       "Firefox narrow compaction divider",
     );
-    await assertCompactionDivider(boundary, "Firefox narrow compaction divider", expectedAgent);
+    await assertCompactionDivider(boundary, "Firefox narrow compaction divider", expectedAttribution);
     await resizeCompactionViewport(
       page,
       boundary,
       { width: 1717, height: 1470 },
       "Firefox restored compaction divider",
     );
-    await assertCompactionDivider(boundary, "Firefox restored compaction divider", expectedAgent);
+    await assertCompactionDivider(boundary, "Firefox restored compaction divider", expectedAttribution);
     const lane = console.locator(".team-agent").first();
     await assertComposerPointerSelection(
       page,
@@ -96,7 +96,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
     assert.equal(await boundary.count(), 1, "Firefox reload keeps one compaction divider");
     await waitForCompactionReady(page, boundary, "Firefox replayed compaction divider");
-    await assertCompactionDivider(boundary, "Firefox replayed compaction divider", expectedAgent);
+    await assertCompactionDivider(boundary, "Firefox replayed compaction divider", expectedAttribution);
 
     await page.clock.fastForward(LIVENESS_PROBE_MS + 500);
     const settled = await assertMosaicLattice(page, false);

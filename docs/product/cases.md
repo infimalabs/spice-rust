@@ -13,13 +13,13 @@ product contract; failing any of them disproves it.
 
 | Property | Proof |
 | --- | --- |
-| Evidence isolation | prove a staged native target outside the candidate checkout; candidate source and ambient build output cannot satisfy it |
+| Proof source honesty | replay the current candidate checkout in each target environment; assert that documentation and receipts do not claim a payload-source equality the proof does not check |
 | Rendering never launches | open every read surface with all lanes vacant; assert zero occupant launches |
 | Layout purity | replay recorded event logs; assert identical positions |
 | Zero-write on no-op | count style writes on an unchanged render; must be 0 |
 | Single wake per decision | several derived-ready tasks, all lanes vacant; exactly one occupant starts |
 | Starvation is an age | one ready task; starts only after the age |
-| Semantic retirement | read without acking; count unchanged |
+| Semantic retirement | read without answering; count unchanged |
 | Landing atomicity | interrupt a landing; tree is pre-merge or recoverable |
 | Install reversibility | install twice, then unapply; the operator's original state returns |
 | Footprint containment | land a diff touching a foreign path; refused |

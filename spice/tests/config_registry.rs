@@ -55,6 +55,8 @@ blocked_trailers = ["Co-Authored-By"]
 [taste.zeta]
 words = ["delay", "slept"]
 message = "Wait on the real event."
+enabled = false
+scopes = { paths = ["src/**"], extensions = [".rs"], vendors = ["codex"], models = ["gpt-current"], phases = ["pre-commit-success"] }
 
 [taste.alpha]
 words = ["finish"]
@@ -557,6 +559,12 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "policy.admission",
     "taste.<name>.words",
     "taste.<name>.message",
+    "taste.<name>.enabled",
+    "taste.<name>.scopes.paths",
+    "taste.<name>.scopes.extensions",
+    "taste.<name>.scopes.vendors",
+    "taste.<name>.scopes.models",
+    "taste.<name>.scopes.phases",
     "consent.posture",
     "consent.rule[].name",
     "consent.rule[].tool",

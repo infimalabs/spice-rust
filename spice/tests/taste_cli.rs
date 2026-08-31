@@ -143,7 +143,15 @@ impl Resident {
             || fixture.canvas.is_file(),
         ) {
             Readiness::Ready => resident,
-            Readiness::Exited => panic!("resident exited before readiness"),
+            Readiness::Exited => {
+                let output = resident
+                    .child
+                    .take()
+                    .expect("exited resident child")
+                    .wait_with_output()
+                    .expect("exited resident output");
+                panic!("resident exited before readiness: {}", spoken(&output));
+            }
         }
     }
 
@@ -291,6 +299,65 @@ fn taste_reporting_and_review_plans_survive_restart() {
             && plan.acceptance.len() == 2
             && plan.origin.as_ref() == Some(&causal)
     }));
+}
+
+#[test]
+fn disabled_scoped_rows_remain_visible_and_drop_preserves_the_complete_row() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.root.join("spice-rust.toml"),
+        format!(
+            concat!(
+                "{}\n",
+                "[taste.retired]\n",
+                "words = [\"branch\"]\n",
+                "message = \"Keep one current path.\"\n",
+                "enabled = false\n",
+                "scopes = {{ paths = [\"src/**\"], vendors = [\"codex\"], phases = [\"pre-commit-success\"] }}\n",
+            ),
+            POLICY,
+        ),
+    )
+    .expect("disabled scoped taste policy");
+    let resident = Resident::start(&fixture);
+
+    let report = text_reply::<serde_json::Value>(&fixture.invoke(&["taste"]));
+    let row = report["tastes"]
+        .as_array()
+        .expect("taste rows")
+        .iter()
+        .find(|row| row["name"] == "retired")
+        .expect("disabled row remains enumerable");
+    assert_eq!(row["enabled"], false);
+    assert_eq!(
+        row["scopes"],
+        serde_json::json!({
+            "paths": ["src/**"],
+            "extensions": [],
+            "vendors": ["codex"],
+            "models": [],
+            "phases": ["pre-commit-success"],
+        })
+    );
+
+    let dropped = fixture.invoke(&["taste", "drop", "retired", "--origin", CURATION_ORIGIN]);
+    assert!(dropped.status.success(), "{}", spoken(&dropped));
+    let proposal = task_add_requests(&fixture)
+        .into_iter()
+        .find(|plan| plan.title == "Propose tracked taste retirement: retired")
+        .expect("disabled retirement proposal is durable");
+    let description = proposal
+        .description
+        .expect("proposal carries the tracked row");
+    assert!(description.contains("enabled = false"), "{description}");
+    assert!(
+        description.contains(
+            "scopes = { paths = [\"src/**\"], vendors = [\"codex\"], phases = [\"pre-commit-success\"] }"
+        ),
+        "{description}",
+    );
+
+    resident.stop(&fixture);
 }
 
 #[test]

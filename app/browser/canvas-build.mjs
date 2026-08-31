@@ -38,7 +38,8 @@ export async function buildResident({ app = true, gitCommonDirectory } = {}) {
       : undefined;
     if (!prebuiltBinary) {
       await execute(installed, [
-        "dev", "cargo", "--", "build", "--locked", "-p", "spice", "--bin", "spice",
+        "dev", "cargo", "--", "build", "--locked", "--target-dir", "target",
+        "-p", "spice", "--bin", "spice",
       ], {
         cwd: root,
         maxBuffer: 16 * 1024 * 1024,

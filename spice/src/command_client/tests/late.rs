@@ -1,3 +1,5 @@
+use super::*;
+
 /// A record outlives its publisher, and the reader refuses it unread.
 ///
 /// Both halves run against one fixture and one set of published bytes, so the

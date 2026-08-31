@@ -743,7 +743,7 @@ pub(super) fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
     let facts = bus.fact_snapshot().expect("fixture facts read");
     let born = oops
         .born()
-        .expect("fixture oops handle carries an inception stamp");
+        .expect("fixture oops handle carries a birth stamp");
     assert!(facts.facts().iter().any(|fact| {
         fact.fact.kind() == wire::FactKind::TaskNoted
             && fact

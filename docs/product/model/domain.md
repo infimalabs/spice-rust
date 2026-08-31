@@ -145,7 +145,7 @@ product.
 
 ```mermaid
 flowchart LR
-  JR["SQLite journal<br/>one authenticated writer"] --> SemanticFacts["tasks, claims, steering lifecycle,<br/>topology heads, command receipts"]
+  JR["durable journal<br/>one authenticated writer"] --> SemanticFacts["tasks, claims, steering lifecycle,<br/>topology heads, command receipts"]
   TR["transcript tape"] --> ActivityWhatTheAgentProduced["vendor bytes and typed evidence<br/>of what the agent produced"]
   FS["filesystem inbox"] --> PendingSteering["disposable projection of live directives"]
   RG["admitted target registry"] --> WorktreeIdentity["worktree identity"]
@@ -165,20 +165,26 @@ resume from a cursor or reconnect for an authoritative snapshot.
 
 ```mermaid
 flowchart LR
-  DA["DURABLE AUTHORITY<br/>losing it loses facts"] --> M["ordered forward migrations<br/>or a refusal before mutation"]
+  DA["DURABLE AUTHORITY<br/>losing it loses facts"] --> M["declared historical set;<br/>one forward route to current<br/>or refusal without rewriting the authority"]
   RP["REBUILDABLE PROJECTION<br/>losing it costs a replay"] --> D["discard and rebuild<br/>at the current shape"]
 ```
 
-**Invariant —** The two classes never share a file, a connection, or a
-transaction.
+**Invariant —** Durable facts and heads remain semantically and
+capability-distinct from rebuildable index rows. A concrete profile may
+co-locate a derived index in the authority store and update or rebuild it in an
+authority transaction, but rebuilding that projection must not mutate immutable
+facts or heads.
 
 **Invariant —** A projection family must answer all of these or it does not
 belong in the projection store: *where do its facts come from, what records how
 far it got, how far back can that source be replayed, what refills it, what
 can it still say when the source no longer reaches back far enough.*
 
-**Invariant —** Authority migrations form one ordered, unbroken, forward-only
-chain. Every admitted shape has exactly one next step; an unsupported shape is
-refused before mutation with the shape and supported range named.
+**Invariant —** Each durable authority declares a finite supported historical set
+and one unambiguous forward route from every admitted shape to current. A route
+may be sequential or direct; an unknown or inconsistent authority is never
+migrated or rewritten, and no historical runtime remains parallel. Independent,
+explicitly admitted pre-read maintenance is outside that authority-migration
+guarantee and may mutate only the stale temporary state it owns.
 
 ---

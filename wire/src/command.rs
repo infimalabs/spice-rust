@@ -233,7 +233,7 @@ impl Law {
 /// under the same predicates whether it is carried, renewed, freed, or
 /// lapsed. Every doc comment restates the row it implements.
 impl Law {
-    /// Intended inception stamp is absent and every dependency exists at its
+    /// Intended birth stamp is absent and every dependency exists at its
     /// named workflow head.
     pub const ADD: Self = Self {
         required: &[WitnessKind::Absence],

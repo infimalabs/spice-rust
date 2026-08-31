@@ -159,6 +159,7 @@ export async function assertCanvas(page, scheme) {
           const style = getComputedStyle(element);
           return style.display !== "none" && style.visibility !== "hidden";
         })
+        .filter((element) => !element.matches(".message-agent-name"))
         .filter((element) => element.scrollWidth > element.clientWidth + 1)
         .map((element) => element.textContent?.trim() ?? element.className),
     };

@@ -22,7 +22,7 @@ type ClaimOrigins = BTreeMap<wire::TaskHandle, (wire::Seq, wire::Actor, Option<w
 /// Exact retired schema-3 task-head shape consumed by this crossing.
 ///
 /// `handle` and `uuid` are legacy inputs here, not current task authorities;
-/// the later identity crossing contracts both onto the inception stamp.
+/// the later identity crossing contracts both onto the birth stamp.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct AllocatedTaskHead {

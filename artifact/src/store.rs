@@ -1039,7 +1039,7 @@ fn parse_task_key(text: &str, subject: &str) -> Result<TaskStamp, Error> {
                         concat!(
                             "{} uses rendered-handle task directory {:?} from artifact ",
                             "store release 1; this release owns version {} and requires ",
-                            "inception-stamp directory keys"
+                            "birth-stamp directory keys"
                         ),
                         subject, text, STORE_VERSION,
                     ),

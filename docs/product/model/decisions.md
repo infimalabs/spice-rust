@@ -200,8 +200,8 @@ flowchart LR
 **Invariant —** A dry allocator arrives while the board still visibly holds
 rows. Pointing the agent at those rows makes it conclude the allocator missed
 something and go hunting for a row to unstick by hand. Report the board instead:
-held by other lanes, waiting on dependencies, deferred until scheduled, on the
-oops board.
+held by other lanes, waiting on dependencies, deferred until an explicit wake,
+on the oops board.
 
 **Invariant —** Permission to stop is bound to the single condition that grants
 it, and the lookalikes are named so they cannot be generalized to: a board that
@@ -236,7 +236,7 @@ stateDiagram-v2
   live --> declined : agent NACK
   live --> canceled : operator cancel
   live --> lapsed : lapse transaction accepted
-  live --> deadlettered : delivery cannot complete
+  live --> deadlettered : PendingInbox automatic wake is Unstarted or terminal-class failed
   lapsed --> live : recovery retains presentation stage
   deadlettered --> live : recovery retains presentation stage
   acked --> [*]
@@ -254,9 +254,11 @@ its identity changes.
 
 **Invariant —** `lapsed` and `deadlettered` remain recoverable. Recovery
 restores the same directive to live with its presentation stage intact. An item
-nobody answered, one delivery could not complete, and an item the agent
-declined are different facts; collapsing them would make silence or transport
-failure look like a decision.
+nobody answered, a pending directive parked after its lane's terminal automatic
+wake failure, and an item the agent declined are different facts; collapsing
+them would make silence or a start failure look like a decision. Deadlettering
+does not generalize to held-claim, capacity, operator-start, nonterminal-error,
+or arbitrary delivery-failure paths.
 
 **Policy —** reminded 15s, escalated 60s, overdue 300s, lapse threshold 24h.
 

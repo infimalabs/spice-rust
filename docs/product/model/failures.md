@@ -7,21 +7,22 @@
 
 | Failure | Behavior | Never |
 | --- | --- | --- |
-| transport drops | reconnect with bounded pacing; resume the authenticated stream or take a fresh snapshot | lose steering |
+| transport drops | reconnect with bounded pacing; resume the authenticated stream or take a fresh snapshot, retaining same-mount browser predictions | lose journal-accepted steering; before a live key or accepted standing returns, browser death may still lose the ephemeral prediction |
 | discovery fails transiently | **touch nothing**; report | destroy lanes |
 | agent or turn exits mid-claim before lease expiry | the lane becomes vacant while the claim stays `active`; the held-claim arm launches a successor onto that exact possession | silently lapse or reassign |
 | an active claim reaches its lease expiry | the independent timer submits one lapse transaction; accepted disposition becomes `lapsed`, after which readers derive readiness | infer lapse from process liveness |
-| agent won't start | steering moves to recoverable `deadlettered` with a recovery command | drop the item |
+| a `PendingInbox` automatic wake returns unstarted or a terminal-class start failure | that lane's pending directives move to recoverable `deadlettered` with recovery commands | generalize the transition to held-claim, capacity, operator, or nonterminal wake failures |
 | remote unreachable at launch | start anyway with a skip note | lock the lane out |
 | landing conflicts | complete recoverable merge + recipe | stranded markers |
 | landing races | re-integrate against new baseline, bounded retries | clobber a peer |
 | projection corrupt | discard, rebuild, replay | serve silent nulls |
-| authority shape unsupported | refuse before mutation, naming the shape and supported migration range | mutate blindly |
+| authority shape unsupported | refuse without migrating or rewriting that authority, naming the shape and supported migration range; independent admitted pre-read maintenance remains outside this guarantee | interpret or rewrite the unsupported authority |
 | judging disabled | publish a configured trigger hit directly | require a judge |
 | judging enabled but the process is unavailable, times out, errors, or exhausts ambiguity | abandon the candidate and emit nothing | fall back to direct publication |
 | speech backend failure is detected | show nonblocking `Speech unavailable` state | block the transcript |
 | working-state collection fails | silence | change the command's outcome |
-| a probed subsystem is unavailable | brief anyway, with the gap visible | withhold the briefing |
+| a recoverable configuration, journal, steering, board, or authority read fails | continue construction with a typed unknown naming the probe and error | report zero or clear |
+| the whole session discovery-and-render deadline expires | refuse with action, inputs, and budget named; emit no partial report | present a partial briefing as complete |
 | a release step is interrupted | re-running converges | unwind or duplicate |
 | an install is interrupted | resume the canonical receipt; refuse an opposing or new operation until it completes | interleave two transactions |
 | a lane's payload fails | that lane shows its own error | void the batch |
@@ -98,7 +99,7 @@ sequenceDiagram
   B->>F: allocator hands out
   F->>F: lifecycle launches occupants as needed
   O->>F: steer mid-flight
-  F-->>O: ACK inside the reply
+  F-->>O: ACK / NACK inside the reply
   F->>B: land phases
   B->>F: review goes to a peer
   F-->>O: turns end, lanes become vacant
@@ -119,7 +120,8 @@ sequenceDiagram
   A->>G: integrate + publish (phase advance)
   T->>A: review phase to a peer
   A-->>T: clean or findings
-  T-->>S: lineage closes
+  A-->>T: task completion publishes in journal and board
+  Note over S,T: ack:key remains immutable provenance<br/>steering standing changes only through its own typed ACK / NACK / cancel path
 ```
 
 ### Renewal
@@ -161,8 +163,9 @@ position preserved as new ones arrive.*
 **Cases** — a new member joins mid-read (the changed geometry replays
 deterministically, and a reader more than 80px from the top stays anchored); a
 member is renewed (its old messages keep their lane-derived accent); composers
-are reordered (neither colours nor message order change); a member's history is
-paged (only that member's sentinel triggers).
+are reordered (neither colours nor message order change); retained history is
+bounded independently per lane, so one prolific member cannot evict every
+other member's visible cards.
 
 ---
 
@@ -179,7 +182,7 @@ The vocabulary is deliberate. These words carry contracts.
 | **mosaic** | the placed, newest-first message lattice | a feed |
 | **shard** | one member's concrete send address | a broadcast |
 | **lifetime** | autonomy policy: Steer, Drive, Drain | a filter |
-| **steering** | durable operator intent requiring acknowledgement | a chat message |
+| **steering** | durable operator intent requiring a typed answer — ACK or NACK/decline | a chat message |
 | **ACK / NACK** | typed agent dispositions, `acked` or `declined` | a read receipt or operator cancellation |
 | **claim** | exclusive, leased possession of a task | an assignment |
 | **phase** | a slot in a task's flow; advancing publishes | a status field |

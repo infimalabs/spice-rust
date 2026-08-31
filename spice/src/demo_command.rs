@@ -871,7 +871,8 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
     Ok(())
 }
 
-include!("demo_command_tail.rs");
+mod runtime;
+use runtime::*;
 
 #[cfg(test)]
 #[path = "demo_command/tests.rs"]

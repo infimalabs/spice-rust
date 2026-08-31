@@ -150,7 +150,7 @@ impl InstallRetirementSummary {
     }
 }
 
-/// Bounded metadata for repository-wide Git hook activation.
+/// Ordered byte-free metadata for repository-wide Git hook activation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookActivationSummary {

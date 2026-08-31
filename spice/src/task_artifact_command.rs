@@ -217,7 +217,7 @@ fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<Sele
     let born = task.born().map_err(|error| {
         Failure::refusal(
             "artifact::task-invalid",
-            "one current handle carrying a canonical inception stamp",
+            "one current handle carrying a canonical birth stamp",
             error.to_string(),
             "read board and pass the exact current task handle",
         )

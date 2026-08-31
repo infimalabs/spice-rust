@@ -20,18 +20,18 @@ fn native_task_handles_use_the_predecessor_stamp_alphabet() {
         assert_eq!(stamp.as_bytes()[steer::Key::WIDTH - 1], expected);
     }
 }
-/// Shape CASE 147 / INVARIANTS ID-02: lexical identity order is inception order.
+/// Shape CASE 147 / INVARIANTS ID-02: lexical identity order is birth order.
 #[test]
-fn plain_string_stamp_and_handle_order_is_inception_order() {
+fn plain_string_stamp_and_handle_order_is_birth_order() {
     let millis = [2_705_i64, 51, 2_704, 52, 53];
     let mut stamps = millis
         .into_iter()
-        .map(|millis| wire::TaskStamp::for_millis(millis).expect("fixture inception"))
+        .map(|millis| wire::TaskStamp::for_millis(millis).expect("fixture birth stamp"))
         .collect::<Vec<_>>();
     stamps.sort();
     let expected = [51_i64, 52, 53, 2_704, 2_705]
         .into_iter()
-        .map(|millis| wire::TaskStamp::for_millis(millis).expect("fixture inception"))
+        .map(|millis| wire::TaskStamp::for_millis(millis).expect("fixture birth stamp"))
         .collect::<Vec<_>>();
     assert_eq!(stamps, expected);
 
@@ -40,7 +40,7 @@ fn plain_string_stamp_and_handle_order_is_inception_order() {
         .map(|millis| {
             TaskHandle::for_project(
                 "task.identity",
-                &wire::TaskStamp::for_millis(millis).expect("fixture inception"),
+                &wire::TaskStamp::for_millis(millis).expect("fixture birth stamp"),
             )
         })
         .collect::<Vec<_>>();
@@ -60,7 +60,7 @@ fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     let alphabet = (0..52_i64)
         .map(|millis| {
             wire::TaskStamp::for_millis(millis)
-                .expect("alphabet fixture inception")
+                .expect("alphabet fixture birth stamp")
                 .as_str()
                 .as_bytes()[wire::TaskStamp::WIDTH - 1]
         })
@@ -74,7 +74,7 @@ fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     let (root, bus, epoch, _seats) = fixture("identity-collision", 0);
     let candidate_millis = 90_000_i64;
     let first_stamp =
-        wire::TaskStamp::for_millis(candidate_millis).expect("first fixture inception");
+        wire::TaskStamp::for_millis(candidate_millis).expect("first fixture birth stamp");
     add_born(
         &bus,
         epoch,
@@ -83,10 +83,10 @@ fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     );
 
     let after_first = board(&bus, epoch, Actor::Operator);
-    let second_stamp = allocate_inception(&after_first, candidate_millis);
+    let second_stamp = allocate_task_stamp(&after_first, candidate_millis);
     assert_eq!(
         second_stamp,
-        wire::TaskStamp::for_millis(candidate_millis + 1).expect("second fixture inception")
+        wire::TaskStamp::for_millis(candidate_millis + 1).expect("second fixture birth stamp")
     );
     add_born(
         &bus,
@@ -96,11 +96,11 @@ fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     );
 
     let after_second = board(&bus, epoch, Actor::Operator);
-    let followups = allocate_inceptions(&after_second, candidate_millis, 3);
+    let followups = allocate_task_stamps(&after_second, candidate_millis, 3);
     let expected = (2..5)
         .map(|offset| {
             wire::TaskStamp::for_millis(candidate_millis + offset)
-                .expect("advanced fixture inception")
+                .expect("advanced fixture birth stamp")
         })
         .collect::<Vec<_>>();
     assert_eq!(

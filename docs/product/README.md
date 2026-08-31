@@ -2,9 +2,12 @@
 
 An operations console for a fleet of coding agents. One operator supervises many
 agents, each inhabiting a real git worktree, by reading their transcripts and
-writing durable steering into their repositories. Supervision, coordination,
-counsel, and repository checks are derived from those two surfaces rather than
-maintained separately.
+writing durable steering through one journal authority. Transcripts are evidence
+of what agents produced; the journal owns durable facts and current heads;
+filesystem and interface surfaces are disposable projections. Coordination
+consumers read the journal authority or its admitted projections and never
+reconstruct those facts or current heads from transcripts or repository-local
+steering artifacts.
 
 This is the product model: what the product *is*, and what anything calling
 itself spice has to do. Entities, loops, policies, boundaries, failure

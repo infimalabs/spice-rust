@@ -133,7 +133,7 @@ pub(in crate::board_command) fn claim_grant(
 /// Nothing here refuses on what the caller asked for; by this point the command
 /// is already admitted and the plan already decided, so every failure below is
 /// a fault rather than a refusal the caller could have avoided: a validated
-/// inception stamp that will not form an origin is a protocol fault, and the
+/// birth stamp that will not form an origin is a protocol fault, and the
 /// mint and the receipt are store faults. The public handle is answer text only.
 ///
 /// The plan arrives whole rather than as loose arguments so the guard's

@@ -93,7 +93,7 @@ impl RestoreCapture {
         &self.members
     }
 
-    /// Every task in the captured journal head set, ordered by inception.
+    /// Every task in the captured journal head set, ordered by birth.
     #[must_use]
     pub fn tasks(&self) -> &[TaskStamp] {
         &self.tasks

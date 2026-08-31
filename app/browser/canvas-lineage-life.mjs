@@ -36,6 +36,157 @@ export async function cleanupLineageFixture({ fixture, resident, owner, request 
   await owner.cleanup();
 }
 
+async function admitSevenMemberLineage(fixture, worktrees) {
+  await reply(fixture, [
+    "lane", "add", worktrees[0], "--life", "Steer", "--vendor", "claude",
+  ]);
+  const first = await reply(fixture, ["lane"]);
+  const host = first.body.lanes.find((lane) => lane.worktree === worktrees[0]);
+  assert.ok(host, "the seven-member lineage has an admitted host");
+  for (const worktree of worktrees.slice(1)) {
+    await reply(fixture, [
+      "lane", "add", worktree,
+      "--lineage", host.lineage_id,
+      "--life", "Steer",
+      "--vendor", "claude",
+    ]);
+  }
+  const snapshot = await reply(fixture, ["lane"]);
+  const members = snapshot.body.lanes.filter(
+    (lane) => lane.lineage_id === host.lineage_id,
+  );
+  assert.equal(members.length, 7, "ordinary lane admission retains all seven members");
+  assert.deepEqual(
+    members.map((member) => member.worktree).sort(),
+    [...worktrees].sort(),
+    "the seven-member lineage contains exactly the admitted worktrees",
+  );
+  assert.ok(
+    members.every((member) => !member.occupant),
+    "layout proof begins before any lineage member is occupied",
+  );
+  return { host, members };
+}
+
+async function findSevenMemberComposer(context, endpoint, lineageId) {
+  const page = await context.newPage();
+  const monitor = monitorPage(page);
+  await page.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  const surface = page.locator(`.team-surface[data-lineage-id="${lineageId}"]`);
+  await surface.waitFor();
+  await surface.getByRole("tab", { name: /^Compose/ }).click();
+  const strip = surface.locator(":scope > .team-pane .team-composer > .team-agents");
+  await strip.locator(":scope > .team-agent").nth(6).waitFor();
+  return { monitor, strip };
+}
+
+async function measureComposerStrip(strip) {
+  return strip.evaluate((node) => {
+    return {
+      weight: node.closest(".team-surface")?.dataset.lineageWeight,
+      overflowX: getComputedStyle(node).overflowX,
+      clientWidth: node.clientWidth,
+      scrollWidth: node.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+      viewportWidth: innerWidth,
+      members: [...node.querySelectorAll(":scope > .team-agent")].map((member) => {
+        const box = member.getBoundingClientRect();
+        return {
+          lane: member.dataset.agentLane,
+          left: box.left,
+          top: box.top,
+        };
+      }),
+    };
+  });
+}
+
+function assertComposerStripGeometry(geometry, members) {
+  const detail = JSON.stringify(geometry);
+  assert.equal(
+    geometry.weight,
+    "6",
+    `seven members retain the six-share host ceiling: ${detail}`,
+  );
+  assert.deepEqual(
+    geometry.members.map(({ lane }) => lane),
+    members.map(({ lane }) => lane),
+    "all seven composers retain resident member order",
+  );
+  assert.ok(
+    geometry.members.every(({ top }) => Math.abs(top - geometry.members[0].top) <= 1),
+    `the implicit seventh track stays in the one composer row: ${detail}`,
+  );
+  assert.ok(
+    geometry.members.every((member, index) =>
+      index === 0 || geometry.members[index - 1].left < member.left),
+    `the composer row remains ordered west to east: ${detail}`,
+  );
+  assert.ok(
+    ["auto", "scroll"].includes(geometry.overflowX)
+      && geometry.scrollWidth > geometry.clientWidth,
+    `the composer strip owns horizontal overflow: ${detail}`,
+  );
+  assert.ok(
+    geometry.bodyWidth <= geometry.viewportWidth,
+    `strip overflow never widens the page: ${detail}`,
+  );
+}
+
+async function assertEasternComposerVisible(strip) {
+  const eastern = await strip.evaluate((node) => {
+    node.style.scrollBehavior = "auto";
+    node.scrollLeft = node.scrollWidth;
+    const stripBox = node.getBoundingClientRect();
+    const last = node.querySelector(":scope > .team-agent:last-child")?.getBoundingClientRect();
+    return {
+      scrollLeft: node.scrollLeft,
+      stripRight: stripBox.right,
+      lastRight: last?.right ?? Number.POSITIVE_INFINITY,
+    };
+  });
+  assert.ok(
+    eastern.scrollLeft > 0 && eastern.lastRight <= eastern.stripRight + 1,
+    `eastward strip scroll reveals member seven: ${JSON.stringify(eastern)}`,
+  );
+}
+
+/// Prove a lineage larger than the six-share visual ceiling remains one
+/// ordered horizontal composer strip. The seven seats are admitted through the
+/// ordinary vacant `lane add` path before any occupant can make topology and
+/// task allocation interact, so this fixture isolates layout from lifecycle.
+export async function assertSevenMemberComposerStrip(browser) {
+  const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-seven-member-")));
+  const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-seven-lanes-")));
+  const owner = ownFixture({ fixture, linkedRoot });
+  let resident;
+  let context;
+  try {
+    const worktrees = await configureFixture(fixture, linkedRoot, 7);
+    resident = owner.ownResident(await startResident(fixture));
+    const pending = await reply(fixture, ["trust"]);
+    await reply(fixture, ["trust", "grant", pending.body.digest]);
+    const { host, members } = await admitSevenMemberLineage(fixture, worktrees);
+
+    context = await browser.newContext({
+      colorScheme: "light",
+      viewport: { width: 520, height: 720 },
+    });
+    const { monitor, strip } = await findSevenMemberComposer(
+      context,
+      resident.discovery.endpoint,
+      host.lineage_id,
+    );
+    assertComposerStripGeometry(await measureComposerStrip(strip), members);
+    await assertEasternComposerVisible(strip);
+    monitor.assertClean();
+  } finally {
+    if (context) await context.close();
+    await cleanupLineageFixture({ fixture, resident, owner });
+  }
+}
+
 export async function assertLineageLifeIsolation(browser) {
   const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lineage-life-")));
   const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-life-lanes-")));

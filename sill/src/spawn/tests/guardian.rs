@@ -1,3 +1,5 @@
+use super::*;
+
 struct ProtectedFixture {
     root: PathBuf,
     topology: LockTopology,
@@ -86,7 +88,7 @@ fn blocked_group_spec(fifo: &Path) -> Spec {
     )
 }
 
-fn reap_protected_leader(running: &mut super::Running) -> std::process::ExitStatus {
+fn reap_protected_leader(running: &mut super::super::Running) -> std::process::ExitStatus {
     let started = Instant::now();
     loop {
         if let Some(status) = running
@@ -205,7 +207,7 @@ fn running_wait_does_not_join_a_guardian_for_an_unreadable_live_group() {
     );
 }
 
-fn test_spec<I, S>(
+pub(super) fn test_spec<I, S>(
     program: &str,
     arguments: I,
     environment: Environment,

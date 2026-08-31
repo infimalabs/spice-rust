@@ -238,7 +238,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             inspect_path(path),
         ),
         InstallError::BinaryNotRegular(path) | InstallError::BinaryEmpty(path) => format!(
-            "inspect the selected executable with `{}`; from the worktree root, rebuild it with `cargo build --locked -p spice`, then rerun `target/debug/spice install`",
+            "inspect the selected executable with `{}`; from the worktree root, rebuild it with `cargo build --locked --target-dir target -p spice`, then rerun `target/debug/spice install`",
             inspect_path(path),
         ),
         InstallError::HookPathUnrepresentable { path, .. } => format!(
@@ -247,7 +247,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         InstallError::BinaryContextChanged => concat!(
             "the `.spice-install/bin/spice` asset was planned from another executable; preview ",
             "and apply through the same freshly built executable: from the worktree root, run ",
-            "`cargo build --locked -p spice`, rerun `target/debug/spice install`, then pass ",
+            "`cargo build --locked --target-dir target -p spice`, rerun `target/debug/spice install`, then pass ",
             "that preview's digest to `target/debug/spice install --apply=<digest>`",
         )
         .to_owned(),
@@ -276,7 +276,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         )
         .to_owned(),
         InstallError::Drift { path, .. } => format!(
-            "resolve the asset root with `git rev-parse --path-format=absolute --git-common-dir`, inspect its Rust-owned target with `ls -ld -- <printed-common-git>/{path}`, and preserve the operator replacement or restore the recorded installed image before retrying reversal",
+            "resolve the asset root with `/usr/bin/git rev-parse --path-format=absolute --git-common-dir`, inspect its Rust-owned target with `ls -ld -- <printed-common-git>/{path}`, and preserve the operator replacement or restore the recorded installed image before retrying reversal",
         ),
         _ => {
             unreachable!("fault-only install errors never construct refusal guidance")
@@ -287,11 +287,13 @@ fn install_refusal_remedy(error: &InstallError) -> String {
 fn hook_configuration_remedy(error: &InstallError) -> Option<String> {
     match error {
         InstallError::ForeignHookPath { worktree, .. } => Some(format!(
-            "inspect `core.hooksPath` in {} and keep predecessor hooks in a separate worktree before previewing installation again",
+            "inspect `/usr/bin/git config --show-origin --show-scope --get-all core.hooksPath` in {}; make system, global, and command scopes contribute no value, then deliberately replace only the exact refused common-local or worktree-local value before previewing again",
             worktree.display(),
         )),
-        InstallError::GitConfigurationDrift { worktree, .. } => Some(format!(
-            "inspect `git config --show-origin --get-all core.hooksPath` in {}; restore the exact previewed or installed value before retrying",
+        InstallError::GitConfigurationDrift {
+            worktree, scope, ..
+        } => Some(format!(
+            "inspect `/usr/bin/git config --show-origin --show-scope --get-all core.hooksPath` in {}, then restore the exact previewed or installed vector in its {scope:?} scope; system, global, and command scopes must contribute no value",
             worktree.display(),
         )),
         _ => None,

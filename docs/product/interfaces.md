@@ -228,19 +228,19 @@ never a patch to a dispatcher.
 authority. Repository configuration can mount a command, but it cannot discover
 or load executable values into the vendor, wrapper, or gate namespaces.
 
-### Universal scopes
+### Shared gate-and-taste scopes
 
 ```mermaid
 flowchart LR
-  S["one selector model"] --> P[policies]
-  S --> ST[studies]
-  S --> M[maxims]
-  S --> W[wrappers and hooks]
+  S["path, extension, vendor,<br/>model, phase"] --> P[gate policies and studies]
+  S --> M[tastes and maxims]
 ```
 
 **Invariant —** Applicability is expressed once, in one selector language, and
-reused by every subsystem that needs to say "here but not there". Path,
-extension, vendor, model, and phase are the exact selector axes.
+reused by gate policies and studies and by tastes and maxims. Path, extension,
+vendor, model, and phase are the exact selector axes. Shell wrappers and
+configured pre-commit commands have separate contracts; the latter's scopes
+are path-only.
 
 ---
 
@@ -281,7 +281,7 @@ environment and refusing a commit are different jobs.
 flowchart TD
   C["canned transcript"] --> S["seeded lane in an isolated root"]
   S --> R["replays into the real renderer"]
-  R --> N["no model call, no repo mutation"]
+  R --> N["no model call;<br/>no caller/source-repository mutation"]
 ```
 
 **Invariant —** The demo exercises the **real** rendering path with static data.
@@ -324,8 +324,12 @@ rather than duplicating.
 
 ```mermaid
 flowchart TD
-  M["selected message"] --> E["exact full message text"]
-  E --> Q["one global queue"]
+  T["topbar manual"] --> TC["trimmed main-content inner text<br/>at most 32 KiB, no lane"]
+  C["card manual"] --> CM["exact message.text<br/>with its rendered lane"]
+  N["automatic narration"] --> NM["newly cursor-admitted<br/>full message text"]
+  TC --> Q["one global queue"]
+  CM --> Q
+  NM --> Q
   Q --> B{"configured backend"}
   B --> S["browser system synthesis<br/>callback-settled"]
   B --> X["external rendering<br/>deadline-bounded"]
@@ -334,9 +338,11 @@ flowchart TD
   P --> Q
 ```
 
-**Invariant —** Manual speech and automatic narration use the selected
-message's complete text. Automatic narration admits only messages newer than
-the browser's per-lane cursor; it does not reinterpret ACKs or paragraph edges.
+**Invariant —** Card speech uses that card's exact complete `message.text` and
+retains its rendered lane. The topbar instead speaks the trimmed visible
+`main.content` inner text, refuses more than 32 KiB, and carries no lane.
+Automatic narration admits each newly cursor-admitted message's complete text;
+it does not reinterpret ACKs or paragraph edges.
 
 **Invariant —** Speech is **best-effort ear candy**. A detected failure is
 reported as nonblocking `Speech unavailable` state and never blocks the visible
@@ -363,7 +369,7 @@ flowchart TD
   AG --> BOARD["task board<br/>claims, phases, graphs"]
   BOARD --> ALLOC["allocator"]
   ALLOC --> AG
-  AG --> GIT["three git boundaries"]
+  AG --> GIT["three lane-integration<br/>git boundaries"]
   GIT --> BASE["baseline"]
   BASE --> GIT
   AG --> CONS["counsel"]
@@ -379,7 +385,8 @@ console, which informs the operator), **steer** (the operator creates steering,
 which reaches the agent), **work** (the board feeds the allocator, which assigns
 the agent, which updates the board), **land** (the agent writes git, which
 advances the baseline, which refreshes the agent), **counsel** (the agent
-requests counsel, which becomes steering, which reaches the agent), and
+produces authored prose, enabled counsel recognizes it, and admitted reminders
+return as ordinary steering), and
 **staff** (the board exposes capacity, which wakes the agent, which updates the
 board).
 

@@ -130,10 +130,10 @@ pub(super) fn document_handles(
                 return existing.statement.body.handle.clone();
             }
             let born = loop {
-                let candidate = allocate_inception(board, epoch_millis);
+                let candidate = allocate_task_stamp(board, epoch_millis);
                 epoch_millis = epoch_millis
                     .checked_add(1)
-                    .expect("document task inception increment fits i64");
+                    .expect("document task birth increment fits i64");
                 if planned.iter().all(|planned| planned != &candidate) {
                     break candidate;
                 }

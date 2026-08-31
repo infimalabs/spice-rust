@@ -64,7 +64,7 @@ export async function resizeCompactionViewport(page, divider, viewport, label) {
   }, { key, before });
 }
 
-export async function assertCompactionDivider(divider, label, expectedAgent) {
+export async function assertCompactionDivider(divider, label, expectedAttribution) {
   const geometry = await divider.evaluate((boundary) => {
     const rect = (node) => {
       const box = node.getBoundingClientRect();
@@ -184,7 +184,7 @@ export async function assertCompactionDivider(divider, label, expectedAgent) {
     ["mosaic-compaction-age", "", "mosaic-compaction-context"],
     `${label} keeps age, separator, and compacted-context hierarchy`,
   );
-  assert.equal(geometry.agent.text, expectedAgent);
+  assert.equal(geometry.agent.text, expectedAttribution);
   assert.equal(geometry.context.text, "compacted context");
   assert.ok(Number.parseFloat(geometry.contextGroup.gap) > 0, `${label} separates agent and context`);
   assert.match(geometry.label.fontFamily, /system-ui/);

@@ -1,15 +1,17 @@
-fn ref_state(object: Option<&str>) -> dist::RefState<'_> {
+use super::*;
+
+pub(super) fn ref_state(object: Option<&str>) -> dist::RefState<'_> {
     object.map_or(dist::RefState::Absent, dist::RefState::Present)
 }
 
-fn package_state(identity: Digest, object: String) -> dist::OperationState {
+pub(super) fn package_state(identity: Digest, object: String) -> dist::OperationState {
     dist::OperationState::Package {
         identity: Some(identity),
         object: Some(object),
     }
 }
 
-fn stable_ref_observation(
+pub(super) fn stable_ref_observation(
     previewed: Option<&String>,
     current: Option<String>,
     release: &str,
@@ -20,7 +22,7 @@ fn stable_ref_observation(
     }
 }
 
-fn admitted_local_progress(
+pub(super) fn admitted_local_progress(
     plan: &dist::ReleasePlan,
     head: &str,
     version: &dist::ProductVersion,
@@ -44,7 +46,7 @@ fn admitted_local_progress(
     }
 }
 
-fn exact_version_bump(status: &str) -> bool {
+pub(super) fn exact_version_bump(status: &str) -> bool {
     let mut lines = status.lines();
     matches!(
         lines.next(),
@@ -52,7 +54,7 @@ fn exact_version_bump(status: &str) -> bool {
     ) && lines.next().is_none()
 }
 
-fn stable_source_observation(
+pub(super) fn stable_source_observation(
     previewed: Option<&String>,
     current: Option<String>,
     source_commit: &str,
@@ -65,7 +67,7 @@ fn stable_source_observation(
 }
 
 #[cfg(unix)]
-fn make_executable(path: &Path) -> Result<(), dist::EffectError> {
+pub(super) fn make_executable(path: &Path) -> Result<(), dist::EffectError> {
     use std::os::unix::fs::PermissionsExt as _;
 
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
@@ -73,13 +75,16 @@ fn make_executable(path: &Path) -> Result<(), dist::EffectError> {
 }
 
 #[cfg(not(unix))]
-fn make_executable(_: &Path) -> Result<(), dist::EffectError> {
+pub(super) fn make_executable(_: &Path) -> Result<(), dist::EffectError> {
     Err(dist::EffectError::Environment(
         "release probe installation requires Unix executable modes".to_owned(),
     ))
 }
 
-fn manifest_bytes(root: &Path, plan: &dist::ReleasePlan) -> Result<Vec<u8>, dist::EffectError> {
+pub(super) fn manifest_bytes(
+    root: &Path,
+    plan: &dist::ReleasePlan,
+) -> Result<Vec<u8>, dist::EffectError> {
     let path = root.join("dist/stage/release/manifest.json");
     let bytes = fs::read(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -96,7 +101,7 @@ fn manifest_bytes(root: &Path, plan: &dist::ReleasePlan) -> Result<Vec<u8>, dist
     Ok(bytes)
 }
 
-fn package_preview(
+pub(super) fn package_preview(
     root: &Path,
     plan: &dist::ReleasePlan,
 ) -> Result<crate::release_package::Preview, dist::EffectError> {
@@ -115,7 +120,7 @@ fn package_preview(
     })
 }
 
-fn object_exists(root: &Path, object: &str) -> Result<bool, dist::EffectError> {
+pub(super) fn object_exists(root: &Path, object: &str) -> Result<bool, dist::EffectError> {
     let output = Command::new("git")
         .args(["cat-file", "-e", &format!("{object}^{{tree}}")])
         .current_dir(root)
@@ -124,7 +129,7 @@ fn object_exists(root: &Path, object: &str) -> Result<bool, dist::EffectError> {
     Ok(output.status.success())
 }
 
-fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<String, String> {
+pub(super) fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(arguments)
         .current_dir(root)
@@ -151,7 +156,7 @@ fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<String, String>
     }
 }
 
-pub(super) fn execute(
+pub(crate) fn execute(
     root: &Path,
     journal_root: &Path,
     plan: &dist::ReleasePlan,
@@ -164,7 +169,7 @@ pub(super) fn execute(
         .map_err(execute_outcome)
 }
 
-pub(super) fn verify_completed(
+pub(crate) fn verify_completed(
     journal_root: &Path,
     key: &Digest,
     manifest: &Digest,
@@ -209,7 +214,9 @@ pub(super) fn verify_completed(
         .map_err(|error| error.to_string())
 }
 
-fn execute_outcome(error: dist::ExecuteError) -> Outcome<wire::intent::RecognitionAnswer> {
+pub(super) fn execute_outcome(
+    error: dist::ExecuteError,
+) -> Outcome<wire::intent::RecognitionAnswer> {
     match error {
         dist::ExecuteError::Effect(effect) => effect_outcome(effect),
         dist::ExecuteError::Journal(detail) => journal_fault(detail),
@@ -223,7 +230,7 @@ fn execute_outcome(error: dist::ExecuteError) -> Outcome<wire::intent::Recogniti
     }
 }
 
-fn effect_outcome(error: dist::EffectError) -> Outcome<wire::intent::RecognitionAnswer> {
+pub(super) fn effect_outcome(error: dist::EffectError) -> Outcome<wire::intent::RecognitionAnswer> {
     match error {
         dist::EffectError::Moved(detail) => release_refusal(
             "release::external-plan-moved",
@@ -261,7 +268,7 @@ fn effect_outcome(error: dist::EffectError) -> Outcome<wire::intent::Recognition
     }
 }
 
-fn release_refusal(
+pub(super) fn release_refusal(
     reason: &str,
     witness: &str,
     expected: &str,
@@ -279,7 +286,7 @@ fn release_refusal(
     ))
 }
 
-fn journal_fault(detail: String) -> Outcome<wire::intent::RecognitionAnswer> {
+pub(super) fn journal_fault(detail: String) -> Outcome<wire::intent::RecognitionAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Environment,
         reason: "release::operation-journal-failed".to_owned(),

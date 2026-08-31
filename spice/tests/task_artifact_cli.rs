@@ -598,9 +598,7 @@ fn assert_backup_restore(
     second: artifact::Artifact,
 ) {
     fixture.reply::<JournalBackup>(&["backup".to_owned(), fixture.bundle.display().to_string()]);
-    let born = task
-        .born()
-        .expect("fixture handle carries its inception stamp");
+    let born = task.born().expect("fixture handle carries its birth stamp");
     assert!(
         fixture
             .bundle

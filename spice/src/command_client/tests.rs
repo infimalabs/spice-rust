@@ -644,4 +644,4 @@ fn canvas_rechecks_discovery_identity_immediately_before_launch() {
     assert!(!fault.detail.contains(&original.capability.to_string()));
 }
 
-include!("tests/late.rs");
+mod late;

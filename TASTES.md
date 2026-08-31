@@ -13,8 +13,8 @@ One runtime law has two explicitly configured modes. With `judge.enabled`
 absent or false, selection is the whole decision: a configured bag hit in
 authored prose emits one `[TASTE]` ordinary directive to the lane that wrote the
 prose, carrying the taste's message unchanged. With `judge.enabled = true`, the
-resident asks the one bounded judge process several equivalent framings in a
-deterministically shuffled order. Exactly one normalized YES confirms the
+resident deterministically shuffles several equivalent framings, then invokes a
+fresh bounded judge child for each framing in sequence. Exactly one normalized YES confirms the
 candidate and opens the same ordinary directive; exactly one normalized NO
 clears it without interruption. Malformed replies retry only to the declared
 bound, while absence, timeout, process error, or exhausted ambiguity abandons
@@ -91,16 +91,17 @@ an operator commit. `enabled = false` is the named reversible disablement;
 deletion removes the row and its history from the current configured record.
 
 When tracked policy declares `policy.taste_mining_threshold >= 2`, `spice taste
-mine` reads one authenticated journal snapshot, clusters recurring ACK
-corrections at that threshold, and files or reuses hidden, operator-reviewed
-proposals whose origins name the oldest supporting ACK. Without that declaration
-mining refuses, and in either case it never edits tracked policy. `spice taste
-add TEXT` and `spice taste drop NAME` prepare explicit curation proposals from
-the evidence that motivated them. A proposal
-inherits the operator's active task, or names its steering or parent cause
-explicitly with `--origin`; an ungrounded filing is refused. No proposal changes
-the tracked set. Admission or retirement requires the authoring checks, the
-paired confirm-and-clear fixtures, and an operator commit of the exact entry.
+mine` reads one authenticated journal snapshot, clusters recurring operator
+corrections answered by acknowledgement or decline at that threshold, and files
+or reuses hidden, operator-reviewed proposals whose origins name the oldest
+supporting acknowledgement key as `ack:<key>`. Without that declaration mining
+refuses, and in either case it never edits tracked policy. `spice taste add TEXT`
+and `spice taste drop NAME` prepare explicit curation proposals from the evidence
+that motivated them. A proposal inherits the acting caller's sole active claim,
+or carries an explicit causal `--origin`—ordinarily `ack:` or `task:`; an
+ungrounded filing is refused. No proposal changes the tracked set. Admission or
+retirement requires the authoring checks, the paired confirm-and-clear fixtures,
+and an operator commit of the exact entry.
 
 Every direct fire and adjudicated decision preserves its locus. The curation
 view is derived from the journal at one snapshot: recent reminders per taste

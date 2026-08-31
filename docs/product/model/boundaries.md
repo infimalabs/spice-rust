@@ -22,25 +22,40 @@ flowchart LR
 ### Closed loop: Counsel
 
 ```mermaid
-flowchart LR
+flowchart TD
   P["assistant prose"] --> T["trigger bags"]
-  T --> J["judge (optional)"]
-  J --> S["reminder as ordinary steering"]
+  T --> E{"judge enabled?"}
+  E -- no --> S["direct reminder as<br/>ordinary steering"]
+  E -- yes --> J["deterministically shuffled framings;<br/>one fresh bounded child each"]
+  J -- "normalized YES" --> S2["confirmed reminder as<br/>ordinary steering"]
+  J -- "normalized NO" --> C["cleared judgment;<br/>metrics only"]
+  J -- "absence, error, timeout,<br/>or exhausted ambiguity" --> D["no publication"]
   S --> P
-  J --> M["match, confirm, recurrence metrics"]
-  M --> SC["per-vendor bag scoping"]
-  SC --> T
+  S2 --> P
+  S --> M["match, admitted decision,<br/>recurrence metrics"]
+  S2 --> M
+  C --> M2["match + judged-decision metrics"]
+  M --> SC["evidence for a tracked scope change<br/>paths / extensions / vendors / models / phases"]
+  M2 --> SC
+  SC --> O{"operator accepts an independently<br/>committed tracked change?"}
+  O -- yes --> T
+  O -- no --> U["active tracked bags unchanged"]
+  U --> T
 ```
 
 **Invariant —** A confirmed reminder returns as **ordinary steering** — the
 same durable channel as the operator's own words. The counsel has no private
 channel.
 
+**Invariant —** Reporting and mining provide evidence only. They never add,
+remove, or rescope active tracked bags; only an operator-accepted tracked change
+does that.
+
 ### Closed loop: Maxim mining
 
 ```mermaid
 flowchart TD
-  A["ACK corrections"] --> C["cluster into themes"]
+  A["operator corrections answered<br/>by ACK or decline"] --> C["cluster into themes"]
   C --> R{"recurrence reaches the threshold?"}
   R -- yes --> D["draft a bag stanza"]
   D --> B["file on a hidden triage board"]
@@ -56,24 +71,35 @@ everything else.
 
 ```mermaid
 flowchart TD
-  U["projection unavailable"] --> D["discard files"]
-  D --> C["recreate at current shape"]
-  C --> R["replay from native source"]
+  U["projection unavailable"] --> D["discard or reinitialize only<br/>the derived projection"]
+  D --> C["rebuild at current shape"]
+  C --> R["replay durable history"]
   R --> S["serve facts"]
   S --> U
 ```
+
+**Invariant —** Projection rebuild preserves its containing authority and every
+immutable fact and head. A profile that co-locates derived index rows with
+authority state reinitializes only those derived rows inside the authority's
+transaction boundary.
 
 ### Closed loop: Release
 
 ```mermaid
 flowchart TD
-  B["build exact target payloads"] --> X["prove each target outside<br/>the candidate checkout"]
+  B["build exact target payloads"] --> X["replay the current candidate checkout<br/>in each target environment"]
   X --> R["validate detached proof receipts"]
   R --> S["seal manifest over artifacts + receipts"]
   S --> N["derive notes and resolve<br/>the exact publication plan"]
-  N --> G["run the complete strict battery<br/>over the plan's source commit"]
-  G --> PUB["converge the ordered publication<br/>of the exact sealed object"]
+  N --> A{"publication action"}
+  A -- "fresh publish" --> G["run the complete strict battery<br/>over the plan's source commit"]
+  A -- "tag-and-announce recovery" --> PRE["resolve preconditions<br/>and credentials"]
+  PRE --> VIS["await registry visibility"]
+  VIS --> TAG["create immutable tag"]
+  TAG --> ANN["announce;<br/>no strict-battery rerun"]
+  G --> PUB["converge the ordered publication<br/>of the plan-bound refs and package"]
   PUB --> B
+  ANN --> B
 ```
 
 **Invariant —** Notes derive from git history, not a maintained changelog. The
@@ -83,10 +109,12 @@ ledger is already the record.
 
 ## Boundaries and seams
 
-### The three git boundaries
+### The three lane-integration git boundaries
 
-**Invariant —** Agents never pull and never push. Git is touched at exactly three
-control-plane moments, and no more.
+**Invariant —** Agents never pull and never push. Agent-lane integration touches
+the lane's worktree at exactly three control-plane moments: launch, claim, and
+phase completion. Release, gate, proof, and installation Git operations belong
+to other boundaries.
 
 ```mermaid
 sequenceDiagram

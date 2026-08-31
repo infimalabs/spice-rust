@@ -671,7 +671,7 @@ async fn send_task_note(
 ) -> Result<(), String> {
     let born = task
         .born()
-        .map_err(|error| format!("task handle {task} has no canonical inception stamp: {error}"))?;
+        .map_err(|error| format!("task handle {task} has no canonical birth stamp: {error}"))?;
     let body = TaskNote {
         task: task.clone(),
         note,

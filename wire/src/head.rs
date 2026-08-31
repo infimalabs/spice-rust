@@ -27,7 +27,7 @@ pub struct ClaimCell {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskHead {
-    /// Sole task identity, minted from its inception instant.
+    /// Sole task identity, minted from its birth instant.
     pub born: TaskStamp,
     /// Fact that first placed this task in the queue.
     pub queue_origin: Seq,

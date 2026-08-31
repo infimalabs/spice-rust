@@ -1,11 +1,14 @@
 # Cargo isolation
 
 Spice resident lanes receive a private `CARGO_HOME` over one immutable,
-content-addressed directory-source store. The store is rooted at
-`$SPICE_RS_BOOTSTRAP_CARGO_HOME/spice/source-store-v2` (normally below the
-native `~/.cargo`) and is keyed by the exact `Cargo.lock` bytes plus schema
-version. Cargo, rustc, and rustdoc are admitted as one exact native toolchain
-before `CARGO_HOME` changes. A complete explicit
+content-addressed directory-source store. Spice captures the bootstrap Cargo
+home from `SPICE_RS_BOOTSTRAP_CARGO_HOME`, then `CARGO_HOME`, then
+`HOME/.cargo`, in that precedence order. The store is rooted at the captured
+home's `spice/source-store-v2` and is keyed by the exact `Cargo.lock` bytes
+plus schema version. Descendant Cargo processes receive that captured home as
+`SPICE_RS_BOOTSTRAP_CARGO_HOME` while their private home is exported as
+`CARGO_HOME`. Cargo, rustc, and rustdoc are admitted as one exact native
+toolchain before `CARGO_HOME` changes. A complete explicit
 `SPICE_RS_NATIVE_CARGO`/`SPICE_RS_NATIVE_RUSTC`/`SPICE_RS_NATIVE_RUSTDOC`
 trio takes precedence; otherwise Spice resolves all three through the channel
 declared by the worktree's `rust-toolchain.toml` and the exact `rustup` below

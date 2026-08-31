@@ -65,38 +65,52 @@ operation's exact prior state before crossing the effect boundary and a typed
 receipt after convergence. Resumption admits only that same plan and receipt
 prefix.
 
-### The gate order, and the one seam in it
+### The fresh-publish gate order, and the one seam in it
 
-The bump sits between two gates, and both neighbours are load-bearing.
+The fresh-publish bump sits between two gates, and both neighbours are
+load-bearing. Tag-and-announce recovery takes a separate four-operation path.
 
 ```mermaid
-flowchart LR
-  SEAL["admit the post-proof<br/>two-target manifest"] --> COR["correctness gate"]
+flowchart TD
+  A{"release action"}
+  A -- "fresh publish" --> SEAL["admit the post-proof<br/>two-target manifest"]
+  SEAL --> COR["correctness gate"]
   COR --> BUMP["bump and verify version"]
   BUMP --> COMMIT["materialize deterministic<br/>release commit"]
-  COMMIT --> ART["rebuild the exact package<br/>from sealed objects"]
-  ART --> PROBE["copy the compiled-host executable<br/>to an independent probe root<br/>and run its version contract"]
+  COMMIT --> ART["rebuild the exact package<br/>from admitted staged inputs"]
+  ART --> PROBE["read the compiled-host executable,<br/>copy and chmod it in a probe root,<br/>and require command success"]
+  A -- "tag-and-announce recovery" --> PRE["resolve preconditions<br/>and credentials"]
+  PRE --> VIS["await registry visibility"]
+  VIS --> TAG["create immutable tag"]
+  TAG --> ANN["announce"]
 ```
 
-**Invariant —** The bump lands **after** correctness, so a red source never
-authorizes a version transition. Recovery may admit the exact version-only
-intermediate state after correctness has already been receipted; that resumable
-state cannot move the bump ahead of the gate in a fresh execution.
+**Invariant —** The fresh-publish bump lands **after** correctness, so a red
+source never authorizes a version transition. Fresh-publish resumption may admit
+the exact version-only intermediate state after correctness has already been
+receipted; that resumable state cannot move the bump ahead of the gate.
 
-**Invariant —** The correctness gate selects the exact source commit named by
-the accepted plan and executes the complete canonical strict battery over that
-immutable tree. Every arm must admit before the bump. This host-side battery is
-distinct from the sealed target proof replay completed before the manifest and
-publication plan are accepted.
+**Invariant —** For fresh publish, the correctness gate selects the exact source
+commit named by the accepted plan and executes the complete canonical strict
+battery over that immutable tree. Every arm must admit before the bump. This
+host-side battery is distinct from the sealed target proof replay completed
+before the manifest and publication plan are accepted. Tag-and-announce
+recovery instead resolves preconditions and credentials, awaits registry
+visibility, creates the immutable tag, and announces; it does not rerun the
+correctness battery.
 
-**Invariant —** The bump lands **before** the artifact gate, so the package ref
-names the exact sealed package rebuilt for that version and release commit.
+**Invariant —** The fresh-publish bump lands **before** the artifact gate, so
+the package ref names the exact sealed package rebuilt for that version and
+release commit.
 
-**Invariant —** The artifact gate proves both composition and use. The package
-contains the admitted post-proof manifest and its content-addressed target
-objects; the compiled-host executable is then copied to an independent probe
-root, rehashed, made executable, and required to answer the structured version
-command.
+**Invariant —** The artifact gate proves both composition and use. A persistent
+release target directory may contribute reusable build output; the rebuilt
+package must nevertheless equal the planned package and Git-tree identities.
+The compiled-host staged executable is read, matched to the plan's artifact
+digest, copied to a plan-keyed probe root, made executable there, and required
+to return success from `--json version`. The probe does not require the staged
+source itself to be regular or executable, and it does not interpret the
+command's output as a structured identity.
 
 **Invariant —** Preview, execution, and recovery use one plan and receipt grammar.
 A parallel verification or publication body would be a second release authority.
@@ -120,6 +134,12 @@ environment that actually ran proof: the Linux receipt's OCI identity must match
 the payload's proof-container pin, while the Darwin receipt binds the attested
 native runner digest.
 
+The two payloads must bind the source digest carried by their manifest. The
+publication plan separately admits its source and release commits and the
+manifest, package, target, notes, and installed-artifact identities. Current
+admission does not compare the manifest's source digest with the plan's source
+commit.
+
 ```mermaid
 flowchart TD
   D["aarch64-apple-darwin payload"] --> DN["attested native proof runner"]
@@ -133,14 +153,19 @@ flowchart TD
   M --> P["release plan binds manifest,<br/>payloads, receipts, and package"]
 ```
 
-**Invariant —** Proof executes the complete current battery in the one sealed
-environment admitted for that compiled target. Unsupported hosts, target drift,
-environment drift, infrastructure failure, or a non-clean replay publish no
-receipt.
+**Invariant —** Proof executes the complete current battery against the current
+candidate checkout: Linux mounts that checkout read-only in the admitted OCI
+environment, while Darwin passes it to the attested native runner. Replay is
+bound to the admitted payload, environment, and battery, but it does not prove
+that the workspace commit equals the payload's source digest. Unsupported hosts,
+target drift, environment drift, infrastructure failure, or a non-clean replay
+publish no receipt.
 
-**Invariant —** A proof receipt is detached from the payload and canonical. It is
-admitted only when target, payload digest, environment, battery digest, replay
-digest, and clean standing form one identity chain.
+**Invariant —** A proof receipt is detached from the payload and canonical. Only
+a clean replay publishes a receipt, and admission requires target, payload
+digest, environment, battery digest, replay digest, and clean standing to form
+one identity chain. A refused replay remains a typed refusal, not a refused
+receipt.
 
 **Invariant —** The release manifest is post-proof. Both canonical targets and
 their exact receipts must be present, clean, and mutually consistent before the
@@ -151,10 +176,13 @@ release.
 published before the sole manifest pointer. A reader therefore sees either the
 prior complete seal or the new complete seal, never a pointer to missing proof.
 
-**Invariant —** The independent executable probe trusts bytes, not a version
-claim. It copies the staged native regular file to a plan-keyed probe root,
-recomputes its digest, and exercises its structured version command. Candidate
-source cannot substitute for the sealed executable.
+**Invariant —** The independent executable probe reads the compiled-host staged
+path, recomputes its artifact digest, and refuses disagreement with the plan. A
+readable symlink or other readable source is followed by that read; the probe
+then atomically copies the bytes to a plan-keyed regular file, applies executable
+permissions to the copy, and requires the copied process to exit successfully
+for `--json version`. It does not validate the source file's type or mode or
+decode stdout as a version identity.
 
 ### Notes are read out of the ledger
 
@@ -170,7 +198,7 @@ flowchart TD
   subgraph INVENTORY["build the inventory"]
     direction LR
     SUP["suppress add-and-revert<br/>pairs on both sides"] --> COL["collapse shared-task<br/>landings"]
-    COL --> GRP["group by each commit's<br/>declared project"]
+    COL --> GRP["group from each commit's declaration;<br/>empty and agent.* map to general"]
   end
 
   subgraph PUBLISH["curate and publish"]
@@ -198,19 +226,24 @@ reverted commit, not with one whose identifier equals it. The reverted commit
 almost always arrived on a side branch and never appears in the first-parent
 list at all.
 
-**Invariant —** Landings sharing a task identity collapse into one entry, held at
-the position where that task first landed and described by its most recent
-wording. A task that lands once per phase would otherwise appear once per phase,
-described by its earliest and least accurate wording.
+**Invariant —** Landings sharing a task identity collapse into one entry at the
+position where that task first landed. The most recent landing supplies both the
+entry's subject and its declared project. A task that lands once per phase would
+otherwise appear once per phase, described and grouped by stale declarations.
 
-**Invariant —** Every entry carries at least one reference back into history, and
-entries preserve landing order. A description with no pointer cannot be verified
-when it turns out to be wrong.
+**Invariant —** Every entry carries at least one reference back into history.
+Rendering groups the collapsed entries by the project supplied by each task's
+latest landing, emits project buckets in the order those projects first appear
+in that collapsed entry sequence, and preserves entry order within a bucket.
+Equal edited descriptions merge only within the same project bucket, retaining
+every contributing reference; project grouping does not preserve one global
+landing order or raw-history project order.
 
-**Invariant —** Entries group by the project each commit itself declares — the
-author's own statement of what the change belongs to — never by inference from
-the paths it touched. A commit declaring none lands in a general grouping rather
-than disappearing.
+**Invariant —** Each collapsed entry groups from the project its latest landing
+declares — the author's own statement of what the change belongs to — never by
+inference from touched paths. An empty declaration and every declared `agent.*`
+project map to `general`; every other declared project retains its own first-seen
+bucket in the collapsed entry sequence.
 
 **Invariant —** A trailing handle is stripped from a description only when it
 matches that commit's own recorded identifier. Guessing from shape truncates
@@ -268,6 +301,11 @@ step to another provider.
 tree reaches the immutable package ref. The reverse order exposes a package whose
 source is not present at the same authority.
 
+**Invariant —** Only source publication and guarded package-ref publication have
+explicit no-effect rehearsal operations. Tag and announcement publication run
+their convergent Git mutations directly; the current plan neither rehearses
+those effects nor marks them as unrehearsable.
+
 **Invariant —** Tag and announcement wait until bounded observation sees the
 exact package object at the package ref. Exhausting that observation is a loud
 terminal refusal, not permission to advertise unobservable content.
@@ -278,9 +316,11 @@ The accepted-operation journal and typed receipts make each restart resume the
 same plan at the first incomplete boundary.
 
 **Invariant —** `spice release publish --action tag-and-announce` previews a
-plan that performs only tagging and announcement; repeating that same action
-command with `--apply=<digest>` finishes a release whose package ref is already
-visible without rebuilding or republishing the package tree.
+plan that resolves recovery preconditions and credentials, observes registry
+visibility, then performs only the tag and announcement publication effects;
+repeating that same action command with `--apply=<digest>` finishes a release
+whose package ref is already visible without rebuilding or republishing the
+package tree.
 
 **Invariant —** A version names exactly one package object and one release commit.
 An existing package, tag, or announcement ref pointing elsewhere refuses rather
@@ -297,21 +337,23 @@ not exist.
 ### Installing into a repository the product does not own
 
 The same discipline, pointed inward. Installing hooks means writing into someone
-else's repository, so one canonical status-bearing receipt owns the exact plan,
-first-captured prior images, durable progress, and reversal outcomes.
+else’s repository, so one canonical status-bearing receipt owns the exact plan,
+first-captured prior-image evidence, durable progress, and reversal outcomes.
 
 ```mermaid
 flowchart TD
-  OBS["resolve exact plan by observation<br/>including prior scoped and effective values"] --> PRE["side-effect-free preview<br/>and canonical plan digest"]
+  OBS["privately resolve exact plan by observation<br/>including prior scoped and effective values"] --> PRE["side-effect-free byte-free stage summary<br/>and canonical plan digest"]
   PRE --> APP["authorize exact digest"]
   APP --> AGAIN["re-resolve plan and executable<br/>repository configuration"]
   AGAIN --> SAME{"digest and bound<br/>observations still exact?"}
   SAME -- no --> REF["refuse before effect"]
-  SAME -- yes --> ACCEPT["atomically accept canonical<br/>applying receipt generation"]
+  SAME -- yes --> MAINT["bounded recognized stale-install<br/>maintenance"]
+  MAINT --> ACCEPT["atomically accept canonical<br/>applying receipt generation"]
 ```
 
 The accepted receipt is the transaction authority. It exists durably before the
-first live installation effect and governs one serial compare-and-swap loop.
+first receipt-owned installation effect and governs one serial compare-and-swap
+loop.
 
 ```mermaid
 flowchart TD
@@ -333,27 +375,38 @@ flowchart TD
 
 **Invariant —** What the operator reviews is produced purely by observation.
 Application requires that plan's exact digest and executes the same resolved
-operations; a moved digest refuses before mutation.
+receipt-owned operations; a moved digest refuses before mutation.
+
+**Invariant —** Preview never invokes maintenance. After apply admits the exact
+digest and bound observations, it may run one bounded pass that reclaims only
+recognized stale install-record publications and unreferenced rollback blobs.
+Explicit reversal admits the same pass through its `--unapply` direction. This
+Spice-owned pre-plan-effect maintenance is not a receipt-owned plan operation and
+never imports, repairs, or deletes foreign state.
 
 **Invariant —** Before the first receipt-owned repository effect, apply
 atomically accepts one canonical `applying` receipt containing the exact plan,
-repository identity, complete prior images, and zero progress. Immutable
-content-addressed rollback material may be staged earlier, but is inert and
-reclaimable until that receipt authenticates it. Every later progress or
-terminal receipt is a complete canonical generation compare-and-swap published
-from the exact prior generation. A stale or concurrent writer refuses and
-leaves the current receipt unchanged.
+repository identity, and zero progress. It records exact install-owned reversible
+prior images directly or authenticates them through digest-bound rollback
+evidence. Immutable content-addressed rollback material may be staged earlier,
+but is inert and reclaimable until that receipt authenticates it. Every later
+progress or terminal receipt is a complete canonical generation compare-and-swap
+published from the exact prior generation. A stale or concurrent writer refuses
+and leaves the current receipt unchanged.
 
-**Invariant —** No change is made until the accepted receipt already describes
-its exact operation and prior image, and the operation's completion is durably
-published before the next operation begins. A mutation whose receipt was lost
-is an untracked modification of someone else's repository that no reversal can
-reliably identify.
+**Invariant —** No receipt-owned plan change is made until the accepted receipt
+already describes its exact operation and prior image, and the operation's
+completion is durably published before the next operation begins. A plan
+mutation whose receipt was lost is an untracked modification of someone else's
+repository that no reversal can reliably identify.
 
-**Invariant —** The receipt carries the **complete prior state** — value,
-permissions, and whether the file, setting, or parent directory existed at all.
-Recording only the new state makes absence unrecoverable, so an uninstall leaves
-an empty file where the operator originally had nothing.
+**Invariant —** The receipt records directly, or authenticates through
+digest-bound rollback evidence, the exact install-owned reversible prior image:
+regular-file bytes, ordinary `0o777` mode bits, and absence; exact prior
+configuration values or absence; and whether the installation introduced a
+parent directory. Ownership, ACLs, extended attributes, and special mode bits are
+outside this contract. Recording only the new state makes absence unrecoverable,
+so an uninstall leaves an empty file where the operator originally had nothing.
 
 **Invariant —** Prior state is captured once, at first application. A repeat run
 must never re-derive it from state the installation itself produced, or a later
@@ -383,7 +436,7 @@ flowchart TD
     direction LR
     START["next operation<br/>in exact inverse order"] --> ID{"still exactly<br/>what was applied?"}
     ID -- no --> DR["REFUSE AS DRIFT<br/>overwrite nothing"]
-    ID -- yes --> RV["restore recorded<br/>prior state"]
+    ID -- yes --> RV["restore admitted reversible<br/>prior image"]
   end
   DR --> HOLD["changed target and current receipt<br/>remain recovery evidence"]
 ```
@@ -402,15 +455,17 @@ flowchart LR
   FIN --> KEEP["retain the canonical receipt"]
 ```
 
-**Invariant —** Reversal runs in exact inverse order and refuses a receipt whose
-order is not the exact inverse. Application enables a capability before using it
+**Invariant —** The receipt stores operations in canonical application order.
+Reversal derives and runs their exact inverse. A noncanonical application
+inventory refuses at admission. Application enables a capability before using it
 and writes files before pointing configuration at them; any other order leaves
 the repository pointing at things that no longer exist.
 
-**Invariant —** Before the first reversal effect, the exact `complete` receipt is
-compare-and-swap advanced to `unapplying`. Each later progress generation is
-published from the exact generation it replaces, and terminal `uninstalled`
-status is published only after every operation has a recorded outcome.
+**Invariant —** After the admitted bounded maintenance pass and before the first
+receipt-owned reversal effect, the exact `complete` receipt is compare-and-swap
+advanced to `unapplying`. Each later progress generation is published from the
+exact generation it replaces, and terminal `uninstalled` status is published
+only after every operation has a recorded outcome.
 
 **Invariant —** Identity drift returns a typed refusal, preserves the changed
 target and current receipt, and publishes no terminal `uninstalled` status.
@@ -421,31 +476,36 @@ same receipt instead of inventing a successful partial reversal.
 resumed. Re-installing over a half-reversed repository would let two plans
 contend for one receipt and make the first-captured prior state ambiguous.
 
-**Invariant —** Both directions are resumable and idempotent: a re-run performs
-only what is not yet recorded complete, and a plan already satisfied against
-unchanged state performs no effect and leaves its receipt intact.
+**Invariant —** Both receipt-owned directions are resumable and idempotent: a
+re-run performs only plan operations not yet recorded complete, and a plan
+already satisfied against unchanged state performs no receipt-owned effect and
+leaves its receipt intact. The independently bounded maintenance pass may still
+reclaim newly eligible stale installation publications.
 
-**Invariant —** A reversal refuses when the canonical receipt generation changes
-between preview and application, so authorization is never spent on operations
-that were never displayed.
+**Invariant —** `--unapply` is the explicit reversal direction; it has no
+separate preview digest. It reads and validates the canonical receipt, then
+conditions the first `unapplying` publication and every later progress
+replacement on that receipt's exact native generation. A moved generation
+refuses and preserves the current receipt.
 
 ### The canonical receipt
 
-The receipt is the only thing standing between "installed" and "unrecoverable",
-which makes its integrity the load-bearing property of the whole plane. One
-current document is the complete installation authority.
+The canonical receipt is the sole installation-status and transaction
+authority, so its integrity is load-bearing. A digest-bound rollback blob is
+subordinate authenticated evidence, not a second status authority, and may be
+required to reverse an admitted migrated installation.
 
 ```mermaid
 flowchart TD
   subgraph READ["admit the current receipt"]
     direction LR
-    H["one bounded canonical<br/>status-bearing document"] --> RD{"regular, non-linked,<br/>repository-bound, consistent?"}
+    H["one canonical<br/>status-bearing document"] --> RD{"regular, non-linked,<br/>repository-bound, consistent?"}
     RD -- no --> REF["REFUSE<br/>never repair, truncate,<br/>or synthesize absence"]
     RD -- yes --> USE["drive resume,<br/>refresh, or reversal"]
   end
   subgraph WRITE["publish the next generation"]
     direction LR
-    USE --> NEXT["form one complete bounded<br/>canonical next document"]
+    USE --> NEXT["form one complete<br/>canonical next document"]
     NEXT --> CAS{"exact prior generation<br/>still current?"}
     CAS -- no --> STALE["refuse; current receipt<br/>remains intact"]
     CAS -- yes --> PUB["atomic replace through<br/>a real owner-readable file"]
@@ -453,36 +513,42 @@ flowchart TD
   end
 ```
 
-**Invariant —** Every receipt generation is bounded, self-contained, and
-canonical. It is published atomically through a real non-symbolic file and only
-when the exact prior native generation and complete file image still match. A
-generation too large for the publication contract is refused rather than split.
+**Invariant —** Every receipt generation is canonical. It is published
+atomically through a real non-symbolic file and only when the exact prior native
+generation and complete receipt image still match. A version-7 migration
+receipt may authenticate a separately stored digest-bound rollback blob.
 
 **Invariant —** An unreadable, truncated, noncanonical, linked, or internally
 inconsistent receipt **refuses**. Reading damaged provenance as "not installed"
 strands real, still-active modifications with no owner and no path to removal.
 
-**Invariant —** Every receipt is bound to the repository it describes and refused
-when it names a different one. A copied repository directory would otherwise
-drive a reversal that rewrites the wrong working tree.
+**Invariant —** Every receipt is bound to the repository it describes. A
+nonterminal receipt refuses when it names another Git-common owner, as does a
+terminal copy while its original owner still exists. A `complete` or
+`uninstalled` receipt may rebase only after the old owner no longer exists;
+repository, plan, activation, and rollback bindings all move together.
 
 **Invariant —** The canonical receipt remains after ordinary clean terminal
-directions. A `complete` receipt retains the plan and original prior images
-needed for reversal; an `uninstalled` receipt retains its terminal status and
-complete progress. Absence is never synthesized by deleting provenance.
+directions. A `complete` receipt retains the plan and directly records, or
+authenticates through digest-bound rollback evidence, the original install-owned
+reversible prior images needed for reversal; an `uninstalled` receipt retains its
+terminal status and complete progress. Absence is never synthesized by deleting
+provenance.
 
 **Invariant —** Digest-bound rollback material is subordinate evidence
 authenticated by the canonical receipt. Its identity and exact relationship to
 that receipt are validated before it can drive reversal or migration.
 
-**Invariant —** Durable install state advances through one ordered, unbroken,
-forward-only migration chain into the current canonical receipt. An unknown
-schema, a gap, a branch, or an inconsistent migration refuses without changing
-the receipt or repository. An ordinary in-place refresh retains the original
+**Invariant —** Durable install state admits exact historical receipt versions 7,
+8, 9, and 10 and migrates each admitted shape directly forward into the current
+version-11 canonical receipt. Unknown or inconsistent shapes refuse without
+receipt-owned reversal or mutation and leave the canonical receipt unchanged;
+the preceding admitted maintenance pass may still remove unrelated recognized
+stale Spice-owned temporary publications. No historical representation executes
+through the current appliance. An ordinary in-place refresh retains the original
 pre-first-install images rather than creating a receipt rollback snapshot. Only
 the admitted version-7 migration refresh authenticates a snapshot that restores
 the exact pre-migration assets and receipt during unapply; that is reversal of
-the whole migration, not an older representation executing through the current
-appliance.
+the whole migration.
 
 ---

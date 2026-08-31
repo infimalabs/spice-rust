@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 use gate::test_support::gix;
 use gix::bstr::ByteSlice as _;
 
-const LIVE_SHELL_GLUE: [&str; 5] = [
+const LIVE_SHELL_GLUE: [&str; 8] = [
+    ".githooks/commit-msg",
+    ".githooks/pre-commit",
+    ".githooks/reference-transaction",
     "dist/proof-image/cargo-wrapper.sh",
     "dist/proof-runner/build.sh",
     "steer/hooks/entry.sh",
@@ -60,6 +63,7 @@ fn shell_files(root: &Path) -> BTreeSet<String> {
         .filter(|path| {
             root.join(path).is_file()
                 && (Path::new(path).extension() == Some(OsStr::new("sh"))
+                    || Path::new(path).starts_with(".githooks")
                     || Path::new(path).starts_with("steer/hooks/wrappers"))
         })
         .collect()
@@ -75,9 +79,9 @@ fn collect_shell_files(root: &Path, directory: &Path, selected: &mut BTreeSet<St
                 collect_shell_files(root, &path, selected);
             }
         } else if path.extension() == Some(OsStr::new("sh"))
-            || path
-                .strip_prefix(root)
-                .is_ok_and(|relative| relative.starts_with("steer/hooks/wrappers"))
+            || path.strip_prefix(root).is_ok_and(|relative| {
+                relative.starts_with(".githooks") || relative.starts_with("steer/hooks/wrappers")
+            })
         {
             let relative = path
                 .strip_prefix(root)

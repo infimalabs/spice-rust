@@ -276,7 +276,7 @@ impl JournalRead<'_> {
         page.finish(limit, horizon)
     }
 
-    /// Every current task storage bundle in ascending inception order.
+    /// Every current task storage bundle in ascending birth order.
     ///
     /// The union makes loose workflow, claim, and lease rows observable rather
     /// than silently treating the statement table as the complete key set.
@@ -309,7 +309,7 @@ impl JournalRead<'_> {
         Ok(bundles)
     }
 
-    /// Current storage bundle for one exact task inception stamp.
+    /// Current storage bundle for one exact task birth stamp.
     pub fn task_heads_for(&self, stamp: &wire::TaskStamp) -> Result<Option<TaskHeads>, GuardError> {
         let statement = self.task_head(stamp)?;
         let workflow = self.workflow_head(stamp)?;
@@ -394,7 +394,7 @@ impl JournalRead<'_> {
         Ok(bundles)
     }
 
-    /// Current task statement head, when the inception stamp exists.
+    /// Current task statement head, when the birth stamp exists.
     pub fn task_head(
         &self,
         stamp: &wire::TaskStamp,
@@ -418,7 +418,7 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
-    /// Current workflow head, when the inception stamp exists.
+    /// Current workflow head, when the birth stamp exists.
     pub fn workflow_head(
         &self,
         stamp: &wire::TaskStamp,
@@ -426,7 +426,7 @@ impl JournalRead<'_> {
         self.text_head("workflow_heads", "stamp", stamp.as_str())
     }
 
-    /// Current claim head, when the inception stamp exists.
+    /// Current claim head, when the birth stamp exists.
     pub fn claim_head(
         &self,
         stamp: &wire::TaskStamp,
@@ -442,7 +442,7 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
-    /// Current lease head, when the inception stamp exists.
+    /// Current lease head, when the birth stamp exists.
     pub fn lease_head(
         &self,
         stamp: &wire::TaskStamp,

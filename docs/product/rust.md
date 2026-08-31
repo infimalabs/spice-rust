@@ -12,22 +12,35 @@ are non-authoritative and must be ignored.
 ## Verification boundary
 
 The ordinary commit gate captures one immutable staged tree, computes its
-digest, and maps every recognized path to a deterministic local set of canonical
-gate arms and Cargo targets. A known selection, policy, build, or toolchain
-authority selects every applicable arm and target with explicit exhaustive
-reach. An unclassified path or a Rust/manifest path outside the workspace
-refuses before work begins; unknown impact never guesses at coverage.
+digest, and maps every recognized path to the exact arms, Cargo targets, and
+reach owned by its compiled classification. Exact selector-authority entries
+select the exhaustive battery; authority-shaped paths outside those entries do
+not inherit that reach. In particular, the exact `spice/src/change_gate.rs` is
+authority, while the five `spice/src/change_gate/` submodules — `cargo_budget`,
+`policy_schedule`, `progress`, `test_execution`, and `worker_scheduler` — remain
+ordinary Rust sources with the seven-arm Rust reach. An unclassified path or a
+Rust/manifest path outside the workspace refuses before work begins; unknown
+impact never guesses at coverage.
 
-Selection, policy, tests, and the final report consume the same captured bytes.
-A moving index or source mismatch refuses. Selected arms retain canonical order
-and collect every selected finding. Package checks and explicitly named study
-arms are separate bounded surfaces; the unscoped repository verifier refuses
-before launching work.
+Packaged selection, policy, tests, and the final report consume the same captured
+bytes. Configured commands are separate: they run in authored order with captured
+selection/digest metadata from the live repository working directory and must
+establish their own source binding before reading bytes. A moving index or
+packaged-source mismatch refuses. Returned typed arm reports retain all of their
+findings in canonical order, and already-started independent work is joined. A
+scheduler error lowers the canonical failure cutoff, leaves unstarted later arms
+without invented rows, and returns the first canonical error without a complete
+report. Package checks and explicitly named study arms are separate bounded
+surfaces; the unscoped repository verifier refuses before launching work.
 
 Gate-state changes are proposed in memory and published as one typed
-transaction only when the selected run accepts. A refusal is byte-preserving,
-including proposed healing. An accepted partial run reconciles only observed
-keys and never prunes unrelated state.
+transaction only when the packaged selected run accepts. A refused packaged
+selected run is byte-preserving, including proposed healing. A later configured
+command refusal does not roll back state already published by an admitted
+packaged selected run. A partial run limits measurement and result
+reconciliation to observed sticky keys and preserves omitted keys that survive
+complete-ledger run-start rename, liveness, and expiry maintenance. All of
+those changes remain transaction-local until the packaged selected run accepts.
 
 Authorities: [`gate/src/change_selection.rs`](../../gate/src/change_selection.rs),
 [`gate/src/state.rs`](../../gate/src/state.rs),
@@ -43,7 +56,7 @@ Rust stores every task's `born` identity as exactly eight ASCII characters. It
 encodes a nonnegative epoch millisecond in fixed-width base 52 with the exact
 ordered alphabet
 `0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz`. Ordinary string order
-therefore equals inception order, and the omitted vowels keep a minted stamp
+therefore equals birth order, and the omitted vowels keep a minted stamp
 out of prose-shaped words. An instant outside the eight-character space
 refuses. When minting collides with an existing stamp, Rust advances the
 represented instant by exactly one millisecond until the stamp is free; it
@@ -56,7 +69,7 @@ coverage lives in
 ## Session boundary
 
 Session reporting is daemonless and read-only. It briefs from admitted
-transcript and repository evidence, reconstructs bounded windows across
+transcript and repository evidence, reconstructs selected-horizon windows across
 compaction, and reports message, phase, command, commit, and token views. It
 never distils or persists completion learnings and owns no learning store.
 Decodable fields that have no producer are inert input, not product behavior.
@@ -171,10 +184,13 @@ focused neighboring modules.
 
 Durable direction and semantic retirement follow the product loop. Filesystem
 inboxes are delivery materializations; journal facts own lifecycle history.
-Lease warnings are read-only command-stderr decoration produced by the
-working-state meter. The resident never appends a warning fact or turns a
-warning into steering. Decodable warning facts with no producer are retained
-journal evidence only.
+Lease warnings are non-authoritative command-stderr decoration produced by the
+working-state meter. The meter is read-only with respect to journal, task, and
+lease authority, but may durably publish three disposable suppression, owner,
+and loss records beneath worktree runtime state: `session-meter.json`,
+`session-meter-owner.json`, and `session-meter-loss.json`. The resident never
+appends a warning fact or turns a warning into steering. Decodable warning facts
+with no producer are retained journal evidence only.
 
 Authorities: [`steer/src/directives.rs`](../../steer/src/directives.rs),
 [`spice/src/session_meter.rs`](../../spice/src/session_meter.rs), and
@@ -198,10 +214,11 @@ operator restores or deliberately reconciles the named evidence, the same
 receipt resumes. An ordinary in-place refresh retains each operation's original
 pre-first-install image and binds the installed image it supersedes; unapply
 therefore restores the filesystem first observed and publishes the current
-receipt terminal. Only migration from the admitted version-7 receipt carries a
-digest-bound rollback snapshot. Reversing that migration restores the exact
-pre-migration assets and version-7 receipt as one prior state, rather than
-running the older shape through the current appliance.
+receipt terminal. Only migration from the admitted version-7 receipt
+authenticates a digest-bound rollback snapshot, which may reside in a separately
+stored blob. Reversing that migration restores the exact pre-migration assets
+and version-7 receipt as one prior state, rather than running the older shape
+through the current appliance.
 
 The compiled CLI exposes the sole Spice command vocabulary. The active harness
 owns task, session, and steering state; an installed Spice bootstrap explicitly
@@ -222,17 +239,32 @@ Authorities: [`spice/src/repository.rs`](../../spice/src/repository.rs),
 ## Release and proof
 
 Release is a sealed two-target appliance. Each target payload binds source, the
-native binary, app generation, and build pins. Proof runs outside the candidate
-in the target's exact proof environment and emits a detached receipt; a
-post-proof seal composes both target payloads and receipts into one release
-manifest. Publication consumes only that sealed object through the same
-digest-bound, resumable plan it previewed.
+native binary, app generation, and build pins. Proof replays the current
+candidate checkout — read-only in the Linux container and through the attested
+native runner on Darwin — and does not compare that workspace commit with the
+payload source. Only a clean replay publishes a detached receipt. A post-proof
+seal composes both target payloads and receipts into one release manifest; the
+publication plan separately admits its source and release commits and the
+manifest, package, notes, targets, and operations without equating the plan's
+source commit with the manifest source.
 
-Execution runs the complete canonical strict gate battery over the exact source
-commit named by the accepted plan before changing the version or crossing an
-external publication boundary. The release root is explicit rather than
-ambient, a completed red report is a refusal, and only admission followed by an
-unchanged clean source can publish the plan-specific correctness receipt.
+Target builds use a persistent release target directory. Package materialization
+rechecks staged executable bytes against the payload inventory and must reproduce
+the planned package and Git-tree identities. The compiled-host probe reads and
+digests its staged source, follows any readable source shape, copies those bytes
+to a regular plan-keyed file, applies executable mode to the copy, and accepts a
+successful `--json version` process without decoding its output. Source and
+package publication have explicit no-effect rehearsals; tag and announcement do
+not, and the plan does not label them unrehearsable.
+
+Fresh publish runs the complete canonical strict gate battery over the exact
+source commit named by the accepted plan before changing the version or
+crossing an external publication boundary. Tag-and-announce recovery instead
+resolves preconditions and credentials, awaits registry visibility, creates the
+immutable tag, and announces, in that order, without rerunning that gate arm.
+The release root is explicit rather than ambient, a
+completed red report is a refusal, and only admission followed by an unchanged
+clean source can publish the plan-specific correctness receipt.
 
 Authorities: [`dist/src/release.rs`](../../dist/src/release.rs),
 [`proof/src/lib.rs`](../../proof/src/lib.rs), and

@@ -66,7 +66,8 @@ pins=$(printf '%s\n' \
     "digest = \"$(unsealed tool-digest "$sandbox_path")\"") # env-policy: allow
 
 env SPICE_NATIVE_PINS="$pins" \
-    cargo build --locked --release -p proof --bin spice-proof-darwin-runner # env-policy: allow
+    cargo build --locked --release --target-dir "$root/target" \
+    -p proof --bin spice-proof-darwin-runner # env-policy: allow
 
 runner="$bundle/bin/spice-proof-darwin-runner" # env-policy: allow
 install -m 555 "$root/target/release/spice-proof-darwin-runner" "$runner" # env-policy: allow

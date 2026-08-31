@@ -53,7 +53,7 @@ fn gate_findings_file_exact_deferred_tasks() {
                 .body
                 .handle
                 .born()
-                .expect("derived finding handle carries its inception stamp"),
+                .expect("derived finding handle carries its birth stamp"),
             task.statement.body.born,
         );
         assert!(task.workflow.body.deferral.is_some());
@@ -611,9 +611,7 @@ fn gate_findings_use_the_active_claim_as_origin_when_present() {
         task.statement.body.provenance.to_string(),
         format!(
             "task:{}",
-            parent
-                .born()
-                .expect("parent handle carries an inception stamp")
+            parent.born().expect("parent handle carries a birth stamp")
         )
     );
     clean(&root, bus);
@@ -889,7 +887,7 @@ fn text(answer: CommandAnswer) -> String {
 fn task_done_validation(bus: &Bus, task: &TaskHandle) -> String {
     let born = task
         .born()
-        .expect("gate finding handle carries its inception stamp");
+        .expect("gate finding handle carries its birth stamp");
     let snapshot = bus
         .fact_snapshot()
         .expect("gate finding completion facts read");

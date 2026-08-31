@@ -296,7 +296,11 @@ export async function assertCompactionBoundary(
     afterBox.y >= boundaryBox.y + boundaryBox.height - 1,
     `post-compaction activity stays below its boundary: ${JSON.stringify({ boundaryBox, afterBox })}`,
   );
-  await assertCompactionDivider(divider, "Chromium narrow compaction divider", seeded.agentName);
+  await assertCompactionDivider(
+    divider,
+    "Chromium narrow compaction divider",
+    seeded.agentAttribution,
+  );
   assertMosaicAnchorPreserved(
     scrolled,
     await mosaicScrollSnapshot(plane),
@@ -306,7 +310,11 @@ export async function assertCompactionBoundary(
   if (viewport && compactViewport
     && (compactViewport.width !== viewport.width || compactViewport.height !== viewport.height)) {
     await resizeCompactionViewport(page, divider, viewport, "Chromium restored compaction divider");
-    await assertCompactionDivider(divider, "Chromium wide compaction divider", seeded.agentName);
+    await assertCompactionDivider(
+      divider,
+      "Chromium wide compaction divider",
+      seeded.agentAttribution,
+    );
   }
   await page.screenshot({
     path: join(artifacts, "canvas-compaction-boundary.png"),

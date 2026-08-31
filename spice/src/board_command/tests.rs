@@ -155,9 +155,7 @@ fn add_born(bus: &Bus, epoch: CanonicalUuid, born: wire::TaskStamp, title: &str)
 }
 
 fn creation_fact_origin(bus: &Bus, task: &TaskHandle) -> wire::Origin {
-    let born = task
-        .born()
-        .expect("fixture handle carries an inception stamp");
+    let born = task.born().expect("fixture handle carries a birth stamp");
     bus.fact_snapshot()
         .expect("creation facts read")
         .facts()

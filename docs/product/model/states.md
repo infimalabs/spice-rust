@@ -43,9 +43,10 @@ flowchart TD
   A["accepted phase advance<br/>journal fact"] --> X{"flow exhausted?"}
   X -- no --> P["phase advances;<br/>workflow.status stays pending"]
   X -- yes --> C["workflow.status = completed"]
-  A --> T{"tree changed?"}
-  T -- yes --> L["publish one attested<br/>landing / merge"]
-  T -- no --> J["journal and board only;<br/>no Git merge"]
+  A --> T{"Git publication consequence?"}
+  T -- "new task-owned tree" --> L["publish one attested<br/>baseline-first landing / merge"]
+  T -- "baseline already contains work" --> F["fast-forward;<br/>no synthetic merge"]
+  T -- none --> J["journal and board only;<br/>no Git merge"]
 ```
 
 **Invariant —** Queue age has one durable origin, and unrelated modifications to
@@ -192,8 +193,9 @@ sequenceDiagram
 ### Closed loop: Steering item
 
 The journal-owned disposition, journal-owned presentation stage, and disposable
-delivery projection are orthogonal. Observing a projection may advance its
-suppression record; it never becomes a directive-lifecycle transition.
+delivery projection are orthogonal. A vendor post-tool observation may advance
+its locked durable hook-delivery record; a top-level shell read does not. Neither
+becomes a directive-lifecycle transition.
 
 ```mermaid
 stateDiagram-v2
@@ -202,7 +204,7 @@ stateDiagram-v2
   live --> declined: agent NACK
   live --> canceled: operator cancellation
   live --> lapsed: lapse transaction accepted
-  live --> deadlettered: delivery cannot complete
+  live --> deadlettered: PendingInbox automatic wake is Unstarted or terminal-class failed
   lapsed --> live: recovery retains presentation stage
   deadlettered --> live: recovery retains presentation stage
   acked --> [*]
@@ -227,9 +229,10 @@ flowchart LR
   J["journal standing is LIVE"] --> I["disposable inbox projection"]
   I --> H["vendor post-tool hook"]
   I --> S["next top-level shell-command boundary"]
-  H --> R["suppressed readout"]
-  S --> R
-  R --> O["observation only;<br/>journal disposition and stage unchanged"]
+  H --> HR["readout under locked<br/>hook-delivery suppression"]
+  S --> SR["independent rendered-file read;<br/>may repeat while nonempty"]
+  HR --> O["observation only;<br/>journal disposition and stage unchanged"]
+  SR --> O
 ```
 
 **Invariant —** Publish is one accepted journal transaction and is durable before
@@ -244,9 +247,11 @@ available typed exits.
 **Invariant —** The escalation ladder is time-since-publication, not
 retry-count. Escalation changes *presentation urgency*, never identity.
 
-**Invariant —** An item whose delivery cannot be completed moves to
-`deadlettered` from whichever live presentation stage it has reached, never
-dropped. Recovery returns `lapsed` or `deadlettered` to live while retaining the
+**Invariant —** Only a `PendingInbox` automatic wake that returns `Unstarted` or
+a terminal-class start failure deadletters: it moves every pending directive on
+that lane from its retained live presentation stage to `deadlettered`. Held-claim,
+capacity, operator-start, nonterminal-error, and arbitrary delivery-failure paths
+do not. Recovery returns `lapsed` or `deadlettered` to live while retaining the
 directive's identity, lineage, presentation stage, and presentation history.
 
 **Policy —** reminded 15s, escalated 60s, overdue 300s, lapse threshold 24h,
@@ -324,6 +329,7 @@ flowchart LR
   F -->|"move or reorder member"| FR["fused<br/>(new member order)"]
   O -.->|"Close team"| H["hidden<br/>(this browser only)"]
   F -.->|"Close team"| H
+  H -.->|"Agents → Open team"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
 ```
 
 **Invariant —** Fusing is a *team merge*, splitting a *team split*. There is no
@@ -331,7 +337,8 @@ client-only grouping.
 
 **Invariant —** `Close team` is a browser-local presentation action. It hides
 the team in that mounted browser reducer; it sends no command, changes no
-topology, and does not hide the team in another browser.
+topology, and does not hide the team in another browser. A closed grouped
+lineage remains restorable during that mount through **Agents → Open team**.
 
 **Invariant —** Browser-local close neither inspects nor erases drafts. Unsafe
 draft or submission state instead installs the page-leave confirmation guard.
@@ -413,9 +420,10 @@ may have lost the earlier steering — but it never changes the reminder text.
 quoting itself.
 
 **Policy —** Adjudication is optional. With `judge.enabled` absent or false,
-configured trigger rules publish directly. When enabled, one bounded judge
-process receives deterministically shuffled equivalent framings in sequence;
-absence, timeout, process error, or exhausted ambiguity drops the candidate.
+configured trigger rules publish directly. When enabled, equivalent framings
+are deterministically shuffled, then each is attempted sequentially through a
+fresh bounded judge child; absence, timeout, process error, or exhausted
+ambiguity drops the candidate.
 
 #### The bag, and how it matches
 
@@ -432,8 +440,8 @@ flowchart TD
   end
   subgraph RESOLVE["resolve the opinion"]
     direction LR
-    B["owning bag"] --> S{"in scope for<br/>this vendor?"}
-    S -- yes --> D["dedupe as one<br/>(bag, trigger) pair"]
+    B["owning bag"] --> S{"in shared scope?<br/>path / extension / vendor / model / phase"}
+    S -- yes --> D["dedupe as one content key<br/>(bag + normalized prose)"]
     D --> O["render in declared bag,<br/>then trigger order"]
   end
   M -- yes --> B
@@ -451,13 +459,15 @@ transformation nobody can see.
 refused when the configuration loads. A trigger that can never match a word is a
 silently dead opinion.
 
-**Invariant —** One statement fires a bag at most once, however many of its
-triggers hit, and results order by declared bag order then trigger. The same
-prose always produces the same reminders in the same sequence.
+**Invariant —** One statement selects a bag at most once, however many of its
+triggers hit, and candidates order by declared bag order then trigger. The same
+prose always produces the same candidate sequence; runtime publication still
+suppresses a repeated content-derived key within one compaction epoch.
 
-**Invariant —** Applicability is expressed in the same selector grammar
-everything else uses, so a bag can apply to one vendor and not another without
-inventing a second scoping language.
+**Invariant —** Applicability is expressed in the same path, extension, vendor,
+model, and phase selector grammar used by gate policies and studies, so a bag
+can apply to one vendor and not another without inventing a second scoping
+language.
 
 **Invariant —** A bag is disabled by **name**, in a tracked record, so every
 clone sees the same set of opinions in force. A disabled bag is enumerable — an
@@ -465,10 +475,10 @@ opinion the repository has decided against, rather than one that quietly stopped
 firing.
 
 **Invariant —** Adjudication asks the same question in several equivalent
-framings and **shuffles them**, so a judge that latches onto position rather
-than meaning cannot bias the answer. A reply that does not collapse to a single
-yes or no is retried a bounded number of times and then abandoned rather than
-interpreted.
+framings and shuffles them deterministically from the content-derived evidence
+key. The same evidence repeats the same order; different evidence may produce a
+different order. A reply that does not collapse to a single yes or no is retried
+a bounded number of times and then abandoned rather than interpreted.
 
 ### Closed loop: Projection family
 

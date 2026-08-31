@@ -833,7 +833,7 @@ fn a_moved_witness_refuses_before_any_allocator_comparison_is_reached() {
         refusal.contains(
             winner
                 .born()
-                .expect("fixture winner carries an inception stamp")
+                .expect("fixture winner carries a birth stamp")
                 .as_str()
         ),
         "the refusal names the client witness that moved, not a comparison: {refusal}"

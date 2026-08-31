@@ -41,7 +41,10 @@ import {
   assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
 } from "./canvas-endpoint-probes.mjs";
-import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
+import {
+  assertLineageLifeIsolation,
+  assertSevenMemberComposerStrip,
+} from "./canvas-lineage-life.mjs";
 import { assertLineageDrainFailureTeardown } from "./canvas-lineage-teardown.mjs";
 import { assertCanonicalInlineTaskCode } from "./control-reference.mjs";
 import { assertLiveThreadCoalescing } from "./live-thread-coalescing.mjs";
@@ -847,6 +850,7 @@ try {
         await assertHandshakeTimeout(browser, resident.discovery.endpoint);
         await assertCanvasProtocolRefresh(browser, resident.discovery.endpoint);
         await assertLineageLifeIsolation(browser);
+        await assertSevenMemberComposerStrip(browser);
         light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
         await installBrowserSpeech(light);
         await installSocketControl(light);
@@ -929,7 +933,7 @@ try {
         await assertFirefoxRestoredMosaic(
           resident.discovery.endpoint,
           artifacts,
-          seeded.agentName,
+          seeded.agentAttribution,
         );
       });
       await run.scenario("authority-task-flow", async () => {

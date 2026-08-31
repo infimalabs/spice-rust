@@ -139,7 +139,7 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
         .parse::<wire::TaskHandle>()
         .expect("fixture task handle")
         .born()
-        .expect("fixture handle carries an inception stamp");
+        .expect("fixture handle carries a birth stamp");
     serde_json::from_value(serde_json::json!({
         "visibility": {"kind": "public"},
         "origin_thread": "operator",

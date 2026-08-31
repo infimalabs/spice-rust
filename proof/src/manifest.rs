@@ -855,4 +855,5 @@ impl From<atomic::Error> for ManifestPublishError {
     }
 }
 
-include!("manifest/tests.rs");
+#[cfg(test)]
+mod tests;

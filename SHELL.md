@@ -69,6 +69,39 @@ Spice. They never invoke Cargo or `xtask`; current-source policy is the separate
 configured `spice dev cargo -- run --quiet --locked --package spice --bin spice
 -- gate selection` leaf.
 
+## `.githooks/commit-msg`
+
+Caller: Git when the tracked development hook path is selected for a commit.
+
+Disposition: Irreducible glue.
+
+Reason: The hook begins outside the Rust process. It resolves the Git common
+directory and `exec`s the already-installed appliance’s `gate commit-msg` leaf,
+preserving Git’s message-file operand and process I/O without duplicating policy.
+
+## `.githooks/pre-commit`
+
+Caller: Git when the tracked development hook path is selected for a commit.
+
+Disposition: Irreducible glue.
+
+Reason: The hook begins outside the Rust process. It resolves the Git common
+directory and `exec`s the already-installed appliance’s `gate pre-commit` leaf,
+preserving Git’s process contract without invoking a build system or duplicating
+policy.
+
+## `.githooks/reference-transaction`
+
+Caller: Git while a tracked development reference transaction holds the shared
+repository reference lock.
+
+Disposition: Irreducible glue.
+
+Reason: The hook must enter the already-installed Rust appliance without
+building under Git’s shared lock. It resolves the Git common directory and
+`exec`s `gate reference-transaction`, preserving the state operand, update
+records, exit status, and process I/O without duplicating policy.
+
 ## `dist/proof-image/cargo-wrapper.sh`
 
 Caller: `dist/proof-image/Dockerfile`, installed as `/opt/spice/bin/cargo`
@@ -104,10 +137,11 @@ Disposition: Irreducible glue.
 
 Reason: It receives the shell tool's complete argument vector before the native
 command shell exists, then replaces itself with `spice run` and the separately
-packaged inner stage. `spice run` first gives the complete top-level command to
-the optional configured RTK selector; every unusable answer reports a
-degradation and runs the original argv unchanged. A Rust child cannot replace
-the shell process that chose to start it.
+packaged inner stage. When the configured RTK executable passed launch-time
+health admission, `spice run` first gives it the complete top-level command;
+every unusable rewrite answer reports a degradation and runs the original argv
+unchanged. Inactive health leaves native argv outside the per-command selector.
+A Rust child cannot replace the shell process that chose to start it.
 
 ## `steer/hooks/static/stage.sh`
 

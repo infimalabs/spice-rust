@@ -1,4 +1,4 @@
-//! Schema 5 to 6 contraction of task identity onto the inception stamp.
+//! Schema 5 to 6 contraction of task identity onto the birth stamp.
 //!
 //! The old schema indexed heads by a rendered handle and repeated a UUID in
 //! statement facts and heads. The current schema stores only the fixed-width
@@ -545,7 +545,7 @@ fn replace_handle(
         invalid(
             table,
             row,
-            &format!("{label} does not carry a canonical inception stamp"),
+            &format!("{label} does not carry a canonical birth stamp"),
         )
     })?;
     object.insert(field.to_owned(), Value::String(stamp));
@@ -602,7 +602,7 @@ fn stamp_from_handle(table: &'static str, row: &str, handle: &str) -> Result<Str
             invalid(
                 table,
                 row,
-                &format!("rendered task handle has no inception stamp: {error}"),
+                &format!("rendered task handle has no birth stamp: {error}"),
             )
         })
 }

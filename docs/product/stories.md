@@ -67,8 +67,10 @@ with backlog depth.
 
 *As the agent, I want to remain reachable during tool work without instrumenting
 descendants twice.* — Pending intent is eligible at the vendor's post-tool hook
-and the next top-level shell command. Both share one durable delivery decision;
-descendant shells remain unmodified.
+and the next top-level shell command. Post-tool delivery alone uses the locked
+durable suppression record; every top-level shell command independently rereads
+the rendered inbox and may repeat it while nonempty. Descendant shells remain
+unmodified.
 
 ### Work
 
@@ -117,7 +119,8 @@ send address.
 
 *As the operator, I want two browsers to agree.* — Membership, ordering, and
 topology revision are server truth. A browser may independently hide a team
-with `Close team`; that presentation choice does not mutate topology.
+with `Close team`; that presentation choice does not mutate topology, and the
+same mount can restore a closed grouped lineage through **Agents → Open team**.
 
 ### Reading
 
@@ -126,7 +129,8 @@ board.* — New content preserves existing columns and spans; more than 80px fro
 the top, same-frame compensation preserves the visible anchor.
 
 *As the reader, I want to know what was asked without leaving the answer.* —
-Steering renders as a quote inside the reply that acknowledges it.
+Steering renders as a quote inside the reply that answers it through ACK or
+NACK/decline.
 
 *As the reader, I want to hear what arrives while I am looking elsewhere.* —
 Speech is a third channel, best-effort, and never blocks the record.
@@ -138,29 +142,35 @@ what I said about it.* — Directives come from the steering plane; the transcri
 supplies only what happened.
 
 *As the agent, I want to be told when the briefing could not see something.* — A
-window that could not be read is loud, an unavailable probe leaves a visible
-hole, and an absent fact renders as unknown rather than zero.
+window that could not be read is loud, a recoverable authority-read failure
+leaves a visible unknown, and an absent fact renders as unknown rather than
+zero. Discovery and rendering share one deadline; exceeding it refuses without
+passing off a partial briefing as complete.
 
-*As the agent, I want the important part of a briefing to survive truncation.* —
-Sections are emitted in decision-priority order, because the budget cuts from
-the end.
+*As the agent, I want briefing pruning to preserve authority.* — Outstanding
+asks, held work, and report metadata are never budget-pruned. The line and byte
+thresholds estimate transcript-turn material, remove the oldest whole turns
+first, and retain at least one turn even when that turn exceeds the estimate.
 
-*As the agent, I want the state line to mean something.* — It speaks on change,
-stays silent otherwise, and can never alter the outcome of the command it
-decorates.
+*As the agent, I want the state line to mean something.* — It speaks when its
+state key changes or the current lease tier's reminder cadence is due, stays
+silent for an identical state before that cadence, and can never alter the
+outcome of the command it decorates.
 
 ### Shipping
 
 *As the maintainer, I want to read every externally visible publication effect
-before it happens.* — Each publication verb previews its complete ordered plan,
-and execution accepts only the digest of the plan that was read. Ordinary local
-mutations rely on their typed transactional contracts.
+before it happens.* — Each release publication verb previews its complete
+ordered plan, and execution accepts only the digest of the plan that was read.
+Ordinary local mutations rely on their typed transactional contracts.
 
-*As the maintainer, I want the gates to be evidence about exactly what the fleet
-runs, not about the tree I am standing in.* — Both canonical native targets are
-sealed before proof, replayed in their pinned environments, and admitted by
-detached receipts; the release manifest exists only after both receipts are
-complete.
+*As the maintainer, I want proof evidence to state exactly what it binds.* — Each
+canonical target replays the current candidate checkout in its admitted
+environment and binds the resulting battery and replay identities to the target
+payload identity. Proof does not compare that checkout with the payload's source
+digest or inspect the staged executable bytes. Only a clean replay publishes a
+detached receipt, and the release manifest exists only after both clean receipts
+are complete.
 
 *As the maintainer, I want an interrupted release to be finishable.* — Every
 publication step converges. `spice release publish --action tag-and-announce`
@@ -173,9 +183,13 @@ built.* — Notes come from first-parent landings, with reverted work suppressed
 and repeated landings collapsed to one entry.
 
 *As the operator, I want uninstall never to overwrite evidence that moved.* —
-Every mutation records the complete prior state. Reversal restores only the
-exact installed identity; drift refuses with the changed target and current
-receipt preserved for repair and resumption.
+Every receipt-owned installation mutation records directly, or authenticates
+through digest-bound rollback evidence, its exact reversible prior image:
+regular-file bytes and ordinary `0o777` mode, prior absence or configuration
+value, and introduced-parent existence. Ownership, ACLs, extended attributes,
+and special mode bits are outside that image. Reversal restores only the exact
+installed identity; drift refuses with the changed target and current receipt
+preserved for repair and resumption.
 
 ---
 
@@ -198,17 +212,17 @@ flowchart LR
 
 | Failure the operator sees | Mechanism | Rule |
 | --- | --- | --- |
-| The gates pass on a payload never proved | release admitted candidate-local or mismatched evidence instead of a sealed target receipt | each detached receipt binds the exact payload, environment, and complete replay; the manifest seals only complete receipts |
+| A proof receipt is read as evidence about payload source or executable bytes | payload identity binding was mistaken for proof of material the replay never inspects | each detached receipt binds payload identity, environment, battery, and replay; package materialization separately checks staged executable bytes, and no proof-time payload-source equality is claimed |
 | An uninstall restores the installer's own output | a repeat install re-derived prior state from what it had already written | prior state is captured once, at first application |
 | A refresh launches an occupant in every vacant lane | a read path was allowed to run lifecycle | only lifecycle authority launches or renews occupants |
 | Cards jitter sideways as content resolves | still-settling cards re-chose their column | columns and spans stay latched until a geometry replay; content resolution settles only vertically |
-| A whole batch of cards is removed and reinserted | the container was rebuilt rather than reconciled | never touch a node already placed |
-| Cards flash one by one when an agent joins | member count entered the identity that forces re-measure | presentation-only facts stay out of identity |
+| A whole batch of cards is removed and reinserted | the container was rebuilt rather than reconciled | retain every still-admitted keyed node and reconcile it in place; content and changed placement properties may still update, while a card trimmed from the visible window may leave |
+| Cards flash one by one when an agent joins | member count entered per-card identity and forced individual remeasurement | member count stays out of card identity and style; a changed lineage weight may instead settle a new host width and trigger one full geometry replay |
 | A card is buried under its neighbours | a reservation counted a placeholder without the body around it | measure the whole card, placeholder included |
 | A failed image remains indistinguishable from loading | the load/error observer did not publish its outcome | image error is a distinct state and remeasures the whole card |
 | The board slides in by its own height on open | a fresh surface animated from a synthetic origin | first paint writes the real target with motion suppressed |
 | The board rewrites itself whenever a pane flaps | reveal discarded the deferred base flow | an unmeasurable surface stays readable without committing a plane; reveal is a correction |
-| A wide card is jammed into a narrow slot | measurement mutated nodes the position memo could not see | a measured, unmoved card is force-rewritten to its committed style |
+| A wide card is jammed into a narrow slot | measurement mutated nodes the position memo could not see | compare admitted placement properties and skip every unchanged style write |
 | Live lanes vanish on a transient error | an empty enumeration was read as absence | a failed enumeration is not evidence |
 | Messages arrive minutes late under load | interactive replies queued behind bulk work | interactive and bulk paths never share a queue |
 | One client starves another | a cursor was shared across connections | per-connection read state |
@@ -216,10 +230,10 @@ flowchart LR
 | A render aborts mid-board | an index grew past a fixed palette | reduce indices into range at their source |
 | An active claim sits forever after its occupant exits | no wake arm could see a possessed but ineligible row | launch a successor onto the task already possessed |
 | An agent hunts for work that is not there | a dry allocator pointed at a populated board | report the board, and name a populated board as expected |
-| Git advances mid-session | a replayed path performed a launch-time advance | integration touches git at exactly three boundaries |
+| Git advances mid-session | a replayed path performed a launch-time advance | agent-lane integration touches the lane's worktree at exactly three boundaries |
 | An agent resumes from its own summary of the ask | intent was reconstructed from transcript prose | directives come from the steering plane; the transcript never supplies the ask |
 | A briefing looks clean because nothing could be read | an unreadable window rendered as an empty one | a window that could not be read is loud |
-| An uninstall leaves an empty file where nothing had been | the record kept the new state and not the absence | each record carries whether the thing existed at all |
+| An uninstall leaves an empty file where nothing had been | the record kept the new state and not the absence | the record or its authenticated rollback evidence retains whether the thing existed at all |
 | Release notes credit a feature nobody can find | an add-and-revert pair was counted as one shipped change | pairs inside one window are suppressed on both sides |
 | A published version points at source no one can fetch | the immutable package ref was published before its source commit | the source ref reaches the tracked Git authority first |
 
@@ -235,12 +249,16 @@ watch it, or accept its callback. At an external consistency seam with no event,
 bounded observation is an explicit release step with a deadline and a terminal
 refusal, never an unbounded retry loop.
 
-**No fallbacks.** Commit to one deterministic path and let violated assumptions
-fail loudly.
+**No silent or unadmitted compatibility fallbacks.** Commit to one current
+contract and let violated assumptions fail loudly. Declared defaults and
+explicit optional-degradation or fail-closed branches are intentional parts of
+that contract, not alternate compatibility behavior.
 
-**No shims, aliases, or legacy branches.** One tested, visible, current path.
-Durable data advances through one ordered, unbroken, forward-only migration
-chain.
+**No parallel user-facing shims, aliases, or legacy product paths.** One tested,
+visible, current path may admit named compatibility solely at explicit wire and
+migration boundaries. Each durable authority gives every admitted historical
+shape one unambiguous direct or sequential route into current; no historical
+runtime remains parallel.
 
 **Not an IDE.** Something the operator overhears and steers.
 

@@ -1,6 +1,6 @@
 //! Task and claim lifecycle fact bodies.
 //!
-//! Every task reference here is the durable inception stamp. Public handles
+//! Every task reference here is the durable birth stamp. Public handles
 //! belong to folds and commands; no fact can make a rendered stem
 //! authoritative again.
 
@@ -44,7 +44,7 @@ pub enum Severity {
 /// A task statement and initial workflow head were created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAdded {
-    /// Sole task identity minted from the statement's inception instant.
+    /// Sole task identity minted from the statement's birth instant.
     pub task: TaskStamp,
     /// Statement title.
     pub title: String,

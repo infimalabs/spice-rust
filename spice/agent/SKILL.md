@@ -38,9 +38,11 @@ If continuity is clipped, recover only the detail needed to proceed with
 - Run shell commands normally. The worktree shell and wrapper own steering and
   appliance selection; use `spice run -- CMD` only as an explicit recovery
   surface.
-- Handle the operator's current direction first. Capture durable work with
-  `spice task add TITLE --project PROJECT`; capture does not claim or switch
-  tasks. Finish the immediate direction, then return to the allocator.
+- Handle the operator's current direction first. Capture pending steering as
+  `spice task add TITLE --project PROJECT --origin ack:KEY`, using the exact
+  acknowledged steering key. Bare `task add` is only for work causally nested
+  under the lane's sole active claim. Capture does not claim or switch tasks.
+  Finish the immediate direction, then return to the allocator.
 - Drain allocator-selected work with `spice task next` until it reports no work
   or a real blocker exists. An `allocator-empty` result ends only that drain
   pass; it does not discharge uncaptured operator direction or other
@@ -59,11 +61,13 @@ If continuity is clipped, recover only the detail needed to proceed with
 - The normal pre-commit gate is the default constitution. Invoke it through
   `git commit` or `spice gate pre-commit`, and fix what it reports unless current
   operator steering explicitly authorizes another path.
-- Complete implementation with `spice task done --validation TEXT`; complete an
-  assigned review with
-  `spice task review HANDLE --finding FINDING --note NOTE`. Then run
-  `spice task next` again and keep draining until `allocator-empty` or a real
-  blocker. A clean review requires inspecting the integrated diff and
+- Complete implementation with `spice task done --validation TEXT`. Complete an
+  assigned clean review with
+  `spice task review HANDLE --finding clean --note NOTE`. An unclean review uses
+  `--finding FINDING --note NOTE` and must durably track that finding in the same
+  invocation with `--then "title=... | project=..."` or `--followup HANDLE`.
+  Then run `spice task next` again and keep draining until `allocator-empty` or a
+  real blocker. A clean review requires inspecting the integrated diff and
   independently checking proportionate evidence.
 - If a claim moves to another worktree, stop editing and return to the allocator.
   Surface any resulting loose commit with its exact task handle; never run

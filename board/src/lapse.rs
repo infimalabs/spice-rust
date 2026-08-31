@@ -245,9 +245,7 @@ fn observe(
 ) -> Result<Observation, ObserveError> {
     let task = &request.intent.task;
     let stamp = task.born().map_err(|error| {
-        GuardError::Invalid(format!(
-            "task {task} has no canonical inception stamp: {error}"
-        ))
+        GuardError::Invalid(format!("task {task} has no canonical birth stamp: {error}"))
     })?;
     let statement = read
         .task_head(&stamp)?

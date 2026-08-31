@@ -18,22 +18,22 @@ use crate::ident::{CanonicalUuid, Digest};
 const TASK_STAMP_ALPHABET: &[u8; 52] = b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
 const TASK_STAMP_SPACE: u64 = 52_u64.pow(TaskStamp::WIDTH as u32);
 
-/// A task's sole durable identity: its fixed-width inception instant.
+/// A task's sole durable identity: its fixed-width birth instant.
 ///
 /// The alphabet is ASCII ordered and vowel-free. Fixed-width base-52 therefore
-/// preserves inception order under ordinary string comparison while keeping a
+/// preserves birth order under ordinary string comparison while keeping a
 /// minted stamp out of prose-shaped words.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskStamp(String);
 
-/// Text that does not spell a canonical task inception stamp.
+/// Text that does not spell a canonical task birth stamp.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[error("task stamp must be eight characters from the vowel-free base-52 alphabet: {0:?}")]
 pub struct TaskStampError(String);
 
 /// An epoch millisecond that cannot be represented by a task stamp.
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
-#[error("task inception millisecond is outside the eight-character base-52 space: {0}")]
+#[error("task birth millisecond is outside the eight-character base-52 space: {0}")]
 pub struct TaskStampMintError(i64);
 
 impl TaskStamp {
@@ -110,7 +110,7 @@ impl TaskHandle {
         &self.0
     }
 
-    /// Render the current public name from a project and sole inception stamp.
+    /// Render the current public name from a project and sole birth stamp.
     #[must_use]
     pub fn for_project(project: &str, born: &TaskStamp) -> Self {
         let source = project.rsplit('.').next().unwrap_or(project);
@@ -124,7 +124,7 @@ impl TaskHandle {
         Self(format!("{stem}-{born}"))
     }
 
-    /// Recover the inception stamp carried by a rendered handle.
+    /// Recover the birth stamp carried by a rendered handle.
     pub fn born(&self) -> Result<TaskStamp, TaskStampError> {
         self.0
             .rsplit_once('-')
@@ -351,7 +351,7 @@ pub enum Witness {
         /// Resident epoch the command relies on.
         epoch: CanonicalUuid,
     },
-    /// An inception stamp the command intends to mint does not yet exist.
+    /// A birth stamp the command intends to mint does not yet exist.
     Absence {
         /// Stamp that must be absent.
         task: TaskStamp,
@@ -498,7 +498,7 @@ pub enum WitnessKind {
     Lease,
     /// Lane occupancy under a resident generation.
     Residency,
-    /// An inception stamp that must not yet exist.
+    /// A birth stamp that must not yet exist.
     Absence,
     /// A task that must exist, with no constraint on its revision.
     Existence,

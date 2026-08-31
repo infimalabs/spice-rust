@@ -400,7 +400,7 @@ impl TaskState {
 
 #[derive(Debug)]
 pub(super) struct OpenPhase {
-    /// Durable inception identity; project edits cannot split one effort history.
+    /// Durable birth identity; project edits cannot split one effort history.
     pub(super) task: TaskStamp,
     pub(super) phase: Phase,
     pub(super) phase_index: u32,

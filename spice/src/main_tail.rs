@@ -1,5 +1,10 @@
+use super::*;
+
 #[cfg(not(target_arch = "wasm32"))]
-fn deliver_task_migration(outcome: &Outcome<spice::config::TaskMigrationReport>, form: Form) -> ! {
+pub(super) fn deliver_task_migration(
+    outcome: &Outcome<spice::config::TaskMigrationReport>,
+    form: Form,
+) -> ! {
     if form == Form::Text
         && let Outcome::Reply(reply) = outcome
     {
@@ -49,7 +54,7 @@ pub(crate) fn session_environment() -> session_command::Environment {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn working_directory() -> Result<PathBuf, Outcome<()>> {
+pub(crate) fn working_directory() -> Result<PathBuf, Outcome<()>> {
     std::env::current_dir().map_err(|error| {
         Outcome::Fault(Fault {
             class: FaultClass::Environment,
@@ -69,11 +74,11 @@ pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
     clippy::disallowed_methods,
     reason = "the binary rim alone terminates the process"
 )]
-fn terminate_code(code: i32) -> ! {
+pub(crate) fn terminate_code(code: i32) -> ! {
     std::process::exit(code);
 }
 
-const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
+pub(crate) const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
     match outcome {
         Outcome::Reply(_) => REPLY_EXIT,
         Outcome::Refusal(_) => REFUSAL_EXIT,

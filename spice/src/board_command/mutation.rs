@@ -243,7 +243,7 @@ fn prepare_task(
     let [task] = handles.as_slice() else {
         return Err(protocol_fault(
             "task::add-witness-invalid",
-            "task add requires exactly one intended absent inception stamp",
+            "task add requires exactly one intended absent birth stamp",
         ));
     };
     let born = task.clone();
@@ -276,7 +276,7 @@ fn prepare_task(
                 refusal(
                     "task::dependency-invalid",
                     Some(error.to_string()),
-                    "name dependencies carrying canonical inception stamps",
+                    "name dependencies carrying canonical birth stamps",
                 )
             })?,
         provenance: origin.clone(),
