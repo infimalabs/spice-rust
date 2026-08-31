@@ -27,7 +27,11 @@ import {
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertVacantWakeSubmission } from "./vacant-wake-submission.mjs";
-import { assertCanvas, captureReportedAgentPage } from "./canvas-readiness.mjs";
+import {
+  assertAgentSpacingRejectsFallbackOnlyMarkup,
+  assertCanvas,
+  captureReportedAgentPage,
+} from "./canvas-readiness.mjs";
 import { assertCanvasProtocolRefresh } from "./canvas-compatibility.mjs";
 import { assertAuthoritySurface, driveTeam } from "./canvas-authority.mjs";
 import {
@@ -1039,6 +1043,10 @@ try {
         resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
         lightMonitor.expectNetworkInterruption(false);
         await assertCanvas(lightPage, "light-restarted");
+        await assertAgentSpacingRejectsFallbackOnlyMarkup(
+          lightPage,
+          "light-restarted Agents spacing",
+        );
         await chooseCanvasView(lightPage, "Chronology");
         assert.equal(await lightPage.getByText(/Note appended to/).count(), 0,
           "new generation clears prior command reply state");
