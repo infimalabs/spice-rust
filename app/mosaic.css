@@ -133,7 +133,7 @@
   min-width: 0;
   gap: .35em;
   overflow: hidden;
-  color: color-mix(in srgb, var(--accent-slot, var(--accent)) 30%, var(--muted));
+  color: color-mix(in srgb, var(--accent-slot, var(--ink)) 70%, var(--ink));
 }
 .mosaic-compaction-label .message-key,
 .mosaic-compaction-agent {
@@ -407,7 +407,7 @@
   max-width: 100%;
   container-type: inline-size;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line-soft);
   border-radius: 9px;
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -426,8 +426,8 @@
   gap: 8px;
   min-height: 44px;
   padding: 5px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--page);
+  border-bottom: 1px solid var(--control-line-soft);
+  background: var(--panel);
 }
 
 /* The grip only earns a column when a team can actually be arranged. */
@@ -469,9 +469,9 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
   padding: 4px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line-soft);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--page) 82%, var(--panel));
+  background: var(--control-surface-soft);
 }
 
 .team-mode {
@@ -492,9 +492,9 @@
   line-height: 1.45;
 }
 .team-mode.selected {
-  background: var(--panel);
+  background: var(--control);
   color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
 }
 .team-mode-badge {
   min-width: 19px;
@@ -525,7 +525,8 @@
   min-height: 30px;
   padding: 0;
   border-radius: 50%;
-  background: var(--panel);
+  border-color: var(--control-line-soft);
+  background: var(--control-surface-soft);
   color: var(--muted);
   font-size: 1rem;
 }
@@ -533,12 +534,12 @@
 .team-surface .ticker {
   min-height: 26px;
   padding: 6px 10px;
-  border-top: 1px solid var(--line);
-  background: var(--page);
+  border-top: 1px solid var(--control-line-soft);
+  background: var(--panel);
   font-size: .65rem;
 }
 
-.team-pane { background: var(--page); }
+.team-pane { background: var(--panel); }
 .team-pane[data-team-mode="Compose"] { overflow: hidden; }
 
 .team-compose {
@@ -579,9 +580,9 @@
   flex-direction: column;
   align-self: stretch;
   overflow: hidden;
-  border-color: var(--line);
+  border-color: var(--control-line-soft);
   border-radius: 8px;
-  background: var(--panel);
+  background: var(--control);
   box-shadow: none;
 }
 .team-surface .team-agent:focus-within { border-color: var(--accent); }
@@ -605,9 +606,9 @@
   max-height: var(--composer-shard-block-size);
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line-soft);
   border-radius: 7px;
-  background: var(--panel);
+  background: var(--control);
 }
 /* Quote shards are the context leading into the primary draft, so the visible
    stack and the submitted Markdown share quote-then-primary order. */
@@ -808,9 +809,9 @@
   min-height: var(--team-control-item-height);
   padding: 4px 7px;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line-soft);
   border-radius: 999px;
-  background: var(--panel);
+  background: var(--control);
   cursor: ew-resize;
 }
 .team-slider input {
@@ -841,7 +842,7 @@
 .team-slider.armed,
 .team-slider.maxed {
   border-color: color-mix(in srgb, var(--control-state-accent) 70%, var(--line));
-  background: color-mix(in srgb, var(--control-state-accent) 18%, var(--panel));
+  background: color-mix(in srgb, var(--control-state-accent) 18%, var(--control));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-state-accent) 22%, transparent);
 }
 .team-slider.armed span,
@@ -941,7 +942,7 @@
   gap: 0;
   margin: 0;
   padding: 9px;
-  border: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  border: 1px solid var(--line-soft);
   border-right: 3px solid var(--accent-slot, var(--accent));
   border-radius: 10px;
   background: var(--panel);
@@ -1049,8 +1050,8 @@
   height: 32px;
   min-height: 32px;
   margin-left: 0;
-  border-color: color-mix(in srgb, var(--line) 36%, transparent);
-  background: color-mix(in srgb, var(--page) 62%, var(--panel));
+  border-color: var(--control-line-soft);
+  background: var(--control-surface-soft);
   color: var(--muted);
   font-size: 1rem;
 }
