@@ -367,6 +367,53 @@ fn repository_test_sources_do_not_spawn_or_wrap_git() {
         "absolute Git spellings in tests changed; tests must inject parsed or repository state, and inert assertions must be declared exactly"
     );
 
+    let violations = git_process_violations(&sources);
+    assert!(
+        violations.is_empty(),
+        "tests must use in-process repository state or injected command observations, not Git processes: {violations:#?}"
+    );
+}
+
+#[test]
+fn inline_rust_tests_are_selected_without_absorbing_production_items() {
+    let source = r#"
+fn production_before() {
+    Command::new("git");
+}
+
+#[cfg(test)]
+mod tests {
+    fn process_fixture() {
+        Command::new("git");
+    }
+}
+
+fn production_after() {
+    Command::new("git");
+}
+"#;
+    let selected = selected_test_source("fixture/src/lib.rs", source)
+        .expect("the inline test module is selected");
+    assert!(selected.contains("process_fixture"));
+    assert!(!selected.contains("production_before"));
+    assert!(!selected.contains("production_after"));
+
+    let inline = BTreeMap::from([("fixture/src/lib.rs".to_owned(), selected)]);
+    assert_eq!(git_process_violations(&inline).len(), 1);
+
+    let path_test = "fn fixture() { Command::new(\"git\"); }";
+    assert_eq!(
+        selected_test_source("fixture/tests/process.rs", path_test).as_deref(),
+        Some(path_test)
+    );
+    let javascript = "execute(\"git\", [\"status\"]);";
+    assert_eq!(
+        selected_test_source("fixture/process.test.mjs", javascript).as_deref(),
+        Some(javascript)
+    );
+}
+
+fn git_process_violations(sources: &BTreeMap<String, String>) -> Vec<String> {
     let mut violations = Vec::new();
     for (path, text) in sources
         .iter()
@@ -403,10 +450,7 @@ fn repository_test_sources_do_not_spawn_or_wrap_git() {
             }
         }
     }
-    assert!(
-        violations.is_empty(),
-        "tests must use in-process repository state or injected command observations, not Git processes: {violations:#?}"
-    );
+    violations
 }
 
 /// Whether a tracked source is test code rather than production.
@@ -527,17 +571,31 @@ fn collect_test_sources(root: &Path, directory: &Path, sources: &mut BTreeMap<St
             .to_owned();
         let text = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read test source {relative}: {error}"));
-        let selected = (is_fixture(&relative)
-            || relative
-                .rsplit_once('/')
-                .map_or(relative.as_str(), |(_, name)| name)
-                .contains(".test.")
-            || relative == "xtask/src/app/source/modules.rs")
-            .then_some(text);
+        let selected = selected_test_source(&relative, &text);
         if let Some(selected) = selected {
             sources.insert(relative, selected);
         }
     }
+}
+
+fn selected_test_source(path: &str, source: &str) -> Option<String> {
+    let named_test = is_fixture(path)
+        || path
+            .rsplit_once('/')
+            .map_or(path, |(_, name)| name)
+            .contains(".test.")
+        || path == "xtask/src/app/source/modules.rs";
+    if Path::new(path).extension() == Some(OsStr::new("rs")) {
+        let inline = gate::test_support::rust_test_item_sources(source)
+            .unwrap_or_else(|error| panic!("parse Rust test items in {path}: {error}"));
+        if named_test {
+            return Some(source.to_owned());
+        }
+        if !inline.is_empty() {
+            return Some(inline.join("\n"));
+        }
+    }
+    named_test.then(|| source.to_owned())
 }
 
 fn collect_rust_sources(root: &Path, directory: &Path, sources: &mut BTreeMap<String, String>) {
