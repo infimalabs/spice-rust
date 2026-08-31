@@ -106,7 +106,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 105);
+    assert_eq!(contracts().len(), 106);
 
     let unaccounted = contracts()
         .iter()
@@ -119,7 +119,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 105);
+    assert_eq!(landed, 106);
     assert_eq!(landing(&["gate", "commit-msg"]), Landing::Landed);
     assert_eq!(landing(&["gate", "reference-transaction"]), Landing::Landed);
     assert_eq!(landing(&["gate", "selection"]), Landing::Landed);
@@ -130,6 +130,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["config", "migrate-tasks"]), Landing::Landed);
     assert_eq!(landing(&["release", "publish"]), Landing::Landed);
     assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
+    assert_eq!(landing(&["rtk", "gain"]), Landing::Landed);
     assert_eq!(landing(&["lane"]), Landing::Landed);
     assert_eq!(landing(&["lane", "add"]), Landing::Landed);
     assert_eq!(landing(&["lane", "drain"]), Landing::Landed);
@@ -569,6 +570,7 @@ fn tool_postures_follow_the_closed_command_order() {
         declared,
         vec![
             ("doctor".to_owned(), vec!["rtk"]),
+            ("rtk gain".to_owned(), vec!["rtk"]),
             ("dev cargo".to_owned(), vec!["cargo"]),
             ("dev xtask".to_owned(), vec!["cargo"]),
             ("lock run".to_owned(), vec!["CMD"]),

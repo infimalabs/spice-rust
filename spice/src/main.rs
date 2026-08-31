@@ -62,6 +62,8 @@ mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod rtk_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod run_meter;
 #[cfg(not(target_arch = "wasm32"))]
 mod session_command;
@@ -289,6 +291,7 @@ fn dispatch_native_policy_queries(contract: &cli::Contract, leaf: &clap::ArgMatc
             }
         },
         ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
+        ["rtk", "gain"] => deliver(&rtk_command::gain(leaf), form),
         ["consent"] => deliver(&consent_command::read(contract), form),
         ["consent", "allow"] => deliver(
             &consent_command::decide(leaf, contract, wire::Answer::Granted),
@@ -468,6 +471,10 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ["session", ..] => (
             "session::target-unsupported",
             "filesystem transcript forensics are unavailable on wasm32",
+        ),
+        ["rtk", "gain"] => (
+            "rtk::target-unsupported",
+            "repository history discovery and native RTK execution are unavailable on wasm32",
         ),
         _ => return None,
     };

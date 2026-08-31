@@ -158,6 +158,18 @@ pub struct Version {
     pub app: Digest,
 }
 
+/// RTK savings reported from one exact agent history database.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RtkGainReport {
+    /// Agent identity supplied by the operator.
+    pub agent: String,
+    /// Exact database path selected after repository-wide resolution.
+    pub database: String,
+    /// Standard output produced by `rtk gain` for that database.
+    pub output: String,
+}
+
 /// Receipt for opening the current resident's published browser surface.
 ///
 /// The operator capability is intentionally absent. It is a socket credential,

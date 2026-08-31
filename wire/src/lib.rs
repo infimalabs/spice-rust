@@ -92,7 +92,8 @@ pub use reply::{
     JournalReindex, JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence,
     Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
     ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, Response,
-    RestoreVerification, SeqRange, SeqRangeError, SpiceCommand, ThreadReport, Version,
+    RestoreVerification, RtkGainReport, SeqRange, SeqRangeError, SpiceCommand, ThreadReport,
+    Version,
 };
 pub use stream::{
     AgentActivityKind, AgentMessage, MessageLocus, OperatorDirection, StreamAdmissionError,

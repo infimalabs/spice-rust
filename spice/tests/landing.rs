@@ -57,6 +57,7 @@ const CASES: &[Case] = &[
     case("session turns", &["session", "turns"]),
     case("doctor", &["doctor"]),
     case("version", &["version"]),
+    case("rtk gain", &["rtk", "gain", UUID]),
     case("install", &["install"]),
     case("dev cargo", &["dev", "cargo", "--", "--version"]),
     case("dev xtask", &["dev", "xtask", "--", "help"]),
