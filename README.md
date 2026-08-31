@@ -8,6 +8,11 @@ No appliance transition is part of that completion path.
 The manual commands below are for the initial authority transition and
 operator-directed recovery, not ordinary source-task completion.
 
+The implementation-independent contract lives in the [Spice product
+model](docs/product/README.md). Its [Rust implementation
+profile](docs/product/rust.md) records the exact exceptions and Rust-specific
+choices that this repository must preserve.
+
 ## Install and start
 
 Spice is this repository's installed appliance. Preview its digest-bound plan,
@@ -57,17 +62,9 @@ typed envelope; `--open` opens the browser.
 ### Optional RTK companion
 
 Supervised agent shells use [RTK](https://github.com/rtk-ai/rtk) when it is
-installed, and otherwise run every command natively. RTK remains a separate
-optional executable rather than an appliance asset:
-
-```sh
-brew install rtk
-rtk --version
-rtk rewrite -- git status
-```
-
-The default executable identity is `rtk`. Tracked `spice-rust.toml` or
-Git-common `.spice-rs/config.toml` may select one basename or absolute path:
+installed, and otherwise run commands natively. RTK is a separate optional
+executable, not an appliance asset. Tracked `spice-rust.toml` or Git-common
+`.spice-rs/config.toml` may replace the default `rtk` executable:
 
 ```toml
 [rtk]
@@ -98,8 +95,8 @@ that `"$spice_rs" dev xtask -- app` publishes under ignored `dist/stage-app`; it
 incomplete generation. `127.0.0.1:8767` is the no-fallback default. `--host` and
 `--port` override it, while `--port 0` takes a free port.
 
-The accepted browser-substrate decision and its conditional migration sequence
-are recorded in [app/SUBSTRATE.md](app/SUBSTRATE.md).
+The Rust/WASM-only browser substrate and its protocol boundary are recorded in
+the [Rust implementation profile](docs/product/rust.md#canvas-and-transport).
 
 A non-loopback listener requires explicit consent. Add a URL-safe bearer token
 unless the surrounding network is the intended access boundary:
@@ -167,31 +164,16 @@ Formatting remains a workspace check; run `"$spice_rs" dev cargo -- fmt --all
 changed slice as separate work instead of widening the current run.
 
 [DEVELOPMENT.md](DEVELOPMENT.md) maps the crate ownership seams, generated
-surfaces, complete test portfolio, validation tiers, measured concurrency
-limits, and safe disk-cleanup rules used by development agents.
+surfaces, test portfolio, validation tiers, concurrency posture, and safe
+disk-cleanup rules used by development agents.
 
-[SHAPE_CONFORMANCE.md](SHAPE_CONFORMANCE.md) governs the Rust port's matches,
-intentional deviations, resolved risk dispositions, and current self-hosting GO
-decision against the authoritative product shape.
+The [product model](docs/product/README.md) governs portable behavior, and the
+[Rust implementation profile](docs/product/rust.md) is the current deviation
+and specialization register.
 
-## Cargo build cache
-
-Cargo's configured `build_directory` may point every worktree at a shared
-machine cache shaped as `CargoBuild/<bucket>/<workspace-hash>`. Inventory it
-without writes with:
-
-```sh
-"$spice_rs" dev xtask -- build-cache --dry-run --max-bytes 40GiB --retain-live-worktrees 2
-```
-
-Apply the same deterministic oldest-first plan with `--apply`, or drive by
-free space instead of total cache size with `--free-space-floor 100GiB`. The
-collector retains the current worktree and the configured number of hottest
-linked worktree roots, skips any root with a held `.cargo-build-lock`, and never
-manages `CARGO_HOME`, `CARGO_TARGET_DIR`, or sccache.
-
-[SHELL.md](SHELL.md) inventories the few shell-bound entrypoints that remain
-and every orchestration script retired into these Rust commands.
+Shared Cargo-cache inventory and cleanup are documented in
+[DEVELOPMENT.md](DEVELOPMENT.md#disk-budget). [SHELL.md](SHELL.md) inventories
+the few shell-bound entrypoints that remain.
 
 The `gate` integration tests enforce repository contracts from stable product
 inputs. Lattice conformance compares every local path dependency in
@@ -200,9 +182,6 @@ inputs. Lattice conformance compares every local path dependency in
 of truth: it fails when a workspace member is added without an entry or when a
 manifest adds, removes, reverses, or cycles a local dependency edge.
 
-Doctrine conformance holds [DOCTRINE.md](DOCTRINE.md) to its compiled section,
-kernel, and decision-record contract. It requires every invariant to be stated
-rather than merely named, every decision to carry rationale and explicit
-deletions, settled language throughout, and every relative record link to
-resolve on disk. [TASTES.md](TASTES.md) is the companion record that governs
-curated preferences.
+The product model and Rust profile replace the former port doctrine and pinned
+shape audit. [TASTES.md](TASTES.md) remains executable repository truth: its
+seed block and curation law are checked against the configured taste registry.

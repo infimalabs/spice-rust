@@ -100,20 +100,12 @@ Use that boundary in this order:
    hooks. File unexpected failures outside the selected slice as separate work;
    do not widen the current run. Commit and land the task.
 
-## Measured cost and concurrency
+## Cost and concurrency
 
-On the measured 12-core, 24 GiB host, a warm `cargo check -p xtask` took 1.21
-seconds and the scoped `xtask` verifier 22.89 seconds. A representative two-file
-`gate` change selected its affected targets and 10 local arms in 79.28 seconds
-with fresh output and 61.80 seconds on immediate repeat; it did not run the full
-verifier or a study. These are observations, not latency promises.
-
-The cold isolated fleet matrix in
-[`gate/THROUGHPUT_AUDIT.md`](gate/THROUGHPUT_AUDIT.md) found saturation at four
-agent-equivalent runs; 4, 8, and 10 runs peaked at 51, 63, and 99 concurrent
-`rustc` processes and none received a GO. Keep checks scoped while peers compile.
-The package verifier serializes its three Cargo children and grants each one
-build job; do not widen the slice to compete for the same machine.
+Keep checks scoped while peers compile. Historical wall times and fleet samples
+are machine- and revision-specific rather than repository law. The package
+verifier serializes its three Cargo children and grants each one build job; do
+not widen the slice to compete for the same machine.
 
 ## Disk budget and safe cleanup
 

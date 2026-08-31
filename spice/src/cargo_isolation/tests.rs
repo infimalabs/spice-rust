@@ -107,13 +107,12 @@ impl Drop for Fixture {
     }
 }
 
-const TRACKED_CARGO_GUIDANCE: [(&str, &str); 3] = [
+const TRACKED_CARGO_GUIDANCE: [(&str, &str); 2] = [
     ("AGENTS.md", include_str!("../../../AGENTS.md")),
     (
         "spice/CARGO_ISOLATION.md",
         include_str!("../../CARGO_ISOLATION.md"),
     ),
-    ("spice/COEXISTENCE.md", include_str!("../../COEXISTENCE.md")),
 ];
 
 #[test]
