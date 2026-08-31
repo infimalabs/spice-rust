@@ -437,6 +437,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         measurements.clone(),
         committed.clone(),
     );
+    use_data_image_open_events(host.clone());
     use_activity_measurements(
         host.clone(),
         measurement_width,
@@ -761,6 +762,90 @@ fn use_image_resolution_events(
             }
         }
     });
+}
+
+#[hook]
+fn use_data_image_open_events(host: NodeRef) {
+    use_effect_with(host, move |host| {
+        let registration = host.cast::<web_sys::Element>().and_then(|host| {
+            let opened = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                let Some(target) = event
+                    .target()
+                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                else {
+                    return;
+                };
+                let Some(anchor) = target
+                    .closest("a[data-full-size-data-image]")
+                    .ok()
+                    .flatten()
+                else {
+                    return;
+                };
+                let Some(source) = anchor
+                    .query_selector("img")
+                    .ok()
+                    .flatten()
+                    .and_then(|image| image.get_attribute("src"))
+                else {
+                    return;
+                };
+                event.prevent_default();
+                let Some(url) = data_image_blob_url(&source) else {
+                    return;
+                };
+                let opened = web_sys::window().is_some_and(|window| {
+                    window
+                        .open_with_url_and_target_and_features(&url, "_blank", "noopener")
+                        .is_ok()
+                });
+                if opened {
+                    let retired_url = url.clone();
+                    Timeout::new(60_000, move || {
+                        let _ = web_sys::Url::revoke_object_url(&retired_url);
+                    })
+                    .forget();
+                } else {
+                    let _ = web_sys::Url::revoke_object_url(&url);
+                }
+            });
+            host.add_event_listener_with_callback("click", opened.as_ref().unchecked_ref())
+                .ok()?;
+            Some((host, opened))
+        });
+        move || {
+            if let Some((host, opened)) = registration {
+                let _ = host
+                    .remove_event_listener_with_callback("click", opened.as_ref().unchecked_ref());
+            }
+        }
+    });
+}
+
+fn data_image_blob_url(source: &str) -> Option<String> {
+    let (metadata, payload) = source.split_once(',')?;
+    let normalized = metadata.to_ascii_lowercase();
+    if !matches!(
+        normalized.as_str(),
+        "data:image/png;base64"
+            | "data:image/jpeg;base64"
+            | "data:image/gif;base64"
+            | "data:image/webp;base64"
+    ) {
+        return None;
+    }
+    let content_type = &metadata[5..metadata.find(';')?];
+    let decoded = web_sys::window()?.atob(payload).ok()?;
+    let bytes = decoded
+        .encode_utf16()
+        .map(|byte| u8::try_from(byte).ok())
+        .collect::<Option<Vec<_>>>()?;
+    let parts = js_sys::Array::new();
+    parts.push(&js_sys::Uint8Array::from(bytes.as_slice()));
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type(content_type);
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options).ok()?;
+    web_sys::Url::create_object_url_with_blob(&blob).ok()
 }
 
 #[hook]

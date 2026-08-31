@@ -26,6 +26,7 @@ import { assertNaturalMessageFooterInsets } from "./message-card-reference.mjs";
 const ARRIVAL_QUIET_MS = 500;
 const ARRIVAL_DEADLINE_MS = 15_000;
 const ARRIVAL_PROBE_MS = 125;
+const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 function mosaicCardCount(page) {
   return page.locator('[data-pane="agent-console"] .mosaic-message-card').count();
@@ -47,6 +48,74 @@ async function settledMosaicCards(page, label) {
     count = current;
   }
   return assertMosaicLattice(page, false);
+}
+
+async function installFirefoxImageFixture(page) {
+  await page.evaluate((pixel) => {
+    const fixture = document.createElement("section");
+    fixture.dataset.firefoxImageFixture = "true";
+    const card = (imageOnly, count) => {
+      const article = document.createElement("article");
+      article.className = "mosaic-message-card";
+      if (imageOnly) article.classList.add("mosaic-message-card--image-only");
+      const body = document.createElement("div");
+      body.className = "message-body markdown-body";
+      const stack = document.createElement("p");
+      stack.className = "message-image-stack";
+      for (let index = 0; index < count; index += 1) {
+        const anchor = document.createElement("a");
+        anchor.className = "message-image message-image--openable";
+        anchor.href = "about:blank";
+        anchor.target = "_blank";
+        anchor.rel = "noopener";
+        anchor.ariaLabel = `Open Firefox fixture ${index + 1} full size`;
+        anchor.title = anchor.ariaLabel;
+        const image = document.createElement("img");
+        image.src = `data:image/png;base64,${pixel}`;
+        image.alt = `Firefox fixture ${index + 1}`;
+        anchor.append(image);
+        stack.append(anchor);
+      }
+      body.append(stack);
+      article.append(body);
+      return article;
+    };
+    fixture.append(card(false, 1), card(true, 3));
+    document.body.append(fixture);
+  }, PIXEL_PNG);
+  return page.locator('[data-firefox-image-fixture="true"]');
+}
+
+async function assertFirefoxImageFixture(fixture, label) {
+  const observed = await fixture.evaluate((host) => [...host.querySelectorAll("article")].map((card) => ({
+    cardWidth: card.getBoundingClientRect().width,
+    stackWidth: card.querySelector(".message-image-stack").getBoundingClientRect().width,
+    previews: [...card.querySelectorAll(".message-image")].map((preview) => {
+      const image = preview.querySelector("img");
+      const box = preview.getBoundingClientRect();
+      const imageBox = image.getBoundingClientRect();
+      return {
+        top: box.top,
+        right: box.right,
+        height: imageBox.height,
+        objectFit: getComputedStyle(image).objectFit,
+        target: preview.target,
+        rel: preview.rel,
+      };
+    }),
+  })));
+  assert.ok(Math.abs(observed[0].previews[0].height - 140) <= 1,
+    `${label} bounds an ordinary preview: ${JSON.stringify(observed)}`);
+  assert.ok(observed[1].previews.every((preview) => Math.abs(preview.height - 252) <= 1),
+    `${label} bounds image-only previews: ${JSON.stringify(observed)}`);
+  assert.ok(observed[1].previews.every((preview) => preview.objectFit === "contain"),
+    `${label} preserves image aspect ratios`);
+  assert.ok(observed[1].previews.every((preview) => preview.target === "_blank" && preview.rel === "noopener"),
+    `${label} preserves isolated full-size target semantics`);
+  assert.ok(observed[1].previews.every((preview) => Math.abs(preview.top - observed[1].previews[0].top) <= 1),
+    `${label} keeps multiple images in one bounded row`);
+  assert.ok(observed.every((card) => card.stackWidth <= card.cardWidth),
+    `${label} keeps image stacks inside their cards: ${JSON.stringify(observed)}`);
 }
 
 export async function captureFirefoxAgentPageSpacing(
@@ -100,6 +169,9 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
     await assertNaturalMessageFooterInsets(console, "Firefox wide restored Mosaic");
+    const imageFixture = await installFirefoxImageFixture(page);
+    await assertFirefoxImageFixture(imageFixture, "Firefox wide image fixture");
+    await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-wide.png") });
     const boundary = console.locator('[data-card-kind="compaction"]');
     assert.equal(await boundary.count(), 1, "Firefox restores the real compaction exactly once");
     await waitForCompactionReady(page, boundary, "Firefox wide compaction divider");
@@ -112,6 +184,8 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     );
     await assertCompactionDivider(boundary, "Firefox narrow compaction divider", expectedAttribution);
     await assertNaturalMessageFooterInsets(console, "Firefox narrow restored Mosaic");
+    await assertFirefoxImageFixture(imageFixture, "Firefox narrow image fixture");
+    await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-narrow.png") });
     await resizeCompactionViewport(
       page,
       boundary,
@@ -139,6 +213,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
       lane,
       lane.locator(".composer-shard--primary"),
     );
+    await imageFixture.evaluate((fixture) => fixture.remove());
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Agents");

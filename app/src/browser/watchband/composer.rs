@@ -160,6 +160,7 @@ fn render_agent_message_card(
     let correspondent =
         agent_message_correspondent(member, quote_lane, message, quote_dispatcher, speak, order);
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
+    let rendered_markdown = render_markdown(&message.text);
     let card_label = if is_compaction {
         format!("Context compacted by {attribution}")
     } else {
@@ -174,6 +175,8 @@ fn render_agent_message_card(
                 .expect("message media passed admission before browser rendering")
         })
         .collect::<Vec<_>>();
+    let image_only = rendered_markdown.image_only
+        || (!unlinked_media.is_empty() && message.text.trim().is_empty());
     html! {
         <article
             key={source_id.clone()}
@@ -181,6 +184,7 @@ fn render_agent_message_card(
             class={classes!(
                 "mosaic-message-card",
                 is_compaction.then_some("mosaic-compaction-card"),
+                (!is_compaction && image_only).then_some("mosaic-message-card--image-only"),
                 layout.lifecycle.as_str(),
             )}
             aria-label={card_label}
@@ -209,7 +213,7 @@ fn render_agent_message_card(
             if is_compaction {
                 {render_compaction_boundary(message, &attribution)}
             } else {
-                <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
+                <div class="message-body markdown-body">{rendered_markdown.html}</div>
                 {render_agent_message_media(unlinked_media)}
                 {render_agent_message_footer(
                     message,
@@ -295,13 +299,25 @@ fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
     }
     html! {
         <div class="message-attachments">
-            {for unlinked_media.into_iter().map(|media| html! {
-                <img
-                    src={media.data_url.clone()}
-                    alt={media.name.clone()}
-                    title={media.name.clone()}
-                    data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
-                />
+            {for unlinked_media.into_iter().map(|media| {
+                let action = format!("Open {} full size", media.name);
+                html! {
+                    <a
+                        class="message-image message-image--openable"
+                        href="about:blank"
+                        target="_blank"
+                        rel="noopener"
+                        title={action.clone()}
+                        aria-label={action}
+                        data-full-size-data-image="true"
+                    >
+                        <img
+                            src={media.data_url.clone()}
+                            alt={media.name.clone()}
+                            data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
+                        />
+                    </a>
+                }
             })}
         </div>
     }
@@ -591,9 +607,14 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
     }
 }
 
+struct RenderedMarkdown {
+    html: Html,
+    image_only: bool,
+}
+
 /// Render received text. Drafts are never rendered: a composer shard shows the
 /// operator what they typed, so the built Markdown is only ever the message sent.
-fn render_markdown(markdown: &str) -> Html {
+fn render_markdown(markdown: &str) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -601,24 +622,216 @@ fn render_markdown(markdown: &str) -> Html {
         | Options::ENABLE_SMART_PUNCTUATION
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
+    let events = Parser::new_ext(markdown, options)
+        .map(sanitize_markdown_event)
+        .collect::<Vec<_>>();
+    let image_only = markdown_is_image_only(&events);
     let mut rendered_tasks = Vec::new();
     let mut code_block = false;
-    let events = Parser::new_ext(markdown, options).flat_map(|event| {
-        let event = sanitize_markdown_event(event);
-        match &event {
-            MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
-            MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
-            _ => {}
-        }
-        if code_block {
-            vec![event]
-        } else {
-            inline_task_chips(event, &mut rendered_tasks)
-        }
-    });
+    let events = decorate_markdown_images(events)
+        .into_iter()
+        .flat_map(|event| {
+            match &event {
+                MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
+                MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
+                _ => {}
+            }
+            if code_block {
+                vec![event]
+            } else {
+                inline_task_chips(event, &mut rendered_tasks)
+            }
+        });
     let mut output = String::new();
     pulldown_cmark::html::push_html(&mut output, events);
-    Html::from_html_unchecked(AttrValue::from(output))
+    RenderedMarkdown {
+        html: Html::from_html_unchecked(AttrValue::from(output)),
+        image_only,
+    }
+}
+
+fn markdown_is_image_only(events: &[MarkdownEvent<'_>]) -> bool {
+    let mut image_depth = 0usize;
+    let mut images = 0usize;
+    for event in events {
+        match event {
+            MarkdownEvent::Start(Tag::Image { .. }) => {
+                image_depth += 1;
+                images += 1;
+            }
+            MarkdownEvent::End(TagEnd::Image) => image_depth = image_depth.saturating_sub(1),
+            _ if image_depth > 0 => {}
+            MarkdownEvent::Start(Tag::Paragraph)
+            | MarkdownEvent::End(TagEnd::Paragraph)
+            | MarkdownEvent::SoftBreak
+            | MarkdownEvent::HardBreak => {}
+            MarkdownEvent::Text(text) if text.trim().is_empty() => {}
+            _ => return false,
+        }
+    }
+    images > 0
+}
+
+fn decorate_markdown_images(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>> {
+    let mut decorated = Vec::with_capacity(events.len());
+    let mut index = 0usize;
+    let mut image_stack = false;
+    while index < events.len() {
+        match &events[index] {
+            MarkdownEvent::Start(Tag::Paragraph) => {
+                image_stack = paragraph_is_image_stack(&events[index + 1..]);
+                if image_stack {
+                    decorated.push(MarkdownEvent::InlineHtml(
+                        "<p class=\"message-image-stack\">".into(),
+                    ));
+                } else {
+                    decorated.push(events[index].clone());
+                }
+            }
+            MarkdownEvent::End(TagEnd::Paragraph) if image_stack => {
+                decorated.push(MarkdownEvent::InlineHtml("</p>".into()));
+                image_stack = false;
+            }
+            MarkdownEvent::Start(Tag::Image {
+                dest_url, title, ..
+            }) => {
+                let end = events[index + 1..]
+                    .iter()
+                    .position(|event| matches!(event, MarkdownEvent::End(TagEnd::Image)))
+                    .map_or(events.len(), |offset| index + offset + 1);
+                let alt = image_alt_text(&events[index + 1..end]);
+                decorated.push(MarkdownEvent::InlineHtml(
+                    image_preview_html(dest_url, title, &alt).into(),
+                ));
+                index = end;
+            }
+            _ => decorated.push(events[index].clone()),
+        }
+        index += 1;
+    }
+    decorated
+}
+
+fn paragraph_is_image_stack(events: &[MarkdownEvent<'_>]) -> bool {
+    let mut image_depth = 0usize;
+    let mut images = 0usize;
+    for event in events {
+        match event {
+            MarkdownEvent::End(TagEnd::Paragraph) if image_depth == 0 => return images > 0,
+            MarkdownEvent::Start(Tag::Image { .. }) => {
+                image_depth += 1;
+                images += 1;
+            }
+            MarkdownEvent::End(TagEnd::Image) => image_depth = image_depth.saturating_sub(1),
+            _ if image_depth > 0 => {}
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {}
+            MarkdownEvent::Text(text) if text.trim().is_empty() => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn image_alt_text(events: &[MarkdownEvent<'_>]) -> String {
+    let mut alt = String::new();
+    for event in events {
+        match event {
+            MarkdownEvent::Text(text) | MarkdownEvent::Code(text) => alt.push_str(text),
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => alt.push(' '),
+            _ => {}
+        }
+    }
+    alt
+}
+
+fn image_preview_html(source: &str, authored_title: &str, alt: &str) -> String {
+    let source = escape_html_attribute(source);
+    let alt = escape_html_attribute(alt);
+    let label = if alt.is_empty() { "image" } else { &alt };
+    let action = escape_html_attribute(&format!("Open {label} full size"));
+    let image_title = if authored_title.is_empty() {
+        String::new()
+    } else {
+        format!(" title=\"{}\"", escape_html_attribute(authored_title))
+    };
+    let openable_data_image = data_image_is_openable(&source);
+    let malformed_data_image = data_image_has_malformed_base64(&source);
+    let image = if source.is_empty() || malformed_data_image {
+        format!("<img alt=\"{alt}\"{image_title}>")
+    } else {
+        format!("<img src=\"{source}\" alt=\"{alt}\"{image_title}>")
+    };
+    if openable_data_image {
+        format!(
+            "<a class=\"message-image message-image--openable\" href=\"about:blank\" \
+             target=\"_blank\" rel=\"noopener\" title=\"{action}\" aria-label=\"{action}\" \
+             data-full-size-data-image=\"true\">{image}</a>"
+        )
+    } else if !source.is_empty() && !is_data_image_source(&source) {
+        format!(
+            "<a class=\"message-image message-image--openable\" href=\"{source}\" \
+             target=\"_blank\" rel=\"noopener\" title=\"{action}\" \
+             aria-label=\"{action}\">{image}</a>"
+        )
+    } else {
+        format!("<span class=\"message-image\" title=\"Image preview\">{image}</span>")
+    }
+}
+
+fn data_image_has_malformed_base64(source: &str) -> bool {
+    source.split_once(',').is_some_and(|(metadata, payload)| {
+        let metadata = metadata.to_ascii_lowercase();
+        metadata.starts_with("data:image/")
+            && metadata.ends_with(";base64")
+            && !canonical_base64_payload(payload)
+    })
+}
+
+fn data_image_is_openable(source: &str) -> bool {
+    source.split_once(',').is_some_and(|(metadata, payload)| {
+        matches!(
+            metadata.to_ascii_lowercase().as_str(),
+            "data:image/png;base64"
+                | "data:image/jpeg;base64"
+                | "data:image/gif;base64"
+                | "data:image/webp;base64"
+        ) && canonical_base64_payload(payload)
+    })
+}
+
+fn is_data_image_source(source: &str) -> bool {
+    source
+        .split_once(',')
+        .map_or(source, |(metadata, _)| metadata)
+        .to_ascii_lowercase()
+        .starts_with("data:image/")
+}
+
+fn canonical_base64_payload(payload: &str) -> bool {
+    if payload.is_empty() || !payload.len().is_multiple_of(4) {
+        return false;
+    }
+    let body = payload.trim_end_matches('=');
+    let padding = payload.len() - body.len();
+    padding <= 2
+        && body
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+}
+
+fn escape_html_attribute(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 fn inline_task_chips<'a>(
@@ -721,7 +934,7 @@ fn sanitize_markdown_url(url: CowStr<'_>, image: bool) -> CowStr<'_> {
     let candidate = url.trim().to_ascii_lowercase();
     let safe_scheme = candidate.starts_with("https://")
         || candidate.starts_with("http://")
-        || candidate.starts_with("mailto:")
+        || (!image && candidate.starts_with("mailto:"))
         || (image && candidate.starts_with("data:image/"));
     let relative = !candidate.starts_with("//")
         && !candidate
