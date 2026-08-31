@@ -316,11 +316,12 @@ fn launch_environment(
             "the supervised environment has no native SHELL to restore behind interception",
         )
     })?;
-    let rtk_history = paths
-        .runtime
-        .join("agents")
-        .join(lane.to_string())
-        .join("rtk/history.db");
+    let state = repository
+        .admit_state()
+        .map_err(|error| crate::state_failure(&error).outcome())?;
+    let rtk_history = state
+        .rtk_history(lane)
+        .map_err(|error| crate::state_failure(&error).outcome())?;
     fs::create_dir_all(
         rtk_history
             .parent()

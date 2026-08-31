@@ -155,6 +155,21 @@ impl InactiveRtkFixture {
             "absent\n"
         );
     }
+
+    pub(in crate::resident) fn assert_rust_native_history_path_prepared(&self) {
+        assert!(
+            self.paths
+                .runtime
+                .join("rtk")
+                .join(self.lane.to_string())
+                .is_dir(),
+            "resident launch did not prepare the typed RTK lane root"
+        );
+        assert!(
+            !self.paths.runtime.join("agents").exists(),
+            "resident launch recreated the superseded generic agents root"
+        );
+    }
 }
 
 impl Drop for InactiveRtkFixture {

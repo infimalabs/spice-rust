@@ -55,6 +55,13 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
     assert_eq!(state.canvas(), common.join(".spice-rs/canvas"));
     assert_eq!(state.degraded(), common.join(".spice-rs/degraded"));
     assert_eq!(state.tape(), common.join(".spice-rs/tape"));
+    assert_eq!(state.rtk(), common.join(".spice-rs/rtk"));
+    assert_eq!(
+        state
+            .rtk_history(CanonicalUuid::new(uuid::Uuid::from_u128(1)))
+            .expect("current RTK history path admits"),
+        common.join(".spice-rs/rtk/00000000-0000-0000-0000-000000000001/history.db")
+    );
     assert_eq!(state.inbox(), common.join(".spice-rs/inbox"));
     let retired_learnings = common.join(".spice-rs/learnings");
     assert!(
@@ -232,6 +239,38 @@ fn retired_release_one_state_refuses_before_current_state_is_touched() {
         b"release-one proof bytes\n"
     );
     assert!(!current.exists());
+}
+
+#[test]
+fn retired_rust_agents_rtk_path_refuses_with_its_owning_layout() {
+    let scratch = Scratch::new();
+    let root = case(&scratch, "retired Rust RTK agents path");
+    let common = root.join(".git");
+    fs::create_dir(&common).expect("create common Git directory");
+    let lane = CanonicalUuid::new(uuid::Uuid::from_u128(1));
+    let retired = common
+        .join(STATE_DIRECTORY)
+        .join("agents")
+        .join(lane.to_string())
+        .join("rtk/history.db");
+    fs::create_dir_all(retired.parent().expect("retired history parent"))
+        .expect("create retired RTK directory");
+    fs::write(&retired, b"retired Rust RTK bytes\n").expect("plant retired RTK history");
+    let repository = Repository::discover(&root).expect("discover repository");
+    let state = repository.admit_state().expect("current state admits");
+
+    let error = state
+        .rtk_history(lane)
+        .expect_err("retired Rust RTK path must refuse");
+
+    assert_eq!(error.release(), Some(RETIRED_RTK_RELEASE));
+    assert_eq!(error.path(), retired);
+    assert!(error.to_string().contains("archive or remove"));
+    assert_eq!(
+        fs::read(&retired).expect("retired RTK history remains"),
+        b"retired Rust RTK bytes\n"
+    );
+    assert!(!state.rtk().exists());
 }
 
 #[cfg(unix)]

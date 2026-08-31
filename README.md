@@ -79,7 +79,7 @@ Exit 0 or 3 with nonempty output selects the rewrite; exit 1 with empty output
 keeps the native command. Launch, timeout, protocol, and parsing failures print
 `RTK rewrite degraded to native` and execute the original argv unchanged. RTK
 history is isolated at
-`<git-common>/.spice-rs/agents/<lane>/rtk/history.db` through `RTK_DB_PATH`.
+`<git-common>/.spice-rs/rtk/<lane>/history.db` through `RTK_DB_PATH`.
 `spice doctor` reports whether the exact configured executable is available but
 does not start it.
 
@@ -119,21 +119,14 @@ the HTTP origin. Wildcard binds publish loopback; for a VPN browser, replace
 `127.0.0.1` with the host's VPN address, keep the port, and append `#TOKEN` only
 when authentication is enabled.
 
-Activation refuses unless all three installed hooks are executable. Pre-commit
-runs the ordinary staged selector: recognized paths execute only their affected
-Cargo targets and local policy arms. A selector/toolchain authority path, an
-unclassified path, or a Rust/manifest path outside the workspace refuses with
-that path before policy or tests run. There is no exhaustive fallback in the
-ordinary hook or allocator-owned merge resolution. Bare repository-wide
-verification is retired and refuses before starting work; use staged selection
-or `"$spice_rs" dev xtask -- verify --package PACKAGE` for bounded feedback.
+Activation requires all three installed hooks. Pre-commit runs the staged
+selector: recognized paths execute their affected Cargo targets and policy
+arms; authority, unclassified, and out-of-workspace Rust paths refuse before
+execution. There is no exhaustive fallback. Use staged selection or
+`"$spice_rs" dev xtask -- verify --package PACKAGE` for bounded feedback.
 
-Legacy verifier bundles already stored by earlier releases remain exact to
-their producing worktree and selected-source identity. Only an open two-parent
-resolution may read both parent archives for forward compatibility: matching
-per-arm authorities can be reused, while resolution-only or protected-authority
-changes execute their selected checks normally. Current single-parent commits
-and task completion never read or produce these archives.
+Only open two-parent resolution may reuse matching legacy verifier evidence.
+Current single-parent commits and task completion never read or produce it.
 
 The native `commit-msg` hook enforces message hygiene and exact v1
 `Spice-Origin` grammar. The `reference-transaction` hook refuses a
@@ -154,28 +147,17 @@ the exact downstream target that exercises it.
 
 `"$spice_rs" dev cargo -- run --quiet --locked --package spice --bin spice --
 gate selection` is the source-development delegate for the ordinary
-staged-change gate. It builds
-and invokes one public Spice command, captures the index once, maps every changed
-path to canonical Cargo test targets and focused policy arms, and retains the
-path-to-check evidence in one typed report. Known backend, frontend,
-documentation, and configuration paths select only their local evidence. A
-selector/toolchain authority path, an unclassified path, or an out-of-workspace
-Rust/manifest path returns a deterministic path-specific refusal before any
-selected policy or test execution.
+staged-change gate. It captures the index once, maps changed paths to canonical
+tests and policy arms, and retains that evidence in one typed report. Invalid
+or unclassified paths refuse before execution.
 
 This selected evidence is the commit boundary; it never escalates to an
-exhaustive repository run. The native `spice gate pre-commit` command resolves
-tracked pre-commit policy once in one isolated worker. It runs
-the packaged selected-change gate exactly once by default, followed by admitted
-configured commands in authored order; `pre_commit_builtins = false` runs only
-configured commands and refuses an empty effective battery. Packaged and
-configured work share the captured source and the fixed 180-second envelope,
-including a 164-second worker allowance and cleanup reserves. A clean worker is
-silent; a refusal names only selected failures plus a private canonical report
-path. The supervisor owns the worker's complete process group, including Cargo,
-rustc, Trunk, parsers, and descendants. Every tracked hook dispatches directly
-to installed Spice; the authored source-development command above reaches
-`gate selection` and never redispatches the pre-commit dispatcher.
+exhaustive repository run. Native `spice gate pre-commit` resolves tracked
+policy once in an isolated worker, runs the packaged selector, then admitted
+configured commands in authored order. `pre_commit_builtins = false` runs only
+configured commands and refuses an empty battery. All work shares one captured
+source and bounded process group; clean is silent and failures name only
+selected findings plus the private report path.
 
 The scoped package command identifies every repository-wide action and compiled
 gate arm it intentionally skips. Its three Cargo children run serially with a

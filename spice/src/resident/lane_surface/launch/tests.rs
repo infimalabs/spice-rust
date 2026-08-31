@@ -28,6 +28,7 @@ fn inactive_configured_rtk_is_removed_from_the_occupant_and_published_by_launch(
     );
     fixture.assert_occupant_started_without_rtk();
     fixture.assert_one_configured_probe_from_launch_worktree();
+    fixture.assert_rust_native_history_path_prepared();
     let health = session
         .launch
         .as_ref()

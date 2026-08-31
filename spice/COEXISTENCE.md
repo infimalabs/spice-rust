@@ -28,9 +28,11 @@ their configured optional RTK companion: Python does so through
 Git-common `.spice-rs` root, so the two implementations share no writable RTK
 configuration or history state. The explicit
 `spice/src/rtk_command.rs#pub(crate) fn gain` inspector executes only against
-one UUID-selected Rust history below `.spice-rs`; it does not inspect
-predecessor state. Operators query it with `spice rtk gain AGENT_UUID`; the
-reply names the exact database path and RTK output. Rust's
+the UUID-selected Rust history returned by
+`spice/src/repository.rs#pub fn rtk_history` at
+`.spice-rs/rtk/<lane-uuid>/history.db`; it does not inspect predecessor state.
+Operators query it with `spice rtk gain AGENT_UUID`; the reply names the exact
+database path and RTK output. Rust's
 `spice/src/cli.rs#Command::new("spice")` is a clap command name, not a process
 construction. The executable-name convergence still mattered through an
 inherited shell `PATH`; the routing root cause and closure are recorded below.
