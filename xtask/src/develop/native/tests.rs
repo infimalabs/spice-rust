@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use gate::test_support::gix;
+
 use super::*;
 
 /// How many names one fixture tries before giving up on an exclusive root.
@@ -42,19 +44,18 @@ impl Fixture {
     }
 
     /// Canonicalize the freshly created `root` and make it a repository.
-    ///
-    /// The fixture owns the root before `git` is asked to initialize it, so a
-    /// refusal here unwinds through [`Fixture::drop`] and takes the directory
-    /// with it. Building the fixture last would leave the one root no test ever
-    /// used behind, which is the collision this whole change exists to stop.
     fn initialized(root: PathBuf) -> Self {
         let fixture = Self(fs::canonicalize(&root).expect("scratch root canonicalizes"));
-        let status = Command::new("git")
-            .args(["init", "--quiet", "--initial-branch=main", "."])
-            .current_dir(&fixture.0)
-            .status()
-            .expect("git launches");
-        assert!(status.success(), "scratch repository is initialized");
+        let repository = gix::ThreadSafeRepository::init_opts(
+            &fixture.0,
+            gix::create::Kind::WithWorktree,
+            gix::create::Options::default(),
+            gix::open::Options::isolated(),
+        )
+        .expect("initialize in-process scratch repository")
+        .to_thread_local();
+        fs::write(repository.git_dir().join("HEAD"), "ref: refs/heads/main\n")
+            .expect("select deterministic scratch branch");
         fixture
     }
 

@@ -9,6 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gate::{BatteryReport, GateId};
 
+mod support;
+use support::RepositoryFixture;
+
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const FORMAT_ACTION: &str =
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
@@ -28,10 +31,7 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
         "pub fn fixture() { assert_eq!(2 + 2, 4); }\n",
     )
     .expect("write fixture Rust source");
-    git(
-        &fixture.repository,
-        &["add", "app/index.html", "src/lib.rs"],
-    );
+    RepositoryFixture::open(&fixture.repository).stage_all();
 
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create standalone compiler programs");
@@ -95,11 +95,10 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
         "pub fn fixture() { assert_eq!(2 + 2, 4); }\n",
     )
     .expect("write one-package staged change");
-    git(&fixture.repository, &["add", "src/lib.rs"]);
+    RepositoryFixture::open(&fixture.repository).stage_all();
 
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create scoped verifier program directory");
-    install_real_git(&programs);
     let cargo_log = fixture.root.join("cargo-actions");
     executable(
         &programs.join("cargo"),
@@ -283,15 +282,6 @@ impl Fixture {
         ));
         let repository = root.join("repository");
         fs::create_dir_all(repository.join("src")).expect("create verifier fixture repository");
-        git(&repository, &["init", "-q"]);
-        git(
-            &repository,
-            &["config", "user.email", "verify-process@example.invalid"],
-        );
-        git(
-            &repository,
-            &["config", "user.name", "Verifier Process Fixture"],
-        );
         fs::write(
             repository.join("spice-rust.toml"),
             format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
@@ -322,8 +312,8 @@ impl Fixture {
             .expect("write verifier fixture Canvas entry point");
         fs::write(repository.join("src/lib.rs"), "pub fn fixture() {}\n")
             .expect("write verifier fixture source");
-        git(&repository, &["add", "."]);
-        git(&repository, &["commit", "-qm", "fixture"]);
+        let repository_fixture = RepositoryFixture::initialize(&repository);
+        repository_fixture.commit_all();
 
         let binaries = root.join("current-build");
         fs::create_dir(&binaries).expect("create fixture current-build directory");
@@ -337,15 +327,7 @@ impl Fixture {
         spice::install::apply(&discovered, Some(&current_spice), &plan.digest().unwrap())
             .expect("publish fixture installed appliance");
         let hooks = discovered.common_dir().join(".spice-install/git-hooks");
-        git(
-            &repository,
-            &[
-                "config",
-                "--local",
-                "core.hooksPath",
-                hooks.to_str().expect("fixture hook path is UTF-8"),
-            ],
-        );
+        repository_fixture.set_hooks_path(&hooks);
         Self { root, repository }
     }
 }
@@ -402,24 +384,6 @@ fn executable(path: &Path, text: &str) {
     fs::write(path, text).expect("write process fixture executable");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
         .expect("make process fixture executable");
-}
-
-fn install_real_git(programs: &Path) {
-    std::os::unix::fs::symlink("/usr/bin/git", programs.join("git"))
-        .expect("install real Git in the verifier fixture rim");
-}
-
-fn git(root: &Path, arguments: &[&str]) {
-    let output = Command::new("/usr/bin/git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("fixture Git launches");
-    assert!(
-        output.status.success(),
-        "git {arguments:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 fn streams(output: &std::process::Output) -> String {

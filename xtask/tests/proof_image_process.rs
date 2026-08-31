@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use gate::test_support::gix;
+
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const IDENTITY: &str = "sha256:3e8a97ea5628fad302eafb4e93f81da8236c6bf164fd3459509d6db71ee57334";
 
@@ -130,9 +132,22 @@ impl Fixture {
             fs::write(source.join(name), format!("fixture {name}\n")).unwrap();
         }
         fs::write(source.join("identity.txt"), format!("{IDENTITY}\n")).unwrap();
-        git(&repository, &["init", "-q"]);
+        initialize_repository(&repository);
         Self { root, repository }
     }
+}
+
+fn initialize_repository(root: &Path) {
+    let repository = gix::ThreadSafeRepository::init_opts(
+        root,
+        gix::create::Kind::WithWorktree,
+        gix::create::Options::default(),
+        gix::open::Options::isolated(),
+    )
+    .expect("initialize in-process proof-image repository")
+    .to_thread_local();
+    fs::write(repository.git_dir().join("HEAD"), "ref: refs/heads/main\n")
+        .expect("select deterministic proof-image branch");
 }
 
 impl Drop for Fixture {
@@ -144,19 +159,6 @@ impl Drop for Fixture {
 fn executable(path: &Path, text: &str) {
     fs::write(path, text).expect("write fixture executable");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("make fixture executable");
-}
-
-fn git(root: &Path, arguments: &[&str]) {
-    let output = Command::new("/usr/bin/git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("fixture Git launches");
-    assert!(
-        output.status.success(),
-        "git {arguments:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 fn streams(output: &std::process::Output) -> String {

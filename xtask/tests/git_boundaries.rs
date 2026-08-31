@@ -63,7 +63,7 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 10] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 6] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
     // control-plane boundary after authored release approval. Each count
@@ -79,15 +79,6 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 10] = [
     // subcommands by name to give them a longer timeout, and issues nothing.
     ("spice/src/task_git/command.rs", "fetch", 1),
     ("spice/src/task_git/command.rs", "push", 1),
-    // The completion interruption fixture creates a bare repository below its
-    // temporary test root and exercises publication conflict recovery against
-    // that local path. These are test-only Git calls, not production authority.
-    ("spice/tests/task_completion_cli.rs", "clone", 1),
-    ("spice/tests/task_completion_cli.rs", "fetch", 1),
-    ("spice/tests/task_completion_cli.rs", "push", 2),
-    // The stale-claim recovery fixture creates and seeds a bare repository
-    // under its temporary root so completion can retain real commit evidence.
-    ("spice/src/board_command/tests/stale_reclaim.rs", "push", 1),
 ];
 
 /// The activation surface, which GIT-06 keeps free of git entirely.
@@ -338,6 +329,36 @@ fn this_battery_remains_a_scoped_workspace_target() {
     assert!(
         manifest.contains("\n    \"xtask\",\n"),
         "xtask is not a workspace member, so --workspace never builds this file"
+    );
+}
+
+/// Xtask tests model repository state in process and never launch real Git.
+#[test]
+fn xtask_test_sources_do_not_spawn_or_wrap_git() {
+    let sources = workspace_rust_sources();
+    let mut violations = Vec::new();
+    for (path, text) in sources.iter().filter(|(path, text)| {
+        path.starts_with("xtask/")
+            && (is_fixture(path)
+                || path.as_str() == "xtask/src/app/source/modules.rs"
+                || text.contains("#[cfg(test)]"))
+            && path.as_str() != SELF_PATH
+    }) {
+        for (index, line) in text.lines().enumerate() {
+            let lower = line.to_ascii_lowercase();
+            let constructs_git = line.contains("Command::new") && lower.contains("git");
+            let wraps_git = lower.contains("/usr/bin/git")
+                && ["copy", "hard_link", "symlink"]
+                    .into_iter()
+                    .any(|operation| line.contains(operation));
+            if constructs_git || wraps_git {
+                violations.push(format!("{path}:{}: {}", index + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "xtask tests must use in-process repository state or injected command observations, not Git processes: {violations:#?}"
     );
 }
 

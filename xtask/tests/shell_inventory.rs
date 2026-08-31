@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use gate::test_support::gix;
+use gix::bstr::ByteSlice as _;
 
 const LIVE_SHELL_GLUE: [&str; 5] = [
     "dist/proof-image/cargo-wrapper.sh",
@@ -61,46 +63,34 @@ fn every_tracked_shell_file_has_one_checked_disposition() {
 }
 
 fn shell_files(root: &Path) -> BTreeSet<String> {
-    if root.join(".git").exists() {
-        git_shell_files(root)
-    } else {
-        let mut tracked = BTreeSet::new();
-        collect_shell_files(root, root, &mut tracked);
-        tracked
+    if !root.join(".git").exists() {
+        let mut selected = BTreeSet::new();
+        collect_shell_files(root, root, &mut selected);
+        return selected;
     }
-}
-
-fn git_shell_files(root: &Path) -> BTreeSet<String> {
-    let output = Command::new("git")
-        .args(["ls-files", "-z", "--", "*.sh", "steer/hooks/wrappers/*"])
-        .current_dir(root)
-        .output()
-        .expect("Git lists tracked shell files");
-    assert!(
-        output.status.success(),
-        "git ls-files failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .map(|path| String::from_utf8(path.to_vec()).expect("tracked shell path is UTF-8"))
-        .filter(|path| root.join(path).is_file())
+    let repository = gix::open_opts(root, gix::open::Options::isolated())
+        .expect("open workspace repository in process");
+    let index = repository.open_index().expect("open workspace Git index");
+    index
+        .entries()
+        .iter()
+        .map(|entry| entry.path(&index).to_str_lossy().into_owned())
+        .filter(|path| {
+            root.join(path).is_file()
+                && (Path::new(path).extension() == Some(OsStr::new("sh"))
+                    || Path::new(path).starts_with("steer/hooks/wrappers"))
+        })
         .collect()
 }
 
-fn collect_shell_files(root: &Path, directory: &Path, tracked: &mut BTreeSet<String>) {
+fn collect_shell_files(root: &Path, directory: &Path, selected: &mut BTreeSet<String>) {
     for entry in fs::read_dir(directory).expect("selected source directory reads") {
         let entry = entry.expect("selected source entry reads");
         let path = entry.path();
         let name = entry.file_name();
         if path.is_dir() {
-            if name != OsStr::new(".git")
-                && name != OsStr::new("node_modules")
-                && name != OsStr::new("target")
-            {
-                collect_shell_files(root, &path, tracked);
+            if name != OsStr::new("node_modules") && name != OsStr::new("target") {
+                collect_shell_files(root, &path, selected);
             }
         } else if path.extension() == Some(OsStr::new("sh"))
             || path
@@ -113,7 +103,7 @@ fn collect_shell_files(root: &Path, directory: &Path, tracked: &mut BTreeSet<Str
                 .to_str()
                 .expect("shell path is UTF-8")
                 .to_owned();
-            tracked.insert(relative);
+            selected.insert(relative);
         }
     }
 }

@@ -451,15 +451,15 @@ fn restart_command(
     let mut command = Command::new(installed);
     command.args(["--json", "up"]);
     let (host, port) = endpoint;
-    if !forwards_option(&request.up_arguments, "--host") {
-        if let Some(host) = host {
-            command.args(["--host", host]);
-        }
+    if !forwards_option(&request.up_arguments, "--host")
+        && let Some(host) = host
+    {
+        command.args(["--host", host]);
     }
-    if !forwards_option(&request.up_arguments, "--port") {
-        if let Some(port) = port {
-            command.args(["--port", &port.to_string()]);
-        }
+    if !forwards_option(&request.up_arguments, "--port")
+        && let Some(port) = port
+    {
+        command.args(["--port", &port.to_string()]);
     }
     command.args(&request.up_arguments);
     command

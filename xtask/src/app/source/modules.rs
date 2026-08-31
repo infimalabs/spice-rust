@@ -4,21 +4,26 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
+
+use gate::test_support::gix;
+use gix::bstr::ByteSlice as _;
 
 /// Every Git-tracked Rust source under `app/src` must be reachable from the
 /// crate root. Attributes do not hide declarations from this walk: a module
 /// compiled only for Wasm or tests is still one authored branch of the app.
-fn loose_tracked_sources(root: &Path) -> Result<Vec<String>, String> {
-    let tracked = tracked_app_sources(root)?;
+fn loose_sources(root: &Path, tracked: BTreeSet<String>) -> Result<Vec<String>, String> {
     let reached = external_module_graph(root)?;
     Ok(tracked.difference(&reached).cloned().collect())
 }
 
 fn admit_tracked_sources(root: &Path) -> Result<(), String> {
-    let loose = loose_tracked_sources(root)?;
+    admit_sources(root, tracked_app_sources(root)?)
+}
+
+fn admit_sources(root: &Path, tracked: BTreeSet<String>) -> Result<(), String> {
+    let loose = loose_sources(root, tracked)?;
     if loose.is_empty() {
         return Ok(());
     }
@@ -32,29 +37,16 @@ fn tracked_app_sources(root: &Path) -> Result<BTreeSet<String>, String> {
     if !root.join(".git").exists() {
         return filesystem_app_sources(root);
     }
-    git_tracked_app_sources(root)
-}
-
-fn git_tracked_app_sources(root: &Path) -> Result<BTreeSet<String>, String> {
-    let output = Command::new("git")
-        .args(["-C"])
-        .arg(root)
-        .args(["ls-files", "-z", "--", "app/src"])
-        .output()
-        .map_err(|error| format!("git ls-files could not start: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git ls-files failed with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    let bytes = String::from_utf8(output.stdout)
-        .map_err(|error| format!("git ls-files returned non-UTF-8 paths: {error}"))?;
-    Ok(bytes
-        .split('\0')
-        .filter(|path| path.ends_with(".rs"))
-        .map(str::to_owned)
+    let repository = gix::open_opts(root, gix::open::Options::isolated())
+        .map_err(|error| format!("repository could not open: {error}"))?;
+    let index = repository
+        .open_index()
+        .map_err(|error| format!("Git index could not open: {error}"))?;
+    Ok(index
+        .entries()
+        .iter()
+        .map(|entry| entry.path(&index).to_str_lossy().into_owned())
+        .filter(|path| path.starts_with("app/src/") && path.ends_with(".rs"))
         .collect())
 }
 
@@ -290,8 +282,6 @@ impl Fixture {
         .expect("write reachable fixture module");
         fs::write(root.join("app/src/loose.rs"), "pub fn loose() {}\n")
             .expect("write loose fixture module");
-        git(root, &["init", "--quiet"]);
-        git(root, &["add", "app/src"]);
         fixture
     }
 
@@ -309,16 +299,6 @@ impl Drop for Fixture {
     }
 }
 
-fn git(root: &Path, arguments: &[&str]) {
-    let status = Command::new("git")
-        .args(["-C"])
-        .arg(root)
-        .args(arguments)
-        .status()
-        .expect("fixture git command starts");
-    assert!(status.success(), "fixture git command succeeds");
-}
-
 #[test]
 fn every_tracked_app_rust_source_is_reachable_from_the_crate_root() {
     admit_tracked_sources(&repository_root()).expect("walk current app module graph");
@@ -327,9 +307,19 @@ fn every_tracked_app_rust_source_is_reachable_from_the_crate_root() {
 #[test]
 fn a_tracked_loose_module_fails_with_its_exact_path() {
     let fixture = Fixture::new();
+    let tracked = filesystem_app_sources(fixture.root()).expect("observe fixture source paths");
     assert_eq!(
-        admit_tracked_sources(fixture.root()).expect_err("tracked loose module must fail"),
+        admit_sources(fixture.root(), tracked).expect_err("tracked loose module must fail"),
         "Git-tracked app Rust sources outside the external module graph: app/src/loose.rs"
+    );
+}
+
+#[test]
+fn a_selected_tree_without_git_metadata_uses_its_present_sources() {
+    let fixture = Fixture::new();
+    assert_eq!(
+        tracked_app_sources(fixture.root()).expect("inventory selected fixture tree"),
+        filesystem_app_sources(fixture.root()).expect("observe selected fixture sources")
     );
 }
 
