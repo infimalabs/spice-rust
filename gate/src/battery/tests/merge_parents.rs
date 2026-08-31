@@ -22,6 +22,7 @@
 //! inherited-file exemption.
 
 use super::*;
+
 use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricId, MetricKey};
 
 /// The source the second parent commits and the merge inherits verbatim.
@@ -617,23 +618,10 @@ fn a_manual_conflict_resolution_remains_merge_authored() {
     fixture_git(&repository, &["add", CONFLICTED]);
     fixture_git(&repository, &["commit", "-q", "-m", "main conflicts"]);
 
-    let output = {
-        let _fixture_git_guard = FIXTURE_GIT_BARRIER
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        Command::new("/usr/bin/git")
-            .args(["merge", "--no-commit", "--no-ff", "side-conflict"])
-            .current_dir(&repository)
-            .env_clear()
-            .env("HOME", &repository)
-            .output()
-            .expect("run the deliberately conflicting fixture merge")
-    };
     assert_eq!(
-        output.status.code(),
-        Some(1),
-        "Git must identify the fixture as conflicted: {}",
-        String::from_utf8_lossy(&output.stderr)
+        crate::test_repository::merge(&repository, "side-conflict"),
+        crate::test_repository::MergeOutcome::Conflicted(vec![CONFLICTED.to_owned()]),
+        "the fixture must retain the conflict provenance"
     );
     assert!(repository.join(".git/MERGE_HEAD").exists());
 

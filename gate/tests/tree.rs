@@ -1,10 +1,8 @@
-//! Git selections exercised through real repositories and real parser processes.
+//! Git selections exercised through in-process repositories and real parser processes.
 
 use std::fs;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::{PermissionsExt as _, symlink};
-use std::process::Command;
-use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use gate::{
@@ -15,49 +13,18 @@ use sill::Deadlines;
 
 mod support;
 
-use support::Tree;
+use support::{Tree, git_repository};
 
-const GIT: &str = "/usr/bin/git";
-/// Keep fixture Git child lifetimes disjoint under translated amd64 execution.
-static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 const MUTATING_COUNTER: &str = "/bin/chmod u+w \"$1\"; \
      printf 'changed by parser\\n' >> \"$1\"; printf '1\\n'";
 
-fn git(tree: &Tree, arguments: &[&str]) -> String {
-    let _fixture_git_guard = FIXTURE_GIT_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    let output = Command::new(GIT)
-        .args(arguments)
-        .current_dir(&tree.root)
-        .env_clear()
-        .env("HOME", &tree.root)
-        .output()
-        .unwrap_or_else(|error| panic!("run git {arguments:?}: {error}"));
-    assert!(
-        output.status.success(),
-        "git {arguments:?} exited {}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("Git fixture output is UTF-8")
-        .trim()
-        .to_owned()
-}
-
 fn repository(label: &str) -> Tree {
-    let tree = Tree::new(label);
-    git(&tree, &["init", "-q", "-b", "main"]);
-    git(&tree, &["config", "user.name", "Gate Fixture"]);
-    git(&tree, &["config", "user.email", "gate@example.invalid"]);
-    tree
+    git_repository(label)
 }
 
 fn commit_all(tree: &Tree, message: &str) -> String {
-    git(tree, &["add", "--all"]);
-    git(tree, &["commit", "-q", "-m", message]);
-    git(tree, &["rev-parse", "HEAD"])
+    tree.stage_all();
+    tree.commit(message)
 }
 
 fn bounds() -> Bounds {
@@ -86,7 +53,7 @@ fn staged_and_revision_sources_never_read_checkout_only_bytes() {
     #[cfg(target_family = "unix")]
     fs::set_permissions(tree.path("bin/tool.sh"), fs::Permissions::from_mode(0o755))
         .expect("make the staged fixture executable");
-    git(&tree, &["add", "src/lib.rs", "bin/tool.sh"]);
+    tree.stage(&["src/lib.rs", "bin/tool.sh"]);
     tree.write("src/lib.rs", "unstaged\n");
     tree.write("notes.untracked", "untracked\n");
 
@@ -207,8 +174,7 @@ fn revision_refusals_name_the_requested_revision() {
         .expect_err("a revision range is refused");
     assert!(matches!(range, TreeError::RevisionUnresolved { .. }));
 
-    git(&tree, &["branch", "colliding"]);
-    git(&tree, &["tag", "colliding"]);
+    tree.create_ambiguous_ref("colliding");
     let ambiguous = Selector::revision("colliding")
         .materialize(&tree.root)
         .expect_err("an ambiguous branch and tag name is refused");
@@ -226,7 +192,7 @@ fn symlinks_and_submodules_are_named_before_materialization() {
     commit_all(&tree, "ordinary file");
 
     symlink("target.txt", tree.path("linked.txt")).expect("create a fixture symlink");
-    git(&tree, &["add", "linked.txt"]);
+    tree.stage(&["linked.txt"]);
     let linked = Selector::staged()
         .materialize(&tree.root)
         .expect_err("a staged symlink is refused");
@@ -235,10 +201,9 @@ fn symlinks_and_submodules_are_named_before_materialization() {
         TreeError::Symlink { path } if path == "linked.txt"
     ));
 
-    git(&tree, &["reset", "-q", "--hard", "HEAD"]);
-    let commit = git(&tree, &["rev-parse", "HEAD"]);
-    let cacheinfo = format!("160000,{commit},vendor/dependency");
-    git(&tree, &["update-index", "--add", "--cacheinfo", &cacheinfo]);
+    fs::remove_file(tree.path("linked.txt")).expect("remove fixture symlink");
+    tree.stage_all();
+    tree.stage_submodule("vendor/dependency", &tree.head());
     let submodule = Selector::staged()
         .materialize(&tree.root)
         .expect_err("a staged submodule is refused");
@@ -252,12 +217,8 @@ fn symlinks_and_submodules_are_named_before_materialization() {
 fn a_missing_staged_blob_produces_no_selected_tree() {
     let tree = repository("missing-object");
     tree.write("lost.txt", "lost\n");
-    git(&tree, &["add", "lost.txt"]);
-    let listing = git(&tree, &["ls-files", "--stage", "lost.txt"]);
-    let object = listing
-        .split_whitespace()
-        .nth(1)
-        .expect("the staged listing carries an object id");
+    tree.stage(&["lost.txt"]);
+    let object = tree.staged_object("lost.txt");
     let object_path = tree
         .root
         .join(".git/objects")
@@ -278,7 +239,7 @@ fn a_missing_staged_blob_produces_no_selected_tree() {
 fn run_snapshot_integrity_remains_the_second_door() {
     let tree = repository("snapshot-second-door");
     tree.write("src/lib.rs", "one\n");
-    git(&tree, &["add", "src/lib.rs"]);
+    tree.stage(&["src/lib.rs"]);
     let selected = Selector::staged()
         .materialize(&tree.root)
         .expect("materialize staged bytes");

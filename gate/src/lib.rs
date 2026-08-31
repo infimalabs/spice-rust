@@ -34,6 +34,8 @@ pub mod state;
 #[cfg(not(target_arch = "wasm32"))]
 mod structural;
 pub mod test_evidence;
+#[cfg(test)]
+mod test_repository;
 pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;

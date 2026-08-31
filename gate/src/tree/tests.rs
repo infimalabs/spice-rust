@@ -1,15 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
 
 use sill::Acquisition;
 
 use super::{Selector, StagedAuthorityDifference, TreeError};
-
-/// Keep fixture Git child lifetimes disjoint under translated amd64 execution.
-static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 
 struct Repository {
     root: PathBuf,
@@ -43,26 +38,50 @@ impl Repository {
     }
 
     fn git_at(&self, directory: &Path, arguments: &[&str]) -> String {
-        let _fixture_git_guard = FIXTURE_GIT_BARRIER
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let output = Command::new("/usr/bin/git")
-            .args(arguments)
-            .current_dir(directory)
-            .env_clear()
-            .env("HOME", &self.root)
-            .output()
-            .unwrap_or_else(|source| panic!("run Git {arguments:?}: {source}"));
-        assert!(
-            output.status.success(),
-            "Git {arguments:?} exited {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout)
-            .expect("Git output is UTF-8")
-            .trim()
-            .to_owned()
+        match arguments {
+            ["init", ..] => crate::test_repository::initialize(directory),
+            ["config", ..] => {}
+            ["add", "--all"] => crate::test_repository::stage_all(directory),
+            ["add", paths @ ..] => crate::test_repository::stage(directory, paths),
+            ["commit", .., "-m", message] => {
+                crate::test_repository::commit(directory, message);
+            }
+            ["rev-parse", "HEAD"] => return crate::test_repository::head(directory),
+            ["mv", source, destination] => {
+                crate::test_repository::move_path(directory, source, destination);
+            }
+            ["update-ref", reference, id] => {
+                crate::test_repository::set_ref(&self.root, reference, id);
+            }
+            ["worktree", "add", "-q", "-b", branch, linked, "HEAD"] => {
+                crate::test_repository::create_linked_worktree(
+                    &self.root,
+                    Path::new(linked),
+                    branch,
+                );
+            }
+            ["worktree", "remove", "--force", linked] => {
+                crate::test_repository::remove_linked_worktree(&self.root, Path::new(linked));
+            }
+            ["pack-refs", "--all", option] => {
+                crate::test_repository::pack_refs(&self.root, *option == "--prune");
+            }
+            ["branch", branch] => crate::test_repository::create_branch(&self.root, branch),
+            ["symbolic-ref", "HEAD", reference] => {
+                crate::test_repository::set_symbolic_head(&self.root, reference);
+            }
+            ["update-index", "--split-index"] => {
+                crate::test_repository::split_index(&self.root);
+            }
+            ["checkout", "-q", "-b", branch, start] => {
+                crate::test_repository::checkout_from(&self.root, branch, true, Some(start));
+            }
+            ["checkout", "-q", branch] => {
+                crate::test_repository::checkout(&self.root, branch, false);
+            }
+            unsupported => panic!("unsupported in-process fixture operation {unsupported:?}"),
+        }
+        String::new()
     }
 
     fn commit(&self, message: &str) -> String {

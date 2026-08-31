@@ -12,7 +12,6 @@ mod tests {
 
     #[test]
     fn one_current_run_constructs_one_coherent_gate_report_and_direct_body() {
-        ReportFixture::assert_parent_environment_isolated();
         let report = fixture_gate_report();
 
         assert_eq!(report.version(), GATE_REPORT_VERSION);

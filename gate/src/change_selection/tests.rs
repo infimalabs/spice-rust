@@ -2,7 +2,6 @@ use super::*;
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 struct Scratch {
@@ -18,12 +17,7 @@ impl Scratch {
             NEXT.fetch_add(1, Ordering::Relaxed),
         ));
         fs::create_dir(&root).expect("create selector fixture");
-        let status = Command::new("/usr/bin/git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(&root)
-            .status()
-            .expect("launch fixture Git");
-        assert!(status.success());
+        crate::test_repository::initialize(&root);
         Self { root }
     }
 
@@ -33,12 +27,7 @@ impl Scratch {
             fs::create_dir_all(parent).expect("create fixture path parent");
         }
         fs::write(target, bytes).expect("write fixture path");
-        let status = Command::new("/usr/bin/git")
-            .args(["add", "--", path])
-            .current_dir(&self.root)
-            .status()
-            .expect("launch fixture Git add");
-        assert!(status.success());
+        crate::test_repository::stage(&self.root, &[path]);
     }
 }
 

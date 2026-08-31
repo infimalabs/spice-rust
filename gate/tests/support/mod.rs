@@ -8,24 +8,15 @@ use gate::{
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
+mod repository;
 pub(crate) mod toolchain;
 
 /// Names tried before a scratch root is declared unobtainable.
 const CREATE_ATTEMPTS: usize = 128;
 
-/// The one program every fixture repository is built with.
-pub(crate) const GIT: &str = "/usr/bin/git";
-
 static NEXT_TREE: AtomicU32 = AtomicU32::new(0);
-
-/// Docker Desktop's amd64 translation cannot reap concurrent fixture Git
-/// children reliably. Each integration binary owns this support module, so one
-/// barrier keeps every Git child lifetime in that binary disjoint.
-static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 
 /// A source tree the fixture creates, owns, and can prove it removed.
 pub(crate) struct Tree {
@@ -93,57 +84,15 @@ impl Drop for Tree {
 #[allow(dead_code)]
 pub(crate) fn git_repository(label: &str) -> Tree {
     let repository = Tree::new(label);
-    git(&repository, &["init", "-q", "-b", "main"]);
-    git(&repository, &["config", "user.name", "Gate Fixture"]);
-    git(
-        &repository,
-        &["config", "user.email", "gate@example.invalid"],
-    );
+    repository.initialize();
     repository
 }
 
 /// Stage everything present and commit it under one message.
 #[allow(dead_code)]
 pub(crate) fn git_commit(repository: &Tree, message: &str) {
-    git(repository, &["add", "--all"]);
-    git(repository, &["commit", "-q", "-m", message]);
-}
-
-/// Run one fixture Git command that is required to succeed.
-#[allow(dead_code)]
-pub(crate) fn git(repository: &Tree, arguments: &[&str]) -> String {
-    let output = git_output(repository, arguments);
-    assert!(
-        output.status.success(),
-        "git {arguments:?} exited {}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("Git fixture output is UTF-8")
-        .trim()
-        .to_owned()
-}
-
-/// Run one fixture Git command and return its complete completion.
-#[allow(dead_code)]
-pub(crate) fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
-    let _fixture_git_guard = fixture_git_barrier();
-    Command::new(GIT)
-        .args(arguments)
-        .current_dir(&repository.root)
-        .env_clear()
-        .env("HOME", &repository.root)
-        .output()
-        .unwrap_or_else(|error| panic!("run git {arguments:?}: {error}"))
-}
-
-/// Hold the integration binary's Git-child barrier across an external fixture event.
-#[allow(dead_code)]
-pub(crate) fn fixture_git_barrier() -> MutexGuard<'static, ()> {
-    FIXTURE_GIT_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+    repository.stage_all();
+    repository.commit(message);
 }
 
 /// One tracked workspace document, read from the real workspace.
