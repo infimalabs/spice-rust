@@ -511,9 +511,57 @@ function assertUnmoved(armed, finished, label) {
 }
 
 async function submitAssistantActivity(page, console, lane, text, activityReplay) {
-  await activityReplay.injectAgentProse(page, lane, text);
-  return console.locator(`[data-card-kind="agent-message"][data-agent-lane="${lane}"]`)
-    .filter({ hasText: text.split("\n", 1)[0] });
+  const injected = await activityReplay.injectAgentProse(page, lane, text);
+  return console.locator(`[data-mosaic-card-key="${injected.key}"]`);
+}
+
+async function assertImagePreview(preview, label, expectedHeight) {
+  const observed = await preview.evaluate((element) => {
+    const image = element.querySelector("img");
+    const box = element.getBoundingClientRect();
+    const imageBox = image.getBoundingClientRect();
+    const cardBox = element.closest(".mosaic-message-card").getBoundingClientRect();
+    const style = getComputedStyle(image);
+    return {
+      box: { left: box.left, right: box.right, width: box.width },
+      card: { left: cardBox.left, right: cardBox.right, width: cardBox.width },
+      image: { width: imageBox.width, height: imageBox.height },
+      objectFit: style.objectFit,
+      maxHeight: style.maxHeight,
+    };
+  });
+  assert.ok(
+    Math.abs(observed.image.height - expectedHeight) <= 1,
+    `${label} uses the ${expectedHeight}px bounded slot: ${JSON.stringify(observed)}`,
+  );
+  assert.ok(observed.box.width <= observed.card.width, `${label} stays within its card`);
+  assert.ok(
+    observed.box.left >= observed.card.left - 1 && observed.box.right <= observed.card.right + 1,
+    `${label} does not overflow its card: ${JSON.stringify(observed)}`,
+  );
+  assert.equal(observed.objectFit, "contain", `${label} preserves aspect ratio within its slot`);
+  assert.equal(observed.maxHeight, `${expectedHeight}px`, `${label} exposes a stable computed cap`);
+}
+
+async function assertFullSizeTarget(preview, label, expectedHref) {
+  assert.equal(await preview.getAttribute("target"), "_blank", `${label} opens in a new tab`);
+  assert.equal(await preview.getAttribute("rel"), "noopener", `${label} isolates its opener`);
+  assert.match(await preview.getAttribute("aria-label"), /^Open .+ full size$/,
+    `${label} names its full-size action`);
+  assert.match(await preview.getAttribute("title"), /^Open .+ full size$/,
+    `${label} exposes a discoverable tooltip`);
+  if (expectedHref) assert.equal(await preview.getAttribute("href"), expectedHref, `${label} targets its source`);
+}
+
+async function openAndAssertIsolated(page, preview, label, expectedUrl) {
+  const opened = page.waitForEvent("popup");
+  await preview.click();
+  const popup = await opened;
+  await popup.waitForLoadState("domcontentloaded");
+  if (expectedUrl instanceof RegExp) assert.match(popup.url(), expectedUrl, `${label} opens full size`);
+  else assert.equal(popup.url(), expectedUrl, `${label} opens full size`);
+  assert.equal(await popup.evaluate(() => window.opener), null, `${label} has no opener`);
+  await popup.close();
 }
 
 async function settleMosaicActivity(page, plane) {
@@ -815,6 +863,12 @@ export async function assertPersistentMosaic(
       cardKey,
       `reconciliation retains the authored ${outcome} assistant record`,
     );
+    const remotePreview = card.locator("a.message-image");
+    await assertImagePreview(remotePreview, `remote ${outcome} preview`, 140);
+    await assertFullSizeTarget(remotePreview, `remote ${outcome} preview`, url);
+    if (outcome === "load") {
+      await openAndAssertIsolated(page, remotePreview, "remote image preview", url);
+    }
     await page.unroute(url);
   }
 
@@ -840,6 +894,100 @@ export async function assertPersistentMosaic(
   assert.ok(ready.retained, "an already-complete image retains untouched card nodes");
   assert.deepEqual(ready.writes, [], "an already-complete image writes no untouched placement");
   assert.equal(ready.commits, readyProbe.commits + 1, "an already-complete image corrects once");
+
+  const embeddedPreview = readyCard.locator("a.message-image");
+  await assertImagePreview(embeddedPreview, "embedded ordinary preview", 140);
+  await assertFullSizeTarget(embeddedPreview, "embedded ordinary preview", "about:blank");
+  assert.equal(await embeddedPreview.getAttribute("data-full-size-data-image"), "true");
+  await openAndAssertIsolated(page, embeddedPreview, "embedded image preview", /^blob:/);
+
+  const imageOnlyCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    `![large embedded preview](data:image/png;base64,${PIXEL_PNG})`,
+    activityReplay,
+  );
+  await imageOnlyCard.waitFor({ state: "attached", timeout: 10_000 });
+  assert.ok(
+    await imageOnlyCard.evaluate((card) => card.classList.contains("mosaic-message-card--image-only")),
+    "a pure image message receives the large preview tier",
+  );
+  await assertImagePreview(imageOnlyCard.locator(".message-image"), "image-only preview", 252);
+
+  const multiImageCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    ["one", "two", "three"].map((name) => (
+      `![${name}](data:image/png;base64,${PIXEL_PNG})`
+    )).join(" "),
+    activityReplay,
+  );
+  await multiImageCard.waitFor({ state: "attached", timeout: 10_000 });
+  const multiPreviews = multiImageCard.locator("p.message-image-stack > .message-image");
+  assert.equal(await multiPreviews.count(), 3, "a multi-image paragraph keeps one intentional stack");
+  const multiGeometry = await multiPreviews.evaluateAll((previews) => previews.map((preview) => {
+    const box = preview.getBoundingClientRect();
+    return { top: box.top, left: box.left, right: box.right };
+  }));
+  assert.ok(multiGeometry.every((box) => Math.abs(box.top - multiGeometry[0].top) <= 1),
+    `multi-image previews share one row: ${JSON.stringify(multiGeometry)}`);
+  await assertImagePreview(multiPreviews.first(), "multi-image preview", 252);
+
+  const unsupportedCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    "![bounded unsupported data image](data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjwvc3ZnPg==)",
+    activityReplay,
+  );
+  await unsupportedCard.waitFor({ state: "attached", timeout: 10_000 });
+  assert.equal(await unsupportedCard.locator("a.message-image").count(), 0,
+    "a non-raster data image has no top-level opening action");
+  await assertImagePreview(unsupportedCard.locator("span.message-image"),
+    "unsupported data-image preview", 252);
+
+  const malformedCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    "![malformed raster data](data:image/png;base64,%%%)",
+    activityReplay,
+  );
+  await malformedCard.waitFor({ state: "attached", timeout: 10_000 });
+  assert.equal(await malformedCard.locator("a.message-image").count(), 0,
+    "malformed raster base64 has no fallback opening path");
+  await assertImagePreview(malformedCard.locator("span.message-image"),
+    "malformed raster preview", 252);
+
+  const attachmentText = "unlinked attachment preview";
+  const attachment = await activityReplay.injectAgentProse(page, member.lane, attachmentText, [{
+    name: "attachment.png",
+    content_type: "image/png",
+    data_url: `data:image/png;base64,${PIXEL_PNG}`,
+  }]);
+  const attachmentCard = console.locator(`[data-mosaic-card-key="${attachment.key}"]`);
+  await attachmentCard.waitFor({ state: "attached", timeout: 10_000 });
+  const attachmentPreview = attachmentCard.locator(".message-attachments .message-image");
+  await assertImagePreview(attachmentPreview, "unlinked attachment preview", 140);
+  await assertFullSizeTarget(attachmentPreview, "unlinked attachment preview", "about:blank");
+
+  const originalViewport = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await waitForMosaicReady(page);
+  await assertImagePreview(multiPreviews.first(), "narrow multi-image preview", 252);
+  const narrowStack = await multiImageCard.locator("p.message-image-stack").evaluate((stack) => ({
+    clientWidth: stack.clientWidth,
+    scrollWidth: stack.scrollWidth,
+    cardWidth: stack.closest(".mosaic-message-card").clientWidth,
+  }));
+  assert.ok(narrowStack.clientWidth <= narrowStack.cardWidth,
+    `the narrow image stack stays inside its card: ${JSON.stringify(narrowStack)}`);
+  assert.ok(narrowStack.scrollWidth >= narrowStack.clientWidth,
+    "the narrow multi-image arrangement retains bounded horizontal access");
+  await page.setViewportSize(originalViewport);
+  await waitForMosaicReady(page);
   await assertMosaicLattice(page, true);
 }
 
