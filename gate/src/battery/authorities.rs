@@ -131,6 +131,18 @@ impl BatteryCapture<'_> {
         self.executor.staged_authority()
     }
 
+    /// Materialize the exact committed base retained by this staged capture.
+    ///
+    /// # Errors
+    ///
+    /// Returns repository, object, path, or filesystem failures from the
+    /// retained selected-tree authority.
+    pub fn materialize_staged_base(
+        &self,
+    ) -> Result<Option<crate::tree::SelectedTree>, BatteryError> {
+        self.executor.materialize_staged_base()
+    }
+
     /// Tracked generated-path selectors captured from this selected tree.
     #[must_use]
     pub fn generated_paths(&self) -> &[String] {

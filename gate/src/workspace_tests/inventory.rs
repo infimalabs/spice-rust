@@ -68,11 +68,21 @@ impl WorkspacePackageReach {
 
 pub(crate) fn workspace_package_reach_at(
     root: &Path,
+    base: Option<&Path>,
     changed_sources: &[String],
     environment: &Environment,
     cargo: &OsStr,
 ) -> Result<WorkspacePackageReach, WorkspaceTestError> {
-    let inventory = acquire_inventory(root, environment, cargo)?;
+    let mut inventory = acquire_inventory(root, environment, cargo)?;
+    if super::cargo_workspace_base_inventory_required(root, changed_sources)? {
+        let base = base.ok_or_else(|| {
+            WorkspaceTestError::new(
+                "removed Rust source requires exact base-tree Cargo ownership inventory",
+            )
+        })?;
+        let base_inventory = acquire_inventory(base, environment, cargo)?;
+        inventory.retain_removed_target_ownership(root, &base_inventory, base, changed_sources)?;
+    }
     let checks = selection::cargo_check_selections(&inventory, root, changed_sources)?;
     Ok(WorkspacePackageReach {
         roots: checks.iter().map(|check| check.root.clone()).collect(),
@@ -185,6 +195,7 @@ pub(super) struct PackageInventory {
     pub(super) root: PathBuf,
     pub(super) dependencies: Vec<PathBuf>,
     pub(super) declared_targets: Vec<TargetIdentity>,
+    pub(super) removed_targets: Vec<TargetIdentity>,
     pub(super) targets: Vec<TargetIdentity>,
 }
 
@@ -197,6 +208,81 @@ pub(super) struct Inventory {
 }
 
 impl Inventory {
+    pub(super) fn retain_removed_target_ownership(
+        &mut self,
+        root: &Path,
+        base: &Self,
+        base_root: &Path,
+        changed_sources: &[String],
+    ) -> Result<(), WorkspaceTestError> {
+        let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let base_root = fs::canonicalize(base_root).unwrap_or_else(|_| base_root.to_path_buf());
+        for changed in changed_sources
+            .iter()
+            .filter(|path| Path::new(path).extension() == Some(OsStr::new("rs")))
+        {
+            let selected_source = root.join(changed);
+            match fs::symlink_metadata(&selected_source) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(WorkspaceTestError::new(format!(
+                        "changed Rust source {changed:?} is unavailable at {}: {error}",
+                        selected_source.display(),
+                    )));
+                }
+            }
+            let base_source = base_root.join(changed);
+            let mut owners = Vec::new();
+            for package in &base.packages {
+                for target in &package.targets {
+                    if target.source == base_source {
+                        owners.push((package, target));
+                    }
+                }
+            }
+            let [(base_package, base_target)] = owners.as_slice() else {
+                if owners.is_empty() {
+                    continue;
+                }
+                return Err(WorkspaceTestError::new(format!(
+                    "removed Rust source {changed:?} has ambiguous base-tree Cargo target ownership",
+                )));
+            };
+            let relative_package = base_package.root.strip_prefix(&base_root).map_err(|_| {
+                WorkspaceTestError::new(format!(
+                    "base-tree Cargo package {:?} root {} escapes base root {}",
+                    base_package.name,
+                    base_package.root.display(),
+                    base_root.display(),
+                ))
+            })?;
+            let current_package = self
+                .packages
+                .iter_mut()
+                .find(|package| {
+                    package.name == base_package.name
+                        && package.root == root.join(relative_package)
+                })
+                .ok_or_else(|| {
+                    WorkspaceTestError::new(format!(
+                        "removed Rust source {changed:?} belonged to base-tree Cargo package {:?}, which has no matching current package",
+                        base_package.name,
+                    ))
+                })?;
+            let mut target = (*base_target).clone();
+            target.package.clone_from(&current_package.id);
+            target.source = rebase_path(&target.source, &base_root, &root, changed)?;
+            for declared in &mut target.declared_path_sources {
+                declared.path = rebase_path(&declared.path, &base_root, &root, changed)?;
+            }
+            current_package.removed_targets.push(target);
+            current_package.removed_targets.sort();
+            current_package.removed_targets.dedup();
+        }
+        Ok(())
+    }
+
     pub(super) fn execution_environment(
         &self,
         environment: Environment,
@@ -257,6 +343,7 @@ impl Inventory {
                     root: package.root.clone(),
                     dependencies: package.dependencies.clone(),
                     declared_targets: package.declared_targets.clone(),
+                    removed_targets: package.removed_targets.clone(),
                     targets,
                 })
             })
@@ -293,6 +380,22 @@ impl Inventory {
             build_directory: self.build_directory.clone(),
         })
     }
+}
+
+fn rebase_path(
+    path: &Path,
+    base_root: &Path,
+    root: &Path,
+    changed: &str,
+) -> Result<PathBuf, WorkspaceTestError> {
+    let relative = path.strip_prefix(base_root).map_err(|_| {
+        WorkspaceTestError::new(format!(
+            "base-tree Cargo ownership for {changed:?} names path {} outside base root {}",
+            path.display(),
+            base_root.display(),
+        ))
+    })?;
+    Ok(root.join(relative))
 }
 
 fn writable_directory(

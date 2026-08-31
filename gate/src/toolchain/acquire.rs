@@ -166,6 +166,7 @@ impl std::error::Error for RimDirectoryError {}
 /// directory they resolve against.
 #[derive(Debug)]
 pub struct ToolchainSource<'a> {
+    tree: Option<&'a SelectedTree>,
     root: &'a Path,
     repository: &'a Path,
     paths: &'a [String],
@@ -184,6 +185,7 @@ impl<'a> ToolchainSource<'a> {
     #[must_use]
     pub fn capture(tree: &'a SelectedTree, rim: RimCapture) -> Self {
         Self {
+            tree: Some(tree),
             root: tree.root(),
             repository: tree.repository(),
             paths: tree.paths(),
@@ -204,6 +206,7 @@ impl<'a> ToolchainSource<'a> {
         reached_paths: Option<&[String]>,
     ) -> Self {
         Self {
+            tree: Some(tree),
             root: tree.root(),
             repository: tree.repository(),
             paths: tree.paths(),
@@ -465,9 +468,14 @@ fn examine(
             ),
             GateId::RustTypecheck => {
                 let programs = resolved_programs(declaration, tools);
+                let base = match cargo_base(source) {
+                    Ok(base) => base,
+                    Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+                };
                 analyze::rust_typecheck(
                     declaration,
                     source.root,
+                    base.as_ref().map(SelectedTree::root),
                     source.repository,
                     source.changes(),
                     bounds,
@@ -476,11 +484,18 @@ fn examine(
             }
             GateId::CanvasWebTypecheck => {
                 let programs = resolved_programs(declaration, tools);
+                let base = match cargo_base(source) {
+                    Ok(base) => base,
+                    Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+                };
                 analyze::canvas_web_typecheck(
                     declaration,
-                    source.root,
+                    analyze::CargoSelection::new(
+                        source.root,
+                        base.as_ref().map(SelectedTree::root),
+                        source.changes(),
+                    ),
                     source.repository,
-                    source.changes(),
                     bounds,
                     analyze::CompilerResources::new(&programs, source.compiler_environment()),
                     refusal(declaration, tools),
@@ -534,6 +549,24 @@ fn examine(
             declaration.id.as_str()
         ),
     )
+}
+
+fn cargo_base(source: &ToolchainSource<'_>) -> Result<Option<SelectedTree>, String> {
+    if !crate::workspace_tests::cargo_workspace_base_inventory_required(
+        source.root,
+        source.changes(),
+    )
+    .map_err(|error| error.to_string())?
+    {
+        return Ok(None);
+    }
+    source
+        .tree
+        .ok_or_else(|| "removed Rust source has no selected-tree base authority".to_owned())?
+        .materialize_staged_base()
+        .map_err(|error| error.to_string())?
+        .map(Some)
+        .ok_or_else(|| "removed Rust source requires a committed staged base tree".to_owned())
 }
 
 /// The refusal this arm's probed evidence earns before any analysis runs.

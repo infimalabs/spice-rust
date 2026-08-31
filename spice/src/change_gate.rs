@@ -337,6 +337,7 @@ impl ChangeGateReport {
 struct ChangeGateExecution {
     selected_root: PathBuf,
     writable_root: PathBuf,
+    base_tree: Option<gate::SelectedTree>,
     test_source: wire::Digest,
     test_changes: Vec<String>,
     test_execution: TestExecution,
@@ -426,9 +427,28 @@ fn run_with_selection(
     let repository = Repository::discover(Path::new(".")).map_err(|error| {
         ChangeGateError::environment("change-gate-repository-unresolved", error)
     })?;
+    let base_tree =
+        if gate::cargo_workspace_base_inventory_required(anchor.root(), anchor.changes())
+            .map_err(|error| ChangeGateError::refusal("base-tree-ownership-refused", error))?
+        {
+            Some(
+                anchor
+                    .materialize_staged_base()
+                    .map_err(ChangeGateError::gate)?
+                    .ok_or_else(|| {
+                        ChangeGateError::refusal(
+                            "base-tree-ownership-refused",
+                            "removed Rust source requires a committed staged base tree",
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
     let execution = ChangeGateExecution {
         selected_root: anchor.root().to_path_buf(),
         writable_root: repository.worktree_root().to_path_buf(),
+        base_tree,
         test_source: anchor.source().clone(),
         test_changes: anchor.changes().to_vec(),
         test_execution,
@@ -762,6 +782,7 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
     let ChangeGateExecution {
         selected_root,
         writable_root,
+        base_tree,
         test_source,
         test_changes,
         test_execution,
@@ -779,6 +800,10 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         budget,
         environment,
     );
+    let test_run = match base_tree.as_ref() {
+        Some(base) => test_run.with_base(base.root()),
+        None => test_run,
+    };
     let test_run = match preexecuted.rust_workspace.as_ref() {
         Some(workspace) => test_run.with_reusable(workspace),
         None => test_run,

@@ -97,6 +97,24 @@ impl<'a> CompilerResources<'a> {
     }
 }
 
+/// Selected Cargo inputs captured at one tree instant.
+#[derive(Clone, Copy)]
+pub(super) struct CargoSelection<'a> {
+    root: &'a Path,
+    base: Option<&'a Path>,
+    changes: &'a [String],
+}
+
+impl<'a> CargoSelection<'a> {
+    pub(super) const fn new(root: &'a Path, base: Option<&'a Path>, changes: &'a [String]) -> Self {
+        Self {
+            root,
+            base,
+            changes,
+        }
+    }
+}
+
 impl Analysis {
     /// A terminal state that carries neither findings nor an exit code.
     pub(super) fn terminal(outcome: ArmOutcome, reason: String) -> Self {

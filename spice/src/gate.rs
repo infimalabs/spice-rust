@@ -145,6 +145,18 @@ impl PreparedArm<'_> {
         self.capture.staged_authority()
     }
 
+    /// Materialize the exact committed base retained beside this staged source.
+    ///
+    /// # Errors
+    ///
+    /// Refuses when the retained repository object or private materialization
+    /// cannot be read exactly.
+    pub fn materialize_staged_base(&self) -> Result<Option<::gate::SelectedTree>, RunError> {
+        self.capture
+            .materialize_staged_base()
+            .map_err(|error| RunError::refusal("gate::base-tree-refused", error))
+    }
+
     /// Execute the one canonical focused arm this capture selected.
     ///
     /// # Errors

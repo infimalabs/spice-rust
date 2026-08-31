@@ -19,9 +19,8 @@ use super::*;
 /// that caused it instead of the next one.
 pub(in crate::toolchain) fn canvas_web_typecheck(
     declaration: ToolchainDeclaration,
-    root: &Path,
+    selection: CargoSelection<'_>,
     repository: &Path,
-    changes: &[String],
     bounds: &Bounds,
     resources: CompilerResources<'_>,
     deferred_trunk_refusal: Option<Analysis>,
@@ -33,15 +32,7 @@ pub(in crate::toolchain) fn canvas_web_typecheck(
         deferred_trunk_refusal,
         compiler_environment: resources.environment(),
     };
-    let analysis = canvas_analysis(
-        declaration,
-        root,
-        repository,
-        changes,
-        bounds,
-        tools,
-        &removal,
-    );
+    let analysis = canvas_analysis(declaration, selection, repository, bounds, tools, &removal);
     match removal.take() {
         Some(report) => Analysis::terminal(ArmOutcome::ParseFailure, report),
         None => analysis,
@@ -57,13 +48,17 @@ struct CanvasTools<'a> {
 
 fn canvas_analysis(
     declaration: ToolchainDeclaration,
-    root: &Path,
+    selection: CargoSelection<'_>,
     repository: &Path,
-    changes: &[String],
     bounds: &Bounds,
     tools: CanvasTools<'_>,
     removal: &Cell<Option<String>>,
 ) -> Analysis {
+    let CargoSelection {
+        root,
+        base,
+        changes,
+    } = selection;
     if !root.join("Cargo.toml").is_file() || !root.join("app/index.html").is_file() {
         return Analysis::not_applicable(declaration);
     }
@@ -90,6 +85,7 @@ fn canvas_analysis(
     if !frontend_change_reaches_canvas(changes) {
         match crate::workspace_tests::workspace_package_reach_at(
             source,
+            base,
             changes,
             &metadata_environment,
             std::ffi::OsStr::new(cargo),

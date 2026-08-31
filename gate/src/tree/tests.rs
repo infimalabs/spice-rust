@@ -133,6 +133,33 @@ fn staged_authority_distinguishes_exact_rename_base_and_lineage() {
 }
 
 #[test]
+fn staged_base_materialization_remains_pinned_to_the_captured_head() {
+    let repository = Repository::new("captured-staged-base");
+    repository.write("value.txt", b"base\n");
+    repository.commit("base");
+    repository.write("value.txt", b"selected\n");
+    repository.git(&["add", "value.txt"]);
+    let selected = Selector::staged()
+        .materialize(&repository.root)
+        .expect("capture staged source and its base");
+
+    repository.git(&["commit", "-q", "-m", "advance live head"]);
+    let base = selected
+        .materialize_staged_base()
+        .expect("materialize retained base object")
+        .expect("committed staged source has a base");
+
+    assert_eq!(
+        fs::read(base.root().join("value.txt")).expect("read retained base file"),
+        b"base\n",
+    );
+    assert_eq!(
+        fs::read(selected.root().join("value.txt")).expect("read staged file"),
+        b"selected\n",
+    );
+}
+
+#[test]
 fn staged_rename_similarity_is_fixed_independently_of_repository_config() {
     let repository = Repository::new("captured-rename-similarity");
     repository.write(
