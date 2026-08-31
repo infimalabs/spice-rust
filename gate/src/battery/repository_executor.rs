@@ -387,6 +387,12 @@ impl<'trace> RepositoryExecutor<'trace> {
         self.tree.staged_authority()
     }
 
+    pub(super) fn materialize_staged_base(&self) -> Result<Option<SelectedTree>, BatteryError> {
+        self.tree
+            .materialize_staged_base()
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
+
     /// Run the canonical mutation profile against this executor's selected tree.
     pub(super) fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
         self.contract.execute_kill(self.tree.root())

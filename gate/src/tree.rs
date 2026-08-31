@@ -237,6 +237,30 @@ impl SelectedTree {
         &self.repository
     }
 
+    /// Materialize the exact `HEAD` commit captured beside a staged index.
+    ///
+    /// The retained object identity, rather than a fresh `HEAD` resolution,
+    /// makes this safe for ancestry-dependent inventories acquired after the
+    /// selected tree itself was sealed. Revision selections and unborn staged
+    /// repositories have no staged base.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same repository, object, path, or filesystem failures as
+    /// [`Selector::materialize`].
+    pub fn materialize_staged_base(&self) -> Result<Option<Self>, TreeError> {
+        let Some(base) = self
+            .staged_authority
+            .as_ref()
+            .and_then(|authority| authority.rename_base)
+        else {
+            return Ok(None);
+        };
+        Selector::revision(base.to_string())
+            .materialize(&self.repository)
+            .map(Some)
+    }
+
     /// Prove that the live Git source has not moved since materialization.
     ///
     /// The staged seal retains its live index watch, so a write followed by a

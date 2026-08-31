@@ -151,6 +151,75 @@ fn workspace_authority_retains_process_proofs() {
     }
 }
 
+#[test]
+fn deleted_auto_target_uses_exact_base_owner_and_one_current_validation_unit() {
+    let selected_root = synthetic_root("deleted-selected");
+    let base_root = synthetic_root("deleted-base");
+    let mut selected = deletion_inventory(&selected_root, false);
+    let base = deletion_inventory(&base_root, true);
+    let changes = ["sample/tests/removed.rs".to_owned()];
+
+    selected
+        .retain_removed_target_ownership(&selected_root, &base, &base_root, &changes)
+        .expect("the exact base target root establishes deletion ownership");
+    assert_eq!(
+        selected.packages[0]
+            .removed_targets
+            .iter()
+            .map(TargetIdentity::display)
+            .collect::<Vec<_>>(),
+        ["test:removed"],
+    );
+    assert_eq!(
+        selected.packages[0].removed_targets[0].source,
+        selected_root.join("sample/tests/removed.rs"),
+    );
+
+    let report = selection_plan(
+        &selected,
+        &selected_root,
+        wire::Digest::compute(wire::Domain::GateSelection, b"deleted-auto-target"),
+        &changes,
+    )
+    .expect("a deleted integration target has one current validation path")
+    .into_report();
+    assert_eq!(report.tests(), ["sample::lib:sample"]);
+    assert_eq!(
+        report
+            .edges()
+            .iter()
+            .map(|edge| (edge.source(), edge.test()))
+            .collect::<Vec<_>>(),
+        [("sample/tests/removed.rs", "sample::lib:sample")],
+    );
+
+    let checks = cargo_check_selections(&selected, &selected_root, &changes)
+        .expect("native selection uses the same deletion validation path");
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].targets.len(), 1);
+    assert_eq!(checks[0].targets[0].identity, "lib:sample");
+}
+
+#[test]
+fn deleted_target_without_base_owner_refuses_instead_of_expanding_package() {
+    let selected_root = synthetic_root("deleted-unowned");
+    let selected = deletion_inventory(&selected_root, false);
+    let error = selection_plan(
+        &selected,
+        &selected_root,
+        wire::Digest::compute(wire::Domain::GateSelection, b"unowned-deleted-target"),
+        &["sample/tests/removed.rs".to_owned()],
+    )
+    .expect_err("an absent current target has no conventional-path fallback");
+
+    assert!(
+        error
+            .to_string()
+            .contains("neither current nor base-tree Cargo target ownership establishes it"),
+        "unexpected refusal: {error}",
+    );
+}
+
 fn representative_inventory(root: &Path) -> Inventory {
     let steer_root = root.join("steer");
     let spice_root = root.join("spice");
@@ -187,6 +256,7 @@ fn representative_inventory(root: &Path) -> Inventory {
                 root: steer_root.clone(),
                 dependencies: Vec::new(),
                 declared_targets: steer_targets.clone(),
+                removed_targets: Vec::new(),
                 targets: steer_targets,
             },
             PackageInventory {
@@ -195,6 +265,7 @@ fn representative_inventory(root: &Path) -> Inventory {
                 root: spice_root,
                 dependencies: vec![steer_root],
                 declared_targets: spice_targets.clone(),
+                removed_targets: Vec::new(),
                 targets: spice_targets,
             },
         ],
@@ -202,6 +273,58 @@ fn representative_inventory(root: &Path) -> Inventory {
         target_directory: root.join("target"),
         build_directory: root.join("target/cargo-build"),
     }
+}
+
+fn deletion_inventory(root: &Path, with_removed: bool) -> Inventory {
+    let package_root = root.join("sample");
+    let mut targets = vec![target(
+        &package_root,
+        "sample-id",
+        "lib",
+        "sample",
+        "src/lib.rs",
+    )];
+    for name in ["kept-a", "kept-b"] {
+        targets.push(target(
+            &package_root,
+            "sample-id",
+            "test",
+            name,
+            &format!("tests/{name}.rs"),
+        ));
+    }
+    if with_removed {
+        targets.push(target(
+            &package_root,
+            "base-sample-id",
+            "test",
+            "removed",
+            "tests/removed.rs",
+        ));
+    }
+    targets.sort();
+    Inventory {
+        packages: vec![PackageInventory {
+            id: if with_removed {
+                "base-sample-id".to_owned()
+            } else {
+                "sample-id".to_owned()
+            },
+            name: "sample".to_owned(),
+            root: package_root,
+            dependencies: Vec::new(),
+            declared_targets: targets.clone(),
+            removed_targets: Vec::new(),
+            targets,
+        }],
+        binary_outputs: Vec::new(),
+        target_directory: root.join("target"),
+        build_directory: root.join("target/cargo-build"),
+    }
+}
+
+fn synthetic_root(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("gate-selection-{label}-{}", std::process::id()))
 }
 
 fn target(root: &Path, package: &str, kind: &str, name: &str, source: &str) -> TargetIdentity {

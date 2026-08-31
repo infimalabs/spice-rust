@@ -69,6 +69,7 @@ impl ProbeFixture {
         read_program: ProgramReader,
     ) -> ToolEvidence {
         let source = ToolchainSource {
+            tree: None,
             root: &self.tree,
             repository: &self.root,
             paths: &[],

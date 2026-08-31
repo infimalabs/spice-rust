@@ -130,6 +130,7 @@ pub(super) fn package_inventory(
         root: package_root.to_path_buf(),
         dependencies,
         declared_targets,
+        removed_targets: Vec::new(),
         targets,
     })
 }
@@ -160,12 +161,6 @@ pub(super) fn selection_plan(
         }
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
-            if let Some(package) =
-                removed_source_package(inventory, &selected_root, changed, &absolute)?
-            {
-                select_package_targets(package, changed, &mut tests, &mut edges)?;
-                continue;
-            }
             return Err(unclassified_source(inventory, changed, &absolute));
         }
         let direct_test_only = exact_test_only_claim(&claims, &absolute);
@@ -174,6 +169,16 @@ pub(super) fn selection_plan(
                 for package in reverse_dependency_closure(inventory, claim.package) {
                     select_package_targets(package, changed, &mut tests, &mut edges)?;
                 }
+                continue;
+            }
+            if claim_has_removed_target(&claim)? {
+                select_targets(
+                    claim.package,
+                    deletion_validation_targets(claim.package)?,
+                    changed,
+                    &mut tests,
+                    &mut edges,
+                )?;
                 continue;
             }
             if !direct_test_only
@@ -245,12 +250,6 @@ pub(super) fn cargo_check_selections(
         let absolute = selected_root.join(changed);
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
-            if let Some(package) =
-                removed_source_package(inventory, &selected_root, changed, &absolute)?
-            {
-                select_package_checks([package], &mut reached)?;
-                continue;
-            }
             return Err(unclassified_source(inventory, changed, &absolute));
         }
         let direct_test_only = exact_test_only_claim(&claims, &absolute);
@@ -261,6 +260,14 @@ pub(super) fn cargo_check_selections(
                     reverse_dependency_closure(inventory, claim.package)
                         .into_iter()
                         .filter(|package| package.id != claim.package.id),
+                    &mut reached,
+                )?;
+                continue;
+            }
+            if claim_has_removed_target(&claim)? {
+                select_target_checks(
+                    claim.package,
+                    deletion_validation_targets(claim.package)?,
                     &mut reached,
                 )?;
                 continue;
@@ -329,6 +336,7 @@ fn source_claims<'a>(
             let explicit = package
                 .declared_targets
                 .iter()
+                .chain(package.removed_targets.iter())
                 .filter_map(|target| {
                     target_explicit_source_reach(target, absolute)
                         .map(|test_only| (target, test_only))
@@ -355,6 +363,50 @@ fn source_claims<'a>(
             })
         })
         .collect()
+}
+
+fn claim_has_removed_target(claim: &SourceClaim<'_>) -> Result<bool, WorkspaceTestError> {
+    let removed = claim
+        .targets
+        .iter()
+        .filter(|target| claim.package.removed_targets.contains(target))
+        .count();
+    if removed == 0 {
+        return Ok(false);
+    }
+    if removed != claim.targets.len() {
+        return Err(WorkspaceTestError::new(format!(
+            "Cargo package {:?} has mixed current and removed target ownership for one changed source",
+            claim.package.name,
+        )));
+    }
+    Ok(true)
+}
+
+/// Current unit target that proves a package remains valid after one target disappears.
+fn deletion_validation_targets(
+    package: &PackageInventory,
+) -> Result<Vec<&TargetIdentity>, WorkspaceTestError> {
+    let libraries = package
+        .targets
+        .iter()
+        .filter(|target| target_is_library(target))
+        .collect::<Vec<_>>();
+    if !libraries.is_empty() {
+        return Ok(libraries);
+    }
+    let binaries = package
+        .targets
+        .iter()
+        .filter(|target| target_has_kind(target, "bin"))
+        .collect::<Vec<_>>();
+    if !binaries.is_empty() {
+        return Ok(binaries);
+    }
+    Err(WorkspaceTestError::new(format!(
+        "Cargo package {:?} has no current library or binary target for deleted-target validation",
+        package.name,
+    )))
 }
 
 fn exact_test_only_claim(claims: &[SourceClaim<'_>], source: &Path) -> bool {
@@ -440,44 +492,6 @@ fn containing_package<'a>(
         .max_by_key(|package| package.root.components().count())
 }
 
-/// Recover package reach for an unclaimed source removed from the selected tree.
-///
-/// Cargo metadata cannot retain an auto-discovered target after its root is
-/// deleted. Absence is therefore classified from the materialized selected
-/// tree itself, never guessed from path convention. A present source with no
-/// target claim remains an error, as does a removed source outside every Cargo
-/// package. Removed library sources never arrive here: the existing library
-/// fallback claims their source directory and retains reverse-dependent reach.
-fn removed_source_package<'a>(
-    inventory: &'a Inventory,
-    selected_root: &Path,
-    changed: &str,
-    absolute: &Path,
-) -> Result<Option<&'a PackageInventory>, WorkspaceTestError> {
-    let root = fs::symlink_metadata(selected_root).map_err(|error| {
-        WorkspaceTestError::new(format!(
-            "selected root {} is unavailable while classifying changed Rust source {changed:?}: {error}",
-            selected_root.display(),
-        ))
-    })?;
-    if !root.is_dir() {
-        return Err(WorkspaceTestError::new(format!(
-            "selected root {} is not a directory while classifying changed Rust source {changed:?}",
-            selected_root.display(),
-        )));
-    }
-    match fs::symlink_metadata(absolute) {
-        Ok(_) => Ok(None),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            Ok(containing_package(inventory, absolute))
-        }
-        Err(error) => Err(WorkspaceTestError::new(format!(
-            "changed Rust source {changed:?} is unavailable at {}: {error}",
-            absolute.display(),
-        ))),
-    }
-}
-
 fn unclassified_source(
     inventory: &Inventory,
     changed: &str,
@@ -491,7 +505,7 @@ fn unclassified_source(
         },
         |package| {
             WorkspaceTestError::new(format!(
-                "changed Rust source {changed:?} is inside Cargo package {:?} but no declared target owns it",
+                "changed Rust source {changed:?} is inside Cargo package {:?} but neither current nor base-tree Cargo target ownership establishes it",
                 package.name,
             ))
         },

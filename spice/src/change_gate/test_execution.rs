@@ -47,6 +47,11 @@ impl<'a> TestRun<'a> {
         self.roots = self.roots.with_reusable(workspace);
         self
     }
+
+    pub(super) fn with_base(mut self, base: &'a Path) -> Self {
+        self.roots = self.roots.with_base(base);
+        self
+    }
 }
 
 pub(super) fn run_selected_tests(

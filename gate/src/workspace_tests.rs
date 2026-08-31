@@ -52,6 +52,35 @@ pub fn cargo_workspace_tests_applicable(root: &Path, changed_sources: &[String])
             .any(|path| selection::test_relevant_source(path))
 }
 
+/// Whether exact ownership of a removed Rust source requires the captured base tree.
+///
+/// # Errors
+///
+/// Refuses filesystem states other than a present entry or an absent path;
+/// callers must not reinterpret an unreadable selected source as a deletion.
+pub fn cargo_workspace_base_inventory_required(
+    root: &Path,
+    changed_sources: &[String],
+) -> Result<bool, WorkspaceTestError> {
+    for changed in changed_sources
+        .iter()
+        .filter(|path| Path::new(path).extension() == Some(OsStr::new("rs")))
+    {
+        let path = root.join(changed);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => {
+                return Err(WorkspaceTestError::new(format!(
+                    "changed Rust source {changed:?} is unavailable at {}: {error}",
+                    path.display(),
+                )));
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Keep each post-prebuild Cargo invocation small enough for the full verifier's
 /// bounded workspace branch to make steady progress under the absolute verifier cap.
 /// Targets are source-weight balanced across the minimum shard count so one
@@ -226,6 +255,7 @@ impl std::error::Error for WorkspaceTestError {}
 pub struct WorkspaceTestRoots<'a> {
     selected: &'a Path,
     writable: &'a Path,
+    base: Option<&'a Path>,
     reusable: Option<&'a crate::RustAnalysisWorkspace>,
 }
 
@@ -288,8 +318,16 @@ impl<'a> WorkspaceTestRoots<'a> {
         Self {
             selected,
             writable,
+            base: None,
             reusable: None,
         }
+    }
+
+    /// Bind the exact committed base retained beside a staged selection.
+    #[must_use]
+    pub const fn with_base(mut self, base: &'a Path) -> Self {
+        self.base = Some(base);
+        self
     }
 
     /// Reuse the exact workspace completed by native analysis of this source.
@@ -538,7 +576,8 @@ fn run_selected_at_mode(
         .reusable
         .map_or(roots.selected, crate::RustAnalysisWorkspace::source);
     let environment = selected_run_environment(roots, environment)?;
-    let inventory = acquire_selected_inventory(root, &environment, changed_sources, output)?;
+    let inventory =
+        acquire_selected_inventory(root, roots.base, &environment, changed_sources, output)?;
     let report = selected_report(&inventory, root, source, changed_sources, output)?;
     let routine = selection::routine_selection(changed_sources);
     let (selection_class, target_limit, shard_limit) = if routine {
@@ -593,6 +632,7 @@ fn selected_run_environment(
 
 fn acquire_selected_inventory(
     root: &Path,
+    base: Option<&Path>,
     environment: &Environment,
     changed_sources: &[String],
     output: &mut impl Write,
@@ -605,7 +645,7 @@ fn acquire_selected_inventory(
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
     let metadata_started = Instant::now();
-    let inventory = match acquire_inventory(root, environment, OsStr::new("cargo")) {
+    let mut inventory = match acquire_inventory(root, environment, OsStr::new("cargo")) {
         Ok(inventory) => {
             writeln!(
                 output,
@@ -628,6 +668,15 @@ fn acquire_selected_inventory(
             return Err(error);
         }
     };
+    if cargo_workspace_base_inventory_required(root, changed_sources)? {
+        let base = base.ok_or_else(|| {
+            WorkspaceTestError::new(
+                "removed Rust source requires exact base-tree Cargo ownership inventory",
+            )
+        })?;
+        let base_inventory = acquire_inventory(base, environment, OsStr::new("cargo"))?;
+        inventory.retain_removed_target_ownership(root, &base_inventory, base, changed_sources)?;
+    }
     Ok(inventory)
 }
 
@@ -1014,6 +1063,7 @@ fn partition_package(
             root: package.root.clone(),
             dependencies: package.dependencies.clone(),
             declared_targets: package.declared_targets.clone(),
+            removed_targets: package.removed_targets.clone(),
             targets,
         })
         .collect()

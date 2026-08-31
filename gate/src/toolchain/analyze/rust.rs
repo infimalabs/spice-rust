@@ -17,8 +17,8 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CompileInvocation, CompilerResources, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER,
-    run_compile_analysis_with_wait, tool_search_path,
+    CargoSelection, CompileInvocation, CompilerResources, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER,
+    RUSTC_WRAPPER, run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
 use crate::toolchain::{
@@ -38,6 +38,7 @@ use sill::{Acquisition, Environment, Possession, WaitPolicy};
 pub(in crate::toolchain) fn rust_typecheck(
     declaration: ToolchainDeclaration,
     root: &Path,
+    base: Option<&Path>,
     repository: &Path,
     changes: &[String],
     bounds: &Bounds,
@@ -45,8 +46,7 @@ pub(in crate::toolchain) fn rust_typecheck(
 ) -> Analysis {
     rust_typecheck_with_workspace(
         declaration,
-        root,
-        changes,
+        CargoSelection::new(root, base, changes),
         bounds,
         resources,
         || RustWorkspace::create(root, repository),
@@ -56,13 +56,17 @@ pub(in crate::toolchain) fn rust_typecheck(
 
 fn rust_typecheck_with_workspace(
     declaration: ToolchainDeclaration,
-    root: &Path,
-    changes: &[String],
+    selection: CargoSelection<'_>,
     bounds: &Bounds,
     resources: CompilerResources<'_>,
     create_workspace: impl FnOnce() -> Result<RustWorkspace, String>,
     wait: Option<WaitPolicy>,
 ) -> Analysis {
+    let CargoSelection {
+        root,
+        base,
+        changes,
+    } = selection;
     if !root.join("Cargo.toml").is_file() {
         return Analysis::not_applicable(declaration);
     }
@@ -81,6 +85,7 @@ fn rust_typecheck_with_workspace(
         Ok(environment) => {
             let reach = crate::workspace_tests::workspace_package_reach_at(
                 &workspace.source,
+                base,
                 changes,
                 &environment,
                 OsStr::new(cargo),
@@ -832,8 +837,7 @@ mod tests {
             let programs = BTreeMap::from([(CARGO, cargo)]);
             rust_typecheck_with_workspace(
                 declaration(GateId::RustTypecheck).expect("native arm is declared"),
-                &self.root,
-                changes,
+                CargoSelection::new(&self.root, None, changes),
                 bounds,
                 CompilerResources::new(&programs, &[]),
                 || {
