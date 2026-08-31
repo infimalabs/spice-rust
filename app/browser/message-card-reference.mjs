@@ -6,6 +6,10 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
+// Mosaic reserves whole CSS rows while text contributes fractional intrinsic
+// heights, leaving at most the final 2.5px rounding remainder inside padding.
+const INSET_TOLERANCE = 3;
+
 const referencePalettes = {
   dark: {
     page: "rgb(16, 20, 17)",
@@ -132,6 +136,70 @@ async function assertMessageCardLayout(console, label) {
   }
 }
 
+export async function assertNaturalMessageFooterInsets(console, label) {
+  const cards = await console.locator(
+    '[data-card-kind="agent-message"][data-layout-phase="committed"]',
+  ).evaluateAll((articles) => articles.map((article) => {
+    const card = article.getBoundingClientRect();
+    const cardStyle = getComputedStyle(article);
+    const footer = article.querySelector(".message-footer");
+    const footerBox = footer.getBoundingClientRect();
+    const footerStyle = getComputedStyle(footer);
+    const actions = [...footer.querySelectorAll(".card-action")]
+      .map((action) => action.getBoundingClientRect());
+    return {
+      key: article.dataset.mosaicCardKey,
+      height: card.height,
+      cardTop: card.top,
+      cardBottom: card.bottom,
+      cardClientHeight: article.clientHeight,
+      cardOffsetHeight: article.offsetHeight,
+      gridTemplateRows: cardStyle.gridTemplateRows,
+      alignContent: cardStyle.alignContent,
+      footerHeight: footerBox.height,
+      footerTop: footerBox.top,
+      footerBottom: footerBox.bottom,
+      footerAlignSelf: footerStyle.alignSelf,
+      footerMarginTop: footerStyle.marginTop,
+      actionHeights: actions.map((action) => action.height),
+      actionBottoms: actions.map((action) => footerBox.bottom - action.bottom),
+      insets: {
+        bottom: card.bottom - Number.parseFloat(cardStyle.borderBottomWidth) - footerBox.bottom,
+        left: footerBox.left - card.left - Number.parseFloat(cardStyle.borderLeftWidth),
+        right: card.right - Number.parseFloat(cardStyle.borderRightWidth) - footerBox.right,
+      },
+      padding: {
+        bottom: Number.parseFloat(cardStyle.paddingBottom),
+        left: Number.parseFloat(cardStyle.paddingLeft),
+        right: Number.parseFloat(cardStyle.paddingRight),
+      },
+    };
+  }));
+  assert.ok(cards.length >= 2, `${label} has short and tall message cards`);
+  const heights = cards.map((card) => card.height);
+  assert.ok(
+    Math.max(...heights) > Math.min(...heights),
+    `${label} exercises distinct short and tall card reservations`,
+  );
+  for (const card of cards) {
+    assert.ok(
+      Math.abs(card.insets.bottom - card.padding.bottom) <= INSET_TOLERANCE,
+      `${label} card ${card.key} footer ends at the natural bottom padding: ${JSON.stringify(card)}`,
+    );
+    assert.ok(
+      Math.abs(card.insets.left - card.padding.left) <= 0.5
+        && Math.abs(card.insets.right - card.padding.right) <= 0.5,
+      `${label} card ${card.key} footer keeps the natural side padding: ${JSON.stringify(card)}`,
+    );
+    assert.ok(
+      card.actionHeights.length === 3
+        && card.actionHeights.every((height) => height <= card.footerHeight + 0.5)
+        && card.actionBottoms.every((inset) => Math.abs(inset) <= 0.5),
+      `${label} card ${card.key} controls reach the natural footer bottom edge: ${JSON.stringify(card)}`,
+    );
+  }
+}
+
 function assertReferenceGeometry(geometry, agentLabels) {
   assert.equal(geometry.card.fontSize, "16px", "message body keeps the reference type size");
   assert.equal(geometry.card.lineHeight, "20px", "message body keeps the reference line rhythm");
@@ -160,7 +228,7 @@ function assertReferenceGeometry(geometry, agentLabels) {
   assert.ok(geometry.inlineCodeText, "the inline-code treatment is measured on real prose");
 
   assert.equal(geometry.footer.display, "flex");
-  assert.equal(geometry.footer.height, 40, "the footer reserves two reference line heights");
+  assert.equal(geometry.footer.height, 32, "the footer follows the natural action height");
   assert.equal(geometry.footer.fontSize, "12px");
   assert.equal(geometry.footer.marginTop, "8px");
   assert.deepEqual(
@@ -221,6 +289,7 @@ async function waitForCommittedResize(page, console, viewport) {
 async function captureReferenceView(page, console, artifacts, viewport, mode) {
   await waitForCommittedResize(page, console, viewport);
   await assertMessageCardLayout(console, viewport.label);
+  await assertNaturalMessageFooterInsets(console, `${mode} ${viewport.label}`);
   await assertReferencePalette(console, mode);
   const cards = console.locator(
     '[data-card-kind="agent-message"][data-layout-phase="committed"]',
