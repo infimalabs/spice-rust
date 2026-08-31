@@ -17,6 +17,9 @@ use spice::install::{InstallPlanSummary, InstallPreview, InstallReceipt, Install
 use spice::repository::Repository;
 use wire::{Outcome, Refusal};
 
+#[path = "support/git_repository.rs"]
+mod git_repository;
+
 /// How long a paused install is given to reach its mutation rendezvous.
 ///
 /// Unapply authenticates the installed image before reaching its first
@@ -44,12 +47,7 @@ impl Fixture {
             std::process::id()
         ));
         fs::create_dir(&root).expect("create install fixture root");
-        let initialized = Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(&root)
-            .status()
-            .expect("launch install fixture Git initialization");
-        assert!(initialized.success());
+        git_repository::initialize(&root);
         fs::create_dir_all(root.join(".git/info")).expect("create repository metadata");
         fs::create_dir_all(root.join(".git/.spice-rs/data"))
             .expect("create Spice state sentinel directory");
@@ -548,21 +546,17 @@ fn installed_hook_activation_uses_no_cargo_or_xtask_and_reverses_git_config() {
 }
 
 fn git_hook_path(root: &std::path::Path) -> Option<String> {
-    let output = Command::new("/usr/bin/git")
-        .args(["config", "--get", "core.hooksPath"])
-        .current_dir(root)
-        .output()
-        .expect("read fixture hook selection");
-    if output.status.code() == Some(1) {
-        return None;
-    }
-    assert!(output.status.success());
-    Some(
-        String::from_utf8(output.stdout)
-            .expect("fixture hook path is UTF-8")
-            .trim_ascii_end()
-            .to_owned(),
+    let bytes = fs::read(root.join(".git/config")).expect("read fixture Git configuration");
+    let config = gix_config::File::from_bytes_no_includes(
+        &bytes,
+        gix_config::file::Metadata::default(),
+        gix_config::file::init::Options::default(),
     )
+    .expect("parse fixture Git configuration");
+    config
+        .raw_value("core.hooksPath")
+        .ok()
+        .map(|value| String::from_utf8(value.into()).expect("fixture hook path is UTF-8"))
 }
 
 #[test]
