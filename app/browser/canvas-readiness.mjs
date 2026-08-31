@@ -16,6 +16,7 @@ const agentSpacingOwners = Object.freeze({
   committedCard: ':scope > .lane-mosaic-plane > .mosaic-message-card[data-layout-phase="committed"]',
   emptyActivity: ":scope > .mosaic-message-empty",
   emptyFleet: ':scope > .team-pane[data-team-mode="Compose"] > .empty',
+  measuringCard: ':scope > .lane-mosaic-plane > .mosaic-message-card[data-layout-phase="measuring"]',
   plane: ":scope > .lane-mosaic-plane",
 });
 const axisPanes = new Map([
@@ -34,6 +35,23 @@ const axisPanes = new Map([
 ]);
 
 export async function assertAgentPageBottomSpacing(page, state) {
+  await waitForPageFunction(
+    page,
+    `${state} populated spacing geometry commits`,
+    TRANSITION_MS,
+    ({ owners }) => [...document.querySelectorAll(".team-surface")].every((surface) => {
+      if (!surface.hasAttribute("data-lineage-id")) return true;
+      const activities = surface.querySelectorAll(owners.activity);
+      if (activities.length !== 1) return true;
+      const activity = activities[0];
+      if (activity.dataset.empty !== "false") return true;
+      const planes = activity.querySelectorAll(owners.plane);
+      if (planes.length !== 1) return true;
+      if (activity.querySelectorAll(owners.committedCard).length > 0) return true;
+      return activity.querySelectorAll(owners.measuringCard).length === 0;
+    }),
+    { owners: agentSpacingOwners },
+  );
   const surfaces = await page.locator(".team-surface").evaluateAll((nodes, { owners, state }) =>
     nodes.map((surface) => {
       const exactlyOne = (root, selector, label) => {
@@ -119,6 +137,47 @@ export async function assertAgentPageBottomSpacing(page, state) {
         `${state} keeps overflowed activity scrollable: ${JSON.stringify(surface)}`,
       );
     }
+  }
+}
+
+export async function assertAgentSpacingRejectsFallbackOnlyMarkup(page, state) {
+  const marker = "fallback-only-spacing-owner";
+  const console = page.locator('[data-pane="agent-console"]');
+  await console.evaluate((host, fallbackMarker) => {
+    const surface = document.createElement("section");
+    surface.className = "team-surface";
+    surface.dataset.lineageId = fallbackMarker;
+    surface.dataset.fallbackSpacingOwner = fallbackMarker;
+    const pane = document.createElement("div");
+    pane.className = "team-pane";
+    pane.dataset.teamMode = "Compose";
+    const compose = document.createElement("div");
+    compose.className = "team-compose";
+    const activity = document.createElement("div");
+    activity.className = "team-activity-grid";
+    activity.dataset.empty = "false";
+    const plane = document.createElement("div");
+    plane.className = "lane-mosaic-plane";
+    const fallback = document.createElement("div");
+    fallback.className = "message-body";
+    fallback.textContent = "synthetic fallback";
+    plane.append(fallback);
+    activity.append(plane);
+    compose.append(activity);
+    pane.append(compose);
+    surface.append(pane);
+    host.append(surface);
+  }, marker);
+  try {
+    await assert.rejects(
+      assertAgentPageBottomSpacing(page, state),
+      /populated activity has no committed card geometry owner/,
+      `${state} refuses fallback-only synthetic geometry`,
+    );
+  } finally {
+    await page.locator(`[data-fallback-spacing-owner="${marker}"]`).evaluate((surface) => {
+      surface.remove();
+    });
   }
 }
 
