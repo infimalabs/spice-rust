@@ -198,6 +198,47 @@ function assertReferenceGeometry(geometry, agentLabels) {
     geometry.actions.buttons.every((button) => button.width === 32 && button.height === 32),
     "each message action occupies the reference 32px circle",
   );
+  assert.ok(
+    geometry.actions.buttons.every((button) => button.borderRadius === "50%"),
+    "each message action keeps the reference circular hit target",
+  );
+  assert.ok(
+    geometry.actions.buttons.every(
+      (button) => button.borderLeftColor !== geometry.controlLineSoft,
+    ),
+    "each message action mixes its producer accent into the soft control border",
+  );
+}
+
+async function assertActionInteraction(page, card) {
+  const producer = card.locator(".message-agent-name");
+  const labels = ["Speak this message", "Quote this message", "Copy this message"];
+  await producer.focus();
+  for (const label of labels) {
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.getAttribute("aria-label")),
+      label,
+      `keyboard order reaches ${label}`,
+    );
+    assert.equal(
+      await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle),
+      "solid",
+      `${label} retains the shared visible focus ring`,
+    );
+  }
+
+  const quote = card.getByRole("button", { name: "Quote this message" });
+  const box = await quote.boundingBox();
+  assert.ok(box, "the quote control has a pointer hit target");
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const resting = await quote.evaluate((button) => getComputedStyle(button).backgroundColor);
+  await page.mouse.move(center.x, center.y);
+  await page.mouse.down();
+  const pressed = await quote.evaluate((button) => getComputedStyle(button).backgroundColor);
+  assert.notEqual(pressed, resting, "pointer press gives the quote control visible feedback");
+  await page.mouse.move(0, 0);
+  await page.mouse.up();
 }
 
 async function waitForCommittedResize(page, console, viewport) {
@@ -296,10 +337,13 @@ export async function assertReferenceMessageCard(
     panelProbe.style.background = "var(--panel)";
     article.append(panelProbe);
     const panel = getComputedStyle(panelProbe).backgroundColor;
+    panelProbe.style.borderColor = "var(--control-line-soft)";
+    const controlLineSoft = getComputedStyle(panelProbe).borderLeftColor;
     panelProbe.remove();
     return {
       card: measured(article),
       panel,
+      controlLineSoft,
       grid: measured(grid),
       footer: measured(footer),
       footerChildren: [...footer.children].map((node) => node.className),
@@ -325,6 +369,7 @@ export async function assertReferenceMessageCard(
     };
   });
   assertReferenceGeometry(geometry, agentLabels);
+  await assertActionInteraction(page, card);
 
   const original = page.viewportSize();
   for (const mode of ["dark", "light"]) {

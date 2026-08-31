@@ -655,14 +655,28 @@ export async function assertAgentConversation(
     sharedSlot[0].producer, sharedSlot[1].producer,
     "the producer name is what stays distinct when the colour does not",
   );
-  const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
+  const expectedActions = [
+    { label: "Speak this message", icon: "▶" },
+    { label: "Quote this message", icon: "❝" },
+    { label: "Copy this message", icon: "⧉" },
+  ];
   const actionCard = console.locator('[data-card-kind="agent-message"]').first();
   assert.ok((await actionCard.locator(".message-agent-name").innerText()).trim());
   assert.deepEqual(
     await actionCard.locator(".message-actions button").evaluateAll(
-      (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
+      (buttons) => buttons.map((button) => ({
+        label: button.getAttribute("aria-label"),
+        icon: button.querySelector(".card-action-icon")?.textContent,
+        iconHidden: button.querySelector(".card-action-icon")?.getAttribute("aria-hidden"),
+        title: button.title,
+      })),
     ),
-    expectedActions,
+    expectedActions.map(({ label, icon }) => ({
+      label,
+      icon,
+      iconHidden: "true",
+      title: label,
+    })),
     "assistant cards expose the reference speak, quote, and copy controls",
   );
   await assertReferenceMessageCard(

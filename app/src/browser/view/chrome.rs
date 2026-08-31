@@ -423,20 +423,20 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
     html! {
         <span class="message-actions">
             <button
-                class="card-action" type="button" title="Speak this message"
+                class="card-action card-action--speak" type="button" title="Speak this message"
                 aria-label="Speak this message"
                 onclick={Callback::from(move |_| speak.emit(spoken.clone()))}
-            >{"▶"}</button>
+            ><span class="card-action-icon" aria-hidden="true">{"▶"}</span></button>
             <button
-                class="card-action" type="button" title="Quote this message"
+                class="card-action card-action--quote" type="button" title="Quote this message"
                 aria-label="Quote this message"
                 onclick={Callback::from(move |_| quote.emit(()))}
-            >{"❞"}</button>
+            ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
             <button
-                class="card-action" type="button" title="Copy this message"
+                class="card-action card-action--copy" type="button" title="Copy this message"
                 aria-label="Copy this message"
                 onclick={Callback::from(move |_| copy_text(&copied))}
-            >{"⧉"}</button>
+            ><span class="card-action-icon" aria-hidden="true">{"⧉"}</span></button>
         </span>
     }
 }
