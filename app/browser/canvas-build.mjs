@@ -12,13 +12,16 @@ export const root = resolve(here, "../..");
 export const prebuiltBinary = process.env.SPICE_CANVAS_BINARY; // env-policy: allow
 export const binary = prebuiltBinary ?? join(root, "target/debug/spice");
 
-async function installedSpice() {
-  const { stdout } = await execute(
-    "/usr/bin/git",
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    { cwd: root },
-  );
-  const common = stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout;
+async function installedSpice(resolvedGitCommonDirectory) {
+  let common = resolvedGitCommonDirectory;
+  if (common === undefined) {
+    const { stdout } = await execute(
+      "/usr/bin/git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { cwd: root },
+    );
+    common = stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout;
+  }
   const path = join(common, ".spice-install/bin/spice");
   const metadata = await lstat(path);
   if (!metadata.isFile() || metadata.isSymbolicLink()) {
@@ -28,9 +31,11 @@ async function installedSpice() {
   return path;
 }
 
-export async function buildResident({ app = true } = {}) {
+export async function buildResident({ app = true, gitCommonDirectory } = {}) {
   try {
-    const installed = !prebuiltBinary || app ? await installedSpice() : undefined;
+    const installed = !prebuiltBinary || app
+      ? await installedSpice(gitCommonDirectory)
+      : undefined;
     if (!prebuiltBinary) {
       await execute(installed, [
         "dev", "cargo", "--", "build", "--locked", "-p", "spice", "--bin", "spice",

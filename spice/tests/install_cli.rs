@@ -491,7 +491,6 @@ fn installed_hook_activation_uses_no_cargo_or_xtask_and_reverses_git_config() {
     let fixture = Fixture::new("no-cargo-hook-activation");
     let tools = fixture.root.join("fixture-tools");
     fs::create_dir(&tools).expect("create fixture tool directory");
-    symlink("/usr/bin/git", tools.join("git")).expect("link fixture Git");
     let invoked = fixture.root.join("build-tool-invoked");
     for name in ["cargo", "xtask"] {
         let path = tools.join(name);
