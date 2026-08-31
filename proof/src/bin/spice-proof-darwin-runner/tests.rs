@@ -63,8 +63,8 @@ static NEIGHBOURHOODS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 /// the profile, and a denial that reached it would be exactly the failure a
 /// neighbourhood built without one could not see.
 ///
-/// The workspace is a linked worktree of a repository outside the
-/// neighbourhood, which is the layout that separates the two write denials.
+/// The workspace and its repository authority are separate directories,
+/// which is the linked-worktree shape that separates the two write denials.
 /// A repository under the parent is unwritable whichever rule is asked, so a
 /// fixture built that way cannot tell that the older denial naming the
 /// common directory is still doing anything -- measured, dropping that name
@@ -99,11 +99,9 @@ impl Neighbourhood {
             .expect("the clock is past the epoch")
             .as_nanos();
         // The names carry the process and a nanosecond both, because every
-        // lane runs this and one of them is not enough on its own. The clock
-        // is not enough either: it answers in microseconds on this machine, so
-        // two of these built at once shared a name and the second `git init`
-        // refused an origin the first had already made. The counter separates
-        // them within a process the way the process id separates lanes.
+        // lane runs this and one of them is not enough on its own. The counter
+        // separates fixtures within a process the way the process id separates
+        // lanes.
         let stem = format!(
             "{}-{nonce}-{}",
             std::process::id(),
@@ -120,6 +118,8 @@ impl Neighbourhood {
         std::fs::create_dir_all(peer.join("src")).expect("the fixture peer is creatable");
         std::fs::create_dir_all(root.join("scratch")).expect("the fixture scratch is creatable");
         std::fs::create_dir_all(&origin).expect("the fixture repository is creatable");
+        std::fs::write(origin.join("HEAD"), "ref: refs/heads/fixture\n")
+            .expect("the fixture repository carries readable authority");
         let peer_source = peer.join("src/lib.rs");
         std::fs::write(&peer_source, Self::PEER_SOURCE).expect("the peer source is writable");
 
@@ -130,43 +130,12 @@ impl Neighbourhood {
         let origin = std::fs::canonicalize(&origin).expect("the fixture repository resolves");
         let peer_source = std::fs::canonicalize(&peer_source).expect("the peer source resolves");
         let workspace = root.join("workspace");
-
-        // The profile asks Git where the workspace keeps its repository, so
-        // the fixture workspace has to be one, and a linked worktree is what
-        // puts that answer outside the neighbourhood. The identity is passed
-        // per-command because a fixture that borrowed the developer's would
-        // fail on a machine that has not configured one.
-        let initialize = std::process::Command::new("/usr/bin/git")
-            .args(["init", "--quiet", "--initial-branch", "fixture"])
-            .current_dir(&origin)
-            .status()
-            .expect("macOS carries the Git this runner is pinned against");
-        assert!(initialize.success(), "the fixture repository initializes");
+        std::fs::create_dir(&workspace).expect("the fixture workspace is creatable");
         std::fs::write(
-            origin.join("Cargo.toml"),
+            workspace.join("Cargo.toml"),
             "[workspace]\nresolver = \"3\"\nmembers = []\n",
         )
-        .expect("the fixture repository carries readable tracked source");
-        for arguments in [
-            ["add", "Cargo.toml"].as_slice(),
-            &["commit", "--quiet", "-m", "fixture"],
-            &[
-                "worktree",
-                "add",
-                "--quiet",
-                "--detach",
-                workspace.to_str().expect("a fixture path is UTF-8"),
-            ],
-        ] {
-            let done = std::process::Command::new("/usr/bin/git")
-                .args(["-c", "user.name=proof fixture"])
-                .args(["-c", "user.email=proof@fixture.invalid"])
-                .args(arguments)
-                .current_dir(&origin)
-                .status()
-                .expect("macOS carries the Git this runner is pinned against");
-            assert!(done.success(), "the fixture repository takes {arguments:?}");
-        }
+        .expect("the fixture workspace carries readable source");
 
         let scratch = root.join("scratch");
         let temporary = Temporary {
@@ -199,11 +168,10 @@ impl Neighbourhood {
             .expect("the fixture peer source sits below its checkout")
     }
 
-    /// Where this fixture's workspace keeps its repository.
+    /// The common-repository authority supplied to the pure profile boundary.
     ///
-    /// Asked of the same function the profile asks rather than assumed from
-    /// the layout, so a fixture that stopped producing a linked worktree
-    /// stops claiming to measure one.
+    /// Its position models the linked-worktree topology that the production
+    /// Git observation supplies without making fixture setup execute Git.
     fn repository(&self) -> PathBuf {
         let common = self.common_repository();
         assert!(
@@ -216,13 +184,17 @@ impl Neighbourhood {
     }
 
     fn common_repository(&self) -> PathBuf {
-        super::git_common_dir(&self.workspace, Path::new("/usr/bin/git"))
-            .expect("the fixture workspace has a repository")
+        self.origin.clone()
     }
 
     fn profile(&self) -> String {
-        super::sandbox_profile(&self.workspace, &fixture_pins(), &self.temporary)
-            .expect("the sealed profile composes for the fixture neighbourhood")
+        super::sandbox_profile_with_common_dir(
+            &self.workspace,
+            &self.origin,
+            &fixture_pins(),
+            &self.temporary,
+        )
+        .expect("the sealed profile composes for the fixture neighbourhood")
     }
 }
 
@@ -703,8 +675,13 @@ fn a_cargo_home_inside_the_workspace_keeps_its_warm_caches_denied() {
 
     let mut pins = fixture_pins();
     pins.cargo_home = cargo_home;
-    let profile = super::sandbox_profile(&neighbourhood.workspace, &pins, &neighbourhood.temporary)
-        .expect("a Cargo home below the workspace is admitted rather than refused");
+    let profile = super::sandbox_profile_with_common_dir(
+        &neighbourhood.workspace,
+        &neighbourhood.origin,
+        &pins,
+        &neighbourhood.temporary,
+    )
+    .expect("a Cargo home below the workspace is admitted rather than refused");
     let below = with_the_allow_below_the_denials(&profile);
 
     let warm = warm.to_str().expect("a fixture path is UTF-8");
