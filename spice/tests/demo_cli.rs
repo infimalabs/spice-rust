@@ -292,7 +292,6 @@ fn staged_app_seed_callers_are_fully_inventoried() {
             "consent_cli.rs",
             "demo_cli.rs",
             "journal_cli.rs",
-            "release_publish.rs",
             "steering.rs",
             "task_artifact_cli.rs",
             "taste_cli.rs",
