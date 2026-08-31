@@ -13,7 +13,7 @@ use gate::{
 mod support;
 
 use support::{
-    Tree, acquired, acquired_arm, acquired_inputs, contract_repository, git, git_commit,
+    Tree, acquired, acquired_arm, acquired_inputs, contract_repository, git_commit,
     workspace_document,
 };
 
@@ -550,7 +550,7 @@ fn an_authored_document_above_its_committed_base_is_held_to_the_true_limit() {
     );
 
     repository.write(PATH, &"y".repeat(DEBT as usize));
-    git(&repository, &["add", PATH]);
+    repository.stage(&[PATH]);
     let changed = acquire();
     let [held] = changed.bounds() else {
         panic!(
@@ -570,7 +570,7 @@ fn an_authored_document_above_its_committed_base_is_held_to_the_true_limit() {
     );
 
     repository.write(PATH, &"x".repeat(BASE as usize));
-    git(&repository, &["add", PATH]);
+    repository.stage(&[PATH]);
     let healed = acquire();
     let [decision] = healed.bounds() else {
         panic!(

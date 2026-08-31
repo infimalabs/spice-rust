@@ -44,6 +44,7 @@ inotify = { version = "0.11.4", default-features = false }
 
 [dev-dependencies]
 flate2 = "1.1.8"
+gix = { version = "0.86.0", default-features = false, features = ["tree-editor"] }
 
 [lints]
 workspace = true

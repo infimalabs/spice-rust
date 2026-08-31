@@ -19,7 +19,7 @@ use wire::{Digest, Domain};
 
 mod support;
 
-use support::{Tree, fixture_git_barrier, git_commit, git_repository};
+use support::{Tree, git_commit, git_repository};
 
 /// A line counter written entirely in shell builtins.
 ///
@@ -64,11 +64,11 @@ const MUTATING_UNTRACKED_COUNTER: &str = "root=$1; shift; \
      while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
      done; printf '%s\\n' \"$count\"";
 
-/// Add a new live path to the Git index after the captured source was counted.
+/// Install a prepared index containing a new path after the captured source was counted.
 const ADD_TRACKED_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
      while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
      done; printf 'added\\n' > \"$root/added.rs\"; \
-     /usr/bin/git -C \"$root\" add added.rs; printf '%s\\n' \"$count\"";
+     /bin/cp \"$root/.git/index.with-added\" \"$root/.git/index\"; printf '%s\\n' \"$count\"";
 
 /// Delete one live tracked path after the captured source was counted.
 const DELETE_TRACKED_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
@@ -897,6 +897,14 @@ fn tracked_index_jurisdiction_names_index_path_creation() {
     let tree = git_repository("tracked-path-creation");
     tree.write("src/lib.rs", "one\n");
     git_commit(&tree, "tracked source");
+    let index = tree.path(".git/index");
+    let captured_index = fs::read(&index).expect("capture the original fixture index");
+    tree.write("added.rs", "added\n");
+    tree.stage(&["added.rs"]);
+    fs::copy(&index, tree.path(".git/index.with-added"))
+        .expect("prepare the expanded fixture index");
+    fs::write(&index, captured_index).expect("restore the captured fixture index");
+    fs::remove_file(tree.path("added.rs")).expect("leave the new path for the parser to create");
     let metric = live_root_metric(
         "rust.lines",
         "lines before the tracked path set grows",
@@ -906,7 +914,6 @@ fn tracked_index_jurisdiction_names_index_path_creation() {
     let policy = Policy::tracked_index(Ignore::parse("").expect("parse ignore"), [metric])
         .expect("declare tracked-index policy");
 
-    let _git_barrier = fixture_git_barrier();
     let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
         .expect_err("tracked path creation refuses");
     assert!(

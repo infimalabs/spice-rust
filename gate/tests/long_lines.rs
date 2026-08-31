@@ -4,7 +4,7 @@ use gate::{Contract, GateReport, LONG_LINE_LIMIT, Standing};
 
 mod support;
 
-use support::{Tree, git, git_commit, git_repository};
+use support::{Tree, git_commit, git_repository};
 
 const BASELINE: &str = "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n";
 
@@ -20,10 +20,7 @@ fn equal_tree_totals_cannot_cancel_across_files() {
 
     let run = adjudicate(&repository);
     assert_eq!(run.receipt().standing(), Standing::Refused);
-    assert_eq!(
-        run.receipt().head(),
-        git(&repository, &["rev-parse", "HEAD"])
-    );
+    assert_eq!(run.receipt().head(), repository.head());
     assert_eq!(run.receipt().long_lines().len(), 1);
     let finding = &run.receipt().long_lines()[0];
     assert_eq!((finding.path(), finding.line()), ("src/add.rs", 2));
@@ -60,7 +57,7 @@ fn a_new_file_has_zero_per_file_debt() {
     let repository = fixture("long-lines-new-file");
     git_commit(&repository, "empty Rust baseline");
     repository.write("src/new.rs", &format!("{}\n", long("new")));
-    git(&repository, &["add", "src/new.rs"]);
+    repository.stage(&["src/new.rs"]);
 
     let run = adjudicate(&repository);
     assert_eq!(run.receipt().standing(), Standing::Refused);
@@ -91,7 +88,7 @@ fn a_long_line_only_refusal_names_its_actionable_locus_first() {
         "src/detail.rs",
         &format!("short\n{}\n", "x".repeat(LONG_LINE_LIMIT + 1)),
     );
-    git(&repository, &["add", "src/detail.rs"]);
+    repository.stage(&["src/detail.rs"]);
     let contract = Contract::load(&repository.root).expect("load current contract");
 
     let run = contract

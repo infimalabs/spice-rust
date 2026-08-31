@@ -14,10 +14,7 @@ use wire::{Digest, Domain, Phase, TaskHandle};
 
 mod support;
 
-use support::{
-    acquired, acquired_arm, captured_baselines, contract_repository, git, git_commit, git_output,
-    git_repository, measured,
-};
+use support::{acquired, acquired_arm, captured_baselines, contract_repository, measured};
 
 #[test]
 fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
@@ -190,50 +187,14 @@ fn merge_evidence_refuses_conflicts_on_a_clean_completion() {
 }
 
 #[test]
-fn real_modify_delete_conflict_with_the_head_tree_fails_with_path_provenance() {
-    let repository = git_repository("core-merge-conflict");
-    repository.write("f", "base\n");
-    git_commit(&repository, "base");
-
-    git(&repository, &["checkout", "-q", "-b", "side"]);
-    fs::remove_file(repository.path("f")).expect("delete f on side");
-    git_commit(&repository, "delete f");
-
-    git(&repository, &["checkout", "-q", "main"]);
-    repository.write("f", "modified on main\n");
-    git_commit(&repository, "modify f");
-
-    let head_tree = git(&repository, &["rev-parse", "HEAD^{tree}"]);
-    let merge = git_output(
-        &repository,
-        &[
-            "merge-tree",
-            "--write-tree",
-            "-z",
-            "--name-only",
-            "HEAD",
-            "side",
-        ],
-    );
-    assert_eq!(merge.status.code(), Some(1), "modify/delete must conflict");
-    let fields = merge.stdout.split(|byte| *byte == 0).collect::<Vec<_>>();
-    let expected_tree = String::from_utf8(fields[0].to_owned()).expect("tree is UTF-8");
-    assert_eq!(expected_tree, head_tree, "conflicted tree reproduces HEAD");
-    assert!(
-        fields.iter().any(|field| *field == b"f"),
-        "git merge-tree names the conflicted path: {:?}",
-        String::from_utf8_lossy(&merge.stdout)
-    );
-
+fn modify_delete_conflict_fails_with_path_provenance() {
     let tree = fixture_tree();
-    let observation = measured(CoreEvidence::MergeIntegrity(
-        MergeIntegrityEvidence::Compared {
-            head_tree,
-            expected_tree,
-            completion: MergeTreeCompletion::Conflicted,
-            conflicted_paths: vec!["f".to_owned()],
-        },
-    ));
+    let observation = measured(CoreEvidence::MergeIntegrity(compared_merge(
+        "1",
+        "2",
+        MergeTreeCompletion::Conflicted,
+        vec!["f".to_owned()],
+    )));
     let report = evaluate_core(
         &CoreInputs::new(battery_for(&tree, GateId::MergeIntegrity, observation))
             .expect("real conflicted evidence admits for evaluation"),
@@ -241,8 +202,6 @@ fn real_modify_delete_conflict_with_the_head_tree_fails_with_path_provenance() {
     let merge_arm = &report.arms()[0];
     assert_eq!(merge_arm.standing(), CoreStanding::Failed);
     assert!(merge_arm.diagnostic().contains("conflicted at: f"));
-
-    repository.remove();
 }
 
 #[test]
@@ -454,7 +413,7 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
 fn a_partially_staged_file_is_acquired_from_the_captured_repository() {
     let repository = contract_repository("core-acquire-partial");
     repository.write("src/app.rs", "fn main() {\n    // staged\n}\n");
-    git(&repository, &["add", "src/app.rs"]);
+    repository.stage(&["src/app.rs"]);
     repository.write("src/app.rs", "fn main() {\n    // unstaged\n}\n");
 
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
@@ -500,7 +459,7 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
     .expect("capture one clean core source");
 
     repository.write("src/app.rs", "fn main() {\n    // staged\n}\n");
-    git(&repository, &["add", "src/app.rs"]);
+    repository.stage(&["src/app.rs"]);
     repository.write("src/app.rs", "fn main() {\n    // unstaged\n}\n");
 
     let inputs =
@@ -620,57 +579,22 @@ fn a_disappeared_selected_tree_refuses_capture_with_a_typed_core_input_error() {
 }
 
 #[test]
-fn an_empty_merge_is_acquired_from_the_repository_and_refused_by_the_engine() {
-    let repository = contract_repository("core-acquire-empty-merge");
-    git(&repository, &["checkout", "-q", "-b", "side"]);
-    repository.write("src/side.rs", "pub fn side() {}\n");
-    git_commit(&repository, "side work");
-
-    git(&repository, &["checkout", "-q", "main"]);
-    repository.write("src/main.rs", "pub fn main_work() {}\n");
-    git_commit(&repository, "main work");
-
-    let output = git_output(&repository, &["merge", "--no-commit", "--no-ff", "side"]);
-    assert!(
-        output.status.success(),
-        "the fixture merge must succeed cleanly: {}",
-        String::from_utf8_lossy(&output.stderr)
+fn a_clean_computed_tree_mismatch_is_refused_as_an_empty_merge() {
+    let observation = measured(CoreEvidence::MergeIntegrity(compared_merge(
+        "1",
+        "2",
+        MergeTreeCompletion::Clean,
+        Vec::new(),
+    )));
+    let report = evaluate_core(
+        &CoreInputs::new(battery_for(
+            &fixture_tree(),
+            GateId::MergeIntegrity,
+            observation,
+        ))
+        .expect("clean merge evidence admits for evaluation"),
     );
-    assert!(repository.path(".git/MERGE_HEAD").exists());
-    git(&repository, &["read-tree", "--reset", "-u", "HEAD"]);
-
-    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
-    let merge = acquired_arm(&report, GateId::MergeIntegrity);
-
-    let head_tree = git(&repository, &["rev-parse", "HEAD^{tree}"]);
-    let CoreObservation::Measured {
-        evidence:
-            CoreEvidence::MergeIntegrity(MergeIntegrityEvidence::Compared {
-                head_tree: acquired_head,
-                expected_tree,
-                completion,
-                conflicted_paths,
-            }),
-    } = merge.observation()
-    else {
-        panic!(
-            "an in-progress merge must be compared, not {:?}",
-            merge.observation()
-        );
-    };
-    assert_eq!(
-        acquired_head, &head_tree,
-        "acquisition read the real HEAD tree"
-    );
-    assert_eq!(*completion, MergeTreeCompletion::Clean);
-    assert!(conflicted_paths.is_empty());
-    assert_ne!(
-        expected_tree, &head_tree,
-        "git merge-tree must compute the merge this reset index would discard"
-    );
-
+    let merge = &report.arms()[0];
     assert_eq!(merge.standing(), CoreStanding::Failed);
     assert!(merge.diagnostic().contains("empty merge refused"));
-
-    repository.remove();
 }

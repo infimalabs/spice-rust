@@ -1,8 +1,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
-use std::process::{Command, Output};
-use std::sync::{Mutex, PoisonError};
+use std::process::Command;
 
 use gate::{
     AnalysisEvidence, Contract, GateId, HYGIENE_ARMS, HygieneConfiguration, HygieneExclusion,
@@ -12,16 +11,12 @@ use gate::{
 
 mod support;
 
-use support::Tree;
+use support::{Tree, git_commit, git_repository};
 
-const GIT: &str = "/usr/bin/git";
 const PROCESS_FIXTURE: &str = "acquisition_process_fixture";
 const REPOSITORY_ENV: &str = "SPICE_HYGIENE_ACQUIRE_REPOSITORY"; // env-policy: allow
 const MARKER_ENV: &str = "SPICE_HYGIENE_INTERPRETER_MARKER"; // env-policy: allow
 const TEMP_DIRECTORY_ENV: &str = "TMPDIR"; // env-policy: allow
-
-/// Keep fixture Git child lifetimes disjoint under translated amd64 execution.
-static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 
 #[test]
 fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
@@ -527,46 +522,6 @@ fn hygiene_repository(label: &str, excluded_broken_source: bool) -> Tree {
     }
     git_commit(&repository, "hygiene fixture");
     repository
-}
-
-fn git_repository(label: &str) -> Tree {
-    let repository = Tree::new(label);
-    git(&repository, &["init", "-q", "-b", "main"]);
-    git(&repository, &["config", "core.excludesFile", "/dev/null"]);
-    git(&repository, &["config", "user.name", "Gate Fixture"]);
-    git(
-        &repository,
-        &["config", "user.email", "gate@example.invalid"],
-    );
-    repository
-}
-
-fn git_commit(repository: &Tree, message: &str) {
-    git(repository, &["add", "--all"]);
-    git(repository, &["commit", "-q", "-m", message]);
-}
-
-fn git(repository: &Tree, arguments: &[&str]) -> String {
-    let output = git_output(repository, arguments);
-    assert!(
-        output.status.success(),
-        "git {} failed:\nstdout:\n{}\nstderr:\n{}",
-        arguments.join(" "),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("git output is UTF-8")
-}
-
-fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
-    let _fixture_git_guard = FIXTURE_GIT_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    Command::new(GIT)
-        .args(arguments)
-        .current_dir(&repository.root)
-        .output()
-        .expect("launch git fixture command")
 }
 
 fn workspace_document(name: &str) -> String {

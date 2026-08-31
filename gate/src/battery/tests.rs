@@ -1,8 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
 
 use wire::{Digest, Domain};
 
@@ -18,11 +16,6 @@ use crate::state::{
 use crate::toolchain::{ArmFinding, ArmOutcome, FindingDetail, LOCAL_PATH_MARKER};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-
-/// Docker Desktop's amd64 translation cannot reap concurrent fixture Git
-/// children reliably. The fixture is testing repository evidence, not process
-/// parallelism, so keep those child lifetimes disjoint on every host.
-static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 
 /// The Rust file carrying a local path marker, selected as changed.
 const MARKED: &str = "src/marked.rs";
@@ -471,31 +464,56 @@ fn discouraged_word() -> (String, String) {
     )
 }
 
-/// Run one fixture Git command and return its trimmed standard output.
+/// Apply one operation from the fixture's closed in-process repository vocabulary.
 ///
-/// The output is returned rather than discarded so a fixture that mutates the
-/// repository can prove the mutation with the same program the Git-declared
-/// arms run, instead of asserting against its own idea of what Git did.
+/// Operations that produce observable repository identities return them as
+/// text for the existing assertions. Anything outside this typed fixture
+/// vocabulary refuses instead of falling back to a child process.
 fn fixture_git(repository: &Path, arguments: &[&str]) -> String {
-    let _fixture_git_guard = FIXTURE_GIT_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    let output = Command::new("/usr/bin/git")
-        .args(arguments)
-        .current_dir(repository)
-        .env_clear()
-        .env("HOME", repository)
-        .output()
-        .expect("run fixture git");
-    assert!(
-        output.status.success(),
-        "git {arguments:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("fixture git output is text")
-        .trim()
-        .to_owned()
+    match arguments {
+        ["init", ..] => crate::test_repository::initialize(repository),
+        ["config", ..] => {}
+        ["add", "--all"] => crate::test_repository::stage_all(repository),
+        ["add", "-u", "--", paths @ ..] => crate::test_repository::stage(repository, paths),
+        ["add", paths @ ..] => crate::test_repository::stage(repository, paths),
+        ["commit", .., "-m", message] => {
+            crate::test_repository::commit(repository, message);
+        }
+        ["rm", "-q", "--cached", paths @ ..] => {
+            crate::test_repository::remove_from_index(repository, paths);
+        }
+        ["rm", .., path] => crate::test_repository::remove(repository, &[*path]),
+        ["mv", source, destination] => {
+            crate::test_repository::move_path(repository, source, destination);
+        }
+        ["checkout", "-q", "-b", branch] => {
+            crate::test_repository::checkout(repository, branch, true);
+        }
+        ["checkout", "-q", branch] => {
+            crate::test_repository::checkout(repository, branch, false);
+        }
+        ["merge", "--no-commit", "--no-ff", branch] => {
+            assert_eq!(
+                crate::test_repository::merge(repository, branch),
+                crate::test_repository::MergeOutcome::Clean,
+                "fixture merge must be clean"
+            );
+        }
+        ["rev-parse", "HEAD"] => return crate::test_repository::head(repository),
+        ["rev-parse", "HEAD^{tree}"] => return crate::test_repository::head_tree(repository),
+        ["rev-parse", "-q", "--verify", "MERGE_HEAD"] => {
+            return fs::read_to_string(repository.join(".git/MERGE_HEAD"))
+                .expect("read fixture MERGE_HEAD")
+                .trim()
+                .to_owned();
+        }
+        ["diff", "--cached", "--name-only"] => {
+            return crate::test_repository::staged_changes(repository);
+        }
+        ["diff", "--name-only"] => return crate::test_repository::worktree_changes(repository),
+        unsupported => panic!("unsupported in-process fixture operation {unsupported:?}"),
+    }
+    String::new()
 }
 
 impl Drop for Fixture {
