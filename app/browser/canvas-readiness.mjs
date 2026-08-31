@@ -40,11 +40,13 @@ export async function assertAgentPageBottomSpacing(page, state) {
         ? Math.max(...cards.map((card) => card.getBoundingClientRect().bottom))
         : content?.getBoundingClientRect().bottom;
       const surfaceBox = surface.getBoundingClientRect();
+      const surfaceStyle = getComputedStyle(surface);
       const planeBox = plane?.getBoundingClientRect();
       return {
         content: content?.className ?? "absent",
         cards: cards.length,
         gap: floor ? surfaceBox.bottom - floor : Number.POSITIVE_INFINITY,
+        minHeight: surfaceStyle.minHeight,
         plane: planeBox ? {
           clientHeight: plane.clientHeight,
           height: planeBox.height,
@@ -58,6 +60,10 @@ export async function assertAgentPageBottomSpacing(page, state) {
 
   assert.ok(surfaces.length > 0, `${state} renders at least one agent surface`);
   for (const surface of surfaces) {
+    assert.ok(
+      surface.minHeight === "auto" || Number.parseFloat(surface.minHeight) <= 0,
+      `${state} does not restore a viewport minimum: ${JSON.stringify(surface)}`,
+    );
     assert.ok(
       surface.gap <= (surface.cards > 0 ? 24 : 2),
       `${state} has bounded space below ${surface.content}: ${JSON.stringify(surface)}`,

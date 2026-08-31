@@ -15,7 +15,10 @@ import {
   assertCompactionBoundaryPersistence,
   installPersistedMosaicImageRoutes,
 } from "./agent-conversation-mosaic.mjs";
-import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
+import {
+  assertFirefoxRestoredMosaic,
+  captureFirefoxAgentPageSpacing,
+} from "./firefox-restored-mosaic.mjs";
 import {
   assertComposerPointerSelection,
   assertComposerShards,
@@ -873,12 +876,22 @@ try {
         lightMonitor = monitorPage(lightPage);
         await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
         await assertCanvas(lightPage, "task-chip");
+        await captureFirefoxAgentPageSpacing(resident.discovery.endpoint, artifacts, {
+          file: "firefox-agents-empty-480x468.png",
+          populated: false,
+          state: "Firefox empty Agents viewport",
+        });
         const team = await seatAgentTeam(lightPage, fixture, worktrees);
         await team.console.getByRole("tab", { name: /^Compose/ }).click();
         const surface = team.console.locator(
           `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
         );
         await assertCanonicalInlineTaskCode(surface);
+        await captureFirefoxAgentPageSpacing(resident.discovery.endpoint, artifacts, {
+          file: "firefox-agents-short-480x468.png",
+          populated: true,
+          state: "Firefox short Agents viewport",
+        });
         lightMonitor.assertClean();
         await light.close();
       });

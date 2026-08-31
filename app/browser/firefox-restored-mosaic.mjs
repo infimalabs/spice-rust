@@ -3,7 +3,8 @@ import { join } from "node:path";
 
 import { assertMosaicLattice } from "./agent-conversation.mjs";
 import { installPersistedMosaicImageRoutes } from "./agent-conversation-mosaic.mjs";
-import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
+import { chooseCanvasView, CONNECT_MS, monitorPage } from "./canvas-fixture.mjs";
+import { assertAgentPageBottomSpacing } from "./canvas-readiness.mjs";
 import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import {
   assertCompactionDivider,
@@ -47,6 +48,35 @@ async function settledMosaicCards(page, label) {
   return assertMosaicLattice(page, false);
 }
 
+export async function captureFirefoxAgentPageSpacing(
+  endpoint,
+  artifacts,
+  { file, populated, state },
+) {
+  const firefox = await launchBrowser("firefox");
+  const context = await firefox.newContext({
+    colorScheme: "dark",
+    viewport: { width: 480, height: 468 },
+  });
+  const page = await context.newPage();
+  const monitor = monitorPage(page);
+  try {
+    await page.goto(endpoint, { waitUntil: "networkidle" });
+    await chooseCanvasView(page, "Agents");
+    if (populated) {
+      await page.locator(
+        '.mosaic-message-card[data-layout-phase="committed"]',
+      ).first().waitFor({ timeout: CONNECT_MS });
+    }
+    await assertAgentPageBottomSpacing(page, state);
+    await page.screenshot({ path: join(artifacts, file) });
+    monitor.assertClean();
+  } finally {
+    await context.close();
+    await firefox.close();
+  }
+}
+
 export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedAttribution) {
   const firefox = await launchBrowser("firefox");
   const context = await firefox.newContext({
@@ -82,6 +112,20 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
       "Firefox restored compaction divider",
     );
     await assertCompactionDivider(boundary, "Firefox restored compaction divider", expectedAttribution);
+    await resizeCompactionViewport(
+      page,
+      boundary,
+      { width: 480, height: 468 },
+      "Firefox reported Agents viewport",
+    );
+    await assertAgentPageBottomSpacing(page, "Firefox reported Agents viewport");
+    await page.screenshot({ path: join(artifacts, "firefox-agents-reported-480x468.png") });
+    await resizeCompactionViewport(
+      page,
+      boundary,
+      { width: 1717, height: 1470 },
+      "Firefox restored Agents viewport",
+    );
     const lane = console.locator(".team-agent").first();
     await assertComposerPointerSelection(
       page,
