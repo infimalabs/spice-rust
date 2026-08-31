@@ -640,6 +640,27 @@ fn git_common_dir(workspace: &Path, git: &Path) -> Result<PathBuf, String> {
 fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Result<String, String> {
     let parent = denied_parent(workspace, pins)?;
     let git_common = git_common_dir(workspace, &pins.git.path)?;
+    compose_sandbox_profile(workspace, parent, &git_common, pins, temporary)
+}
+
+#[cfg(test)]
+fn sandbox_profile_with_common_dir(
+    workspace: &Path,
+    git_common: &Path,
+    pins: &Pins,
+    temporary: &Temporary,
+) -> Result<String, String> {
+    let parent = denied_parent(workspace, pins)?;
+    compose_sandbox_profile(workspace, parent, git_common, pins, temporary)
+}
+
+fn compose_sandbox_profile(
+    workspace: &Path,
+    parent: &Path,
+    git_common: &Path,
+    pins: &Pins,
+    temporary: &Temporary,
+) -> Result<String, String> {
     let host_registry = pins.cargo_home.join("registry");
     let host_git = pins.cargo_home.join("git");
     Ok(format!(
@@ -659,11 +680,11 @@ fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Resu
             "(allow file-write* (subpath \"{}\"))\n"
         ),
         sandbox_string(workspace)?,
-        sandbox_string(&git_common)?,
+        sandbox_string(git_common)?,
         sandbox_string(parent)?,
         sandbox_string(parent)?,
         sandbox_string(workspace)?,
-        sandbox_string(&git_common)?,
+        sandbox_string(git_common)?,
         sandbox_string(&temporary.root)?,
         sandbox_string(&host_registry)?,
         sandbox_string(&host_git)?,
