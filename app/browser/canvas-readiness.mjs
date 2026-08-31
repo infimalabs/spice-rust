@@ -11,6 +11,13 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const artifacts = join(root, "artifacts/canvas");
+const agentSpacingOwners = Object.freeze({
+  activity: ':scope > .team-pane[data-team-mode="Compose"] > .team-compose > .team-activity-grid',
+  committedCard: ':scope > .lane-mosaic-plane > .mosaic-message-card[data-layout-phase="committed"]',
+  emptyActivity: ":scope > .mosaic-message-empty",
+  emptyFleet: ':scope > .team-pane[data-team-mode="Compose"] > .empty',
+  plane: ":scope > .lane-mosaic-plane",
+});
 const axisPanes = new Map([
   ["Magnitude", ["Effort", "Pressure", "Residue", "Consent Volume"]],
   ["Flow", ["Tasks", "Claims", "Deferrals", "Reviews"]],
@@ -27,26 +34,62 @@ const axisPanes = new Map([
 ]);
 
 export async function assertAgentPageBottomSpacing(page, state) {
-  const surfaces = await page.locator(".team-surface").evaluateAll((nodes) =>
+  const surfaces = await page.locator(".team-surface").evaluateAll((nodes, { owners, state }) =>
     nodes.map((surface) => {
-      const pane = surface.querySelector(":scope > .team-pane");
-      const content = pane?.firstElementChild;
-      const activity = pane?.querySelector(".team-activity-grid");
-      const plane = activity?.querySelector(".lane-mosaic-plane");
-      const cards = [...(plane?.querySelectorAll(
-        '.mosaic-message-card[data-layout-phase="committed"]',
-      ) ?? [])];
-      const floor = cards.length > 0
-        ? Math.max(...cards.map((card) => card.getBoundingClientRect().bottom))
-        : content?.getBoundingClientRect().bottom;
+      const exactlyOne = (root, selector, label) => {
+        const matches = root.querySelectorAll(selector);
+        if (matches.length !== 1) {
+          throw new Error(`${state} requires one ${label}, observed ${matches.length}`);
+        }
+        return matches[0];
+      };
+      const populated = surface.hasAttribute("data-lineage-id");
+      let activity = null;
+      let plane = null;
+      let cards = [];
+      let floor;
+      let owner;
+      if (!populated) {
+        const empty = exactlyOne(surface, owners.emptyFleet, "fleet-empty geometry owner");
+        const committed = surface.querySelectorAll(
+          '.mosaic-message-card[data-layout-phase="committed"]',
+        );
+        if (committed.length !== 0) {
+          throw new Error(`${state} fleet-empty surface has ${committed.length} committed cards`);
+        }
+        floor = empty.getBoundingClientRect().bottom;
+        owner = "fleet-empty";
+      } else {
+        activity = exactlyOne(surface, owners.activity, "lineage activity geometry owner");
+        plane = exactlyOne(activity, owners.plane, "lineage Mosaic plane");
+        cards = [...activity.querySelectorAll(owners.committedCard)];
+        const emptyState = activity.dataset.empty;
+        if (emptyState !== "true" && emptyState !== "false") {
+          throw new Error(`${state} lineage activity has invalid data-empty=${emptyState}`);
+        }
+        if (emptyState === "true") {
+          if (cards.length !== 0) {
+            throw new Error(`${state} activity-empty surface has ${cards.length} committed cards`);
+          }
+          const empty = exactlyOne(activity, owners.emptyActivity, "activity-empty geometry owner");
+          floor = empty.getBoundingClientRect().bottom;
+          owner = "activity-empty";
+        } else {
+          if (cards.length === 0) {
+            throw new Error(`${state} populated activity has no committed card geometry owner`);
+          }
+          floor = Math.max(...cards.map((card) => card.getBoundingClientRect().bottom));
+          owner = "committed-cards";
+        }
+      }
       const surfaceBox = surface.getBoundingClientRect();
       const surfaceStyle = getComputedStyle(surface);
       const planeBox = plane?.getBoundingClientRect();
       return {
-        content: content?.className ?? "absent",
         cards: cards.length,
-        gap: floor ? surfaceBox.bottom - floor : Number.POSITIVE_INFINITY,
+        gap: surfaceBox.bottom - floor,
         minHeight: surfaceStyle.minHeight,
+        owner,
         plane: planeBox ? {
           clientHeight: plane.clientHeight,
           height: planeBox.height,
@@ -56,6 +99,7 @@ export async function assertAgentPageBottomSpacing(page, state) {
         } : null,
       };
     }),
+    { owners: agentSpacingOwners, state },
   );
 
   assert.ok(surfaces.length > 0, `${state} renders at least one agent surface`);
@@ -66,7 +110,7 @@ export async function assertAgentPageBottomSpacing(page, state) {
     );
     assert.ok(
       surface.gap <= (surface.cards > 0 ? 24 : 2),
-      `${state} has bounded space below ${surface.content}: ${JSON.stringify(surface)}`,
+      `${state} has bounded space below ${surface.owner}: ${JSON.stringify(surface)}`,
     );
     if (surface.gap < 0) {
       assert.ok(
