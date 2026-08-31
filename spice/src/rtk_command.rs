@@ -11,7 +11,7 @@ use wire::{
     RtkGainReport,
 };
 
-use spice::repository::{Repository, STATE_DIRECTORY};
+use spice::repository::Repository;
 
 /// Resolve one agent database and run the configured RTK gain query against it.
 pub(crate) fn gain(matches: &ArgMatches) -> Outcome<RtkGainReport> {
@@ -62,9 +62,9 @@ pub(crate) fn gain(matches: &ArgMatches) -> Outcome<RtkGainReport> {
             .outcome();
         }
     };
-    let database = match resolve_history(&repository, &identity) {
+    let database = match selected_history(&repository, &identity) {
         Ok(database) => database,
-        Err(failure) => return failure.outcome(),
+        Err(outcome) => return outcome,
     };
     let database_text = match database.to_str() {
         Some(database) => database.to_owned(),
@@ -131,27 +131,38 @@ pub(crate) fn gain(matches: &ArgMatches) -> Outcome<RtkGainReport> {
     })
 }
 
+fn selected_history(
+    repository: &Repository,
+    identity: &AgentIdentity,
+) -> Result<PathBuf, Outcome<RtkGainReport>> {
+    let state = repository
+        .admit_state()
+        .map_err(|error| crate::state_failure(&error).outcome())?;
+    let current = state
+        .rtk_history(identity.uuid)
+        .map_err(|error| crate::state_failure(&error).outcome())?;
+    resolve_history(current, &identity.canonical).map_err(Failure::outcome)
+}
+
 #[derive(Debug)]
 struct AgentIdentity {
+    uuid: CanonicalUuid,
     canonical: String,
 }
 
 impl AgentIdentity {
     fn parse(text: &str) -> Option<Self> {
-        let uuid = text
-            .parse::<CanonicalUuid>()
-            .map(CanonicalUuid::get)
-            .ok()
-            .or_else(|| {
-                (text.len() == 32
-                    && text
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
-                .then(|| uuid::Uuid::parse_str(text).ok())
-                .flatten()
-            })?;
+        let uuid = text.parse::<CanonicalUuid>().ok().or_else(|| {
+            (text.len() == 32
+                && text
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+            .then(|| uuid::Uuid::parse_str(text).ok().map(CanonicalUuid::new))
+            .flatten()
+        })?;
         Some(Self {
-            canonical: uuid.as_hyphenated().to_string(),
+            canonical: uuid.to_string(),
+            uuid,
         })
     }
 }
@@ -171,14 +182,8 @@ impl HistoryObservation {
     }
 }
 
-fn resolve_history(repository: &Repository, identity: &AgentIdentity) -> Result<PathBuf, Failure> {
-    let current = repository
-        .common_dir()
-        .join(STATE_DIRECTORY)
-        .join("agents")
-        .join(&identity.canonical)
-        .join("rtk/history.db");
-    if let Some(observed) = observe_history(current) {
+fn resolve_history(current: PathBuf, canonical: &str) -> Result<PathBuf, Failure> {
+    if let Some(observed) = observe_history(current.clone()) {
         return match observed.problem {
             None => Ok(observed.path),
             Some(_) => Err(Failure::fault(
@@ -193,14 +198,8 @@ fn resolve_history(repository: &Repository, identity: &AgentIdentity) -> Result<
         "rtk::history-absent",
         format!(
             "no current Rust RTK history database was found for agent {} at {}",
-            identity.canonical,
-            repository
-                .common_dir()
-                .join(STATE_DIRECTORY)
-                .join("agents")
-                .join(&identity.canonical)
-                .join("rtk/history.db")
-                .display()
+            canonical,
+            current.display()
         ),
     ))
 }

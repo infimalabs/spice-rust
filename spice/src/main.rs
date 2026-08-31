@@ -126,9 +126,10 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
                 )
                 .with_detail(format!(
                     concat!(
-                        "follow the named archive/remove action or repair the malformed state ",
-                        "component at {}"
+                        "{}; follow the named archive/remove action or repair the malformed ",
+                        "state component at {}"
                     ),
+                    error,
                     error.path().display()
                 )),
             ))

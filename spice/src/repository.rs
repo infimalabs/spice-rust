@@ -31,9 +31,9 @@
 //!    export path on the command line, reads that one file, and writes nothing.
 //!    `spice rtk gain` is a separate read-only inspector rather than a
 //!    translator: an operator must name one agent UUID and only its current
-//!    Git-common `.spice-rs` database may be passed to RTK through the
-//!    documented `RTK_DB_PATH` input. Worktree-local and predecessor state are
-//!    not inspected.
+//!    Git-common [`StatePaths::rtk_history`] database may be passed to RTK
+//!    through the documented `RTK_DB_PATH` input. Worktree-local and
+//!    predecessor state are not inspected.
 //!
 //! `tests/coexistence.rs` enforces the filesystem ownership boundary by identity:
 //! it seeds Python's complete `.spice` root, runs the real Rust binary against
@@ -87,11 +87,14 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use wire::CanonicalUuid;
+
 /// Sole repository-common directory owned by the current Spice runtime.
 pub const STATE_DIRECTORY: &str = ".spice-rs";
 
 const RETIRED_STATE_DIRECTORY: &str = ".spice-rust";
 const RETIRED_STATE_RELEASE: &str = "release-one";
+const RETIRED_RTK_RELEASE: &str = "rust-rtk-agents-layout";
 
 /// One repository resolved to its worktree and shared Git directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +124,7 @@ pub struct StatePaths {
     canvas: PathBuf,
     degraded: PathBuf,
     tape: PathBuf,
+    rtk: PathBuf,
     artifact_data: PathBuf,
     artifacts: PathBuf,
     install_record: PathBuf,
@@ -168,6 +172,7 @@ impl StatePaths {
             canvas: runtime.join("canvas"),
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
+            rtk: runtime.join("rtk"),
             artifacts: artifact_data.join("tasks"),
             install_record: runtime.join("install.json"),
             local_configuration: runtime.join("config.toml"),
@@ -292,6 +297,28 @@ impl StatePaths {
         &self.tape
     }
 
+    /// Parent of per-lane RTK history databases.
+    #[must_use]
+    pub fn rtk(&self) -> &Path {
+        &self.rtk
+    }
+
+    /// Current RTK history database for one Rust lane identity.
+    ///
+    /// The first Rust RTK integration copied the predecessor's generic
+    /// `agents/<uuid>/rtk` grouping. That path is refused rather than retained
+    /// as a second execution arm; the current path follows Rust's existing
+    /// typed-root/per-lane organization used by `tape` and `degraded`.
+    pub fn rtk_history(&self, lane: CanonicalUuid) -> Result<PathBuf, StateError> {
+        let retired = self
+            .runtime()
+            .join("agents")
+            .join(lane.to_string())
+            .join("rtk/history.db");
+        refuse_retired_path(&retired, RETIRED_RTK_RELEASE)?;
+        Ok(self.rtk().join(lane.to_string()).join("history.db"))
+    }
+
     /// Task-addressed sidecar artifact store.
     #[must_use]
     pub fn artifacts(&self) -> &Path {
@@ -347,6 +374,7 @@ impl StatePaths {
             self.proof(),
             self.degraded(),
             self.tape(),
+            self.rtk(),
             &self.artifact_data,
             self.artifacts(),
             self.install_rollback_blobs(),
@@ -663,12 +691,16 @@ impl Repository {
 
 fn refuse_retired_state(common: &Path) -> Result<(), StateError> {
     let path = common.join(RETIRED_STATE_DIRECTORY);
-    match fs::symlink_metadata(&path) {
+    refuse_retired_path(&path, RETIRED_STATE_RELEASE)
+}
+
+fn refuse_retired_path(path: &Path, release: &'static str) -> Result<(), StateError> {
+    match fs::symlink_metadata(path) {
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(StateError::filesystem(&path, source)),
+        Err(source) => Err(StateError::filesystem(path, source)),
         Ok(_) => Err(StateError::RetiredState {
-            path,
-            release: RETIRED_STATE_RELEASE,
+            path: path.to_path_buf(),
+            release,
         }),
     }
 }

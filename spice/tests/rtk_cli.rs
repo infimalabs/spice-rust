@@ -38,13 +38,18 @@ impl Fixture {
 
     fn rust_history(&self, agent: &str) -> PathBuf {
         self.root
-            .join(".git/.spice-rs/agents")
+            .join(".git/.spice-rs/rtk")
             .join(agent)
-            .join("rtk/history.db")
+            .join("history.db")
     }
 
     fn stale_worktree_history(&self, root: &Path, agent: &str) -> PathBuf {
-        root.join(".spice-rs/agents")
+        root.join(".spice-rs/rtk").join(agent).join("history.db")
+    }
+
+    fn retired_rust_history(&self, agent: &str) -> PathBuf {
+        self.root
+            .join(".git/.spice-rs/agents")
             .join(agent)
             .join("rtk/history.db")
     }
@@ -234,6 +239,27 @@ fn duplicate_stale_worktree_histories_are_ignored() {
     assert!(diagnostic.contains(&fixture.rust_history(AGENT).display().to_string()));
     assert!(!diagnostic.contains(&first.display().to_string()));
     assert!(!diagnostic.contains(&second.display().to_string()));
+}
+
+#[test]
+#[cfg(unix)]
+fn superseded_rust_agents_history_is_a_release_owned_refusal() {
+    let fixture = Fixture::new("retired", "#!/bin/sh\nexit 99\n");
+    let retired = fixture.retired_rust_history(AGENT);
+    fs::create_dir_all(retired.parent().expect("retired history has a parent"))
+        .expect("retired RTK directory creates");
+    fs::write(&retired, b"retired-rust-history\n").expect("retired history writes");
+
+    let output = fixture.invoke(&["rtk", "gain", AGENT]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let diagnostic = String::from_utf8(output.stderr).expect("refusal is UTF-8");
+    assert!(diagnostic.contains("repository::state-path-refused"));
+    assert!(
+        diagnostic.contains("rust-rtk-agents-layout"),
+        "refusal omitted retired layout: {diagnostic}"
+    );
+    assert!(diagnostic.contains(&retired.display().to_string()));
 }
 
 #[test]
