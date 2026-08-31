@@ -42,45 +42,6 @@ fn appliance_generation_fence_is_canonical_bound_or_explicitly_unbound() {
 }
 
 #[test]
-fn mixed_path_resolution_authority_uses_the_complete_selection_surface() {
-    let source = Digest::compute(wire::Domain::GateTree, b"mixed resolution authority");
-    let paths = vec!["README.md".to_owned(), "spice/src/lib.rs".to_owned()];
-    let selection = gate::select_current_source_change_gates(source.clone(), &paths)
-        .expect("mixed Rust and non-Rust paths select policy gates");
-    let tests = gate::TestEvidenceGraph::select_tests(
-        source.clone(),
-        vec!["spice/src/lib.rs".to_owned()],
-        vec!["spice::lib:spice".to_owned()],
-        vec![
-            gate::TestSelectionEdge::new("spice/src/lib.rs", "spice::lib:spice")
-                .expect("the fixture edge is canonical"),
-        ],
-        gate::CoverageCompleteness::Complete,
-    )
-    .expect("the Rust path selects the test-relevant subset");
-
-    assert_eq!(selection.changed_sources(), paths);
-    assert_eq!(tests.changed_sources(), ["spice/src/lib.rs"]);
-    let expected_source = source.to_string();
-    assert!(resolution_selection_authority_matches(
-        &selection,
-        &expected_source,
-        &paths,
-    ));
-    assert!(!resolution_selection_authority_matches(
-        &selection,
-        &expected_source,
-        tests.changed_sources(),
-    ));
-    let moved_source = Digest::compute(wire::Domain::GateTree, b"moved authority").to_string();
-    assert!(!resolution_selection_authority_matches(
-        &selection,
-        &moved_source,
-        &paths,
-    ));
-}
-
-#[test]
 fn run_enters_supervision_with_only_private_worker_artifacts() {
     let phase = Cell::new(0);
     let answer = run_with(|files| {
@@ -360,91 +321,6 @@ fn configured_only_report_is_validated_and_silent_when_every_step_admits() {
             .is_none(),
         "clean configured-only admission must remain silent",
     );
-}
-
-#[test]
-fn resolution_supervision_uses_private_artifacts_and_the_same_fixed_envelope() {
-    let phase = Cell::new(0);
-    let answer = run_with_resolution(|files| {
-        assert_eq!(phase.get(), 0);
-        for path in [&files.progress, &files.terminal] {
-            assert_eq!(
-                fs::metadata(path)
-                    .expect("resolution worker artifact metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600,
-            );
-        }
-        phase.set(1);
-        resolution_deadline(&files.progress)
-    });
-
-    assert_eq!(phase.get(), 1);
-    let Outcome::Refusal(refusal) = answer else {
-        panic!("resolution fixture returns its deadline refusal");
-    };
-    assert_eq!(refusal.reason(), "gate::pre-commit-deadline-elapsed");
-    let bounds = ProcessBounds::production();
-    assert_eq!(
-        bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain,
-        Duration::from_secs(599),
-    );
-}
-
-#[test]
-fn configured_only_resolution_report_is_source_bound_and_nonempty() {
-    let source = Digest::compute(wire::Domain::GateTree, b"resolution source");
-    let document = serde_json::json!({
-        "version": RESOLUTION_REPORT_VERSION,
-        "source": source,
-        "configured": {
-            "source": source,
-            "steps": [{
-                "label": "resolution fixture",
-                "argv": ["/bin/true"],
-                "selected_paths": ["gate/src/change_selection.rs"],
-                "enabled": true,
-                "findings": [],
-            }],
-        },
-    });
-    let bytes = serde_json::to_vec(&document).expect("encode resolution fixture");
-    let report = ResolutionReport::decode(&bytes).expect("decode resolution evidence");
-
-    assert!(report.admits());
-    assert_eq!(report.source, source);
-
-    let empty = serde_json::json!({
-        "version": RESOLUTION_REPORT_VERSION,
-        "source": source,
-    });
-    assert!(
-        ResolutionReport::decode(&serde_json::to_vec(&empty).expect("encode empty resolution"))
-            .expect_err("empty resolution evidence refuses")
-            .contains("empty effective battery"),
-    );
-}
-
-#[test]
-fn resolution_report_rejects_the_retired_exhaustive_coverage_arm() {
-    let source = Digest::compute(wire::Domain::GateTree, b"resolution source");
-    let document = serde_json::json!({
-        "version": RESOLUTION_REPORT_VERSION,
-        "source": source,
-        "packaged": {
-            "coverage": "exhaustive",
-            "policy": [],
-            "tests": [],
-        },
-    });
-
-    let error = ResolutionReport::decode(
-        &serde_json::to_vec(&document).expect("encode retired exhaustive resolution"),
-    )
-    .expect_err("retired exhaustive resolution arm refuses");
-    assert!(error.contains("unknown variant"), "{error}");
 }
 
 #[test]

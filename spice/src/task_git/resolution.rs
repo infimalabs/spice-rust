@@ -51,7 +51,6 @@ pub(super) fn complete(
     active: &board::Active<'_>,
     parents: Parents<'_>,
     message: &str,
-    evidence: ResolutionEvidence<'_>,
 ) -> Result<String, Error> {
     let Parents {
         agent,
@@ -61,8 +60,6 @@ pub(super) fn complete(
     require_claim(meta, active)?;
     let seal = preflight.complete(root, target, agent, upstream, message)?;
     require_tree_within_footprint(root, meta.label, upstream, &seal.tree, agent)?;
-    evidence().map_err(evidence_error)?;
-    require_claim(meta, active)?;
     seal.verify(root, target)?;
     let created = run(
         root,
@@ -137,7 +134,7 @@ impl Preflight {
         } else {
             Err(Error::refusal(
                 "git::resolution-state-moved",
-                "resolution controls, index, HEAD, or Git configuration moved while evidence was running",
+                "resolution controls, index, HEAD, or Git configuration moved during completion",
                 "restore the exact sealed resolution and retry task completion",
             ))
         }
@@ -210,7 +207,7 @@ impl Seal {
         if observed != self.configuration {
             return Err(Error::refusal(
                 "git::resolution-configuration-moved",
-                "Git configuration changed while resolution evidence was running",
+                "Git configuration changed during resolution completion",
                 "restore the intended repository configuration and retry task completion",
             ));
         }
@@ -354,23 +351,6 @@ fn moved(name: &str, expected: &str, observed: &str) -> Error {
     )
 }
 
-pub(super) fn evidence_error(error: ResolutionEvidenceError) -> Error {
-    if error.reason == "gate::resolution-in-progress" {
-        return Error {
-            class: error.class,
-            reason: "git::resolution-in-progress",
-            detail: error.detail,
-            remedy: "retry task completion to read the durable terminal result".to_owned(),
-        };
-    }
-    Error {
-        class: error.class,
-        reason: "git::resolution-evidence-refused",
-        detail: format!("{}: {}", error.reason, error.detail),
-        remedy: error.remedy,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{env, path::PathBuf};
@@ -438,20 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_evidence_preserves_the_operation_identity_for_the_command_reply() {
-        let operation = "00000000-0000-4000-8000-000000000051";
-        let error = evidence_error(ResolutionEvidenceError::refusal(
-            "gate::resolution-in-progress",
-            operation,
-            "retry",
-        ));
-        assert_eq!(error.reason(), "git::resolution-in-progress");
-        assert_eq!(error.detail(), operation);
-        assert_eq!(error.class(), ErrorClass::Refusal);
-    }
-
-    #[test]
-    fn preflight_refuses_configuration_movement_during_evidence() {
+    fn preflight_refuses_configuration_movement_during_completion() {
         let (scratch, head) = preflight_repository();
         let preflight = Preflight::capture(&scratch.0).expect("capture exact preflight");
         git(

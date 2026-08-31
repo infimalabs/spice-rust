@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use gate::{ArmFamily, GateId};
 use serde::{Deserialize, Serialize};
 use sill::{
-    Acquisition, Argv, Availability, Cancellation, Completion, Deadlines, Environment, LockFile,
-    LockName, Output, Possession, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy,
+    Acquisition, Argv, Cancellation, Completion, Deadlines, Environment, LockFile, LockName,
+    Output, Possession, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy,
     StreamPolicy, WaitOutcome, WaitPolicy,
 };
 use spice::repository::Repository;
@@ -20,21 +20,14 @@ use wire::{Digest, Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply
 
 mod configured;
 mod dispatch;
-mod resolution_operation;
 mod terminal;
 
-pub(crate) use resolution_operation::Authority as ResolutionAuthority;
-
-use dispatch::{dispatch, dispatch_resolution};
+use dispatch::dispatch;
+use terminal::classify;
 #[cfg(test)]
 use terminal::report_outcome;
-use terminal::{classify, classify_resolution, resolution_terminal};
 
 const WORKER_ARGUMENT: &str = "__gate-pre-commit-worker";
-const RESOLUTION_WORKER_ARGUMENT: &str = "__gate-resolution-worker";
-const RESOLUTION_SELECTION_WORKER_ARGUMENT: &str = "__gate-resolution-selection-worker";
-const RESOLUTION_OPERATION_WORKER_ARGUMENT: &str = "__gate-resolution-operation-worker";
-pub(super) const RESOLUTION_PENDING_REASON: &str = "gate::resolution-in-progress";
 const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const HARD_DEADLINE: Duration = Duration::from_secs(600);
@@ -97,7 +90,6 @@ impl WorkerPhase {
 }
 
 const PRE_COMMIT_REPORT_VERSION: u64 = 4;
-const RESOLUTION_REPORT_VERSION: u64 = 4;
 
 /// One complete packaged-plus-configured pre-commit battery result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -180,129 +172,6 @@ impl Report {
         let report: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
         report.validate()?;
         Ok(report)
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case", tag = "coverage")]
-enum ResolutionPackagedReport {
-    Selected { report: Vec<u8> },
-}
-
-impl ResolutionPackagedReport {
-    fn selected(report: &spice::change_gate::ChangeGateReport) -> Result<Self, String> {
-        Ok(Self::Selected {
-            report: report.encode().map_err(|error| error.to_string())?,
-        })
-    }
-
-    fn validate(&self, source: &Digest) -> Result<bool, String> {
-        match self {
-            Self::Selected { report } => {
-                let report = spice::change_gate::ChangeGateReport::decode(report)
-                    .map_err(|error| error.to_string())?;
-                if report.selection().source() != source || report.tests().source() != source {
-                    return Err(
-                        "resolution packaged evidence names a different staged source".to_owned(),
-                    );
-                }
-                Ok(report.admits())
-            }
-        }
-    }
-
-    fn refusal_evidence(&self) -> String {
-        match self {
-            Self::Selected { report } => spice::change_gate::ChangeGateReport::decode(report)
-                .map_or_else(
-                    |error| format!("invalid selected resolution evidence: {error}"),
-                    |report| report.refusal_fold(),
-                ),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ResolutionReport {
-    version: u64,
-    source: Digest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    packaged: Option<ResolutionPackagedReport>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    configured: Option<configured::ConfiguredReport>,
-}
-
-impl ResolutionReport {
-    fn new(
-        source: Digest,
-        packaged: Option<ResolutionPackagedReport>,
-        configured: Option<configured::ConfiguredReport>,
-    ) -> Result<Self, String> {
-        let report = Self {
-            version: RESOLUTION_REPORT_VERSION,
-            source,
-            packaged,
-            configured,
-        };
-        report.validate()?;
-        Ok(report)
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        if self.version != RESOLUTION_REPORT_VERSION {
-            return Err(format!(
-                "unsupported resolution report version {}; expected {RESOLUTION_REPORT_VERSION}",
-                self.version,
-            ));
-        }
-        if self.packaged.is_none() && self.configured.is_none() {
-            return Err("resolution report carries an empty effective battery".to_owned());
-        }
-        if let Some(packaged) = &self.packaged {
-            let _ = packaged.validate(&self.source)?;
-        }
-        if self
-            .configured
-            .as_ref()
-            .is_some_and(|report| report.source() != &self.source)
-        {
-            return Err(
-                "resolution configured evidence names a different staged source".to_owned(),
-            );
-        }
-        Ok(())
-    }
-
-    fn admits(&self) -> bool {
-        self.packaged
-            .as_ref()
-            .is_none_or(|report| report.validate(&self.source) == Ok(true))
-            && self
-                .configured
-                .as_ref()
-                .is_none_or(configured::ConfiguredReport::admits)
-    }
-
-    fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
-        serde_json::to_vec(self)
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
-        let report: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-        report.validate()?;
-        Ok(report)
-    }
-
-    fn refusal_evidence(&self) -> String {
-        let mut evidence = self
-            .packaged
-            .as_ref()
-            .map_or_else(String::new, ResolutionPackagedReport::refusal_evidence);
-        if let Some(configured) = self.configured.as_ref().filter(|report| !report.admits()) {
-            evidence.push_str(&configured.refusal_evidence());
-        }
-        evidence
     }
 }
 
@@ -453,43 +322,6 @@ pub(super) fn run() -> Outcome<Report> {
     run_with(|files| supervise(files, &generation))
 }
 
-/// Run selected evidence for one allocator-owned merge resolution.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the resolution binary rim rejects configured-command recursion before supervision"
-)]
-pub(super) fn run_resolution(
-    repository: &Repository,
-    authority: resolution_operation::Authority<'_>,
-) -> Outcome<()> {
-    if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
-        return configured::recursion_refusal(&source);
-    }
-    resolution_operation::run(repository, authority)
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the resolution binary rim rejects configured-command recursion before supervision"
-)]
-pub(super) fn run_resolution_blocking(repository: &Repository) -> Outcome<()> {
-    if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
-        return configured::recursion_refusal(&source);
-    }
-    let _dispatch = match DispatchGuard::acquire_in(repository) {
-        Ok(dispatch) => dispatch,
-        Err(outcome) => return outcome,
-    };
-    run_with_resolution(|files| supervise_resolution(files, repository.worktree_root()))
-}
-
-pub(super) fn has_resolution_operation(
-    repository: &Repository,
-    authority: resolution_operation::Authority<'_>,
-) -> Result<bool, Outcome<()>> {
-    resolution_operation::exists(repository, authority)
-}
-
 #[derive(Debug)]
 struct DispatchGuard {
     _possession: Possession,
@@ -524,31 +356,9 @@ impl DispatchGuard {
             Err(error) => Err(fault("gate::pre-commit-lock-unavailable", error)),
         }
     }
-
-    fn wait_in(repository: &Repository) -> io::Result<Self> {
-        let state = repository.admit_state().map_err(io::Error::other)?;
-        fs::create_dir_all(state.worktree_locks())?;
-        let name = LockName::new("pre-commit").expect("pre-commit is a valid fixed lock name");
-        let lock = LockFile::new(name, state.worktree_locks().join(DISPATCH_LOCK));
-        lock.acquire().map(|possession| Self {
-            _possession: possession,
-        })
-    }
 }
 
 fn run_with(supervisor: impl FnOnce(&WorkerFiles) -> Outcome<Report>) -> Outcome<Report> {
-    let files = match WorkerFiles::create() {
-        Ok(files) => files,
-        Err(error) => return fault("gate::pre-commit-supervisor-unavailable", error),
-    };
-    let answer = supervisor(&files);
-    match files.cleanup() {
-        Ok(()) => answer,
-        Err(error) => fault("gate::pre-commit-cleanup-failed", error),
-    }
-}
-
-fn run_with_resolution(supervisor: impl FnOnce(&WorkerFiles) -> Outcome<()>) -> Outcome<()> {
     let files = match WorkerFiles::create() {
         Ok(files) => files,
         Err(error) => return fault("gate::pre-commit-supervisor-unavailable", error),
@@ -567,44 +377,8 @@ fn run_with_resolution(supervisor: impl FnOnce(&WorkerFiles) -> Outcome<()>) -> 
 pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32> {
     let _executable = arguments.next()?;
     let worker = arguments.next()?;
-    if worker.as_os_str() != OsStr::new(WORKER_ARGUMENT)
-        && worker.as_os_str() != OsStr::new(RESOLUTION_WORKER_ARGUMENT)
-        && worker.as_os_str() != OsStr::new(RESOLUTION_SELECTION_WORKER_ARGUMENT)
-        && worker.as_os_str() != OsStr::new(RESOLUTION_OPERATION_WORKER_ARGUMENT)
-    {
+    if worker.as_os_str() != OsStr::new(WORKER_ARGUMENT) {
         return None;
-    }
-    if worker.as_os_str() == OsStr::new(RESOLUTION_OPERATION_WORKER_ARGUMENT) {
-        let Some(root) = arguments.next() else {
-            eprintln!("resolution operation worker requires its durable root");
-            return Some(1);
-        };
-        if arguments.next().is_some() {
-            eprintln!("resolution operation worker received trailing arguments");
-            return Some(1);
-        }
-        return Some(match resolution_operation::worker(Path::new(&root)) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("resolution operation worker failed: {error}");
-                1
-            }
-        });
-    }
-    if worker.as_os_str() == OsStr::new(RESOLUTION_SELECTION_WORKER_ARGUMENT) {
-        if arguments.next().is_some() {
-            eprintln!("resolution selection worker received trailing arguments");
-            return Some(1);
-        }
-        let outcome = resolution_selection_worker();
-        crate::render::render(&outcome, crate::render::Form::Text)
-            .expect("typed resolution selection outcome renders as text")
-            .speak();
-        return Some(match outcome {
-            Outcome::Reply(_) => crate::REPLY_EXIT,
-            Outcome::Refusal(_) => crate::REFUSAL_EXIT,
-            Outcome::Fault(_) => crate::FAULT_EXIT,
-        });
     }
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
         let refusal: Outcome<()> = configured::recursion_refusal(&source);
@@ -621,10 +395,8 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         eprintln!("commit-gate worker requires a terminal path");
         return Some(1);
     };
-    let generation = (worker.as_os_str() == OsStr::new(WORKER_ARGUMENT))
-        .then(|| arguments.next())
-        .flatten();
-    if worker.as_os_str() == OsStr::new(WORKER_ARGUMENT) && generation.is_none() {
+    let generation = arguments.next();
+    if generation.is_none() {
         eprintln!("commit-gate worker requires an appliance generation fence");
         return Some(1);
     }
@@ -632,17 +404,13 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         eprintln!("commit-gate worker received trailing arguments");
         return Some(1);
     }
-    let result = if worker.as_os_str() == OsStr::new(RESOLUTION_WORKER_ARGUMENT) {
-        resolution_worker(Path::new(&progress), Path::new(&terminal))
-    } else {
-        worker_run(
-            Path::new(&progress),
-            Path::new(&terminal),
-            generation
-                .as_deref()
-                .expect("the pre-commit worker requires its appliance generation fence"),
-        )
-    };
+    let result = worker_run(
+        Path::new(&progress),
+        Path::new(&terminal),
+        generation
+            .as_deref()
+            .expect("the pre-commit worker requires its appliance generation fence"),
+    );
     Some(match result {
         Ok(()) => 0,
         Err(error) => {
@@ -650,104 +418,6 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
             1
         }
     })
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the private configured resolution rim acquires the source and path authorities injected by its supervising worker"
-)]
-fn resolution_selection_worker() -> Outcome<()> {
-    let expected_source = match env::var(configured::SOURCE_VARIABLE) {
-        Ok(source) => source,
-        Err(error) => {
-            return fault(
-                "gate::resolution-source-authority-missing",
-                format!("{}: {error}", configured::SOURCE_VARIABLE),
-            );
-        }
-    };
-    let expected_paths = match env::var(configured::PATHS_VARIABLE)
-        .map_err(|error| error.to_string())
-        .and_then(|paths| {
-            serde_json::from_str::<Vec<String>>(&paths).map_err(|error| error.to_string())
-        }) {
-        Ok(paths) => paths,
-        Err(error) => {
-            return fault(
-                "gate::resolution-path-authority-invalid",
-                format!("{}: {error}", configured::PATHS_VARIABLE),
-            );
-        }
-    };
-    // SAFETY: `worker_entry` runs before the binary creates any threads, this
-    // private leaf never returns to ordinary command dispatch, and the copied
-    // authorities above remain available for the terminal comparison. Removing
-    // them here prevents nested workspace-test binaries from mistaking their
-    // own commit-worker fixtures for configured-command recursion.
-    unsafe {
-        env::remove_var(configured::SOURCE_VARIABLE);
-        env::remove_var(configured::PATHS_VARIABLE);
-    }
-    let mut progress = Vec::new();
-    let result = spice::change_gate::run_resolution(&mut progress);
-    match result {
-        Ok(report)
-            if resolution_selection_authority_matches(
-                report.selection(),
-                &expected_source,
-                &expected_paths,
-            ) && report.admits() =>
-        {
-            Outcome::Reply(Reply {
-                position: ReplyPosition::Direct {},
-                body: (),
-            })
-        }
-        Ok(report)
-            if !resolution_selection_authority_matches(
-                report.selection(),
-                &expected_source,
-                &expected_paths,
-            ) =>
-        {
-            Outcome::Refusal(Refusal::evidence(
-                "gate::resolution-configured-source-moved",
-                format!(
-                    "expected_source={expected_source}; observed_source={}; expected_paths={expected_paths:?}; observed_paths={:?}",
-                    report.selection().source(),
-                    report.selection().changed_sources(),
-                ),
-                "retry task completion after the staged source and path set stop moving",
-            ))
-        }
-        Ok(report) => {
-            progress.extend_from_slice(report.refusal_fold().as_bytes());
-            Outcome::Refusal(Refusal::evidence(
-                "gate::resolution-configured-regressed",
-                String::from_utf8_lossy(&progress).into_owned(),
-                "repair the selected source finding, then retry task completion",
-            ))
-        }
-        Err(error) if error.is_fault() => Outcome::Fault(Fault {
-            class: FaultClass::Environment,
-            reason: error.reason().to_owned(),
-            detail: error.detail().to_owned(),
-        }),
-        Err(error) => Outcome::Refusal(Refusal::evidence(
-            error.reason(),
-            error.detail(),
-            "repair the selected source finding, then retry task completion",
-        )),
-    }
-}
-
-fn resolution_selection_authority_matches(
-    selection: &gate::ChangeSelectionReport,
-    expected_source: &str,
-    expected_paths: &[String],
-) -> bool {
-    selection.source().to_string() == expected_source
-        && selection.changed_sources() == expected_paths
 }
 
 fn supervise(files: &WorkerFiles, generation: &ApplianceGenerationFence) -> Outcome<Report> {
@@ -786,40 +456,6 @@ fn supervise(files: &WorkerFiles, generation: &ApplianceGenerationFence) -> Outc
         }
     };
     classify(files, &waited)
-}
-
-fn supervise_resolution(files: &WorkerFiles, root: &Path) -> Outcome<()> {
-    let executable = match env::current_exe() {
-        Ok(executable) => executable,
-        Err(error) => return fault("gate::pre-commit-executable-unavailable", error),
-    };
-    let spec = match worker_spec_at(
-        executable,
-        [
-            OsString::from(RESOLUTION_WORKER_ARGUMENT),
-            files.progress.as_os_str().to_owned(),
-            files.terminal.as_os_str().to_owned(),
-        ],
-        root,
-        ProcessBounds::production(),
-    ) {
-        Ok(spec) => spec,
-        Err(error) => return fault("gate::resolution-worker-invalid", error),
-    };
-    let running = match sill::spawn(spec) {
-        Ok(running) => running,
-        Err(error) => return fault("gate::resolution-worker-unavailable", error),
-    };
-    let waited = match running.wait() {
-        Ok(waited) => waited,
-        Err(error) => {
-            return resolution_worker_lost(
-                &files.progress,
-                format!("resolution worker wait or reap failed: {error}"),
-            );
-        }
-    };
-    classify_resolution(files, &waited)
 }
 
 fn worker_run(progress_path: &Path, terminal: &Path, generation: &OsStr) -> io::Result<()> {
@@ -932,21 +568,6 @@ fn appliance_generation_moved(
     }
 }
 
-fn resolution_worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
-    let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
-    let mut progress = OpenOptions::new().append(true).open(progress_path)?;
-    let started = Instant::now();
-    write_phase(&mut progress, &WorkerPhase::Capture)?;
-    match dispatch_resolution(&mut progress, started) {
-        Ok(report) => {
-            let mut document = vec![REPORT_RECORD];
-            document.extend(report.encode().map_err(io::Error::other)?);
-            fs::write(terminal, document)
-        }
-        Err(failure) => write_failure(terminal, &failure),
-    }
-}
-
 fn worker_io_failure(error: io::Error) -> WorkerFailure {
     WorkerFailure {
         reason: "gate::pre-commit-progress-unavailable".to_owned(),
@@ -976,10 +597,6 @@ fn write_failure(path: &Path, failure: &WorkerFailure) -> io::Result<()> {
 }
 
 fn worker_failure(failure: WorkerFailure) -> Outcome<Report> {
-    failure_outcome(failure)
-}
-
-fn resolution_worker_failure(failure: WorkerFailure) -> Outcome<()> {
     failure_outcome(failure)
 }
 
@@ -1031,10 +648,6 @@ fn deadline(progress: &Path) -> Outcome<Report> {
     deadline_outcome(progress)
 }
 
-fn resolution_deadline(progress: &Path) -> Outcome<()> {
-    deadline_outcome(progress)
-}
-
 fn deadline_outcome<T>(progress: &Path) -> Outcome<T> {
     let phase = last_phase(progress);
     Outcome::Refusal(Refusal::bare(
@@ -1057,10 +670,6 @@ fn deadline_outcome<T>(progress: &Path) -> Outcome<T> {
 }
 
 fn worker_lost(progress: &Path, detail: String) -> Outcome<Report> {
-    worker_lost_outcome(progress, detail)
-}
-
-fn resolution_worker_lost(progress: &Path, detail: String) -> Outcome<()> {
     worker_lost_outcome(progress, detail)
 }
 

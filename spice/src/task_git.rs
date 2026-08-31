@@ -125,43 +125,6 @@ impl fmt::Display for Error {
 
 impl StdError for Error {}
 
-/// One failure from the allocator-only resolution evidence runner.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolutionEvidenceError {
-    class: ErrorClass,
-    reason: String,
-    detail: String,
-    remedy: String,
-}
-
-impl ResolutionEvidenceError {
-    /// Retain a policy or test refusal without converting it into a Git fault.
-    #[must_use]
-    pub fn refusal(
-        reason: impl Into<String>,
-        detail: impl Into<String>,
-        remedy: impl Into<String>,
-    ) -> Self {
-        Self {
-            class: ErrorClass::Refusal,
-            reason: reason.into(),
-            detail: detail.into(),
-            remedy: remedy.into(),
-        }
-    }
-
-    /// Retain an environment or protocol failure from the evidence process.
-    #[must_use]
-    pub fn fault(reason: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            class: ErrorClass::Fault,
-            reason: reason.into(),
-            detail: detail.into(),
-            remedy: "repair the named evidence process and retry task completion".to_owned(),
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct Target {
     remote: String,
@@ -409,25 +372,18 @@ pub fn advance_at_launch(repository: &Repository) -> LaunchAdvance {
 }
 
 /// Publish an allocator-authenticated phase, including an owned merge resolution.
-///
-/// The evidence callback is reachable only when the repository retains the exact
-/// conflict state previously materialized for `active`. Ordinary commits and
-/// direct test callers cannot select it.
 pub fn publish_claimed(
     repository: &Repository,
     meta: Metadata<'_>,
     active: &board::Active<'_>,
-    evidence: impl FnOnce() -> Result<(), ResolutionEvidenceError>,
 ) -> Result<GitBoundary, Error> {
-    publish_inner(repository, meta, Some((active, Box::new(evidence))))
+    publish_inner(repository, meta, Some(active))
 }
 
-type ResolutionEvidence<'a> = Box<dyn FnOnce() -> Result<(), ResolutionEvidenceError> + 'a>;
-
-fn publish_inner<'a>(
+fn publish_inner(
     repository: &Repository,
     meta: Metadata<'_>,
-    resolution: Option<(&board::Active<'_>, ResolutionEvidence<'a>)>,
+    resolution: Option<&board::Active<'_>>,
 ) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
@@ -445,14 +401,9 @@ fn publish_inner<'a>(
         require_clean(root, "task completion")?;
     }
     let resolution = match (resolution_state, resolution) {
-        (true, Some((active, evidence))) => {
+        (true, Some(active)) => {
             let preflight = resolution::Preflight::capture(root)?;
-            evidence().map_err(resolution::evidence_error)?;
-            Some((
-                active,
-                Box::new(|| Ok(())) as ResolutionEvidence<'_>,
-                preflight,
-            ))
+            Some((active, preflight))
         }
         _ => None,
     };
@@ -468,7 +419,7 @@ fn publish_inner<'a>(
     };
     fetch(root, &target)?;
     let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
-    if let Some((active, evidence, preflight)) = resolution {
+    if let Some((active, preflight)) = resolution {
         let local_commits = ahead_count(root, &target.baseline)?;
         let message = compose_message(meta);
         let integrated = resolution::complete(
@@ -482,7 +433,6 @@ fn publish_inner<'a>(
                 preflight,
             },
             &message,
-            evidence,
         )?;
         let admission = Admission::resolve(repository, &integrated)?;
         let (integrated, published_upstream) = publish_with_retry(

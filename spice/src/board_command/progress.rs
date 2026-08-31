@@ -211,12 +211,7 @@ pub(super) fn task_done(
             ),
         );
     }
-    let resume_epoch = match resumable_task_completion(repository, &snapshot, command, entry, done)
-    {
-        Ok(resume) => resume,
-        Err(outcome) => return outcome,
-    };
-    let (at, lane, transition) = match done_transition(&snapshot, entry, command, resume_epoch) {
+    let (at, lane, transition) = match done_transition(&snapshot, entry, command, false) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
