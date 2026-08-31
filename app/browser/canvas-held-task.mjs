@@ -12,23 +12,49 @@ import { TOOL_ACTIVITY_TEXT, toolCallId } from "./canvas-activity-records.mjs";
 // no badge at all and the count stays unproven no matter how many tabs are
 // clicked. `mode_badge` counts standings carrying a handle, so raising it means
 // really claiming. This scenario reads the positive count and the held handle
-// off the card, then proves natural lapse removes both without issuing free.
+// off the card, proves an admitted renewal reaches the Tasks row, then covers
+// explicit release and natural lapse as separate badge-removal paths.
 export async function assertHeldTaskCount(
   team,
   fixture,
-  lane,
+  lanes,
   { artifacts, claimMs, reply, replyAsLane, restartAfterExpiry, transitionMs },
 ) {
+  const [expiryLane, releaseLane] = lanes;
   const composerAge = team.locator(
-    `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+    `.team-agent[data-agent-lane="${expiryLane}"] .composer-shard--primary .composer-shard-age`,
   );
   const composerProvenance = () => captureComposerProvenance(composerAge);
+  const releaseComposerAge = team.locator(
+    `.team-agent[data-agent-lane="${releaseLane}"] .composer-shard--primary .composer-shard-age`,
+  );
+  const releaseClaim = await claimAutomatically({
+    claimMs,
+    composerProvenance: () => captureComposerProvenance(releaseComposerAge),
+    fixture,
+    lane: releaseLane,
+    artifacts: null,
+    replyAsLane,
+    team,
+    transitionMs,
+    verifyRenderedRenewal: false,
+  });
   const claim = await claimAutomatically({
     claimMs,
     composerProvenance,
     fixture,
-    lane,
+    lane: expiryLane,
     artifacts,
+    replyAsLane,
+    team,
+    transitionMs,
+    verifyRenderedRenewal: true,
+  });
+  await releaseClaimExplicitly({
+    claim: releaseClaim,
+    fixture,
+    lane: releaseLane,
+    reply,
     replyAsLane,
     team,
     transitionMs,
@@ -37,7 +63,7 @@ export async function assertHeldTaskCount(
     claim,
     composerProvenance,
     fixture,
-    lane,
+    lane: expiryLane,
     reply,
     replyAsLane,
     restartAfterExpiry,
@@ -121,6 +147,7 @@ async function claimAutomatically({
   replyAsLane,
   team,
   transitionMs,
+  verifyRenderedRenewal,
 }) {
   const badge = team.getByRole("tab", { name: /^Tasks/ }).locator(".team-mode-badge");
   const lifetime = team.locator('.team-lifetime input[type="range"]');
@@ -162,6 +189,11 @@ async function claimAutomatically({
     lane,
     "the team task row remains attributed to the claiming member",
   );
+  const taskTitle = (await taskRow.locator(".team-task-title").innerText()).trim();
+  const initialRenewedAt = Number(
+    await taskRow.locator(".team-task-age").getAttribute("data-age-authored"),
+  );
+  assert.ok(Number.isFinite(initialRenewedAt), "the task row carries an admitted renewal instant");
   if (artifacts) {
     await team.page().screenshot({
       path: join(artifacts, "canvas-tasks-active-claim.png"),
@@ -172,13 +204,29 @@ async function claimAutomatically({
   const promotedExpiry = await waitForPromotedClaimExpiry(
     fixture, lane, handle, replyAsLane, claimMs * 4,
   );
-  const renewedExpiry = await waitForClaimExpiry(
-    fixture, lane, handle, replyAsLane, 35_000, promotedExpiry,
-  );
-  assert.ok(
-    renewedExpiry > promotedExpiry,
-    "the resident heartbeat moves task lease expiry",
-  );
+  const renewedExpiry = verifyRenderedRenewal
+    ? await waitForClaimExpiry(fixture, lane, handle, replyAsLane, 35_000, promotedExpiry)
+    : promotedExpiry;
+  if (verifyRenderedRenewal) {
+    assert.ok(
+      renewedExpiry > promotedExpiry,
+      "the resident heartbeat moves task lease expiry",
+    );
+    await team.getByRole("tab", { name: /^Tasks/ }).click();
+    const renewed = await waitForRenderedTaskRenewal(
+      team, handle, initialRenewedAt, transitionMs * 4,
+    );
+    assert.match(renewed.rendered, /^(?:now|\d+[smhd])$/, "renewal age remains readable");
+    assert.equal(renewed.title, taskTitle, "renewal preserves the actor-facing title");
+    assert.equal(renewed.phase, phase, "renewal preserves the authoritative workflow phase");
+    assert.equal(renewed.lane, lane, "renewal preserves the claiming member attribution");
+    assert.equal(
+      Number(await badge.innerText()),
+      heldBadgeCount,
+      "renewal preserves the Tasks badge count",
+    );
+    await team.getByRole("tab", { name: /^Compose/ }).click();
+  }
   assertComposerProvenance(
     await composerProvenance(), provenance,
     "automatic renewal cannot retarget provenance",
@@ -188,6 +236,51 @@ async function claimAutomatically({
   );
   assert.equal(heldStatus.claim, handle, "lane status names the renewed automatic claim");
   return { badge, handle, heldBadgeCount, heldStatus, lifetime, provenance, renewedExpiry };
+}
+
+async function releaseClaimExplicitly({
+  claim,
+  fixture,
+  lane,
+  reply,
+  replyAsLane,
+  team,
+  transitionMs,
+}) {
+  const { badge, handle, heldStatus, lifetime } = claim;
+  if (await lifetime.inputValue() !== "0") await lifetime.fill("0");
+  await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  await waitForTaskPolicy(fixture, lane, "steer", reply, transitionMs);
+  await team.getByRole("tab", { name: /^Tasks/ }).click();
+  const taskRow = team.locator(`.team-task-row[data-task-handle="${handle}"]`);
+  await taskRow.waitFor({ timeout: transitionMs });
+  const queuedBefore = await team.locator(".team-direction-row").count();
+  const preReleaseBadgeCount = Number(await badge.innerText());
+  assert.ok(
+    Number.isInteger(preReleaseBadgeCount) && preReleaseBadgeCount >= 2,
+    "the two-lane team counts both claims before explicit release",
+  );
+
+  await replyAsLane(fixture, lane, ["task", "free", handle]);
+  const releasedBadgeCount = await waitForBadgeBelow(
+    badge, preReleaseBadgeCount, transitionMs * 4,
+  );
+  await taskRow.waitFor({ state: "detached", timeout: transitionMs * 4 });
+  assert.equal(
+    releasedBadgeCount,
+    preReleaseBadgeCount - 1,
+    "explicit release removes exactly the freed lane from the Tasks badge",
+  );
+  assert.equal(
+    await team.locator(".team-direction-row").count(),
+    queuedBefore,
+    "explicit task release does not reinterpret queued direction",
+  );
+  const releasedStatus = parseTaskStatus(
+    (await replyAsLane(fixture, lane, ["task", "status"])).body.text,
+  );
+  assert.equal(releasedStatus.claim, null, "task free removes the lane's active claim");
+  assert.equal(releasedStatus.stale, heldStatus.stale, "task free does not manufacture expiry");
 }
 
 async function lapseClaimNaturally({
@@ -202,11 +295,12 @@ async function lapseClaimNaturally({
   transitionMs,
 }) {
   const {
-    badge, handle, heldBadgeCount, heldStatus, lifetime, provenance, renewedExpiry,
+    badge, handle, heldStatus, lifetime, provenance, renewedExpiry,
   } = claim;
   // Steer prevents the lapsed task from being automatically allocated again.
   // The resident is then stopped across the exact durable deadline, which also
   // proves no browser clock or task-free command manufactured the transition.
+  await team.getByRole("tab", { name: /^Compose/ }).click();
   await lifetime.fill("0");
   await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
   await waitForTaskPolicy(fixture, lane, "steer", reply, transitionMs);
@@ -219,7 +313,7 @@ async function lapseClaimNaturally({
   );
   const preExpiryBadgeCount = Number(await badge.innerText());
   assert.ok(
-    Number.isInteger(preExpiryBadgeCount) && preExpiryBadgeCount >= heldBadgeCount,
+    Number.isInteger(preExpiryBadgeCount) && preExpiryBadgeCount >= 1,
     "the lineage still counts the observed claim before resident shutdown",
   );
   assertComposerProvenance(
@@ -290,6 +384,29 @@ async function waitForStableComposerProvenance(
   throw new Error(`composer provenance did not remain stable for ${quietMs}ms`);
 }
 
+async function waitForRenderedTaskRenewal(team, handle, after, timeout) {
+  const deadline = Date.now() + timeout;
+  let last;
+  while (Date.now() < deadline) {
+    const row = team.locator(`.team-task-row[data-task-handle="${handle}"]`);
+    if (await row.count() === 1) {
+      const age = row.locator(".team-task-age");
+      last = {
+        authored: Number(await age.getAttribute("data-age-authored")),
+        rendered: (await age.innerText()).trim(),
+        title: (await row.locator(".team-task-title").innerText()).trim(),
+        phase: (await row.locator(".team-task-phase").innerText()).trim(),
+        lane: await row.getAttribute("data-agent-lane"),
+      };
+      if (Number.isFinite(last.authored) && last.authored > after) return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `timed out waiting for rendered renewal after ${after}: ${JSON.stringify(last)}`,
+  );
+}
+
 async function waitForPromotedClaimExpiry(fixture, lane, handle, replyAsLane, timeout) {
   const deadline = Date.now() + timeout;
   let last = 0;
@@ -305,7 +422,8 @@ async function waitForBadgeBelow(badge, before, timeout) {
   const deadline = Date.now() + timeout;
   let last = before;
   while (Date.now() < deadline) {
-    last = await badge.count() === 0 ? 0 : Number(await badge.innerText());
+    const labels = await badge.allTextContents();
+    last = labels.length === 0 ? 0 : Number(labels[0]);
     if (Number.isInteger(last) && last < before) return last;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

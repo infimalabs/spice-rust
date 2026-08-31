@@ -7,7 +7,7 @@ use web_sys::{DragEvent, HtmlInputElement};
 use super::clock::Age;
 use super::*;
 use crate::composer_drafts::{ComposerDraft, compose};
-use crate::watchband::{self, Standing};
+use crate::watchband::{self, Standing, TeamTaskSectionState};
 
 mod composer;
 mod controls;
@@ -305,6 +305,8 @@ fn render_tasks(
         .iter()
         .filter(|standing| standing.pending > 0)
         .collect::<Vec<_>>();
+    let active_state = TeamTaskSectionState::active(runtime.board().is_some(), active.len());
+    let direction_state = TeamTaskSectionState::direction(runtime.inbox().is_some(), queued.len());
     let policy = LineageLife::from(lineage.subscription).label();
     let active_summary = runtime.board().map_or_else(
         || "Task state unavailable".to_owned(),
@@ -333,10 +335,8 @@ fn render_tasks(
                         <span>{active.len()}</span>
                     }
                 </header>
-                if runtime.board().is_none() {
-                    <p class="team-task-empty" role="status">{"Task snapshot unavailable."}</p>
-                } else if active.is_empty() {
-                    <p class="team-task-empty">{"No active tasks for this team."}</p>
+                if let Some(message) = active_state.message() {
+                    <p class="team-task-empty" role={active_state.unavailable().then_some("status")}>{message}</p>
                 } else {
                     <ol class="team-task-list">
                         {for active.into_iter().map(render_task_row)}
@@ -350,10 +350,8 @@ fn render_tasks(
                         <span>{queued.iter().map(|standing| standing.pending).sum::<usize>()}</span>
                     }
                 </header>
-                if runtime.inbox().is_none() {
-                    <p class="team-task-empty" role="status">{"Direction snapshot unavailable."}</p>
-                } else if queued.is_empty() {
-                    <p class="team-task-empty">{"No queued direction."}</p>
+                if let Some(message) = direction_state.message() {
+                    <p class="team-task-empty" role={direction_state.unavailable().then_some("status")}>{message}</p>
                 } else {
                     <ol class="team-direction-list">
                         {for queued.into_iter().map(render_direction_row)}

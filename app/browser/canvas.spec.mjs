@@ -955,11 +955,11 @@ try {
       await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
       await assertCanvas(lightPage, "light-lease");
       await run.scenario("composer-lease", async () => {
-        const team = await seatLeaseAgent(lightPage, fixture, worktrees[0]);
+        const team = await seatLeaseAgent(lightPage, fixture, worktrees.slice(0, 2));
         await assertHeldTaskCount(
           team.console,
           fixture,
-          team.lane,
+          team.lanes,
           async (deadline) => {
             lightMonitor.expectNetworkInterruption(true);
             await stopResident(fixture, resident);

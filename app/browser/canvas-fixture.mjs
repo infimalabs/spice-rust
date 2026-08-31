@@ -232,8 +232,8 @@ export async function replyAsLane(fixture, lane, args) {
   return outcome;
 }
 
-export function assertHeldTaskCount(team, fixture, lane, restartAfterExpiry, artifacts) {
-  return assertHeldTaskCountWith(team, fixture, lane, {
+export function assertHeldTaskCount(team, fixture, lanes, restartAfterExpiry, artifacts) {
+  return assertHeldTaskCountWith(team, fixture, lanes, {
     artifacts,
     claimMs: CONNECT_MS,
     reply,
