@@ -37,6 +37,17 @@ pub(super) const DOCTOR_TOOLS: &[ExternalTool] = &[ExternalTool {
     network: ToolNetwork::NotExecuted,
 }];
 
+pub(super) const RTK_QUERY_TOOLS: &[ExternalTool] = &[ExternalTool {
+    name: "rtk",
+    owner: "spice::rtk_gain",
+    mode: ToolMode::Launch,
+    requirement: ToolRequirement::Required,
+    source: ToolSource::WorktreeConfiguration,
+    bounds: ToolBounds::ChildOwned,
+    cancellation: ToolCancellation::ChildOwned,
+    network: ToolNetwork::Denied,
+}];
+
 pub(super) const CALLER_COMMAND: &[ExternalTool] = &[ExternalTool {
     name: "CMD",
     owner: "caller",
@@ -228,9 +239,29 @@ fn validate_execution_posture(path: &str, tool: &ExternalTool, violations: &mut 
 #[cfg(test)]
 fn validate_source_posture(path: &str, tool: &ExternalTool, violations: &mut Vec<String>) {
     if tool.source == ToolSource::WorktreeConfiguration {
-        if tool.mode != ToolMode::Observe || tool.requirement != ToolRequirement::Optional {
+        let expected = match tool.mode {
+            ToolMode::Observe => (
+                ToolRequirement::Optional,
+                ToolBounds::NotExecuted,
+                ToolCancellation::NotExecuted,
+                ToolNetwork::NotExecuted,
+            ),
+            ToolMode::Launch => (
+                ToolRequirement::Required,
+                ToolBounds::ChildOwned,
+                ToolCancellation::ChildOwned,
+                ToolNetwork::Denied,
+            ),
+        };
+        let observed = (
+            tool.requirement,
+            tool.bounds,
+            tool.cancellation,
+            tool.network,
+        );
+        if observed != expected {
             violations.push(format!(
-                "{path}: worktree tool {:?} is not optional",
+                "{path}: worktree tool {:?} escaped its configured integration posture",
                 tool.name
             ));
         }

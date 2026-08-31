@@ -164,6 +164,17 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "spice::version"
     ),
     row!(
+        ["rtk", "gain"],
+        "rtk gain AGENT_UUID",
+        Local,
+        None,
+        [],
+        [Daemonless, Toolful],
+        RTK_QUERY_TOOLS,
+        Reply,
+        "spice::rtk_gain"
+    ),
+    row!(
         ["install"],
         "install [--apply=<digest>|--unapply]",
         Local,

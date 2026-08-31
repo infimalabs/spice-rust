@@ -11,8 +11,8 @@ use wire::manifest::ReleaseTarget;
 use wire::{
     Actor, CanonicalUuid, Command, Envelope, Fact, FactKind, Fault, FaultClass, Hello, Instant,
     Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, RefusalDiagnostic, Rejected,
-    ReleaseNotes, Reply, ReplyPosition, Response, Seq, SeqRange, SpiceCommand, TaskHandle, Version,
-    WireVersion, Witness, body,
+    ReleaseNotes, Reply, ReplyPosition, Response, RtkGainReport, Seq, SeqRange, SpiceCommand,
+    TaskHandle, Version, WireVersion, Witness, body,
 };
 
 /// Body of the `task::done` command this fixture pins.
@@ -244,6 +244,27 @@ fn version_is_the_exact_stable_four_identity_document() {
         VERSION.as_bytes(),
         "the stable machine form changed"
     );
+}
+
+#[test]
+fn rtk_gain_report_requires_exact_agent_database_and_output_provenance() {
+    let document = r#"{"agent":"019fe52f10ad7c839df4511323d1b7fb","database":"/repo/.spice/agents/019fe52f10ad7c839df4511323d1b7fb/rtk/history.db","output":"Saved 42 tokens\n"}"#;
+    let report: RtkGainReport = round_trip(document);
+    assert_eq!(report.agent, "019fe52f10ad7c839df4511323d1b7fb");
+
+    for malformed in [
+        document.replace(
+            ",\"database\":\"/repo/.spice/agents/019fe52f10ad7c839df4511323d1b7fb/rtk/history.db\"",
+            "",
+        ),
+        document.replace("\"output\":\"Saved 42 tokens\\n\"", "\"output\":null"),
+        document.replace("}", ",\"unknown\":true}"),
+    ] {
+        assert!(
+            wire::decode::<RtkGainReport>(malformed.as_bytes()).is_err(),
+            "malformed RTK gain report was admitted: {malformed}"
+        );
+    }
 }
 
 #[test]

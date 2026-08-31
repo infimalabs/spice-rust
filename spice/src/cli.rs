@@ -23,7 +23,8 @@ pub use tools::ExternalTool;
 pub const JUDGE_EXECUTABLE: &str = tools::JUDGE_EXECUTABLE;
 use tools::{
     CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NATIVE_CARGO_TOOL,
-    NO_TOOLS, PROOF_TOOLS, REFERENCE_TRANSACTION_TOOLS, TASK_DONE_TOOLS, TASK_GIT_TOOLS, UP_TOOLS,
+    NO_TOOLS, PROOF_TOOLS, REFERENCE_TRANSACTION_TOOLS, RTK_QUERY_TOOLS, TASK_DONE_TOOLS,
+    TASK_GIT_TOOLS, UP_TOOLS,
 };
 #[cfg(test)]
 use tools::{
@@ -279,6 +280,7 @@ fn observation_landed(path: &[&str]) -> bool {
             | ["session", "turns"]
             | ["doctor"]
             | ["version"]
+            | ["rtk", "gain"]
             | ["gate"]
             | ["gate", "findings"]
             | ["gate", "camp"]

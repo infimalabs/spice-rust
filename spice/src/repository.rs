@@ -29,6 +29,11 @@
 //! 4. A cross-system bridge is refused by default. The sole translator that
 //!    exists, `spice config migrate-tasks`, runs only when an operator names an
 //!    export path on the command line, reads that one file, and writes nothing.
+//!    `spice rtk gain` is a separate read-only inspector rather than a
+//!    translator: an operator must name one agent UUID and only its current
+//!    Git-common `.spice-rs` database may be passed to RTK through the
+//!    documented `RTK_DB_PATH` input. Worktree-local and predecessor state are
+//!    not inspected.
 //!
 //! `tests/coexistence.rs` enforces the filesystem ownership boundary by identity:
 //! it seeds Python's complete `.spice` root, runs the real Rust binary against
