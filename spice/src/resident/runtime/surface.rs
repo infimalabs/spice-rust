@@ -197,6 +197,14 @@ pub(super) async fn run_surface(
         &mut message_reader,
         progress,
     )?;
+    let mut session_compactions =
+        message_surface::SessionCompactions::new(crate::session_environment());
+    session_compactions.synchronize(
+        residency.body(),
+        &message_publisher,
+        message_reader.state_mut(),
+        progress,
+    )?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
         .map_err(|error| store_fault("resident::read-materialization-failed", &error))?;
     let command_surface = command_surface::Surface::new(
@@ -228,6 +236,7 @@ pub(super) async fn run_surface(
         server_task,
         message_publisher,
         message_reader.into_state(),
+        session_compactions,
         taste_submitter,
         taste_completions,
         records,
@@ -336,6 +345,7 @@ pub(super) async fn drive_surface(
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
     mut message_state: message_surface::MessageState,
+    mut session_compactions: message_surface::SessionCompactions,
     mut taste_submitter: Option<&mut taste_surface::AdjudicationSubmitter>,
     mut taste_completions: Option<&mut taste_surface::AdjudicationCompletions>,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
@@ -347,6 +357,9 @@ pub(super) async fn drive_surface(
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
 ) -> CommandResult<()> {
+    let mut session_compaction_poll =
+        tokio::time::interval(message_surface::SESSION_COMPACTION_POLL_INTERVAL);
+    session_compaction_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     reconcile_wakes(
         bus,
         command_surface,
@@ -408,6 +421,12 @@ pub(super) async fn drive_surface(
                 taste_submitter.as_deref_mut(), &mut lifecycle, report,
                 &mut message_state, diagnostic,
             )?,
+            _ = session_compaction_poll.tick() => {
+                let residency = current_residency(bus, epoch)?;
+                session_compactions.synchronize(
+                    residency.body(), &message_publisher, &mut message_state, diagnostic,
+                )?;
+            }
             timer = timers.recv() => {
                 let timer = timer.ok_or_else(|| environment_fault(
                     "bus::timer-events-closed",

@@ -1,11 +1,5 @@
 // Canonical vendor records used to seed and advance Canvas activity fixtures.
 
-export const sessionRecord = JSON.stringify({
-  type: "system",
-  subtype: "init",
-  session_id: "018f7777-7777-7444-8888-999999999999",
-});
-
 export const triggeredActivityRecord = JSON.stringify({
   timestamp: new Date().toISOString(),
   type: "assistant",
@@ -20,11 +14,6 @@ export const triggeredActivityRecord = JSON.stringify({
       output_tokens: 1,
     },
   },
-});
-
-export const compactionActivityRecord = JSON.stringify({
-  type: "system",
-  subtype: "compact_boundary",
 });
 
 // The vendor correlation id joins the call to its result and is the exact

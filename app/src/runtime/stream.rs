@@ -514,8 +514,15 @@ impl CanvasRuntime {
         if duplicate {
             return activity_changed;
         }
-        self.messages
-            .push(retained.unwrap_or_else(|| Rc::new(message.clone())));
+        let retained = retained.unwrap_or_else(|| Rc::new(message.clone()));
+        let insertion = self
+            .messages
+            .iter()
+            .position(|existing| {
+                message_chronology_key(existing) > message_chronology_key(&retained)
+            })
+            .unwrap_or(self.messages.len());
+        self.messages.insert(insertion, retained);
         if let Some(limit) = self.message_limit {
             trim_agent_message_lane(&mut self.messages, message.lane, limit);
         }
@@ -641,6 +648,16 @@ impl CanvasRuntime {
         }
         true
     }
+}
+
+fn message_chronology_key(message: &AgentMessage) -> (i64, CanonicalUuid, u64, u64, u32) {
+    (
+        agent_message_display_millis(message),
+        message.lane,
+        message.locus.member,
+        message.locus.offset,
+        message.locus.event,
+    )
 }
 
 fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {

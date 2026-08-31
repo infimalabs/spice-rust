@@ -116,6 +116,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             server_task,
             message_publisher,
             MessageState::default(),
+            message_surface::SessionCompactions::new(crate::session_environment()),
             Some(submitter),
             Some(completions),
             records,

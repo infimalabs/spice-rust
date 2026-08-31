@@ -28,8 +28,6 @@ import {
 } from "./canvas-build.mjs";
 import {
   TOOL_ACTIVITY_TEXT,
-  compactionActivityRecord,
-  sessionRecord,
   toolActivityRecord,
   toolResultRecord,
   triggeredActivityRecord,
@@ -48,6 +46,7 @@ export { monitorPage } from "./canvas-monitor.mjs";
 /// by `configureFixture`, which appends to it, and the teardown owner, which
 /// reads it back to decide exactly which processes this run is responsible for.
 export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
+const PRIMARY_FIXTURE_SESSION = "018f7777-7777-7444-8888-999999999999";
 
 const execute = promisify(execFile);
 const SHUTDOWN_COMMAND_MS = 25_000;
@@ -57,10 +56,14 @@ const CANVAS_SEED_STEERING_ORIGIN = "ack:1kLMtWnl";
 /// Durable parent origin learned independently for each isolated fixture.
 const taskOrigins = new Map();
 
-export function fixtureCommandEnv(lane) {
+export function fixtureCommandEnv(lane, fixture) {
   const env = { ...process.env };
   if (lane) env.SPICE_RS_LANE = lane;
   else delete env.SPICE_RS_LANE;
+  if (fixture) {
+    env.HOME = join(fixture, ".git", "spice-home");
+    delete env.CLAUDE_CONFIG_DIR;
+  }
   return env;
 }
 
@@ -115,7 +118,7 @@ export async function startResident(fixture) {
   await mkdir(dirname(canvas), { recursive: true });
   const child = spawn(binary, ["--json", "up", "--foreground", "--port", "0"], {
     cwd: fixture,
-    env: fixtureCommandEnv(),
+    env: fixtureCommandEnv(undefined, fixture),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -188,7 +191,7 @@ async function invoke(fixture, args, lane) {
     const result = await execute(binary, ["--json", ...args], {
       cwd: fixture,
       timeout: 20_000,
-      env: fixtureCommandEnv(lane),
+      env: fixtureCommandEnv(lane, fixture),
     });
     return decodeOutcome(result.stdout, result.stderr);
   } catch (error) {
@@ -286,7 +289,15 @@ export async function configureFixture(
     "vendors=${0%/*}/" + VENDOR_PID_LEDGER,
     'printf \'%s\\n\' "$$" >> "$vendors"',
     "name=${PWD##*/}",
-    `printf '%s\\n' '${sessionRecord}'`,
+    'case "$name" in',
+    '  lane-*) session_id=$(printf \'018f7777-7777-7444-8888-%012d\' "${name#lane-}") ;;',
+    `  *) session_id=${PRIMARY_FIXTURE_SESSION} ;;`,
+    "esac",
+    "session_dir=$HOME/.claude/projects/canvas",
+    "session_transcript=$session_dir/$session_id.jsonl",
+    'mkdir -p "$session_dir"',
+    ': >> "$session_transcript"',
+    'printf \'{"type":"system","subtype":"init","session_id":"%s"}\\n\' "$session_id"',
     `if [ "$name" != "${noCardWorktree}" ]; then`,
     `  ${concatAgentRecord()}`,
     "fi",
@@ -312,7 +323,8 @@ export async function configureFixture(
     "  fi",
     "  if [ -f .spice-compaction-trigger ]; then",
     "    rm -f .spice-compaction-trigger",
-    `    printf '%s\\n' '${compactionActivityRecord}'`,
+    "    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')",
+    "    printf '{\"timestamp\":\"%s\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\\n' \"$timestamp\" >> \"$session_transcript\"",
     "  fi",
     "  sleep 1",
     "done",
@@ -605,7 +617,7 @@ export async function stopResident(fixture, resident) {
     : Promise.resolve();
   await execute(binary, ["--json", "down"], {
     cwd: fixture,
-    env: fixtureCommandEnv(),
+    env: fixtureCommandEnv(undefined, fixture),
     timeout: SHUTDOWN_COMMAND_MS,
   });
   await exited;
