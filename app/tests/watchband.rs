@@ -191,6 +191,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows[0].liveness, wire::intent::LaneLiveness::Running);
     assert_eq!(rows[0].pending, 2);
     assert_eq!(rows[0].handle.as_deref(), Some("FIDELIT-1kKRSfyV"));
+    assert_eq!(rows[0].task_title.as_deref(), Some("Rebuild the watchband"));
     assert_eq!(rows[0].phase.as_deref(), Some("review"));
 
     // The second lane is deliberately unlike the first: no inbox row and no
@@ -200,6 +201,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows[1].pending, 0);
     assert_eq!(rows[1].headline, None);
     assert_eq!(rows[1].handle, None);
+    assert_eq!(rows[1].task_title, None);
     assert_eq!(rows[1].phase, None);
     assert_eq!(rows[1].held_since, None);
 }
@@ -268,6 +270,7 @@ fn the_newest_active_claim_on_a_lane_is_the_one_showing() {
     let rows = standings(&lanes, &[], &tasks);
 
     assert_eq!(rows[0].handle.as_deref(), Some("NEWER-1kKRSfyV"));
+    assert_eq!(rows[0].task_title.as_deref(), Some("Rebuild the watchband"));
     assert_eq!(rows[0].phase.as_deref(), Some("review"));
 }
 

@@ -189,7 +189,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   assert.equal(await steer.isEnabled(), true, "a nonempty vacant draft enables Steer");
   assert.equal(
     await steer.getAttribute("title"),
-    "Send with Steer: Manual task filters",
+    "Send with Steer: Use operator-selected work only",
     "the vacant action keeps the established Steer title",
   );
   const composerActions = await form.locator(".team-send").evaluateAll((buttons) =>

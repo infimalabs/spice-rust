@@ -724,7 +724,14 @@ export async function assertAgentConversation(
   assert.match(await age.getAttribute("data-age-authored"), /^\d+$/);
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
-  for (const mode of ["Filters", "Metrics", "Info"]) {
+  await console.getByRole("tab", { name: /^Tasks/ }).click();
+  await console.locator(".team-task-workspace").waitFor();
+  assert.equal(
+    await console.locator(".team-task-workspace").count(),
+    1,
+    "Tasks renders one team-scoped operational workspace",
+  );
+  for (const mode of ["Metrics", "Info"]) {
     await console.getByRole("tab", { name: new RegExp(`^${mode}`) }).click();
     await console.locator(".team-detail-card").nth(3).waitFor();
     assert.equal(await console.locator(".team-detail-card").count(), 4, `${mode} reaches all agents`);

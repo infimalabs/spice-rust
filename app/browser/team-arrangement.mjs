@@ -224,11 +224,11 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     `.team-surface[data-lineage-id="${secondary.lineage}"]`,
   );
   const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
-  await primarySurface.getByRole("tab", { name: /^Filters/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
   await secondarySurface.getByRole("tab", { name: /^Metrics/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Filters", "Metrics"],
+    ["Tasks", "Metrics"],
     "the teams hold distinct views immediately before one lineage retires",
   );
 
@@ -256,7 +256,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   );
   assert.equal(
     await selectedMode(primarySurface),
-    "Filters",
+    "Tasks",
     "retiring a sibling preserves the surviving team's selected view",
   );
   await primarySurface.getByRole("tab", { name: /^Compose/ }).click();
@@ -265,7 +265,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     [{ lineage: primary.lineage, lanes: [...primary.lanes, ...secondary.lanes] }],
     "the canvas draws one team whose first composer never moved",
   );
-  await primarySurface.getByRole("tab", { name: /^Filters/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
 
   await reply(fixture, [
     "lane", "add", worktrees[5],
@@ -279,7 +279,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   await recreatedSurface.waitFor({ timeout: TRANSITION_MS });
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(recreatedSurface)],
-    ["Filters", "Compose"],
+    ["Tasks", "Compose"],
     "a recreated lineage starts clean instead of reviving its retired view state",
   );
   await page.evaluate(() => {

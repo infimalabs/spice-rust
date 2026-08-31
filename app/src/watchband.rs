@@ -73,6 +73,8 @@ pub struct Standing {
     pub headline: Option<String>,
     /// Handle of the task the lane currently holds.
     pub handle: Option<String>,
+    /// Actor-facing title of the task the lane currently holds.
+    pub task_title: Option<String>,
     /// Phase that task currently sits in.
     pub phase: Option<String>,
     /// Epoch milliseconds at which the claim's lease began.
@@ -308,6 +310,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                     .and_then(|row| row.pending.last())
                     .and_then(|directive| directive.preview.clone()),
                 handle: held.map(|task| task.statement.body.handle.to_string()),
+                task_title: held.map(|task| task.presentation_title().to_owned()),
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
                 held_since: held.and_then(|task| lease_instant(task, |lease| lease.start)),
                 renewed_at: held.and_then(|task| lease_instant(task, |lease| lease.renewal)),

@@ -7,7 +7,7 @@ import { TOOL_ACTIVITY_TEXT, toolCallId } from "./canvas-activity-records.mjs";
 
 // Observe the one navigation tab the operator reference qualifies by a count.
 //
-// The reference image shows "Filters 27", and `badge` renders nothing at zero
+// The Tasks badge renders nothing at zero
 // (app/src/watchband.rs), so a fixture in which no lane holds a task shows
 // no badge at all and the count stays unproven no matter how many tabs are
 // clicked. `mode_badge` counts standings carrying a handle, so raising it means
@@ -17,7 +17,7 @@ export async function assertHeldTaskCount(
   team,
   fixture,
   lane,
-  { claimMs, reply, replyAsLane, restartAfterExpiry, transitionMs },
+  { artifacts, claimMs, reply, replyAsLane, restartAfterExpiry, transitionMs },
 ) {
   const composerAge = team.locator(
     `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
@@ -28,6 +28,7 @@ export async function assertHeldTaskCount(
     composerProvenance,
     fixture,
     lane,
+    artifacts,
     replyAsLane,
     team,
     transitionMs,
@@ -112,6 +113,7 @@ export async function assertHeldTaskCount(
 }
 
 async function claimAutomatically({
+  artifacts,
   claimMs,
   composerProvenance,
   fixture,
@@ -120,7 +122,7 @@ async function claimAutomatically({
   team,
   transitionMs,
 }) {
-  const badge = team.getByRole("tab", { name: /^Filters/ }).locator(".team-mode-badge");
+  const badge = team.getByRole("tab", { name: /^Tasks/ }).locator(".team-mode-badge");
   const lifetime = team.locator('.team-lifetime input[type="range"]');
   const handle = await waitForActiveClaim(fixture, lane, replyAsLane, claimMs * 4);
   assert.match(handle, /^\S+-\S+$/, `automatic allocation returns a task handle: ${handle}`);
@@ -135,13 +137,38 @@ async function claimAutomatically({
   const heldBadgeCount = Number(await badge.innerText());
   assert.ok(
     Number.isInteger(heldBadgeCount) && heldBadgeCount >= 1,
-    "Filters counts at least the observed lane's held task",
+    "Tasks counts at least the observed lane's held task",
   );
   const placeholder = await team.locator(`.team-agent[data-agent-lane="${lane}"]`)
     .getByRole("textbox").getAttribute("placeholder");
   const [heldHandle, phase] = placeholder.split("\n").at(-1).split(", ");
   assert.equal(heldHandle, handle, `the held card names the claimed task: ${placeholder}`);
   assert.ok(phase, `the held card names the phase it holds: ${placeholder}`);
+  await team.getByRole("tab", { name: /^Tasks/ }).click();
+  const taskRow = team.locator(`.team-task-row[data-task-handle="${handle}"]`);
+  await taskRow.waitFor({ timeout: transitionMs * 4 });
+  assert.equal(
+    (await taskRow.locator(".team-task-title").innerText()).trim().length > 0,
+    true,
+    "the team task row carries the actor-facing task title",
+  );
+  assert.equal(
+    (await taskRow.locator(".team-task-phase").innerText()).trim(),
+    phase,
+    "the team task row carries the authoritative workflow phase",
+  );
+  assert.equal(
+    await taskRow.getAttribute("data-agent-lane"),
+    lane,
+    "the team task row remains attributed to the claiming member",
+  );
+  if (artifacts) {
+    await team.page().screenshot({
+      path: join(artifacts, "canvas-tasks-active-claim.png"),
+      fullPage: true,
+    });
+  }
+  await team.getByRole("tab", { name: /^Compose/ }).click();
   const promotedExpiry = await waitForPromotedClaimExpiry(
     fixture, lane, handle, replyAsLane, claimMs * 4,
   );
@@ -205,7 +232,7 @@ async function lapseClaimNaturally({
   );
   assert.ok(
     lapsedBadgeCount < preExpiryBadgeCount,
-    "Filters loses at least the observed lane's naturally expired task",
+    "Tasks loses at least the observed lane's naturally expired task",
   );
   const lapsedStatus = parseTaskStatus(
     (await replyAsLane(fixture, lane, ["task", "status"])).body.text,
