@@ -292,6 +292,133 @@ fn render_details(
     }
 }
 
+fn render_tasks(
+    runtime: &CanvasRuntime,
+    lineage: &crate::runtime::LaneRow,
+    standings: &[Standing],
+) -> Html {
+    let active = standings
+        .iter()
+        .filter(|standing| standing.handle.is_some())
+        .collect::<Vec<_>>();
+    let queued = standings
+        .iter()
+        .filter(|standing| standing.pending > 0)
+        .collect::<Vec<_>>();
+    let policy = LineageLife::from(lineage.subscription).label();
+    let active_summary = runtime.board().map_or_else(
+        || "Task state unavailable".to_owned(),
+        |_| format!("{} active", active.len()),
+    );
+    html! {
+        <main class="team-task-workspace" aria-label="Team tasks">
+            <header class="team-task-summary">
+                <div>
+                    <span class="team-task-eyebrow">{"Team work"}</span>
+                    <strong>{active_summary}</strong>
+                </div>
+                <div
+                    class="team-task-policy"
+                    data-task-policy-extension=""
+                    aria-label={format!("Task policy: {policy}")}
+                >
+                    <span>{"Task policy"}</span>
+                    <strong>{policy}</strong>
+                </div>
+            </header>
+            <section class="team-task-section" aria-labelledby={format!("active-tasks-{}", lineage.lane)}>
+                <header>
+                    <h3 id={format!("active-tasks-{}", lineage.lane)}>{"Active tasks"}</h3>
+                    if !active.is_empty() {
+                        <span>{active.len()}</span>
+                    }
+                </header>
+                if runtime.board().is_none() {
+                    <p class="team-task-empty" role="status">{"Task snapshot unavailable."}</p>
+                } else if active.is_empty() {
+                    <p class="team-task-empty">{"No active tasks for this team."}</p>
+                } else {
+                    <ol class="team-task-list">
+                        {for active.into_iter().map(render_task_row)}
+                    </ol>
+                }
+            </section>
+            <section class="team-task-section" aria-labelledby={format!("direction-queue-{}", lineage.lane)}>
+                <header>
+                    <h3 id={format!("direction-queue-{}", lineage.lane)}>{"Direction queue"}</h3>
+                    if !queued.is_empty() {
+                        <span>{queued.iter().map(|standing| standing.pending).sum::<usize>()}</span>
+                    }
+                </header>
+                if runtime.inbox().is_none() {
+                    <p class="team-task-empty" role="status">{"Direction snapshot unavailable."}</p>
+                } else if queued.is_empty() {
+                    <p class="team-task-empty">{"No queued direction."}</p>
+                } else {
+                    <ol class="team-direction-list">
+                        {for queued.into_iter().map(render_direction_row)}
+                    </ol>
+                }
+            </section>
+        </main>
+    }
+}
+
+fn render_task_row(standing: &Standing) -> Html {
+    let handle = standing.handle.clone().unwrap_or_default();
+    let title = standing
+        .task_title
+        .clone()
+        .unwrap_or_else(|| "Task title unavailable".to_owned());
+    let phase = standing
+        .phase
+        .clone()
+        .unwrap_or_else(|| "unknown".to_owned());
+    let renewed = lease_age(standing.renewed_at, "team-task-age", "unavailable");
+    html! {
+        <li
+            class="team-task-row"
+            data-task-handle={handle.clone()}
+            data-agent-lane={standing.lane.to_string()}
+            data-accent={standing.accent.to_string()}
+        >
+            <div class="team-task-row-main">
+                <code>{handle}</code>
+                <strong class="team-task-title">{title}</strong>
+            </div>
+            <div class="team-task-row-meta">
+                <span class="team-task-member">
+                    <span class="agent-presence" aria-hidden="true"></span>
+                    <span class="team-task-member-name">{standing.label.clone()}</span>
+                </span>
+                <span class="team-task-phase">{phase}</span>
+                <span class="team-task-renewed">{"renewed "}{renewed}</span>
+            </div>
+        </li>
+    }
+}
+
+fn render_direction_row(standing: &Standing) -> Html {
+    let preview = standing
+        .headline
+        .clone()
+        .unwrap_or_else(|| "Preview unavailable".to_owned());
+    html! {
+        <li
+            class="team-direction-row"
+            data-agent-lane={standing.lane.to_string()}
+            data-accent={standing.accent.to_string()}
+        >
+            <span class="team-task-member">
+                <span class="agent-presence" aria-hidden="true"></span>
+                <strong class="team-task-member-name">{standing.label.clone()}</strong>
+            </span>
+            <span class="team-direction-preview">{preview}</span>
+            <span class="team-direction-count">{format!("{} pending", standing.pending)}</span>
+        </li>
+    }
+}
+
 /// One lease instant as a ticking age, or `vacant` for a lane holding no claim.
 ///
 /// The vacant spelling stays a caller's choice because the two sites mean
@@ -320,20 +447,8 @@ fn render_agent_details(
         .occupant
         .map(|value| value.to_string())
         .unwrap_or_else(|| "vacant".to_owned());
-    let claim = standing
-        .handle
-        .as_deref()
-        .zip(standing.phase.as_deref())
-        .map_or_else(
-            || "no active claim".to_owned(),
-            |(handle, phase)| format!("{handle} / {phase}"),
-        );
     let held = lease_age(standing.held_since, "claim-age", "—");
     let renewed = lease_age(standing.renewed_at, "claim-age", "—");
-    let headline = standing
-        .headline
-        .clone()
-        .unwrap_or_else(|| "clear".to_owned());
     html! {
         <article
             class="team-detail-card"
@@ -346,20 +461,6 @@ fn render_agent_details(
                 <span>{standing.vendor.clone()}</span>
             </header>
             {match mode {
-                LineageMode::Filters => html! {
-                    <dl>
-                        <div><dt>{"Task scope"}</dt><dd>{claim}</dd></div>
-                        <div>
-                            <dt>{"Queue"}</dt>
-                            <dd>{format!("{} pending", standing.pending)}</dd>
-                        </div>
-                        <div><dt>{"Life"}</dt><dd>{standing.life.clone()}</dd></div>
-                        <div>
-                            <dt>{"Activity"}</dt>
-                            <dd>{headline}</dd>
-                        </div>
-                    </dl>
-                },
                 LineageMode::Metrics => html! {
                     <dl>
                         <div><dt>{"Pending"}</dt><dd>{standing.pending}</dd></div>
@@ -385,12 +486,12 @@ fn render_agent_details(
                             <dd>{standing.liveness.as_str()}</dd>
                         </div>
                         <div>
-                            <dt>{"Vendor / life"}</dt>
+                            <dt>{"Vendor / residency policy"}</dt>
                             <dd>{format!("{} / {}", standing.vendor, standing.life)}</dd>
                         </div>
                     </dl>
                 },
-                LineageMode::Compose => Html::default(),
+                LineageMode::Compose | LineageMode::Tasks => Html::default(),
             }}
         </article>
     }

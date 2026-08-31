@@ -36,18 +36,18 @@ pub(super) fn carries_lineage(transfer: &web_sys::DataTransfer) -> bool {
 pub(in crate::browser) enum LineageMode {
     #[default]
     Compose,
-    Filters,
+    Tasks,
     Metrics,
     Info,
 }
 
 impl LineageMode {
-    const ALL: [Self; 4] = [Self::Compose, Self::Filters, Self::Metrics, Self::Info];
+    const ALL: [Self; 4] = [Self::Compose, Self::Tasks, Self::Metrics, Self::Info];
 
     pub(super) const fn label(self) -> &'static str {
         match self {
             Self::Compose => "Compose",
-            Self::Filters => "Filters",
+            Self::Tasks => "Tasks",
             Self::Metrics => "Metrics",
             Self::Info => "Info",
         }
@@ -96,7 +96,8 @@ pub(super) fn render_empty_fleet(
                         LineageMode::Compose => {
                             empty("No agents are assigned. Open Info to add one.")
                         }
-                        LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => {
+                        LineageMode::Tasks => render_tasks(runtime, &empty_lineage, &[]),
+                        LineageMode::Metrics | LineageMode::Info => {
                             render_details(runtime, &empty_lineage, &[], mode, controls)
                         }
                     }}
@@ -163,7 +164,20 @@ pub(super) fn render_populated_fleet(
                                     render.can_configure,
                                     render.controls,
                                 ),
-                                LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => html! {
+                                LineageMode::Tasks => html! {
+                                    <>
+                                        {view::chrome::render_lineage_ticker(
+                                            render.runtime,
+                                            lineage,
+                                        )}
+                                        {render_tasks(
+                                            render.runtime,
+                                            lineage,
+                                            &lineage_standings,
+                                        )}
+                                    </>
+                                },
+                                LineageMode::Metrics | LineageMode::Info => html! {
                                     <>
                                         {view::chrome::render_lineage_ticker(
                                             render.runtime,
@@ -426,7 +440,7 @@ fn render_lineage_toolbar(
 fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
     let count = match mode {
         LineageMode::Compose => standings.iter().map(|standing| standing.pending).sum(),
-        LineageMode::Filters => standings
+        LineageMode::Tasks => standings
             .iter()
             .filter(|standing| standing.handle.is_some())
             .count(),

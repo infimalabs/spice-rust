@@ -28,6 +28,19 @@
   .team-toolbar:has(.team-drag-handle) { grid-template-columns: 12px 22px minmax(0, 1fr) 30px; }
   .team-mode { padding-inline: 4px; font-size: .6rem; }
   .team-mode-badge { display: none; }
+  .team-task-workspace { padding-inline: 8px; }
+  .team-task-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .team-task-row-meta {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    justify-items: start;
+  }
+  .team-task-member { max-width: 100%; }
+  .team-task-renewed { grid-column: auto; justify-self: end; }
+  .team-direction-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+  }
+  .team-direction-preview { grid-column: 1 / -1; grid-row: 2; }
   .team-detail-grid { grid-template-columns: 1fr; }
   .seat-panel { padding: 16px; }
   .page-heading { align-items: start; }

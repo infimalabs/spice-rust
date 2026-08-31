@@ -86,16 +86,16 @@ export async function assertPerTeamWatchbands(
     ["Metrics", "Info"],
     "two teams retain different selected views simultaneously",
   );
-  await primarySurface.getByRole("tab", { name: /^Filters/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Filters", "Info"],
+    ["Tasks", "Info"],
     "a subsequent primary switch preserves the secondary selection",
   );
   await secondarySurface.getByRole("tab", { name: /^Compose/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Filters", "Compose"],
+    ["Tasks", "Compose"],
     "a subsequent secondary switch preserves the primary selection",
   );
   await primarySurface.getByRole("tab", { name: /^Compose/ }).click();
@@ -121,6 +121,27 @@ export async function assertPerTeamWatchbands(
     0,
     "unacknowledged secondary prose is absent from the conversation",
   );
+  await secondarySurface.getByRole("tab", { name: /^Tasks/ }).click();
+  const queuedDirection = secondarySurface.locator(
+    `.team-direction-row[data-agent-lane="${secondary.lane}"]`,
+  );
+  await queuedDirection.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(
+    (await queuedDirection.locator(".team-direction-preview").innerText()).trim(),
+    firstSecondaryDirection,
+    "Tasks shows the admitted newest direction preview without parsing authored text",
+  );
+  assert.equal(
+    (await queuedDirection.locator(".team-direction-count").innerText()).trim(),
+    "1 pending",
+    "Tasks keeps queued direction separate from active task count",
+  );
+  assert.equal(
+    await secondarySurface.locator(".team-task-row").count(),
+    0,
+    "queued direction is not presented as allocator-eligible work",
+  );
+  await secondarySurface.getByRole("tab", { name: /^Compose/ }).click();
   assert.equal(await console.locator(".team-surface").count(), 2);
   assert.equal(await console.locator(".team-speech").count(), 2);
   assert.equal(await console.locator(".team-lifetime").count(), 2);
@@ -139,6 +160,26 @@ export async function assertPerTeamWatchbands(
   assert.ok(
     widthsByWeight[1].width > widthsByWeight[0].width,
     "the four-agent lineage remains wider than its one-agent sibling",
+  );
+  const modeGeometry = await console.locator(".team-surface").evaluateAll((surfaces) =>
+    surfaces.map((surface) => ({
+      width: surface.getBoundingClientRect().width,
+      labels: [...surface.querySelectorAll(".team-mode > span:first-child")].map((label) => {
+        const button = label.parentElement.getBoundingClientRect();
+        const rect = label.getBoundingClientRect();
+        return {
+          text: label.textContent,
+          left: rect.left,
+          right: rect.right,
+          contained: rect.left >= button.left && rect.right <= button.right,
+        };
+      }),
+    })),
+  );
+  assert.ok(
+    modeGeometry.every(({ labels }) => labels.every((label, index) =>
+      label.contained && (index === 0 || labels[index - 1].right <= label.left))),
+    `team-local tabs fit without overlapping at every lineage width: ${JSON.stringify(modeGeometry)}`,
   );
 
   const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
@@ -222,6 +263,75 @@ export async function assertPerTeamWatchbands(
     primaryRows.every((lane) => lane.occupant && lane.disposition === "occupied"),
     "watchband Drain changes task policy and never tears down occupants",
   );
+  await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
+  assert.equal(
+    await primarySurface.locator('.team-task-policy[aria-label="Task policy: Drain"]').count(),
+    1,
+    "Tasks reports the authoritative team task policy once",
+  );
+  assert.equal(
+    await primarySurface.getByText("Life", { exact: true }).count(),
+    0,
+    "Tasks does not expose the ambiguous per-seat Life label",
+  );
+  for (const seatLife of new Set(primaryRows.map((lane) => lane.life))) {
+    assert.equal(
+      await primarySurface.getByText(seatLife, { exact: true }).count(),
+      0,
+      `Tasks does not present seat policy ${seatLife} as team task state`,
+    );
+  }
+  const taskWorkspace = primarySurface.locator(".team-task-workspace");
+  const taskGeometry = async () => taskWorkspace.evaluate((workspace) => {
+    const bounds = workspace.getBoundingClientRect();
+    const rows = [...workspace.querySelectorAll(".team-task-row, .team-direction-row")]
+      .map((row) => {
+        const rect = row.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          width: rect.width,
+          textOverflow: row.scrollWidth - row.clientWidth,
+        };
+      });
+    return {
+      clientWidth: workspace.clientWidth,
+      scrollWidth: workspace.scrollWidth,
+      left: bounds.left,
+      right: bounds.right,
+      rows,
+    };
+  });
+  const assertTaskGeometry = (geometry, viewport) => {
+    assert.ok(
+      geometry.clientWidth > 0 && geometry.scrollWidth <= geometry.clientWidth,
+      `${viewport} Tasks workspace has visible width without horizontal overflow: ${
+        JSON.stringify(geometry)
+      }`,
+    );
+    assert.ok(
+      geometry.rows.every((row) => row.width > 0
+        && row.left >= geometry.left
+        && row.right <= geometry.right
+        && row.textOverflow <= 0),
+      `${viewport} task and direction rows stay inside the workspace: ${JSON.stringify(geometry)}`,
+    );
+  };
+  assertTaskGeometry(await taskGeometry(), "desktop");
+  await page.screenshot({
+    path: join(artifacts, "canvas-tasks-team-desktop.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  assertTaskGeometry(await taskGeometry(), "narrow");
+  await page.screenshot({
+    path: join(artifacts, "canvas-tasks-team-narrow.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  await primarySurface.getByRole("tab", { name: /^Compose/ }).click();
   assert.equal(
     await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
     1,

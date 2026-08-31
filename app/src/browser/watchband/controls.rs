@@ -21,7 +21,7 @@ impl LineageLife {
 
     const fn help(self) -> &'static str {
         match self.wire().scope() {
-            wire::intent::TaskSubscriptionScope::Manual => "Manual task filters",
+            wire::intent::TaskSubscriptionScope::Manual => "Use operator-selected work only",
             wire::intent::TaskSubscriptionScope::ManualAndAutoProject => {
                 "Auto-subscribe to projects this team creates or claims"
             }

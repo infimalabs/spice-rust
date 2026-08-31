@@ -972,6 +972,7 @@ try {
             lightMonitor.expectNetworkInterruption(false);
             await chooseCanvasView(lightPage, "Agents");
           },
+          artifacts,
         );
         lightMonitor.assertClean();
         await light.close();
