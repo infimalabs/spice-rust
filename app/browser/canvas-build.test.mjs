@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -12,9 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
-const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 
 function restoreEnvironment(name, value) {
@@ -33,7 +30,6 @@ test("a prebuilt resident cannot absorb exact-appliance app publication", async 
   try {
     await mkdir(browser, { recursive: true });
     await writeFile(modulePath, await readFile(join(here, "canvas-build.mjs")));
-    await execute("/usr/bin/git", ["init", "--quiet", fixture]);
 
     const appliance = join(fixture, ".git/.spice-install/bin/spice");
     await mkdir(dirname(appliance), { recursive: true });
@@ -50,7 +46,10 @@ test("a prebuilt resident cannot absorb exact-appliance app publication", async 
     process.env.SPICE_APP_CALL_LEDGER = ledger;
     const build = await import(pathToFileURL(modulePath));
 
-    await assert.rejects(build.buildResident({ app: true }), (error) => {
+    await assert.rejects(build.buildResident({
+      app: true,
+      gitCommonDirectory: join(fixture, ".git"),
+    }), (error) => {
       assert.equal(error.cause?.code, 23);
       assert.match(error.message, /stderr=exact appliance rejected app publication/);
       return true;

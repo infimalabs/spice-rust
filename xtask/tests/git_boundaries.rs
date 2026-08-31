@@ -16,7 +16,7 @@
 //! network call or a new git entry point is to say so in the allowlist, in a
 //! diff a reviewer reads, rather than to add it quietly and stay green.
 //!
-//! The four tests fall into two deliberately independent pairs. The two
+//! The first four tests fall into two deliberately independent pairs. The two
 //! network tests read subcommand literals and know nothing about module
 //! structure; the boundary test reads public entry points and knows nothing
 //! about subcommands. A new network call site reds the network pair alone. The
@@ -24,6 +24,7 @@
 //! entry point the resident stops calling, and for a git reference appearing in
 //! the activation surface. The fourth test polices neither surface: it asserts
 //! that this battery remains a named workspace target for scoped execution.
+//! The fifth rejects Git process construction across repository test sources.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -38,6 +39,19 @@ use std::path::{Path, PathBuf};
 /// this file stops the carve-out from matching, the file is scanned like any
 /// other, and its literals red the test instead of disappearing from it.
 const SELF_PATH: &str = "xtask/tests/git_boundaries.rs";
+
+/// Inert absolute-Git spellings retained by test assertions and pin fixtures.
+///
+/// Counts make each exception closed: another spelling in one of these files
+/// still has to be reviewed and declared. The policy test below separately
+/// rejects executable constructors that name Git through `PATH`.
+const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 5] = [
+    ("gate/src/battery/tests/fold.rs", 2),
+    ("gate/src/battery/tests/single_arm.rs", 1),
+    ("proof/src/bin/spice-proof-darwin-runner/tests.rs", 1),
+    ("spice/src/cargo_isolation/tests.rs", 1),
+    ("xtask/tests/verify_process.rs", 1),
+];
 
 /// Every git subcommand that can reach the network.
 const NETWORK_SUBCOMMANDS: [&str; 5] = ["fetch", "push", "pull", "clone", "ls-remote"];
@@ -332,33 +346,66 @@ fn this_battery_remains_a_scoped_workspace_target() {
     );
 }
 
-/// Xtask tests model repository state in process and never launch real Git.
+/// Repository tests model Git state in process and never launch real Git.
 #[test]
-fn xtask_test_sources_do_not_spawn_or_wrap_git() {
-    let sources = workspace_rust_sources();
+fn repository_test_sources_do_not_spawn_or_wrap_git() {
+    let sources = workspace_test_sources();
+    let found_absolute = sources
+        .iter()
+        .filter(|(path, _)| path.as_str() != SELF_PATH)
+        .filter_map(|(path, text)| {
+            let count = text.matches("/usr/bin/git").count();
+            (count > 0).then(|| (path.clone(), count))
+        })
+        .collect::<BTreeSet<_>>();
+    let declared_absolute = INERT_ABSOLUTE_GIT_TEST_SITES
+        .into_iter()
+        .map(|(path, count)| (path.to_owned(), count))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        found_absolute, declared_absolute,
+        "absolute Git spellings in tests changed; tests must inject parsed or repository state, and inert assertions must be declared exactly"
+    );
+
     let mut violations = Vec::new();
-    for (path, text) in sources.iter().filter(|(path, text)| {
-        path.starts_with("xtask/")
-            && (is_fixture(path)
-                || path.as_str() == "xtask/src/app/source/modules.rs"
-                || text.contains("#[cfg(test)]"))
-            && path.as_str() != SELF_PATH
-    }) {
+    for (path, text) in sources
+        .iter()
+        .filter(|(path, _)| path.as_str() != SELF_PATH)
+    {
+        let compact = text
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        for needle in [
+            "command::new(\"git\")",
+            "command::new('git')",
+            "command::new(git)",
+            "execfile(\"git\"",
+            "execfilesync(\"git\"",
+            "execute(\"git\"",
+            "spawn(\"git\"",
+            "spawnsync(\"git\"",
+        ] {
+            if compact.contains(needle) {
+                violations.push(format!("{path}: executable constructor contains {needle}"));
+            }
+        }
         for (index, line) in text.lines().enumerate() {
-            let lower = line.to_ascii_lowercase();
-            let constructs_git = line.contains("Command::new") && lower.contains("git");
-            let wraps_git = lower.contains("/usr/bin/git")
-                && ["copy", "hard_link", "symlink"]
-                    .into_iter()
-                    .any(|operation| line.contains(operation));
-            if constructs_git || wraps_git {
-                violations.push(format!("{path}:{}: {}", index + 1, line.trim()));
+            let lower = line.trim().to_ascii_lowercase();
+            if lower.starts_with("git ") || lower.contains("exec git ") || lower.contains("\\ngit ")
+            {
+                violations.push(format!(
+                    "{path}:{}: shell wrapper contains {}",
+                    index + 1,
+                    line.trim()
+                ));
             }
         }
     }
     assert!(
         violations.is_empty(),
-        "xtask tests must use in-process repository state or injected command observations, not Git processes: {violations:#?}"
+        "tests must use in-process repository state or injected command observations, not Git processes: {violations:#?}"
     );
 }
 
@@ -437,6 +484,60 @@ fn workspace_rust_sources() -> BTreeMap<String, String> {
     let mut sources = BTreeMap::new();
     collect_rust_sources(&root, &root, &mut sources);
     sources
+}
+
+/// Every test-only source body in the selected workspace tree.
+fn workspace_test_sources() -> BTreeMap<String, String> {
+    let root = workspace_root();
+    let mut sources = BTreeMap::new();
+    collect_test_sources(&root, &root, &mut sources);
+    sources
+}
+
+fn collect_test_sources(root: &Path, directory: &Path, sources: &mut BTreeMap<String, String>) {
+    let mut entries = fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("read source directory {}: {error}", directory.display()))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|error| panic!("read source entry in {}: {error}", directory.display()));
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .unwrap_or_else(|error| panic!("inspect source path {}: {error}", path.display()));
+        if kind.is_dir() {
+            if !excluded_source_directory(&entry.file_name()) {
+                collect_test_sources(root, &path, sources);
+            }
+            continue;
+        }
+        if !kind.is_file()
+            || !matches!(
+                path.extension().and_then(OsStr::to_str),
+                Some("bash" | "cjs" | "js" | "jsx" | "mjs" | "py" | "rs" | "sh" | "ts" | "tsx")
+            )
+        {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .expect("walked source stays beneath workspace")
+            .to_str()
+            .expect("test source path is UTF-8")
+            .to_owned();
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read test source {relative}: {error}"));
+        let selected = (is_fixture(&relative)
+            || relative
+                .rsplit_once('/')
+                .map_or(relative.as_str(), |(_, name)| name)
+                .contains(".test.")
+            || relative == "xtask/src/app/source/modules.rs")
+            .then_some(text);
+        if let Some(selected) = selected {
+            sources.insert(relative, selected);
+        }
+    }
 }
 
 fn collect_rust_sources(root: &Path, directory: &Path, sources: &mut BTreeMap<String, String>) {
