@@ -63,12 +63,13 @@ export async function installActivityReplay(context) {
     nextAgentProse(lane) {
       return new Promise((resolve) => proseWaiters.push({ lane, resolve }));
     },
-    async injectAgentProse(page, lane, text) {
+    async injectAgentProse(page, lane, text, media) {
       const source = proseFrames.get(lane);
       assert.ok(source, `the route captured an agent prose frame for ${lane}`);
       assert.ok(activeSocket, "the route retains the current browser WebSocket");
       const frame = JSON.parse(JSON.stringify(source));
       frame.message.text = text;
+      if (media !== undefined) frame.message.media = media;
       frame.message.authored = new Date().toISOString();
       frame.message.authored_synthetic = false;
       delete frame.message.observed;

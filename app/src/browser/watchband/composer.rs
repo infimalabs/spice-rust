@@ -172,6 +172,8 @@ fn render_agent_message_card(
                 .expect("message media passed admission before browser rendering")
         })
         .collect::<Vec<_>>();
+    let image_only = markdown_is_image_only(&message.text)
+        || (message.text.trim().is_empty() && !unlinked_media.is_empty());
     html! {
         <article
             key={source_id.clone()}
@@ -179,6 +181,7 @@ fn render_agent_message_card(
             class={classes!(
                 "mosaic-message-card",
                 is_compaction.then_some("mosaic-compaction-card"),
+                image_only.then_some("image-only"),
                 layout.lifecycle.as_str(),
             )}
             aria-label={card_label}
@@ -293,12 +296,14 @@ fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
     html! {
         <div class="message-attachments">
             {for unlinked_media.into_iter().map(|media| html! {
-                <img
-                    src={media.data_url.clone()}
-                    alt={media.name.clone()}
-                    title={media.name.clone()}
-                    data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
-                />
+                <span class="message-image message-attachment" title={format!("Embedded image {}", media.name)}>
+                    <img
+                        src={media.data_url.clone()}
+                        alt={media.name.clone()}
+                        decoding="async"
+                        data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
+                    />
+                </span>
             })}
         </div>
     }
@@ -597,23 +602,160 @@ fn render_markdown(markdown: &str) -> Html {
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
     let mut rendered_tasks = Vec::new();
+    let mut image = None;
     let mut code_block = false;
-    let events = Parser::new_ext(markdown, options).flat_map(|event| {
+    let mut events = Vec::new();
+    for event in Parser::new_ext(markdown, options) {
         let event = sanitize_markdown_event(event);
+        if image.is_some() {
+            match event {
+                MarkdownEvent::End(TagEnd::Image) => {
+                    let image = image.take().expect("an open Markdown image closes once");
+                    events.push(MarkdownEvent::InlineHtml(
+                        render_markdown_image(image).into(),
+                    ));
+                }
+                MarkdownEvent::Text(text) | MarkdownEvent::Code(text) => {
+                    image
+                        .as_mut()
+                        .expect("Markdown image alt text has an open image")
+                        .alt
+                        .push_str(&text);
+                }
+                MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => image
+                    .as_mut()
+                    .expect("Markdown image break has an open image")
+                    .alt
+                    .push(' '),
+                _ => {}
+            }
+            continue;
+        }
+        if let MarkdownEvent::Start(Tag::Image {
+            dest_url, title, ..
+        }) = event
+        {
+            image = Some(MarkdownImage {
+                source: dest_url,
+                title,
+                alt: String::new(),
+            });
+            continue;
+        }
         match &event {
             MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
             _ => {}
         }
         if code_block {
-            vec![event]
+            events.push(event);
         } else {
-            inline_task_chips(event, &mut rendered_tasks)
+            events.extend(inline_task_chips(event, &mut rendered_tasks));
         }
-    });
+    }
     let mut output = String::new();
-    pulldown_cmark::html::push_html(&mut output, events);
+    pulldown_cmark::html::push_html(&mut output, events.into_iter());
     Html::from_html_unchecked(AttrValue::from(output))
+}
+
+struct MarkdownImage<'a> {
+    source: CowStr<'a>,
+    title: CowStr<'a>,
+    alt: String,
+}
+
+fn render_markdown_image(image: MarkdownImage<'_>) -> String {
+    let source = image.source.trim();
+    let alt = image.alt.trim();
+    let alt = if alt.is_empty() { "image" } else { alt };
+    let escaped_alt = escaped_html(alt);
+    if source.is_empty() {
+        return format!(
+            "<span class=\"message-image message-image--unsupported\" role=\"img\" \
+             aria-label=\"Image unavailable: {escaped_alt}\">[image: {escaped_alt}]</span>"
+        );
+    }
+
+    let escaped_source = escaped_href(source);
+    let lower_source = source.to_ascii_lowercase();
+    if lower_source.starts_with("data:image/") {
+        return format!(
+            "<span class=\"message-image\" title=\"Embedded image\">\
+             <img src=\"{escaped_source}\" alt=\"{escaped_alt}\" decoding=\"async\"></span>"
+        );
+    }
+
+    let label = escaped_html(&format!("Open {alt} full size"));
+    let title = if image.title.trim().is_empty() {
+        label.clone()
+    } else {
+        escaped_html(image.title.trim())
+    };
+    format!(
+        "<a class=\"message-image\" href=\"{escaped_source}\" title=\"{title}\" \
+         aria-label=\"{label}\" target=\"_blank\" rel=\"noopener\">\
+         <img src=\"{escaped_source}\" alt=\"{escaped_alt}\" decoding=\"async\"></a>"
+    )
+}
+
+fn escaped_href(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'!' | b'#'..=b'%' | b'('..=b';' | b'=' | b'?' | b'@' | b'^' | b'_' | b'~'
+            )
+        {
+            escaped.push(char::from(byte));
+        } else if byte == b'&' {
+            escaped.push_str("&amp;");
+        } else if byte == b'\'' {
+            escaped.push_str("&#x27;");
+        } else {
+            escaped.push('%');
+            escaped.push(char::from(HEX[usize::from(byte >> 4)]));
+            escaped.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+    }
+    escaped
+}
+
+fn escaped_html(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
+fn markdown_is_image_only(markdown: &str) -> bool {
+    let mut depth = 0_u32;
+    let mut images = 0_u32;
+    for event in Parser::new_ext(markdown, Options::ENABLE_GFM) {
+        match event {
+            MarkdownEvent::Start(Tag::Image { .. }) => {
+                depth = depth.saturating_add(1);
+                images = images.saturating_add(1);
+            }
+            MarkdownEvent::End(TagEnd::Image) => depth = depth.saturating_sub(1),
+            MarkdownEvent::Start(Tag::Paragraph) | MarkdownEvent::End(TagEnd::Paragraph) => {}
+            MarkdownEvent::Text(text) if depth > 0 || text.trim().is_empty() => {}
+            MarkdownEvent::Code(_) if depth > 0 => {}
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {}
+            MarkdownEvent::Start(_) | MarkdownEvent::End(_) if depth > 0 => {}
+            _ => return false,
+        }
+    }
+    images > 0 && depth == 0
 }
 
 fn inline_task_chips<'a>(
@@ -716,7 +858,7 @@ fn sanitize_markdown_url(url: CowStr<'_>, image: bool) -> CowStr<'_> {
     let candidate = url.trim().to_ascii_lowercase();
     let safe_scheme = candidate.starts_with("https://")
         || candidate.starts_with("http://")
-        || candidate.starts_with("mailto:")
+        || (!image && candidate.starts_with("mailto:"))
         || (image && candidate.starts_with("data:image/"));
     let relative = !candidate.starts_with("//")
         && !candidate

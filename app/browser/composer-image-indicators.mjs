@@ -26,12 +26,17 @@ export async function pasteImages(composer, names) {
 /// their classes. Pinning the literals instead would pass even after the card
 /// treatment moved on, which is the parity this acceptance is about.
 async function messageCardTreatment(page) {
-  return page.evaluate(() => {
+  return page.evaluate(async (encoded) => {
     const host = document.createElement("div");
     host.className = "message-attachments";
+    const preview = document.createElement("span");
+    preview.className = "message-image message-attachment";
     const image = document.createElement("img");
-    host.append(image);
+    image.src = `data:image/png;base64,${encoded}`;
+    preview.append(image);
+    host.append(preview);
     document.body.append(host);
+    await image.decode();
     const style = getComputedStyle(image);
     const read = {
       width: image.getBoundingClientRect().width,
@@ -42,7 +47,7 @@ async function messageCardTreatment(page) {
     };
     host.remove();
     return read;
-  });
+  }, PIXEL_PNG);
 }
 
 /// `composer-shard-image-indicator` is the heading's reserved name for a draft

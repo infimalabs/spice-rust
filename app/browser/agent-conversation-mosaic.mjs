@@ -510,10 +510,9 @@ function assertUnmoved(armed, finished, label) {
   );
 }
 
-async function submitAssistantActivity(page, console, lane, text, activityReplay) {
-  await activityReplay.injectAgentProse(page, lane, text);
-  return console.locator(`[data-card-kind="agent-message"][data-agent-lane="${lane}"]`)
-    .filter({ hasText: text.split("\n", 1)[0] });
+async function submitAssistantActivity(page, console, lane, text, activityReplay, media) {
+  const injected = await activityReplay.injectAgentProse(page, lane, text, media);
+  return console.locator(`[data-mosaic-card-key="${injected.key}"]`);
 }
 
 async function settleMosaicActivity(page, plane) {
@@ -568,6 +567,7 @@ export async function assertPersistentMosaic(
   plane,
   member,
   activityReplay,
+  artifacts,
 ) {
   await settleMosaicActivity(page, plane);
   const firstCard = console.locator('.mosaic-message-card[data-layout-phase="committed"]').first();
@@ -753,6 +753,8 @@ export async function assertPersistentMosaic(
   const origin = new URL(page.url()).origin;
   for (const outcome of ["load", "error"]) {
     const url = `${origin}/mosaic-${outcome}-${crypto.randomUUID()}.png`;
+    const alt = `${outcome} "quoted" & safe`;
+    const markdownAlt = `${outcome} \`"quoted"\` & safe`;
     let release;
     let arrived;
     const released = new Promise((resolve) => { release = resolve; });
@@ -766,7 +768,7 @@ export async function assertPersistentMosaic(
         await route.fulfill({ contentType: "image/png", body: "not an image" });
       }
     });
-    const text = `late Mosaic image ${outcome}\n\n![${outcome}](${url})`;
+    const text = `late Mosaic image ${outcome}\n\n![${markdownAlt}](${url})`;
     const pendingProbe = await armPlacementProbe(plane);
     const card = await submitAssistantActivity(page, console, member.lane, text, activityReplay);
     await card.waitFor({ state: "attached", timeout: 10_000 });
@@ -777,6 +779,31 @@ export async function assertPersistentMosaic(
         .find((candidate) => candidate.dataset.mosaicCardKey === key)
         ?.dataset.layoutPhase === "committed",
       await card.getAttribute("data-mosaic-card-key"));
+    const opening = await card.locator(".message-image").evaluate((preview) => {
+      const image = preview.querySelector("img");
+      const box = image.getBoundingClientRect();
+      return {
+        alt: image.getAttribute("alt"),
+        height: box.height,
+        href: preview.getAttribute("href"),
+        label: preview.getAttribute("aria-label"),
+        rel: preview.getAttribute("rel"),
+        tag: preview.tagName,
+        target: preview.getAttribute("target"),
+        width: box.width,
+      };
+    });
+    assert.equal(opening.alt, alt, `remote ${outcome} image preserves escaped alt text`);
+    assert.equal(opening.label, `Open ${alt} full size`,
+      `remote ${outcome} image exposes one escaped accessible action`);
+    assert.equal(opening.tag, "A", `remote ${outcome} image exposes a full-size link`);
+    assert.equal(opening.href, url, `remote ${outcome} image opens its sanitized source`);
+    assert.equal(opening.target, "_blank", `remote ${outcome} image opens separately`);
+    assert.ok(opening.rel.split(/\s+/).includes("noopener"),
+      `remote ${outcome} image isolates its opener`);
+    assert.equal(opening.height, 140, `remote ${outcome} preview uses the ordinary letterbox`);
+    assert.ok(opening.width <= (await card.boundingBox()).width,
+      `remote ${outcome} preview remains inside its card`);
     const pending = await finishPlacementProbe(plane, pendingProbe);
     assert.ok(pending.retained, `pending image ${outcome} retains untouched card nodes`);
     assert.deepEqual(pending.writes, [], `pending image ${outcome} writes no untouched placement`);
@@ -810,6 +837,14 @@ export async function assertPersistentMosaic(
     assert.equal(resolved.commits, pending.commits + 1, `late image ${outcome} corrects once`);
     assert.equal(await card.locator("img").getAttribute("data-mosaic-image-state"),
       outcome === "load" ? "loaded" : "error");
+    const resolvedImage = await card.locator("img").evaluate((image) => {
+      const box = image.getBoundingClientRect();
+      return { height: box.height, width: box.width };
+    });
+    assert.equal(resolvedImage.height, 140,
+      `resolved ${outcome} preview retains the ordinary letterbox height`);
+    assert.ok(resolvedImage.width >= 100 && resolvedImage.width <= (await card.boundingBox()).width,
+      `resolved ${outcome} preview stays visibly bounded: ${JSON.stringify(resolvedImage)}`);
     assert.equal(
       await card.getAttribute("data-mosaic-card-key"),
       cardKey,
@@ -840,6 +875,136 @@ export async function assertPersistentMosaic(
   assert.ok(ready.retained, "an already-complete image retains untouched card nodes");
   assert.deepEqual(ready.writes, [], "an already-complete image writes no untouched placement");
   assert.equal(ready.commits, readyProbe.commits + 1, "an already-complete image corrects once");
+
+  const embedded = await readyCard.locator(".message-image").evaluate((preview) => ({
+    height: preview.querySelector("img").getBoundingClientRect().height,
+    links: preview.closest("a") === null ? 0 : 1,
+    tag: preview.tagName,
+  }));
+  assert.deepEqual(
+    embedded,
+    { height: 140, links: 0, tag: "SPAN" },
+    "an embedded data image stays bounded and noninteractive",
+  );
+
+  const largeCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    `![large](data:image/png;base64,${PIXEL_PNG})`,
+    activityReplay,
+  );
+  await waitForPage(page, "image-only preview commits at its large tier", TRANSITION_MS,
+    (key) => {
+      const card = document.querySelector(`[data-mosaic-card-key="${key}"]`);
+      return card?.dataset.layoutPhase === "committed"
+        && card.querySelector("img")?.dataset.mosaicImageState === "loaded";
+    }, await largeCard.getAttribute("data-mosaic-card-key"));
+  const large = await largeCard.evaluate((card) => ({
+    height: card.querySelector("img").getBoundingClientRect().height,
+    imageOnly: card.classList.contains("image-only"),
+    tag: card.querySelector(".message-image").tagName,
+  }));
+  assert.deepEqual(
+    large,
+    { height: 252, imageOnly: true, tag: "SPAN" },
+    "an image-only data preview uses the large noninteractive letterbox",
+  );
+
+  const multiCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    `![one](data:image/png;base64,${PIXEL_PNG})\n![two](data:image/png;base64,${PIXEL_PNG})`,
+    activityReplay,
+  );
+  await multiCard.locator(".message-image").nth(1).waitFor({ timeout: TRANSITION_MS });
+  const multiGeometry = async () => multiCard.evaluate((card) => {
+    const stack = card.querySelector(".message-body p");
+    const box = stack.getBoundingClientRect();
+    return {
+      display: getComputedStyle(stack).display,
+      imageOnly: card.classList.contains("image-only"),
+      images: [...stack.querySelectorAll("img")].map((image) => {
+        const imageBox = image.getBoundingClientRect();
+        return { height: imageBox.height, left: imageBox.left, right: imageBox.right };
+      }),
+      overflowX: getComputedStyle(stack).overflowX,
+      stack: { left: box.left, right: box.right },
+    };
+  });
+  const multiDesktop = await multiGeometry();
+  assert.equal(multiDesktop.display, "flex", "multiple previews share one intentional row");
+  assert.equal(multiDesktop.overflowX, "auto", "multiple previews own bounded horizontal overflow");
+  assert.equal(multiDesktop.imageOnly, true, "a pure preview stack receives the large tier");
+  assert.ok(multiDesktop.images.every((image) => image.height === 252),
+    `each image-only preview uses the large letterbox: ${JSON.stringify(multiDesktop)}`);
+
+  const priorViewport = page.viewportSize();
+  assert.ok(priorViewport, "the Mosaic page has a viewport to restore");
+  await page.setViewportSize({ width: 390, height: 720 });
+  await waitForPage(page, "mobile image-preview width commits", TRANSITION_MS, () => (
+    [...document.querySelectorAll(".lane-mosaic-plane")].every((candidate) => (
+      candidate.dataset.measurementPhase === "ready"
+        && Math.abs(Number(candidate.dataset.committedWidth) - candidate.clientWidth) <= 1
+    ))
+  ));
+  const multiMobile = await multiGeometry();
+  assert.ok(
+    multiMobile.images.every((image) => (
+      image.left >= multiMobile.stack.left - 0.5 && image.right <= multiMobile.stack.right + 0.5
+    )),
+    `mobile image previews remain within their bounded row: ${JSON.stringify(multiMobile)}`,
+  );
+  await multiCard.screenshot({
+    path: join(artifacts, "canvas-mosaic-image-previews-mobile.png"),
+  });
+  await page.setViewportSize(priorViewport);
+  await waitForPage(page, "desktop image-preview width restores", TRANSITION_MS, () => (
+    [...document.querySelectorAll(".lane-mosaic-plane")].every((candidate) => (
+      candidate.dataset.measurementPhase === "ready"
+        && Math.abs(Number(candidate.dataset.committedWidth) - candidate.clientWidth) <= 1
+    ))
+  ));
+  await multiCard.screenshot({
+    path: join(artifacts, "canvas-mosaic-image-previews-desktop.png"),
+  });
+
+  const attachmentCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    "unlinked attachment preview",
+    activityReplay,
+    [{
+      name: "detached.png",
+      content_type: "image/png",
+      data_url: `data:image/png;base64,${PIXEL_PNG}`,
+    }],
+  );
+  await attachmentCard.locator(".message-attachment img").waitFor({ timeout: TRANSITION_MS });
+  const attachment = await attachmentCard.locator(".message-attachment").evaluate((preview) => ({
+    height: preview.querySelector("img").getBoundingClientRect().height,
+    identity: preview.querySelector("img").dataset.mediaIdentity,
+    links: preview.closest("a") === null ? 0 : 1,
+    tag: preview.tagName,
+  }));
+  assert.equal(attachment.height, 140, "an unlinked attachment uses the ordinary letterbox");
+  assert.ok(attachment.identity, "an unlinked attachment retains admitted media identity");
+  assert.equal(attachment.links, 0, "a data attachment does not claim a blocked opening action");
+  assert.equal(attachment.tag, "SPAN", "a data attachment degrades to a semantic preview wrapper");
+
+  const unsupportedCard = await submitAssistantActivity(
+    page,
+    console,
+    member.lane,
+    "![unsafe](javascript:alert(1))",
+    activityReplay,
+  );
+  const unsupported = unsupportedCard.locator(".message-image--unsupported");
+  await unsupported.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await unsupportedCard.locator("a, img").count(), 0,
+    "an unsupported image source renders no navigation or fetch target");
   await assertMosaicLattice(page, true);
 }
 

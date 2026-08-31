@@ -65,12 +65,56 @@
 .markdown-body th,
 .markdown-body td { padding: .35em .45em; border: 1px solid var(--line); text-align: left; }
 .markdown-body a { color: var(--accent); }
-.markdown-body img {
-  display: block; max-width: 100%; max-height: 20rem; margin: .5em 0;
-  border: 1px solid var(--line); border-radius: 5px; object-fit: contain;
+.message-image {
+  display: inline-grid;
+  flex: 0 0 auto;
+  max-width: 100%;
+  place-items: center;
+  color: var(--muted);
+  text-decoration: none;
 }
-.markdown-body img[data-mosaic-image-state="pending"] {
-  width: 100%;
+.message-image img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: var(--mosaic-image-height, 8.75rem);
+  max-height: var(--mosaic-image-height, 8.75rem);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--page);
+  object-fit: contain;
+}
+.message-image:focus-visible img {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.message-image--unsupported {
+  min-height: 2.5rem;
+  padding: .5rem .75rem;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+}
+.markdown-body .message-image { margin: .5em 0; }
+.markdown-body p:has(> .message-image + .message-image) {
+  display: flex;
+  flex-flow: row nowrap;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.markdown-body p:has(> .message-image + .message-image) .message-image {
+  flex: 0 1 min(9.75rem, 100%);
+  max-width: min(9.75rem, 100%);
+  min-width: 0;
+}
+.markdown-body p:has(> .message-image + .message-image) .message-image img {
+  max-width: 9.75rem;
+}
+.message-image img[data-mosaic-image-state="pending"],
+.message-image img[data-mosaic-image-state="error"] {
+  width: var(--mosaic-image-height, 8.75rem);
   height: 8.75rem;
 }
 .composer-send {
@@ -81,6 +125,8 @@
 }
 
 .mosaic-message-card {
+  --mosaic-image-height: 8.75rem;
+  --mosaic-image-large-height: 15.75rem;
   display: inline-grid;
   width: 100%;
   gap: 12px;
@@ -146,13 +192,34 @@
 }
 .mosaic-compaction-age { color: var(--muted); font-weight: 500; }
 
-.message-attachments { display: flex; flex-wrap: wrap; gap: 7px; }
-.message-attachments img {
-  width: 72px;
-  height: 54px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  object-fit: cover;
+.message-attachments {
+  display: flex;
+  flex-flow: row nowrap;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.message-attachments .message-image {
+  flex: 0 1 min(9.75rem, 100%);
+  max-width: min(9.75rem, 100%);
+  min-width: 0;
+}
+.message-attachments .message-image img { max-width: 9.75rem; }
+.mosaic-message-card.image-only .message-body p:has(> .message-image),
+.mosaic-message-card.image-only .message-attachments { margin: 0; }
+.mosaic-message-card.image-only .message-body p .message-image,
+.mosaic-message-card.image-only .message-attachments .message-image {
+  flex: 1 1 0;
+  max-width: min(100%, 56rem);
+  min-width: 0;
+}
+.mosaic-message-card.image-only .message-image img {
+  width: auto;
+  max-width: 100%;
+  height: var(--mosaic-image-large-height);
+  max-height: var(--mosaic-image-large-height);
 }
 
 .mosaic-message-empty {
@@ -666,7 +733,7 @@
   opacity: .7;
 }
 
-/* A third of the message-card thumbnail, keeping its border, radius, and crop
+/* A third of the message-card thumbnail, keeping its border, radius, and fit
    so a draft image reads as the same object at heading scale. The strip is
    bounded and scrolls, so attachments never push the prose out of the row. An
    empty strip stays laid out at zero width rather than `display: none`: it owns
@@ -694,7 +761,7 @@
   height: 18px;
   border: 1px solid var(--line);
   border-radius: 5px;
-  object-fit: cover;
+  object-fit: contain;
 }
 .composer-shard-image-indicator:hover img { border-color: var(--accent); }
 .composer-shard-heading > button,
