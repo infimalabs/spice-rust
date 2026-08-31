@@ -2,9 +2,9 @@ use std::cell::Cell;
 
 use app::mosaic::{
     Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, MIN_CARD_ROWS, Reservation,
-    TALL_THRESHOLD_PX, TRACK_COUNT, burial_depth, content_box_width, css_row_start, extent,
-    full_replay, pack, pane_is_scrolled, replay_liquid, resolve_frozen_resize, ripple_rows,
-    rows_for, scroll_compensation, span_candidates,
+    TALL_THRESHOLD_PX, TRACK_COUNT, boundary_rows_for, burial_depth, content_box_width,
+    css_row_start, extent, full_replay, pack, pane_is_scrolled, replay_liquid,
+    resolve_frozen_resize, ripple_rows, rows_for, scroll_compensation, span_candidates,
 };
 
 fn candidates(span: usize, rows: i32) -> Vec<Candidate> {
@@ -58,6 +58,16 @@ fn short_cards_keep_three_vertical_modules_without_rounding_down_long_cards() {
     assert_eq!(MIN_CARD_ROWS, 3);
     assert_eq!(rows_for(1.0, geometry.gap, geometry.module), 3);
     assert_eq!(rows_for(240.0, geometry.gap, geometry.module), 5);
+}
+
+#[test]
+fn compact_boundaries_reserve_measured_height_without_the_card_minimum() {
+    let narrow = Geometry::new(16.0, 300.0);
+    let wide = Geometry::new(16.0, 1440.0);
+
+    assert_eq!(boundary_rows_for(14.0, narrow.gap, narrow.module), 2);
+    assert_eq!(boundary_rows_for(14.0, wide.gap, wide.module), 1);
+    assert_eq!(rows_for(14.0, wide.gap, wide.module), MIN_CARD_ROWS);
 }
 
 #[test]

@@ -188,6 +188,16 @@ pub fn rows_for(px: f64, gap: i32, module: i32) -> i32 {
     MIN_CARD_ROWS.max(((px + f64::from(gap)) / f64::from(module)).ceil() as i32)
 }
 
+/// Convert a measured chronological divider into compact vertical modules.
+///
+/// Dividers are labels rather than cards, so they need their measured height
+/// but not the ordinary three-module reading floor.
+#[must_use]
+pub fn boundary_rows_for(px: f64, gap: i32, module: i32) -> i32 {
+    let module = module.max(1);
+    1.max(((px + f64::from(gap)) / f64::from(module)).ceil() as i32)
+}
+
 /// Build the base candidate and, only for a tall base measurement, one wide candidate.
 pub fn span_candidates(
     geometry: &Geometry,

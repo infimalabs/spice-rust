@@ -885,7 +885,11 @@ fn measure_element(
         let height = measure(crate::mosaic::TRACK_COUNT);
         vec![crate::mosaic::Candidate {
             span: crate::mosaic::TRACK_COUNT,
-            rows: crate::mosaic::rows_for(height, geometry.gap, geometry.module),
+            rows: if activity.is_boundary() {
+                crate::mosaic::boundary_rows_for(height, geometry.gap, geometry.module)
+            } else {
+                crate::mosaic::rows_for(height, geometry.gap, geometry.module)
+            },
         }]
     } else {
         crate::mosaic::span_candidates(&geometry, measure)
