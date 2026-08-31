@@ -228,17 +228,18 @@ export async function seatAgentTeam(
   };
 }
 
-/// Seat one lineage directly under automatic task policy.
+/// Seat one two-member lineage directly under automatic task policy.
 ///
 /// Unlike the conversation fixture, this lane never transitions from an
-/// already-running Steer process into task work. Its first rendered composer
-/// and automatic lease therefore belong to one startup generation.
-export async function seatLeaseAgent(page, fixture, worktree) {
+/// already-running Steer process into task work. Their first rendered composers
+/// and automatic leases therefore belong to one startup generation.
+export async function seatLeaseAgent(page, fixture, worktrees) {
+  const [expiryWorktree, releaseWorktree] = worktrees;
   const console = page.locator('[data-pane="agent-console"]');
   await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Info/ }).click();
   await console.getByLabel("Name").fill(agentNames[0]);
-  await console.getByLabel("Worktree").fill(worktree);
+  await console.getByLabel("Worktree").fill(expiryWorktree);
   await console.getByLabel("Life").fill("steer");
   await assignTeamLaneIds(page);
   await console.getByLabel("Vendor").fill("Claude");
@@ -246,28 +247,46 @@ export async function seatLeaseAgent(page, fixture, worktree) {
   await waitForElement(page, "automatic lease agent renders", AGENT_SEAT_MS,
     console.locator(".team-detail-card").first());
 
+  await console.getByLabel("Name").fill(agentNames[1]);
+  await console.getByLabel("Worktree").fill(releaseWorktree);
+  await console.getByLabel("Life").fill("steer");
+  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+  await waitForElement(page, "explicit release lease agent renders", AGENT_SEAT_MS,
+    console.locator(".team-detail-card").nth(1));
+
   const lanes = await reply(fixture, ["lane"]);
-  const seated = lanes.body.lanes.find((lane) => lane.worktree === worktree);
-  assert.ok(seated, "the automatic lease agent has one durable standing");
-  assert.equal(seated.lane, teamLaneIds[0], "the lease fixture fixes its lane identity");
-  await reply(fixture, ["lane", "wake", seated.lane]);
-  for (const title of ["Lease provenance witness", "Lease allocation companion"]) {
-    await replyAsLane(fixture, seated.lane, [
-      "task", "add", title,
+  const seated = [expiryWorktree, releaseWorktree].map(
+    (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
+  );
+  assert.ok(seated.every(Boolean), "both lease agents have durable standings");
+  assert.deepEqual(
+    seated.map((lane) => lane.lane),
+    teamLaneIds.slice(0, 2),
+    "the lease fixture fixes both lane identities",
+  );
+  for (const [index, lane] of seated.entries()) {
+    await reply(fixture, ["lane", "wake", lane.lane]);
+    await replyAsLane(fixture, lane.lane, [
+      "task", "add", index === 0 ? "Lease provenance witness" : "Explicit release witness",
       "--project", "app.browser",
       "--acceptance", "the automatic lease remains observable in Canvas",
     ]);
+    await reply(fixture, ["lane", "drain", lane.lane]);
   }
-  await reply(fixture, ["lane", "drain", seated.lane]);
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await console.locator('.team-lifetime input[type="range"]').fill("2");
   await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
-  await waitForLeaseAgentOccupant(fixture, worktree, AGENT_SEAT_MS * 2);
+  for (const worktree of [expiryWorktree, releaseWorktree]) {
+    await waitForLeaseAgentOccupant(fixture, worktree, AGENT_SEAT_MS * 2);
+  }
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Compose/ }).click();
-  await console.locator(`.team-agent[data-agent-lane="${seated.lane}"]`).waitFor();
-  return { console, lane: seated.lane };
+  for (const lane of seated) {
+    await console.locator(`.team-agent[data-agent-lane="${lane.lane}"]`).waitFor();
+  }
+  return { console, lanes: seated.map((lane) => lane.lane) };
 }
 
 async function waitForLeaseAgentOccupant(fixture, worktree, timeout) {

@@ -38,6 +38,64 @@ pub const SHORT_LEN: usize = 8;
 /// screen, so the width is the band's property rather than the renderer's.
 pub const FIELD_BUDGET: usize = 22;
 
+/// Render state for one independently admitted section of the team Tasks view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeamTaskSectionState {
+    TaskSnapshotUnavailable,
+    NoActiveTasks,
+    ActiveTasks,
+    DirectionSnapshotUnavailable,
+    NoQueuedDirection,
+    QueuedDirection,
+}
+
+impl TeamTaskSectionState {
+    /// State of the board-backed active-task section.
+    #[must_use]
+    pub const fn active(board_available: bool, count: usize) -> Self {
+        if !board_available {
+            Self::TaskSnapshotUnavailable
+        } else if count == 0 {
+            Self::NoActiveTasks
+        } else {
+            Self::ActiveTasks
+        }
+    }
+
+    /// State of the inbox-backed direction section.
+    #[must_use]
+    pub const fn direction(inbox_available: bool, count: usize) -> Self {
+        if !inbox_available {
+            Self::DirectionSnapshotUnavailable
+        } else if count == 0 {
+            Self::NoQueuedDirection
+        } else {
+            Self::QueuedDirection
+        }
+    }
+
+    /// Exact empty or unavailable copy, absent when rows are ready.
+    #[must_use]
+    pub const fn message(self) -> Option<&'static str> {
+        match self {
+            Self::TaskSnapshotUnavailable => Some("Task snapshot unavailable."),
+            Self::NoActiveTasks => Some("No active tasks for this team."),
+            Self::DirectionSnapshotUnavailable => Some("Direction snapshot unavailable."),
+            Self::NoQueuedDirection => Some("No queued direction."),
+            Self::ActiveTasks | Self::QueuedDirection => None,
+        }
+    }
+
+    /// Whether assistive technology should announce a missing projection.
+    #[must_use]
+    pub const fn unavailable(self) -> bool {
+        matches!(
+            self,
+            Self::TaskSnapshotUnavailable | Self::DirectionSnapshotUnavailable
+        )
+    }
+}
+
 /// One lane's complete standing, joined from the three answers that carry it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Standing {
