@@ -444,13 +444,12 @@ fn lease_instant(
 /// the dealing and not in the size.
 ///
 /// So the colour is not what tells two agents apart and no surface may read it
-/// that way. A card names its lane in `data-agent-lane`, and visibly shows the
-/// short author/lane pair beside the worktree leaf when it carries an agent's
-/// message or the short lane alone when it carries a directive; those are the
-/// attribution, and they stay distinct when the colours do not. What the colour
-/// buys is continuity across a redraw, a reorder, and a reseat — which a slot
-/// dealt per lineage could not buy without recolouring a seated member because
-/// a different member arrived.
+/// that way. A card names its lane in `data-agent-lane`, retains the canonical
+/// author/lane and worktree attribution in its accessible label, and visibly
+/// names the configured agent or worktree leaf beside its actions. Those stay
+/// distinct when the colours do not. What the colour buys is continuity across
+/// a redraw, a reorder, and a reseat — which a slot dealt per lineage could not
+/// buy without recolouring a seated member because a different member arrived.
 #[must_use]
 pub fn accent(id: CanonicalUuid) -> usize {
     usize::try_from(id.get().as_u128() % ACCENTS as u128).unwrap_or(0)
@@ -476,7 +475,7 @@ pub fn short(id: CanonicalUuid) -> String {
     id.to_string().chars().take(SHORT_LEN).collect()
 }
 
-/// Visible, colour-independent attribution for one agent-authored card.
+/// Canonical, colour-independent attribution for one agent-authored card.
 ///
 /// The immutable author and lane lead so narrow cards retain the identities
 /// before truncation. The worktree leaf is the human route operators recognize,
@@ -492,6 +491,19 @@ pub fn agent_message_attribution(
     name.map(str::trim)
         .filter(|name| !name.is_empty())
         .map_or_else(|| identity.clone(), |name| format!("{identity} · {name}"))
+}
+
+/// Compact visible identity beside one agent-authored card's actions.
+///
+/// The admitted configured name wins. Without one, the admitted worktree's
+/// basename is the only other valid owner. Returning `None` leaves a violated
+/// admission assumption visible to the renderer instead of fabricating a third
+/// label from lane or author identity.
+#[must_use]
+pub fn agent_message_label<'a>(worktree: &'a str, name: Option<&'a str>) -> Option<&'a str> {
+    name.map(str::trim)
+        .filter(|name| !name.is_empty())
+        .or_else(|| worktree.rsplit('/').find(|part| !part.is_empty()))
 }
 
 /// Widest string [`elapsed_label`] can return, counted in characters.
@@ -699,7 +711,10 @@ pub fn truncate(text: &str, budget: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_LINEAGE_VISUAL_WEIGHT, agent_message_attribution, lineage_visual_weight};
+    use super::{
+        MAX_LINEAGE_VISUAL_WEIGHT, agent_message_attribution, agent_message_label,
+        lineage_visual_weight,
+    };
 
     #[test]
     fn unnamed_agent_attribution_still_names_author_lane_and_worktree() {
@@ -729,6 +744,27 @@ mod tests {
             agent_message_attribution(author, lane, "/fleet/one/spice-rust-z", Some(" Ash "),),
             "11111111/22222222 · spice-rust-z · Ash",
         );
+    }
+
+    #[test]
+    fn message_label_prefers_the_configured_agent_name() {
+        assert_eq!(
+            agent_message_label("/fleet/one/spice-rust-z", Some(" Ash ")),
+            Some("Ash"),
+        );
+    }
+
+    #[test]
+    fn unnamed_message_label_uses_the_worktree_basename() {
+        assert_eq!(
+            agent_message_label("/fleet/one/spice-rust-z/", None),
+            Some("spice-rust-z"),
+        );
+    }
+
+    #[test]
+    fn message_label_refuses_without_a_name_or_worktree_basename() {
+        assert_eq!(agent_message_label("/", Some("  ")), None);
     }
 
     #[test]

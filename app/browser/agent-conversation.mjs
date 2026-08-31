@@ -30,12 +30,18 @@ import { assertAgentPageBottomSpacing } from "./canvas-readiness.mjs";
 const AGENT_SEAT_MS = 15_000;
 
 export { assertMosaicLattice };
-export const agentNames = ["Ava", "Bex", "Cy", "Dee"];
+export const agentNames = ["Ava", "Bex", "Cy"];
+const teamSeatNames = [...agentNames, undefined];
 
 function canonicalAgentAttribution(member) {
   assert.ok(member.occupant, `lane ${member.lane} has an occupant identity`);
-  return `${member.occupant.slice(0, 8)}/${member.lane.slice(0, 8)}`
-    + ` · ${basename(member.worktree)} · ${member.name}`;
+  const identity = `${member.occupant.slice(0, 8)}/${member.lane.slice(0, 8)}`
+    + ` · ${basename(member.worktree)}`;
+  return member.name ? `${identity} · ${member.name}` : identity;
+}
+
+function messageFooterLabel(member) {
+  return member.name ?? basename(member.worktree);
 }
 
 /// The fourth identity ends in 6 rather than 3 on purpose, and tidying it back
@@ -172,7 +178,7 @@ export async function seatAgentTeam(
     "the inherited Info surface keeps the first seat details visible",
   );
   for (const [index, worktree] of teamWorktrees.slice(1).entries()) {
-    await console.getByLabel("Name").fill(agentNames[index + 1]);
+    await console.getByLabel("Name").fill(teamSeatNames[index + 1] ?? "");
     await console.getByLabel("Worktree").fill(worktree);
     await console.getByLabel("Life").fill("steer");
     await console.getByLabel("Vendor").fill("Claude");
@@ -207,7 +213,7 @@ export async function seatAgentTeam(
   assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
   assert.deepEqual(seated.map((lane) => lane.lane), teamLaneIds, "four fixed lane identities render");
   assert.ok(seated.every((lane) => lane.lineage_id === host.lineage_id), "one lineage renders");
-  assert.deepEqual(seated.map((lane) => lane.name), agentNames);
+  assert.deepEqual(seated.map((lane) => lane.name), teamSeatNames);
   assert.ok(seated.every((lane) => lane.vendor === "claude"));
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
   assert.equal(
@@ -612,19 +618,28 @@ export async function assertAgentConversation(
   // colour is decoration and the assertions below are what an operator and a
   // test actually read to tell the two apart. A message card leads with short
   // canonical author/lane identity and a worktree leaf, then keeps the
-  // configured producer name as redundant presentation.
+  // configured producer name or the unnamed lane's worktree basename.
   const messageChrome = await console.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => ({
       lane: card.dataset.agentLane,
       accent: card.dataset.accent,
       producer: card.querySelector(".message-agent-name")?.textContent?.trim() ?? "",
+      producerAria: card.querySelector(".message-agent-name")?.getAttribute("aria-label") ?? "",
     })),
   );
   for (const member of seated) {
-    const expected = canonicalAgentAttribution(member);
+    const expected = messageFooterLabel(member);
+    const attribution = canonicalAgentAttribution(member);
     assert.ok(
       messageChrome.some((card) => card.lane === member.lane && card.producer === expected),
-      `lane ${member.lane} renders its complete canonical attribution`,
+      `lane ${member.lane} renders its configured name or worktree basename`,
+    );
+    assert.ok(
+      messageChrome.some((card) => (
+        card.lane === member.lane
+          && card.producerAria === `Copy agent id for ${attribution}`
+      )),
+      `lane ${member.lane} preserves canonical attribution for its copy control`,
     );
   }
   const sharedSlot = [seated[0].lane, seated[3].lane].map(
@@ -650,7 +665,13 @@ export async function assertAgentConversation(
     expectedActions,
     "assistant cards expose the reference speak, quote, and copy controls",
   );
-  await assertReferenceMessageCard(page, console, actionCard, artifacts, agentNames);
+  await assertReferenceMessageCard(
+    page,
+    console,
+    actionCard,
+    artifacts,
+    seated.map(messageFooterLabel),
+  );
 
   const scroller = plane;
   const compensationViewport = page.viewportSize();
