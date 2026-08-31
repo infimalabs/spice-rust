@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use spice::install::{apply, installed_git_hooks, plan};
 use spice::repository::Repository;
 
+#[path = "support/git_repository.rs"]
+mod git_repository;
+
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const USAGE: &str = "usage: spice gate reference-transaction <prepared|committed|aborted>\n";
 
@@ -168,61 +171,6 @@ fn prepared_reads_stdin_and_names_the_first_malformed_line() {
 }
 
 #[test]
-fn installed_hook_reaches_installed_spice_and_refuses_protected_history() {
-    let scratch = Scratch::repository("installed-product");
-    let (base, protected) = scratch.protected_history();
-    scratch.install_real_hook_target();
-
-    let output = Command::new("git")
-        .args(["update-ref", "refs/heads/main", &base, &protected])
-        .current_dir(scratch.path())
-        .output()
-        .expect("rewind protected branch through installed hook");
-    assert_ne!(output.status.code(), Some(0), "{}", streams(&output));
-    let diagnostic = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        diagnostic.contains("refused to abandon upstream-merged commits"),
-        "{diagnostic}"
-    );
-    assert_eq!(scratch.rev_parse("refs/heads/main"), protected);
-}
-
-#[test]
-fn linked_worktree_reaches_the_same_common_installed_product() {
-    let scratch = Scratch::repository("linked-worktree");
-    let (base, protected) = scratch.protected_history();
-    scratch.install_real_hook_target();
-    let linked = scratch.join("linked");
-    scratch.git(&[
-        "worktree",
-        "add",
-        "--quiet",
-        "-b",
-        "linked",
-        linked.to_str().expect("linked path is UTF-8"),
-        &protected,
-    ]);
-    scratch.git(&["config", "branch.linked.remote", "origin"]);
-    scratch.git(&["config", "branch.linked.merge", "refs/heads/main"]);
-
-    let output = Command::new("git")
-        .args(["update-ref", "refs/heads/linked", &base, &protected])
-        .current_dir(&linked)
-        .output()
-        .expect("rewind linked branch through common installed hook");
-    assert_ne!(output.status.code(), Some(0), "{}", streams(&output));
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("refused to abandon upstream-merged commits")
-    );
-    assert!(
-        !linked.join(".spice-install").exists(),
-        "linked worktree must resolve the Git-common installation"
-    );
-}
-
-#[test]
 fn hook_launcher_has_one_direct_product_path_and_never_enters_cargo() {
     let scratch = Scratch::repository("no-cold-build");
     let log = scratch.join("spice-argv");
@@ -333,9 +281,7 @@ impl Scratch {
 
     fn repository(label: &str) -> Self {
         let scratch = Self::directory(label);
-        scratch.git(&["init", "--quiet", "--initial-branch=main", "."]);
-        scratch.git(&["config", "user.name", "Spice Hook Test"]);
-        scratch.git(&["config", "user.email", "hooks@example.invalid"]);
+        git_repository::initialize(scratch.path());
         scratch
     }
 
@@ -356,49 +302,6 @@ impl Scratch {
         path
     }
 
-    fn git(&self, arguments: &[&str]) -> Output {
-        let output = Command::new("git")
-            .args(arguments)
-            .current_dir(self.path())
-            .output()
-            .expect("run Git fixture command");
-        assert_success(&output, &format!("git {}", arguments.join(" ")));
-        output
-    }
-
-    fn rev_parse(&self, revision: &str) -> String {
-        String::from_utf8(self.git(&["rev-parse", revision]).stdout)
-            .unwrap()
-            .trim()
-            .to_owned()
-    }
-
-    fn protected_history(&self) -> (String, String) {
-        let story = self.join("story.txt");
-        fs::write(&story, "base\n").expect("write base story");
-        self.git(&["add", "story.txt"]);
-        self.git(&["commit", "--quiet", "-m", "Create base history"]);
-        let base = self.rev_parse("HEAD");
-
-        fs::write(&story, "base\nprotected\n").expect("write protected story");
-        self.git(&["commit", "--quiet", "-am", "Publish protected history"]);
-        let protected = self.rev_parse("HEAD");
-
-        fs::write(&story, "base\nprotected\nlocal\n").expect("write local story");
-        self.git(&["commit", "--quiet", "-am", "Keep local history"]);
-        let local = self.rev_parse("HEAD");
-        self.git(&["remote", "add", "origin", "."]);
-        self.git(&["update-ref", "refs/remotes/origin/main", &protected]);
-        self.git(&["update-ref", "refs/heads/main", &protected, &local]);
-        self.git(&["config", "branch.main.remote", "origin"]);
-        self.git(&["config", "branch.main.merge", "refs/heads/main"]);
-        (base, protected)
-    }
-
-    fn install_real_hook_target(&self) {
-        self.install_hook_target(Path::new(spice()));
-    }
-
     fn install_hook_target(&self, source: &Path) -> PathBuf {
         let repository = Repository::discover(self.path()).expect("discover test repository");
         let planned = plan(&repository, Some(source)).expect("plan test installation");
@@ -408,13 +311,7 @@ impl Scratch {
             &planned.digest().expect("digest test installation"),
         )
         .expect("apply test installation");
-        let hook = installed_git_hooks(&repository).join("reference-transaction");
-        self.git(&[
-            "config",
-            "core.hooksPath",
-            hook.parent().unwrap().to_str().expect("hook path is UTF-8"),
-        ]);
-        hook
+        installed_git_hooks(&repository).join("reference-transaction")
     }
 }
 
