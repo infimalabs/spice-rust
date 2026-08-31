@@ -543,6 +543,39 @@ async function assertImagePreview(preview, label, expectedHeight) {
   assert.equal(observed.maxHeight, `${expectedHeight}px`, `${label} exposes a stable computed cap`);
 }
 
+async function imageOnlyTierGeometry(card) {
+  return card.evaluate((element) => {
+    const body = element.querySelector(".message-body");
+    const stacks = [...body.querySelectorAll(":scope > p.message-image-stack")];
+    const cardBox = element.getBoundingClientRect();
+    const bodyBox = body.getBoundingClientRect();
+    const stackBox = stacks[0]?.getBoundingClientRect();
+    return {
+      stacks: stacks.length,
+      cardHeight: cardBox.height,
+      cardScrollHeight: element.scrollHeight,
+      bodyHeight: bodyBox.height,
+      stackHeight: stackBox?.height,
+      contained: Boolean(stackBox)
+        && stackBox.top >= bodyBox.top - 1
+        && stackBox.bottom <= bodyBox.bottom + 1
+        && bodyBox.top >= cardBox.top - 1
+        && bodyBox.bottom <= cardBox.bottom + 1,
+    };
+  });
+}
+
+function assertOneImageOnlyTier(reference, observed, label) {
+  assert.equal(observed.stacks, 1, `${label} renders exactly one card-wide image stack`);
+  assert.ok(observed.contained, `${label} keeps the image tier inside its body and card`);
+  assert.ok(Math.abs(observed.stackHeight - 252) <= 1,
+    `${label} has one 252px stack: ${JSON.stringify(observed)}`);
+  assert.ok(observed.bodyHeight <= reference.bodyHeight + 1,
+    `${label} body does not exceed one image tier: ${JSON.stringify({ reference, observed })}`);
+  assert.ok(observed.cardScrollHeight <= reference.cardScrollHeight + 1,
+    `${label} card content does not sum image tiers: ${JSON.stringify({ reference, observed })}`);
+}
+
 async function assertFullSizeTarget(preview, label, expectedHref) {
   assert.equal(await preview.getAttribute("target"), "_blank", `${label} opens in a new tab`);
   assert.equal(await preview.getAttribute("rel"), "noopener", `${label} isolates its opener`);
@@ -914,6 +947,7 @@ export async function assertPersistentMosaic(
     "a pure image message receives the large preview tier",
   );
   await assertImagePreview(imageOnlyCard.locator(".message-image"), "image-only preview", 252);
+  const imageOnlyGeometry = await imageOnlyTierGeometry(imageOnlyCard);
 
   const multiImageCard = await submitAssistantActivity(
     page,
@@ -921,12 +955,13 @@ export async function assertPersistentMosaic(
     member.lane,
     ["one", "two", "three"].map((name) => (
       `![${name}](data:image/png;base64,${PIXEL_PNG})`
-    )).join(" "),
+    )).join("\n\n"),
     activityReplay,
   );
   await multiImageCard.waitFor({ state: "attached", timeout: 10_000 });
   const multiPreviews = multiImageCard.locator("p.message-image-stack > .message-image");
-  assert.equal(await multiPreviews.count(), 3, "a multi-image paragraph keeps one intentional stack");
+  assert.equal(await multiPreviews.count(), 3,
+    "blank-line-separated images retain every preview in one intentional stack");
   const multiGeometry = await multiPreviews.evaluateAll((previews) => previews.map((preview) => {
     const box = preview.getBoundingClientRect();
     return { top: box.top, left: box.left, right: box.right };
@@ -934,6 +969,11 @@ export async function assertPersistentMosaic(
   assert.ok(multiGeometry.every((box) => Math.abs(box.top - multiGeometry[0].top) <= 1),
     `multi-image previews share one row: ${JSON.stringify(multiGeometry)}`);
   await assertImagePreview(multiPreviews.first(), "multi-image preview", 252);
+  assertOneImageOnlyTier(
+    imageOnlyGeometry,
+    await imageOnlyTierGeometry(multiImageCard),
+    "blank-line-separated desktop previews",
+  );
 
   const unsupportedCard = await submitAssistantActivity(
     page,
@@ -977,6 +1017,11 @@ export async function assertPersistentMosaic(
   await page.setViewportSize({ width: 390, height: 844 });
   await waitForMosaicReady(page);
   await assertImagePreview(multiPreviews.first(), "narrow multi-image preview", 252);
+  assertOneImageOnlyTier(
+    await imageOnlyTierGeometry(imageOnlyCard),
+    await imageOnlyTierGeometry(multiImageCard),
+    "blank-line-separated narrow previews",
+  );
   const narrowStack = await multiImageCard.locator("p.message-image-stack").evaluate((stack) => ({
     clientWidth: stack.clientWidth,
     scrollWidth: stack.scrollWidth,
