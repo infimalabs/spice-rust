@@ -112,8 +112,7 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
         }),
         spice::repository::StateError::Linked { .. }
         | spice::repository::StateError::NotDirectory { .. }
-        | spice::repository::StateError::NotRegularFile { .. }
-        | spice::repository::StateError::RetiredState { .. } => {
+        | spice::repository::StateError::NotRegularFile { .. } => {
             StateFailure::Refusal(Refusal::bare(
                 wire::RefusalDiagnostic::new(
                     "repository::state-path-refused".to_owned(),
@@ -125,10 +124,7 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
                     Some(error.to_string()),
                 )
                 .with_detail(format!(
-                    concat!(
-                        "{}; follow the named archive/remove action or repair the malformed ",
-                        "state component at {}"
-                    ),
+                    "{}; repair the malformed state component at {}",
                     error,
                     error.path().display()
                 )),

@@ -248,12 +248,11 @@ pub(super) fn repository_state_failure(
         }
         spice::repository::StateError::Linked { .. }
         | spice::repository::StateError::NotDirectory { .. }
-        | spice::repository::StateError::NotRegularFile { .. }
-        | spice::repository::StateError::RetiredState { .. } => refusal(
+        | spice::repository::StateError::NotRegularFile { .. } => refusal(
             "repository::state-path-refused",
             Some(error.to_string()),
             &format!(
-                "follow the named archive/remove action or repair the malformed state component at {}",
+                "repair the malformed state component at {}",
                 error.path().display()
             ),
         ),

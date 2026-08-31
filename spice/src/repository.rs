@@ -75,11 +75,10 @@
 //!   worktree to pin the per-worktree anchor, the Rust shadow bytes, and the
 //!   absence of publication at Python's filename.
 //!
-//! Release-one `.spice-rust` state remains retired and is refused explicitly.
-//! Rust data left beneath Python-owned `.spice` by an earlier layout is not
-//! admitted as current state: reading it would recreate the routing ambiguity
-//! this namespace boundary removes. `tests/coexistence.rs` proves native
-//! commands instead leave the complete predecessor root byte-identical.
+//! State outside the current fixed namespaces is ignored. In particular,
+//! obsolete layouts cannot affect current state admission or command startup.
+//! `tests/coexistence.rs` proves native commands leave the complete predecessor
+//! root byte-identical.
 
 use std::error::Error;
 use std::fmt;
@@ -91,10 +90,6 @@ use wire::CanonicalUuid;
 
 /// Sole repository-common directory owned by the current Spice runtime.
 pub const STATE_DIRECTORY: &str = ".spice-rs";
-
-const RETIRED_STATE_DIRECTORY: &str = ".spice-rust";
-const RETIRED_STATE_RELEASE: &str = "release-one";
-const RETIRED_RTK_RELEASE: &str = "rust-rtk-agents-layout";
 
 /// One repository resolved to its worktree and shared Git directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -305,18 +300,11 @@ impl StatePaths {
 
     /// Current RTK history database for one Rust lane identity.
     ///
-    /// The first Rust RTK integration copied the predecessor's generic
-    /// `agents/<uuid>/rtk` grouping. That path is refused rather than retained
-    /// as a second execution arm; the current path follows Rust's existing
-    /// typed-root/per-lane organization used by `tape` and `degraded`.
-    pub fn rtk_history(&self, lane: CanonicalUuid) -> Result<PathBuf, StateError> {
-        let retired = self
-            .runtime()
-            .join("agents")
-            .join(lane.to_string())
-            .join("rtk/history.db");
-        refuse_retired_path(&retired, RETIRED_RTK_RELEASE)?;
-        Ok(self.rtk().join(lane.to_string()).join("history.db"))
+    /// The path follows the typed-root/per-lane organization used by `tape`
+    /// and `degraded`. Unowned paths elsewhere in the runtime are irrelevant.
+    #[must_use]
+    pub fn rtk_history(&self, lane: CanonicalUuid) -> PathBuf {
+        self.rtk().join(lane.to_string()).join("history.db")
     }
 
     /// Task-addressed sidecar artifact store.
@@ -566,10 +554,8 @@ impl Repository {
     ///
     /// An absent namespace is valid and remains absent. Existing directory
     /// parents and regular-file leaves are inspected without following links.
-    /// Any release-one `.spice-rust` entry refuses before these current paths
-    /// are returned; operators archive or remove that retired tree manually.
+    /// Entries outside the current fixed namespace are not inspected.
     pub fn admit_state(&self) -> Result<StatePaths, StateError> {
-        refuse_retired_state(&self.common)?;
         let paths = StatePaths::new(
             self.common.join(STATE_DIRECTORY),
             self.git.join(STATE_DIRECTORY),
@@ -594,7 +580,6 @@ impl Repository {
     ///
     /// Returns the exact malformed or unavailable client-path component.
     pub fn admit_resident_client(&self) -> Result<PathBuf, StateError> {
-        refuse_retired_state(&self.common)?;
         let paths = StatePaths::new(
             self.common.join(STATE_DIRECTORY),
             self.git.join(STATE_DIRECTORY),
@@ -618,7 +603,6 @@ impl Repository {
     ///
     /// Returns the exact malformed or unavailable delivery-state component.
     pub fn admit_steering_delivery(&self) -> Result<SteeringDeliveryPaths, StateError> {
-        refuse_retired_state(&self.common)?;
         let paths = StatePaths::new(
             self.common.join(STATE_DIRECTORY),
             self.git.join(STATE_DIRECTORY),
@@ -645,7 +629,6 @@ impl Repository {
     /// Returns the exact malformed or unavailable authority component, or a
     /// symbolic-link inbox.
     pub fn admit_resident_state(&self) -> Result<StatePaths, StateError> {
-        refuse_retired_state(&self.common)?;
         let paths = StatePaths::new(
             self.common.join(STATE_DIRECTORY),
             self.git.join(STATE_DIRECTORY),
@@ -677,7 +660,6 @@ impl Repository {
     /// Returns an unavailable or malformed state-root error, or refuses a
     /// symbolic-link inbox.
     pub fn admit_inbox_delivery(&self) -> Result<PathBuf, StateError> {
-        refuse_retired_state(&self.common)?;
         let paths = StatePaths::new(
             self.common.join(STATE_DIRECTORY),
             self.git.join(STATE_DIRECTORY),
@@ -686,22 +668,6 @@ impl Repository {
         let inbox = paths.inbox();
         admit_unlinked(inbox)?;
         Ok(inbox.to_path_buf())
-    }
-}
-
-fn refuse_retired_state(common: &Path) -> Result<(), StateError> {
-    let path = common.join(RETIRED_STATE_DIRECTORY);
-    refuse_retired_path(&path, RETIRED_STATE_RELEASE)
-}
-
-fn refuse_retired_path(path: &Path, release: &'static str) -> Result<(), StateError> {
-    match fs::symlink_metadata(path) {
-        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(StateError::filesystem(path, source)),
-        Ok(_) => Err(StateError::RetiredState {
-            path: path.to_path_buf(),
-            release,
-        }),
     }
 }
 
@@ -755,11 +721,6 @@ pub enum StateError {
     NotRegularFile { path: PathBuf },
     /// A component could not be inspected without following it.
     Filesystem { path: PathBuf, source: io::Error },
-    /// A retired state root remains and must be handled by the operator.
-    RetiredState {
-        path: PathBuf,
-        release: &'static str,
-    },
 }
 
 impl StateError {
@@ -777,17 +738,7 @@ impl StateError {
             Self::Linked { path }
             | Self::NotDirectory { path }
             | Self::NotRegularFile { path }
-            | Self::Filesystem { path, .. }
-            | Self::RetiredState { path, .. } => path,
-        }
-    }
-
-    /// Release owning a refused predecessor spelling, when applicable.
-    #[must_use]
-    pub const fn release(&self) -> Option<&'static str> {
-        match self {
-            Self::RetiredState { release, .. } => Some(release),
-            _ => None,
+            | Self::Filesystem { path, .. } => path,
         }
     }
 }
@@ -817,15 +768,6 @@ impl fmt::Display for StateError {
                 "Rust state component could not be inspected at {}: {source}",
                 path.display()
             ),
-            Self::RetiredState { path, release } => write!(
-                formatter,
-                concat!(
-                    "retired state root belongs to release={} at {}; archive or remove it ",
-                    "after preserving evidence before starting current Spice"
-                ),
-                release,
-                path.display()
-            ),
         }
     }
 }
@@ -834,10 +776,7 @@ impl Error for StateError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Filesystem { source, .. } => Some(source),
-            Self::Linked { .. }
-            | Self::NotDirectory { .. }
-            | Self::NotRegularFile { .. }
-            | Self::RetiredState { .. } => None,
+            Self::Linked { .. } | Self::NotDirectory { .. } | Self::NotRegularFile { .. } => None,
         }
     }
 }

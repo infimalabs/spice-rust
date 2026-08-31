@@ -138,9 +138,7 @@ fn selected_history(
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
-    let current = state
-        .rtk_history(identity.uuid)
-        .map_err(|error| crate::state_failure(&error).outcome())?;
+    let current = state.rtk_history(identity.uuid);
     resolve_history(current, &identity.canonical).map_err(Failure::outcome)
 }
 

@@ -151,8 +151,7 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         InstallError::State(
             StateError::Linked { .. }
             | StateError::NotDirectory { .. }
-            | StateError::NotRegularFile { .. }
-            | StateError::RetiredState { .. },
+            | StateError::NotRegularFile { .. },
         ) => install_refusal(
             &error,
             "install-state",
@@ -312,10 +311,6 @@ fn state_remedy(error: &InstallError) -> Option<String> {
         )),
         InstallError::State(StateError::NotRegularFile { path }) => Some(format!(
             "inspect the Rust state leaf with `{}` and restore that fixed component as a regular file before retrying preview",
-            inspect_path(path),
-        )),
-        InstallError::State(StateError::RetiredState { path, release }) => Some(format!(
-            "inspect the {release}-owned tree with `{}`; preserve its evidence and archive it under an operator-chosen path before retrying the current preview",
             inspect_path(path),
         )),
         _ => None,

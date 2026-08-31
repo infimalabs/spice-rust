@@ -57,9 +57,7 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
     assert_eq!(state.tape(), common.join(".spice-rs/tape"));
     assert_eq!(state.rtk(), common.join(".spice-rs/rtk"));
     assert_eq!(
-        state
-            .rtk_history(CanonicalUuid::new(uuid::Uuid::from_u128(1)))
-            .expect("current RTK history path admits"),
+        state.rtk_history(CanonicalUuid::new(uuid::Uuid::from_u128(1))),
         common.join(".spice-rs/rtk/00000000-0000-0000-0000-000000000001/history.db")
     );
     assert_eq!(state.inbox(), common.join(".spice-rs/inbox"));
@@ -212,65 +210,64 @@ fn hook_delivery_admission_does_not_depend_on_disposable_inbox_shape() {
 }
 
 #[test]
-fn retired_release_one_state_refuses_before_current_state_is_touched() {
+fn unrelated_state_root_is_ignored() {
     let scratch = Scratch::new();
-    let root = case(&scratch, "retired release-one state");
+    let root = case(&scratch, "unrelated state root");
     let common = root.join(".git");
     fs::create_dir(&common).expect("create common Git directory");
-    let current = common.join(STATE_DIRECTORY);
-    let retired = common.join(RETIRED_STATE_DIRECTORY);
-    fs::create_dir_all(retired.join("proof/run/target")).expect("create release-one proof tree");
+    let unrelated = common.join(".spice-rust");
+    fs::create_dir_all(unrelated.join("proof/run/target")).expect("create unrelated tree");
     fs::write(
-        retired.join("proof/run/target/receipt.json"),
-        b"release-one proof bytes\n",
+        unrelated.join("proof/run/target/receipt.json"),
+        b"unrelated bytes\n",
     )
-    .expect("plant release-one proof");
+    .expect("plant unrelated data");
     let repository = Repository::discover(&root).expect("discover repository");
 
-    let error = repository
+    let state = repository
         .admit_state()
-        .expect_err("retired release-one state must refuse");
+        .expect("unrelated roots do not affect current state admission");
 
-    assert_eq!(error.release(), Some(RETIRED_STATE_RELEASE));
-    assert_eq!(error.path(), retired);
-    assert!(error.to_string().contains("archive or remove"));
+    assert_eq!(state.runtime(), common.join(STATE_DIRECTORY));
     assert_eq!(
-        fs::read(retired.join("proof/run/target/receipt.json")).unwrap(),
-        b"release-one proof bytes\n"
+        fs::read(unrelated.join("proof/run/target/receipt.json")).unwrap(),
+        b"unrelated bytes\n"
     );
-    assert!(!current.exists());
 }
 
 #[test]
-fn retired_rust_agents_rtk_path_refuses_with_its_owning_layout() {
+fn unowned_agents_path_does_not_affect_current_rtk_history() {
     let scratch = Scratch::new();
-    let root = case(&scratch, "retired Rust RTK agents path");
+    let root = case(&scratch, "unowned agents path");
     let common = root.join(".git");
     fs::create_dir(&common).expect("create common Git directory");
     let lane = CanonicalUuid::new(uuid::Uuid::from_u128(1));
-    let retired = common
+    let unrelated = common
         .join(STATE_DIRECTORY)
         .join("agents")
         .join(lane.to_string())
         .join("rtk/history.db");
-    fs::create_dir_all(retired.parent().expect("retired history parent"))
-        .expect("create retired RTK directory");
-    fs::write(&retired, b"retired Rust RTK bytes\n").expect("plant retired RTK history");
+    fs::create_dir_all(unrelated.parent().expect("unrelated history parent"))
+        .expect("create unrelated RTK directory");
+    fs::write(&unrelated, b"unrelated RTK bytes\n").expect("plant unrelated RTK history");
     let repository = Repository::discover(&root).expect("discover repository");
     let state = repository.admit_state().expect("current state admits");
 
-    let error = state
-        .rtk_history(lane)
-        .expect_err("retired Rust RTK path must refuse");
+    let current = state.rtk_history(lane);
 
-    assert_eq!(error.release(), Some(RETIRED_RTK_RELEASE));
-    assert_eq!(error.path(), retired);
-    assert!(error.to_string().contains("archive or remove"));
     assert_eq!(
-        fs::read(&retired).expect("retired RTK history remains"),
-        b"retired Rust RTK bytes\n"
+        current,
+        common
+            .join(STATE_DIRECTORY)
+            .join("rtk")
+            .join(lane.to_string())
+            .join("history.db")
     );
-    assert!(!state.rtk().exists());
+    assert_eq!(
+        fs::read(&unrelated).expect("unrelated RTK history remains"),
+        b"unrelated RTK bytes\n"
+    );
+    assert!(!current.exists());
 }
 
 #[cfg(unix)]

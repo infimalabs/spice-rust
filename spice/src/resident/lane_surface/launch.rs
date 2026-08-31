@@ -319,9 +319,7 @@ fn launch_environment(
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
-    let rtk_history = state
-        .rtk_history(lane)
-        .map_err(|error| crate::state_failure(&error).outcome())?;
+    let rtk_history = state.rtk_history(lane);
     fs::create_dir_all(
         rtk_history
             .parent()
