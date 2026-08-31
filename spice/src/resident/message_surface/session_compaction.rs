@@ -196,6 +196,7 @@ fn publish(
             ordinal: record.ordinal,
             decoded: &record.decoded,
             authored: record.authored.as_deref(),
+            observed: state.observations.latest(lane),
             observations: &state.observations,
         },
         &mut state.previews,
@@ -206,7 +207,6 @@ fn publish(
 /// Namespace preserved-session loci away from tape member ordinals while
 /// retaining a deterministic identity across resident and browser restarts.
 fn session_member(thread: &str) -> u64 {
-    const SESSION_NAMESPACE: u64 = 1_u64 << 63;
     let mut value = 0_u64;
     let mut digits = 0_u32;
     for byte in thread.bytes().filter(u8::is_ascii_hexdigit) {
@@ -222,7 +222,7 @@ fn session_member(thread: &str) -> u64 {
             break;
         }
     }
-    SESSION_NAMESPACE | value
+    SESSION_MESSAGE_MEMBER_NAMESPACE | value
 }
 
 #[cfg(test)]

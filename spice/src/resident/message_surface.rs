@@ -14,6 +14,8 @@ mod backlog;
 mod session_compaction;
 mod tool_preview;
 
+const SESSION_MESSAGE_MEMBER_NAMESPACE: u64 = 1_u64 << 63;
+
 pub(super) use backlog::{BacklogReader, restore_agent_messages};
 pub(super) use session_compaction::{
     POLL_INTERVAL as SESSION_COMPACTION_POLL_INTERVAL, SessionCompactions,
@@ -108,6 +110,14 @@ impl MessageObservations {
 
     fn source(&self, lane: CanonicalUuid, locus: listen::Locus) -> Option<CanonicalUuid> {
         self.find(lane, locus).map(|observation| observation.source)
+    }
+
+    fn latest(&self, lane: CanonicalUuid) -> Option<wire::Instant> {
+        self.0
+            .iter()
+            .rev()
+            .find(|observation| observation.lane == lane)
+            .map(|observation| observation.at)
     }
 
     fn find(&self, lane: CanonicalUuid, locus: listen::Locus) -> Option<&MessageObservation> {
@@ -258,6 +268,7 @@ pub(super) fn publish_agent_messages(
                 ordinal: event,
                 decoded,
                 authored,
+                observed: None,
                 observations: &state.observations,
             },
             &mut state.previews,
@@ -274,6 +285,7 @@ struct AgentEvent<'a> {
     ordinal: u32,
     decoded: &'a listen::Event,
     authored: Option<&'a str>,
+    observed: Option<wire::Instant>,
     observations: &'a MessageObservations,
 }
 
@@ -291,6 +303,7 @@ fn publish_agent_event(
         ordinal,
         decoded,
         authored,
+        observed,
         observations,
     } = event;
     let (activity, locus, text, media) = match decoded {
@@ -332,7 +345,7 @@ fn publish_agent_event(
     };
     let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, ordinal)?;
     let observed = authored_synthetic
-        .then(|| observations.at(lane, locus))
+        .then(|| observed.or_else(|| observations.at(lane, locus)))
         .flatten();
     wire::media::admit_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
@@ -381,7 +394,16 @@ fn synthetic_agent_message_authored(
     const BASE_MILLIS: i64 = 946_684_800_000;
     const MEMBER_MILLIS: i64 = 86_400_000;
 
-    let member = i64::try_from(locus.member.saturating_sub(1)).map_err(|error| {
+    // A preserved session is one file, so its namespaced member identifies the
+    // source rather than advancing tape chronology. Its byte offset still gives
+    // every timestamp-less event a stable in-file order, while the unchanged
+    // locus carries the full session identity through publication and dedupe.
+    let member = if locus.member & SESSION_MESSAGE_MEMBER_NAMESPACE == 0 {
+        locus.member.saturating_sub(1)
+    } else {
+        0
+    };
+    let member = i64::try_from(member).map_err(|error| {
         store_fault(
             "canvas::message-authored-unrepresentable",
             &error.to_string(),

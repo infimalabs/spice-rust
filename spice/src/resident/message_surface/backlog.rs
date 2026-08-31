@@ -170,6 +170,7 @@ fn publish_scan(
                     ordinal: event,
                     decoded: &sourced.event,
                     authored: sourced.context.timestamp.as_deref(),
+                    observed: None,
                     observations: &reader.state.observations,
                 },
                 &mut reader.state.previews,
