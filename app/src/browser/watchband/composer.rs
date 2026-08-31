@@ -155,6 +155,8 @@ fn render_agent_message_card(
         &member.worktree,
         member.name.as_deref(),
     );
+    let footer_label = watchband::agent_message_label(&member.worktree, member.name.as_deref())
+        .expect("admitted agent message has a configured name or worktree basename");
     let correspondent =
         agent_message_correspondent(member, quote_lane, message, quote_dispatcher, speak, order);
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
@@ -213,6 +215,7 @@ fn render_agent_message_card(
                     message,
                     &correspondent,
                     crate::runtime::agent_message_display_millis(message),
+                    footer_label,
                     &attribution,
                 )}
             }
@@ -308,14 +311,16 @@ fn render_agent_message_footer(
     message: &wire::AgentMessage,
     correspondent: &view::chrome::Correspondent,
     display_millis: i64,
-    producer: &str,
+    producer_label: &str,
+    attribution: &str,
 ) -> Html {
     let locus = format!(
         "tape {}:{}+{}#{}",
         message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
     );
     let card_actions = view::chrome::render_card_actions(&message.text, correspondent);
-    let producer = producer.to_owned();
+    let producer_label = producer_label.to_owned();
+    let attribution = attribution.to_owned();
     let author = message.author.to_string();
     let author_title = format!("Copy agent id\n{author}");
     let copy_author = Callback::from(move |_| view::chrome::copy_text(&author));
@@ -325,9 +330,9 @@ fn render_agent_message_footer(
                 class="message-agent-name"
                 type="button"
                 title={author_title}
-                aria-label={format!("Copy agent id for {producer}")}
+                aria-label={format!("Copy agent id for {attribution}")}
                 onclick={copy_author}
-            >{producer}</button>
+            >{producer_label}</button>
             <span class="message-footer-separator" aria-hidden="true">{"\u{b7}"}</span>
         </>
     };

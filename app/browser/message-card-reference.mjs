@@ -132,7 +132,7 @@ async function assertMessageCardLayout(console, label) {
   }
 }
 
-function assertReferenceGeometry(geometry, agentNames) {
+function assertReferenceGeometry(geometry, agentLabels) {
   assert.equal(geometry.card.fontSize, "16px", "message body keeps the reference type size");
   assert.equal(geometry.card.lineHeight, "20px", "message body keeps the reference line rhythm");
   assert.match(geometry.card.fontFamily, /system-ui/, "message prose uses the system sans stack");
@@ -170,21 +170,18 @@ function assertReferenceGeometry(geometry, agentNames) {
   );
   assert.equal(geometry.classifiers, 0, "the generic agent classifier is absent");
   assert.doesNotMatch(geometry.footerText, /(?:^|\s)agent(?:\s|$)/i);
-  assert.match(
-    geometry.agent.text,
-    /^[0-9a-f]{8}\/[0-9a-f]{8} · [^\n·]+ · /i,
-    "the visible footer leads with canonical short author/lane and a worktree leaf",
-  );
   assert.ok(
-    agentNames.some((name) => geometry.agent.text.endsWith(` · ${name}`)),
-    "a configured name remains redundant presentation at the attribution tail",
+    agentLabels.includes(geometry.agent.text),
+    "the visible footer uses an exact configured name or worktree basename",
   );
   assert.equal(geometry.agent.fontSize, "12px");
   assert.equal(geometry.agent.fontWeight, "400");
   assert.match(geometry.agent.fontFamily, /system-ui/);
   assert.equal(
-    geometry.agent.ariaLabel,
-    `Copy agent id for ${geometry.agent.text}`,
+    /^Copy agent id for [0-9a-f]{8}\/[0-9a-f]{8} · [^\n·]+(?: · [^\n·]+)?$/i.test(
+      geometry.agent.ariaLabel,
+    ),
+    true,
     "the accessible copy control retains the complete unellipsized attribution",
   );
   assert.match(geometry.agent.title, /^Copy agent id\n[0-9a-f-]{36}$/);
@@ -192,8 +189,8 @@ function assertReferenceGeometry(geometry, agentNames) {
   assert.equal(geometry.agent.textOverflow, "ellipsis");
   assert.equal(geometry.agent.whiteSpace, "nowrap");
   assert.ok(
-    geometry.agent.scrollWidth > geometry.agent.clientWidth,
-    "the reference footer exercises visible ellipsis without truncating its text alternative",
+    geometry.agent.scrollWidth <= geometry.agent.clientWidth,
+    "the compact visible identity fits without ellipsis",
   );
   assert.equal(geometry.actions.gap, "6px");
   assert.equal(geometry.actions.buttons.length, 3);
@@ -263,7 +260,7 @@ export async function assertReferenceMessageCard(
   console,
   card,
   artifacts,
-  agentNames,
+  agentLabels,
 ) {
   const geometry = await card.evaluate((article) => {
     const measured = (node) => {
@@ -327,7 +324,7 @@ export async function assertReferenceMessageCard(
       inlineCodeText: inlineCode?.textContent ?? "",
     };
   });
-  assertReferenceGeometry(geometry, agentNames);
+  assertReferenceGeometry(geometry, agentLabels);
 
   const original = page.viewportSize();
   for (const mode of ["dark", "light"]) {
