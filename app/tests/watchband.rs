@@ -1,9 +1,9 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN, accent,
-    arrangement, badge, elapsed_label, first_nonquoted_prose, leaf, one_line, reported_tasks,
-    short, split_lineage, standing_title, standings, task_mentions, ticker_line, topology,
-    truncate,
+    arrangement, badge, elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, leaf,
+    one_line, reported_tasks, short, split_lineage, standing_title, standings, task_mentions,
+    ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -440,6 +440,26 @@ fn elapsed_names_one_unit_at_each_boundary() {
     assert_eq!(elapsed_label(3_600_000), "1h");
     assert_eq!(elapsed_label(86_399_999), "23h");
     assert_eq!(elapsed_label(86_400_000), "1d");
+}
+
+#[test]
+fn elapsed_deadlines_wake_only_when_the_visible_unit_can_change() {
+    assert_eq!(elapsed_label_deadline_millis(-5_000), Some(6_000));
+    assert_eq!(elapsed_label_deadline_millis(0), Some(1_000));
+    assert_eq!(elapsed_label_deadline_millis(999), Some(1));
+    assert_eq!(elapsed_label_deadline_millis(1_000), Some(1_000));
+    assert_eq!(elapsed_label_deadline_millis(59_999), Some(1));
+    assert_eq!(elapsed_label_deadline_millis(60_000), Some(60_000));
+    assert_eq!(elapsed_label_deadline_millis(3_599_999), Some(1));
+    assert_eq!(elapsed_label_deadline_millis(3_600_000), Some(3_600_000));
+    assert_eq!(elapsed_label_deadline_millis(86_399_999), Some(1));
+    assert_eq!(elapsed_label_deadline_millis(86_400_000), Some(86_400_000));
+    assert_eq!(
+        elapsed_label_deadline_millis(99 * 86_400_000),
+        Some(86_400_000),
+    );
+    assert_eq!(elapsed_label_deadline_millis(100 * 86_400_000), None);
+    assert_eq!(elapsed_label_deadline_millis(i64::MAX), None);
 }
 
 /// A ticking age may only change text, never the box the text sits in. The box

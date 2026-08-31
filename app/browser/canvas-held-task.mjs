@@ -310,7 +310,7 @@ function assertComposerProvenance(actual, expected, message) {
   );
   assert.equal(actual.authored, actual.cardAuthored, `${message}: link and card timestamps agree`);
   assert.match(actual.rendered, /^(?:now|\d+[smhd])$/, `${message}: relative time remains visible`);
-  assert.equal(actual.clock, "shared", `${message}: relative time uses the message clock`);
+  assert.equal(actual.clock, "deadline", `${message}: relative time uses the message clock`);
 }
 
 async function clearLaneInbox(fixture, lane, reply) {

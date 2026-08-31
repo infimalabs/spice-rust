@@ -643,7 +643,7 @@ export async function assertComposerShards({
     }`,
   );
   assert.ok(
-    activityChrome.every((age) => age.clock === "shared"),
+    activityChrome.every((age) => age.clock === "deadline"),
     `every message-backed composer age advances on the shared browser clock: ${
       JSON.stringify(activityChrome)
     }`,

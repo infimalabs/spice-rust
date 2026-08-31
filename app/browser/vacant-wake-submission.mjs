@@ -177,7 +177,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     `vacancy does not replace the linked message timestamp: ${JSON.stringify(vacantChronology)}`,
   );
   assert.ok(
-    vacantChronology.headerAuthored === undefined || vacantChronology.clock === "shared",
+    vacantChronology.headerAuthored === undefined || vacantChronology.clock === "deadline",
     `a source-authored vacant heading keeps the shared ticking clock: ${
       JSON.stringify(vacantChronology)
     }`,

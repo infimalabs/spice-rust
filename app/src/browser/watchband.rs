@@ -17,9 +17,8 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    agent_message_source_id, drop_on_lane, focus_after_render, keyboard_submit, paste_images,
-    primary_textarea_id, render_agent_message_card, render_image_indicators, render_quote_shards,
-    update_body,
+    AgentMessageCard, agent_message_source_id, drop_on_lane, focus_after_render, keyboard_submit,
+    paste_images, primary_textarea_id, render_image_indicators, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -225,7 +224,7 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
             Some(ActivityCard::Agent {
                 member: member.clone(),
                 quote_lane: crate::composer_drafts::quote_lane(&lineage.members, message),
-                message: message.clone(),
+                message: Rc::clone(message),
             })
         })
         .collect::<Vec<_>>();
@@ -464,7 +463,7 @@ fn visible_agent_prose(
         } if lane.is_none_or(|lane| lane == member.lane)
             && message.activity == wire::AgentActivityKind::Prose =>
         {
-            watchband::first_nonquoted_prose(&message.text).map(|prose| (message, prose))
+            watchband::first_nonquoted_prose(&message.text).map(|prose| (message.as_ref(), prose))
         }
         ActivityCard::Agent { .. } => None,
     }

@@ -9,13 +9,51 @@ use gloo_timers::callback::Timeout;
 const MIN_MEASURABLE_WIDTH_PX: i32 = 24;
 const RESIZE_DEBOUNCE_MILLIS: u32 = 200;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub(super) enum ActivityCard {
     Agent {
         member: crate::runtime::LaneMember,
         quote_lane: CanonicalUuid,
-        message: wire::AgentMessage,
+        message: Rc<wire::AgentMessage>,
     },
+}
+
+impl PartialEq for ActivityCard {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Agent {
+                    member: left_member,
+                    quote_lane: left_quote_lane,
+                    message: left_message,
+                },
+                Self::Agent {
+                    member: right_member,
+                    quote_lane: right_quote_lane,
+                    message: right_message,
+                },
+            ) => {
+                left_member.lane == right_member.lane
+                    && left_member.name == right_member.name
+                    && left_member.worktree == right_member.worktree
+                    && left_quote_lane == right_quote_lane
+                    && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ActivityFingerprint {
+    worktree: String,
+    message: Rc<wire::AgentMessage>,
+}
+
+impl PartialEq for ActivityFingerprint {
+    fn eq(&self, other: &Self) -> bool {
+        self.worktree == other.worktree
+            && (Rc::ptr_eq(&self.message, &other.message) || self.message == other.message)
+    }
 }
 
 impl ActivityCard {
@@ -35,14 +73,14 @@ impl ActivityCard {
         }
     }
 
-    fn measurement_fingerprint(&self) -> String {
+    fn measurement_fingerprint(&self) -> ActivityFingerprint {
         match self {
             Self::Agent {
                 member, message, ..
-            } => format!(
-                "agent\0{}\0{}\0{}\0{}",
-                member.worktree, message.author, message.locus.event, message.text
-            ),
+            } => ActivityFingerprint {
+                worktree: member.worktree.clone(),
+                message: Rc::clone(message),
+            },
         }
     }
 
@@ -70,13 +108,14 @@ impl ActivityCard {
 struct ActivityMeasurement {
     width: i32,
     key: String,
-    fingerprint: String,
+    fingerprint: ActivityFingerprint,
     image_revision: u64,
     candidates: Vec<crate::mosaic::Candidate>,
     latched: Option<crate::mosaic::Candidate>,
     heights: Vec<i32>,
 }
 
+#[derive(Clone, PartialEq)]
 pub(super) struct CardLayout {
     pub(super) committed: bool,
     pub(super) track: usize,
@@ -162,8 +201,14 @@ fn copy_layout_property(element: &web_sys::HtmlElement, property: &str, attribut
     value
         .parse::<i32>()
         .unwrap_or_else(|_| panic!("Mosaic layout attribute {attribute} is an integer: {value}"));
-    element
-        .style()
+    let style = element.style();
+    if style
+        .get_property_value(property)
+        .is_ok_and(|current| current == value)
+    {
+        return;
+    }
+    style
         .set_property(property, &value)
         .unwrap_or_else(|_| panic!("Mosaic layout writes {property}"));
 }
@@ -206,20 +251,56 @@ fn use_layout_properties(
     });
 }
 
+struct MeasurementIndex<'a> {
+    by_key: BTreeMap<&'a str, Vec<&'a ActivityMeasurement>>,
+}
+
+impl<'a> MeasurementIndex<'a> {
+    fn new(measurements: &'a [ActivityMeasurement]) -> Self {
+        let mut by_key = BTreeMap::<&str, Vec<&ActivityMeasurement>>::new();
+        for measurement in measurements {
+            by_key
+                .entry(measurement.key.as_str())
+                .or_default()
+                .push(measurement);
+        }
+        Self { by_key }
+    }
+
+    fn get(
+        &self,
+        key: &str,
+        width: i32,
+        activity: &ActivityCard,
+        image_revision: u64,
+    ) -> Option<&'a ActivityMeasurement> {
+        let fingerprint = activity.measurement_fingerprint();
+        self.by_key.get(key)?.iter().copied().find(|measurement| {
+            measurement.width == width
+                && measurement.fingerprint == fingerprint
+                && measurement.image_revision == image_revision
+        })
+    }
+
+    fn latest(&self, key: &str, activity: &ActivityCard) -> Option<&'a ActivityMeasurement> {
+        let fingerprint = activity.measurement_fingerprint();
+        self.by_key
+            .get(key)?
+            .iter()
+            .rev()
+            .copied()
+            .find(|measurement| measurement.fingerprint == fingerprint)
+    }
+}
+
 fn activity_measurement<'a>(
-    measurements: &'a [ActivityMeasurement],
+    index: &MeasurementIndex<'a>,
     width: i32,
     activity: &ActivityCard,
     image_revision: u64,
 ) -> Option<&'a ActivityMeasurement> {
     let key = activity.key();
-    let fingerprint = activity.measurement_fingerprint();
-    measurements.iter().find(|measurement| {
-        measurement.width == width
-            && measurement.key == key
-            && measurement.fingerprint == fingerprint
-            && measurement.image_revision == image_revision
-    })
+    index.get(&key, width, activity, image_revision)
 }
 
 #[derive(Properties, PartialEq)]
@@ -698,19 +779,21 @@ fn use_activity_measurements(
             (width, cards, image_revisions, committed_spans),
             move |(width, cards, image_revisions, committed_spans)| {
                 let canceled = Rc::new(Cell::new(false));
+                let measurement_index = MeasurementIndex::new(&prior);
+                let committed_spans = committed_spans
+                    .iter()
+                    .map(|(key, span)| (key.as_str(), *span))
+                    .collect::<BTreeMap<_, _>>();
                 let unknown = cards
                     .iter()
                     .enumerate()
                     .filter_map(|(index, activity)| {
                         let key = activity.key();
                         let image_revision = image_revisions.get(&key);
-                        activity_measurement(&prior, *width, activity, image_revision)
+                        activity_measurement(&measurement_index, *width, activity, image_revision)
                             .is_none()
                             .then(|| {
-                                let latched_span =
-                                    committed_spans.iter().find_map(|(candidate, span)| {
-                                        (candidate == &key).then_some(*span)
-                                    });
+                                let latched_span = committed_spans.get(key.as_str()).copied();
                                 (index, activity.clone(), image_revision, latched_span)
                             })
                     })
@@ -863,13 +946,14 @@ fn measured_activity_at_revisions(
     width: i32,
     image_revisions: &ImageRevisions,
 ) -> Option<Vec<crate::mosaic_plane::MeasuredCard<String>>> {
+    let measurement_index = MeasurementIndex::new(measurements);
     (width >= MIN_MEASURABLE_WIDTH_PX)
         .then(|| {
             cards
                 .iter()
                 .map(|activity| {
                     activity_measurement(
-                        measurements,
+                        &measurement_index,
                         width,
                         activity,
                         image_revisions.get(&activity.key()),
@@ -921,57 +1005,40 @@ fn render_activity_cards(
     plane: Option<&crate::mosaic_plane::PersistentLanePlane<String>>,
     image_revisions: &ImageRevisions,
 ) -> Html {
+    let cards_by_key = properties
+        .cards
+        .iter()
+        .map(|activity| (activity.key(), activity))
+        .collect::<BTreeMap<_, _>>();
+    let placements = plane
+        .into_iter()
+        .flat_map(crate::mosaic_plane::PersistentLanePlane::cards)
+        .map(|entry| (entry.key.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let measurement_index = MeasurementIndex::new(measurements);
     let mut ordered = plane
         .into_iter()
         .flat_map(|plane| plane.cards())
-        .filter_map(|entry| {
-            properties
-                .cards
-                .iter()
-                .find(|activity| activity.key() == entry.key)
-        })
+        .filter_map(|entry| cards_by_key.get(&entry.key).copied())
         .collect::<Vec<_>>();
     let unknown = properties
         .cards
         .iter()
-        .filter(|activity| {
-            let key = activity.key();
-            ordered.iter().all(|known| known.key() != key)
-        })
+        .filter(|activity| !placements.contains_key(activity.key().as_str()))
         .collect::<Vec<_>>();
     ordered.extend(unknown);
     ordered
         .into_iter()
         .enumerate()
         .map(|(order, activity)| {
-            let speak = if properties.speech == LineageSpeech::Quiet {
-                Callback::from(|_: String| {})
-            } else {
-                let lane = properties.lane.to_string();
-                let speech_queue = properties.speak.clone();
-                Callback::from(move |text: String| {
-                    speech_queue.emit(SpeechRequest::manual(Some(lane.clone()), text));
-                })
-            };
             let key = activity.key();
             let image_revision = image_revisions.get(&key);
-            let placement = plane.and_then(|plane| {
-                plane
-                    .cards()
-                    .iter()
-                    .find(|entry| entry.key == key)
-                    .map(|entry| (plane, entry))
-            });
+            let placement = plane.zip(placements.get(key.as_str()).copied());
             let measurement = placement
                 .and_then(|(plane, _)| {
-                    activity_measurement(measurements, plane.geometry(), activity, image_revision)
+                    measurement_index.get(&key, plane.geometry(), activity, image_revision)
                 })
-                .or_else(|| {
-                    measurements.iter().rev().find(|measurement| {
-                        measurement.key == key
-                            && measurement.fingerprint == activity.measurement_fingerprint()
-                    })
-                });
+                .or_else(|| measurement_index.latest(&key, activity));
             let layout = match (placement, measurement) {
                 (Some((_plane, entry)), Some(measurement)) => CardLayout::placed(
                     entry.card.creation_index,
@@ -988,15 +1055,20 @@ fn render_activity_cards(
                     member,
                     quote_lane,
                     message,
-                } => render_agent_message_card(
-                    member,
-                    *quote_lane,
-                    message,
-                    &properties.quote_dispatcher,
-                    &speak,
-                    quote_order,
-                    &layout,
-                ),
+                } => html! {
+                    <AgentMessageCard
+                        key={key}
+                        member={member.clone()}
+                        quote_lane={*quote_lane}
+                        message={message.clone()}
+                        quote_dispatcher={properties.quote_dispatcher.clone()}
+                        speech_queue={properties.speak.clone()}
+                        speech={properties.speech}
+                        lane={properties.lane}
+                        order={quote_order}
+                        {layout}
+                    />
+                },
             }
         })
         .collect()
