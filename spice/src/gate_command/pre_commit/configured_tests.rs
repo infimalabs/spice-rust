@@ -167,7 +167,6 @@ fn configured_spawn_bypasses_path_and_reports_the_authored_spice_argv() {
         Some(&exact),
         test_bounds(Duration::from_secs(2)),
         Cancellation::Never,
-        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("exact configured route executes");
@@ -259,61 +258,6 @@ fn configured_spice_route_refuses_redirected_authority_after_capture() {
             .contains("lane::wrapper-command-redirected"),
         "{}",
         refusal.detail(),
-    );
-}
-
-#[test]
-fn only_unscoped_resolution_source_gate_argv_selects_the_private_selected_leaf() {
-    let current = parsed_commands(&[row(
-        "Spice source gate",
-        &[
-            "spice",
-            "dev",
-            "cargo",
-            "--",
-            "run",
-            "--quiet",
-            "--locked",
-            "--package",
-            "spice",
-            "--bin",
-            "spice",
-            "--",
-            "gate",
-            "selection",
-        ],
-        &[],
-    )]);
-    let ordinary = effective_argv(&current[0], ExecutionMode::Ordinary);
-    assert_eq!(ordinary, current[0].run());
-    let resolution = effective_argv(&current[0], ExecutionMode::Resolution);
-    assert_eq!(
-        resolution,
-        [
-            "spice",
-            "dev",
-            "cargo",
-            "--",
-            "run",
-            "--quiet",
-            "--locked",
-            "--package",
-            "spice",
-            "--bin",
-            "spice",
-            "--",
-            super::super::RESOLUTION_SELECTION_WORKER_ARGUMENT,
-        ],
-    );
-
-    let scoped = parsed_commands(&[row(
-        "scoped source gate",
-        &["cargo", "run", "--", "gate", "selection"],
-        &["src/**"],
-    )]);
-    assert_eq!(
-        effective_argv(&scoped[0], ExecutionMode::Resolution),
-        scoped[0].run(),
     );
 }
 
@@ -424,7 +368,6 @@ fn ordered_steps_receive_exact_scope_source_working_directory_and_sanitized_envi
         None,
         test_bounds(Duration::from_secs(2)),
         Cancellation::Never,
-        ExecutionMode::Ordinary,
         &mut || {
             verifications += 1;
             Ok(())
@@ -561,7 +504,6 @@ fn independent_child_failures_are_aggregated_in_authored_order() {
         None,
         bounds,
         Cancellation::Never,
-        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("independent failures remain report evidence");
@@ -623,7 +565,6 @@ fn large_successful_output_is_drained_without_a_finding() {
         None,
         bounds,
         Cancellation::Never,
-        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("large successful step drains to completion");
@@ -664,7 +605,6 @@ fn truncated_failure_reports_exit_with_a_retention_marker() {
         None,
         bounds,
         Cancellation::Never,
-        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("truncated failing step remains bounded report evidence");
@@ -749,7 +689,6 @@ fn one_shared_deadline_terminates_and_reaps_a_late_step_process_tree() {
         None,
         test_bounds(Duration::from_millis(750)),
         Cancellation::Never,
-        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("deadline is report evidence");
@@ -817,7 +756,6 @@ fn cancellation_terminates_and_reaps_the_configured_process_tree() {
         None,
         test_bounds(Duration::from_secs(2)),
         Cancellation::Token(token),
-        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("cancellation is report evidence");
@@ -873,7 +811,6 @@ fn authority_movement_between_steps_stops_before_the_next_spawn() {
         None,
         test_bounds(Duration::from_secs(2)),
         Cancellation::Never,
-        ExecutionMode::Ordinary,
         &mut || {
             checks += 1;
             if checks == 2 {
@@ -1162,7 +1099,6 @@ fn source_gate_failure_report(label: &str, progress_bytes: usize) -> ConfiguredR
         Some(&executable),
         ExecutionBounds::production(Duration::from_secs(5)),
         Cancellation::Never,
-        ExecutionMode::Ordinary,
         &mut || Ok(()),
     )
     .expect("source gate failure remains classified process evidence")

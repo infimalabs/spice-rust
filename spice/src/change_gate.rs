@@ -385,28 +385,16 @@ pub fn run_current_source(
     run_with_selection(progress, SelectionSurface::CurrentSource)
 }
 
-/// Run the packaged selector over the resolved index captured for a merge.
-///
-/// Resolution derives its selection from the same staged source and compiled
-/// reach policy as an ordinary commit. It reads no retained verifier state.
-pub fn run_resolution(
-    progress: &mut (impl Write + Send),
-) -> Result<ChangeGateReport, ChangeGateError> {
-    run_with_selection(progress, SelectionSurface::Resolution)
-}
 #[derive(Clone, Copy)]
 enum SelectionSurface {
     Packaged,
     CurrentSource,
-    Resolution,
 }
 
 impl SelectionSurface {
     fn prepare_anchor(self) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
         match self {
-            Self::Packaged | Self::Resolution => {
-                crate::gate::prepare_arm(Selector::staged(), GateId::Staging)
-            }
+            Self::Packaged => crate::gate::prepare_arm(Selector::staged(), GateId::Staging),
             Self::CurrentSource => {
                 crate::gate::prepare_arm_strict(Selector::staged(), GateId::Staging)
             }
@@ -566,7 +554,7 @@ fn select_changes(
 ) -> Result<(ChangeSelectionReport, TestExecution), ChangeGateError> {
     let (selection, test_execution) =
         match surface {
-            SelectionSurface::Packaged | SelectionSurface::Resolution => {
+            SelectionSurface::Packaged => {
                 let policy = packaged_policy(anchor.root(), anchor.paths())?;
                 let selection = gate::select_change_gates(
                     anchor.source().clone(),

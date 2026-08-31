@@ -62,12 +62,6 @@ pub(super) struct ConfiguredReport {
     steps: Vec<StepReport>,
 }
 
-#[derive(Clone, Copy)]
-enum ExecutionMode {
-    Ordinary,
-    Resolution,
-}
-
 impl ConfiguredReport {
     /// The capture ceiling bounds retained diagnostics, not command success.
     pub(super) fn admits(&self) -> bool {
@@ -652,23 +646,13 @@ impl Dispatch {
         cancellation: Cancellation,
         progress: &File,
     ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
-        self.execute_configured_mode(runtime, cancellation, ExecutionMode::Ordinary, progress)
+        self.execute_configured_inner(runtime, cancellation, progress)
     }
 
-    pub(super) fn execute_resolution_configured(
+    fn execute_configured_inner(
         &mut self,
         runtime: Duration,
         cancellation: Cancellation,
-        progress: &File,
-    ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
-        self.execute_configured_mode(runtime, cancellation, ExecutionMode::Resolution, progress)
-    }
-
-    fn execute_configured_mode(
-        &mut self,
-        runtime: Duration,
-        cancellation: Cancellation,
-        mode: ExecutionMode,
         progress: &File,
     ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
         if !self.has_configured() {
@@ -710,7 +694,6 @@ impl Dispatch {
             spice.as_deref(),
             ExecutionBounds::production(runtime),
             cancellation,
-            mode,
             Some(progress),
             &mut verify,
         )
@@ -737,7 +720,6 @@ fn execute_steps_with_progress(
     spice: Option<&Path>,
     bounds: ExecutionBounds,
     cancellation: Cancellation,
-    mode: ExecutionMode,
     progress: Option<&File>,
     verify: &mut impl FnMut() -> Result<(), ConfiguredFailure>,
 ) -> Result<ConfiguredReport, ConfiguredFailure> {
@@ -760,7 +742,7 @@ fn execute_steps_with_progress(
             ));
             continue;
         }
-        let argv = effective_argv(command, mode);
+        let argv = effective_argv(command);
         let process_argv = process_argv(&argv, spice)?;
         let remaining = bounds.runtime.saturating_sub(started.elapsed());
         if remaining.is_zero() {
@@ -827,7 +809,6 @@ fn execute_steps(
     spice: Option<&Path>,
     bounds: ExecutionBounds,
     cancellation: Cancellation,
-    mode: ExecutionMode,
     verify: &mut impl FnMut() -> Result<(), ConfiguredFailure>,
 ) -> Result<ConfiguredReport, ConfiguredFailure> {
     execute_steps_with_progress(
@@ -839,7 +820,6 @@ fn execute_steps(
         spice,
         bounds,
         cancellation,
-        mode,
         None,
         verify,
     )
@@ -900,20 +880,8 @@ fn is_source_gate_contract(command: &PreCommitStep) -> bool {
             .eq(SOURCE_GATE_ARGV)
 }
 
-fn effective_argv(command: &PreCommitStep, mode: ExecutionMode) -> Vec<String> {
-    let argv = command.run();
-    if !matches!(mode, ExecutionMode::Resolution)
-        || !command.scopes().paths().is_empty()
-        || argv.len() < 4
-        || argv[argv.len() - 3] != "--"
-        || argv[argv.len() - 2..] != ["gate", "selection"]
-    {
-        return argv.to_vec();
-    }
-    let mut effective = argv[..argv.len() - 3].to_vec();
-    effective.push("--".to_owned());
-    effective.push(super::RESOLUTION_SELECTION_WORKER_ARGUMENT.to_owned());
-    effective
+fn effective_argv(command: &PreCommitStep) -> Vec<String> {
+    command.run().to_vec()
 }
 
 fn process_argv(argv: &[String], spice: Option<&Path>) -> Result<Vec<OsString>, ConfiguredFailure> {
