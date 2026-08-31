@@ -130,10 +130,7 @@ pub fn apply(
     }
 
     let updates = parse_updates(input)?;
-    if !updates
-        .iter()
-        .any(|update| update.reference.starts_with(LOCAL_PREFIX))
-    {
+    if !requires_repository(&updates) {
         return Ok(());
     }
 
@@ -458,6 +455,12 @@ fn parse_updates(input: &str) -> Result<Vec<RefUpdate<'_>>, ReferenceTransaction
         });
     }
     Ok(updates)
+}
+
+fn requires_repository(updates: &[RefUpdate<'_>]) -> bool {
+    updates
+        .iter()
+        .any(|update| update.reference.starts_with(LOCAL_PREFIX))
 }
 
 /// The value a rewind puts in place of the branch's tip.

@@ -752,6 +752,10 @@ fn selected_changes(repository: &Path, selector: &Selector) -> Result<Vec<String
         }
         _ => error,
     })?;
+    parse_selected_changes(&output)
+}
+
+fn parse_selected_changes(output: &[u8]) -> Result<Vec<String>, RunError> {
     let mut changes = output
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())

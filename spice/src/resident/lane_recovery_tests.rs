@@ -1,3 +1,4 @@
+use std::fs;
 use std::sync::{Arc, Mutex, mpsc};
 
 use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError};
@@ -430,12 +431,7 @@ fn runtime_paths(fixture: &Fixture, common: std::path::PathBuf) -> RuntimePaths 
 /// not a Git checkout, so no fixture may borrow repository identity from the
 /// directory this crate happened to be compiled in.
 fn real_worktree(fixture: &Fixture) -> (String, std::path::PathBuf) {
-    let initialized = std::process::Command::new("/usr/bin/git")
-        .args(["init", "--quiet", "--initial-branch", "fixture"])
-        .current_dir(&fixture.root)
-        .status()
-        .expect("the fixture Git process starts");
-    assert!(initialized.success(), "the fixture worktree initializes");
+    fs::create_dir(fixture.root.join(".git")).expect("the fixture Git directory creates");
     let repository = Repository::discover(&fixture.root).expect("the fixture is a repository");
     (
         repository.worktree_root().display().to_string(),

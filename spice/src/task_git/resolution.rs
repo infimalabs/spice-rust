@@ -129,6 +129,10 @@ impl Preflight {
         message: &str,
     ) -> Result<Seal, Error> {
         let seal = Seal::capture(root, target, agent, upstream, message)?;
+        self.require_unchanged(seal)
+    }
+
+    fn require_unchanged(self, seal: Seal) -> Result<Seal, Error> {
         if seal == self.0 {
             Ok(seal)
         } else {
@@ -353,87 +357,35 @@ fn moved(name: &str, expected: &str, observed: &str) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, path::PathBuf};
-
     use super::*;
 
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new() -> Self {
-            let root = env::temp_dir().join(format!(
-                "spice-resolution-preflight-{}-{}",
-                std::process::id(),
-                uuid::Uuid::new_v4().simple(),
-            ));
-            fs::create_dir(&root).expect("create resolution scratch");
-            Self(root)
+    fn seal(configuration: &str) -> Seal {
+        Seal {
+            agent: "agent".to_owned(),
+            upstream: "upstream".to_owned(),
+            tree: "tree".to_owned(),
+            head_ref: "refs/heads/main".to_owned(),
+            configuration: configuration.to_owned(),
+            message: "resolved task".to_owned(),
         }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).expect("remove resolution scratch");
-        }
-    }
-
-    fn git(root: &Path, arguments: &[&str]) -> String {
-        let output = std::process::Command::new("git")
-            .args(arguments)
-            .current_dir(root)
-            .output()
-            .expect("run Git fixture command");
-        assert!(
-            output.status.success(),
-            "git {arguments:?}: {}",
-            String::from_utf8_lossy(&output.stderr),
-        );
-        String::from_utf8(output.stdout)
-            .expect("Git fixture output is UTF-8")
-            .trim()
-            .to_owned()
-    }
-
-    fn preflight_repository() -> (Scratch, String) {
-        let scratch = Scratch::new();
-        git(&scratch.0, &["init", "--quiet"]);
-        git(&scratch.0, &["config", "user.name", "Spice Test"]);
-        git(
-            &scratch.0,
-            &["config", "user.email", "spice-test@example.invalid"],
-        );
-        fs::write(scratch.0.join("tracked.txt"), b"resolved\n").expect("write tracked fixture");
-        git(&scratch.0, &["add", "tracked.txt"]);
-        git(&scratch.0, &["commit", "--quiet", "-m", "seed"]);
-        let head = git(&scratch.0, &["rev-parse", "HEAD"]);
-        for (name, value) in [
-            ("MERGE_HEAD", format!("{head}\n")),
-            ("ORIG_HEAD", format!("{head}\n")),
-            ("MERGE_MODE", "no-ff\n".to_owned()),
-            ("MERGE_MSG", "resolved task\n".to_owned()),
-        ] {
-            fs::write(scratch.0.join(".git").join(name), value).expect("write merge-state fixture");
-        }
-        (scratch, head)
     }
 
     #[test]
     fn preflight_refuses_configuration_movement_during_completion() {
-        let (scratch, head) = preflight_repository();
-        let preflight = Preflight::capture(&scratch.0).expect("capture exact preflight");
-        git(
-            &scratch.0,
-            &["config", "spice.fixture-moved", "during-evidence"],
-        );
-        let target = Target {
-            remote: "origin".to_owned(),
-            baseline: "HEAD".to_owned(),
-            branch: "main".to_owned(),
-        };
-
-        let error = preflight
-            .complete(&scratch.0, &target, &head, &head, "resolved task")
+        let error = Preflight(seal("before"))
+            .require_unchanged(seal("after"))
             .expect_err("moved configuration is refused");
         assert_eq!(error.reason(), "git::resolution-state-moved");
+    }
+
+    #[test]
+    fn preflight_admits_the_exact_sealed_state() {
+        let expected = seal("unchanged");
+        assert_eq!(
+            Preflight(seal("unchanged"))
+                .require_unchanged(expected)
+                .expect("exact seal is admitted"),
+            seal("unchanged")
+        );
     }
 }

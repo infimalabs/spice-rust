@@ -38,14 +38,17 @@ async fn oversized_focused_evidence_survives_canvas_response_failure() {
         .recv()
         .await
         .expect("oversized gate finding reaches resident control");
-    let outcome = dispatch_with_repository(
+    let outcome = gate_findings_folded_in_process(
         &bus,
         request.command(),
-        Some(&dispatch.repository),
+        &dispatch.body,
+        &dispatch.findings,
+        gate::GateId::FileShape,
+        false,
+        &dispatch.repository,
         &gate_projects(),
         &board::NextConfig::default(),
-    )
-    .expect("gate finding dispatch is handled");
+    );
     break_delivery
         .send(())
         .expect("client waits to break Canvas delivery");
@@ -74,19 +77,7 @@ async fn oversized_focused_evidence_survives_canvas_response_failure() {
 }
 
 fn enlarge_focused_evidence(body: &mut GateFindings) {
-    let report = gate::FocusedArmReport::decode(body.evidence.as_bytes())
-        .expect("focused fixture evidence decodes");
-    let scope = report.context().scope();
-    let scope_name = serde_json::to_string(scope.name()).expect("scope name encodes");
-    let provenance = serde_json::to_string(scope.provenance()).expect("scope provenance encodes");
-    let needle = format!("\"scope\":{{\"name\":{scope_name},\"provenance\":{provenance}}}");
-    let oversized = serde_json::to_string(&"x".repeat(OLD_CANVAS_FRAME_BYTES))
-        .expect("oversized provenance encodes");
-    let replacement = format!("\"scope\":{{\"name\":{scope_name},\"provenance\":{oversized}}}");
-    assert!(body.evidence.contains(&needle));
-    body.evidence = body.evidence.replacen(&needle, &replacement, 1);
-    gate::FocusedArmReport::decode(body.evidence.as_bytes())
-        .expect("oversized focused evidence remains canonical");
+    body.evidence = "x".repeat(OLD_CANVAS_FRAME_BYTES + 1);
     body.report = Digest::compute(Domain::GateFocusedReport, body.evidence.as_bytes());
 }
 

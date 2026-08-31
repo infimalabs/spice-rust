@@ -19,6 +19,7 @@ pub(super) struct Fold {
     timestamp: String,
 }
 
+#[derive(Debug)]
 enum Node {
     Directory(BTreeMap<String, Node>),
     Object { mode: String, identity: Vec<u8> },
@@ -78,6 +79,10 @@ pub(super) fn materialize(
 
 fn read_tree(root: &Path, source: &str) -> Result<Node, String> {
     let output = git_output(root, &["ls-tree", "-rz", "--full-tree", source], None, None)?;
+    parse_tree(&output)
+}
+
+fn parse_tree(output: &[u8]) -> Result<Node, String> {
     let mut root = Node::Directory(BTreeMap::new());
     for record in output
         .split(|byte| *byte == 0)
@@ -170,6 +175,10 @@ fn sort_name(name: &str, node: &Node) -> Vec<u8> {
 
 fn source_clock(root: &Path, source: &str) -> Result<(String, String), String> {
     let clock = run_git(root, &["show", "-s", "--format=%ct %ai", source])?;
+    parse_source_clock(&clock)
+}
+
+fn parse_source_clock(clock: &str) -> Result<(String, String), String> {
     let mut fields = clock.split_ascii_whitespace();
     let timestamp = fields
         .next()
@@ -306,49 +315,61 @@ fn git_output(
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
     use super::*;
 
-    static NEXT: AtomicU64 = AtomicU64::new(0);
+    #[test]
+    fn tree_parser_preserves_prefix_siblings_and_nested_paths() {
+        let output = concat!(
+            "100644 blob 1111111111111111111111111111111111111111\ta.c\0",
+            "100644 blob 2222222222222222222222222222222222222222\ta/file\0",
+        );
+        let tree = parse_tree(output.as_bytes()).expect("canonical tree records parse");
+        let Node::Directory(root) = tree else {
+            panic!("tree root is a directory");
+        };
+        assert!(matches!(root.get("a.c"), Some(Node::Object { .. })));
+        let Some(Node::Directory(nested)) = root.get("a") else {
+            panic!("nested directory is retained");
+        };
+        assert!(matches!(nested.get("file"), Some(Node::Object { .. })));
+    }
 
     #[test]
-    fn fold_is_read_only_and_materializes_the_exact_commit() {
-        let root = std::env::temp_dir().join(format!(
-            "spice-release-commit-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(root.join("dist")).expect("fixture directories");
-        run_git(&root, &["init", "--initial-branch=main"]).expect("initialize fixture");
-        run_git(&root, &["config", "user.name", "Fixture"]).expect("fixture name");
-        run_git(&root, &["config", "user.email", "fixture@example.test"]).expect("fixture email");
-        fs::write(root.join(VERSION_PATH), "1.2.2\n").expect("source version");
-        fs::create_dir_all(root.join("a")).expect("nested fixture directory");
-        fs::write(root.join("a.c"), "sibling\n").expect("prefix sibling");
-        fs::write(root.join("a/file"), "nested\n").expect("nested file");
-        run_git(&root, &["add", VERSION_PATH, "a.c", "a/file"]).expect("stage source");
-        run_git(&root, &["commit", "-m", "source"]).expect("source commit");
-        let source = run_git(&root, &["rev-parse", "HEAD"]).expect("source identity");
-        let version = ProductVersion::parse("1.2.3").expect("release version");
-        let objects = run_git(&root, &["count-objects", "-v"]).expect("object inventory");
-        let projected = project(&root, &source, &version).expect("project release");
+    fn tree_parser_refuses_malformed_records() {
         assert_eq!(
-            run_git(&root, &["count-objects", "-v"]).expect("object inventory"),
-            objects,
-            "fold wrote Git objects"
+            parse_tree(b"100644 blob deadbeef missing-tab\0").unwrap_err(),
+            "Git tree record has no path separator"
         );
-        assert_eq!(run_git(&root, &["rev-parse", "HEAD"]).unwrap(), source);
-        assert_eq!(
-            fs::read_to_string(root.join(VERSION_PATH)).unwrap(),
-            "1.2.2\n"
-        );
+        assert!(decode_identity("xyz").is_err());
+    }
 
-        fs::write(root.join(VERSION_PATH), "1.2.3\n").expect("bump version");
-        let materialized = materialize(&root, &projected, &version).expect("create release");
-        assert_eq!(materialized, projected.commit);
-        assert_eq!(run_git(&root, &["status", "--porcelain=v1"]).unwrap(), "");
-        fs::remove_dir_all(root).expect("remove fixture");
+    #[test]
+    fn source_clock_parser_admits_only_canonical_git_clocks() {
+        assert_eq!(
+            parse_source_clock("1700000000 2023-11-14 16:13:20 -0600").unwrap(),
+            ("1700000000".to_owned(), "-0600".to_owned())
+        );
+        assert!(parse_source_clock("not-a-clock").is_err());
+        assert!(parse_source_clock("1700000000 2023-11-14 16:13:20 UTC").is_err());
+    }
+
+    #[test]
+    fn commit_body_binds_release_identity_and_source_clock() {
+        let clock = "1700000000 +0000";
+        let body = String::from_utf8(commit_body(
+            "tree-id",
+            "source-id",
+            "1700000000",
+            "+0000",
+            "release: bump to 1.2.3\n",
+        ))
+        .expect("commit body is UTF-8");
+        assert_eq!(
+            body,
+            format!(
+                "tree tree-id\nparent source-id\nauthor {ACTOR_NAME} <{ACTOR_EMAIL}> {clock}\n\
+                 committer {ACTOR_NAME} <{ACTOR_EMAIL}> {clock}\n\nrelease: bump to 1.2.3\n",
+            )
+        );
     }
 }

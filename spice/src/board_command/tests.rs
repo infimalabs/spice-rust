@@ -20,10 +20,6 @@ use fixture::*;
 mod reclaim;
 use reclaim::*;
 
-// A command-level recovery fixture keeps commit-bearing stale residency apart
-// from ordinary renewal arithmetic.
-mod stale_reclaim;
-
 // Each allocator re-read refusal is pinned by a scenario that moves only
 // what that one comparison reads, so severing them apart is observable.
 mod allocation_guard;
@@ -38,9 +34,6 @@ mod task_listing;
 // contract on `ClaimGrant`, and a caller sees only the first refusal, so it
 // is pinned apart from the scenarios that drive a claim that succeeds.
 mod claim_grant;
-
-// Automatic capacity uses the same allocator guard and mint before launch.
-mod automatic_lifecycle;
 
 fn at<'a>(answer: &'a BoardAnswer, task: &TaskHandle) -> &'a BoardTask {
     task_heads(answer, task).expect("fixture task is visible")

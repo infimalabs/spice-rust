@@ -11,7 +11,7 @@ pub(super) use claim::{
 };
 pub(super) use gate_findings::gate_findings;
 #[cfg(test)]
-pub(super) use gate_findings::{FindingRow, gate_findings_folded};
+pub(super) use gate_findings::{FindingRow, gate_findings_folded, gate_findings_folded_in_process};
 pub(super) use taste_proposal::taste_proposal_add;
 
 /// One actor-filtered board snapshot whose cursor and entries were validated together.

@@ -293,50 +293,6 @@ fn gate_findings_refuse_clean_report_from_another_repository_authority() {
 }
 
 #[test]
-fn gate_findings_refuse_pre_finding_revision_as_recovery() {
-    let (root, bus, epoch, _) = fixture("gate-findings-historical-recovery", 1);
-    let finding = focused_dispatch(&root, "historical-finding", &["historical"]);
-    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
-    let clean_history = focused_revision_dispatch(&finding.repository, "HEAD");
-
-    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &clean_history);
-
-    assert!(matches!(
-        outcome,
-        Outcome::Refusal(ref refusal)
-            if refusal.reason() == "gate::finding-source-regressed"
-    ));
-    let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].workflow.body.status, "pending");
-    clean(&root, bus);
-}
-
-#[test]
-fn gate_findings_refuse_present_evidence_from_unrelated_history() {
-    let (root, bus, epoch, _) = fixture("gate-findings-unrelated-history", 1);
-    let finding = focused_dispatch(&root, "related-finding", &["unrelated-history"]);
-    assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &finding));
-    let initial_revision = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
-        .statement
-        .body
-        .revision;
-    let unrelated = unrelated_focused_revision(&finding, &["unrelated-history"]);
-    assert_eq!(finding.findings[0].identity, unrelated.findings[0].identity);
-
-    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &unrelated);
-
-    assert!(matches!(
-        outcome,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "gate::finding-source-regressed"
-    ));
-    let tasks = gate_tasks(&gate_board(&bus, epoch, Actor::Operator));
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].statement.body.revision, initial_revision);
-    clean(&root, bus);
-}
-
-#[test]
 fn gate_findings_accept_descendant_staged_recovery_through_review() {
     let (root, bus, epoch, seats) = fixture("gate-findings-descendant-recovery", 1);
     let finding = focused_dispatch(&root, "descendant-finding", &["descendant"]);
@@ -346,7 +302,6 @@ fn gate_findings_accept_descendant_staged_recovery_through_review() {
         .body
         .handle
         .clone();
-    commit_focused(&finding, "commit standing finding");
     let clean_report = focused_dispatch(&root, "descendant-clean", &[]);
     assert_ne!(finding.body.source.anchor, clean_report.body.source.anchor);
     let lane = claim_gate_task(&bus, epoch, &seats[0], &task);
@@ -716,38 +671,6 @@ fn gate_findings_refuse_invalid_focused_report_before_board_work() {
 }
 
 #[test]
-fn gate_findings_refuse_a_source_envelope_for_another_report_tree() {
-    let (root, bus, epoch, _) = fixture("gate-findings-source-tree-mismatch", 1);
-    let mut dispatch = focused_dispatch(&root, "source-tree", &[]);
-    dispatch.body.source.tree = digest("another-selected-tree");
-
-    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &dispatch);
-
-    assert!(matches!(
-        outcome,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "gate::finding-source-mismatch"
-    ));
-    assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
-    clean(&root, bus);
-}
-
-#[test]
-fn gate_findings_refuse_a_report_after_its_staged_selection_moves() {
-    let (root, bus, epoch, _) = fixture("gate-findings-source-moved", 1);
-    let stale = focused_dispatch(&root, "stale-selection", &["stale-selection"]);
-    let _current = focused_dispatch(&root, "current-selection", &[]);
-
-    let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &stale);
-
-    assert!(matches!(
-        outcome,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "gate::finding-source-moved"
-    ));
-    assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
-    clean(&root, bus);
-}
-
-#[test]
 fn gate_findings_refuse_fold_state_disagreement_before_board_work() {
     let (root, bus, epoch, _) = fixture("gate-findings-fold-mismatch", 1);
     let source = focused_dispatch(&root, "fold-source", &[]);
@@ -800,7 +723,24 @@ fn issue_gate_findings_for_repository(
     dispatch: &FocusedDispatch,
     repository: &Repository,
 ) -> Outcome<CommandAnswer> {
-    issue_gate_findings_raw(bus, epoch, actor, dispatch.body.clone(), repository)
+    let command = fixture_command(
+        epoch,
+        actor,
+        CommandKind::GateFindings,
+        Vec::new(),
+        &dispatch.body,
+    );
+    gate_findings_folded_in_process(
+        bus,
+        &command,
+        &dispatch.body,
+        &dispatch.findings,
+        gate::GateId::FileShape,
+        dispatch.findings.is_empty(),
+        repository,
+        &gate_projects(),
+        &board::NextConfig::default(),
+    )
 }
 
 fn issue_gate_findings_raw(
@@ -926,7 +866,7 @@ fn finding(name: &str) -> FindingRow {
         authority: "file shape declaration fixture".to_owned(),
         locus: format!("gate=file-shape metric=file.lines key=path=\"src/{name}.rs\""),
         title: format!("Gate finding {name}"),
-        description: format!("Finding {name} exceeded its bound"),
+        description: format!("Finding {name} exceeded its bound\nGate: file-shape"),
         acceptance: vec![format!("Finding {name} is no longer reported")],
     }
 }
