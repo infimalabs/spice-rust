@@ -153,6 +153,13 @@ fn render_agent_message_card(
     let correspondent =
         agent_message_correspondent(member, quote_lane, message, quote_dispatcher, speak, order);
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
+    let card_label = producer.as_ref().map(|producer| {
+        if is_compaction {
+            format!("Context compacted by {producer}")
+        } else {
+            format!("Agent message from {producer}")
+        }
+    });
     let unlinked_media = message
         .media
         .iter()
@@ -171,12 +178,7 @@ fn render_agent_message_card(
                 is_compaction.then_some("mosaic-compaction-card"),
                 layout.lifecycle.as_str(),
             )}
-            aria-label={match (is_compaction, producer.as_deref()) {
-                (true, Some(producer)) => format!("Context compacted by {producer}"),
-                (true, None) => "Context compacted".to_owned(),
-                (false, Some(producer)) => format!("Agent message from {producer}"),
-                (false, None) => "Agent message".to_owned(),
-            }}
+            aria-label={card_label}
             data-card-kind={agent_card_kind(is_compaction)}
             data-message-role="agent"
             data-mosaic-card-key={source_id}
@@ -219,10 +221,14 @@ fn render_compaction_boundary(
     member: &crate::runtime::LaneMember,
     message: &wire::AgentMessage,
 ) -> Html {
-    let agent = member
-        .name
-        .clone()
-        .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
+    let agent_identity = member.name.clone().map(|agent| {
+        html! {
+            <>
+                <span aria-hidden="true">{"\u{b7}"}</span>
+                <span class="mosaic-compaction-agent" title={agent.clone()}>{agent}</span>
+            </>
+        }
+    });
     let display_millis = crate::runtime::agent_message_display_millis(message);
     html! {
         <>
@@ -231,8 +237,7 @@ fn render_compaction_boundary(
                 <Age authored={display_millis} class="mosaic-compaction-age" />
                 <span aria-hidden="true">{"\u{b7}"}</span>
                 <span class="message-key">{"Context compacted"}</span>
-                <span aria-hidden="true">{"\u{b7}"}</span>
-                <span class="mosaic-compaction-agent" title={agent.clone()}>{agent}</span>
+                {agent_identity}
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
         </>
