@@ -659,7 +659,7 @@ export async function captureReferenceViewport(page, artifacts) {
     "the live lineage has no redundant operator control bar",
   );
   assert.equal(pixels.bodyWidth, 1000, "the reference viewport has no horizontal overflow");
-  assert.equal(pixels.background, "rgb(11, 15, 12)", "the captured surface uses the dark palette");
+  assert.equal(pixels.background, "rgb(16, 20, 17)", "the captured surface uses the dark palette");
   await captureReferenceControls(
     page,
     team,

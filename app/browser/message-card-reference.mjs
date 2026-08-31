@@ -6,6 +6,85 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
+const referencePalettes = {
+  dark: {
+    page: "rgb(16, 20, 17)",
+    panel: "rgb(24, 29, 25)",
+    control: "rgb(20, 25, 21)",
+  },
+  light: {
+    page: "rgb(247, 248, 244)",
+    panel: "rgb(255, 255, 255)",
+    control: "rgb(255, 255, 255)",
+  },
+};
+
+async function assertReferencePalette(console, mode) {
+  const measured = await console.locator(".team-surface").first().evaluate((surface) => {
+    const background = (selector) => getComputedStyle(
+      selector ? surface.querySelector(selector) : surface,
+    ).backgroundColor;
+    const probe = document.createElement("span");
+    surface.append(probe);
+    const token = (name) => {
+      probe.style.background = `var(${name})`;
+      const value = getComputedStyle(probe).backgroundColor;
+      probe.style.background = "";
+      return value;
+    };
+    const values = {
+      page: token("--page"),
+      panel: token("--panel"),
+      control: token("--control"),
+      controlSoft: token("--control-surface-soft"),
+      body: getComputedStyle(document.body).backgroundColor,
+      surface: background(),
+      toolbar: background(".team-toolbar"),
+      rail: background(".team-mode-rail"),
+      selectedMode: background(".team-mode.selected"),
+      menu: background(".team-menu"),
+      ticker: background(".ticker"),
+      pane: background('.team-pane:not([hidden])'),
+      agent: background(".team-agent"),
+      card: background('.mosaic-message-card[data-layout-phase="committed"]'),
+      cardAction: background(".mosaic-message-card .card-action"),
+    };
+    probe.remove();
+    return values;
+  });
+  const expected = referencePalettes[mode];
+  assert.deepEqual(
+    {
+      page: measured.page,
+      panel: measured.panel,
+      control: measured.control,
+    },
+    expected,
+    `${mode} palette copies the reference surface ladder`,
+  );
+  assert.equal(measured.body, expected.page, `${mode} body owns the page surface`);
+  for (const owner of ["surface", "toolbar", "ticker", "pane", "card"]) {
+    assert.equal(measured[owner], expected.panel, `${mode} ${owner} owns the panel surface`);
+  }
+  for (const owner of ["selectedMode", "agent"]) {
+    assert.equal(measured[owner], expected.control, `${mode} ${owner} owns the control surface`);
+  }
+  for (const owner of ["rail", "menu", "cardAction"]) {
+    assert.equal(
+      measured[owner],
+      measured.controlSoft,
+      `${mode} ${owner} owns the soft control surface`,
+    );
+  }
+  if (mode === "dark") {
+    assert.equal(
+      new Set([expected.page, measured.controlSoft, expected.control, expected.panel]).size,
+      4,
+      "dark mode keeps four visibly distinct neighboring surface steps",
+    );
+  }
+}
+
 async function assertMessageCardLayout(console, label) {
   const planes = await console.locator(".lane-mosaic-plane").evaluateAll((elements) => (
     elements.map((plane) => [...plane.querySelectorAll(
@@ -142,9 +221,10 @@ async function waitForCommittedResize(page, console, viewport) {
     }, priorWidths);
 }
 
-async function captureReferenceView(page, console, artifacts, viewport) {
+async function captureReferenceView(page, console, artifacts, viewport, mode) {
   await waitForCommittedResize(page, console, viewport);
   await assertMessageCardLayout(console, viewport.label);
+  await assertReferencePalette(console, mode);
   const cards = console.locator(
     '[data-card-kind="agent-message"][data-layout-phase="committed"]',
   );
@@ -170,11 +250,11 @@ async function captureReferenceView(page, console, artifacts, viewport) {
   const screenshotCard = console.locator(`[data-mosaic-card-key="${widest.key}"]`);
   assert.equal(
     await screenshotCard.evaluate((article) => getComputedStyle(article).backgroundColor),
-    "rgb(17, 23, 18)",
-    `${viewport.label} capture explicitly exercises dark mode`,
+    referencePalettes[mode].panel,
+    `${viewport.label} capture explicitly exercises ${mode} mode`,
   );
   await screenshotCard.screenshot({
-    path: join(artifacts, `canvas-message-card-${viewport.label}-dark.png`),
+    path: join(artifacts, `canvas-message-card-${viewport.label}-${mode}.png`),
   });
 }
 
@@ -250,13 +330,15 @@ export async function assertReferenceMessageCard(
   assertReferenceGeometry(geometry, agentNames);
 
   const original = page.viewportSize();
-  await page.emulateMedia({ colorScheme: "dark" });
-  await captureReferenceView(page, console, artifacts, {
-    label: "reference", width: 648, height: 726,
-  });
-  await captureReferenceView(page, console, artifacts, {
-    label: "mobile", width: 390, height: 720,
-  });
+  for (const mode of ["dark", "light"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await captureReferenceView(page, console, artifacts, {
+      label: "reference", width: 648, height: 726,
+    }, mode);
+    await captureReferenceView(page, console, artifacts, {
+      label: "mobile", width: 390, height: 720,
+    }, mode);
+  }
   await waitForCommittedResize(page, console, { label: "restored reference", ...original });
   await assertMessageCardLayout(console, "restored reference");
   await page.emulateMedia({ colorScheme: null });

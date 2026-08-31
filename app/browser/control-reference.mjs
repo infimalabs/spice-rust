@@ -6,11 +6,11 @@ import { assertTeamActions } from "./team-actions.mjs";
 const darkPalette = {
   quiet: "rgb(138, 169, 232)",
   drain: "rgb(230, 180, 78)",
-  green: "rgb(115, 199, 159)",
+  green: "rgb(116, 198, 157)",
   // One ink prints every submit state, the way the predecessor's `.primary`
   // reads a single `--button-accent-fg` and lets only the fill follow the
   // state accent. A maxed-only ink would be a second place to keep in step.
-  pageInk: "rgb(11, 15, 12)",
+  pageInk: "rgb(16, 20, 17)",
 };
 
 async function selectLifetime(page, lineage, input, value, label) {
