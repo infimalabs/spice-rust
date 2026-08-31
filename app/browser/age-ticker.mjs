@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
 import { installSocketControl } from "./canvas-speech.mjs";
 
-/// The shared clock's period, mirroring `TICK_MILLIS` in
-/// `app/src/browser/clock.rs`. The assertion below reads a label that advances
-/// on this cadence, so a drift here shows up as a timeout rather than as a
+/// The longest deadline for a seconds-old label, matching the one-second
+/// quantum selected by `elapsed_label_deadline_millis`. The assertion below
+/// reads a young label, so a drift here shows up as a timeout rather than as a
 /// silently weaker test.
 const TICK_MS = 1_000;
 
@@ -43,7 +43,7 @@ const PLACEMENT_ATTRIBUTES = ["data-track", "data-span", "data-base", "data-row"
 /// before it even probes (`LIVENESS_PROBE_MILLIS`), and this window is a few
 /// seconds, so the stall stays well inside what the socket considers healthy.
 ///
-/// One observation watches the composer's shared age and one stable assistant
+/// One observation watches the composer's scheduled age and one stable assistant
 /// card together, proving the label moved while the lattice did not.
 export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, lane) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -242,11 +242,11 @@ async function observeOneBoundary(card, lane) {
       // slipped through -- lands outside this pair and fails rather than
       // counting as an advance.
       //
-      // A pair rather than one string, because the label is the shared clock's
-      // most recent publication and the render it triggers can be scheduled
-      // behind it. Demanding sub-tick agreement would be demanding something
-      // the design never promised; one tick is exactly the lag it does allow,
-      // and a frozen label leaves even that window within two seconds.
+      // A pair rather than one string, because the label's deadline callback
+      // can be scheduled behind its boundary. Demanding sub-tick agreement
+      // would be demanding something the design never promised; a one-second
+      // quantum is exactly the lag it allows, and a frozen label leaves even
+      // that window within two seconds.
       expected: [
         elapsedLabel(Date.now() - authored),
         elapsedLabel(Date.now() - config.tickMs - authored),

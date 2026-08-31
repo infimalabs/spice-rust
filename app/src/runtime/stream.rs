@@ -205,10 +205,18 @@ impl CanvasRuntime {
                 let changed = !self.message_snapshot_matches(limit, messages);
                 self.message_limit = Some(limit);
                 if changed {
-                    self.messages.clear();
+                    let previous = std::mem::take(&mut self.messages);
                     self.activities.clear();
                     for message in messages {
-                        self.observe_message(message);
+                        let retained = previous
+                            .iter()
+                            .find(|existing| {
+                                existing.lane == message.lane
+                                    && existing.locus == message.locus
+                                    && existing.as_ref() == message
+                            })
+                            .cloned();
+                        self.observe_message_with_retained(message, retained);
                     }
                 }
                 StreamApplication::new(Vec::new(), changed)
@@ -469,6 +477,14 @@ impl CanvasRuntime {
     }
 
     fn observe_message(&mut self, message: &AgentMessage) -> bool {
+        self.observe_message_with_retained(message, None)
+    }
+
+    fn observe_message_with_retained(
+        &mut self,
+        message: &AgentMessage,
+        retained: Option<Rc<AgentMessage>>,
+    ) -> bool {
         let (class, title) = match message.activity {
             AgentActivityKind::Prose => ("prose", "assistant"),
             AgentActivityKind::Tool => ("tool", "tool"),
@@ -498,7 +514,8 @@ impl CanvasRuntime {
         if duplicate {
             return activity_changed;
         }
-        self.messages.push(message.clone());
+        self.messages
+            .push(retained.unwrap_or_else(|| Rc::new(message.clone())));
         if let Some(limit) = self.message_limit {
             trim_agent_message_lane(&mut self.messages, message.lane, limit);
         }
@@ -568,7 +585,7 @@ impl CanvasRuntime {
             }
         }
         let activity_count = activities.len();
-        self.messages.iter().eq(messages)
+        self.messages.iter().map(Rc::as_ref).eq(messages)
             && self
                 .activities
                 .iter()
@@ -636,7 +653,11 @@ fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {
     }
 }
 
-fn trim_agent_message_lane(messages: &mut Vec<AgentMessage>, lane: CanonicalUuid, limit: usize) {
+fn trim_agent_message_lane(
+    messages: &mut Vec<Rc<AgentMessage>>,
+    lane: CanonicalUuid,
+    limit: usize,
+) {
     let activities = messages
         .iter()
         .filter(|message| message.lane == lane)
@@ -803,9 +824,9 @@ mod message_retention_tests {
             if matches!(offset, 20 | 80 | 220) {
                 activity.activity = AgentActivityKind::Compaction;
             }
-            messages.push(activity);
+            messages.push(Rc::new(activity));
             if offset < QUIET_HISTORY_LENGTH {
-                messages.push(message(quiet_lane, offset));
+                messages.push(Rc::new(message(quiet_lane, offset)));
             }
             trim_agent_message_lane(&mut messages, busy_lane, 256);
         }

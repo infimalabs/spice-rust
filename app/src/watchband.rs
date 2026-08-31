@@ -277,7 +277,7 @@ pub fn split_lineage(
 /// function: the lease instants are copied through untouched, and whoever
 /// renders them subtracts the time then. That is what lets a standing outlive
 /// the frame that built it — the join changes only when the resident speaks,
-/// while the age changes every second.
+/// while the age advances at its next visible unit boundary.
 #[must_use]
 pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) -> Vec<Standing> {
     lanes
@@ -410,6 +410,17 @@ pub const AGE_LABEL_WIDTH: usize = 4;
 
 /// Days past which the label stops counting and says only that it is more.
 const AGE_LABEL_MAX_DAYS: i64 = 99;
+const MILLIS_PER_SECOND: i64 = 1_000;
+const SECONDS_PER_MINUTE: i64 = 60;
+const SECONDS_PER_HOUR: i64 = 3_600;
+const SECONDS_PER_DAY: i64 = 86_400;
+const LAST_SECOND_OF_MINUTE: i64 = SECONDS_PER_MINUTE - 1;
+const LAST_SECOND_OF_HOUR: i64 = SECONDS_PER_HOUR - 1;
+const LAST_SECOND_OF_DAY: i64 = SECONDS_PER_DAY - 1;
+const MILLIS_PER_MINUTE: i64 = SECONDS_PER_MINUTE * MILLIS_PER_SECOND;
+const MILLIS_PER_HOUR: i64 = SECONDS_PER_HOUR * MILLIS_PER_SECOND;
+const MILLIS_PER_DAY: i64 = SECONDS_PER_DAY * MILLIS_PER_SECOND;
+const MIN_TIMER_DELAY_MILLIS: i128 = 1;
 
 /// A duration in the band's spelling: one unit, no decimals, largest that fits.
 ///
@@ -427,17 +438,55 @@ const AGE_LABEL_MAX_DAYS: i64 = 99;
 /// "long dead".
 #[must_use]
 pub fn elapsed_label(millis: i64) -> String {
-    let seconds = millis / 1_000;
+    let seconds = millis / MILLIS_PER_SECOND;
     match seconds {
         ..=0 => "now".to_owned(),
-        1..=59 => format!("{seconds}s"),
-        60..=3_599 => format!("{}m", seconds / 60),
-        3_600..=86_399 => format!("{}h", seconds / 3_600),
-        _ => match seconds / 86_400 {
+        1..=LAST_SECOND_OF_MINUTE => format!("{seconds}s"),
+        SECONDS_PER_MINUTE..=LAST_SECOND_OF_HOUR => {
+            format!("{}m", seconds / SECONDS_PER_MINUTE)
+        }
+        SECONDS_PER_HOUR..=LAST_SECOND_OF_DAY => {
+            format!("{}h", seconds / SECONDS_PER_HOUR)
+        }
+        _ => match seconds / SECONDS_PER_DAY {
             days @ ..=AGE_LABEL_MAX_DAYS => format!("{days}d"),
             _ => format!("{AGE_LABEL_MAX_DAYS}d+"),
         },
     }
+}
+
+/// Delay until [`elapsed_label`] can return a different spelling.
+///
+/// Old labels use their displayed unit as the timer quantum, so restored
+/// history does not wake every age each second. A saturated day label has no
+/// later spelling and therefore no deadline. Very distant future instants are
+/// capped to the browser timer's `u32` input and reconsidered when that bound
+/// expires.
+#[must_use]
+pub fn elapsed_label_deadline_millis(millis: i64) -> Option<u32> {
+    let seconds = millis / MILLIS_PER_SECOND;
+    let delay = match seconds {
+        ..=0 => i128::from(MILLIS_PER_SECOND.saturating_sub(millis)),
+        1..=LAST_SECOND_OF_MINUTE => i128::from(until_next_multiple(millis, MILLIS_PER_SECOND)),
+        SECONDS_PER_MINUTE..=LAST_SECOND_OF_HOUR => {
+            i128::from(until_next_multiple(millis, MILLIS_PER_MINUTE))
+        }
+        SECONDS_PER_HOUR..=LAST_SECOND_OF_DAY => {
+            i128::from(until_next_multiple(millis, MILLIS_PER_HOUR))
+        }
+        _ if seconds / SECONDS_PER_DAY <= AGE_LABEL_MAX_DAYS => {
+            i128::from(until_next_multiple(millis, MILLIS_PER_DAY))
+        }
+        _ => return None,
+    };
+    Some(
+        u32::try_from(delay.clamp(MIN_TIMER_DELAY_MILLIS, i128::from(u32::MAX)))
+            .expect("delay is clamped to u32"),
+    )
+}
+
+fn until_next_multiple(millis: i64, quantum: i64) -> i64 {
+    quantum - millis.rem_euclid(quantum)
 }
 
 /// First authored line in a message after borrowed Markdown quotes are skipped.

@@ -87,7 +87,59 @@ pub(super) fn focus_after_render(id: String) {
     });
 }
 
-pub(super) fn render_agent_message_card(
+#[derive(Properties)]
+pub(super) struct AgentMessageCardProps {
+    pub(super) member: crate::runtime::LaneMember,
+    pub(super) quote_lane: CanonicalUuid,
+    pub(super) message: Rc<wire::AgentMessage>,
+    pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
+    pub(super) speech_queue: Callback<SpeechRequest>,
+    pub(super) speech: LineageSpeech,
+    pub(super) lane: CanonicalUuid,
+    pub(super) order: u64,
+    pub(super) layout: CardLayout,
+}
+
+impl PartialEq for AgentMessageCardProps {
+    fn eq(&self, other: &Self) -> bool {
+        self.member.lane == other.member.lane
+            && self.member.name == other.member.name
+            && self.member.worktree == other.member.worktree
+            && self.quote_lane == other.quote_lane
+            && (Rc::ptr_eq(&self.message, &other.message) || self.message == other.message)
+            && self.quote_dispatcher == other.quote_dispatcher
+            && self.speech_queue == other.speech_queue
+            && self.speech == other.speech
+            && self.lane == other.lane
+            && self.order == other.order
+            && self.layout == other.layout
+    }
+}
+
+/// Keep stable message DOM and parsed Markdown out of unrelated surface updates.
+#[function_component(AgentMessageCard)]
+pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
+    let speak = if props.speech == LineageSpeech::Quiet {
+        Callback::from(|_: String| {})
+    } else {
+        let lane = props.lane.to_string();
+        let speech_queue = props.speech_queue.clone();
+        Callback::from(move |text: String| {
+            speech_queue.emit(SpeechRequest::manual(Some(lane.clone()), text));
+        })
+    };
+    render_agent_message_card(
+        &props.member,
+        props.quote_lane,
+        &props.message,
+        &props.quote_dispatcher,
+        &speak,
+        props.order,
+        &props.layout,
+    )
+}
+
+fn render_agent_message_card(
     member: &crate::runtime::LaneMember,
     quote_lane: CanonicalUuid,
     message: &wire::AgentMessage,

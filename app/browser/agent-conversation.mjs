@@ -718,7 +718,7 @@ export async function assertAgentConversation(
   const age = outgoing.locator(".message-age");
   assert.match((await age.innerText()).trim(), /^(?:now|\d+[smhd])$/);
   assert.match(await age.getAttribute("title"), /^tape \d+:\d+\+\d+#\d+$/);
-  assert.equal(await age.getAttribute("data-age-clock"), "shared");
+  assert.equal(await age.getAttribute("data-age-clock"), "deadline");
   assert.match(await age.getAttribute("data-age-authored"), /^\d+$/);
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 

@@ -41,7 +41,6 @@ mod connection;
 mod view;
 mod watchband;
 
-use clock::WallClock;
 use connection::{request_external_speech, run_surface};
 use view::{CanvasRender, render_canvas};
 use watchband::ComposerAction;
@@ -518,15 +517,27 @@ fn canvas_app() -> Html {
         speech: speech.clone(),
         status: speech_status.clone(),
     };
+    let current_speech_runtime = use_mut_ref(|| speech_runtime.clone());
+    *current_speech_runtime.borrow_mut() = speech_runtime.clone();
     let speak = {
-        let speech_runtime = speech_runtime.clone();
-        use_callback((), move |request: SpeechRequest, ()| {
-            speech_runtime.enqueue(request);
+        let current_speech_runtime = current_speech_runtime.clone();
+        use_memo((), move |_| {
+            Callback::from(move |request: SpeechRequest| {
+                current_speech_runtime.borrow().enqueue(request);
+            })
         })
     };
     let narration_cursors = use_mut_ref(load_narration_cursors);
-    let narrate = use_narration_callback(narration_cursors, speak.clone());
-    let agents = use_agent_controls(sender.clone(), surface.clone(), speak.clone(), narrate);
+    let narrate = {
+        let speak = (*speak).clone();
+        use_memo((), move |_| narration_callback(narration_cursors, speak))
+    };
+    let agents = use_agent_controls(
+        sender.clone(),
+        surface.clone(),
+        (*speak).clone(),
+        (*narrate).clone(),
+    );
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     use_surface_connection(
         sender.clone(),
@@ -549,15 +560,9 @@ fn canvas_app() -> Html {
         note_text.clone(),
         note_notice.clone(),
     );
-    let toggle_speech = speech_toggle(speech_status.clone(), speech_runtime, speak);
+    let toggle_speech = speech_toggle(speech_status.clone(), speech_runtime, (*speak).clone());
 
-    // The clock wraps the canvas rather than living inside it so that a tick
-    // re-renders `WallClock` and the `Age` leaves that read its context, and
-    // never `CanvasApp` itself. Sampling the time as a hook here instead would
-    // rebuild the whole tree every second, which is how a once-a-second label
-    // turns into a once-a-second Mosaic re-measurement.
-    html! {
-        <WallClock>{render_canvas(CanvasRender {
+    render_canvas(CanvasRender {
         connection: &connection,
         surface: &surface,
         axis: &axis,
@@ -576,8 +581,7 @@ fn canvas_app() -> Html {
         speech: &speech,
         speech_status: &speech_status,
         toggle_speech,
-        })}</WallClock>
-    }
+    })
 }
 
 #[hook]
@@ -822,12 +826,11 @@ fn store_narration_cursors(cursors: &NarrationCursors) {
     let _ = storage.set_item(NARRATION_CURSOR_STORAGE, &value);
 }
 
-#[hook]
-fn use_narration_callback(
+fn narration_callback(
     cursors: Rc<RefCell<NarrationCursors>>,
     speak: Callback<SpeechRequest>,
 ) -> Callback<NarrationBatch> {
-    use_callback((), move |batch: NarrationBatch, ()| {
+    Callback::from(move |batch: NarrationBatch| {
         let lines = {
             let mut cursors = cursors.borrow_mut();
             let lines = cursors.observe(batch.materialization, &batch.messages);

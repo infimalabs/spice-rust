@@ -6,6 +6,7 @@
 //! contribute the operator records rendered by conversation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, EffortAnswer,
@@ -468,7 +469,7 @@ pub struct CanvasRuntime {
     fact_pages: Vec<BrowserState<FactRow>>,
     trust_pages: Vec<BrowserState<TrustView>>,
     trust_resume: Option<StreamCursor>,
-    messages: Vec<AgentMessage>,
+    messages: Vec<Rc<AgentMessage>>,
     operator_messages: Vec<OperatorMessage>,
     /// Absent until the retained message page announces its exact capacity.
     message_limit: Option<usize>,
@@ -684,7 +685,7 @@ impl CanvasRuntime {
 
     /// Newest retained agent-authored transcript messages in creation order.
     #[must_use]
-    pub fn messages(&self) -> &[AgentMessage] {
+    pub fn messages(&self) -> &[Rc<AgentMessage>] {
         &self.messages
     }
 

@@ -622,7 +622,7 @@ export async function assertPersistentMosaic(
   await settleMosaicActivity(page, plane);
 
   const tickingAge = console.locator(
-    '.mosaic-message-card[data-layout-phase="committed"] .message-age[data-age-clock="shared"]',
+    '.mosaic-message-card[data-layout-phase="committed"] .message-age[data-age-clock="deadline"]',
   )
     .filter({ hasText: /^(?:now|\d+s)$/ })
     .last();
@@ -642,7 +642,7 @@ export async function assertPersistentMosaic(
     `the selected message footer names its authored instant and card: ${JSON.stringify(ageTarget)}`,
   );
   assert.ok(
-    await console.locator('.composer-shard-age-label[data-age-clock="shared"]')
+    await console.locator('.composer-shard-age-label[data-age-clock="deadline"]')
       .evaluateAll((ages, authored) => ages.some(
         (age) => age.dataset.ageAuthored === authored,
       ), ageTarget.authored),
@@ -686,7 +686,7 @@ export async function assertPersistentMosaic(
     ageCardBefore,
     "the selected message card preserves its Mosaic placement and bounding geometry",
   );
-  assertUnmoved(ageProbe, aged, "a shared-clock age tick");
+  assertUnmoved(ageProbe, aged, "a deadline-driven age tick");
   assert.equal(
     aged.commits,
     ageProbe.commits,

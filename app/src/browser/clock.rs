@@ -1,4 +1,4 @@
-//! One browser clock, shared by every relative age the canvas draws.
+//! Deadline-driven relative ages for the browser canvas.
 //!
 //! Ages used to be arithmetic done during render: a component read
 //! `Date::now()`, subtracted an instant, and spelled the difference. That makes
@@ -7,65 +7,21 @@
 //! the span it had when its last frame arrived. The canvas looked idle because
 //! it was idle.
 //!
-//! The clock is inverted here. [`WallClock`] owns the only interval in the
-//! canvas and publishes the current instant as context; [`Age`] consumes it and
-//! is the only thing that subtracts. Every surface that shows an age holds an
-//! absolute display instant and renders an `<Age>`, so they all advance
-//! together off one timer, and none of them needs a frame from the resident.
-//!
-//! The shape matters as much as the sharing. `Age` is a leaf, so a tick
-//! re-renders the label and nothing above it. That is what keeps a ticking age
-//! away from the Mosaic: the plane's props never mention time, so a second
-//! passing cannot re-measure a card or move a placement.
+//! Each [`Age`] schedules only the next instant at which its visible spelling
+//! can change. A seconds-old message wakes each second, a minutes-old message
+//! wakes once a minute, and a saturated age never wakes. Keeping that timer in
+//! the leaf avoids reconciling the complete canvas VDOM for every seconds-old
+//! label. The callback writes only a changed text node; any later Yew render
+//! computes that same text from the current clock. Dropping the effect cancels
+//! the pending browser timer and prevents the callback from rearming itself.
 
-use gloo_timers::callback::Interval;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use gloo_timers::callback::Timeout;
 use yew::prelude::*;
 
-use crate::watchband::{AGE_LABEL_WIDTH, elapsed_label};
-
-/// How often the shared clock republishes the current instant.
-///
-/// One second because that is the finest distinction `elapsed_label` draws: a
-/// faster tick would republish an instant that spells the same label, and a
-/// slower one would let the seconds visibly skip.
-const TICK_MILLIS: u32 = 1_000;
-
-/// The current instant, in epoch milliseconds, as the canvas last observed it.
-///
-/// A newtype rather than a bare `i64` so the context lookup is unambiguous, and
-/// `PartialEq` so a republished-but-identical instant costs consumers nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Clock(pub(super) i64);
-
-#[derive(Properties, PartialEq)]
-pub(super) struct WallClockProps {
-    pub(super) children: Html,
-}
-
-/// Publish a once-a-second instant to everything rendered beneath.
-///
-/// The interval is started by the effect that runs on mount and dropped by its
-/// teardown, so it is tied to the canvas being on screen and to nothing else.
-/// In particular it does not wait on the resident: an operator who opens the
-/// canvas while discovery is failing still watches the ages move, which is the
-/// only way the screen can distinguish "nothing is happening" from "I am no
-/// longer being told what is happening".
-#[function_component(WallClock)]
-pub(super) fn wall_clock(props: &WallClockProps) -> Html {
-    let now = use_state_eq(now_millis);
-    {
-        let now = now.clone();
-        use_effect_with((), move |()| {
-            let interval = Interval::new(TICK_MILLIS, move || now.set(now_millis()));
-            move || drop(interval)
-        });
-    }
-    html! {
-        <ContextProvider<Clock> context={Clock(*now)}>
-            {props.children.clone()}
-        </ContextProvider<Clock>>
-    }
-}
+use crate::watchband::{AGE_LABEL_WIDTH, elapsed_label, elapsed_label_deadline_millis};
 
 #[derive(Properties, PartialEq)]
 pub(super) struct AgeProps {
@@ -81,7 +37,7 @@ pub(super) struct AgeProps {
     pub(super) title: AttrValue,
 }
 
-/// One relative age, advancing on the shared clock.
+/// One relative age, advancing at its next visible deadline.
 ///
 /// The rendered span is a fixed-width slot: `data-age-slot` carries the
 /// character budget the label is bounded to, and the stylesheet sizes the box
@@ -89,23 +45,57 @@ pub(super) struct AgeProps {
 /// text node and leaves every neighbouring layout box exactly where it was.
 #[function_component(Age)]
 pub(super) fn age(props: &AgeProps) -> Html {
-    // An `Age` outside the provider still reads correctly on first paint and
-    // then freezes -- which is the exact defect this module exists to remove,
-    // arriving silently. Nothing renders one today, and nothing should: the
-    // provider wraps the whole canvas. The fallback is here so a future caller
-    // placed outside it is wrong about liveness rather than blank, and the
-    // absent `data-age-clock` attribute is what names it as unprovided.
-    let clock = use_context::<Clock>();
-    let now = clock.map_or_else(now_millis, |clock| clock.0);
+    let slot = use_node_ref();
+    {
+        let slot = slot.clone();
+        use_effect_with(props.authored, move |authored| {
+            let active = Rc::new(Cell::new(true));
+            let pending = Rc::new(RefCell::new(None));
+            schedule(slot, *authored, Rc::clone(&active), Rc::clone(&pending));
+            move || {
+                active.set(false);
+                pending.borrow_mut().take();
+            }
+        });
+    }
+    let now = now_millis();
     html! {
         <span
+            ref={slot}
             class={props.class.clone()}
             title={props.title.clone()}
             data-age-slot={AGE_LABEL_WIDTH.to_string()}
             data-age-authored={props.authored.to_string()}
-            data-age-clock={clock.map(|_| "shared")}
-        >{elapsed_label(now - props.authored)}</span>
+            data-age-clock="deadline"
+        >{elapsed_label(now.saturating_sub(props.authored))}</span>
     }
+}
+
+fn schedule(
+    slot: NodeRef,
+    authored: i64,
+    active: Rc<Cell<bool>>,
+    pending: Rc<RefCell<Option<Timeout>>>,
+) {
+    let Some(delay) = elapsed_label_deadline_millis(now_millis().saturating_sub(authored)) else {
+        return;
+    };
+    let next_pending = Rc::clone(&pending);
+    let timeout = Timeout::new(delay, move || {
+        next_pending.borrow_mut().take();
+        if !active.get() {
+            return;
+        }
+        let Some(element) = slot.cast::<web_sys::Element>() else {
+            return;
+        };
+        let label = elapsed_label(now_millis().saturating_sub(authored));
+        if element.text_content().as_deref() != Some(&label) {
+            element.set_text_content(Some(&label));
+        }
+        schedule(slot, authored, active, next_pending);
+    });
+    pending.borrow_mut().replace(timeout);
 }
 
 /// The browser's current instant in epoch milliseconds.
