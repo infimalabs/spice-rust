@@ -536,6 +536,15 @@ impl EventDirectives<'_> {
                         retirement_matches(retirement, self.event, locus)
                     })))
     }
+
+    fn historical_context(&self, token: &str, miss: steer::ack::scan::Miss) -> Option<steer::Key> {
+        if miss != steer::ack::scan::Miss::Historical {
+            return None;
+        }
+        let key = token.parse::<steer::Key>().ok()?;
+        let directive = self.directives.0.get(&key)?;
+        (directive.lane == self.event.lane).then_some(key)
+    }
 }
 
 impl steer::Standing for EventDirectives<'_> {
@@ -590,6 +599,7 @@ fn present_steering_acknowledgements_with_directives(
     for acknowledgement in steer::ack::scan::scan_acknowledgements(text, &standing) {
         let separator = acknowledgement.separator;
         let mut recognized = Vec::new();
+        let mut contexts = Vec::new();
         let mut missed = Vec::new();
         for recognition in acknowledgement.recognitions {
             match recognition.outcome {
@@ -600,15 +610,28 @@ fn present_steering_acknowledgements_with_directives(
                         .iter()
                         .any(|known| known == &(key.clone(), disposition))
                     {
-                        recognized.push((key, disposition));
+                        recognized.push((key.clone(), disposition));
+                    }
+                    if !contexts.iter().any(|known| known == &key) {
+                        contexts.push(key);
                     }
                 }
                 steer::ack::scan::Outcome::Retired { key, .. } => {
                     missed.push(key.to_string());
                 }
-                steer::ack::scan::Outcome::Missed { token, .. } => missed.push(token),
+                steer::ack::scan::Outcome::Missed { token, miss } => {
+                    if let Some(key) = standing.historical_context(&token, miss) {
+                        if !contexts.iter().any(|known| known == &key) {
+                            contexts.push(key);
+                        }
+                    } else {
+                        missed.push(token);
+                    }
+                }
             }
         }
+        // Historical keys add display context only when this packet also
+        // carries a retirement authenticated to the current event.
         if recognized.is_empty() {
             continue;
         }
@@ -619,7 +642,7 @@ fn present_steering_acknowledgements_with_directives(
         append_presented_source(&mut rendered, source, capitalize_body);
         capitalize_body = false;
         start_quote_block(&mut rendered);
-        for (index, (key, _)) in recognized.iter().enumerate() {
+        for (index, key) in contexts.iter().enumerate() {
             let directive = directives.0.get(key).ok_or_else(|| {
                 format!("canonical acknowledgment recognition lost directive {key}")
             })?;
@@ -977,6 +1000,59 @@ mod tests {
             present_steering_acknowledgements_with_directives(text, &directives, later)
                 .expect("historical duplicate remains visible"),
             text,
+        );
+    }
+
+    #[test]
+    fn mixed_current_and_historical_keys_present_every_known_context() {
+        let historical = "1kR5x8yR"
+            .parse::<steer::Key>()
+            .expect("historical fixture key parses");
+        let current = "1kR5xJDD"
+            .parse::<steer::Key>()
+            .expect("current fixture key parses");
+        let retirement = |offset, column| wire::body::TranscriptLocus {
+            source: None,
+            member: 1,
+            offset,
+            length: 1,
+            event: 0,
+            line: 1,
+            column,
+        };
+        let directives = PresentationDirectives(BTreeMap::from([
+            (
+                historical,
+                PresentationDirective {
+                    lane: lane(),
+                    text: "Continue".to_owned(),
+                    disposition: wire::Disposition::Acked,
+                    retirement: Some(retirement(8, 5)),
+                },
+            ),
+            (
+                current,
+                PresentationDirective {
+                    lane: lane(),
+                    text: "[TASTE] fallbacks: Keep one deterministic path.".to_owned(),
+                    disposition: wire::Disposition::Acked,
+                    retirement: Some(retirement(0, 14)),
+                },
+            ),
+        ]));
+        let text = concat!(
+            "ACK 1kR5x8yR 1kR5xJDD: Continuing with the explicit two-context contract ",
+            "only."
+        );
+
+        assert_eq!(
+            present_steering_acknowledgements_with_directives(text, &directives, event())
+                .expect("mixed historical and current keys present"),
+            concat!(
+                "> Continue\n\n",
+                "> [TASTE] fallbacks: Keep one deterministic path.\n\n",
+                "Continuing with the explicit two-context contract only."
+            ),
         );
     }
 

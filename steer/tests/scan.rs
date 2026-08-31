@@ -116,6 +116,32 @@ fn one_distributed_message_extracts_every_acknowledgement_once() {
     );
 }
 
+/// Historical standing changes disposition, not packet membership: a later
+/// key in the same header must still be parsed and judged independently.
+#[test]
+fn a_mixed_historical_and_live_header_parses_every_key_in_source_order() {
+    let standing = Board(
+        [
+            ("1kR5x8yR", Disposition::Acked),
+            ("1kR5xJDD", Disposition::Live),
+        ]
+        .into_iter()
+        .map(|(key, disposition)| (key.parse::<Key>().expect("fixture key"), disposition))
+        .collect(),
+    );
+
+    assert_eq!(
+        report(&scan(
+            "ACK 1kR5x8yR 1kR5xJDD: One response covers both keys.",
+            &standing,
+        )),
+        vec![
+            "1:5 1kR5x8yR historical".to_owned(),
+            "1:14 1kR5xJDD acked".to_owned(),
+        ],
+    );
+}
+
 /// A refusal is a disposition, not an absence of one.
 #[test]
 fn a_refusal_retires_the_directive_as_declined() {
