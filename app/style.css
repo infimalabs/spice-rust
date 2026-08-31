@@ -580,9 +580,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: transparent;
   color: var(--muted);
   font-size: .62rem;
+  line-height: 1;
 }
 
 .card-action:hover { border-color: var(--accent-slot, var(--accent)); color: var(--accent-slot, var(--accent)); }
+.card-action-icon {
+  display: block;
+  line-height: 1;
+  pointer-events: none;
+}
 .message p { margin: 7px 0 0; font-size: .84rem; line-height: 1.45; white-space: pre-wrap; }
 
 .message-attachments { display: grid; gap: 8px; margin-top: 10px; }

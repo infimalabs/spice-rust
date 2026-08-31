@@ -1050,14 +1050,29 @@
   height: 32px;
   min-height: 32px;
   margin-left: 0;
-  border-color: var(--control-line-soft);
+  border-color: color-mix(
+    in srgb,
+    var(--accent-slot, var(--accent)) 24%,
+    var(--control-line-soft)
+  );
   background: var(--control-surface-soft);
   color: var(--muted);
+  font-family: ui-sans-serif, system-ui, sans-serif;
   font-size: 1rem;
+  font-weight: 400;
 }
 .team-surface .mosaic-message-card footer .card-action:hover,
 .team-surface .mosaic-message-card footer .card-action:focus-visible {
   border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 42%, var(--line));
+  color: var(--ink);
+}
+.team-surface .mosaic-message-card footer .card-action:active {
+  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
+  background: color-mix(
+    in srgb,
+    var(--accent-slot, var(--accent)) 12%,
+    var(--control-surface-soft)
+  );
   color: var(--ink);
 }
 @container (max-width: 12.5rem) {
