@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   chooseCanvasView,
   CONNECT_MS,
+  TRANSITION_MS,
   waitForPageFunction,
 } from "./canvas-fixture.mjs";
 
@@ -30,11 +31,27 @@ export async function assertAgentPageBottomSpacing(page, state) {
     nodes.map((surface) => {
       const pane = surface.querySelector(":scope > .team-pane");
       const content = pane?.firstElementChild;
+      const activity = pane?.querySelector(".team-activity-grid");
+      const plane = activity?.querySelector(".lane-mosaic-plane");
+      const cards = [...(plane?.querySelectorAll(
+        '.mosaic-message-card[data-layout-phase="committed"]',
+      ) ?? [])];
+      const floor = cards.length > 0
+        ? Math.max(...cards.map((card) => card.getBoundingClientRect().bottom))
+        : content?.getBoundingClientRect().bottom;
       const surfaceBox = surface.getBoundingClientRect();
-      const contentBox = content?.getBoundingClientRect();
+      const planeBox = plane?.getBoundingClientRect();
       return {
         content: content?.className ?? "absent",
-        gap: contentBox ? surfaceBox.bottom - contentBox.bottom : Number.POSITIVE_INFINITY,
+        cards: cards.length,
+        gap: floor ? surfaceBox.bottom - floor : Number.POSITIVE_INFINITY,
+        plane: planeBox ? {
+          clientHeight: plane.clientHeight,
+          height: planeBox.height,
+          overflowY: getComputedStyle(plane).overflowY,
+          rows: plane.dataset.planeRows,
+          scrollHeight: plane.scrollHeight,
+        } : null,
       };
     }),
   );
@@ -42,10 +59,52 @@ export async function assertAgentPageBottomSpacing(page, state) {
   assert.ok(surfaces.length > 0, `${state} renders at least one agent surface`);
   for (const surface of surfaces) {
     assert.ok(
-      surface.gap >= 0 && surface.gap <= 2,
-      `${state} leaves only its border below ${surface.content}: ${JSON.stringify(surface)}`,
+      surface.gap <= (surface.cards > 0 ? 24 : 2),
+      `${state} has bounded space below ${surface.content}: ${JSON.stringify(surface)}`,
     );
+    if (surface.gap < 0) {
+      assert.ok(
+        surface.plane?.overflowY === "auto"
+          && surface.plane.scrollHeight > surface.plane.clientHeight,
+        `${state} keeps overflowed activity scrollable: ${JSON.stringify(surface)}`,
+      );
+    }
   }
+}
+
+async function waitForAgentWidths(page, state) {
+  await waitForPageFunction(page, `${state} Mosaic widths commit`, TRANSITION_MS, () => (
+    [...document.querySelectorAll(".lane-mosaic-plane")].every((plane) => (
+      plane.dataset.measurementPhase === "ready"
+        && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1
+    ))
+  ));
+}
+
+export async function captureReportedAgentPage(page, state) {
+  const previous = page.viewportSize();
+  assert.ok(previous, `${state} has a viewport to restore`);
+  await page.setViewportSize({ width: 862, height: 374 });
+  await waitForAgentWidths(page, `${state} reported viewport`);
+  await assertAgentPageBottomSpacing(page, `${state} reported viewport`);
+  const containment = await page.evaluate(() => ({
+    bodyWidth: document.body.scrollWidth,
+    surfaces: [...document.querySelectorAll(".team-surface")].map((surface) => {
+      const box = surface.getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    }),
+    viewportWidth: window.innerWidth,
+  }));
+  assert.ok(containment.bodyWidth <= containment.viewportWidth, `${state} has no page overflow`);
+  assert.ok(
+    containment.surfaces.every((surface) => (
+      surface.left >= -0.5 && surface.right <= containment.viewportWidth + 0.5
+    )),
+    `${state} keeps every agent surface in the reported viewport: ${JSON.stringify(containment)}`,
+  );
+  await page.screenshot({ path: join(artifacts, "canvas-agents-reported-862x374.png") });
+  await page.setViewportSize(previous);
+  await waitForAgentWidths(page, `${state} restored viewport`);
 }
 
 /// Prove the connected canvas is visible, navigable, and within its viewport.

@@ -24,7 +24,7 @@ import {
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertVacantWakeSubmission } from "./vacant-wake-submission.mjs";
-import { assertCanvas } from "./canvas-readiness.mjs";
+import { assertCanvas, captureReportedAgentPage } from "./canvas-readiness.mjs";
 import { assertCanvasProtocolRefresh } from "./canvas-compatibility.mjs";
 import { assertAuthoritySurface, driveTeam } from "./canvas-authority.mjs";
 import {
@@ -1041,6 +1041,8 @@ try {
         await assertNoCredentialOrLandingGap(
           lightPage, [firstCapability, resident.discovery.capability],
         );
+        await chooseCanvasView(lightPage, "Agents");
+        await captureReportedAgentPage(lightPage, "restored short-content Agents page");
         lightMonitor.assertClean();
         await light.close();
       });
