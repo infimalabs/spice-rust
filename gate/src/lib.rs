@@ -34,6 +34,7 @@ pub mod state;
 #[doc(hidden)]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod test_support {
+    pub use crate::structural::rust_test_item_sources;
     pub use gix;
 }
 #[cfg(not(target_arch = "wasm32"))]

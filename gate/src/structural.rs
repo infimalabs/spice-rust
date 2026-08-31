@@ -6,6 +6,10 @@ use std::fmt;
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor, StreamingIterator};
 use tree_sitter_language::LanguageFn;
 
+mod rust_test_items;
+
+pub use rust_test_items::rust_test_item_sources;
+
 /// One language-independent structural pattern identity.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum StructuralPattern {
