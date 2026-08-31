@@ -223,10 +223,7 @@ fn render_compaction_boundary(
 ) -> Html {
     let agent_identity = member.name.clone().map(|agent| {
         html! {
-            <>
-                <span aria-hidden="true">{"\u{b7}"}</span>
-                <span class="mosaic-compaction-agent" title={agent.clone()}>{agent}</span>
-            </>
+            <span class="mosaic-compaction-agent" title={agent.clone()}>{agent}</span>
         }
     });
     let display_millis = crate::runtime::agent_message_display_millis(message);
@@ -236,8 +233,10 @@ fn render_compaction_boundary(
             <span class="mosaic-compaction-label">
                 <Age authored={display_millis} class="mosaic-compaction-age" />
                 <span aria-hidden="true">{"\u{b7}"}</span>
-                <span class="message-key">{"Context compacted"}</span>
-                {agent_identity}
+                <span class="mosaic-compaction-context">
+                    {agent_identity}
+                    <span class="message-key">{"compacted context"}</span>
+                </span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
         </>

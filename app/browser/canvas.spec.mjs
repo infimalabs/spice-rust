@@ -907,9 +907,6 @@ try {
         );
         await assertTeamMenu(lightPage, fixture);
       });
-      await run.scenario("firefox-restored-mosaic", async () => {
-        await assertFirefoxRestoredMosaic(resident.discovery.endpoint, artifacts);
-      });
       await run.scenario("reference-composer", async () => {
         const reference = await browser.newContext({ colorScheme: "dark", viewport: { width: 1000, height: 568 } });
         await installPersistedMosaicImageRoutes(reference);
@@ -927,6 +924,13 @@ try {
         await assertVacantWakeSubmission(lightPage, fixture, seeded);
         await assertRetainedHistory(lightPage, fixture);
         await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
+      });
+      await run.scenario("firefox-restored-mosaic", async () => {
+        await assertFirefoxRestoredMosaic(
+          resident.discovery.endpoint,
+          artifacts,
+          seeded.agentName,
+        );
       });
       await run.scenario("authority-task-flow", async () => {
         await assertLiveThreadCoalescing(

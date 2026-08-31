@@ -9,6 +9,10 @@ import {
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
+import {
+  assertCompactionDivider,
+  resizeCompactionViewport,
+} from "./compaction-boundary-reference.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const PERSISTED_IMAGE_ROUTE = /\/mosaic-(?:load|error)-[0-9a-f-]+\.png$/;
@@ -214,7 +218,7 @@ export async function assertCompactionBoundary(
         && card.dataset.track === "0"
         && card.dataset.span === "12"
         && card.querySelectorAll(".mosaic-compaction-rule").length === 2
-        && card.querySelector(".message-key")?.textContent?.trim() === "Context compacted"
+        && card.querySelector(".message-key")?.textContent?.trim() === "compacted context"
         && card.querySelector(".mosaic-compaction-agent")?.textContent?.trim().length > 0
         && card.querySelectorAll(".message-actions button").length === 0;
     },
@@ -224,30 +228,11 @@ export async function assertCompactionBoundary(
   const laneAccent = await team
     .locator(`.team-agent[data-agent-lane="${seeded.lane}"]`)
     .getAttribute("data-accent");
-  const boundaryChrome = await divider.evaluate((card) => ({
-    accent: card.dataset.accent,
-    aria: card.getAttribute("aria-label"),
-    label: card.querySelector(".message-key")?.textContent?.trim(),
-    agent: card.querySelector(".mosaic-compaction-agent")?.textContent?.trim(),
-    age: card.querySelector(".mosaic-compaction-age")?.textContent?.trim(),
-    borderStyle: getComputedStyle(card).borderStyle,
-    background: getComputedStyle(card).backgroundColor,
-    overflow: card.scrollWidth - card.clientWidth,
-    lineColors: [...card.querySelectorAll(".mosaic-compaction-rule")]
-      .map((line) => getComputedStyle(line).backgroundColor),
-  }));
-  assert.equal(boundaryChrome.accent, laneAccent, "the boundary keeps the compacting lane accent");
-  assert.equal(boundaryChrome.label, "Context compacted");
-  assert.equal(boundaryChrome.agent, seeded.agentName);
-  assert.ok(boundaryChrome.age, "the boundary carries its authored time");
-  assert.match(boundaryChrome.aria, /Context compacted by/);
-  assert.notEqual(boundaryChrome.borderStyle, "none", "the boundary keeps regular card chrome");
-  assert.notEqual(boundaryChrome.background, "rgba(0, 0, 0, 0)", "the boundary has a card surface");
-  assert.ok(boundaryChrome.overflow <= 1, `the boundary fits its width: ${JSON.stringify(boundaryChrome)}`);
-  assert.equal(new Set(boundaryChrome.lineColors).size, 1, "both boundary rules share one accent");
-  assert.ok(
-    boundaryChrome.lineColors.every((color) => color !== "rgba(0, 0, 0, 0)"),
-    `the boundary accent is visible: ${JSON.stringify(boundaryChrome)}`,
+  assert.equal(await divider.getAttribute("data-accent"), laneAccent);
+  assert.equal(
+    await team.locator('[data-card-kind="compaction"]').count(),
+    1,
+    "the real transcript compaction renders exactly once",
   );
 
   const afterBoundary = new Map(
@@ -311,6 +296,7 @@ export async function assertCompactionBoundary(
     afterBox.y >= boundaryBox.y + boundaryBox.height - 1,
     `post-compaction activity stays below its boundary: ${JSON.stringify({ boundaryBox, afterBox })}`,
   );
+  await assertCompactionDivider(divider, "Chromium narrow compaction divider", seeded.agentName);
   assertMosaicAnchorPreserved(
     scrolled,
     await mosaicScrollSnapshot(plane),
@@ -319,7 +305,8 @@ export async function assertCompactionBoundary(
   await divider.scrollIntoViewIfNeeded();
   if (viewport && compactViewport
     && (compactViewport.width !== viewport.width || compactViewport.height !== viewport.height)) {
-    await page.setViewportSize(viewport);
+    await resizeCompactionViewport(page, divider, viewport, "Chromium restored compaction divider");
+    await assertCompactionDivider(divider, "Chromium wide compaction divider", seeded.agentName);
   }
   await page.screenshot({
     path: join(artifacts, "canvas-compaction-boundary.png"),
@@ -343,7 +330,7 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
     "reload restores the compaction boundary exactly once",
   );
   assert.equal(await restored.getAttribute("data-span"), "12");
-  assert.equal((await restored.locator(".message-key").innerText()).trim(), "Context compacted");
+  assert.equal((await restored.locator(".message-key").innerText()).trim(), "compacted context");
 
   const socketCount = await page.evaluate(() => window.__canvasSockets?.length ?? 0);
   assert.ok(socketCount > 0, "the browser fixture captures the active Canvas socket");
@@ -919,7 +906,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
     assert.equal(plane.columnGap, 12, "the horizontal lattice keeps the predecessor gap");
     assert.equal(plane.rowGap, plane.columnGap, "the vertical lattice shares that grid rhythm");
     assert.equal(plane.minLane, 272, "the browser exposes the predecessor minimum lane width");
-    assert.equal(plane.minCardRows, 3, "compact cards reserve three vertical modules");
+    assert.equal(plane.minCardRows, 3, "ordinary cards reserve three vertical modules");
     assert.deepEqual(
       plane.cards.map((card) => card.creationIndex),
       plane.cards.map((_, index) => index),
@@ -940,7 +927,11 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       assert.equal(card.heights.length, card.reads, "every instrumented read records one height");
       assert.deepEqual(card.candidateSpans, expectedSpans, "height alone admits the wide tier");
       assert.ok(card.track >= 0 && card.track + card.span <= plane.trackCount);
-      assert.ok(card.rows >= plane.minCardRows);
+      if (card.kind === "compaction") {
+        assert.ok(card.rows >= 1, "a compaction divider keeps a nonzero row reservation");
+      } else {
+        assert.ok(card.rows >= plane.minCardRows);
+      }
       assert.ok(
         card.box.right - card.box.left + 0.5 >= Math.min(plane.minLane, plane.width),
         `Mosaic card keeps the responsive minimum lane width: ${JSON.stringify(card)}`,

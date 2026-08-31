@@ -112,7 +112,7 @@
 .mosaic-compaction-rule {
   width: 100%;
   height: 1px;
-  background: var(--accent-slot, var(--accent));
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
 }
 .mosaic-compaction-label {
   display: inline-flex;
@@ -120,16 +120,29 @@
   gap: 7px;
   min-width: 0;
   max-width: 100%;
-  color: var(--accent-slot, var(--ink));
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .68rem;
-  font-weight: 650;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: .75rem;
+  font-weight: 500;
+  letter-spacing: 0;
   white-space: nowrap;
+}
+.mosaic-compaction-context {
+  display: inline-flex;
+  min-width: 0;
+  gap: .35em;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--accent-slot, var(--accent)) 30%, var(--muted));
 }
 .mosaic-compaction-label .message-key,
 .mosaic-compaction-agent {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.mosaic-compaction-label .message-key { flex: 0 1 auto; }
+.mosaic-compaction-agent {
+  flex: 1 1 auto;
 }
 .mosaic-compaction-age { color: var(--muted); font-weight: 500; }
 
@@ -926,7 +939,15 @@
   line-height: 1.25;
   box-shadow: none;
 }
-.team-surface .mosaic-compaction-card { gap: 12px; }
+.team-surface .mosaic-message-card.mosaic-compaction-card {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
 .team-surface .mosaic-message-card:target {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

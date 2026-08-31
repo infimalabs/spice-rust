@@ -5,6 +5,11 @@ import { assertMosaicLattice } from "./agent-conversation.mjs";
 import { installPersistedMosaicImageRoutes } from "./agent-conversation-mosaic.mjs";
 import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
 import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
+import {
+  assertCompactionDivider,
+  resizeCompactionViewport,
+  waitForCompactionReady,
+} from "./compaction-boundary-reference.mjs";
 import { assertComposerPointerSelection } from "./composer-shards.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 
@@ -42,7 +47,7 @@ async function settledMosaicCards(page, label) {
   return assertMosaicLattice(page, false);
 }
 
-export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
+export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedAgent) {
   const firefox = await launchBrowser("firefox");
   const context = await firefox.newContext({
     colorScheme: "dark",
@@ -59,6 +64,24 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
     await console.getByRole("tab", { name: /^Compose/ }).click();
     const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
+    const boundary = console.locator('[data-card-kind="compaction"]');
+    assert.equal(await boundary.count(), 1, "Firefox restores the real compaction exactly once");
+    await waitForCompactionReady(page, boundary, "Firefox wide compaction divider");
+    await assertCompactionDivider(boundary, "Firefox wide compaction divider", expectedAgent);
+    await resizeCompactionViewport(
+      page,
+      boundary,
+      { width: 390, height: 720 },
+      "Firefox narrow compaction divider",
+    );
+    await assertCompactionDivider(boundary, "Firefox narrow compaction divider", expectedAgent);
+    await resizeCompactionViewport(
+      page,
+      boundary,
+      { width: 1717, height: 1470 },
+      "Firefox restored compaction divider",
+    );
+    await assertCompactionDivider(boundary, "Firefox restored compaction divider", expectedAgent);
     const lane = console.locator(".team-agent").first();
     await assertComposerPointerSelection(
       page,
@@ -71,6 +94,9 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
     await console.getByRole("tab", { name: /^Compose/ }).click();
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
+    assert.equal(await boundary.count(), 1, "Firefox reload keeps one compaction divider");
+    await waitForCompactionReady(page, boundary, "Firefox replayed compaction divider");
+    await assertCompactionDivider(boundary, "Firefox replayed compaction divider", expectedAgent);
 
     await page.clock.fastForward(LIVENESS_PROBE_MS + 500);
     const settled = await assertMosaicLattice(page, false);
@@ -84,6 +110,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts) {
       "the liveness heartbeat never removes a restored Firefox card",
     );
     await page.screenshot({ path: join(artifacts, "firefox-restored-mosaic.png"), fullPage: true });
+    await boundary.screenshot({ path: join(artifacts, "firefox-compaction-boundary.png") });
     monitor.assertClean();
   } finally {
     await context.close();

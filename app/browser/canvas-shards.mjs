@@ -37,8 +37,8 @@ export const CANVAS_SHARDS = Object.freeze([
     name: "interaction",
     scenarios: Object.freeze([
       "agent-conversation",
-      "firefox-restored-mosaic",
       "reference-composer",
+      "firefox-restored-mosaic",
       "authority-task-flow",
     ]),
   }),
