@@ -549,6 +549,28 @@ fn the_stylesheet_sizes_the_age_slot_from_the_label_budget() {
 }
 
 #[test]
+fn the_command_bar_is_not_delineated_from_the_canvas() {
+    for (stylesheet, selector) in [
+        (include_str!("../style.css"), ".commandbar {"),
+        (include_str!("../mosaic.css"), ".commandbar--mosaic {"),
+        (include_str!("../responsive.css"), ".commandbar {"),
+    ] {
+        let rule = stylesheet
+            .split_once(selector)
+            .unwrap_or_else(|| panic!("the stylesheet has a {selector} rule"))
+            .1
+            .split_once('}')
+            .unwrap_or_else(|| panic!("the {selector} rule is closed"))
+            .0;
+
+        assert!(
+            !rule.contains("border-bottom"),
+            "the {selector} rule delineates the header from the canvas"
+        );
+    }
+}
+
+#[test]
 fn composer_prose_skips_blank_and_borrowed_lines_at_any_quote_depth() {
     assert_eq!(
         first_nonquoted_prose(

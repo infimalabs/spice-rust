@@ -100,7 +100,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 18px;
   min-height: 56px;
   padding: 8px 18px;
-  border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
 
