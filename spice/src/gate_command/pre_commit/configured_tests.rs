@@ -5,7 +5,6 @@ use super::*;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt as _, symlink};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
@@ -87,14 +86,7 @@ fn test_bounds(runtime: Duration) -> ExecutionBounds {
 }
 
 fn initialize_repository(root: &Path) -> Repository {
-    Command::new("/usr/bin/git")
-        .args(["init", "-q", "-b", "main"])
-        .current_dir(root)
-        .status()
-        .expect("launch fixture Git")
-        .success()
-        .then_some(())
-        .expect("initialize fixture repository");
+    fs::create_dir(root.join(".git")).expect("create fixture Git directory");
     Repository::discover(root).expect("discover configured-command fixture")
 }
 
@@ -834,14 +826,7 @@ fn authority_movement_between_steps_stops_before_the_next_spawn() {
 #[test]
 fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
     let scratch = Scratch::new("trust-refusal");
-    Command::new("/usr/bin/git")
-        .args(["init", "-q", "-b", "main"])
-        .current_dir(&scratch.root)
-        .status()
-        .expect("launch fixture Git")
-        .success()
-        .then_some(())
-        .expect("initialize fixture repository");
+    let repository = initialize_repository(&scratch.root);
     fs::write(
         scratch.root.join("spice-rust.toml"),
         concat!(
@@ -850,7 +835,6 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
         ),
     )
     .expect("write executable policy fixture");
-    let repository = Repository::discover(&scratch.root).expect("discover trust fixture");
     let policy = DispatchPolicy::load(&repository).expect("load executable policy");
 
     let detail = policy.trust_refusal_detail(Some(TrustState::Pended));
@@ -870,20 +854,12 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
 #[test]
 fn durable_trust_is_read_only_and_required_before_execution() {
     let scratch = Scratch::new("durable-trust");
-    Command::new("/usr/bin/git")
-        .args(["init", "-q", "-b", "main"])
-        .current_dir(&scratch.root)
-        .status()
-        .expect("launch fixture Git")
-        .success()
-        .then_some(())
-        .expect("initialize fixture repository");
+    let repository = initialize_repository(&scratch.root);
     fs::write(
         scratch.root.join("spice-rust.toml"),
         "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n",
     )
     .expect("write trusted policy fixture");
-    let repository = Repository::discover(&scratch.root).expect("discover trust fixture");
     let policy = DispatchPolicy::load(&repository).expect("load executable policy");
     let state = repository.admit_state().expect("admit fixture state paths");
     fs::create_dir_all(state.data()).expect("create fixture authority parent");
@@ -942,20 +918,12 @@ fn durable_trust_is_read_only_and_required_before_execution() {
 #[test]
 fn missing_trust_authority_refuses_with_the_exact_executable_capability() {
     let scratch = Scratch::new("missing-trust-authority");
-    Command::new("/usr/bin/git")
-        .args(["init", "-q", "-b", "main"])
-        .current_dir(&scratch.root)
-        .status()
-        .expect("launch fixture Git")
-        .success()
-        .then_some(())
-        .expect("initialize fixture repository");
+    let repository = initialize_repository(&scratch.root);
     fs::write(
         scratch.root.join("spice-rust.toml"),
         "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n",
     )
     .expect("write executable policy fixture");
-    let repository = Repository::discover(&scratch.root).expect("discover trust fixture");
     let policy = DispatchPolicy::load(&repository).expect("load executable policy");
 
     let refusal = policy
@@ -984,18 +952,10 @@ fn missing_trust_authority_refuses_with_the_exact_executable_capability() {
 #[test]
 fn tracked_policy_movement_after_capture_refuses_even_when_bytes_are_restored() {
     let scratch = Scratch::new("policy-movement");
-    Command::new("/usr/bin/git")
-        .args(["init", "-q", "-b", "main"])
-        .current_dir(&scratch.root)
-        .status()
-        .expect("launch fixture Git")
-        .success()
-        .then_some(())
-        .expect("initialize fixture repository");
+    let repository = initialize_repository(&scratch.root);
     let configuration = scratch.root.join("spice-rust.toml");
     let original = "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n";
     fs::write(&configuration, original).expect("write executable policy fixture");
-    let repository = Repository::discover(&scratch.root).expect("discover policy fixture");
     let policy = DispatchPolicy::load(&repository).expect("load executable policy");
     fs::write(
         &configuration,
@@ -1035,15 +995,7 @@ fn recursive_dispatch_is_a_typed_refusal_before_supervision() {
 #[test]
 fn dispatch_possession_blocks_recursion_even_without_the_environment_marker() {
     let scratch = Scratch::new("dispatch-possession");
-    Command::new("/usr/bin/git")
-        .args(["init", "-q", "-b", "main"])
-        .current_dir(&scratch.root)
-        .status()
-        .expect("launch fixture Git")
-        .success()
-        .then_some(())
-        .expect("initialize fixture repository");
-    let repository = Repository::discover(&scratch.root).expect("discover dispatch fixture");
+    let repository = initialize_repository(&scratch.root);
     let _outer = super::super::DispatchGuard::acquire_in::<()>(&repository)
         .expect("outer commit gate owns dispatch");
 

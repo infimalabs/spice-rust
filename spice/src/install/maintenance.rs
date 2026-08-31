@@ -704,13 +704,7 @@ mod tests {
                 NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
             ));
             fs::create_dir(&root).expect("create maintenance fixture");
-            let status = Command::new("git")
-                .args(["init", "-q", "-b", "main"])
-                .current_dir(&root)
-                .status()
-                .expect("initialize maintenance fixture repository");
-            assert!(status.success());
-            fs::create_dir(root.join(".git/.spice-rs")).expect("create runtime directory");
+            fs::create_dir_all(root.join(".git/.spice-rs")).expect("create runtime directory");
             let repository = Repository::discover(&root).expect("discover maintenance fixture");
             Self { root, repository }
         }

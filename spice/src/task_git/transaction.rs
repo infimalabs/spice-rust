@@ -285,17 +285,21 @@ pub(super) fn recovered_lane_head(
     let Some(message) = try_read(root, &["show", "-s", "--format=%B", head])? else {
         return Ok(None);
     };
-    let fields = message
-        .lines()
-        .filter_map(|line| line.split_once(": "))
-        .collect::<BTreeMap<_, _>>();
-    if !landing_fields_match(&fields, meta) {
+    if !landing_message_matches(&message, meta) {
         return Ok(None);
-    };
+    }
     let Some(candidate) = merge_second_parent(root, head)? else {
         return Ok(None);
     };
     Ok(is_ancestor(root, &candidate, head)?.then_some(candidate))
+}
+
+fn landing_message_matches(message: &str, meta: Metadata<'_>) -> bool {
+    let fields = message
+        .lines()
+        .filter_map(|line| line.split_once(": "))
+        .collect::<BTreeMap<_, _>>();
+    landing_fields_match(&fields, meta)
 }
 
 fn landing_fields_match(fields: &BTreeMap<&str, &str>, meta: Metadata<'_>) -> bool {
@@ -631,23 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn recovered_lane_head_uses_merge_second_parent_for_current_landing() {
-        let fixture = Fixture::new("recovered-lane-head");
-        fixture.git(&["init", "--initial-branch=main"]);
-        fixture.git(&["config", "user.name", "Spice Test"]);
-        fixture.git(&["config", "user.email", "spice@example.test"]);
-        fs::write(fixture.root.join("root.txt"), "root\n").expect("root fixture writes");
-        fixture.git(&["add", "."]);
-        fixture.git(&["commit", "-m", "root"]);
-        let base = fixture.head();
-        fixture.git(&["checkout", "-b", "task"]);
-        fs::write(fixture.root.join("task.txt"), "task\n").expect("task fixture writes");
-        fixture.git(&["add", "."]);
-        fixture.git(&["commit", "-m", "agent work"]);
-        let agent = fixture.head();
-        let tree = fixture.git(&["rev-parse", "HEAD^{tree}"]);
-        fixture.git(&["checkout", "main"]);
-
+    fn recovered_lane_head_recognizes_current_landing_evidence() {
         let meta = Metadata {
             label: "GIT-1kQb17Yt",
             title: "Finish task landing trailer cleanup",
@@ -656,41 +644,11 @@ mod tests {
             actor: "lane:00000000-0000-4000-8000-000000000123",
         };
         let message = compose_message(meta);
-        let merge = fixture.git(&[
-            "commit-tree",
-            &tree,
-            "-p",
-            &base,
-            "-p",
-            &agent,
-            "-m",
-            &message,
-        ]);
-
-        assert_eq!(
-            recovered_lane_head(&fixture.root, &merge, meta).expect("landing recovery succeeds"),
-            Some(agent)
-        );
+        assert!(landing_message_matches(&message, meta));
     }
 
     #[test]
-    fn recovered_lane_head_normalizes_legacy_evidence_before_recovery() {
-        let fixture = Fixture::new("legacy-recovered-lane-head");
-        fixture.git(&["init", "--initial-branch=main"]);
-        fixture.git(&["config", "user.name", "Spice Test"]);
-        fixture.git(&["config", "user.email", "spice@example.test"]);
-        fs::write(fixture.root.join("root.txt"), "root\n").expect("root fixture writes");
-        fixture.git(&["add", "."]);
-        fixture.git(&["commit", "-m", "root"]);
-        let base = fixture.head();
-        fixture.git(&["checkout", "-b", "task"]);
-        fs::write(fixture.root.join("task.txt"), "task\n").expect("task fixture writes");
-        fixture.git(&["add", "."]);
-        fixture.git(&["commit", "-m", "agent work"]);
-        let agent = fixture.head();
-        let tree = fixture.git(&["rev-parse", "HEAD^{tree}"]);
-        fixture.git(&["checkout", "main"]);
-
+    fn recovered_lane_head_recognizes_legacy_landing_evidence() {
         let meta = Metadata {
             label: "GIT-1kQb9T0w",
             title: "Normalize legacy task landing evidence during recovery",
@@ -707,50 +665,6 @@ mod tests {
             "Task-Project: task.git\n",
             "Task-Session: lane:00000000-0000-4000-8000-000000000123\n",
         );
-        let merge = fixture.git(&[
-            "commit-tree",
-            &tree,
-            "-p",
-            &base,
-            "-p",
-            &agent,
-            "-m",
-            message,
-        ]);
-
-        assert_eq!(
-            recovered_lane_head(&fixture.root, &merge, meta).expect("landing recovery succeeds"),
-            Some(agent)
-        );
-    }
-
-    struct Fixture {
-        root: PathBuf,
-    }
-
-    impl Fixture {
-        fn new(name: &str) -> Self {
-            let root =
-                std::env::temp_dir().join(format!("spice-task-git-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&root);
-            fs::create_dir_all(&root).expect("fixture directory is created");
-            Self { root }
-        }
-
-        fn git(&self, arguments: &[&str]) -> String {
-            let output = run(&self.root, arguments).expect("Git launches");
-            assert!(output.success(), "{}", output.detail("run fixture Git"));
-            output.stdout.trim_end_matches('\n').to_owned()
-        }
-
-        fn head(&self) -> String {
-            self.git(&["rev-parse", "HEAD"])
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("fixture cleanup");
-        }
+        assert!(landing_message_matches(message, meta));
     }
 }

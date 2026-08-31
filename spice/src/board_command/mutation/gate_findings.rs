@@ -128,11 +128,80 @@ pub(in crate::board_command) fn gate_findings_folded(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    gate_findings_folded_with_relation(
+        bus,
+        command,
+        dispatch,
+        findings,
+        instrument,
+        admits,
+        repository,
+        projects,
+        allocation,
+        &require_gate_finding_source_relation,
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(in crate::board_command) fn gate_findings_folded_in_process(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    dispatch: &GateFindings,
+    findings: &[FindingRow],
+    instrument: gate::GateId,
+    admits: bool,
+    repository: &Repository,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Outcome<CommandAnswer> {
+    gate_findings_folded_with_relation(
+        bus,
+        command,
+        dispatch,
+        findings,
+        instrument,
+        admits,
+        repository,
+        projects,
+        allocation,
+        &require_in_process_source_relation,
+    )
+}
+
+type SourceRelation = dyn Fn(
+    &Repository,
+    &wire::intent::GateFindingSource,
+    &wire::intent::GateFindingSource,
+    bool,
+) -> Result<(), Outcome<CommandAnswer>>;
+
+#[allow(clippy::too_many_arguments)]
+fn gate_findings_folded_with_relation(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    dispatch: &GateFindings,
+    findings: &[FindingRow],
+    instrument: gate::GateId,
+    admits: bool,
+    repository: &Repository,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    source_relation: &SourceRelation,
+) -> Outcome<CommandAnswer> {
     if let Err(outcome) = validate_finding_fold(findings, admits) {
         return outcome;
     }
     let prepared = match prepare_finding_fold(
-        bus, command, dispatch, findings, instrument, repository, projects, allocation,
+        bus,
+        command,
+        dispatch,
+        findings,
+        instrument,
+        repository,
+        projects,
+        allocation,
+        source_relation,
     ) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
@@ -194,6 +263,7 @@ fn prepare_finding_fold(
     repository: &Repository,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
+    source_relation: &SourceRelation,
 ) -> Result<PreparedFindingFold, Outcome<CommandAnswer>> {
     let project = match projects.admit_manual_creation(GATE_FINDINGS_PROJECT) {
         Ok(project) => project,
@@ -220,6 +290,7 @@ fn prepare_finding_fold(
         &dispatch.source,
         &dispatch.report,
         command.actor(),
+        source_relation,
     )?;
     let created = plans
         .iter()
@@ -492,6 +563,7 @@ fn plan_gate_findings(
     source: &wire::intent::GateFindingSource,
     report: &Digest,
     actor: &Actor,
+    source_relation: &SourceRelation,
 ) -> Result<Vec<GateFindingPlan>, Outcome<CommandAnswer>> {
     let open_instrument = open_instrument_findings(snapshot, instrument)?;
     let current = findings
@@ -524,7 +596,7 @@ fn plan_gate_findings(
             .map(|entry| entry.handle().clone());
         let action = if let Some(entry) = open.first() {
             let prior = gate_finding_task_source(entry)?;
-            require_gate_finding_source_relation(repository, &prior, source, false)?;
+            source_relation(repository, &prior, source, false)?;
             let statement = desired_gate_finding_statement(
                 entry,
                 finding,
@@ -566,7 +638,7 @@ fn plan_gate_findings(
             continue;
         }
         let prior = gate_finding_task_source(entry)?;
-        require_gate_finding_source_relation(repository, &prior, source, true)?;
+        source_relation(repository, &prior, source, true)?;
         let authority = gate_finding_recovery_authority(bus, entry, actor, at)?;
         let heads = gate_finding_heads(snapshot, entry)?;
         let action = if let Some((claim, source, transition)) = authority {
@@ -706,6 +778,30 @@ fn require_gate_finding_source_relation(
                 "rerun the exact instrument from the repair repository at a current descendant source",
             )
         })
+}
+
+#[cfg(test)]
+fn require_in_process_source_relation(
+    _repository: &Repository,
+    prior: &wire::intent::GateFindingSource,
+    candidate: &wire::intent::GateFindingSource,
+    recovery: bool,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if prior.repository != candidate.repository {
+        return Err(refusal(
+            "gate::finding-repository-mismatch",
+            None,
+            "keep in-process finding evidence within one repository authority",
+        ));
+    }
+    if recovery && prior.tree == candidate.tree {
+        return Err(refusal(
+            "gate::finding-recovery-unproven",
+            None,
+            "move the selected source before reporting a finding as recovered",
+        ));
+    }
+    Ok(())
 }
 
 fn gate_finding_task(entry: &Entry) -> bool {

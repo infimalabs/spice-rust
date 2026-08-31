@@ -101,6 +101,13 @@ pub fn validate_gate_finding_source(
         GateFindingSourceKind::Revision => Selector::revision(source.anchor.clone()),
     };
     let current = capture_gate_finding_anchor(repository, &selector)?;
+    validate_gate_finding_source_against(source, &current)
+}
+
+fn validate_gate_finding_source_against(
+    source: &GateFindingSource,
+    current: &GateFindingAnchor,
+) -> Result<(), RunError> {
     if current.repository != source.repository {
         return Err(RunError::refusal(
             "gate::finding-repository-mismatch",
@@ -136,6 +143,15 @@ pub fn require_gate_finding_source_forward(
     recovery: bool,
 ) -> Result<(), RunError> {
     validate_gate_finding_source(repository, candidate)?;
+    require_forward_envelope(prior, candidate)?;
+    require_commit_ancestor(repository, &prior.anchor, &candidate.anchor)?;
+    require_recovery_movement(prior, candidate, recovery)
+}
+
+fn require_forward_envelope(
+    prior: &GateFindingSource,
+    candidate: &GateFindingSource,
+) -> Result<(), RunError> {
     if prior.repository != candidate.repository {
         return Err(RunError::refusal(
             "gate::finding-repository-mismatch",
@@ -151,7 +167,14 @@ pub fn require_gate_finding_source_forward(
             "a committed revision at the same anchor cannot supersede staged finding evidence",
         ));
     }
-    require_commit_ancestor(repository, &prior.anchor, &candidate.anchor)?;
+    Ok(())
+}
+
+fn require_recovery_movement(
+    prior: &GateFindingSource,
+    candidate: &GateFindingSource,
+    recovery: bool,
+) -> Result<(), RunError> {
     if recovery && prior.tree == candidate.tree {
         return Err(RunError::refusal(
             "gate::finding-recovery-unproven",
@@ -216,5 +239,131 @@ fn require_commit_ancestor(
                 String::from_utf8_lossy(&output.stderr).trim()
             ),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn digest(domain: Domain, label: &str) -> Digest {
+        Digest::compute(domain, label.as_bytes())
+    }
+
+    fn source(
+        repository: &str,
+        selection: &str,
+        tree: &str,
+        anchor: &str,
+        kind: GateFindingSourceKind,
+    ) -> GateFindingSource {
+        GateFindingSource {
+            repository: digest(Domain::GateRepositoryAuthority, repository),
+            selection: digest(Domain::GateSelection, selection),
+            tree: digest(Domain::GateTree, tree),
+            anchor: anchor.to_owned(),
+            kind,
+        }
+    }
+
+    fn captured(source: &GateFindingSource) -> GateFindingAnchor {
+        GateFindingAnchor {
+            repository: source.repository.clone(),
+            selection: source.selection.clone(),
+            anchor: source.anchor.clone(),
+            kind: source.kind,
+        }
+    }
+
+    #[test]
+    fn source_validation_refuses_repository_and_selection_movement() {
+        let reported = source(
+            "repository",
+            "selection",
+            "tree",
+            "anchor",
+            GateFindingSourceKind::StagedIndex,
+        );
+        let mut other_repository = captured(&reported);
+        other_repository.repository = digest(Domain::GateRepositoryAuthority, "other");
+        assert_eq!(
+            validate_gate_finding_source_against(&reported, &other_repository)
+                .unwrap_err()
+                .reason(),
+            "gate::finding-repository-mismatch"
+        );
+
+        let mut moved = captured(&reported);
+        moved.selection = digest(Domain::GateSelection, "moved");
+        assert_eq!(
+            validate_gate_finding_source_against(&reported, &moved)
+                .unwrap_err()
+                .reason(),
+            "gate::finding-source-moved"
+        );
+    }
+
+    #[test]
+    fn forward_envelope_refuses_repository_crossing_and_kind_regression() {
+        let prior = source(
+            "repository",
+            "staged",
+            "tree-a",
+            "anchor",
+            GateFindingSourceKind::StagedIndex,
+        );
+        let crossed = source(
+            "other",
+            "revision",
+            "tree-b",
+            "descendant",
+            GateFindingSourceKind::Revision,
+        );
+        assert_eq!(
+            require_forward_envelope(&prior, &crossed)
+                .unwrap_err()
+                .reason(),
+            "gate::finding-repository-mismatch"
+        );
+
+        let regressed = source(
+            "repository",
+            "revision",
+            "tree-b",
+            "anchor",
+            GateFindingSourceKind::Revision,
+        );
+        assert_eq!(
+            require_forward_envelope(&prior, &regressed)
+                .unwrap_err()
+                .reason(),
+            "gate::finding-source-regressed"
+        );
+    }
+
+    #[test]
+    fn recovery_requires_selected_tree_movement() {
+        let prior = source(
+            "repository",
+            "before",
+            "same-tree",
+            "before",
+            GateFindingSourceKind::Revision,
+        );
+        let candidate = source(
+            "repository",
+            "after",
+            "same-tree",
+            "after",
+            GateFindingSourceKind::Revision,
+        );
+        assert_eq!(
+            require_recovery_movement(&prior, &candidate, true)
+                .unwrap_err()
+                .reason(),
+            "gate::finding-recovery-unproven"
+        );
+        require_recovery_movement(&prior, &candidate, false)
+            .expect("refresh does not require tree movement");
     }
 }

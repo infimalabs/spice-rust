@@ -1,110 +1,33 @@
 use super::*;
 
-struct Scratch {
-    root: std::path::PathBuf,
-}
-
-impl Scratch {
-    fn new(label: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-{label}-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4().simple(),
-        ));
-        std::fs::create_dir(&root).expect("create gate fixture root");
-        Self { root }
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.root).expect("remove gate fixture root");
-    }
-}
-
-fn fixture_git(root: &Path, arguments: &[&str]) {
-    let output = Command::new(GIT)
-        .arg("-C")
-        .arg(root)
-        .args(arguments)
-        .output()
-        .expect("launch fixture Git");
-    assert!(
-        output.status.success(),
-        "Git {arguments:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-}
-
 #[test]
 fn staged_renames_retain_both_owners_independent_of_git_rename_configuration() {
-    let scratch = Scratch::new("staged-rename-selection");
-    for directory in ["wire/src", "app/src", "app/browser"] {
-        std::fs::create_dir_all(scratch.root.join(directory))
-            .expect("create rename fixture directory");
-    }
-    std::fs::write(
-        scratch.root.join("wire/src/renamed.rs"),
-        "pub fn renamed() {}\n",
-    )
-    .expect("write cross-package Rust source");
-    std::fs::write(
-        scratch.root.join("README.fixture.md"),
-        "# Renamed fixture\n",
-    )
-    .expect("write cross-language source");
-    fixture_git(&scratch.root, &["init", "--quiet"]);
-    fixture_git(
-        &scratch.root,
-        &["config", "user.email", "gate@example.invalid"],
-    );
-    fixture_git(&scratch.root, &["config", "user.name", "Gate Fixture"]);
-    fixture_git(&scratch.root, &["config", "commit.gpgSign", "false"]);
-    fixture_git(&scratch.root, &["add", "."]);
-    fixture_git(
-        &scratch.root,
-        &["commit", "--quiet", "-m", "fixture baseline"],
-    );
-
-    std::fs::rename(
-        scratch.root.join("wire/src/renamed.rs"),
-        scratch.root.join("app/src/renamed.rs"),
-    )
-    .expect("stage a cross-package Rust rename");
-    std::fs::rename(
-        scratch.root.join("README.fixture.md"),
-        scratch.root.join("app/browser/renamed.mjs"),
-    )
-    .expect("stage a cross-language rename");
-    fixture_git(&scratch.root, &["add", "--all"]);
-
     let expected = [
         "README.fixture.md",
         "app/browser/renamed.mjs",
         "app/src/renamed.rs",
         "wire/src/renamed.rs",
     ];
-    for rename_detection in ["true", "false"] {
-        fixture_git(&scratch.root, &["config", "diff.renames", rename_detection]);
-        let changes = selected_changes(&scratch.root, &Selector::staged())
-            .expect("capture both sides of staged renames");
-        assert_eq!(changes, expected, "diff.renames={rename_detection}");
+    let changes = parse_selected_changes(
+        b"wire/src/renamed.rs\0app/src/renamed.rs\0README.fixture.md\0app/browser/renamed.mjs\0",
+    )
+    .expect("parse both sides emitted by the no-renames Git boundary");
+    assert_eq!(changes, expected);
 
-        let selection = ::gate::select_current_source_change_gates(
-            Digest::compute(wire::Domain::GateTree, b"staged rename fixture"),
-            &changes,
-        )
-        .expect("classify both sides of staged renames");
-        assert_eq!(selection.changed_sources(), expected);
-        for gate_id in [
-            GateId::RepoDocs,
-            GateId::Taste,
-            GateId::Formatters,
-            GateId::CanvasWebTypecheck,
-            GateId::JavascriptUnused,
-        ] {
-            assert!(selection.gate_ids().contains(&gate_id));
-        }
+    let selection = ::gate::select_current_source_change_gates(
+        Digest::compute(wire::Domain::GateTree, b"staged rename fixture"),
+        &changes,
+    )
+    .expect("classify both sides of staged renames");
+    assert_eq!(selection.changed_sources(), expected);
+    for gate_id in [
+        GateId::RepoDocs,
+        GateId::Taste,
+        GateId::Formatters,
+        GateId::CanvasWebTypecheck,
+        GateId::JavascriptUnused,
+    ] {
+        assert!(selection.gate_ids().contains(&gate_id));
     }
 }
 

@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -46,9 +45,7 @@ impl InactiveRtkFixture {
         )
         .expect("fixture lockfile writes");
         fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture source writes");
-        git(&root, &["init", "--quiet", "--initial-branch", "fixture"]);
-        git(&root, &["config", "user.name", "Spice Test"]);
-        git(&root, &["config", "user.email", "spice@example.test"]);
+        fs::create_dir(root.join(".git")).expect("fixture Git directory creates");
 
         let probe_log = root.join("rtk-probes");
         let rtk = root.join("obsolete-rtk");
@@ -109,9 +106,6 @@ impl InactiveRtkFixture {
             ),
         )
         .expect("fixture launch configuration writes");
-        git(&root, &["add", "."]);
-        git(&root, &["commit", "--quiet", "-m", "fixture base"]);
-
         let repository = Repository::discover(&root).expect("fixture repository discovers");
         let skill = spice::install::installed_skill(&repository);
         fs::create_dir_all(skill.parent().expect("installed skill parent"))
@@ -174,18 +168,6 @@ pub(in crate::resident) fn assert_obsolete_health(health: &wire::body::RtkHealth
     assert_eq!(health.version(), Some("0.44.9"));
     assert_eq!(health.detail(), "RTK 0.44.9 is older than required 0.45.0");
     assert!(health.detail().chars().count() <= 1024);
-}
-
-fn git(root: &Path, arguments: &[&str]) {
-    let status = Command::new("/usr/bin/git")
-        .args(arguments)
-        .current_dir(root)
-        .status()
-        .expect("fixture Git command starts");
-    assert!(
-        status.success(),
-        "fixture Git command failed: {arguments:?}"
-    );
 }
 
 fn executable(path: &Path) {
