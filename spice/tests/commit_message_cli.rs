@@ -12,6 +12,9 @@ use spice::install::{apply, installed_git_hooks, plan};
 use spice::repository::Repository;
 use wire::Outcome;
 
+#[path = "support/git_repository.rs"]
+mod git_repository;
+
 const FOLD_NOTICE: &str = concat!(
     "spice commit-msg: auto-folded commit message body lines; ",
     "keep body prose wrapped at 100 chars\n"
@@ -284,12 +287,7 @@ impl Scratch {
             std::process::id()
         ));
         fs::create_dir(&root).expect("scratch root is exclusively created");
-        let initialized = Command::new("git")
-            .args(["init", "--quiet"])
-            .current_dir(&root)
-            .output()
-            .expect("Git initializes fixture repository");
-        assert!(initialized.status.success());
+        git_repository::initialize(&root);
         Self(root)
     }
 

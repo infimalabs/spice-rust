@@ -8,6 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
 use wire::Outcome;
 
+#[path = "support/git_repository.rs"]
+mod git_repository;
+
 struct Fixture {
     root: PathBuf,
     tracked: Vec<u8>,
@@ -22,12 +25,7 @@ impl Fixture {
             std::process::id()
         ));
         fs::create_dir(&root).expect("config fixture root is exclusively created");
-        let output = Command::new("/usr/bin/git")
-            .args(["init", "-q"])
-            .current_dir(&root)
-            .output()
-            .expect("initialize config fixture repository");
-        assert!(output.status.success(), "git init: {output:?}");
+        git_repository::initialize(&root);
         let root = fs::canonicalize(root).expect("canonicalize config fixture root");
         let tracked = concat!(
             "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",

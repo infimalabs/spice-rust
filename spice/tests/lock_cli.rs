@@ -15,6 +15,8 @@ use wire::Outcome;
 
 #[path = "support/file_change.rs"]
 mod file_change;
+#[path = "support/git_repository.rs"]
+mod git_repository;
 #[path = "support/process_exit.rs"]
 mod process_exit;
 use file_change::FileChangeObserver;
@@ -91,12 +93,7 @@ impl Fixture {
             std::process::id()
         ));
         fs::create_dir(&root).expect("lock fixture root is exclusively created");
-        let output = Command::new("/usr/bin/git")
-            .args(["init", "-q"])
-            .current_dir(&root)
-            .output()
-            .expect("initialize lock fixture repository");
-        assert!(output.status.success(), "git init: {output:?}");
+        git_repository::initialize(&root);
         let root = fs::canonicalize(root).expect("canonicalize lock fixture root");
         fs::write(
             root.join("spice-rust.toml"),

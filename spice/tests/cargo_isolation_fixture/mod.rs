@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::cargo_isolation_cleanup::make_writable;
-use super::cargo_isolation_support::{git, sha256, shell_word, write_executable};
+use super::cargo_isolation_support::{sha256, shell_word, write_executable};
 
 pub(super) struct Fixture {
     pub(super) root: PathBuf,
@@ -89,42 +89,21 @@ impl Fixture {
     }
 
     fn seed_repository(&self) {
-        fs::write(
-            self.first.join("Cargo.toml"),
-            "[package]\nname = \"fixture-root\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
-        )
-        .expect("write repository manifest");
-        fs::write(
-            self.first.join("Cargo.lock"),
-            concat!(
-                "version = 4\n\n",
-                "[[package]]\n",
-                "name = \"fixture-dependency\"\n",
-                "version = \"1.0.0\"\n",
-                "source = \"registry+https://github.com/rust-lang/crates.io-index\"\n",
-                "checksum = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
-            ),
-        )
-        .expect("write exact lockfile");
-        git(&self.first, &["init"]);
-        git(&self.first, &["config", "user.name", "Spice Test"]);
-        git(
-            &self.first,
-            &["config", "user.email", "spice@example.invalid"],
+        let manifest =
+            "[package]\nname = \"fixture-root\"\nversion = \"0.0.0\"\nedition = \"2024\"\n";
+        let lock = concat!(
+            "version = 4\n\n",
+            "[[package]]\n",
+            "name = \"fixture-dependency\"\n",
+            "version = \"1.0.0\"\n",
+            "source = \"registry+https://github.com/rust-lang/crates.io-index\"\n",
+            "checksum = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
         );
-        git(&self.first, &["config", "core.hooksPath", "/dev/null"]);
-        git(&self.first, &["add", "Cargo.toml", "Cargo.lock"]);
-        git(&self.first, &["commit", "-m", "fixture"]);
-        git(
-            &self.first,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "fixture-second",
-                self.second.to_str().expect("UTF-8 fixture path"),
-            ],
-        );
+        fs::write(self.first.join("Cargo.toml"), manifest).expect("write repository manifest");
+        fs::write(self.first.join("Cargo.lock"), lock).expect("write exact lockfile");
+        super::git_repository::link(&self.first, &self.second, "fixture-second");
+        fs::write(self.second.join("Cargo.toml"), manifest).expect("write linked manifest");
+        fs::write(self.second.join("Cargo.lock"), lock).expect("write linked lockfile");
     }
 
     fn seed_toolchain(&self, package: &Path) {
@@ -197,16 +176,6 @@ impl Fixture {
     {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
         command.args(["dev", "xtask", "--"]).args(arguments);
-        self.configure(command, worktree)
-    }
-
-    pub(super) fn git_command<I, S>(&self, worktree: &Path, arguments: I) -> Command
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        let mut command = Command::new("/usr/bin/git");
-        command.args(arguments);
         self.configure(command, worktree)
     }
 

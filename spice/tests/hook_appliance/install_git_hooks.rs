@@ -13,6 +13,9 @@ use spice::install::{
 use spice::repository::Repository;
 use wire::Outcome;
 
+#[path = "../support/git_repository.rs"]
+mod git_repository;
+
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -231,12 +234,7 @@ impl Fixture {
             ));
             match fs::create_dir(&root) {
                 Ok(()) => {
-                    let initialized = Command::new("git")
-                        .args(["init", "-q", "-b", "main"])
-                        .current_dir(&root)
-                        .status()
-                        .expect("launch hook fixture Git initialization");
-                    assert!(initialized.success());
+                    git_repository::initialize(&root);
                     fs::create_dir_all(root.join(".git/info")).unwrap();
                     fs::write(root.join(".git/info/exclude"), b"fixture exclude\n").unwrap();
                     return Self { root };
