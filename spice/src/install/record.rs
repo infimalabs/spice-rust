@@ -99,24 +99,39 @@ impl InstallRecord {
         })
     }
 
-    /// Remove the wrapper introduced after historical receipt versions.
+    /// Remove hook assets introduced after the version-7 receipt shape.
     #[cfg(debug_assertions)]
-    pub(super) fn remove_test_wrapper_asset(
+    pub(super) fn remove_test_newer_hook_assets(
         &mut self,
         repository: &Repository,
     ) -> Result<(), InstallError> {
-        let index = self
-            .plan
-            .operations
+        let assets = [
+            super::Asset::HookZsh,
+            super::Asset::HookBash,
+            super::Asset::HookWrapperSpice,
+        ];
+        let mut indices = assets
             .iter()
-            .position(|operation| operation.asset == super::Asset::HookWrapperSpice)
-            .ok_or_else(|| {
-                InstallError::InvalidRecord("test receipt has no wrapper asset".to_owned())
-            })?;
+            .map(|asset| {
+                self.plan
+                    .operations
+                    .iter()
+                    .position(|operation| operation.asset == *asset)
+                    .ok_or_else(|| {
+                        InstallError::InvalidRecord(format!(
+                            "test receipt has no {:?} asset",
+                            asset
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        indices.sort_unstable_by(|left, right| right.cmp(left));
         if let Some(archive) = &self.plan.rollback_archive {
             let inline = archive.is_inline();
             let mut rollback = archive.decode(repository)?;
-            rollback.operations.remove(index);
+            for index in &indices {
+                rollback.operations.remove(*index);
+            }
             let rebuilt = super::RollbackArchive::new(&rollback)?;
             self.plan.rollback_archive = Some(if inline {
                 rebuilt.to_inline(repository)?
@@ -124,29 +139,34 @@ impl InstallRecord {
                 rebuilt
             });
         }
-        self.plan.operations.remove(index);
-        self.reversals.remove(index);
-        self.destinations.remove(index);
-        self.installed.remove(index);
-        self.installed_parents.remove(index);
-        self.restored.remove(index);
+        for index in indices {
+            self.plan.operations.remove(index);
+            self.reversals.remove(index);
+            self.destinations.remove(index);
+            self.installed.remove(index);
+            self.installed_parents.remove(index);
+            self.restored.remove(index);
+        }
         self.completed = self.plan.operation_count();
         self.plan_digest = self.plan.digest()?;
 
-        let wrapper = super::installed_spice_wrapper(repository);
-        fs::remove_file(&wrapper).map_err(|source| {
-            InstallError::io("remove future wrapper test asset", wrapper.clone(), source)
-        })?;
-        let parent = wrapper
-            .parent()
-            .expect("the installed wrapper contract always has a parent");
-        fs::remove_dir(parent).map_err(|source| {
-            InstallError::io(
-                "remove future wrapper test directory",
-                parent.to_path_buf(),
-                source,
-            )
-        })
+        for asset in assets {
+            let (_, relative, _) = super::asset_contract(asset);
+            let path = repository.common_dir().join(relative);
+            fs::remove_file(&path).map_err(|source| {
+                InstallError::io("remove future hook test asset", path, source)
+            })?;
+        }
+        for relative in [
+            ".spice-install/hooks/shell",
+            ".spice-install/hooks/wrappers",
+        ] {
+            let path = repository.common_dir().join(relative);
+            fs::remove_dir(&path).map_err(|source| {
+                InstallError::io("remove future hook test directory", path, source)
+            })?;
+        }
+        Ok(())
     }
 
     pub(super) fn validate(&self) -> Result<(), InstallError> {
@@ -669,7 +689,7 @@ pub(super) fn publish_test_version_7_receipt(repository: &Repository) -> Result<
             "test fixture receipt is not complete".to_owned(),
         ));
     }
-    record.remove_test_wrapper_asset(repository)?;
+    record.remove_test_newer_hook_assets(repository)?;
     record.version = super::MIGRATABLE_RECORD_VERSION;
     record.plan.version = super::MIGRATABLE_RECORD_VERSION;
     record.plan.retirements.clear();

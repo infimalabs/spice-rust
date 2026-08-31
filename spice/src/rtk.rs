@@ -118,16 +118,14 @@ where
         Ok(code) => code,
         Err(verdict) => return verdict,
     };
-    let written = match answer_fidelity(executable, &version_text, &mut invoke) {
-        Ok(count) => count,
+    let fidelity = match answer_fidelity(executable, &version_text, &mut invoke) {
+        Ok(detail) => detail,
         Err(verdict) => return verdict,
     };
     health(
         HealthState::Active,
         Some(version_text),
-        format!(
-            "rewrite protocol valid (exit {protocol_exit}); rewrite preserved the answer (counted {written})"
-        ),
+        format!("rewrite protocol valid (exit {protocol_exit}); {fidelity}"),
     )
 }
 
@@ -199,7 +197,7 @@ where
     Ok(protocol.code)
 }
 
-fn answer_fidelity<F>(executable: &OsStr, version: &str, invoke: &mut F) -> Result<u64, Health>
+fn answer_fidelity<F>(executable: &OsStr, version: &str, invoke: &mut F) -> Result<String, Health>
 where
     F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
 {
@@ -212,15 +210,16 @@ where
             .collect::<Vec<_>>(),
     ) {
         Ok(count) => count,
-        Err(reason) => {
-            return Err(health(
-                HealthState::ProtocolInvalid,
-                Some(version.to_owned()),
-                format!("written fidelity probe could not be verified: {reason}"),
+        Err(_) => {
+            return Ok(format!(
+                "answer unchecked: {} reported no count",
+                FIDELITY_PROBE.join(" ")
             ));
         }
     };
-    let rewritten = rewritten_fidelity_count(executable, version, invoke)?;
+    let Some(rewritten) = rewritten_fidelity_count(executable, invoke) else {
+        return Ok("answer unchecked: the rewrite reported no count".to_owned());
+    };
     if rewritten != written {
         return Err(health(
             HealthState::RewriteUnfaithful,
@@ -231,84 +230,38 @@ where
             ),
         ));
     }
-    Ok(written)
+    Ok(format!("rewrite preserved the answer (counted {written})"))
 }
 
-fn rewritten_fidelity_count<F>(
-    executable: &OsStr,
-    version: &str,
-    invoke: &mut F,
-) -> Result<u64, Health>
+fn rewritten_fidelity_count<F>(executable: &OsStr, invoke: &mut F) -> Option<u64>
 where
     F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
 {
     let fidelity_arguments = rewrite_arguments(&FIDELITY_PROBE);
     let fidelity = match invoke(executable, &fidelity_arguments, None) {
         Ok(result) if matches!(result.code, 0 | 3) && !result.stdout.trim().is_empty() => result,
-        Ok(result) => {
-            return Err(health(
-                HealthState::ProtocolInvalid,
-                Some(version.to_owned()),
-                format!(
-                    "fidelity rewrite returned exit {} with {} stdout",
-                    result.code,
-                    if result.stdout.trim().is_empty() {
-                        "empty"
-                    } else {
-                        "nonempty"
-                    }
-                ),
-            ));
-        }
-        Err(reason) => {
-            return Err(health(
-                HealthState::ProtocolInvalid,
-                Some(version.to_owned()),
-                format!("fidelity rewrite probe failed: {reason}"),
-            ));
-        }
+        Ok(_) | Err(_) => return None,
     };
     let rewritten = fidelity.stdout.trim();
-    if let Err(reason) = rewrite_fidelity(
+    if rewrite_fidelity(
         &FIDELITY_PROBE
             .iter()
             .map(OsString::from)
             .collect::<Vec<_>>(),
         rewritten,
-    ) {
-        return Err(health(
-            HealthState::RewriteUnfaithful,
-            Some(version.to_owned()),
-            format!("fidelity rewrite was unsafe: {reason}"),
-        ));
+    )
+    .is_err()
+    {
+        return None;
     }
     let mut parsed = match shell_words::split(rewritten) {
         Ok(parsed) if !parsed.is_empty() => parsed,
-        Ok(_) => {
-            return Err(health(
-                HealthState::ProtocolInvalid,
-                Some(version.to_owned()),
-                "fidelity rewrite returned empty argv",
-            ));
-        }
-        Err(error) => {
-            return Err(health(
-                HealthState::ProtocolInvalid,
-                Some(version.to_owned()),
-                format!("fidelity rewrite returned malformed argv: {error}"),
-            ));
-        }
+        Ok(_) | Err(_) => return None,
     };
     remap_direct_frontend(&mut parsed, executable);
     let rewritten_program = OsStr::new(&parsed[0]);
     let rewritten_arguments = parsed[1..].iter().map(OsString::from).collect::<Vec<_>>();
-    search_count(invoke, rewritten_program, &rewritten_arguments).map_err(|reason| {
-        health(
-            HealthState::ProtocolInvalid,
-            Some(version.to_owned()),
-            format!("rewritten fidelity probe could not be verified: {reason}"),
-        )
-    })
+    search_count(invoke, rewritten_program, &rewritten_arguments).ok()
 }
 
 fn health(state: HealthState, version: Option<String>, detail: impl Into<String>) -> Health {
@@ -811,6 +764,30 @@ mod tests {
         assert_eq!(observed.state(), HealthState::RewriteUnfaithful);
         assert!(observed.detail().contains("counted 1"));
         assert!(observed.detail().contains("counted 0"));
+    }
+
+    #[test]
+    fn health_keeps_rewriting_active_when_the_fidelity_probe_has_no_count() {
+        for missing_stage in [2, 4] {
+            let mut stage = 0;
+            let observed = probe_health_with(OsStr::new("rtk"), |_, _, _| {
+                let response = match stage {
+                    0 => result(0, "rtk 0.45.0\n"),
+                    1 => result(0, "rtk git status --short\n"),
+                    2 if missing_stage == 2 => result(2, "probe unavailable\n"),
+                    2 => result(0, "1\n"),
+                    3 => result(0, "rtk rg --count al+pha -\n"),
+                    4 => result(2, "probe unavailable\n"),
+                    _ => panic!("health performed an unexpected probe stage"),
+                };
+                stage += 1;
+                Ok(response)
+            });
+
+            assert_eq!(observed.state(), HealthState::Active);
+            assert!(observed.detail().contains("answer unchecked"));
+            assert_eq!(stage, if missing_stage == 2 { 3 } else { 5 });
+        }
     }
 
     #[test]

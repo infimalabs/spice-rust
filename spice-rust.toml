@@ -128,7 +128,7 @@ test_engines = ["cargo-workspace"]
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the typed Spice variables, so these twenty-eight are the
+# again. Doctor reports only the typed Spice variables, so these thirty are the
 # difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
 # rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
 # retained only as coexistence sentinels. The predecessor's self-exec root and
@@ -136,6 +136,7 @@ test_engines = ["cargo-workspace"]
 # this runtime owns.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
+    "BASH_ENV",
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
     "GIT_CONFIG_COUNT",
@@ -190,6 +191,7 @@ env_names = [
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",
     "TMPDIR",
+    "ZDOTDIR",
 ]
 
 # Which files the shape arm measures lines and bytes over.

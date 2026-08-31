@@ -364,6 +364,14 @@ fn launch_environment(
             spice::install::installed_shell(repository).into_os_string(),
         ),
         (
+            OsString::from(steer::hook::BASH_ENV),
+            spice::install::installed_bash_env(repository).into_os_string(),
+        ),
+        (
+            OsString::from(steer::hook::ZDOTDIR),
+            spice::install::installed_zdotdir(repository).into_os_string(),
+        ),
+        (
             OsString::from(steer::hook::HOOKS),
             spice::install::installed_shell_hooks(repository).into_os_string(),
         ),
@@ -392,13 +400,26 @@ fn launch_environment(
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
     let environment = spice::git_shadow::environment(repository, environment)
         .map_err(|error| store_fault("lane::git-shadow-unavailable", &error.to_string()))?;
+    let probe_environment = rtk_probe_environment(&environment);
     let health = spice::rtk::probe_health_in_environment(
         std::ffi::OsStr::new(rtk_executable),
         repository.worktree_root(),
-        &environment,
+        &probe_environment,
     );
     let environment = rtk_environment(environment, &health);
     Ok((environment, health))
+}
+
+/// Health probes are not agent commands and must never enter lane gain history.
+fn rtk_probe_environment(environment: &Environment) -> Environment {
+    Environment::new(
+        environment
+            .entries()
+            .iter()
+            .filter(|(name, _)| name != spice::rtk::HISTORY_VARIABLE)
+            .cloned(),
+    )
+    .expect("filtering one valid environment entry preserves validity")
 }
 
 fn rtk_environment(environment: Environment, health: &spice::rtk::Health) -> Environment {
@@ -452,6 +473,23 @@ mod rtk_environment_tests {
         );
         let native = rtk_environment(fixture(), &native_health);
         assert_eq!(native.entries(), [("PATH".into(), "/fixture/bin".into())]);
+    }
+
+    #[test]
+    fn health_probe_cannot_write_the_lane_gain_database() {
+        let probe = rtk_probe_environment(&fixture());
+        assert!(
+            probe
+                .entries()
+                .iter()
+                .any(|(name, _)| name == spice::rtk::EXECUTABLE_VARIABLE)
+        );
+        assert!(
+            probe
+                .entries()
+                .iter()
+                .all(|(name, _)| name != spice::rtk::HISTORY_VARIABLE)
+        );
     }
 }
 

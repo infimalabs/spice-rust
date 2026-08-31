@@ -1,15 +1,14 @@
 //! Installing the structural shell-interception boundary.
 //!
 //! Interception puts the structural wrapper in front of every agent-owned
-//! top-level shell command. It uses two executable stages: the outer stage
-//! always enters the Rust wrapper, and the inner stage restores and execs the
-//! user's native shell. A third installed script supplies the separately
-//! configured ambient `spice` command. The launch environment points the agent
-//! at the outer stage; the inner stage points descendants at the native shell.
-//! Exactly-once routing is therefore structural rather than a marker
+//! top-level shell command. The outer stage handles tools that honor `SHELL`;
+//! startup hooks handle tools that launch zsh or Bash directly. Both enter the
+//! Rust wrapper and the inner stage restores and execs the actual native shell.
+//! A final installed script supplies the separately configured ambient `spice`
+//! command. Exactly-once routing is therefore structural rather than a marker
 //! descendants can forge, lose, or accidentally inherit.
 //!
-//! All three scripts are published from bytes compiled into this crate, so what
+//! All hook scripts are published from bytes compiled into this crate, so what
 //! is on disk either matches what this build expects or is named as divergent.
 //! That matters because a script that silently drifted would route in some
 //! other way than the one this code reasons about.
@@ -35,6 +34,12 @@ pub const NATIVE_SHELL: &str = wire::SpiceVariable::NativeShell.as_str();
 /// The exact Spice executable used by structural and configured wrappers.
 pub const EXECUTABLE: &str = wire::SpiceVariable::WrapperSpice.as_str();
 
+/// Bash's noninteractive startup-file selector.
+pub const BASH_ENV: &str = "BASH_ENV"; // env-policy: allow
+
+/// Zsh's startup-file directory selector.
+pub const ZDOTDIR: &str = "ZDOTDIR"; // env-policy: allow
+
 /// One interception stage and the bytes it must carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stage {
@@ -57,7 +62,7 @@ impl Stage {
 }
 
 /// Every stage installation places, in the order a shell reaches them.
-pub const STAGES: [Stage; 3] = [
+pub const STAGES: [Stage; 5] = [
     Stage {
         path: "entry.sh",
         bytes: include_str!("../hooks/entry.sh"),
@@ -65,6 +70,14 @@ pub const STAGES: [Stage; 3] = [
     Stage {
         path: "static/stage.sh",
         bytes: include_str!("../hooks/static/stage.sh"),
+    },
+    Stage {
+        path: "shell/.zshenv",
+        bytes: include_str!("../hooks/shell/.zshenv"),
+    },
+    Stage {
+        path: "shell/bash_env",
+        bytes: include_str!("../hooks/shell/bash_env"),
     },
     Stage {
         path: "wrappers/spice",

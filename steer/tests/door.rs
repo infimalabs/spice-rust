@@ -260,7 +260,7 @@ fn the_spice_shell_wrapper_execs_only_the_typed_appliance() {
     fs::set_permissions(&appliance, fs::Permissions::from_mode(0o700))
         .expect("make exact appliance executable");
 
-    let output = Command::new(hooks.stage(STAGES[2]))
+    let output = Command::new(hooks.stage(STAGES[4]))
         .args(["task", "next", "two words"])
         .env(steer::hook::EXECUTABLE, &appliance)
         .env("CAPTURED", &captured)
