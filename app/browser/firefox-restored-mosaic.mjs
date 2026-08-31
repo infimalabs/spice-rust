@@ -64,10 +64,14 @@ export async function captureFirefoxAgentPageSpacing(
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Agents");
+    const committed = page.locator(
+      '.mosaic-message-card[data-layout-phase="committed"]',
+    );
     if (populated) {
-      await page.locator(
-        '.mosaic-message-card[data-layout-phase="committed"]',
-      ).first().waitFor({ timeout: CONNECT_MS });
+      await committed.first().waitFor({ timeout: CONNECT_MS });
+      assert.ok(await committed.count() > 0, `${state} has committed Mosaic cards`);
+    } else {
+      assert.equal(await committed.count(), 0, `${state} has zero committed Mosaic cards`);
     }
     await assertAgentPageBottomSpacing(page, state);
     await page.screenshot({ path: join(artifacts, file) });
