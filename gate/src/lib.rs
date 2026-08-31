@@ -31,6 +31,11 @@ pub mod policy;
 pub mod ratchet;
 pub mod report;
 pub mod state;
+#[doc(hidden)]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod test_support {
+    pub use gix;
+}
 #[cfg(not(target_arch = "wasm32"))]
 mod structural;
 pub mod test_evidence;
