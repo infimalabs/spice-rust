@@ -13,6 +13,7 @@ import {
 } from "./compaction-boundary-reference.mjs";
 import { assertComposerPointerSelection } from "./composer-shards.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
+import { assertNaturalMessageFooterInsets } from "./message-card-reference.mjs";
 
 /// A ready lattice settles layout, not delivery: under verifier load the
 /// initial card stream can still be arriving when measurements first report
@@ -94,6 +95,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     await console.getByRole("tab", { name: /^Compose/ }).click();
     const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
+    await assertNaturalMessageFooterInsets(console, "Firefox wide restored Mosaic");
     const boundary = console.locator('[data-card-kind="compaction"]');
     assert.equal(await boundary.count(), 1, "Firefox restores the real compaction exactly once");
     await waitForCompactionReady(page, boundary, "Firefox wide compaction divider");
@@ -105,6 +107,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
       "Firefox narrow compaction divider",
     );
     await assertCompactionDivider(boundary, "Firefox narrow compaction divider", expectedAttribution);
+    await assertNaturalMessageFooterInsets(console, "Firefox narrow restored Mosaic");
     await resizeCompactionViewport(
       page,
       boundary,
@@ -138,6 +141,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     await console.getByRole("tab", { name: /^Compose/ }).click();
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
+    await assertNaturalMessageFooterInsets(console, "Firefox reloaded Mosaic");
     assert.equal(await boundary.count(), 1, "Firefox reload keeps one compaction divider");
     await waitForCompactionReady(page, boundary, "Firefox replayed compaction divider");
     await assertCompactionDivider(boundary, "Firefox replayed compaction divider", expectedAttribution);

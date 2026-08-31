@@ -968,10 +968,10 @@
 .team-surface .mosaic-message-card p { line-height: 1.25; }
 .team-surface .mosaic-message-card .message-footer {
   display: flex;
+  align-self: end;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 2.5rem;
   min-width: 0;
   width: 100%;
   margin-top: .5rem;
@@ -1079,8 +1079,6 @@
   .team-surface .mosaic-message-card .message-footer {
     align-content: center;
     flex-wrap: wrap;
-    height: auto;
-    min-height: 2.5rem;
   }
   .team-surface .message-footer-left,
   .team-surface .message-footer-right { flex: 0 0 100%; }
