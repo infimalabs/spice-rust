@@ -149,16 +149,9 @@ fn render_agent_message_card(
     layout: &CardLayout,
 ) -> Html {
     let source_id = agent_message_source_id(message);
-    let producer = agent_message_producer(member, message);
-    let correspondent = agent_message_correspondent(
-        member,
-        quote_lane,
-        message,
-        quote_dispatcher,
-        speak,
-        order,
-        &producer,
-    );
+    let producer = member.name.clone();
+    let correspondent =
+        agent_message_correspondent(member, quote_lane, message, quote_dispatcher, speak, order);
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
     let unlinked_media = message
         .media
@@ -178,10 +171,11 @@ fn render_agent_message_card(
                 is_compaction.then_some("mosaic-compaction-card"),
                 layout.lifecycle.as_str(),
             )}
-            aria-label={if is_compaction {
-                format!("Context compacted by {producer}")
-            } else {
-                format!("Agent message from {producer}")
+            aria-label={match (is_compaction, producer.as_deref()) {
+                (true, Some(producer)) => format!("Context compacted by {producer}"),
+                (true, None) => "Context compacted".to_owned(),
+                (false, Some(producer)) => format!("Agent message from {producer}"),
+                (false, None) => "Agent message".to_owned(),
             }}
             data-card-kind={agent_card_kind(is_compaction)}
             data-message-role="agent"
@@ -214,7 +208,6 @@ fn render_agent_message_card(
                     message,
                     &correspondent,
                     crate::runtime::agent_message_display_millis(message),
-                    false,
                     producer,
                 )}
             }
@@ -246,17 +239,6 @@ fn render_compaction_boundary(
     }
 }
 
-fn agent_message_producer(
-    member: &crate::runtime::LaneMember,
-    message: &wire::AgentMessage,
-) -> String {
-    format!(
-        "{} · {}",
-        watchband::leaf(&member.worktree),
-        watchband::short(message.author),
-    )
-}
-
 fn agent_message_correspondent(
     member: &crate::runtime::LaneMember,
     quote_lane: CanonicalUuid,
@@ -264,7 +246,6 @@ fn agent_message_correspondent(
     quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
     speak: &Callback<String>,
     order: u64,
-    producer: &str,
 ) -> view::chrome::Correspondent {
     let lane_key = quote_lane.to_string();
     let quote_text = message.text.clone();
@@ -274,7 +255,6 @@ fn agent_message_correspondent(
     let focus_lane = lane_key.clone();
     let quote_dispatcher = quote_dispatcher.clone();
     view::chrome::Correspondent {
-        name: producer.to_owned(),
         accent: watchband::accent(member.lane),
         speak: speak.clone(),
         quote: Callback::from(move |()| {
@@ -328,26 +308,39 @@ fn render_agent_message_footer(
     message: &wire::AgentMessage,
     correspondent: &view::chrome::Correspondent,
     display_millis: i64,
-    is_compaction: bool,
-    producer: String,
+    producer: Option<String>,
 ) -> Html {
     let locus = format!(
         "tape {}:{}+{}#{}",
         message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
     );
-    let card_actions = if is_compaction {
-        Html::default()
-    } else {
-        view::chrome::render_card_actions(&message.text, correspondent)
-    };
+    let card_actions = view::chrome::render_card_actions(&message.text, correspondent);
+    let producer_identity = producer.map(|producer| {
+        let author = message.author.to_string();
+        let author_title = format!("Copy agent id\n{author}");
+        let copy_author = Callback::from(move |_| view::chrome::copy_text(&author));
+        html! {
+            <>
+                <button
+                    class="message-agent-name"
+                    type="button"
+                    title={author_title}
+                    aria-label={format!("Copy agent id for {producer}")}
+                    onclick={copy_author}
+                >{producer}</button>
+                <span class="message-footer-separator" aria-hidden="true">{"\u{b7}"}</span>
+            </>
+        }
+    });
     html! {
-        <footer class="message-meta">
-            <span class="message-classifiers">
-                <span class="message-key">{if is_compaction { "compaction" } else { "agent" }}</span>
-            </span>
-            <Age authored={display_millis} class="message-age" title={locus} />
-            <span class="message-author">{producer}</span>
-            {card_actions}
+        <footer class="message-footer">
+            <div class="message-footer-left">
+                <Age authored={display_millis} class="message-age" title={locus} />
+            </div>
+            <div class="message-footer-right">
+                {producer_identity}
+                {card_actions}
+            </div>
         </footer>
     }
 }

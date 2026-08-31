@@ -1,0 +1,240 @@
+import assert from "node:assert/strict";
+import { join } from "node:path";
+
+import {
+  TRANSITION_MS,
+  waitForPageFunction as waitForPage,
+} from "./canvas-fixture.mjs";
+
+async function assertMessageCardLayout(console, label) {
+  const planes = await console.locator(".lane-mosaic-plane").evaluateAll((elements) => (
+    elements.map((plane) => [...plane.querySelectorAll(
+      '.mosaic-message-card[data-layout-phase="committed"]',
+    )].map((card) => {
+      const box = card.getBoundingClientRect();
+      const style = getComputedStyle(card);
+      const painted = [...card.querySelectorAll([
+        ".message-body > *",
+        ".message-attachments img",
+        ".message-footer button",
+        ".message-footer time",
+        ".message-footer-separator",
+      ].join(", "))];
+      return {
+        key: card.dataset.mosaicCardKey,
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        bottom: box.bottom,
+        innerBottom: box.bottom - Number.parseFloat(style.borderBottomWidth),
+        contentBottom: Math.max(...painted.map(
+          (child) => child.getBoundingClientRect().bottom,
+        )),
+      };
+    }))
+  ));
+  for (const cards of planes) {
+    assert.ok(
+      cards.every((card) => card.contentBottom <= card.innerBottom + 0.5),
+      `${label} cards contain their visible content: ${JSON.stringify(cards)}`,
+    );
+    for (let left = 0; left < cards.length; left += 1) {
+      for (let right = left + 1; right < cards.length; right += 1) {
+        const one = cards[left];
+        const two = cards[right];
+        const separated = one.right <= two.left + 0.5 || two.right <= one.left + 0.5
+          || one.bottom <= two.top + 0.5 || two.bottom <= one.top + 0.5;
+        assert.ok(
+          separated,
+          `${label} cards ${one.key} and ${two.key} do not overlap`,
+        );
+      }
+    }
+  }
+}
+
+function assertReferenceGeometry(geometry, agentNames) {
+  assert.equal(geometry.card.fontSize, "16px", "message body keeps the reference type size");
+  assert.equal(geometry.card.lineHeight, "20px", "message body keeps the reference line rhythm");
+  assert.match(geometry.card.fontFamily, /system-ui/, "message prose uses the system sans stack");
+  assert.equal(geometry.card.paddingLeft, "9px", "message card keeps reference inline padding");
+  assert.equal(geometry.card.paddingTop, "9px", "message card keeps reference block padding");
+  assert.equal(geometry.grid.paddingLeft, "11px", "message plane keeps the reference origin gutter");
+  assert.equal(geometry.grid.paddingTop, "11px", "message plane keeps the reference origin gutter");
+  assert.equal(geometry.card.borderRadius, "10px", "message card keeps the reference radius");
+  assert.equal(geometry.card.background, geometry.panel, "message card uses the neutral panel surface");
+  assert.equal(geometry.card.borderLeftWidth, "1px", "the card has no left accent rail");
+  assert.equal(geometry.card.borderRightWidth, "3px", "the producer accent stays on the right");
+  assert.equal(
+    geometry.card.borderLeftColor,
+    geometry.card.borderBottomColor,
+    "the left edge uses the same soft perimeter border as the card",
+  );
+  assert.notEqual(
+    geometry.card.borderLeftColor,
+    geometry.card.borderRightColor,
+    "the right producer edge remains distinguishable from the soft perimeter",
+  );
+  assert.equal(geometry.inlineCode.background, "rgba(0, 0, 0, 0)");
+  assert.equal(geometry.inlineCode.paddingLeft, "0px");
+  assert.match(geometry.inlineCode.fontFamily, /monospace/);
+  assert.ok(geometry.inlineCodeText, "the inline-code treatment is measured on real prose");
+
+  assert.equal(geometry.footer.display, "flex");
+  assert.equal(geometry.footer.height, 40, "the footer reserves two reference line heights");
+  assert.equal(geometry.footer.fontSize, "12px");
+  assert.equal(geometry.footer.marginTop, "8px");
+  assert.deepEqual(
+    geometry.footerChildren,
+    ["message-footer-left", "message-footer-right"],
+    "age and agent actions occupy the reference footer clusters",
+  );
+  assert.equal(geometry.classifiers, 0, "the generic agent classifier is absent");
+  assert.doesNotMatch(geometry.footerText, /(?:^|\s)agent(?:\s|$)/i);
+  assert.doesNotMatch(geometry.footerText, /\b[0-9a-f]{8}\b/i);
+  assert.ok(agentNames.includes(geometry.agent.text), "the footer prints a configured agent name");
+  assert.equal(geometry.agent.fontSize, "12px");
+  assert.equal(geometry.agent.fontWeight, "400");
+  assert.match(geometry.agent.fontFamily, /system-ui/);
+  assert.match(geometry.agent.ariaLabel, /^Copy agent id for /);
+  assert.match(geometry.agent.title, /^Copy agent id\n[0-9a-f-]{36}$/);
+  assert.equal(geometry.actions.gap, "6px");
+  assert.equal(geometry.actions.buttons.length, 3);
+  assert.ok(
+    geometry.actions.buttons.every((button) => button.width === 32 && button.height === 32),
+    "each message action occupies the reference 32px circle",
+  );
+}
+
+async function waitForCommittedResize(page, console, viewport) {
+  const priorWidths = await console.locator(".lane-mosaic-plane").evaluateAll(
+    (planes) => planes.map((plane) => Number(plane.dataset.committedWidth)),
+  );
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  await waitForPage(page, `${viewport.label} message-card width commits`, TRANSITION_MS,
+    (before) => {
+      const planes = [...document.querySelectorAll(
+        '[data-pane="agent-console"] .lane-mosaic-plane',
+      )];
+      return planes.length === before.length && planes.every((plane, index) => (
+        plane.dataset.measurementPhase === "ready"
+        && Number(plane.dataset.committedWidth) !== before[index]
+        && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1
+      ));
+    }, priorWidths);
+}
+
+async function captureReferenceView(page, console, artifacts, viewport) {
+  await waitForCommittedResize(page, console, viewport);
+  await assertMessageCardLayout(console, viewport.label);
+  const cards = console.locator(
+    '[data-card-kind="agent-message"][data-layout-phase="committed"]',
+  );
+  const fits = await cards.evaluateAll((articles) => articles.map((article) => ({
+    key: article.dataset.mosaicCardKey,
+    width: article.getBoundingClientRect().width,
+    cardClientWidth: article.clientWidth,
+    cardScrollWidth: article.scrollWidth,
+    footerClientWidth: article.querySelector(".message-footer").clientWidth,
+    footerScrollWidth: article.querySelector(".message-footer").scrollWidth,
+  })));
+  assert.ok(
+    fits.every((fit) => fit.cardScrollWidth <= fit.cardClientWidth + 1),
+    `${viewport.label} cards have no horizontal overflow: ${JSON.stringify(fits)}`,
+  );
+  assert.ok(
+    fits.every((fit) => fit.footerScrollWidth <= fit.footerClientWidth + 1),
+    `${viewport.label} footers have no horizontal overflow: ${JSON.stringify(fits)}`,
+  );
+  const widest = fits.reduce((selected, candidate) => (
+    candidate.width > selected.width ? candidate : selected
+  ));
+  const screenshotCard = console.locator(`[data-mosaic-card-key="${widest.key}"]`);
+  assert.equal(
+    await screenshotCard.evaluate((article) => getComputedStyle(article).backgroundColor),
+    "rgb(17, 23, 18)",
+    `${viewport.label} capture explicitly exercises dark mode`,
+  );
+  await screenshotCard.screenshot({
+    path: join(artifacts, `canvas-message-card-${viewport.label}-dark.png`),
+  });
+}
+
+export async function assertReferenceMessageCard(
+  page,
+  console,
+  card,
+  artifacts,
+  agentNames,
+) {
+  const geometry = await card.evaluate((article) => {
+    const measured = (node) => {
+      const box = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return {
+        width: box.width,
+        height: box.height,
+        background: style.backgroundColor,
+        borderBottomColor: style.borderBottomColor,
+        borderLeftColor: style.borderLeftColor,
+        borderLeftWidth: style.borderLeftWidth,
+        borderRadius: style.borderRadius,
+        borderRightColor: style.borderRightColor,
+        borderRightWidth: style.borderRightWidth,
+        display: style.display,
+        fontFamily: style.fontFamily,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        gap: style.gap,
+        lineHeight: style.lineHeight,
+        marginTop: style.marginTop,
+        paddingLeft: style.paddingLeft,
+        paddingTop: style.paddingTop,
+      };
+    };
+    const footer = article.querySelector(".message-footer");
+    const agent = article.querySelector(".message-agent-name");
+    const actions = article.querySelector(".message-actions");
+    const inlineCode = article.closest(".team-surface")?.querySelector(".message-body code");
+    const grid = article.closest(".team-activity-grid");
+    const panelProbe = document.createElement("span");
+    panelProbe.style.background = "var(--panel)";
+    article.append(panelProbe);
+    const panel = getComputedStyle(panelProbe).backgroundColor;
+    panelProbe.remove();
+    return {
+      card: measured(article),
+      panel,
+      grid: measured(grid),
+      footer: measured(footer),
+      footerChildren: [...footer.children].map((node) => node.className),
+      footerText: footer.innerText,
+      classifiers: footer.querySelectorAll(".message-key, .message-classifiers").length,
+      agent: {
+        ...measured(agent),
+        ariaLabel: agent.getAttribute("aria-label"),
+        text: agent.innerText,
+        title: agent.title,
+      },
+      actions: {
+        ...measured(actions),
+        buttons: [...actions.querySelectorAll("button")].map(measured),
+      },
+      inlineCode: measured(inlineCode),
+      inlineCodeText: inlineCode?.textContent ?? "",
+    };
+  });
+  assertReferenceGeometry(geometry, agentNames);
+
+  const original = page.viewportSize();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await captureReferenceView(page, console, artifacts, {
+    label: "reference", width: 648, height: 726,
+  });
+  await captureReferenceView(page, console, artifacts, {
+    label: "mobile", width: 390, height: 720,
+  });
+  await waitForCommittedResize(page, console, { label: "restored reference", ...original });
+  await assertMessageCardLayout(console, "restored reference");
+  await page.emulateMedia({ colorScheme: null });
+}

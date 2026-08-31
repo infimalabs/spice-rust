@@ -326,7 +326,7 @@ function assertReferenceGuardRejectsPerturbation(geometry) {
 
 export async function assertCanonicalInlineTaskCode(surface) {
   assert.equal(
-    await surface.locator(".message-meta .message-task-chip").count(),
+    await surface.locator(".message-footer .message-task-chip").count(),
     0,
     "card footers never repeat a reported task handle",
   );
@@ -351,7 +351,7 @@ export async function assertCanonicalInlineTaskCode(surface) {
     "the chip is derived from the task handle the message body reports",
   );
   assert.equal(
-    await card.locator(".message-meta .message-task-chip").count(),
+    await card.locator(".message-footer .message-task-chip").count(),
     0,
     "the inline identifier has no duplicate footer chip",
   );
