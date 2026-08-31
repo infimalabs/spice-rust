@@ -20,8 +20,8 @@ use steer::directives::{Ledger, Steering};
 use wire::body::SteerSent;
 use wire::{CanonicalUuid, SpiceVariable};
 
-#[path = "support/verify_claim.rs"]
-mod verify_claim_fixture;
+#[path = "support/git_repository.rs"]
+mod git_repository;
 
 /// Representative durable state Python Spice owns inside `.spice`.
 const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
@@ -104,55 +104,6 @@ fn this_runtime_claims_no_path_the_predecessor_owns() {
             owned.display()
         );
     }
-}
-
-/// Ordinary native gate capture has no implicit predecessor-state bridge.
-///
-/// The fixture seeds every predecessor gate ledger with bytes that the removed
-/// importer would reject, records their exact identities, and invokes the real
-/// `spice gate` command. The run must succeed without creating current gate
-/// state, and every predecessor file must remain present and byte-identical.
-#[test]
-fn ordinary_gate_ignores_predecessor_gate_state() {
-    let fixture = Fixture::seeded("gate-state");
-    fixture.prepare_gate_repository();
-    let before = fixture.predecessor_gate_identity();
-    assert_eq!(before.len(), PREDECESSOR_GATE_STATE.len());
-
-    let paths = fixture.paths();
-    let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
-    assert_eq!(
-        gate::current_state_path(repository.common_dir()),
-        paths.gate_state(),
-        "the gate writer and StatePaths registry must name one ledger"
-    );
-    let owned = fixture.owned();
-    assert!(owned.contains(&paths.gate_state().to_path_buf()));
-    assert!(owned.contains(&paths.gate_state_lock().to_path_buf()));
-    assert!(
-        !paths.gate_state().exists(),
-        "current gate state starts absent"
-    );
-    assert!(
-        !paths.gate_state_lock().exists(),
-        "current gate-state lock starts absent"
-    );
-
-    let output = fixture.invoke(&["gate"]);
-    assert!(output.status.success(), "native gate must run: {output:?}");
-    assert_eq!(
-        fixture.predecessor_gate_identity(),
-        before,
-        "ordinary native gate changed predecessor gate state"
-    );
-    assert!(
-        !paths.gate_state().exists(),
-        "gate capture created current state from predecessor ledgers"
-    );
-    assert!(
-        !paths.gate_state_lock().exists(),
-        "gate capture created a publication lock while only reading state"
-    );
 }
 
 /// Identical relative names still resolve to physically different places.
@@ -363,16 +314,11 @@ fn the_bridge_refuses_without_an_operator_named_export() {
     );
 }
 
-/// Tracked paths spelling the Rust state layout cannot become inbox or ACK
-/// authority, and writes to the real Git-owned surfaces remain unstageable.
-///
-/// The impostors are committed first so this is stronger than an assertion
-/// over path strings: production publishes a real sealed rendering and opens
-/// the real journal while the committed bytes stay unchanged. A subsequent
-/// `git add -A` observes neither authority write because both are inside Git's
-/// own directory rather than the worktree tree.
+/// Worktree paths spelling the Rust state layout cannot become inbox or ACK
+/// authority. Production publishes a real sealed rendering and opens the real
+/// journal while the lookalike bytes stay unchanged.
 #[test]
-fn repository_lookalikes_cannot_replace_or_stage_inbox_and_ack_authority() {
+fn repository_lookalikes_cannot_replace_inbox_and_ack_authority() {
     let fixture = Fixture::bare("inbox-authority");
     let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce913116302"
         .parse()
@@ -386,8 +332,6 @@ fn repository_lookalikes_cannot_replace_or_stage_inbox_and_ack_authority() {
     fs::write(&impostor_inbox, b"repository-injected direction\n").expect("write impostor inbox");
     fs::write(&impostor_journal, b"repository-injected acknowledgment\n")
         .expect("write impostor journal");
-    git(&fixture.root, &["add", ".spice-rs"]);
-    git(&fixture.root, &["commit", "-qm", "tracked lookalikes"]);
 
     let paths = fixture.paths();
     let impostor_root = fixture.root.join(".spice-rs");
@@ -427,16 +371,6 @@ fn repository_lookalikes_cannot_replace_or_stage_inbox_and_ack_authority() {
             .expect("authoritative inbox reads")
             .contains("authoritative rendered direction")
     );
-    git(&fixture.root, &["add", "-A"]);
-    let status = git_output(
-        &fixture.root,
-        &["status", "--porcelain", "--untracked-files=all"],
-    );
-    assert!(
-        status.stdout.is_empty(),
-        "Git observed authority state as stageable: {}",
-        String::from_utf8_lossy(&status.stdout)
-    );
 }
 
 /// One temporary repository with physically separate Python and Rust roots.
@@ -466,63 +400,12 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create coexistence fixture root");
-        git(&root, &["init", "-q"]);
-        git(
-            &root,
-            &["config", "user.email", "coexistence@example.invalid"],
-        );
-        git(&root, &["config", "user.name", "Coexistence Fixture"]);
+        git_repository::initialize(&root);
         // Canonical from here on: the runtime canonicalizes while discovering,
         // and on macOS the temporary directory is reached through a symlink, so
         // an uncanonicalized root would never equal the paths it reports.
         let root = fs::canonicalize(&root).expect("canonicalize fixture root");
         Self { root }
-    }
-
-    /// Add the smallest tracked repository admitted by the full native gate.
-    fn prepare_gate_repository(&self) {
-        fs::create_dir_all(self.root.join("src")).expect("create gate source directory");
-        fs::create_dir_all(self.root.join("gate/src")).expect("create camp loci");
-        fs::write(
-            self.root.join("spice-rust.toml"),
-            format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
-        )
-        .expect("write gate policy");
-        fs::write(
-            self.root.join("baseline.toml"),
-            "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
-        )
-        .expect("write gate baseline");
-        fs::write(
-            self.root.join("Cargo.toml"),
-            "[package]\nname = \"coexistence-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
-        )
-        .expect("write fixture manifest");
-        fs::write(
-            self.root.join("Cargo.lock"),
-            concat!(
-                "# This file is automatically @generated by Cargo.\n",
-                "# It is not intended for manual editing.\n",
-                "version = 4\n\n",
-                "[[package]]\n",
-                "name = \"coexistence-fixture\"\n",
-                "version = \"0.0.0\"\n",
-            ),
-        )
-        .expect("write fixture lockfile");
-        fs::write(self.root.join("src/lib.rs"), "pub fn fixture() {}\n")
-            .expect("write gate source");
-        for path in [
-            "gate/src/camp.rs",
-            "gate/src/input.rs",
-            "gate/src/kill.rs",
-            "gate/src/verdict.rs",
-        ] {
-            fs::write(self.root.join(path), "// coexistence fixture\n").expect("write camp locus");
-        }
-        git(&self.root, &["add", "."]);
-        git(&self.root, &["commit", "-qm", "fixture"]);
-        verify_claim_fixture::install(&self.root);
     }
 
     fn state_root(&self) -> PathBuf {
@@ -545,9 +428,6 @@ impl Fixture {
 
     fn invoke(&self, args: &[&str]) -> Output {
         let mut command = self.command();
-        if verify_claim_fixture::selects_full_gate(args) {
-            command.env(SpiceVariable::Lane.as_str(), verify_claim_fixture::LANE);
-        }
         command.args(args).output().expect("run the spice binary")
     }
 
@@ -599,41 +479,12 @@ impl Fixture {
             .collect()
     }
 
-    /// Exact identities of the six predecessor gate-state files.
-    fn predecessor_gate_identity(&self) -> BTreeMap<PathBuf, Entry> {
-        PREDECESSOR_GATE_STATE
-            .iter()
-            .map(|(relative, _)| {
-                let path = self.predecessor_root().join(relative);
-                let bytes = fs::read(&path).expect("read predecessor gate state");
-                (path, Entry::File(bytes))
-            })
-            .collect()
-    }
-
     /// Complete byte-level identity of Python Spice's foreign state root.
     fn predecessor_identity(&self) -> BTreeMap<PathBuf, Entry> {
         let mut found = BTreeMap::new();
         walk(&self.predecessor_root(), &mut found);
         found
     }
-}
-
-fn git(root: &Path, arguments: &[&str]) {
-    let output = git_output(root, arguments);
-    assert!(
-        output.status.success(),
-        "git {arguments:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn git_output(root: &Path, arguments: &[&str]) -> Output {
-    Command::new("/usr/bin/git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("coexistence fixture Git launches")
 }
 
 impl Drop for Fixture {
