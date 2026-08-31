@@ -3,7 +3,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use sha2::{Digest as _, Sha256};
 
@@ -34,19 +34,6 @@ pub(super) fn configured_source(home: &Path) -> PathBuf {
             .as_str()
             .expect("generated source directory"),
     )
-}
-
-pub(super) fn git(repository: &Path, arguments: &[&str]) {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(repository)
-        .output()
-        .expect("launch fixture Git");
-    assert!(
-        output.status.success(),
-        "git {arguments:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
 }
 
 pub(super) fn normal_directories(path: &Path) -> usize {
