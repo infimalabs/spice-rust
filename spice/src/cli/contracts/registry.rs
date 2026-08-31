@@ -361,7 +361,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["up"],
-        "up [--foreground] [--host HOST] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open]",
+        "up [--foreground] [--host IP] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open]",
         Local,
         Resident,
         [JournalMigrated, TrustPended, UpSeated],
@@ -658,7 +658,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["doc"],
-        "doc [PATH|-] [--apply=<digest>]",
+        "doc PATH|- [--apply=<digest>]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, DocApplied],

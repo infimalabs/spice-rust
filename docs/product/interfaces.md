@@ -10,62 +10,36 @@ identified by their language and enclosing section.
 
 ## Task documents — prose and board
 
-### The idea
+### The Rust surface
 
-A task family is authorable as ordinary markdown and exportable back to it. The
-document is not a form; it is a **normal form**.
+An authored task document is a digest-bound batch input, not a lossless
+serialization of the board. `spice doc PATH` (or `spice doc -` for standard
+input) classifies ordinary Markdown, emits the one canonical dialect spelling,
+previews the tasks that spelling would touch, and applies only that exact digest
+against the board snapshot captured by the apply invocation.
+`spice doc ledger HANDLE` travels the other direction only as a narrow
+single-task display containing the title, current flow, and tags when those
+heads are representable in the dialect; it is not the inverse of document apply
+and does not export a family.
 
 ```mermaid
 flowchart TD
-  subgraph PLAN["derive the apply plan"]
+  subgraph PLAN["classify and preview"]
     direction LR
-    MD["markdown document"] --> P[parse]
-    P --> G["node graph"]
-    G --> M["match by slug within<br/>project + origin"]
+    MD["authored Markdown"] --> P["parse + normalize"]
+    P --> G["canonical node graph<br/>+ document digest"]
+    G --> M["match project +<br/>document-slug tag"]
   end
-  subgraph APPLY["apply and return to normal form"]
+  subgraph APPLY["one guarded journal transaction"]
     direction LR
-    PL["apply plan: verbs, field policy<br/>edge domain, post-state check"] --> B["board rows"]
-    B --> E["export to normal form"]
+    PL["exact digest + apply-time<br/>board barrier"] --> B["create or edit<br/>matched rows"]
+    B --> R["DocApplied receipt"]
   end
   M --> PL
-  E --> MD
+  B --> L["doc ledger HANDLE:<br/>representable title +<br/>current flow + tags"]
 ```
 
 ### Behavioral properties
-
-These are tested as properties — a suite per property, not a suite per feature.
-
-Every property is high-risk, verified by its own test suite.
-
-```mermaid
-flowchart LR
-  subgraph SUITES["property suites, test method"]
-    direction TB
-    RTS["round-trip suite"]
-    FPS["fixed-point suite"]
-    IDS["idempotence suite"]
-    RES["reentrancy suite"]
-    COS["convergence suite"]
-    RTS ~~~ FPS ~~~ IDS ~~~ RES ~~~ COS
-  end
-
-  subgraph PROPERTIES["high-risk normal-form properties"]
-    direction TB
-    RT["round-trip<br/>ingest then export = identity"]
-    FP["fixed-point<br/>export twice = export once"]
-    ID["idempotence<br/>apply twice = apply once"]
-    RE["reentrancy<br/>interrupted apply resumes clean"]
-    CO["convergence<br/>repeated apply reaches a settled state"]
-    RT ~~~ FP ~~~ ID ~~~ RE ~~~ CO
-  end
-
-  RTS --> RT
-  FPS --> FP
-  IDS --> ID
-  RES --> RE
-  COS --> CO
-```
 
 **Invariant —** **Determinism.** The same document produces the same graph,
 every time, on any machine.
@@ -74,22 +48,51 @@ every time, on any machine.
 CRLF, deep nesting, and pathological structures produce *refusals*, not stack
 traces.
 
-**Invariant —** **One escape rule, both directions.** Whatever escaping the
-writer applies, the reader reverses exactly. A round trip cannot accumulate
-backslashes.
+**Invariant —** **Canonical emission is a fixed point.** The dialect emitter has
+one escape rule that its reader reverses exactly; classifying emitted text and
+emitting it again changes no byte.
 
 **Invariant —** **Cycles are refused, not resolved.** A graph that cannot be a
 DAG is rejected with the cycle named.
 
-**Invariant —** **No creation defaults on apply.** Applying a document must not
-silently invent field values that the document did not state. Absence means
-"unchanged", never "reset to default".
+**Invariant —** Preview is consequence-free. Apply reclassifies the supplied
+document and requires the canonical digest the operator named. In that apply
+invocation the client reads the current board and binds its exact head barrier;
+movement after that read refuses before mutation. Movement between an earlier
+preview invocation and apply is admitted through the apply-time read rather than
+mistaken for a race inside one transaction.
 
-**Invariant —** Writes are atomic and followed by a **settled re-check**. The
-post-state is verified, not assumed.
+**Invariant —** Apply is one guarded journal transaction. An interruption is
+all-or-nothing, and retrying a digest that already has a `DocApplied` fact
+returns that committed receipt without appending a second path.
 
-**Invariant —** Ingest is **idempotent against identity**: re-ingesting a
-document does not duplicate rows it already created.
+**Invariant —** Apply is **idempotent against project-plus-slug identity**. A
+changed document digest may edit an existing matching row; origin records why
+the row was created and does not namespace later document matching.
+
+### The board projection is intentionally narrower than the dialect
+
+| Authored value | New matching row | Existing matching row |
+| --- | --- | --- |
+| title | stored | replaced |
+| project | Rust `doc` supplies `task.document` | same matching project |
+| acceptance | stored; absence is empty | replaced; absence clears it |
+| tags and priority | stored with the internal `document-slug:<slug>` tag; priority is a tag | replaced from the document while retaining the internal slug tag; absence removes prior authored values |
+| dependency graph | stored from the complete parsed graph | replaced from the complete parsed graph; an omitted explicit edge is removed |
+| flow | explicit flow, or the ordinary acceptance-sensitive default | unchanged by document edits |
+| description, due, annotations | normalized by the Markdown dialect but not projected into board heads | no board effect |
+
+These are replacement semantics, not patch semantics. In particular, an absent
+acceptance, tag, priority, or explicit dependency in an edited document does not
+mean “leave the old value alone.” The narrow `doc ledger` output is therefore a
+readable task sketch, not a safe lossless export-and-reapply format. A task
+whose current heads cannot be expressed by the closed dialect reports
+`doc::ledger-unrepresentable` rather than fabricating a document.
+
+The dialect's `Flow:` field deliberately has its own closed input vocabulary:
+`design`, `plan`, `todo`, `verify`, and `review`. That parser grammar is not the
+board's phase vocabulary; ordinary board tasks may use any admitted lowercase
+ASCII phase word.
 
 ### Identity within a document
 
@@ -98,11 +101,15 @@ flowchart TD
   T["title"] --> SL["slug"]
   SL --> Q["qualified by ancestry<br/>when ambiguous"]
   Q --> D["distinguisher for collisions"]
-  D --> ID["stable identity within project + origin"]
+  D --> ID["document-slug tag"]
+  ID --> P["match within exact project"]
 ```
 
-**Invariant —** Matching is scoped to a project **and** an origin. The same slug
-in two families is two different things.
+**Invariant —** Matching is scoped to a project and the exact
+`document-slug:<slug>` tag. The same slug in the same project converges on one
+task even when another document digest supplied it; the same slug in another
+project is distinct. In the Rust command surface, context-free classification
+places authored documents in `task.document`.
 
 ### Refusals and warnings as tables
 
@@ -113,8 +120,9 @@ flowchart LR
   W["warnings table"] --> F["one positive test per code"]
 ```
 
-**Invariant —** Every refusal row has a test proving both that it fires **and
-that it wrote nothing**. A refusal that half-applies is worse than no refusal.
+**Invariant —** A classification, preview, barrier, admission, or settled-task
+refusal writes no task or document fact. A refusal that half-applies is worse
+than no refusal.
 
 **Invariant —** Author text is never parsed as attributes. The argument boundary
 is explicit, so a task titled `priority: high` is a title.
@@ -127,16 +135,19 @@ is explicit, so a task titled `priority: high` is a title.
 
 ```mermaid
 flowchart LR
-  A["type algebra"] --> D["schema declarations"]
-  D --> RuntimeEmitterValidation["runtime emitter validation"]
-  D --> LiveBusFrameValidation["live-bus frame validation"]
-  D --> G["generated browser type annotations"]
-  G --> C["static checker over browser scripts"]
+  W["wire: closed Rust DTO algebra"] --> E["resident emit + decode validation"]
+  W --> F["stream frame validation"]
+  W --> H["host imports the same DTOs"]
+  W --> B["Rust/WASM imports the same DTOs"]
+  E --> T["compiler + serialization tests"]
+  F --> T
+  H --> T
+  B --> T
 ```
 
-**Invariant —** The declarations are the single source. The browser's type
-annotations are **generated** from them and verified in the gate — a drifted
-generated artifact fails the build.
+**Invariant —** The `wire` algebra is the single source. Resident, native host,
+and Rust/WASM browser code compile against the same closed DTOs and validate the
+same canonical serialization; no parallel artifact is another schema authority.
 
 **Invariant —** Payloads are validated at their **emitters**, not only at their
 readers. A producer that breaks the contract is caught where it lies.
@@ -199,18 +210,23 @@ Shadowing fails loudly rather than silently overriding.
 **Invariant —** Dotted mounts may extend a built-in verb only with a **novel**
 action name.
 
-### Entry-point extensions
+### Compiled extensions
 
 ```mermaid
 flowchart TD
-  P["installed package"] --> E["declares drivers, wrappers, studies"]
-  E --> D["discovery with collision rules"]
-  D --> R["registry"]
-  R --> X["doctor reports mixed or broken namespaces"]
+  D["compiled vendor, wrapper,<br/>and gate declarations"] --> V["deterministic sort + validation"]
+  V --> C{"empty, mixed,<br/>mismatched, or colliding?"}
+  C -- yes --> X["one deterministic refusal"]
+  C -- no --> R["typed registry"]
+  R --> U["consumer calls the selected<br/>value's contract"]
 ```
 
-**Invariant —** A new driver, wrapper, or study is a **declared value**, never a
-patch to a dispatcher.
+**Invariant —** A new vendor, wrapper, or gate is a **declared typed value**,
+never a patch to a dispatcher.
+
+**Invariant —** The compiled registry is the only executable extension
+authority. Repository configuration can mount a command, but it cannot discover
+or load executable values into the vendor, wrapper, or gate namespaces.
 
 ### Universal scopes
 
@@ -223,8 +239,8 @@ flowchart LR
 ```
 
 **Invariant —** Applicability is expressed once, in one selector language, and
-reused by every subsystem that needs to say "here but not there". Driver, model,
-worktree, and path all select through the same grammar.
+reused by every subsystem that needs to say "here but not there". Path,
+extension, vendor, model, and phase are the exact selector axes.
 
 ---
 
@@ -234,16 +250,27 @@ worktree, and path all select through the same grammar.
 
 ```mermaid
 flowchart LR
-  D["spice doctor"] --> TaskDoctor["task subsystem doctor"]
-  D --> TransportDoctor["transport subsystem doctor"]
-  D --> RepositoryDoctor["repository subsystem doctor"]
-  TaskDoctor --> R["one rollup"]
-  TransportDoctor --> R
-  RepositoryDoctor --> R
+  D["spice doctor"] --> Board["board"]
+  D --> Journal["journal"]
+  D --> Fold["fold"]
+  D --> Steering["steering"]
+  D --> Lane["lane"]
+  D --> Transport["transport"]
+  D --> Installation["installation"]
+  D --> Release["release"]
+  Board --> R["one rollup"]
+  Journal --> R
+  Fold --> R
+  Steering --> R
+  Lane --> R
+  Transport --> R
+  Installation --> R
+  Release --> R
 ```
 
-**Invariant —** One top-level rollup aggregates every subsystem doctor. "Check
-everything" is a command, not a checklist in a document.
+**Invariant —** One top-level rollup aggregates the closed subsystem roster:
+board, journal, fold, steering, lane, transport, installation, and release.
+"Check everything" is a command, not a checklist in a document.
 
 **Invariant —** Host-probing checks stay **out of hook verdicts**. Diagnosing the
 environment and refusing a commit are different jobs.
@@ -280,7 +307,7 @@ flowchart TD
   end
   subgraph RECORD["submit into the record"]
     direction LR
-    S["submit with steering item"] --> DUR["durable attachment<br/>reference"]
+    S["submit with steering item"] --> DUR["durable inline<br/>attachment value"]
     DUR --> T["browse in transcript"]
   end
   D --> S
@@ -297,18 +324,27 @@ rather than duplicating.
 
 ```mermaid
 flowchart TD
-  M["message"] --> E["select utterances<br/>ACKs win, else edges"]
+  M["selected message"] --> E["exact full message text"]
   E --> Q["one global queue"]
-  Q --> B["backend renders audio"]
-  B --> P["single-owner playback"]
+  Q --> B{"configured backend"}
+  B --> S["browser system synthesis<br/>callback-settled"]
+  B --> X["external rendering<br/>deadline-bounded"]
+  S --> P["single-owner playback"]
+  X --> P
   P --> Q
 ```
 
-**Invariant —** Speech is **best-effort ear candy**. Failures degrade silently
-and must never block the visible stream — the transcript remains the record.
+**Invariant —** Manual speech and automatic narration use the selected
+message's complete text. Automatic narration admits only messages newer than
+the browser's per-lane cursor; it does not reinterpret ACKs or paragraph edges.
 
-**Invariant —** Every backend call is deadline-bounded. A hung synth cannot
-wedge the queue.
+**Invariant —** Speech is **best-effort ear candy**. A detected failure is
+reported as nonblocking `Speech unavailable` state and never blocks the visible
+stream — the transcript remains the record.
+
+**Invariant —** External rendering is deadline-bounded. Browser system
+synthesis instead settles on `onend` or `onerror`; if the browser emits neither,
+the active queue head remains until the operator uses the global stop.
 
 **Invariant —** The clip is played back under the media type the backend
 declared, never a guessed one.

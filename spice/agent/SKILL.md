@@ -36,13 +36,11 @@ If continuity is clipped, recover only the detail needed to proceed with
 - Bias toward reversible action. Stay in the current worktree unless steering
   changes scope, and keep commentary frequent enough for new steering to land.
 - Run shell commands normally. The worktree shell and wrapper own steering and
-  appliance selection; use `spice run -- <command>` only as an explicit recovery
+  appliance selection; use `spice run -- CMD` only as an explicit recovery
   surface.
-- Handle the operator's current direction first. A durable direction can be
-  captured inline on its own line as
-  `TASK title=... | project=STEM.CHILD | acceptance=...`, or with
-  `spice task add TITLE --project PROJECT`. Capture does not claim or switch
-  tasks; finish the immediate direction, then return to the allocator.
+- Handle the operator's current direction first. Capture durable work with
+  `spice task add TITLE --project PROJECT`; capture does not claim or switch
+  tasks. Finish the immediate direction, then return to the allocator.
 - Drain allocator-selected work with `spice task next` until it reports no work
   or a real blocker exists. An `allocator-empty` result ends only that drain
   pass; it does not discharge uncaptured operator direction or other
@@ -68,8 +66,8 @@ If continuity is clipped, recover only the detail needed to proceed with
   blocker. A clean review requires inspecting the integrated diff and
   independently checking proportionate evidence.
 - If a claim moves to another worktree, stop editing and return to the allocator.
-  Fold any resulting loose commit into its assigned task with
-  `spice task capture`; never leave an uncaptured commit between tasks.
+  Surface any resulting loose commit with its exact task handle; never run
+  `spice task capture HANDLE` against work another lane currently holds.
 - Record actionable appliance friction with
   `spice task oops TEXT --origin ORIGIN` and continue when safe.
 - Never finish a turn merely waiting for background work or a wake-up. Keep the
@@ -80,10 +78,10 @@ If continuity is clipped, recover only the detail needed to proceed with
 
 An executable-configuration trust refusal is the one automation stop that
 transfers authority to the operator. Surface its exact digest, provenance, and
-command words. Never run `spice trust grant DIGEST` or
-`spice trust revoke DIGEST` without explicit authorization for that exact
-current ruling. Continue independent allocator work that does not cross the
-refused path.
+command words, then stop that path. A lane never runs `spice trust grant
+DIGEST` or `spice trust revoke DIGEST`, even after the operator authorizes the
+ruling; it hands the exact current command to the operator to invoke. Continue
+independent allocator work that does not cross the refused path.
 
 ## Prompt boundary
 

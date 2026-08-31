@@ -215,7 +215,7 @@ fn active_plan_task_show_prints_the_execution_contract_and_native_commands() {
     assert!(shown.contains("phase_guidance:\n  phase:plan makes the execution contract explicit"));
     assert!(shown.contains(&format!("spice task modify {task} --acceptance \"...\"")));
     assert!(shown.contains("spice task add \"...\" --project PROJECT --acceptance \"...\""));
-    assert!(shown.contains(&format!("spice task depends {task} --after CHILD")));
+    assert!(shown.contains(&format!("spice task depends {task} CHILD")));
     assert!(shown.contains(&format!("spice task note {task} \"...\"")));
     assert!(shown.contains("Planning changes board state, not repository files"));
     assert!(shown.contains("spice task done --validation \"...\""));
@@ -241,7 +241,7 @@ fn plan_only_task_show_requires_an_accepted_connected_child() {
     assert!(shown.contains("acceptance on this task alone cannot complete it"));
     assert!(shown.contains("connect at least one pending child task carrying acceptance"));
     assert!(shown.contains("spice task add \"...\" --project PROJECT --acceptance \"...\""));
-    assert!(shown.contains(&format!("spice task depends {task} --after CHILD")));
+    assert!(shown.contains(&format!("spice task depends {task} CHILD")));
     assert!(shown.contains("complete the planning bookend with spice task done"));
     clean(&root, bus);
 }

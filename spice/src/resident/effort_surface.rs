@@ -9,7 +9,7 @@ use super::{read_materializations::CurrentReads, typed_protocol_fault, typed_sto
 
 /// Answer one effort read from the resident's current durable generation.
 ///
-/// The reduction is the same one `spice journal task-effort` prints, so a
+/// The reduction is the same one `spice task effort` prints, so a
 /// Canvas row and a terminal row that disagree are a fold defect rather than
 /// two independent computations drifting apart. Unlike ordinary resident
 /// reads, this explicit request is the boundary that derives the accumulated

@@ -21,7 +21,7 @@ bound, while absence, timeout, process error, or exhausted ambiguity abandons
 the candidate and emits nothing.
 
 Both judgments are durable `taste::judged` evidence carrying the exact source,
-bag identity, trigger, driver, transcript locus, compaction epoch, and ordered
+bag identity, trigger, vendor, transcript locus, compaction epoch, and ordered
 attempt provenance. That evidence makes replay and restart idempotent; only its
 confirmed variant is a steering publication. The same taste and normalized
 prose can be decided at most once for one bag and compaction epoch, and prose
@@ -30,9 +30,9 @@ own echo before matching, so a quoted reminder never becomes a candidate.
 Confirmed and direct reminders are ordinary steering: acknowledged, declined,
 resent, and expiring like any other directive.
 
-Historical `taste::confirmed` and `taste::cleared` facts predate that law. They
-remain decodable and visible as curation evidence; current resident decisions
-use the provenance-complete `taste::judged` fact instead.
+`taste::judged` is the sole resident decision fact. Other decodable
+taste-decision facts are read-only curation evidence and never drive a resident
+decision.
 
 The configured set is the tracked `[taste]` configuration. `enabled` defaults
 to true and `scopes` defaults to the universal selector. Each named row may set
@@ -83,22 +83,28 @@ silently.
 
 ## 3. Curation lifecycle
 
-`spice install` writes the starter set into tracked `spice-rust.toml`; the binary
-ships no named tastes. From that point the operator owns the set outright.
+Tracked `spice-rust.toml` carries the starter set; installation never authors
+tracked policy, and the binary ships no named tastes. The operator owns the set
+outright.
 Adding, editing, renaming, disabling, re-enabling, or removing a taste requires
 an operator commit. `enabled = false` is the named reversible disablement;
 deletion removes the row and its history from the current configured record.
 
-`spice taste add` and `spice taste drop` prepare curation proposals from the
-evidence that motivated them. A proposal inherits the operator's active task,
-or names its steering or parent cause explicitly with `--origin`; an ungrounded
-filing is refused. A proposal does not change the tracked set. Admission or
-retirement requires the authoring checks, the paired confirm-and-clear
-fixtures, and an operator commit of the exact entry.
+When tracked policy declares `policy.taste_mining_threshold >= 2`, `spice taste
+mine` reads one authenticated journal snapshot, clusters recurring ACK
+corrections at that threshold, and files or reuses hidden, operator-reviewed
+proposals whose origins name the oldest supporting ACK. Without that declaration
+mining refuses, and in either case it never edits tracked policy. `spice taste
+add TEXT` and `spice taste drop NAME` prepare explicit curation proposals from
+the evidence that motivated them. A proposal
+inherits the operator's active task, or names its steering or parent cause
+explicitly with `--origin`; an ungrounded filing is refused. No proposal changes
+the tracked set. Admission or retirement requires the authoring checks, the
+paired confirm-and-clear fixtures, and an operator commit of the exact entry.
 
 Every direct fire and adjudicated decision preserves its locus. The curation
 view is derived from the journal at one snapshot: recent reminders per taste
-and per driver, confirmed and cleared provenance, how live reminders were
+and per vendor, confirmed and cleared provenance, how live reminders were
 answered, and how often one unchanged identity returned across compaction
 epochs. It shows those fires and their ages rather than presenting an all-time
 count as current truth, and it persists no counter of its own. A lineage that
@@ -108,18 +114,18 @@ starting a second reminder.
 Recurrence with acknowledgment supports retention: the preference keeps being
 worth saying. Repeated declines mean either that the bag is too broad or that
 the preference no longer earns its interruption; the attached loci let the
-operator distinguish those cases. Historical clearances read the same way and
+operator distinguish those cases. Recorded clearances read the same way and
 stay visible for as long as the journal holds them.
 
 `spice taste drop NAME` prepares a retirement proposal carrying the recent
-declined loci and the historical clearances that provoked it. The operator may
+declined loci and the recorded clearances that provoked it. The operator may
 narrow the bag, revise the message, or delete the tracked entry. Only the
 commit changes membership. Earlier facts remain history after deletion; they
 never reactivate the taste.
 
-## 4. The starter set install seeds
+## 4. The tracked starter set
 
-Install seeds these entries:
+Repository configuration carries these entries:
 
 ```toml
 [taste.polling]

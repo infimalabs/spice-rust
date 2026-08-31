@@ -5,8 +5,9 @@
 
 The rules that generate everything else. If you keep one page, keep this.
 
-- **One authority per fact.** Every fact has exactly one owner and its own
-   freshness counter. No global revision, no re-derivation from a cheaper source.
+- **One authority per fact.** Every fact has exactly one owner. The authenticated
+   stream binds snapshots and resume positions to the resident epoch and ordered
+   sequence identity; projections rebuild from that same authority.
 - **Derive, never duplicate.** Observation folds the authority's own history
    rather than writing a parallel event log. Projections are rebuildable by
    construction; authority is not.
@@ -14,11 +15,14 @@ The rules that generate everything else. If you keep one page, keep this.
    deliver it. Delivery is retryable; the intent is never recreated.
 - **Semantic retirement.** Nothing is retired by being read. Acceptance and
    refusal are equally first-class and equally terminal.
-- **One visible path.** No shims, aliases, fallbacks, or legacy branches.
-   Durable data gets exactly one forward migration; everything else is replaced
-   outright.
-- **Fail loudly; never degrade silently.** A component that read nothing must
-   not produce the same output as one that read everything.
+- **One visible path.** One tested current command and data vocabulary is visible.
+   Durable data has one ordered forward migration into the current schema, and
+   executable behavior uses that schema directly.
+- **Fail loudly at authoritative boundaries.** A component reporting authority
+   that read nothing must not produce the same output as one that read
+   everything. Silence is confined to non-authoritative decoration and
+   conservative pre-publication filtering; neither can alter or fabricate a
+   fact.
 - **Prefer the good property; never block on it.** Cross-review, fast-forward at
    launch, rewriting, adjudication — each is attempted, none is required. The
    work always has a way forward.
@@ -40,9 +44,9 @@ The rules that generate everything else. If you keep one page, keep this.
 | Transport framing, serialization | **free** |
 | Track counts, span ladders, tween timings | **free** |
 | Phase *names*, handle alphabet, key derivation | **free** |
-| One authority per fact, per-facet freshness | **fixed** |
+| One authority per fact; epoch/sequence-bound snapshot and resume freshness | **fixed** |
 | Durable-before-delivered; semantic retirement | **fixed** |
-| Claim exclusivity, lease, takeover-with-notice | **fixed** |
+| Claim exclusivity, accepted lapse, and exact explicit steal with ownership refusal | **fixed** |
 | The three git boundaries; agents never push or pull | **fixed** |
 | Landing atomicity and footprint containment | **fixed** |
 | Cross-review preferred, never required | **fixed** |
@@ -50,7 +54,7 @@ The rules that generate everything else. If you keep one page, keep this.
 | Rendering never launches | **fixed** |
 | Movement means change | **fixed** |
 | Refusals lead with the repair | **fixed** |
-| Loud degradation | **fixed** |
+| Authoritative degradation is loud | **fixed** |
 | Observation initializes nothing | **fixed** |
 
 **The test for "fixed":** if changing it would make an operator distrust the

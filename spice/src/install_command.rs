@@ -42,10 +42,6 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             return request.fault("install::repository-unresolved", error.to_string());
         }
     };
-    if let Err(error) = spice::install::reclaim_temporary_records(&repository) {
-        return request.install_failure(error);
-    }
-
     match request {
         Request::Plan => {
             let executable = match executable() {
@@ -102,13 +98,6 @@ impl Request {
         match self {
             Self::Plan => Answer::Plan(Outcome::Fault(fault)),
             Self::Apply(_) | Self::Unapply => Answer::Receipt(Outcome::Fault(fault)),
-        }
-    }
-
-    fn install_failure(self, error: InstallError) -> Answer {
-        match self {
-            Self::Plan => Answer::Plan(failure(error)),
-            Self::Apply(_) | Self::Unapply => Answer::Receipt(failure(error)),
         }
     }
 }
@@ -249,7 +238,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             inspect_path(path),
         ),
         InstallError::BinaryNotRegular(path) | InstallError::BinaryEmpty(path) => format!(
-            "inspect the selected executable with `{}`; rebuild it with `cargo build --locked -p spice`, then rerun `target/debug/spice install`",
+            "inspect the selected executable with `{}`; from the worktree root, rebuild it with `cargo build --locked -p spice`, then rerun `target/debug/spice install`",
             inspect_path(path),
         ),
         InstallError::HookPathUnrepresentable { path, .. } => format!(
@@ -257,7 +246,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         ),
         InstallError::BinaryContextChanged => concat!(
             "the `.spice-install/bin/spice` asset was planned from another executable; preview ",
-            "and apply through the same freshly built executable: run ",
+            "and apply through the same freshly built executable: from the worktree root, run ",
             "`cargo build --locked -p spice`, rerun `target/debug/spice install`, then pass ",
             "that preview's digest to `target/debug/spice install --apply=<digest>`",
         )

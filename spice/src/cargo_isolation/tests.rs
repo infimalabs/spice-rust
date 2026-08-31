@@ -131,13 +131,11 @@ fn tracked_guidance_routes_only_rust_cargo_through_the_git_common_appliance() {
             "hard stop",
             "Do not search `PATH`",
             "shared mutable",
-            "`spice session`",
-            "`spice task`",
-            "`spice steering`",
+            "harness authority",
         ] {
             assert!(
                 normalized.contains(required),
-                "{path} must retain the hybrid Cargo authority marker {required:?}",
+                "{path} must retain the Cargo and harness authority marker {required:?}",
             );
         }
         assert!(
@@ -148,32 +146,12 @@ fn tracked_guidance_routes_only_rust_cargo_through_the_git_common_appliance() {
             !normalized.contains("CARGO_HOME="),
             "{path} must not prescribe a direct Cargo-home override",
         );
-
-        let rust_invocations = guidance
-            .lines()
-            .filter(|line| line.contains("\"$spice_rs\" dev"))
-            .collect::<Vec<_>>();
         assert!(
-            rust_invocations
-                .iter()
+            guidance
+                .lines()
                 .any(|line| line.contains("\"$spice_rs\" dev cargo --")),
             "{path} must invoke the exact appliance's Cargo surface",
         );
-        for invocation in rust_invocations {
-            for control in [
-                " session",
-                " task",
-                " steering",
-                " status",
-                " done",
-                " next",
-            ] {
-                assert!(
-                    !invocation.contains(control),
-                    "{path} must keep Python control command {control:?} out of Rust invocation {invocation:?}",
-                );
-            }
-        }
     }
 }
 

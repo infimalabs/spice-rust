@@ -350,7 +350,7 @@ fn installation_with_temporary_evidence(
     if temporary.reclaimable_count() != 0 {
         let receipt_unavailable = matches!(receipt, DoctorObservation::Unavailable { .. });
         let reason = format!(
-            "{} stale install publication file(s) totaling {} bytes are safely reclaimable; run spice install once; {}",
+            "{} stale install publication file(s) totaling {} bytes are safely reclaimable; follow the appended receipt diagnosis, then reclaim through its admitted current direction: preview plus exact digest-bound apply, or `spice install --unapply` for an in-progress reversal; {}",
             temporary.reclaimable_count(),
             temporary.reclaimable_bytes(),
             receipt_diagnosis(&receipt),

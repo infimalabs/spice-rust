@@ -130,7 +130,7 @@ pub(super) fn render_populated_fleet(
                     <section
                         class="team-surface"
                         data-lineage-id={lineage.lane.to_string()}
-                        data-lineage-weight={lineage_standings.len().max(1).to_string()}
+                        data-lineage-weight={watchband::lineage_visual_weight(lineage_standings.len()).to_string()}
                         ondragover={lineage_dragover(render.can_arrange_lineages)}
                         ondrop={lineage_drop(
                             render.can_arrange_lineages,

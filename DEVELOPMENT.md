@@ -1,10 +1,11 @@
 # Rust development loop
 
-This is the repository-native loop for an agent changing the Rust port. It is
-an optimization of feedback order. Package checks and staged target selection
-are the completion evidence; repository-wide verification is retired.
+This is the repository-native loop for changing the Rust appliance. It orders
+feedback from the narrowest falsifier to the commit boundary. Package checks
+and staged target selection are completion evidence; unscoped repository-wide
+verification is not admitted.
 
-The inventory below is a dated map, not metadata authority. Re-run Cargo
+The inventory is a readable ownership map, not metadata authority. Re-run Cargo
 metadata when manifests change.
 
 Bind and validate the exact Git-common Rust appliance before using any
@@ -21,8 +22,9 @@ fi
 
 ## Find the owner before editing
 
-The 23 crates form five intentional layers. `gate/tests/dependency_lattice.rs`
-is the checked source of truth for every local dependency edge and acyclicity.
+The workspace crates form five intentional layers. The workspace manifest owns
+membership; `gate/tests/dependency_lattice.rs` is the checked source of truth
+for every local dependency edge and acyclicity.
 
 | Layer | Crates and ownership |
 | --- | --- |
@@ -49,12 +51,16 @@ Manifest edge changes must update the dependency lattice in the same change.
 | `dist/stage/{objects,targets}/` | Ignored content-addressed release staging owned by `"$spice_rs" dev xtask -- stage-target TARGET`. | Re-stage from tracked source and pins. |
 | `target/` and configured CargoBuild roots | Rebuildable compiler/test caches. | Use the bounded cleanup rules below. |
 | Proof/browser artifacts and `node_modules/` | Ignored evidence or pinned dependencies, not source. | Follow owner READMEs; restore dependencies with `npm ci`. |
-| `.spice/`, `.agents/` | Ignored control state and skills, not caches. | Never include them in an ignored-file sweep. |
+| `<git-common>/.spice-rs/`; `<git-dir>/.spice-rs/`; `<worktree>/.spice-rs/` | The first is durable appliance authority; the second holds disposable per-worktree projections; a same-named worktree-content path is ordinary repository content and is never runtime authority. | Preserve common authority unless an authorized lifecycle operation owns its removal; rebuild disposable projections through the resident; treat worktree content normally. |
+| `<git-common>/.spice-install/agents/skills/spice/SKILL.md` | Generated installed bootstrap skill. | Republish through the digest-bound `spice install` preview/apply cycle; do not edit the installed copy. |
 
 ## Test portfolio and overlap law
 
 Cargo unit, integration, doctest, and Canvas surfaces overlap by purpose, not by
-name. Use Cargo metadata and `--list` for the current inventory.
+name. Use Cargo metadata for target inventory and `"$spice_rs" dev cargo --
+test --locked -p PACKAGE -- --list` for the selected package's test-binary
+inventory; add the same target selector used by the intended run when narrowing
+to `--lib`, `--test TARGET`, or `--doc`.
 
 | Portfolio | Purpose and scope | Feedback invocation |
 | --- | --- | --- |
@@ -78,7 +84,7 @@ stable checkpoint. The four surfaces have distinct jobs:
 
 | Surface | Run it when | Command and boundary |
 | --- | --- | --- |
-| Targeted staged gate | The index is ready for a commit, or you need exact change-to-check evidence. | `"$spice_rs" dev cargo -- run --quiet --locked --package spice --bin spice -- gate selection`. Known paths select affected Cargo targets and focused canonical policy arms. Selector/toolchain authority, unclassified, and out-of-workspace Rust/manifest paths refuse before execution. |
+| Targeted staged gate | The index is ready for a commit, or you need exact change-to-check evidence. | `"$spice_rs" dev cargo -- run --quiet --locked --package spice --bin spice -- gate selection`. Known paths select affected Cargo targets and focused canonical policy arms; known selection, policy, build, and toolchain authority selects explicit exhaustive reach. Unclassified and out-of-workspace Rust/manifest paths refuse. |
 | Package validation | Work is moving within one crate and needs broader compile/test feedback than an exact test. Add downstream packages when a public seam changes. | `"$spice_rs" dev xtask -- verify --package PACKAGE`. Runs package Clippy, all targets, and doctests, while printing every repository-wide action it intentionally omits. |
 | Repository-wide verifier | Never during routine development, handoff, review, or completion. | The unscoped developer verifier refuses before starting work. Use the staged selector, named package checks, and exact downstream targets instead. |
 | Study | You are explicitly investigating suite architecture, mutation reach, or redundant coverage. These can be expensive and are not ordinary edit feedback. | Use `"$spice_rs" dev xtask -- gate ARM` with `suite-seam`, `mutation-coverage`, or `test-subsumption`. Keep their exhaustive inventories out of the commit common path. |
@@ -94,33 +100,31 @@ Use that boundary in this order:
 4. Stage the intended change and run `"$spice_rs" dev cargo -- run --quiet
    --locked --package spice --bin spice -- gate selection` (the installed
    dispatcher invokes that same public leaf through tracked policy). Inspect its
-   typed local selection, or repair the exact path named by a deterministic
-   authority/classification refusal.
+   typed selection, or repair the exact path named by a deterministic
+   classification refusal.
 5. Confirm no owned process remains, inspect the diff, and use the installed
    hooks. File unexpected failures outside the selected slice as separate work;
-   do not widen the current run. Commit and land the task.
+   do not widen the current run. Commit, hand off, or land according to the
+   active harness.
 
 ## Cost and concurrency
 
-Keep checks scoped while peers compile. Historical wall times and fleet samples
-are machine- and revision-specific rather than repository law. The package
-verifier serializes its three Cargo children and grants each one build job; do
-not widen the slice to compete for the same machine.
+Keep checks scoped while peers compile. The package verifier serializes its
+three Cargo children and grants each one build job; do not widen the slice to
+compete for the same machine.
 
 ## Disk budget and safe cleanup
 
-The measured snapshot held 70.2 GiB across CargoBuild and about 129 GiB across
-11 linked worktrees; compiler caches and retired worktrees dominate recoverable
-space. Preview the bounded collector before applying it:
+Preview the bounded collector before applying it:
 
 ```sh
-"$spice_rs" dev xtask -- build-cache --dry-run --max-bytes 40GiB --retain-live-worktrees 2
+"$spice_rs" dev xtask -- build-cache --dry-run --max-bytes BYTES --retain-live-worktrees COUNT
 ```
 
-Use `--free-space-floor 100GiB` instead when free space is the constraint, then
+Use `--free-space-floor BYTES` instead when free space is the constraint, then
 repeat the reviewed request with `--apply`. The collector protects current/live
 roots and held `.cargo-build-lock` roots. Clean `target` only after confirming
 no Cargo/rustc owner, and remove retired worktrees without `--force` only after
-preserving wanted changes. Never use `git clean -fdX`: `.agents/`, `.spice/`,
-artifacts, generations, dependencies, and compiler output do not share one
-disposal policy.
+preserving wanted changes. Never use `git clean -fdX`: appliance state, the
+generated bootstrap skill, artifacts, generations, dependencies, and compiler
+output do not share one disposal policy.

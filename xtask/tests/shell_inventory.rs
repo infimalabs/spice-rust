@@ -13,13 +13,6 @@ const LIVE_SHELL_GLUE: [&str; 5] = [
     "steer/hooks/static/stage.sh",
     "steer/hooks/wrappers/spice",
 ];
-const PORTED_SHELL: [&str; 4] = [
-    "dist/proof-image/build.sh",
-    "dist/proof-image/load.sh",
-    "scripts/install-hooks.sh",
-    "scripts/verify.sh",
-];
-
 #[test]
 fn every_tracked_shell_file_has_one_checked_disposition() {
     let root = workspace_root();
@@ -47,17 +40,6 @@ fn every_tracked_shell_file_has_one_checked_disposition() {
         assert!(
             entry.contains("\nReason:"),
             "live entry has no reason: {entry}"
-        );
-    }
-    for path in PORTED_SHELL {
-        let entry = inventory_entry(&inventory, path);
-        assert!(
-            entry.contains("Disposition: Ported to Rust and deleted."),
-            "ported entry: {entry}"
-        );
-        assert!(
-            !root.join(path).exists(),
-            "ported shell path still exists: {path}"
         );
     }
 }

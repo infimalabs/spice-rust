@@ -476,7 +476,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
             "  phase:plan is this task's entire flow; connect at least one pending child task carrying acceptance, because acceptance on this task alone cannot complete it."
                 .to_owned(),
             format!(
-                "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", then connect it with spice task depends {handle} --after CHILD."
+                "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", then connect it with spice task depends {handle} CHILD."
             ),
             "  Planning changes board state, not repository files; do not edit or commit implementation."
                 .to_owned(),
@@ -490,7 +490,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         "  phase:plan makes the execution contract explicit on this task or decomposes it into dependency-connected child tasks."
             .to_owned(),
         format!(
-            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create accepted children with spice task add \"...\" --project PROJECT --acceptance \"...\" and connect them with spice task depends {handle} --after CHILD."
+            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create accepted children with spice task add \"...\" --project PROJECT --acceptance \"...\" and connect them with spice task depends {handle} CHILD."
         ),
         "  Planning changes board state, not repository files; do not edit or commit implementation."
             .to_owned(),

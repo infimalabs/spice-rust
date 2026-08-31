@@ -3,7 +3,7 @@
 //! Every number here is a number the resident's fold produced. This module
 //! chooses rows, columns and words; it never adds, averages, or converts one,
 //! because a total computed in the browser would be a second reduction able to
-//! disagree with the one `spice journal task-effort` prints from the same
+//! disagree with the one `spice task effort` prints from the same
 //! bytes. What is left is placement, the exact-tag grouping handle, and the one
 //! rule the fold cannot enforce from its side: a phase the fold withheld gets
 //! no sizing number at all, structurally, rather than by a per-cell condition

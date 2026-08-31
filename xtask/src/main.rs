@@ -15,7 +15,7 @@ const USAGE: &str = concat!(
     "usage: \"$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir)",
     "/.spice-install/bin/spice\" dev xtask -- <help|verify --package PACKAGE|",
     "gate [--report] ARM|app|",
-    "install [--host HOST] [--port PORT] [--release] [--no-resident] ",
+    "install [--host IP] [--port PORT] [--release] [--no-resident] ",
     "[-- UP-OPTION...]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
     "[--free-space-floor BYTES] [--retain-live-worktrees N]|",

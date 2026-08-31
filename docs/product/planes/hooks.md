@@ -86,8 +86,8 @@ Two numbers from different models are not the same unit.
 
 ```mermaid
 flowchart LR
-  G["GIT GATE HOOKS<br/>pre-commit, commit-msg, ref-transaction"] --> R["refuse or allow a repo mutation"]
-  D["AGENT DRIVER HOOKS<br/>shell, post-tool"] --> S["shape and steer the agent's own commands"]
+  G["GIT GATE HOOKS<br/>pre-commit, commit-msg, reference-transaction"] --> R["refuse or allow a repo mutation"]
+  D["AGENT VENDOR HOOKS<br/>shell, post-tool"] --> S["shape and steer the agent's own commands"]
 ```
 
 **Invariant —** These are different systems with different owners and different
@@ -99,17 +99,22 @@ confusion the design specifically resolves.
 ```mermaid
 flowchart LR
   T["agent finishes a tool call"] --> H["post-tool hook"]
-  H --> P{"pending steering?"}
-  P -- yes --> I["deliver readout, with suppression"]
+  J["journal standing is LIVE"] --> Q["disposable inbox projection"]
+  H --> P{"eligible projected readout?"}
+  Q --> P
+  P -- yes --> R["deliver readout, with suppression"]
   P -- no --> N["nothing"]
-  I --> A["agent ACKs in prose"]
+  R --> O["delivery observation only;<br/>journal lifecycle unchanged"]
+  O --> A["agent may ACK or NACK<br/>(decline) in prose"]
 ```
 
 **Invariant —** Delivery reaches the agent **inside** non-shell tool spans, not
 only at shell boundaries. An agent doing a long edit run is still reachable.
 
-**Invariant —** The readout is suppressed when it would repeat itself. Delivery
-is not the same as nagging.
+**Invariant —** The vendor post-tool hook and the next top-level shell-command
+boundary consume the same durable delivery decision and suppression state. The
+readout is suppressed when it would repeat itself; observing it changes neither
+the directive's disposition nor its presentation stage.
 
 **Invariant —** The hot path must not query the task database. Steering delivery
 cannot be allowed to cost what a board read costs.
@@ -124,7 +129,11 @@ the whole design.
 flowchart TD
   A["the agent's top-level shell command"] --> R["redirector"]
   R --> W["the wrapper — ONE hop, exactly once"]
-  W --> RW["rewrite routing, worktree environment,<br/>wrapper functions, one steering connection"]
+  I["same disposable inbox projection"] --> P{"eligible projected readout?"}
+  W --> P
+  P -- yes --> S["write one suppressed steering readout"]
+  P -- no --> RW["rewrite routing, worktree environment,<br/>wrapper functions, one steering connection"]
+  S --> RW
   RW --> C["the immediate command shell"]
   C --> SRC["a SOURCED script<br/>shares this shell's functions:<br/>sourcing creates no process"]
   C --> D["an executed script, a child shell"]
@@ -166,33 +175,42 @@ process.
 
 #### Cadence is reachability
 
-Because delivery rides the output of commands, how often an agent runs one is
-how often it can be reached. That makes cadence part of the operating contract
-rather than a matter of style.
+A live directive may be rendered at whichever admitted agent boundary occurs
+next. Vendor post-tool hooks keep non-shell tool spans reachable; the one-shot
+wrapper covers the next top-level shell command. Only a stretch that crosses
+neither boundary offers no delivery opportunity.
 
 ```mermaid
-flowchart LR
-  C["the agent runs a command"] --> D["pending steering rides its output"]
-  D --> C
+flowchart TD
+  D["live steering in the disposable projection"] --> B{"next admitted boundary"}
+  B --> T["vendor post-tool hook"]
+  B --> C["next top-level shell command"]
+  T --> R["same suppressed readout"]
+  C --> R
+  R --> O["observation only;<br/>durable lifecycle stays live"]
+  D --> N["neither boundary occurs"]
+  N --> W["delivery waits;<br/>durable lifecycle stays live"]
   C --> BG["the agent backgrounds the work<br/>and ends its turn"]
-  BG --> S(["the lane stops"])
-  S --> X["nothing restarts it: not a timer,<br/>and not the backgrounded command finishing"]
-  X --> OP(["an operator restarts it by hand"])
+  BG --> S(["the resident vacates the lane"])
+  S --> X["the backgrounded command's exit<br/>is not a wake signal"]
+  X --> RL["only a later lifecycle decision may launch an occupant<br/>for steering, active-claim recovery, capacity, or operator direction"]
 ```
 
-**Invariant —** Command cadence **is** message cadence. An agent that stops
-running commands stops being reachable, so live corrections wait for a command
-that may never come.
+**Invariant —** Boundary cadence is delivery cadence, not command cadence alone.
+Non-shell work remains reachable at vendor post-tool boundaries. If neither a
+post-tool hook nor a top-level shell-command boundary occurs, the directive
+remains live and its delivery waits without fabricating a lifecycle transition.
 
-**Invariant —** Ending a turn stops the lane, and a backgrounded command's exit
-is **not** a wake signal. Long work runs in the foreground so its own completion
-returns control; an already-backgrounded wait is brought forward with a blocking
-wait rather than ended on.
+**Invariant —** Every turn exit vacates the lane, including exit code zero, and
+a backgrounded command's later exit is **not** a wake signal. Long work runs in
+the foreground so its own completion returns control; an already-backgrounded
+wait is brought forward with a blocking wait rather than ended on.
 
 **Invariant —** This reaches the agent as a **capability, not a prohibition**:
-staying in the foreground is what keeps the operator able to reach it. The
-framing matters here more than anywhere else, because the rule costs the agent
-something immediate and buys something it cannot observe from inside.
+continuing to cross admitted tool or shell boundaries is what keeps the operator
+able to reach it. The framing matters here more than anywhere else, because the
+rule costs the agent something immediate and buys something it cannot observe
+from inside.
 
 ### Command rewriting
 
@@ -223,12 +241,12 @@ rewrite invokes exactly that identity. Resolution does no availability lookup.
 
 ```mermaid
 flowchart LR
-  D["driver's native attribution"] --> P{"repo blocks the trailer?"}
+  D["vendor's native attribution"] --> P{"repo blocks the trailer?"}
   P -- yes --> O["disable native attribution to match"]
   P -- no --> T["trailer passes through"]
 ```
 
-**Invariant —** Trailer policy is the repository's. The harness makes the driver
+**Invariant —** Trailer policy is the repository's. The harness makes the vendor
 agree with it up front rather than contradicting it at commit time.
 
 ---

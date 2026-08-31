@@ -164,7 +164,7 @@ function assertReferenceGeometry(geometry) {
     geometry.taskPills.length,
     "each live board stem renders exactly one pill",
   );
-  assert.equal(geometry.taskStrip.gap, "6px", "task-pill-strip gap matches the Python reference");
+  assert.equal(geometry.taskStrip.gap, "6px", "task-pill-strip gap matches the canonical reference");
   for (const pill of geometry.taskPills) {
     const expected = pill.hidden
       ? String(Number(pill.ready) + Number(pill.active) + Number(pill.unavailable))
@@ -319,7 +319,7 @@ function assertReferenceGuardRejectsPerturbation(geometry) {
   assert.throws(
     () => assertReferenceGeometry(perturbed),
     (error) => error instanceof assert.AssertionError
-      && error.message.includes("task-pill-strip gap matches the Python reference"),
+      && error.message.includes("task-pill-strip gap matches the canonical reference"),
     "the measured-style guard reddens and names a deliberately perturbed property",
   );
 }

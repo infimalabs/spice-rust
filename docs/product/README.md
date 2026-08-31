@@ -13,10 +13,10 @@ of any implementation.
 
 ## Documents
 
-The implementation-independent files form a self-contained corpus: keep their
+These files are the canonical product contract for the Rust appliance. Keep the
 Markdown tree together, with links relative to this directory and no dependency
-on its name or depth. The repository-local [Rust profile](rust.md) accompanies
-that corpus and deliberately cites implementation authorities outside it.
+on its name or depth. Concrete mechanisms name their Rust authorities where the
+implementation choice is part of the contract.
 
 | File | What it answers |
 | --- | --- |
@@ -29,7 +29,7 @@ that corpus and deliberately cites implementation authorities outside it.
 | [interfaces.md](interfaces.md) | Task documents, wire seam, extensions, diagnostics, and media. |
 | [stories.md](stories.md) | Who each guarantee serves and the failure modes each one answers. |
 | [checks.md](checks.md) | Commit checks: gates, pressure, instruments, waivers, and isolation. |
-| [rust.md](rust.md) | What the Rust appliance implements differently, omits, or deliberately strengthens. |
+| [rust.md](rust.md) | The Rust implementation profile: concrete appliance selections and the code and executable evidence that own them. |
 
 Start with [value models](value.md) and [operating
 loops](loops.md) for the model. Use the [invariant
@@ -39,12 +39,11 @@ model](model.md), [supporting planes](planes.md), and
 and failures](stories.md) supply the reasoning; [surface
 invariants](invariants/lifecycle.md#surface) guide interface implementation; the
 [checks](checks.md) describe what may be committed. This repository's
-[Rust implementation profile](rust.md) is the applicability and deviation
-register for the imported model.
+[Rust implementation profile](rust.md) fixes the concrete appliance choices left
+open by the portable model and names their implementation owners.
 
-The register states what is true of the product. Implementation status — what a
-given codebase has built, deviated from, or not reached yet — belongs beside it
-in its own file, so the contract stays readable as a contract.
+The register states what is true of the product. Code and tests provide evidence
+that the contract is implemented; they do not create a second product model.
 
 ## Conventions
 
@@ -61,20 +60,23 @@ reference uses the invariant's natural-language name and stable semantic
 anchor. Adding, removing, or regrouping neighboring material never relabels
 anything. Local invariant and policy statements are deliberately unnumbered.
 
-**Implementation status stays separate.** The product model remains independent
-of one implementation. The Rust profile records implementation status and may
-name concrete code, tests, commands, and deployment boundaries; no other model
-document does. The imported implementation-specific surface-mechanics tree was
-removed because it described another client and transport rather than this
-appliance.
+**One current product, one authority for each fact.** Product semantics live in
+this corpus. Concrete Rust types, commands, storage, transport, and release
+boundaries are stated here when they affect those semantics. The [Rust
+implementation profile](rust.md) selects the concrete appliance form where the
+portable model leaves a choice and binds that selection to code and executable
+evidence. A disagreement is a defect, never an alternate product model.
 
 ## By question
 
 - **What can change freely?** See [What is fixed and what is
   free](planes/principles.md#what-is-fixed-and-what-is-free).
-- **What is *allowed* to fail silently?** See [Every degradation is loud](invariants/distribution.md#conduct-every-degradation-is-loud) and the [degradation
-  table](model/failures.md#the-degradation-table). Exactly one exemption exists:
-  a decoration laid over another operation.
+- **What is *allowed* to fail silently?** See [Authoritative degradation is
+  loud](invariants/distribution.md#conduct-authoritative-degradation-is-loud)
+  and the [failure-behavior table](model/failures.md#the-failure-behavior-table).
+  Silence is confined to non-authoritative decoration and conservative
+  pre-publication filtering; neither may alter a fact or widen into fallback
+  behavior.
 - **Which properties fail most quietly when violated?** See [The properties most
   worth guarding](invariants/distribution.md#the-properties-most-worth-guarding).
 - **How is this tested?** See [The case battery](cases.md#the-battery).

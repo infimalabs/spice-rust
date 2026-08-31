@@ -126,7 +126,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
         geometry.primary.top >= geometry.stack.top - 1 &&
         geometry.primary.bottom <= geometry.stack.bottom + 1 &&
         geometry.controls.bottom <= geometry.form.bottom + 1,
-      `${label}: the composer stack stays contained without shift or overlap: ${JSON.stringify(geometry)}`,
+      `${label}: the composer strip stays contained without shift or overlap: ${JSON.stringify(geometry)}`,
     );
     assert.ok(
       geometry.bodyWidth <= geometry.viewportWidth,

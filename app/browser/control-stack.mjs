@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { observedBoundedWait, TRANSITION_MS } from "./canvas-fixture.mjs";
 
-/// Geometry read off the Python Spice reference capture, attachment
+/// Geometry read off the canonical control reference capture, attachment
 /// 6cb304ba784a940d13b5741390528f964f73937102c6a15e3e4539e3ed40968f/01-image.png,
 /// at the 2x device pixel ratio it was taken with. The reference stacks the
 /// speech slider, the lifetime slider, and the send button as three identical
@@ -257,7 +257,7 @@ async function assertNarrowStack(page, controls, viewport) {
 }
 
 /// Capture the lineage control stack at the reference's own states and refuse
-/// any material drift from the Python Spice reference image.
+/// any material drift from the canonical control reference image.
 ///
 /// The console must already hold a seated lineage, and the caller's viewport
 /// must be wider than the 720px breakpoint where the reference itself narrows

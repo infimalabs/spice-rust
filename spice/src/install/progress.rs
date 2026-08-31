@@ -11,6 +11,7 @@ pub(super) fn apply_with_interruption(
     interrupt_after_write: Option<usize>,
 ) -> Result<InstallReceipt, InstallError> {
     let (mut record, record_generation, fresh) = prepare_apply(repository, spice_binary, expected)?;
+    reclaim_temporary_records(repository)?;
     if record.status == InstallStatus::Complete {
         return Ok(record.receipt());
     }

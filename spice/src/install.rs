@@ -503,6 +503,7 @@ pub fn apply(
 
 /// Reverse the complete current install without touching drifted targets.
 pub fn unapply(repository: &Repository) -> Result<InstallReceipt, InstallError> {
+    reclaim_temporary_records(repository)?;
     unapply_with_interruption(repository, None)
 }
 

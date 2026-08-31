@@ -28,7 +28,7 @@ flowchart LR
   J --> S["reminder as ordinary steering"]
   S --> P
   J --> M["match, confirm, recurrence metrics"]
-  M --> SC["per-driver bag scoping"]
+  M --> SC["per-vendor bag scoping"]
   SC --> T
 ```
 
@@ -52,17 +52,6 @@ flowchart TD
 proposal lands as a task on a hidden board so it competes for attention like
 everything else.
 
-### Closed loop: Learning distillation
-
-```mermaid
-flowchart TD
-  T["task slices"] --> E["extract candidates"]
-  E --> J["judge-filter durable ones"]
-  J --> S["bounded learnings store"]
-  S --> B["surfaced in briefing<br/>for active stems"]
-  B --> T
-```
-
 ### Closed loop: Projection rebuild
 
 ```mermaid
@@ -78,11 +67,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  P["prepare"] --> G["full gate battery"]
-  G --> N["notes derived from history"]
-  N --> C["curate highlights"]
-  C --> PUB["publish + tag"]
-  PUB --> P
+  B["build exact target payloads"] --> X["prove each target outside<br/>the candidate checkout"]
+  X --> R["validate detached proof receipts"]
+  R --> S["seal manifest over artifacts + receipts"]
+  S --> N["derive notes and resolve<br/>the exact publication plan"]
+  N --> G["run the complete strict battery<br/>over the plan's source commit"]
+  G --> PUB["converge the ordered publication<br/>of the exact sealed object"]
+  PUB --> B
 ```
 
 **Invariant —** Notes derive from git history, not a maintained changelog. The
@@ -120,9 +111,11 @@ divergent, or unfetchable lanes keep their work exactly as-is and start with an
 explicit skip note. **A lane is never locked out, nor its tree mangled, by its own
 checkout or an unavailable remote.**
 
-**Invariant —** A real content conflict is the **one and only** thing surfaced to
-the agent, and it is framed as *an overlap with the baseline* — never as a sync
-with an upstream. The agent does not experience git as a distributed system.
+**Invariant —** A real content conflict is the **only raw Git synchronization
+failure** surfaced to the agent, and it is framed as *an overlap with the
+baseline* — never as a sync with an upstream. Typed product refusals such as
+footprint and admission failures remain distinct. The agent does not experience
+git as a distributed system.
 
 **Invariant —** Activation is deliberately **not** a fourth boundary. Adding one
 is a regression, not a feature.
@@ -131,15 +124,28 @@ is a regression, not a feature.
 
 ```mermaid
 flowchart TD
-  L["landing"] --> S{"whole suite red?"}
-  S -- yes --> RefuseDoNotLandIntoARed["refuse: do not land into a red tree"]
-  L --> F{"first-parent diff<br/>leaves the task footprint?"}
+  L["landing"] --> S{"integrated tree differs<br/>from the authored tree?"}
+  S -- yes --> A{"declared cheap admission command?"}
+  S -- no --> F
+  A -- no --> F
+  A -- yes --> RUN["run admission against<br/>the synthesized tree"]
+  RUN -- refuses --> RefuseAdmission["leave integrated tree at HEAD,<br/>do not publish; repair, commit, retry"]
+  RUN -- admits --> F
+  F{"first-parent diff<br/>leaves the task footprint?"}
   F -- yes --> RefuseOutOfScope["refuse: out of scope"]
   L --> C{"content conflict?"}
   C -- yes --> MaterializeACOMPLETERecoverableMergeState["materialize a COMPLETE,<br/>recoverable merge state"]
   L --> RACE{"publish raced?"}
   RACE -- yes --> ReIntegrateAgainstTheNewBaselineBounded["re-integrate against the new baseline,<br/>bounded retries"]
 ```
+
+**Invariant —** Landing admission is the configured cheap load, not the whole
+verification suite. It runs only when integration or a publish race synthesizes
+a tree different from the lane's authored tree and a command is declared. A
+nonempty command captured from the lane stays fixed across race retries; when
+the lane declares none, each integrated tree may introduce its own command.
+Refusal leaves the integrated tree checked out for repair and publishes nothing.
+Ordinary commit gating remains a separate boundary.
 
 **Invariant —** A conflict is installed as a *complete* merge state or not at
 all. The visible terminal state is either the untouched pre-merge tree or a
@@ -211,11 +217,11 @@ gitGraph
    commit id: "append successor — gives up nothing, so it passes" type: HIGHLIGHT
 ```
 
-### The driver seam
+### The vendor seam
 
 ```mermaid
 flowchart LR
-  D["driver value"] --> B[binary + argv]
+  D["vendor value"] --> B[binary + argv]
   D --> T[thread-id env var]
   D --> R[transcript location + mapping]
   D --> M[stdout section markers]
@@ -224,22 +230,27 @@ flowchart LR
   D --> P[neutral launch prompt]
 ```
 
-**Invariant —** Adding a driver is **writing one more value**, never adding mode
+**Invariant —** Adding a vendor is **writing one more value**, never adding mode
 branches to consumers.
 
 **Invariant —** Resolution order is explicit: environment, then configured
-driver, then a default for unbound worktrees. Lane consumers resolve per
+vendor, then a default for unbound worktrees. Lane consumers resolve per
 worktree; transcript consumers resolve per file.
 
 ### Configuration layering
 
 ```mermaid
 flowchart TD
-  PKG["packaged defaults"] --> PROJ["tracked project config"]
-  PROJ --> WT["worktree-local overrides"]
-  WT --> FLAG["flags"]
-  FLAG --> EFF["effective value + provenance"]
+  BUILTIN["builtin<br/>compiled defaults"] --> TRACKED["tracked<br/>spice-rust.toml"]
+  TRACKED --> WORKTREE["worktree<br/>admitted override"]
+  WORKTREE --> LOCAL["local<br/>Git-common machine-local override"]
+  LOCAL --> EFF["effective value + provenance"]
 ```
+
+**Invariant —** Precedence increases through `builtin`, `tracked`, `worktree`,
+and `local`, in that exact order. The `local` layer is admitted machine-local
+intent shared through Git common state. Command-specific flags act at their
+command boundary; they are not repository-configuration provenance.
 
 **Invariant —** Every effective value carries its **source provenance**. "Why is
 this value what it is" is answerable without reading files.
@@ -276,7 +287,7 @@ strictly read-only and says so.
 | reads per target | FIFO chain | two reads must apply in request order |
 | reads across targets | parallel | independent lanes must not block each other |
 | team mutations | optimistic, revision-checked | clients re-pull on loss |
-| inbox publication | short-lived lock | atomic key minting |
+| inbox projection publication | short-lived lock | atomically replace the disposable projection |
 
 **Invariant —** A slow read on one lane must never block a heartbeat, a send, or
 a sibling lane. Interactive paths and bulk paths never share a queue.
@@ -284,28 +295,31 @@ a sibling lane. Interactive paths and bulk paths never share a queue.
 **Invariant —** Optimistic concurrency, not locking, governs topology: carry the
 revision you believe, and re-pull when you lose.
 
-### Ordering guarantees
+### Stream ordering guarantees
 
 ```mermaid
 sequenceDiagram
-  participant S as subscriber
-  participant W as watcher
-  participant T as target
-  S->>W: subscribe
-  W->>T: watcher arms
-  T-->>W: baseline signature taken
-  W->>T: initial read
-  T-->>W: contents
-  W-->>S: reply sent
-  Note over W: push gate opens
-  W-->>S: watch pushes flow
-  Note over S,W: a change racing setup is delivered by exactly one of<br/>the initial read or the first queued push
+  participant C as client
+  participant R as resident
+  participant J as journal
+  C->>R: authenticated handshake + optional cursor
+  R->>J: read one consistent head
+  alt cursor belongs to this generation and epoch
+    R-->>C: resume at the next sequence
+  else new generation, epoch, or cursor gap
+    R-->>C: authoritative snapshot + current cursor
+  end
+  J-->>R: accepted facts in journal order
+  R-->>C: bounded frames with monotone sequence
+  Note over C,R: reconnect either resumes exactly once or replaces state with one snapshot
 ```
 
-**Invariant —** A change racing setup is delivered by **exactly one** of {initial
-read, first queued push} — never both, never neither, never out of order.
+**Invariant —** One authenticated stream carries the initial authoritative state
+and subsequent accepted facts. A change racing setup is represented exactly once
+in either the snapshot head or a later sequence, never both and never neither.
 
-**Invariant —** A superseded subscription's in-flight pushes are dropped by
-generation, not interleaved.
+**Invariant —** Application generation and resident epoch fence stale frames.
+Bounded pages preserve journal order; a gap or mismatch reconnects for an
+authoritative snapshot instead of merging incompatible histories.
 
 ---

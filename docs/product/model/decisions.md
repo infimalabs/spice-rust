@@ -13,7 +13,7 @@ flowchart TD
   subgraph GLOBAL["global work value, strict order"]
     direction LR
     E["eligible candidates"] --> Class["class<br/>self-review is last resort"]
-    Class --> Priority["effective priority<br/>inherited from unblocked work"]
+    Class --> Priority["effective priority<br/>inherited from work it unblocks"]
     Priority --> Weight["downstream weight<br/>releases more of the graph"]
   end
   subgraph LOCALITY["locality, only inside the urgency band"]
@@ -98,7 +98,7 @@ allowed to speak.
 ```mermaid
 flowchart TD
   S["board scan"] --> N{"ready count is at least 2?"}
-  N -- yes --> ST{"chosen row READY<br/>for at least the settle interval?"}
+  N -- yes --> ST{"newest eligible READY origin<br/>aged past the settle interval?"}
   N -- no --> LO{"lone row aged<br/>at least the starvation age?"}
   ST -- yes --> W["wake ONE lane"]
   ST -- no --> S
@@ -108,45 +108,52 @@ flowchart TD
   SER --> S
 ```
 
-**Invariant —** Exactly one lane per decision. A later scan must observe the
-started lane before capacity can grow again.
+**Invariant —** Exactly one occupant launch per decision. A later scan must
+observe that lane's occupancy before capacity can grow again.
 
 **Invariant —** Two ready is the trigger: one to claim, one left on the board.
-READY excludes active claims, so running lanes do not inflate the count.
+READY is a read-time eligibility projection and excludes active claims, so
+occupied lanes do not inflate the count.
 
 **Invariant —** Starvation is an **age**, not a retry interval. After it, one is
 enough.
 
-**Invariant —** The settle interval prevents a burst from beating a running
-agent's own done-to-next cycle, or grabbing a row the instant it leaves plan phase.
+**Invariant —** No row is chosen before settling. With at least two eligible
+rows, the clock is the newest READY origin in the whole eligible set; selection
+waits until that origin has aged through the settle interval. A newly eligible
+row therefore extends the horizon instead of being grabbed immediately. This
+prevents a burst from beating a running agent's own done-to-next cycle.
 
 **Policy —** threshold 2, settle 3s, starvation 3min, ensure retry 5s.
 
 ### Held-claim restart — the arm that is not about capacity
 
-An agent that stops mid-task takes its claim with it, and a claimed row is not
-ready — so the work-availability arm is structurally blind to the one task that
-would bring that lane back.
+When an occupant's turn exits mid-task, the resident vacates the lane but the
+claim head remains `active`. That row is therefore not eligible for ordinary
+allocation, so the work-availability arm is structurally blind to the one task
+that would bring an occupant back. `HeldClaim` is the lifecycle resolver's name
+for this derived trigger, not a fourth claim disposition.
 
 ```mermaid
 flowchart TD
-  L["stopped lane"] --> C{"still holds a claim?"}
-  C -- yes --> R["restart onto the task it holds<br/>same ensure path, no new claim"]
+  L["vacant lane"] --> C{"claim disposition<br/>still active?"}
+  C -- yes --> R["launch successor onto the task<br/>same ensure path, no new claim"]
   C -- no --> A["available-work arm"]
-  R --> D["agent decides:<br/>continue, or unclaim"]
+  R --> D["successor decides:<br/>continue, or free the claim"]
 ```
 
 **Invariant —** The claim is **not** re-reserved. A launch reservation hands the
-row back if the launch never reaches readiness, and releasing this one would put
-a task on the board whose worktree still holds the stopped agent's uncommitted
-changes.
+row back if the new process and session are never proven, and releasing this one
+would put a task on the board whose worktree still holds the predecessor
+occupant's uncommitted changes.
 
 **Invariant —** Because the arm takes no new work, it applies to **every driven
 lane**, not only those permitted to expand onto the board.
 
 **Invariant —** It recovers the *task*, not the session, and is explicitly not a
-wake signal. The agent-facing surfaces say so, because a lane waiting on an operator and a
-lane recovering its own task are different states.
+wake signal. The agent-facing surfaces say so, because queued steering and
+recovery of an active claim are different inputs even when both launch an
+occupant into a vacant lane.
 
 **Invariant —** One retry-attempt bucket serves every arm for a lane, and
 consulting the gate **spends** the attempt. Arms that can decline cheaply are
@@ -161,12 +168,12 @@ sequenceDiagram
   participant G as retry gate — one attempt bucket per lane
   participant E as shared ensure path
   Note over R,E: the arms are consulted in a fixed order, and that order is load-bearing
-  R->>H: stopped lane, do you hold a claim?
+  R->>H: vacant lane, is its claim still active?
   alt holds a claim
     H->>G: consult
     G-->>H: the attempt is spent
-    H->>E: restart onto the task already held<br/>no new claim, nothing reserved
-    E-->>R: running, or a refusal naming the held-claim arm
+    H->>E: launch onto the actively possessed task<br/>no new claim, nothing reserved
+    E-->>R: occupant launched, or a refusal naming the held-claim arm
   else holds nothing
     H-->>R: decline, without consulting the gate
     Note over G: the attempt is still unspent
@@ -174,7 +181,7 @@ sequenceDiagram
     W->>G: consult
     G-->>W: the attempt is spent
     W->>E: capacity, selection, claim, start<br/>as one serialized decision
-    E-->>R: running, or a refusal naming the available-work arm
+    E-->>R: occupant launched, or a refusal naming the available-work arm
   end
   Note over H,E: every arm inherits its stop criteria from the ensure path rather than recopying them
 ```
@@ -208,16 +215,9 @@ the rungs but that every rung has the same exit.
 ```mermaid
 stateDiagram-v2
   [*] --> published
-  published --> reminder : silence past the first stage
-  reminder --> escalated : silence past the second
+  published --> reminded : silence past the first stage
+  reminded --> escalated : silence past the second
   escalated --> overdue : silence past the third
-  overdue --> expired : aged out in place
-  published --> retired : ACK or NACK
-  reminder --> retired : ACK or NACK
-  escalated --> retired : ACK or NACK
-  overdue --> retired : ACK or NACK
-  retired --> [*]
-  expired --> [*]
   note right of escalated
     every stage is measured from
     PUBLICATION, never from the
@@ -226,59 +226,84 @@ stateDiagram-v2
   end note
 ```
 
+Disposition is orthogonal to that presentation ladder. Here `live` means any of
+the four retained presentation stages above:
+
+```mermaid
+stateDiagram-v2
+  [*] --> live : publication accepted
+  live --> acked : agent ACK
+  live --> declined : agent NACK
+  live --> canceled : operator cancel
+  live --> lapsed : lapse transaction accepted
+  live --> deadlettered : delivery cannot complete
+  lapsed --> live : recovery retains presentation stage
+  deadlettered --> live : recovery retains presentation stage
+  acked --> [*]
+  declined --> [*]
+  canceled --> [*]
+```
+
 **Invariant —** Escalation is driven by *silence*, measured from publication, and
 rides a stable lineage key so it reads as one intent insisting.
 
-**Invariant —** Every rung exits the same way. Only a semantic answer retires an
-item, so the ladder describes how loudly it is asked and never how it ends.
+**Invariant —** Every live rung admits the same typed dispositions: `acked`,
+`declined`, `canceled`, `lapsed`, and `deadlettered`. A delivery read changes
+none of them. The ladder describes how loudly intent is presented, never how
+its identity changes.
 
-**Invariant —** Expiry is a **terminal state distinct from retirement**. An item
-nobody answered and an item that was refused are different facts, and collapsing
-them would make silence look like a decision.
+**Invariant —** `lapsed` and `deadlettered` remain recoverable. Recovery
+restores the same directive to live with its presentation stage intact. An item
+nobody answered, one delivery could not complete, and an item the agent
+declined are different facts; collapsing them would make silence or transport
+failure look like a decision.
 
-**Policy —** reminder 15s, escalated 60s, overdue 300s, expiry 24h.
+**Policy —** reminded 15s, escalated 60s, overdue 300s, lapse threshold 24h.
 
-### Freshness and ordering
+### Stream generation, ordering, and resumption
 
 ```mermaid
 flowchart LR
-  F["facet arrives"] --> A{"authority matches?"}
-  A -- no --> X["contract break, refuse"]
-  A -- yes --> O{"(epoch, revision)<br/>newer?"}
-  O -- no --> S[stale, ignore]
-  O -- yes --> V{"value differs?"}
-  V -- no --> U["unchanged, advance mark only"]
-  V -- yes --> AP["apply"]
+  H["authenticated handshake"] --> G{"application generation<br/>admitted?"}
+  G -- no --> X["refuse and reconnect"]
+  G -- yes --> E{"resident epoch<br/>matches cursor?"}
+  E -- no --> S["authoritative snapshot"]
+  E -- yes --> Q{"next monotone<br/>sequence?"}
+  Q -- yes --> AP["apply once and advance cursor"]
+  Q -- no --> R["resume or reconnect for snapshot"]
 ```
 
-**Invariant —** Epoch names the authority's counter *generation* and only rises.
-An authority that restarted and resumed from a lower revision still supersedes.
+**Invariant —** Application generation binds the client to one admitted build;
+resident epoch distinguishes restarts; sequence totally orders frames within an
+epoch. A cursor is valid only for that exact generation and epoch.
 
-**Invariant —** Only a monotone count may be published as a generation. A hash
-identity is refused at the producer, because a total order over random digests
-pins a facet forever at whichever digest sorted highest.
+**Invariant —** Resumption is explicit. A consumer either continues from the
+next sequence or receives a fresh authoritative snapshot; it never sorts random
+identities or guesses across an epoch change.
 
 ### Refusal grammar (repair-first)
 
 ```mermaid
 flowchart LR
   R["refusal"] --> C{"is there a way out?"}
-  C -- yes --> F["EXECUTABLE STEP ; diagnostic"]
+  C -- yes --> F["EXACT REPAIR ACTION ; diagnostic<br/>runnable command when one exists"]
   C -- no --> D["bare diagnostic"]
   R --> I{"about the invocation?"}
   I -- yes --> S["single contract statement"]
 ```
 
-**Invariant —** A refusal that can name a way out states the **runnable command
-first**, then the diagnostic. The reader who has just been stopped wants the way
-out first.
+**Invariant —** A refusal that can name a way out states the **exact repair
+action first**, then the diagnostic. When that action is a command, it is
+runnable as printed. Some repairs are necessarily interaction — for example,
+acknowledging one current steering key in new prose — and are stated exactly
+rather than dressed up as a fictitious command.
 
 **Invariant —** The rationale is structural, not stylistic: *an agent mid-claim
 has no operator to ask and no second screen to read.* The message is the entire
 interface.
 
 **Invariant —** Two exemptions, because inverting them moves the reader further
-from the fix: refusals with nothing to run stay bare; refusals about the
+from the fix: refusals with no repair action stay bare; refusals about the
 invocation itself stay one contract statement.
 
 **Invariant —** Gate reports are a third shape: the finding board is the

@@ -25,7 +25,9 @@ Build and export the image from the repository root:
 The command writes an image archive, checksum, and OCI identity under
 `target/proof-image/`. It refuses unless the built identity matches
 `identity.txt`, which is also the identity used by the release proof contract.
-Import those files on another Docker host with:
+On another Docker host, use an exact checkout of this source revision. From its
+repository root, copy the archive and its `.sha256` and `.identity` sidecars
+into `target/proof-image/`, then import them with:
 
 ```sh
 "$spice_rs" dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
@@ -47,7 +49,7 @@ action with:
 ## Container invocation inventory
 
 Container execution is a release-proof exception, not a development
-prerequisite. The tracked repository has three real execution surfaces:
+prerequisite. The release and proof owners expose three execution surfaces:
 
 - `"$spice_rs" dev xtask -- proof-image build` invokes Docker to `buildx build` the exact
   `linux/amd64` image, inspect its immutable identity, run its pinned-tool
@@ -56,10 +58,11 @@ prerequisite. The tracked repository has three real execution surfaces:
   tools cannot replace this boundary: its product is the Linux appliance whose
   architecture, filesystem, tool closure, and OCI identity the proof contract
   records.
-- `"$spice_rs" dev xtask -- proof-image load` invokes Docker only to load that archive and
-  inspect the restored identity. This is recovery for the same distribution
-  artifact, not a build or validation path; rebuilding when the archive exists
-  is slower and creates a second opportunity for identity drift.
+- `"$spice_rs" dev xtask -- proof-image load ARCHIVE` invokes Docker only to
+  load the named archive and inspect the restored identity. This is recovery
+  for the same distribution artifact, not a build or validation path;
+  rebuilding when the archive exists is slower and creates a second opportunity
+  for identity drift.
 - `proof/src/container.rs` invokes the absolute Docker or Podman executable
   selected by `proof.container`. It probes the runtime, inspects the pinned
   image, and uses `run`, `exec`, and `rm` for the
@@ -70,12 +73,9 @@ prerequisite. The tracked repository has three real execution surfaces:
   [sealed native runner](../proof-runner/README.md) and never consults
   `proof.container`.
 
-Every other tracked Docker or Podman spelling does not invoke a real container
-runtime: configuration and error prose, comments describing the boundary, UI
-fixture data, or a test fixture that writes a temporary shell program standing
-in for a runtime. Those tests do not contact a daemon. Adding another real
-invocation requires adding its constraint or native replacement to this
-inventory.
+Configuration, diagnostics, comments, UI fixtures, and test doubles may also
+name Docker or Podman without contacting a daemon. Any additional production
+invocation must declare its constraint or native replacement here.
 
 The native default is deliberately broader than the exceptions. The
 interactive app uses `"$spice_rs" dev xtask -- app`; `npm run test:canvas` exercises it in a
@@ -87,32 +87,29 @@ proof runner natively.
 
 ## Cleaning up
 
-Reclaim only what this lane owns, and reclaim the throwaway part rather than
-all of it. The throwaway part is the build context `target/proof-image/context`,
-which the build command already removes at the start of every run: deleting it
-costs this lane nothing and costs no other lane anything. Its archive, checksum,
-identity, build log, and build status sit beside it under `target/proof-image/`
-and are not throwaway. The archive is what the load command restores from
-below, so deleting `target/proof-image/` itself gives up the cheap recovery and
-leaves the next prune costing this lane the emulated `linux/amd64` rebuild.
+Reclaim only worktree-owned throwaway material. Before each build, the command
+removes the prior `target/proof-image/context` and creates a fresh context that
+remains available afterward. Its archive, checksum, identity, build log, and
+build status sit beside it under `target/proof-image/` and are recovery evidence,
+not scratch. Deleting the whole directory discards the cheap restore path and
+forces another pinned `linux/amd64` build if the admitted image disappears; the
+runtime mechanism for that architecture is an environment concern, not a proof
+contract.
 
-Never reach for a global cleanup. `docker system prune`, `docker image prune`,
-`docker volume prune`, and `docker builder prune` are machine-wide on a host
-where every lane shares one daemon: they delete the pinned proof image named by
-`identity.txt` and the shared build cache out from under whichever lanes happen
-to be building, which is an emulated `linux/amd64` rebuild for each of them.
-The lane that ran the command is rarely the lane that pays.
+Never use a global prune as worktree cleanup. Docker system, image, volume, and
+builder prune operations are daemon-wide and may destroy shared evidence or
+cache according to the selected operation and options. Preview and target the
+specific owned object instead.
 
-A build the daemon dropped this way reports only `unexpected EOF`, which is why
-the Rust command names that case rather than passing it through. If the pinned
-image itself is gone, restore it from the archive with the load action rather
-than rebuilding:
+If a build loses its daemon connection, inspect the reported diagnostic rather
+than inferring a cause. If the admitted image is missing, restore it from the
+archive instead of rebuilding:
 
 ```sh
 "$spice_rs" dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
 ```
 
-This image does not build or own the interactive Canvas stage. Every lane
+This image does not build or own the interactive Canvas stage. Each worktree
 builds that stage natively with `"$spice_rs" dev xtask -- app` into ignored
 `dist/stage-app`; the command atomically publishes one complete immutable
-generation, and its resident serves only those worktree-local bytes.
+generation, and the resident serves only those worktree-local bytes.

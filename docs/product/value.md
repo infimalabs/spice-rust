@@ -8,19 +8,21 @@ person.
 
 ## The thesis
 
-Running one coding agent is a chat problem. Running six is an **operations**
+Running one coding agent is a chat problem. Running a fleet is an **operations**
 problem, and operations needs three things chat does not have.
 
 ```mermaid
 flowchart LR
-  D["DURABILITY<br/>nothing I said is lost"] --> A["ATTRIBUTION<br/>nothing landed is anonymous"]
+  D["DURABILITY<br/>accepted intent survives"] --> A["ATTRIBUTION<br/>nothing landed is anonymous"]
   A --> C["CALM<br/>nothing moves that I am reading"]
   C --> D
 ```
 
-**Durability** turns *"I told it to"* from a memory exercise into a fact the
+**Durability** begins when authority returns a live key or covering standing;
+the browser's pre-acceptance queue is only an ephemeral prediction. Beyond that
+boundary it turns *"I told it to"* from a memory exercise into a fact the
 system holds. **Attribution** turns *"who did this and why"* from a reading
-exercise into a query. **Calm** turns six live streams into something one pair
+exercise into a query. **Calm** turns many live streams into something one pair
 of eyes can actually track. Remove any one and the other two stop paying: an
 un-attributed fleet can't be trusted, an un-durable one can't be steered, and a
 jittering one caps throughput at the operator's ability to re-find their place.
@@ -34,38 +36,49 @@ Every model in this document serves exactly one of these three.
 The invariant register owns every cross-document label; the headings here carry
 their own meaning.
 
-### Steering is durable and retired only by acknowledgement
+### Steering is durable and has a typed lifecycle
 
 ```mermaid
 flowchart TD
-  O["operator sends"] --> F["durable inbox item<br/>atomic, UTC-named"]
-  F --> H["shell hook delivers<br/>into agent's own command"]
-  H --> K["agent emits ACK or NACK<br/>in its transcript"]
-  K --> R["ack-state retires the item"]
-  R --> F
+  O["operator sends"] --> J["journal accepts one directive fact<br/>atomically"]
+  J --> F["filesystem inbox projects<br/>the still-live directive"]
+  F --> B{"next admitted agent boundary"}
+  B --> V["vendor post-tool hook"]
+  B --> S["next top-level shell command"]
+  V --> K["agent ACKs or declines<br/>operator may cancel"]
+  S --> K
+  K --> T["journal records the typed disposition"]
+  T --> E(("settled"))
+  J --> D["lapsed or deadlettered from any live standing<br/>remains explicit and recoverable"]
+  D -->|"recovery transaction accepted"| J
 ```
 
-The item is written before it is delivered, and a *read* never retires it —
-only a semantic acknowledgement in the transcript does. That single asymmetry is
-what makes supervision auditable: "delivered" and "taken" are separate facts,
-and the gap between them is visible as a pending count.
+The directive is accepted in the journal before its disposable inbox projection
+is delivered. Delivery is eligible at both the vendor's post-tool hook and the
+next top-level shell command; both boundaries consume the same durable decision
+and suppression state. A *read* never changes disposition. `acked`, `declined`,
+`canceled`, `lapsed`, `deadlettered`, and recovery are distinct durable facts,
+and any still-live directive may be deadlettered without first becoming
+delivered. That asymmetry makes supervision auditable: "delivered" and "taken"
+are separate facts, and the gap between them remains visible.
 
 **Value:** you can walk away mid-instruction. **Without it:** steering becomes
 fire-and-hope, and the operator becomes the durable store.
 
-### Refusal is a first-class answer
+### Decline is a first-class answer
 
 ```mermaid
 flowchart LR
   I["steering item"] --> A["ACK, taken"]
-  I --> N["NACK, refused, with reason"]
+  I --> N["NACK, declined, with reason"]
   A --> R[retired]
   N --> R
 ```
 
-Both dispositions retire the item; only NACK records *refused*. Refusal is
-advertised everywhere ACK is taught — inbox readouts, the worktree skill, the
-UI — and renders warn-coloured but otherwise identical to an ACK.
+Both dispositions retire the item; NACK records `declined`. Decline is
+taught beside ACK in the agent-facing readouts and worktree skill. In Canvas,
+the resident consumes the marker before publication and the message carries no
+disposition styling, so both render as ordinary Markdown with the lane accent.
 
 **Value:** an agent that disagrees says so instead of complying badly. **Without
 it:** the only cheap path is fake agreement, and the transcript stops being
@@ -75,15 +88,17 @@ evidence.
 
 ```mermaid
 flowchart LR
-  P["item pending"] --> S{"assistant spoke,<br/>no ACK?"}
-  S -- yes --> E["redisplay, escalate by priority"]
+  P["item pending"] --> S{"next named time horizon crossed<br/>with no typed disposition?"}
+  S -- yes --> E["redisplay at the next stage"]
   E --> P
-  S -- "ACK/NACK" --> D[retired]
+  S -- "acked, declined,<br/>or canceled" --> D[retired]
 ```
 
-Unacknowledged steering re-surfaces on shell interaction and escalates after
-repeated silent assistant messages, on a stable lineage key so a resend reads as
-one thread of insistence rather than a pile of duplicates.
+Unanswered steering re-surfaces at an admitted post-tool or top-level shell
+boundary when a named horizon from its publication time has elapsed. Every
+priority follows the same horizons and cadence. Escalation retains one stable
+lineage key, so a resend reads as one thread of insistence rather than a pile of
+duplicates.
 
 **Value:** the failure mode of a busy agent is *delay*, not *loss*.
 
@@ -91,71 +106,80 @@ one thread of insistence rather than a pile of duplicates.
 
 ```mermaid
 flowchart LR
-  N["task next"] --> C["claim, TTL 3600s"]
+  N["task next"] --> C["claim::won<br/>disposition active, TTL 3600s"]
   C --> W[work]
   W --> C
-  C -- "expired / dead agent" --> RL["auto-release"]
+  C -- "claim::lapsed accepted" --> L["disposition lapsed"]
+  L --> RL["readiness derived from<br/>all current predicates"]
   RL --> N
 ```
 
-An actor holds at most one active claim; claims expire and are reclaimed, so a
-dead agent parks nothing permanently. Claim context links cover the surrounding
-300 seconds, which is what lets a claim be reconstructed from the transcript.
+An actor holds at most one active claim. An elapsed lease returns the task to
+eligibility only through an accepted typed lapse transaction, without rewriting
+claim history. An explicit steal is a separate typed operation: it replaces the
+exact claim named by the command, and a displaced occupant learns through an
+ownership refusal rather than a fabricated inbox message. Claim context remains
+reconstructible through the claim's bounded lease, exact opening and closing
+source boundaries, and verified contiguous effort segments.
 
-**Value:** six agents on one board never collide, and the board self-heals from
-crashes without an operator sweep.
+**Value:** two agents never hold the same task at once, and the board
+self-heals from crashes without an operator sweep. Independent tasks can still
+meet at an explicit, recoverable baseline conflict.
 
-### The phase ladder, and who may advance it
+### Each task declares its own phase flow
 
 ```mermaid
-stateDiagram-v2
-  [*] --> design
-  design --> plan
-  plan --> todo
-  todo --> review
-  review --> verify
-  verify --> [*]
-  todo --> [*]
+flowchart LR
+  N["task with no named flow"] --> A{"acceptance exists?"}
+  A -- no --> P["plan → todo → review"]
+  A -- yes --> T["todo → review"]
+  O["operator-named flow"] --> V["nonempty unique<br/>lowercase-word phases"]
+  V --> C["current phase is a member"]
 ```
 
-The approved phases are a **set** of names — `design`, `plan`, `todo`, `review`,
-and `verify` — not a ladder. Order belongs to a task's *flow*, and the phase model
-draws one flow rather than a fixed progression: the public default flow is
-`todo` to `review`, and private work defaults to `todo` alone.
-Each phase advance is its own landing, so a task's history is a sequence of
-merges rather than a mutable row.
+A task's *flow* is its ordered phase vocabulary. It is any nonempty sequence of
+unique, nonempty lowercase ASCII words; there is no global phase enumeration or
+slot ceiling, and the current phase must be a member. When no flow is named, a
+task without acceptance receives `plan` to `todo` to `review`; every other task
+receives `todo` to `review`, independent of visibility. A hidden `.oops` row is
+parked in `plan` but retains the complete `plan` to `todo` to `review` flow and
+requires explicit promotion.
 
-**Review coverage is universal, and history hides it.** A review that finds
-nothing advances the phase without producing a commit, so it lands no merge and
-leaves no trace in a first-parent walk. The channel is readable from the project
-stem: the private channel is keyed by agent, everything else is public and
-carries review.
+Every accepted phase transition is a durable journal fact projected by the
+board. A transition that changes the tree additionally lands one attested merge;
+the complete phase history is therefore the journal sequence, not the merge
+sequence. In particular, a review that finds nothing advances the phase without
+producing a commit, so it lands no merge and leaves no trace in a first-parent
+walk.
 
 ```mermaid
 flowchart LR
   R["review pass"] --> C{"found something?"}
   C -- yes --> M["review landing<br/>(visible in history)"]
-  C -- no --> A["phase advances<br/>(no commit, invisible)"]
+  C -- no --> A["phase advances in journal and board<br/>(no merge in Git)"]
 ```
 
-What history measures is therefore the review **change** rate, not review
-coverage. Counting merges understates the work by every clean review.
+What Git first-parent history measures is therefore the review **change** rate,
+not review coverage. Counting merges understates the work by every clean review;
+the journal and board do not.
 
 ### Cross-review is preferred, never required
 
 ```mermaid
 flowchart LR
-  R["review row"] --> S{"actor authored it?"}
-  S -- no --> E["normal eligibility"]
-  S -- yes --> L["last-resort class<br/>+ urgency negative 100"]
-  E --> A[allocate]
+  R["eligible candidate"] --> S{"actor's own<br/>unassigned review?"}
+  S -- no --> E["ordinary class"]
+  S -- yes --> L["last-resort class"]
+  E --> A["select by priority,<br/>graph weight, urgency, locality"]
   L --> A
 ```
 
-This is a **soft** guarantee with a hard tiebreak, not a refusal. Self-authored
-reviews sort into a last-resort eligibility class and carry a negative 100 urgency
-coefficient, so any other eligible reviewer wins — but a solo agent is never
-deadlocked by having no peer.
+This is a **soft** guarantee with a strict selection class, not a refusal or a
+numeric priority adjustment. Any eligible candidate that is not the actor's own
+unassigned review outranks every such self-review before priority, graph weight,
+urgency, and locality are compared. Only when no other eligible work exists does
+the self-review class become selectable, so a truly quiet solo board never
+deadlocks.
 
 **Value:** the fleet gets independent review whenever it *can*, and degrades to
 progress rather than stalling when it can't. This is the sharpest example of the
@@ -174,27 +198,35 @@ gitGraph
    commit id: "baseline advances, first parent"
 ```
 
-Git integration happens only at task boundaries. The merge is computed before the
-checked-out repo is mutated, so the visible terminal state is either the
-untouched pre-merge tree or a recoverable merge — never stranded conflict
-markers. The trailers ride the merge, not the working commits.
+Mutating Git integration happens only at task phase boundaries. The merge is
+computed before the checked-out repo is mutated, so the visible terminal state
+is either the untouched pre-merge tree or a recoverable merge — never stranded
+conflict markers. The trailers ride the merge, not the working commits.
 
-**Value:** `--first-parent` *is* the ledger. Every landed unit of work carries
-its task, project, phase, and the agent session that did it — which is what
-makes release notes, the effort ledger, and fleet forensics queries instead of
-archaeology.
+**Value:** `--first-parent` is the ledger of mutating landings. Every landed unit
+of work carries its task, project, phase, and the agent session that did it,
+while the journal and board retain every transition whether or not it produced a
+merge. That division makes release notes, the effort ledger, and fleet forensics
+queries instead of archaeology without pretending a clean review changed Git.
 
 ### Every task says where it came from
 
 ```mermaid
 flowchart LR
-  A["ack:&lt;key&gt;<br/>operator steering"] --> T[task]
-  P["task:&lt;handle&gt;<br/>parent work"] --> T
-  T --> B["required on<br/>every assignable project"]
+  A["ack:&lt;key&gt;<br/>authored convention"] --> T[task]
+  P["task:&lt;born-stamp&gt;<br/>parent convention"] --> T
+  S["gate:&lt;digest&gt; or doc:&lt;digest&gt;<br/>typed-route convention"] --> T
+  O["other:&lt;value&gt;<br/>open authored class"] --> T
+  T --> B["one origin realm<br/>always required"]
 ```
 
-Origin is a required field with two realms, and the requirement reaches every
-channel a task can be filed on. Only infallible system surfaces are exempt.
+Every task carries one origin realm. The wire contract validates only a
+nonempty class, a colon, and a nonempty value. Ordinary authored creation
+conventionally names a steering directive or parent work; when the actor holds
+one active claim, the server may derive that `task:` realm. A typed system route
+may instead supply a proved `gate:` or `doc:` cause. Other authored classes are
+accepted and preserved, so these routes are conventions rather than a closed
+realm enumeration.
 
 **Value:** you can always answer *"why does this task exist?"* without reading a
 transcript. In a fleet that files its own follow-ups, this is the difference
@@ -204,9 +236,11 @@ between a board and a landfill.
 
 ```mermaid
 flowchart LR
+  T["team / lineage"] --> L
   L["lane (operator's)"] --> CurrentOccupant["occupant: thread Ash"]
   CurrentOccupant -- renewal --> Successor["occupant: thread Elm"]
-  L --> H["history, drafts, filters,<br/>scroll position survive"]
+  L --> H["history, drafts,<br/>scroll position survive"]
+  T --> P["shared task policy survives<br/>because lineage is unchanged"]
 ```
 
 A lane is an operator-owned container over a worktree; the agent is a tenant.
@@ -217,23 +251,38 @@ new thread while the message stream stays readable.
 would cost the operator their context, and the rational move would be to hoard
 long-lived agents — exactly the thing that makes context rot.
 
-### The taste rules revise themselves
+### Taste changes begin as evidence-backed proposals
 
 ```mermaid
 flowchart LR
-  M[maxim bags] --> F["a trigger matches prose"]
-  F --> J["local judge confirms"]
-  J --> S["confirmed, then ordinary steering"]
-  J --> T["match, confirm, recurrence<br/>metrics"]
-  T --> P["report drives per-driver scoping"]
-  P --> M
-  S --> C["ACK corrections mined<br/>into new proposals"]
-  C --> M
+  M["active tracked maxim bags"] --> F["a trigger matches prose"]
+  F --> E{"judge enabled?"}
+  E -- no --> S["direct ordinary steering"]
+  E -- yes --> J["one bounded judge process<br/>tries shuffled framings in sequence"]
+  J -- "exact normalized YES" --> S2["confirmed ordinary steering"]
+  J -- "exact normalized NO" --> C2["cleared judgment fact"]
+  J -- "unavailable, error, timeout,<br/>or ambiguity exhausted" --> D["candidate dropped;<br/>no direct publication"]
+  S --> T["match, direct decision, recurrence<br/>metrics"]
+  S2 --> T2["match, judged decision, recurrence<br/>metrics"]
+  C2 --> T2
+  T --> P["report supplies evidence for<br/>per-vendor scoping"]
+  T2 --> P
+  S --> C["recurring ACK corrections mined"]
+  S2 --> C
+  C --> H["hidden maxim proposal"]
+  P --> O{"operator accepts<br/>a tracked change?"}
+  H --> O
+  O -- yes --> M
+  O -- no --> U["active maxims unchanged"]
+  U --> M
 ```
 
-Two loops close here. Maxim *effectiveness* is measured per bag per driver and
-that report is what decides which bags apply to whom; separately, recurring ACK
-corrections are clustered into proposed new maxims filed on a hidden board.
+Two loops close here. Maxim *effectiveness* is measured per bag per vendor and
+the report supplies evidence for scoping changes; separately, recurring ACK
+corrections are clustered into a proposed new maxim filed on a hidden board.
+Neither path edits the tracked set. Only operator acceptance of the resulting
+tracked change can add, remove, or rescope an active maxim; a proposal that is
+discarded or deferred leaves the active set unchanged.
 
 **Value:** taste arrives early — while the agent is still speaking, not at
 review — and the taste set is evidence-driven rather than accumulated by
@@ -262,25 +311,25 @@ which is what makes disposable agents affordable in practice. **Without it:** th
 restatement of a directive becomes the directive, and every compaction is a
 small game of telephone with the operator.
 
-### Nothing irreversible happens without a plan the operator read
+### External publication follows the exact plan the operator read
 
 ```mermaid
 flowchart TD
-  V["a verb that can change<br/>something outside the repo"] --> P["render the ordered plan"]
+  V["a publication verb with<br/>external consequences"] --> P["resolve and render the ordered plan"]
   P --> R["operator reads it"]
   R --> X["execute, pinned to that plan"]
   X --> C{"still the same plan?"}
-  C -- no --> REF["refuse, naming what changed"]
+  C -- no --> REF["refuse, naming the expected<br/>and supplied plan digests"]
   C -- yes --> GO["proceed, in the stated order"]
 ```
 
-Publishing a package, pushing a tag, and writing into someone else's repository
-are the only things the system does that it cannot take back. *Moving* a tag is
-not on the list because the system refuses to do it at all ([A version names
+Externally visible release publication is executed from a resolved, sealed plan.
+*Moving* a tag is not a plan option because the system refuses to do it at all
+([A version names
 exactly one commit](invariants/distribution.md#distribution-a-version-names-exactly-one-commit)) — a
-published version names one commit forever. Each is expressed
-as a plan first: resolved by observation, rendered in full, and executed only
-against the plan that was actually read.
+published version names one commit forever. Each effect is expressed as a plan
+first, rendered in full, and executed only against the digest the operator
+authorized; any changed input requires a new preview.
 
 This is the durable-steering guarantee pointed at decisions rather than
 instructions: the operator's
@@ -295,28 +344,46 @@ the discovery happens after the one step that cannot be undone.
 
 ## UI components
 
-### The lane
+### The Canvas view rail
 
-One column per worktree, and every row of it answers a question the operator
-would otherwise have to go and ask.
+```mermaid
+flowchart LR
+  C["Canvas"] --> A["Agents<br/>converse with seated agents"]
+  C --> M["Magnitude<br/>how much exists now?"]
+  C --> F["Flow<br/>what work is moving?"]
+  C --> T["Topology<br/>what is connected and possessed?"]
+  C --> H["Chronology<br/>what happened, in what order, and what waits?"]
+```
+
+Agents is the conversation surface. Magnitude, Flow, Topology, and Chronology
+are the complete closed analytical vocabulary; every analytical pane stands on
+one of those four axes. The rail changes the question asked of the whole Canvas,
+not the mode of one lane or team.
+
+### The team console
+
+The Agents view tiles one console per live team or lineage. A console contains
+one or more member lanes, and every row answers a question the operator would
+otherwise have to go and ask.
 
 ```mermaid
 block-beta
   columns 2
-  T["top row<br/>pip, lights, mode rail, team menu"] q1["is it alive,<br/>and what is it routed to?"]
-  V["view stack<br/>compose | filters | metrics | info"] q2["what can I do with it<br/>without leaving?"]
-  S["status line<br/>age, run state, pending, claimed work"] q3["what is it holding<br/>right now?"]
-  M["message stream<br/>newest first"] q4["what did it<br/>just say?"]
+  T["team row<br/>member lights, mode rail, team menu"] q1["which lineage is this,<br/>and who is alive?"]
+  V["team view<br/>compose | tasks | metrics | info"] q2["what can I do with the team<br/>without leaving?"]
+  S["member shards<br/>age, run state, pending, claimed work"] q3["what is each lane holding<br/>right now?"]
+  M["merged message stream<br/>newest first, explicit lane attribution"] q4["what did the team<br/>just say?"]
 ```
 
 The whole strip is scannable top to bottom in about a second, and the order is
 deliberate: liveness before routing, routing before state, state before words.
-An operator sweeping six lanes reads the first two rows of each and stops at
-whichever one needs attention.
+An operator sweeping several teams reads the first two rows of each and stops at
+whichever team needs attention.
 
-**Why it's the right unit:** it maps 1:1 to a worktree, which is the only unit
-git and the filesystem agree on. Lanes tile, and tiling is what makes six agents
-a *board* rather than six tabs.
+**Why it's the right unit:** the server-owned team topology is exactly what the
+operator arranged. The team tiles as one surface while each member lane remains
+the concrete address of one worktree. That keeps a fused team together without
+turning its members into a broadcast address.
 
 ### Lane, team, occupant
 
@@ -328,47 +395,57 @@ lives**.
 classDiagram
   class Team["TEAM — server truth"] {
     <<authority>>
-    at most six lanes
+    one or more lanes
+    shared task policy
     fusing merges teams
-    two browsers never disagree
+    membership converges across browsers
+    visibility may differ locally
   }
   class Lane["LANE — the operator's"] {
     <<outlives its occupants>>
     one worktree
     always a concrete send address
     host renders, members send
-    history, drafts, filters, scroll
+    history, drafts, scroll
   }
   class Occupant["OCCUPANT — the current agent"] {
     <<replaceable, and meant to be>>
     one thread at a time
     renewal swaps THIS and nothing else
   }
-  Team "1" *-- "1..6" Lane
+  Team "1" *-- "1..*" Lane
   Lane "1" o-- "0..1" Occupant
 ```
 
-Read the two relationships as lifetimes. A lane belongs to exactly one team
-throughout its lifetime, so the team is the unit that closes. An occupant is held
-loosely and may be absent entirely — that absence is precisely what a stopped
-lane is, and why a stopped lane is still a lane. A fused host renders one merged
-newest-first stream while every member stays its own concrete send address.
+Read the two relationships as lifetimes. A lane belongs to exactly one team at
+a time and may move between teams, while the team is the unit that the current
+browser's `Close team` presentation action hides. That action does not alter
+the relationship. The team owns the task policy shared by its members: renewal
+leaves that policy in place because the lineage is unchanged, while a lane moved
+to another lineage takes the destination policy rather than carrying one with
+it. An occupant is held loosely and may be absent entirely —
+that absence makes the lane vacant, while the UI independently presents it as
+`bound` or `unbound` (unless queued steering outranks liveness). A fused host
+renders one merged newest-first stream while every member stays its own concrete
+send address.
 
-**Value:** the operator manipulates topology directly — drag a lane onto
-another's edge to fuse — and the server is always the authority, so two browsers
-never disagree. Because the occupant is the only replaceable part, replacing it
-is cheap enough to do casually, which is the entire point of the separation.
+**Value:** the operator manipulates topology directly — drag a team onto
+another team's edge to fuse — and the server remains authority for membership,
+ordering, and revision. Browsers can intentionally differ in which teams they
+hide without disagreeing about that topology. Because the occupant is the only
+replaceable part, replacing it is cheap enough to do casually, which is the
+entire point of the separation.
 
 ### Closed loop: The fused composer
 
-A team presents as one control surface: a **stack of shards**, one per member,
-in member order. It is a band the operator reads down, not a set of tabs they
-switch between.
+A team presents as one control surface: an ordered **strip of composer
+columns**, one per member. The operator reads it across, with east/west overflow
+when needed; it is not a set of tabs they switch between.
 
 ```mermaid
 flowchart LR
-  subgraph STACK["the composer stack — one shard per member, in member order"]
-    direction TB
+  subgraph STRIP["the composer strip — one column per member, in member order"]
+    direction LR
     AshShard["Ash shard, amber accent"]
     ElmShard["Elm shard, teal accent"]
     YewShard["Yew shard, violet accent"]
@@ -379,15 +456,16 @@ flowchart LR
   AshWorktree --> M["one merged stream in the host lane<br/>newest first"]
   ElmWorktree --> M
   YewWorktree --> M
-  M --> A(["each card carries the accent of<br/>the shard that addressed it"])
-  A --> STACK
+  M --> A(["each card names its lane;<br/>its lane-derived accent is continuity"])
+  A --> STRIP
 ```
 
-The loop is the point. **One ordering does three jobs**: it lays out the shards,
-it assigns the accents, and it attributes the cards coming back — so a colour
-seen in the stream resolves to a position in the stack without a label, a
-lookup, or a hover. Drag a shard to reorder within the team; drag it out to move
-that agent to another. A member that momentarily fails to resolve keeps its
+The loop is the point. Member order lays out the shards; it does not order
+messages or assign identity. Each lane's stable identifier derives its accent,
+so reordering never recolours history. The finite palette may repeat, therefore
+cards carry explicit lane and worktree attribution and colour is only
+presentation continuity. Drag a shard to reorder within the team; drag it out to
+move that lane to another. A member that momentarily fails to resolve keeps its
 seat rather than being dropped from the stack.
 
 **Value:** addressing three agents is one surface instead of three, and nothing
@@ -407,71 +485,80 @@ flowchart LR
   D --> R["Drain<br/>boundary dissolved:<br/>all assignable work"]
 ```
 
-Three values, no more. It is a **server-side lens**: the client renders the
-effective filter set as the allocator resolved it and never re-derives the
-policy. The same control labels the submit button, so you cannot send without
-seeing the autonomy you are sending under.
+Three values, no more. The accepted value is a **server-side task-subscription
+policy** and the client never re-derives task eligibility. On request, however,
+the browser immediately presents the requested value as pending and retains it
+across ordinary reads until the command settles. The same optimistic control
+labels the submit button, so the operator sees the autonomy currently being
+requested as well as the eventual authoritative value.
 
 **Value:** this is the product's most important control — the knob between "I
-approve each thing" and "go find work". Making it a server lens means the UI
-physically cannot lie about how autonomous an agent currently is.
+approve each thing" and "go find work". The pending presentation makes the
+operator's request immediate without pretending it has already settled.
 
-### The mode rail and the shared pane
+### The team mode rail and its scroll ownership
 
 ```mermaid
 flowchart TD
-  R["mode rail: compose, filters, metrics, info"] --> P["panels slide horizontally"]
-  P --> H["pane and stream share<br/>one vertical budget"]
-  H --> SC["scroll hands off:<br/>collapse pane, then scroll"]
+  R["mode rail: compose, tasks, metrics, info"] --> P["selected pane replaces content"]
+  P -- "tasks, metrics, info" --> X["exclusive mode content<br/>no message plane mounted"]
+  P -- "compose" --> C["bounded team-compose<br/>outer vertical scroll"]
+  C --> H["composer columns<br/>horizontal overflow"]
+  C --> S["nested mosaic plane<br/>its own vertical scroll"]
 ```
 
-Four views per lane on a horizontal rail, and the pane trades vertical space
-with the message stream through a single continuous scroll gesture — scroll down
-and the composer collapses before the stream starts moving.
+Four views per live team appear on one rail, with the selected mode retained per
+lineage. Selecting a mode directly replaces pane content; there is no slide
+transition. Tasks, Metrics, and Info replace Compose completely and do not mount
+the message plane. Compose places its form, ticker, and activity inside one
+bounded outer vertical scroller; its member columns own horizontal overflow,
+and the mosaic plane owns a nested vertical scroller. Moving the outer Compose
+scroll may move the whole message plane, while scrolling the nested plane moves
+only its cards.
 
-**Value:** a lane is narrow by construction (six across a monitor). Sharing one
-budget instead of nesting scrollbars is what keeps it usable at that width, and
-it is why the same layout survives a phone viewport.
+**Value:** a team console is narrow by construction. Exclusive modes spend the
+available surface on one job, while Compose keeps wide member columns contained
+and gives the dense message lattice a local reading viewport once it is in view.
 
 ### The reading contract
 
 ```mermaid
 flowchart LR
-  N["new message"] --> I["insert only<br/>zero movement for existing cards"]
+  N["new message"] --> I["insert only<br/>existing spans stay latched"]
   I --> F["frontier rises"]
-  F --> S{"reader scrolled?"}
+  F --> S{"more than 80px<br/>from top?"}
   S -- yes --> C["jump + compensate same frame"]
-  S -- no --> A["animate the push-down"]
+  S -- no --> A["show the push-down<br/>(no position tween)"]
 ```
 
 Newest-first masonry where a card that did not change gets **no style write at
-all**. New content places by insert, never by repacking; a scrolled reader is
-compensated in the same frame so the shift is invisible; a reader at the top
-sees the push-down because there it is the signal.
+all**. New content places by insert, never by repacking; a reader more than 80px
+from the top is compensated in the same frame so the shift is invisible. The
+0–80px near-top zone sees the push-down snap because there it is the signal.
 
 **Value:** this is what "calm" actually costs, and it is the most exacting
-requirement in the product. Reading six live agents at once is impossible if the
-board reflows, so every reading-contract rule is load-bearing on its own.
+requirement in the product. Reading many live agents at once is impossible if
+the board reflows, so every reading-contract rule is load-bearing on its own.
 
-### One saturation language
+### Status carries both tone and count
 
 ```mermaid
 flowchart LR
   P["status pip<br/>per agent liveness"] --> L["saturation = recency"]
   G["lane lights<br/>per member in a team"] --> L
-  F["filter pills<br/>per board stem"] --> V["saturation = agent coverage"]
-  V --> T["idle, dormant, assigned, active, saturated"]
+  F["task pills<br/>per project stem"] --> V["public: ready · active · unavailable counts"]
+  F --> H["hidden system: one aggregate count"]
+  V --> T["base, active, or dormant presentation"]
 ```
 
-Colour means one thing everywhere: **saturation is engagement**. On a pip it
-decays with silence; on a stem pill it encodes whether an agent is actually
-covering that work, layered with whether the work is moving. Idle is the
-deliberate neutral endpoint — it alone means *handleable work is waiting for an
-agent*.
+Lane indicators use saturation for recency. Public project task pills never ask
+colour to carry exact work state: their three-slot string spells ready, active
+or in-flight, and blocked or deferred counts. A hidden-system pill intentionally
+shows one aggregate count rather than exposing that public breakdown.
 
-**Value:** the operator learns one visual rule and reads three different surfaces
-with it. The pill triple (`ready, in-flight, and unavailable`) has a fixed footprint so
-counts moving between slots never jitter the strip.
+**Value:** the operator gets fast peripheral liveness and exact work counts at
+the same time. The three semantic slots are always present, but the unpadded,
+content-driven pill may resize as digit widths change.
 
 ### Steering rendered inside the reply
 
@@ -483,9 +570,11 @@ flowchart TD
   NextQuote --> NextResponse["its response"]
 ```
 
-Messages lay out in the agent's own order: leading prose, then each
-acknowledgement as its steering quote followed by that ACK's response. A refusal
-takes the warn accent through the identical path.
+Messages lay out in the agent's own order: leading prose, then each recognized
+ACK or NACK as its steering quote followed by that attempt's response. The
+resident consumes the marker before publication, and the browser message DTO
+carries no disposition; both paths therefore render as ordinary Markdown with
+the lane accent rather than a distinct decline colour.
 
 **Value:** you never have to hold "what did I ask?" in your head while reading
 the answer. In a fleet where you sent that instruction twenty minutes and four
@@ -500,9 +589,9 @@ flowchart LR
   G["GLANCE, badges<br/>pending counts, mode rail"] --> OP
 ```
 
-Deliberately three, with different bandwidth. Speech speaks *edges* — explicit
-ACK utterances win; narration reads first and last paragraphs; nothing older
-than the moment you opened the lane ever auto-plays.
+Deliberately three, with different bandwidth. Manual speech reads the full
+selected message, and narration reads the full text of each newly observed
+message. Nothing present at first materialization auto-plays.
 
 **Value:** the ear is the only channel that works while you are looking
 somewhere else, which is what lets one operator hold more lanes than they can
@@ -522,7 +611,7 @@ flowchart LR
   AttestedMerges["attested merges"] --> TrustOutput["trust output without reading it"]
   DisposableAgents["disposable agents"] --> Renew["renew instead of hoarding context"]
   DerivedMemory["derived memory"] --> Renew
-  CalmBoard["calm board"] --> WatchFleet["watch six at once"]
+  CalmBoard["calm board"] --> WatchFleet["watch a fleet at once"]
   WalkAway --> S["supervision scales past<br/>what one person can read"]
   AddAgent --> S
   TrustOutput --> S
@@ -531,8 +620,8 @@ flowchart LR
 ```
 
 The result of that composition is a supervision rate one person cannot reach by
-reading: many tasks a day, each reviewed by a second actor, across a fleet whose
-size the operator never manages directly.
+reading: many tasks a day, independently reviewed whenever an eligible peer
+exists, across a fleet whose size the operator never manages directly.
 
 ---
 
@@ -540,17 +629,21 @@ size the operator never manages directly.
 
 One disposition recurs everywhere, and it is the easiest thing to lose.
 
-Cross-review is preferred but never required. The launch-time advance is
-attempted but never raises. Command rewriting helps when it can and falls
-through when it cannot. Adjudication sharpens the counsel when a judge is
-present and is skipped when one is not.
+Cross-review is preferred but never required. Launch-time advancement is
+attempted but never raises. Optional command optimization leaves the native path
+intact when unavailable. Adjudication is optional at configuration time:
+disabled judging publishes a configured trigger hit directly, while enabled
+judging fails closed and publishes only a confirmed candidate.
 
 Each of these is a good property the system reaches for and declines to depend
 on. The natural implementation of every one of them is a hard rule — "no agent
 reviews its own work", "refuse to start on a stale tree", "require the
 optimizer" — and each hard version deadlocks something. A solo agent cannot
-review. A lane with an unreachable remote cannot start. An installation without
-the optional companion cannot run a command.
+review. A lane with an unreachable remote still has local work to do. An
+optional optimizer cannot become a prerequisite for native execution. An
+unavailable configured judge withholds only the speculative counsel candidate;
+it never blocks the agent's primary work and never widens into direct
+publication.
 
 **Prefer the good property; never let it stop the work.** Where that reads as
 laxity, it is the opposite: it is what lets the strict properties elsewhere —

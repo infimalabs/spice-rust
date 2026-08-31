@@ -22,7 +22,8 @@ flowchart LR
 ```
 
 **Invariant —** Asks are sourced from the **steering plane**, not from
-transcript user messages. Transcript prose is a secondary source, merged after.
+transcript user messages. Transcript evidence contributes only what happened
+after directive recovery; it never supplies or backfills the ask.
 
 **Invariant —** Recovery shows the *recovered ask*, parsed from compaction
 intent — never continuation boilerplate, never an assistant-text fallback
@@ -193,7 +194,7 @@ Order is most of the meaning.
 
 **Invariant —** Records merged from several transcripts order by time with
 source identity breaking ties, and the differing timestamp spellings of
-different drivers compare as the same instant. Identical inputs always yield an
+different vendors compare as the same instant. Identical inputs always yield an
 identical sequence.
 
 **Invariant —** Recorded text is exactly what the transcript held; only
@@ -225,7 +226,7 @@ flowchart LR
 ```
 
 **Invariant —** Classification is deterministic and structural, never a prefix
-sniff. Everything downstream — briefing, learnings, maxims, metrics — depends on
+sniff. Everything downstream — briefing, maxims, and metrics — depends on
 telling authored prose from generated text.
 
 **Invariant —** Every operator-role message gets **exactly one** shape, decided
@@ -252,7 +253,7 @@ flowchart TD
   I["input"] --> E{"exists on disk?"}
   E -- yes --> P["read it as that thing"]
   E -- no --> N["normalize as a session identifier"]
-  N --> F["try each known driver,<br/>current context first"]
+  N --> F["try each compiled vendor,<br/>current context first"]
   F --> R{"resolved?"}
   R -- yes --> T["transcript"]
   R -- no --> X["refuse, naming EVERY<br/>unresolvable input at once"]
@@ -291,9 +292,10 @@ a run of short commands in one session does not re-announce the same facts once
 per command.
 
 **Invariant —** The urgency tier of an expiring claim is **part of the identity**
-of what was displayed, so crossing into a more urgent tier speaks immediately
-even when every other fact is unchanged. Expiry is the only thing the meter
-repeats on a timer, and the interval shortens as expiry approaches.
+of what was displayed. Command-start evaluation speaks when elapsed time has
+moved the claim into a more urgent tier, and a cancellable timer repeats that
+evaluation while the supervised command remains active. Its interval narrows as
+expiry approaches, it stops with the command, and it never launches one.
 
 **Invariant —** When the record of the last announcement is missing, unusable,
 or not strictly older than now, the meter **speaks**. Suppression is a claim
@@ -306,53 +308,6 @@ a command is not a status line.
 
 **Invariant —** A meter with nothing true to report emits nothing, rather than an
 empty frame.
-
-### Closed loop: Learning distillation
-
-```mermaid
-flowchart TD
-  subgraph HARVEST["harvest at task completion"]
-    direction LR
-    S["claim-to-completion span"] --> C["bounded candidates"]
-    C --> J{"reusable and<br/>repo-general?"}
-    J -- "no, unavailable<br/>timed out, ambiguous" --> K["skip with reason"]
-  end
-  subgraph REUSE["retain and reuse"]
-    direction LR
-    B["capped per-project store"] --> R["fresh, confirmed handful<br/>reaches briefing"]
-    R --> N["next task runs<br/>better informed"]
-  end
-  J -- yes --> B
-  N --> S
-```
-
-**Invariant —** Learnings are distilled **at task completion**, when the evidence
-is complete and the agent is about to forget it — harvested only from the span
-between claim and completion. A missing or out-of-order span yields nothing
-rather than a wider guess.
-
-**Invariant —** The store is bounded and partitioned per project. A learning set
-that only grows is a second context problem; overflow evicts the least recently
-confirmed first.
-
-**Invariant —** Nothing becomes durable on an unproven verdict. Any failure of
-the judgment — unavailable, timed out, ambiguous, erroring — **skips**, and the
-skip is reported with its reason, so a broken pipeline is distinguishable from a
-task that genuinely had nothing to teach.
-
-**Invariant —** Every stored learning carries the task, the transcript slice, and
-the excerpt it was drawn from. A claim with no provenance cannot be re-judged
-when it turns out to be wrong.
-
-**Invariant —** Re-observing a stored learning refreshes recency and confirmation
-while keeping the original wording and provenance. Confirmation is a count, not
-a rewrite.
-
-**Invariant —** The store is replaced atomically as a whole, and a record that
-cannot be parsed stops the load **loudly** rather than being skipped past.
-
-**Invariant —** Distillation never turns a completed task into a failure. The
-work is done; harvesting from it is opportunistic.
 
 ### One turn through the plane
 
@@ -392,7 +347,7 @@ sequenceDiagram
   participant ST as Steering plane
   participant TR as Transcript
 
-  Note over AG,TR: context fills — the driver compacts or renews
+  Note over AG,TR: context fills — the vendor compacts or renews
   AG->>BR: what was asked, delivered, touched, pending?
   BR->>ST: outstanding asks — the primary source
   ST-->>BR: durable asks
@@ -401,20 +356,16 @@ sequenceDiagram
   BR-->>AG: briefing — omit the asks section when empty
 ```
 
-Ordinary command feedback is repeat-suppressed; completion harvests learning
-only after the work is settled.
+Ordinary command feedback is repeat-suppressed and observational.
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant AG as Agent
   participant MT as Working-state meter
-  participant LN as Learning store
 
   AG->>MT: run a command
   MT-->>AG: one stderr line, only when live state changed
-  AG->>LN: task complete — distil while evidence is complete
-  LN-->>AG: bounded learnings scoped to the held task's project
 ```
 
 ---

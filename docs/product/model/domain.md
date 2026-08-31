@@ -7,9 +7,10 @@
 
 An **operations console for a fleet of coding agents**. One operator supervises
 many agents, each inhabiting a real git worktree, by reading their transcripts and
-writing durable steering into their repositories. Supervision, coordination,
-counsel, and repository checks are all *derived* from those two surfaces —
-the transcript and the filesystem — rather than maintained separately.
+writing durable steering through one journal authority. Transcripts are evidence
+of what agents produced; the journal owns semantic facts and current heads; the
+filesystem inbox is a disposable delivery projection. Supervision, coordination,
+counsel, and repository checks preserve those authority boundaries.
 
 ### The planes
 
@@ -50,7 +51,7 @@ The surface topology owns durable places:
 erDiagram
   REPOSITORY ||--|{ WORKTREE : "all worktrees share one control plane"
   WORKTREE ||--|| LANE : "the lane is the worktree's operator surface"
-  TEAM ||--|{ LANE : "one to six, matching the accent palette"
+  TEAM ||--|{ LANE : "one or more; palette size does not bound topology"
 ```
 
 Occupant history hangs from the durable lane and remains readable through its
@@ -72,7 +73,7 @@ erDiagram
   BOARD ||--o{ TASK : "holds — an empty board is valid"
   TASK ||--o{ CLAIM : "history — at most one active"
   OCCUPANT ||--o{ CLAIM : "history — at most one active"
-  TASK ||--|| PHASE : "one current position in a flow of bounded slots"
+  TASK ||--|| PHASE : "one current member of one nonempty unique-name flow"
 ```
 
 The lane owns forming intent; messages provide the evidence that retires it:
@@ -80,9 +81,9 @@ The lane owns forming intent; messages provide the evidence that retires it:
 ```mermaid
 erDiagram
   LANE ||--|| DRAFT : composes
-  DRAFT ||--o{ ITEM : "steering items"
-  ITEM ||--o| ACK : "exactly one terminal disposition"
-  MESSAGE ||--o{ ACK : "one message may retire several items"
+  DRAFT ||--o{ DIRECTIVE : "steering items"
+  DIRECTIVE ||--o{ DISPOSITION : "typed lifecycle history"
+  MESSAGE ||--o{ DISPOSITION : "one message may answer several directives"
 ```
 
 **Invariant —** A team of one is the degenerate case of a team of any size,
@@ -92,26 +93,26 @@ never a separate type. Every rule written for teams must hold for a team of one.
 
 ```mermaid
 flowchart LR
-  T["inception instant"] --> E["epoch millis"]
-  E --> B["base52, 8 chars,<br/>order-preserving"]
-  B --> I["incepted — the ONLY stored id"]
+  T["birth instant"] --> E["epoch millis"]
+  E --> B["profile-selected canonical encoding<br/>order-preserving"]
+  B --> I["born — the ONLY stored stamp"]
   P["project's rightmost segment"] --> K["KEY — derived, never stored"]
   I --> H["rendered handle"]
   K --> H
 ```
 
-**Invariant —** `incepted` is the sole stored identity. Everything else about a
+**Invariant —** `born` is the sole stored identity. Everything else about a
 task's name is derived.
 
 **Invariant —** Re-homing a task to a different project changes its rendered
 handle **for free**, because the key was never stored.
 
 **Invariant —** The stamp is sortable as a plain string, so identity ordering is
-inception ordering with no parsing.
+birth ordering with no parsing.
 
-**Policy —** The alphabet omits vowels in both cases, so a stamp can never
-accidentally spell a word. Collisions advance the instant by 1 ms rather than
-adding entropy, preserving sortability.
+**Invariant —** A minting collision advances the represented instant rather
+than appending entropy, preserving strict string order. The implementation
+profile fixes the concrete increment and codec.
 
 **INC** — the alphabet, the width, the separator.
 
@@ -121,7 +122,7 @@ One set of rows carries several *different* graphs. None is visible from a list.
 
 ```mermaid
 flowchart LR
-  R[("one set of rows")] --> O["origin forest, why it exists<br/>steering originates task; task originates follow-up"]
+  R[("one set of rows")] --> O["origin forest, why it exists<br/>open class:value shape;<br/>conventional and typed causes"]
   R --> D["dependency DAG, what blocks what<br/>blocker blocks blocked"]
   R --> V["review network, who checks whom<br/>reviewer checks author"]
   R --> P["phase ladder, how work moves<br/>todo advances to review"]
@@ -144,29 +145,27 @@ product.
 
 ```mermaid
 flowchart LR
-  TR["transcript"] --> ActivityWhatTheAgentProduced["activity, what the agent produced"]
-  FS["filesystem inbox"] --> PendingSteering["pending steering"]
-  TB["task board"] --> TasksClaimsPhases["tasks, claims, phases"]
-  TS["team store"] --> TopologyRoutingRenewal["topology, routing, renewal"]
-  AS["ack store"] --> DirectiveLifecycleHistory["directive lifecycle history"]
-  RG["target registry"] --> WorktreeIdentity["worktree identity"]
-  LR["lifecycle reconciler"] --> ProcessStatus["process status"]
+  JR["SQLite journal<br/>one authenticated writer"] --> SemanticFacts["tasks, claims, steering lifecycle,<br/>topology heads, command receipts"]
+  TR["transcript tape"] --> ActivityWhatTheAgentProduced["vendor bytes and typed evidence<br/>of what the agent produced"]
+  FS["filesystem inbox"] --> PendingSteering["disposable projection of live directives"]
+  RG["admitted target registry"] --> WorktreeIdentity["worktree identity"]
+  LR["lifecycle authority"] --> ProcessStatus["current process status"]
+  JR --> STREAM["one authenticated snapshot/resume stream"]
 ```
 
 **Invariant —** No fact has two authorities. A consumer that needs a fact asks
 its owner; it never re-derives it from a cheaper nearby source.
 
-**Invariant —** Each authority carries its own freshness counter. There is no
-global revision. A message that changes one fact must not invalidate another.
-
-**Invariant —** A payload may carry any subset of facets, in any order, twice.
-Consumers reduce by `(authority, epoch, revision)` and ignore what is stale.
+**Invariant —** The resident exposes one ordered authenticated stream. Its
+generation identifies the admitted application instance, its epoch identifies
+the resident lifetime, and its sequence is monotone within that epoch. Consumers
+resume from a cursor or reconnect for an authoritative snapshot.
 
 ### Storage classes
 
 ```mermaid
 flowchart LR
-  DA["DURABLE AUTHORITY<br/>losing it loses facts"] --> M["one forward migration<br/>or a refusal naming its release"]
+  DA["DURABLE AUTHORITY<br/>losing it loses facts"] --> M["ordered forward migrations<br/>or a refusal before mutation"]
   RP["REBUILDABLE PROJECTION<br/>losing it costs a replay"] --> D["discard and rebuild<br/>at the current shape"]
 ```
 
@@ -178,8 +177,8 @@ belong in the projection store: *where do its facts come from, what records how
 far it got, how far back can that source be replayed, what refills it, what
 can it still say when the source no longer reaches back far enough.*
 
-**Invariant —** An authority migration is a **singular forward step**, never an
-accumulating ladder. Refusing an unsupported shape without mutating it is
-legitimate when the refusal names the release that owns the migration.
+**Invariant —** Authority migrations form one ordered, unbroken, forward-only
+chain. Every admitted shape has exactly one next step; an unsupported shape is
+refused before mutation with the shape and supported range named.
 
 ---

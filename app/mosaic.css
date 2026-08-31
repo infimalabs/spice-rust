@@ -784,7 +784,7 @@
   line-height: 1.35;
 }
 
-/* The lineage control stack is sized against the Python Spice reference, which
+/* The lineage control stack is sized against the canonical control reference, which
    fixes every item to one height and one width so the two sliders and the send
    button read as a single column of equal pills. */
 .team-composer-controls {

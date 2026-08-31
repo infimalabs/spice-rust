@@ -11,6 +11,41 @@ use wire::{Digest, Fault, FaultClass, Outcome, Refusal};
 const JOURNAL_SCHEMA: u16 = 1;
 const VISIBILITY_ATTEMPTS: usize = 8;
 
+enum CorrectnessGateStanding {
+    Admitted,
+    Refused(String),
+}
+
+fn run_release_gate(root: &Path, source_commit: &str) -> Result<(), dist::EffectError> {
+    run_release_gate_with(root, source_commit, |root, selector| {
+        let report = spice::gate::run_strict_at(root, selector).map_err(|error| {
+            if error.is_fault() {
+                dist::EffectError::Environment(error.to_string())
+            } else {
+                dist::EffectError::GateRefused(error.to_string())
+            }
+        })?;
+        if report.admits() {
+            Ok(CorrectnessGateStanding::Admitted)
+        } else {
+            Ok(CorrectnessGateStanding::Refused(
+                report.refusal_fold().to_string(),
+            ))
+        }
+    })
+}
+
+fn run_release_gate_with(
+    root: &Path,
+    source_commit: &str,
+    runner: impl FnOnce(&Path, gate::Selector) -> Result<CorrectnessGateStanding, dist::EffectError>,
+) -> Result<(), dist::EffectError> {
+    match runner(root, gate::Selector::revision(source_commit))? {
+        CorrectnessGateStanding::Admitted => Ok(()),
+        CorrectnessGateStanding::Refused(detail) => Err(dist::EffectError::GateRefused(detail)),
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct JournalDocument {
@@ -599,8 +634,7 @@ impl SystemEffects {
                 "correctness gate received the wrong prior-state shape".to_owned(),
             ));
         }
-        self.run_cargo(&["xtask", "verify"])
-            .map_err(dist::EffectError::GateRefused)?;
+        run_release_gate(&self.root, &plan.source_commit)?;
         let head = self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?;
         let status = self.git_local(&["status", "--porcelain=v1", "--untracked-files=no"])?;
         if head != plan.source_commit || !status.is_empty() {
@@ -985,5 +1019,37 @@ mod tests {
         let error = verify_completed(&journal, &key, &manifest, &notes, &[])
             .expect_err("resident recognition requires the external receipt chain");
         assert!(error.contains("cannot read"));
+    }
+
+    #[test]
+    fn release_gate_binds_the_explicit_root_and_source_and_refuses_red() {
+        let root = Path::new("/fixture/release-root");
+        let source = "0123456789abcdef0123456789abcdef01234567";
+        run_release_gate_with(root, source, |observed_root, selector| {
+            assert_eq!(observed_root, root);
+            assert_eq!(selector, gate::Selector::revision(source));
+            Ok(CorrectnessGateStanding::Admitted)
+        })
+        .expect("an admitted canonical report crosses the release gate");
+
+        let refused = run_release_gate_with(root, "source", |_, _| {
+            Ok(CorrectnessGateStanding::Refused("red arm".to_owned()))
+        })
+        .expect_err("a red canonical report cannot mint a release receipt");
+        assert!(matches!(
+            refused,
+            dist::EffectError::GateRefused(detail) if detail == "red arm"
+        ));
+
+        let unavailable = run_release_gate_with(root, "source", |_, _| {
+            Err(dist::EffectError::Environment(
+                "gate unavailable".to_owned(),
+            ))
+        })
+        .expect_err("a gate acquisition fault stays an environment fault");
+        assert!(matches!(
+            unavailable,
+            dist::EffectError::Environment(detail) if detail == "gate unavailable"
+        ));
     }
 }

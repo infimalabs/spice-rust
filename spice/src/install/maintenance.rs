@@ -100,7 +100,7 @@ pub fn inspect_temporary_records(
     Ok(report)
 }
 
-/// Reclaim stale install publication files before one install request.
+/// Reclaim stale install publication files before one mutating install request.
 pub fn reclaim_temporary_records(
     repository: &Repository,
 ) -> Result<InstallTempInspection, InstallError> {

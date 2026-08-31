@@ -2,18 +2,13 @@
 
 This repository develops and self-hosts the Rust Spice appliance.
 
-## Allocator loop
+## Harness authority
 
-- Handle current operator direction before allocator work. When that direction
-  describes durable work, capture it with `spice task add` before returning to
-  `spice task next`; task creation does not claim or switch work.
-- In drain mode, keep pulling allocator-selected work with `spice task next`
-  until it reports `allocator-empty` or a real blocker. Complete only the phase
-  the allocator assigned; after `spice task done` or `spice task review`, run
-  `spice task next` again because the next phase may go to another lane.
-- An `allocator-empty` result successfully ends only the current drain pass. It
-  does not discharge uncaptured operator direction or other obligations from
-  the current turn.
+The active harness or an explicitly installed bootstrap skill owns task,
+thread, session, and steering state. Never infer a task, lane, session, or claim
+merely from the appliance binary's existence. Outside a Spice bootstrap, ignore
+allocator commands. Other implementations and control-plane conventions are
+not authority for this repository.
 
 ## Cargo isolation
 
@@ -30,18 +25,18 @@ if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
   printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
   exit 1
 fi
-"$spice_rs" dev cargo -- <cargo-arguments>
-"$spice_rs" dev xtask -- <xtask-arguments>
+"$spice_rs" dev cargo -- test --locked -p spice
+"$spice_rs" dev xtask -- verify --package spice
 ```
 
-This repository currently has a hybrid command boundary: unqualified
-`spice session`, `spice task`, and `spice steering` commands remain owned by
-the ambient Python controls plane. The exact Rust appliance above owns only
-Rust-specific surfaces such as `dev cargo` and `dev xtask`; its existence does not imply that
-the current agent has a Rust lane, session, or task claim. A missing, symbolic,
-non-regular, or non-executable asset is a hard stop. Do not search `PATH` for a
-replacement, invoke another Cargo route, or point `CARGO_HOME` at a shared
-mutable cache to work around a stale generation.
+Replace the trailing example argument vector with the exact Cargo or xtask
+operation required; retain the bound appliance and `dev ... --` boundary.
+
+The exact appliance owns repository development surfaces such as `dev cargo`
+and `dev xtask`; its existence does not establish harness authority. A missing,
+symbolic, non-regular, or non-executable asset is a hard stop. Do not search
+`PATH` for a replacement, invoke another Cargo route, or point `CARGO_HOME` at
+a shared mutable cache to work around a stale generation.
 
 ## Rust source organization
 

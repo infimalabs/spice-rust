@@ -82,9 +82,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             .contains("--origin ack:<steering-key>")
     );
     assert!(
-        refusal
-            .explanation()
-            .contains("task:<parent-inception-stamp>"),
+        refusal.explanation().contains("task:<parent-born-stamp>"),
         "causal guidance names durable task identity rather than a rendered handle"
     );
     assert!(

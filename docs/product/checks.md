@@ -15,85 +15,119 @@ identified by their language and enclosing section.
 
 ### What it is
 
-A fixed roster of steps, run in a fixed order at commit time, over the staged
-change. Their settings live in one place; every hook, study, document, and test
-reads that one place, so changing a value changes the check everywhere at once.
+A fixed, compiled universe of canonical arms. The ordinary commit gate captures
+the staged source once, maps every changed path to the affected arms and Cargo
+targets, and runs only that deterministic selection. The selection policy,
+settings, tests, and report all bind the same immutable source digest.
 
 ```mermaid
-flowchart LR
-  P["one policy source"] --> G[commit gate]
-  P --> S[direct study runs]
-  P --> D[documentation]
-  P --> T[tests]
+flowchart TD
+  I["staged index"] --> C["capture one immutable source + digest"]
+  C --> S{"classify every changed path"}
+  S -- "known local impact" --> A["canonical local arms + targets"]
+  S -- "known selection, build,<br/>or toolchain authority" --> E["every applicable arm + target<br/>with exhaustive reach"]
+  S -- "unknown, unclassified,<br/>or outside admitted workspace" --> R["refuse before work starts"]
+  E --> T
+  E --> P
+  A --> T["selected Cargo targets"]
+  A --> P["selected policy evidence"]
+  T --> V["one source-bound verdict"]
+  P --> V
 ```
 
-**Invariant —** Direct study runs may take flags for focused investigation; the
-commit gate runs the defaults. Investigation is negotiable, enforcement is not.
+**Invariant —** Ordinary known paths select exact local arms and Cargo targets.
+A known compiled selection, policy, build, or toolchain authority selects every
+applicable arm and target with explicit repository-exhaustive reach. An unknown
+or unclassified path, or a Rust or manifest path outside the admitted workspace,
+refuses before selected work begins; uncertainty never impersonates exhaustive
+authority.
 
-**Invariant —** The roster is ordered, and the order is part of the contract:
-integrity before shape, shape before staging, staging before anything that reads
-staged content.
+**Invariant —** The unscoped repository verifier is not an ordinary completion
+surface. Package verification, explicitly named studies, and the staged selector
+are separate bounded commands; none silently escalates into another.
+
+**Invariant —** Canonical manifest order owns report order. Dependency order is
+preserved, while independent selected arms may execute concurrently. Scheduling
+must not change evidence identity or presentation order.
 
 ### The verdict is collected, not short-circuited
 
 ```mermaid
 flowchart LR
-  IntegrityStudy["integrity study"] --> ShapeStudy["shape study"] --> StagingStudy["staging study"] --> ContentStudy["staged-content study"]
-  IntegrityStudy -.-> F["collect failure"]
-  ShapeStudy -.-> F
-  StagingStudy -.-> F
-  ContentStudy -.-> F
+  Selection["selected canonical arms"] --> IntegrityStudy["integrity"]
+  Selection --> ShapeStudy["shape"]
+  Selection --> StagingStudy["staging"]
+  Selection --> ContentStudy["staged content"]
+  IntegrityStudy --> F["collect terminal evidence"]
+  ShapeStudy --> F
+  StagingStudy --> F
+  ContentStudy --> F
   F --> R["one report, every failure"]
 ```
 
-**Invariant —** Each step's failure is caught and recorded, and the run
-continues. One commit attempt reports the whole picture rather than the first
-thing that went wrong.
+**Invariant —** Every captured selected arm reaches a terminal evidence state.
+An inability or prerequisite failure becomes that arm's named refusal rather
+than removing its row. Independent failures are collected, so one commit attempt
+reports the complete selected picture.
 
-**Invariant —** A clean run prints nothing at all. Silence is the success
-signal; anything printed is either a finding or an informational redirect.
+**Invariant —** A clean installed hook emits no terminal diagnostic. A direct
+selection command returns the complete typed report and may expose bounded
+progress. Silence and evidence are properties of different surfaces, never two
+interpretations of the same output.
 
-### Three outcomes, never conflated
+### Terminal evidence is never conflated
 
 ```mermaid
 flowchart TD
-  R[study runs] --> A{outcome}
-  A --> C["clean — ran, found nothing<br/>names the limits it applied"]
-  A --> F["findings — a rendered board"]
-  A --> X["cannot run — names the missing capability"]
+  R["selected arm reaches a terminal state"] --> A{"typed evidence"}
+  A --> P["passed"]
+  A --> N["not-applicable<br/>with declaration provenance"]
+  A --> E["excluded<br/>with declaration provenance"]
+  A --> X["named refusal<br/>failed, unavailable, unsupported,<br/>unmeasured, timed-out, or explicit-skip"]
+  P --> C["admit"]
+  N --> C
+  E --> C
+  X --> F["refuse"]
 ```
 
-**Invariant —** A study that cannot execute raises, naming the capability it
-needs. It never returns zero findings. *Unknown is not clear* — the same rule
-that governs the rewind guard governs every instrument here.
+**Invariant —** An arm that cannot execute returns a named refusal state and
+the evidence that explains it. It never impersonates a pass or an admitted
+absence. *Unknown is not clear* — the same rule that governs the rewind guard
+governs every instrument here.
 
-**Invariant —** A clean result echoes the limits it actually applied, so a pass
+**Invariant —** A measured pass retains the limits it actually applied, so it
 is evidence about which thresholds were in force rather than a bare assertion.
 
-**Invariant —** A study with no applicable input passes silently. Empty scope
-and empty findings are the same verdict, and both differ from *cannot run*.
+**Invariant —** A focused arm with no applicable input records explicit
+not-applicable evidence. It may contribute no terminal hook text after the whole
+gate accepts, but it is not interchangeable with unknown selection or a missing
+capability.
 
-**Invariant —** Direct runs are tri-state: clean, findings, cannot-run. The
-commit gate collapses findings and cannot-run into one refusal, because from the
-committer's side both mean the same thing.
+**Invariant —** Direct reports preserve passed, not-applicable, excluded, and
+every named refusal state. The commit decision admits only passed and
+contract-owned absence or exclusion; it never erases the evidence distinctions.
 
 ### The ledger follows the verdict
 
 ```mermaid
 flowchart LR
-  G["gate runs"] --> D["latch writes deferred"]
-  D --> V{"every step passed?"}
-  V -- yes --> C["commit the ledgers"]
-  V -- no --> X["discard — ledgers untouched"]
+  G["selected gate runs"] --> D["state changes proposed in memory"]
+  D --> V{"selected run accepts?"}
+  V -- yes --> C["publish one typed state transaction"]
+  V -- no --> X["discard — state bytes untouched"]
   X --> N["next attempt meets the same limits<br/>this one reported"]
 ```
 
-**Invariant —** Every latch write made during a run is held until the whole run
-is accepted. A refused commit leaves the pressure ledgers exactly as it found
-them, so the author's next attempt meets the limits this one reported.
+**Invariant —** Latch creation, hold, healing, rename transfer, and peer-claim
+changes remain proposals until the enclosing selected run accepts. A refused run
+is byte-preserving, so the author's next attempt meets the same durable state.
 
-**Invariant —** Steps contributed by configuration are skipped entirely unless
-the staging step passed, so an extension never runs against a half-staged tree.
+**Invariant —** A selected run reconciles only the state keys it observed.
+Accepting a partial run cannot prune an unrelated latch or claim.
+
+**Invariant —** A configured repository command runs only after staging accepts,
+and receives paths and bytes from the same staged capture. Configuration cannot
+make that command observe a half-staged or different tree.
 
 ---
 
@@ -101,98 +135,107 @@ the staging step passed, so an extension never runs against a half-staged tree.
 
 The mechanism shared by every measure that has a limit rather than a rule.
 
-### Base, flex, latch
+### Base, elastic headroom, latch
 
 ```mermaid
 flowchart TD
-  V["measured value"] --> B{"value does not exceed base?"}
-  B -- yes --> OK["pass, retire any latch"]
-  B -- no --> L{"latched?"}
-  L -- yes --> F["refuse at BASE"]
-  L -- no --> X{"value does not exceed flex ceiling?"}
-  X -- yes --> W["allow, latch"]
-  X -- no --> F
+  V["measured value"] --> L{"durably latched?"}
+  L -- no --> E{"within provenance-seeded<br/>elastic ceiling?"}
+  E -- yes --> P["pass; accepted above-base work<br/>enters claim arbitration"]
+  E -- no --> F["finding at elastic ceiling"]
+  L -- yes --> B{"within base?"}
+  B -- yes --> H["pass; propose healing"]
+  B -- no --> R["finding held at base"]
+  F --> C["resolve peer contention"]
+  R --> C
 ```
 
-**Invariant —** Flex is headroom, not a second limit. The first breach latches
-the subject to its base limit until it measures back under.
+**Invariant —** Elastic headroom is temporary capacity above base, not a second
+normal limit. A durable latch spends that capacity and holds the subject to base
+until an accepted run measures it at or below base.
 
-**Invariant —** The flex ceiling is an exact integer ratio over the base,
-computed with integer arithmetic so it is the same number on every machine.
+**Invariant —** Policy compilation resolves every finite multiplier, minimum,
+maximum, and explicit ratchet into one checked integer ceiling. Non-finite input,
+an invalid range, or an unrepresentable result refuses instead of selecting a
+fallback.
 
 **Invariant —** A refusal that is due to a latch rather than to the value says
 so, and names the ledger holding it. "Over the limit" and "held at base" are
 different diagnoses.
 
+### State changes are accepted as one transaction
+
 ```mermaid
 flowchart LR
-  C["CLEAR<br/>no ledger entry"] -->|"value above base and no greater than ceiling<br/>allow once"| L["LATCHED<br/>held at base"]
-  L -->|"value no greater than base<br/>retire in-scan"| C
-  C -->|"value no greater than base"| P[pass]
-  C -->|"value &gt; ceiling"| R["refuse<br/>ledger untouched"]
-  L -->|"value &gt; base"| RB["refuse at base<br/>name ledger"]
-  L -->|rename| Carry["carry latch<br/>additively"]
-  Carry --> L
-  C -->|"ledger empty"| D["delete ledger"]
+  S["shared state snapshot"] --> M["measure + reconcile in memory"]
+  M --> D{"selected run accepts?"}
+  D -- no --> X["discard every proposed change"]
+  D -- yes --> P["compare-and-publish one typed transaction"]
+  P --> N["new shared state"]
 ```
 
-The flex ceiling is deterministic per path and published author, as described in
-[Jitter is seeded by authorship](#jitter-is-seeded-by-authorship). Latch writes
-wait for whole-run acceptance under the whole-run ledger rule, while retirement
-happens in-scan under the immediate-retirement rule even if another finding
-refuses the run.
-
-### Retirement is immediate and in-scan
-
-**Invariant —** A latch is retired the moment any scan measures its subject at
-or under base — including during a run that fails for other reasons. The gate
-forgives exactly when the code earns it.
+**Invariant —** Healing is evidence, not a side effect of inspection. It becomes
+durable only with the accepted run that observed it. A run refused for any other
+reason leaves the prior latch intact.
 
 **Invariant —** An emptied ledger is deleted rather than left as an empty file,
 so a fully healed subject leaves no trace.
 
-**Invariant —** Latches follow renames additively: a renamed subject carries its
-latch to the new name without the old name being silently dropped.
+**Invariant —** At run start, the complete staged rename map moves every prior
+latch and live claim to its canonical destination before liveness pruning.
+Ambiguous destinations refuse.
 
-### Jitter is seeded by authorship
+**Invariant —** Partial selected runs reconcile only observed sticky keys.
+Unrelated live state survives; absence from a selected slice is not evidence of
+global absence.
+
+### Jitter retains its provenance
 
 ```mermaid
-flowchart LR
-  P["path"] --> K["digest of path + actor"]
-  A["actor from published history"] --> K
+flowchart TD
+  TS["published task session"] --> O["first available seed in fixed order"]
+  PC["published commit"] --> O
+  AA["active actor"] --> O
+  CB["candidate blob"] --> O
+  P["canonical candidate path"] --> O
+  O --> K["digest of path + selected seed"]
   K --> B["bucket within the configured percentage<br/>above or below the headroom"]
-  B --> C["this actor's ceiling for this path"]
+  B --> C["effective ceiling + retained seed source"]
 ```
 
-**Invariant —** The ceiling is jittered per path and per actor, over the
-*headroom* rather than over the limit, so no two agents share an exact edge and
-none of them can drift below base.
+**Invariant —** Variation applies to headroom, never to base. No seed can lower
+the effective ceiling below the normal limit.
 
-**Invariant —** The seed is **who authored the content**, resolved from
-published history — not who is running the scan. Two agents reading the same
-file see the same ceiling; the ceiling moves only when the content's authorship
-does.
+**Invariant —** Seed resolution has one order: published task session, published
+commit, active actor, candidate blob, then canonical candidate path. The report
+retains both the selected value and its source; it never relabels provenance-only
+fallback material as a human actor.
 
-**Invariant —** Jitter is deterministic. The same path and actor always resolve
-to the same ceiling, so a limit never appears to move under an unchanged file.
+**Invariant —** Variation is deterministic for the captured path, seed, and
+policy. Replaying the same evidence resolves the same integer ceiling.
 
 ### Contested pressure informs rather than blocks
 
 ```mermaid
 flowchart LR
-  U[unclaimed] -->|"breach, claim + refuse"| M["held by me"]
-  M -->|"breach, renew + refuse"| M
-  M -->|"lifetime elapses"| U
+  U[unclaimed] -->|"above-base work: claim"| M["held by me"]
+  M -->|"continued work: renew"| M
+  M -->|"lifetime elapsed at run start"| X["treat as absent<br/>propose pruning"]
   U -->|"peer claimed first"| P["held by peer"]
-  P -->|"breach, inform + pass<br/>name holder + expiry"| P
-  P -->|"peer claim expires"| U
+  P -->|"finding: inform + pass<br/>name holder + expiry"| P
+  P -->|"lifetime elapsed at run start"| X
+  X -->|"selected run accepts"| U
+  X -->|"run refuses"| D["durable claim bytes unchanged"]
+  D --> X
 ```
 
-**Invariant —** A live breach on a shared hot subject is claimed, and claims are
-repository-shared so peers see them. Latches are lane-local; claims are not.
+**Invariant —** Latches and claims share one repository authority below the Git
+common directory, so every linked worktree sees the same pressure state.
 
-**Invariant —** Claims are time-boxed and self-pruning. An abandoned claim
-expires without anyone collecting it.
+**Invariant —** Claims are time-boxed. A run treats an elapsed claim as absent
+and proposes pruning it, but only an accepted run publishes that removal. A
+refusal leaves the durable claim bytes unchanged for the same reconciliation on
+the next attempt.
 
 **Invariant —** The earliest claimant owns a contested subject, with a
 deterministic tie-break, so ownership never depends on scan order.
@@ -201,40 +244,34 @@ deterministic tie-break, so ownership never depends on scan order.
 Only unclaimed findings block. The redirect names the holder and the expiry, so
 the reader knows whether to wait or to move to another seam.
 
-**Invariant —** Claiming requires a named actor. A read-only scan neither
-records claims nor observes them, so investigation never perturbs the shared
+**Invariant —** Every run binds one named actor and the run-start claims into
+its verdict semantics. A revision-selected run may observe those claims, but it
+rejects its reconciled proposal before durable publication, so investigation
+never creates, renews, expires, prunes, transfers, heals, or latches shared
 state.
 
 ---
 
 ## The instruments
 
-Each measure, what it counts, and how an exception is expressed. Thresholds are
-policy; the shapes are the contract.
+The compiled manifest is the exact authority for instrument membership, stable
+identity, and report order. This document owns the common semantics; it does not
+duplicate that executable inventory. Current instruments fall into these
+families:
 
-| instrument | measures | limit | waiver |
-| --- | --- | --- | --- |
-| file shape | lines and bytes per source file | base + flex, latching | scoped rule, or shrink |
-| routine complexity | cyclomatic number and length per routine, comments included | base + flex, latching | scoped rule, or extract |
-| repo-truth documents | characters in each product-truth document | base + flex, latching | scoped rule, or cut |
-| magic numbers | bare literals in examine positions, above a magnitude floor | differential against a baseline | name the value |
-| repo shape | namespace packages, path names, generic split names | none — any offender | generated-path exemption |
-| staging | partially staged files | none — the fully-staged rule | stage the rest |
-| merge integrity | a merge whose index still equals its first parent | none | not applicable |
-| local paths | absolute machine-home path literals | none | none |
-| environment literals | undeclared environment names in source | none | a marker comment at the site |
-| environment ledger | the manifest of env names versus those observed | set equality | amend the manifest |
-| reachability | code only the tests reach | a debt ceiling, default zero | named allowlist entry |
-| unused symbols | top-level symbols with no production reference | zero | named exemption entry |
-| assertion-free tests | tests that assert nothing | a debt ceiling, default zero | declare the assertion helper |
-| private coupling | tests reaching into production internals | zero beyond the allowlist | named allowlist record |
-| markdown links | tracked link targets that differ in case | none | none |
-| taste | configured low-value words in prose | none | per-word disable, or scope |
-| configuration integrity | key validity, disablement consumers, tracked trust | set equality | amend the declaration |
-| type checking | the project's own package roots, and the browser scripts | zero errors | the checker's own suppression |
-| suite seam | a landing that reaches past the tests it ran | binary | declare the seam |
-| mutation coverage | whether tests constrain the code | differential against a ratchet | a reasoned standing entry |
-| subsumption | tests whose coverage another test contains | none — reports | not applicable |
+| family | contract | representative evidence |
+| --- | --- | --- |
+| repository integrity | refuse a candidate whose merge, phase, staging, path, document, link, or configuration facts violate a binary or equality rule | tree and index identities, canonical paths, declared versus observed sets |
+| source and toolchain | run the selected formatter, compiler, static-analysis, environment, and prose arms over the captured source | exact tool identity, examined inputs, diagnostics, terminal outcome |
+| structural pressure | measure bounded source and document properties without allowing them to regress invisibly | measured subjects, base and effective ceilings, durable latch transaction |
+| differential quality | compare the selected candidate with admitted baseline or ratchet evidence | baseline identity, candidate identity, additions and removals |
+| test evidence | join executed tests, source reach, mutation disposition, suite seams, and subsumption by one source identity | executed test identities, covered sources, mutation identities, retained comparisons |
+
+The ordinary commit selector runs the arms locally reached by the staged change
+plus its always-on integrity arms. A known compiled authority change is the
+deliberate exception: it selects every applicable arm and target with exhaustive
+reach. Explicit long-running studies consume their own complete test-evidence
+graph; they are not silently folded into an ordinary commit attempt.
 
 **Invariant —** A limit is either a **threshold** (a number a subject must stay
 under), a **set equality** (declared versus observed), a **differential** (this
@@ -244,17 +281,17 @@ limit, and a study says which kind it is.
 **Invariant —** A differential measure fails only on regression. A repository is
 permitted to be imperfect; it is not permitted to get worse.
 
-**Invariant —** Some ceilings are zero and stay there. Where "a little" is already
-the whole problem — code only tests reach, tests that assert nothing — the debt
-ceiling is not a dial to turn.
+**Invariant —** A binary integrity rule and an explicitly zero ceiling stay
+zero. Where one occurrence is already the whole defect, a policy value cannot
+quietly turn the rule into an allowance.
 
 **Invariant —** A measure whose baseline cannot be read must not read as clean.
 This is the one place where the *unknown is not clear* rule is most easily lost,
 because a missing baseline and an empty baseline produce the same set.
 
-Every instrument declares exactly one kind of limit and returns one of three
-verdicts. The instrument table owns the exhaustive instrument-to-kind mapping; this
-diagram owns the type structure.
+Every instrument declares exactly one kind of limit and returns typed terminal
+evidence. The compiled declaration owns that instrument-to-kind mapping; this
+diagram owns the shared type structure.
 
 ```mermaid
 classDiagram
@@ -262,22 +299,28 @@ classDiagram
 
   class Instrument {
     +measures
-    +run() Verdict
+    +run() TerminalEvidence
   }
-  class Verdict {
+  class TerminalEvidence {
     <<enumeration>>
-    clean
-    findings
-    cannot_run
+    passed
+    failed
+    unavailable
+    unsupported
+    unmeasured
+    timed_out
+    explicit_skip
+    not_applicable
+    excluded
   }
   class Limit {
     <<abstract>>
   }
   class Threshold {
     +base
-    +flex
-    +seeded_jitter
-    +lane_local_latch
+    +elastic_headroom
+    +provenance_seed
+    +repository_shared_latch
   }
   class SetEquality {
     +declared
@@ -296,10 +339,10 @@ classDiagram
   Limit <|-- Differential
   Limit <|-- Binary
   Instrument "1" *-- "1" Limit : declares
-  Instrument ..> Verdict : returns
+  Instrument ..> TerminalEvidence : returns
 
-  note for Verdict "clean echoes its limits, findings render as a board, cannot-run names the missing capability"
-  note for Differential "an unreadable baseline never reads clean"
+  note for TerminalEvidence "only passed, not-applicable, and excluded admit; every other state retains a named refusal"
+  note for Differential "an unreadable baseline never passes"
 ```
 
 A waiver is independent of the limit taxonomy. It is tracked and enumerable,
@@ -349,27 +392,28 @@ classDiagram
 
 ```mermaid
 flowchart TD
-  S{"selector"} --> T["tracked — the index"]
-  S --> G["staged — index against HEAD"]
-  S --> B["baseline — working tree against a ref"]
-  S --> P["explicit paths"]
-  T --> E[exclusions]
-  G --> E
-  B --> E
-  P --> E
-  E --> C["content read from the working tree"]
+  S{"one selector"} --> G["ordinary gate — staged index against HEAD"]
+  S --> T["focused scan — one named revision"]
+  G --> C["materialize one immutable source + digest"]
+  T --> C
+  C --> E["apply exclusions inside the captured source"]
+  E --> R["report bound to the same source identity"]
 ```
 
-**Invariant —** Selectors name files; content is read from the working tree. A
-name chosen from the index is scanned with whatever the file currently says, so
-a study reports on the tree the author is actually looking at.
+**Invariant —** Selection and content have one authority. The ordinary gate
+reads staged bytes only; a focused selector materializes one named revision. No
+result combines names from one source with bytes from another.
 
-**Invariant —** The selectors are mutually exclusive. Ambiguous selection is
-refused rather than resolved by precedence.
+**Invariant —** One run has exactly one selector. Staged and revision sources
+cannot be combined or resolved by precedence.
 
-**Invariant —** Exclusions are applied to every selector, and the runtime state
-directory is always excluded. A study can never take the appliance's own
-bookkeeping as evidence about the repository.
+**Invariant —** The captured source cannot move under a run. A digest mismatch,
+missing selected object, or source change refuses instead of producing evidence
+for a hybrid tree.
+
+**Invariant —** Exclusions are applied inside every captured source, and runtime
+state remains outside the scanned authority. A study can never take the
+appliance's own bookkeeping as repository evidence.
 
 **Invariant —** The fully-staged rule is the intersection of staged and unstaged
 names: a file partly staged is refused, because every other measure would
@@ -428,9 +472,9 @@ second one.
 **Invariant —** A finding's identity survives the board's own normalization, which
 is what makes it usable as a key rather than a label.
 
-**Invariant —** A completed predecessor never blocks re-filing. Recurrence files a
-fresh task carrying an annotation that names the resolved one, so the link
-between a recurrence and its prior fix is recorded rather than inferred.
+**Invariant —** A completed task with the same finding identity never blocks
+re-filing. Recurrence files a fresh task carrying an annotation that names the
+resolved one, so the link to its prior fix is recorded rather than inferred.
 
 **Invariant —** Study work is filed **deferred**, and a deferred row carries no
 due date, so time spent parked does not consume the priority clock.
@@ -447,53 +491,61 @@ pre-seed or suppress its own filing.
 
 ## Isolation
 
-Some measures must run the code to measure it. Those run nowhere near the
-operator's tree.
+The one private immutable tree retained by the run is the sole selected-source
+authority. An arm consumes that tree directly or derives a verified exact sealed
+mirror with separate outputs; the caller's checkout is never an execution
+workspace.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Live : disposable checkout of the caller's effective tested content, owning process recorded
-  Live --> Measuring : run the measure
-  Measuring --> Trash : renamed out of the live namespace — the commit point
-  Trash --> [*] : deleted
-  Live --> Dead : owner gone
-  Measuring --> Dead : owner gone
-  Trash --> Dead : crash mid-delete — debris, unambiguously dead
-  Dead --> [*] : scavenged by the next run
-  note right of Live
-    the caller's worktree stays read-only for the whole run
+  [*] --> Building : acquire companion lock and private workspace
+  Building --> Sealed : materialize exact selected objects, verify identity and read-only seal
+  Sealed --> Measuring : execute from the retained tree or a verified sealed mirror
+  Measuring --> Releasing : owner drops the retained tree
+  Releasing --> [*] : make removable, remove workspace, then lock
+  Building --> Abandoned : owner disappears
+  Sealed --> Abandoned : owner disappears
+  Measuring --> Abandoned : owner disappears
+  Abandoned --> [*] : a later run acquires the companion lock and reclaims the root
+  note right of Sealed
+    the caller's checkout stays read-only for the whole run
   end note
 ```
 
-**Invariant —** The measured copy reproduces the caller's **effective tested
-content** — what the tests would actually see — which is deliberately broader
-than any commit-time selector.
+**Invariant —** Isolation preserves selection rather than widening it. The
+private tree contains the exact staged-index or named-revision objects already
+bound to the run's source identity. Every selected arm consumes that authority
+directly or through a verified exact sealed mirror; a mirror cannot add or
+replace selected source.
 
 **Invariant —** The caller's checkout is read-only for the whole run, so
 concurrent control-plane commands and supervisor probes keep observing reality.
 
-**Invariant —** Retirement is atomic by rename: a root is renamed out of the live
-namespace before deletion, so a crash mid-delete leaves debris that is
-unambiguously dead rather than a half-live run.
+**Invariant —** A companion lock is the liveness authority for a private root.
+Cleanup reclaims a root only after acquiring that exact lock; a directory name or
+process-shaped suffix is never enough evidence that the root is abandoned.
 
-**Invariant —** Each root records its owning process, and the next run scavenges
-roots whose owner is gone. Cleanup is a property of the next run rather than of
-the crashed one.
+**Invariant —** Cleanup lifts the read-only seal only while holding the lock,
+removes the workspace first, and unlinks the companion lock only after removal
+succeeds. An interrupted cleanup therefore retains the evidence required for a
+later safe reclamation.
 
 ---
 
 ## What is policy and what is shape
 
-**Shape** — the gate's ordering and collect-all verdict, the three outcomes, the
-deferred ledger, base-flex-latch, retirement, authorship-seeded jitter,
-claim-based redirection, the four kinds of limit, the four forms of waiver,
-idempotent filing, and isolation-by-disposable-copy.
+**Shape** — exact staged-path selection, one immutable source identity, canonical
+report order, collect-all typed terminal evidence, accepted transactional state,
+base-headroom-latch pressure, provenance-retaining variation, claim-based
+redirection, partial reconciliation, the four kinds of limit, the four forms of
+waiver, idempotent filing, and one retained immutable selected-source authority
+with verified exact sealed execution mirrors.
 
-**Policy** — the numbers, and the instrument set itself. File and routine sizes,
-document budgets, debt ceilings, the flex ratio and jitter width, claim
-lifetime, which literals count as magic, which words offend taste, which
-languages a measure covers. A repository retunes these; the packaged values are
-defaults, not the mechanism.
+**Policy** — the compiled instrument manifest and the declared values each
+instrument consumes: thresholds, headroom and variation, claim lifetime,
+recognized literals and prose, admitted paths, ratchets, and tracked waivers.
+Policy can select and tune a known mechanism; it cannot create a new executable
+arm or weaken the shape that admits its evidence.
 
 **The test:** if changing it would make a *different* kind of thing enforceable,
 it is shape. If it only moves where the line sits for the same kind of thing, it

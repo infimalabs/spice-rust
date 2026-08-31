@@ -21,10 +21,10 @@ identified by its language and enclosing loop.
 
 ---
 
-## What transforms
+## Core transformations
 
-Every loop in the appliance is the lifecycle of one of these. Nothing else has a
-lifecycle.
+These are the product's operator-facing loops. Supporting authorities may carry
+their own typed states; this map is a navigation aid, not a closed-world schema.
 
 ```mermaid
 erDiagram
@@ -37,61 +37,130 @@ erDiagram
     AGENT ||--o{ STEERING_ITEM : "must answer"
 ```
 
-Read it as: a **team** groups **lanes**; a lane hosts an **agent** as its
+Read it as: a **team** groups **lanes**; each lane is an independently steerable
+worktree seat and hosts an **agent** as its
 occupant, which claims a **task** and emits **messages**; the operator forms a
 **draft** in that lane, which becomes a **steering item** the agent must answer.
-Nothing outside the set has a lifecycle.
-
-Seven nouns, six loops: **team and lane share one**, because every transition a
-team has — created, merged, split, closed — is a transition of the lane surface
-that renders it, and specifying them apart would split one machine across two
-documents.
+Team topology and lane lifecycle meet on the same console without becoming the
+same entity.
 
 ---
 
 ## L-TASK — the unit of work
 
-**Intent.** A task moves through named phases, and each advance is an attested,
-irreversible publication.
+**Intent.** A task moves through named phases, and every accepted advance is an
+attested journal fact. An advance that changes the tree additionally publishes
+one mutating landing.
+
+Stored workflow status is one small machine:
 
 ```mermaid
 stateDiagram-v2
-  [*] --> ready: filed with origin
-  ready --> claimed: allocator hands out
-  claimed --> landed: phase advance publishes
-  landed --> ready: next phase in flow
-  landed --> [*]: flow exhausted
-  claimed --> ready: claim expires or unclaims
+  direction LR
+  [*] --> pending: task&#58;&#58;added
+  pending --> completed: accepted final phase
+  pending --> deleted: task&#58;&#58;deleted
+  completed --> [*]
+  deleted --> [*]
+```
+
+Claim disposition is a second, independent machine:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> active: claim&#58;&#58;won
+  active --> freed: claim&#58;&#58;freed
+  active --> lapsed: claim&#58;&#58;lapsed
+  freed --> [*]
+  lapsed --> [*]
+```
+
+The surrounding fact and command vocabulary does not add dispositions:
+
+```mermaid
+flowchart LR
+  A["active claim"] --> R["claim::renewed<br/>lease only"] --> AR["same active claim"]
+  A --> C["claim::carried<br/>successor occupant"] --> AC["active retained"]
+  A --> B["claim::rebound<br/>residency repaired"] --> AB["active retained"]
+  A --> S{"exact steal admitted?"}
+  S -- yes --> W["new claim::won"] --> N["new holder active"]
+  S -- no --> F["refusal; no replacement"]
+```
+
+Readiness and possession are projections over those heads, not extra states in
+either machine:
+
+```mermaid
+flowchart LR
+  W["pending, no completion,<br/>no deferral"] --> E["eligible / ready<br/>(derived)"]
+  R["route and assignment admit actor;<br/>dependencies settled"] --> E
+  U["no active claim"] --> E
+  A["claim disposition = active"] --> H["actively possessed / claimed<br/>(derived)"]
+```
+
+Landing is the Git consequence of one class of accepted advance, never a stored
+workflow or claim state:
+
+```mermaid
+flowchart TD
+  A["accepted phase advance<br/>journal fact"] --> X{"flow exhausted?"}
+  X -- no --> P["next phase;<br/>status remains pending"]
+  X -- yes --> C["status becomes completed"]
+  A --> T{"tree changed?"}
+  T -- yes --> L["one attested<br/>landing / merge"]
+  T -- no --> J["no Git merge"]
 ```
 
 **Invariants**
 
-- Every task names its origin (`ack:<key>` or `task:<handle>`). No
-   assignable task exists without one.
+- Every task names an origin realm with the open wire shape
+   `<nonempty-class>:<nonempty-value>`. `ack:<key>` and
+   `task:<born-stamp>` are ordinary conventions; typed system routes
+   conventionally use proved `gate:<report-digest>` or
+   `doc:<preview-digest>` causes. Other authored classes pass unchanged.
+- `workflow.status` is exactly `pending`, `completed`, or `deleted`. Deferral,
+   dependency blocking, readiness, active possession, and landing are not
+   workflow statuses.
 - At most one active claim per actor, at most one actor per claim.
-- A phase advance publishes exactly one merge whose first parent is the
+- `claim::won` mints an `active` head; `claim::renewed`, `claim::carried`, and
+   `claim::rebound` retain `active` while changing their named lease or residency
+   fields. An exact steal is a guarded replacement that emits a new
+   `claim::won`, not a `stolen` disposition.
+- Every phase transition is accepted into the durable task journal and appears
+   through the board projection, including a transition that changes no tree.
+- A mutating phase advance publishes exactly one merge whose first parent is the
    baseline; the tree is computed before the working tree is mutated, so the
    visible terminal state is either the untouched pre-merge tree or a
    recoverable merge. Never a half-installed conflict.
 - The publication carries `Task-Key`, `Task-Project`, `Task-Phase`,
-   `Task-Session`. First-parent history is therefore the complete ledger of
-   attested work.
-- A claim that expires returns the task to ready without losing the work
-   committed under it.
+   `Task-Session`. First-parent history is the ledger of mutating landings, not
+   the authority for every phase transition.
+- An accepted lapse transition changes claim disposition to `lapsed` without
+   losing work committed under the claim. Readers then recompute readiness from
+   every current eligibility predicate.
 - Self-authored review is the last-resort eligibility class, never a
    refusal. A peer wins whenever one exists; a solo agent still progresses.
 - A review that changes nothing still advances the phase. Absence of a
    commit is not absence of review.
 
-**Policy** — claim TTL 3600s, claim context window 300s, public flow
-`todo` to `review`, private flow `todo`, hidden `.oops` flow `plan`, deferred to
-a far-future wait, anti-self-review urgency negative 100.
+**Policy** — a manual claim opens with a 3600s lease and a 7200s renewal maximum,
+and records the lane's exact accounted source boundary. With no named flow,
+a task lacking acceptance receives `plan` to `todo` to `review`; every other
+task receives `todo` to `review`, independent of visibility. A hidden `.oops`
+row is parked in `plan` but retains the complete `plan` to `todo` to `review`
+flow and must be promoted explicitly. Self-authored review is a last-resort
+eligibility class, not an urgency coefficient.
 
-**Incidental** — the task store, the handle alphabet, phase *names*, the number
-of phase slots.
+**Incidental** — the task store, the handle alphabet, concrete phase names, and
+flow length beyond the nonempty, unique-name membership law. The three workflow
+statuses and three claim dispositions are not incidental.
 
-**Acceptance** — `git log --first-parent` reconstructs the full ledger; a killed
-agent's task is reclaimable; a solo agent completes a review phase.
+**Acceptance** — journal replay and the board reconstruct every accepted phase
+transition; first-parent history of the explicitly resolved integrated baseline
+or release commit reconstructs the mutating landing subset; after an accepted
+lapse, the task becomes selectable if every other predicate admits it; a solo
+agent completes a review phase.
 
 ---
 
@@ -102,101 +171,165 @@ agent answering it.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> durable: written atomically
-  durable --> delivered: hook carries it in
-  delivered --> durable: agent silent
-  delivered --> acked: ACK in transcript
-  delivered --> refused: NACK in transcript
+  [*] --> live: journal publication accepted
+  live --> acked: agent ACK
+  live --> declined: agent NACK
+  live --> canceled: operator cancellation
+  live --> lapsed: lapse transaction accepted
+  live --> deadlettered: delivery cannot complete
+  lapsed --> live: recovery retains presentation stage
+  deadlettered --> live: recovery retains presentation stage
   acked --> [*]
-  refused --> [*]
+  declined --> [*]
+  canceled --> [*]
+```
+
+```mermaid
+flowchart LR
+  J["journal standing is live<br/>with retained presentation stage"] --> P["disposable inbox projection"]
+  P --> V["vendor post-tool boundary"]
+  P --> S["next top-level shell boundary"]
+  V --> O["one readout with shared suppression"]
+  S --> O
+  O --> U["observation only;<br/>journal standing and stage unchanged"]
 ```
 
 **Invariants**
 
-- The item is durable before it is delivered. Delivery is retryable;
-   the item is not recreated.
-- Only a semantic acknowledgement in the transcript retires an item. A
-   read never does.
-- Refusal retires the item exactly as acceptance does, and is recorded
-   as a distinct disposition. Refusal must be as reachable as acceptance
-   everywhere acceptance is taught.
-- Undelivered-and-unanswered escalates on a stable lineage key. A resend
+- The journal fact exists before any disposable filesystem projection is
+   delivered. Delivery is retryable; recovery preserves identity, lineage,
+   presentation stage, and presentation history.
+- A read changes neither disposition nor presentation stage. At every live
+   stage, `acked`, `declined`, `canceled`, `lapsed`, and `deadlettered` are the
+   same typed exits.
+- A reasoned refusal retires the item as `declined`, just as acknowledgement
+   retires it as `acked`. Decline must be as reachable as acknowledgement
+   everywhere acknowledgement is taught.
+- Unanswered intent escalates on a stable lineage key. A resend
    is the same intent insisting, not a new intent.
-- Delivery reaches the agent during non-shell work, not only at shell
-   boundaries.
-- Submit cost is independent of backlog depth — identity is derived from
-   names and stat metadata, never by reading queued bodies.
+- Any still-live directive may move to `deadlettered` through an accepted
+   transaction; prior delivery is not a prerequisite.
+- Delivery is eligible at each admitted agent boundary: the vendor's post-tool
+   hook and the next top-level shell command. Both consume the same durable
+   delivery decision and suppression state; descendant shells remain unmodified
+   and cannot duplicate the wrapper.
+- Submit cost is independent of backlog depth; the journal allocates identity
+   without reading queued bodies.
 
-**Policy** — 24h expiry, priority classes drive escalation cadence.
+**Policy** — 24h lapse threshold; every priority class follows the same named
+escalation cadence.
 
-**Incidental** — the file format, the key alphabet, the delivery mechanism.
+**Incidental** — the inbox projection's file format and the key alphabet.
 
-**Acceptance** — kill the browser mid-send: the item survives. Kill the agent:
-the item is still pending. Answer it: the count drops by exactly one.
+**Acceptance** — before the authority returns a live durable key, the
+browser-local queued or sent prediction may be lost with the browser. After the
+key returns, kill the browser or the agent: the item survives and remains
+pending. Answer it: the count drops by exactly one.
 
 ---
 
 ## L-AGENT — the work-availability loop
 
-**Intent.** Capacity follows work. A lane with nothing to do stops; a board with
-work to do wakes one. The operator never manages agent count by hand.
+**Intent.** Capacity follows work. Lifecycle authority may seat one new occupant
+in a vacant lane when derived eligible work warrants it. Every occupant turn
+ends by vacating its lane; only a later serialized lifecycle decision may launch
+another. The operator never manages agent count by hand.
+
+The detached supervisor records the phase of one process turn:
 
 ```mermaid
 stateDiagram-v2
-  [*] --> stopped
-  stopped --> starting: wake decision
-  starting --> running
-  running --> idle: nothing claimable
-  idle --> running: work claimed
-  idle --> stopped: lane closed or drained
-  running --> starting: renewal
+  [*] --> starting: supervisor request published
+  starting --> running: process and session proven
+  starting --> failed: launch or proof failure
+  running --> exited: observed process exit, any code
+  running --> failed: wait or observation failure
+  exited --> [*]
+  failed --> [*]
+```
+
+The UI independently derives lane presentation; pending steering outranks
+liveness:
+
+```mermaid
+flowchart TD
+  Q{"pending steering?"}
+  Q -- yes --> QUEUED["queued"]
+  Q -- no --> L{"resident liveness projection"}
+  L -- running --> RUNNING["running"]
+  L -- running-stale --> STALE["running-stale"]
+  L -- "vacant, session declared" --> BOUND["bound"]
+  L -- "vacant, never bound" --> UNBOUND["unbound"]
+```
+
+Durable resident lifecycle is a third layer. Its staged vocabulary is separate
+from both supervisor phase and UI status; resident replacement may move directly
+to `dark` while detached supervisors remain live:
+
+```mermaid
+flowchart LR
+  S["seated"] --> Q["quiescing"] --> D["draining"] --> T["terminating"] --> K["killing"] --> V["verifying"] --> X["dark"]
+  S -. "resident replacement;<br/>supervisors survive" .-> X
 ```
 
 The wake decision itself is the hardened part:
 
 ```mermaid
 flowchart TD
-  B["board scan"] --> R{"ready count is at least 2?"}
-  R -- yes --> S{"chosen row READY<br/>for at least 3s?"}
+  B["board scan"] --> R{"derived eligible count<br/>is at least 2?"}
+  R -- yes --> S{"newest eligible origin<br/>aged at least 3s?"}
   R -- no --> L{"lone row aged<br/>at least 3 min?"}
-  S -- yes --> W["wake ONE stopped lane"]
+  S -- yes --> W["select ONE vacant lane"]
   S -- no --> B
   L -- yes --> W
   L -- no --> B
-  W --> C["capacity, selection, claim, start<br/>= one serialized decision"]
+  W --> C["capacity, selection, claim::won,<br/>and supervisor start<br/>= one serialized decision"]
   C --> B
 ```
 
 **Invariants**
 
-- Wake starts **exactly one** lane per decision. Capacity check,
-   candidate selection, claim, and startup are a single serialized decision; a
-   later inventory refresh must observe the started lane before capacity can
-   expand again.
-- Two ready tasks are the normal trigger — one for the waking lane to
-   claim, one left on the board. READY excludes active claims, so already-running
-   lanes are not part of the backlog count.
+- Supervisor phase is exactly `starting`, `running`, `exited`, or `failed`; UI
+   lane presentation is exactly `queued`, `running`, `running-stale`, `bound`,
+   or `unbound`; resident lifecycle is exactly `seated`, `quiescing`, `draining`,
+   `terminating`, `killing`, `verifying`, or `dark`. These vocabularies do not
+   form one machine.
+- Every agent turn or process exit, including code zero, ends that occupant and
+   vacates the lane. `working` and `waiting` may describe activity inside one
+   supervisor's `running` turn; neither persists after its exit. A backgrounded
+   descendant's later exit is not a wake signal.
+- Wake launches **exactly one** occupant per decision. Capacity check, candidate
+   selection, claim win, and startup are a single serialized decision; a later
+   inventory refresh must observe the occupied lane before capacity can expand
+   again.
+- Two ready tasks are the normal trigger — one for the new occupant to claim,
+   one left on the board. READY is a derived eligibility projection and
+   excludes active claims, so occupied lanes do not inflate the backlog count.
 - A single ready task is never stranded. After the starvation age, one is
    enough. This is an *age*, not a retry interval.
-- A chosen row must have been READY for a settle interval before it can
-   wake a lane, so a burst does not beat a running agent's own done-to-next cycle
-   or grab a row the instant it leaves plan phase. A row already older than the
-   settle interval, or one riding the starvation escape, starts immediately.
+- No row is chosen before settling. With at least two eligible rows, the newest
+   READY origin in the complete eligible set must age through the settle
+   interval before selection; any newly eligible row extends that horizon. This
+   keeps a burst from beating a running occupant's own done-to-next cycle. A
+   lone row riding the starvation escape launches immediately once its own age
+   passes.
 - Rendering never launches. The snapshot, the live bus, and the UI
-   project settled decisions; no read path can start or renew an agent.
+   project settled decisions; no read path can start or renew an occupant.
 - Decisions for one worktree are serialized; sibling lanes proceed
    independently.
 
 **Policy** — start threshold 2, starvation 180s, settle 3s, ensure retry 5s.
 
-**Incidental** — the scan trigger, the process supervisor, the transport.
+**Incidental** — the scan trigger, process primitive, and transport. The
+supervisor-phase, UI-presentation, and resident-lifecycle vocabularies are not.
 
-**Acceptance** — file two ready tasks with every lane stopped: exactly one lane
-starts. File one and wait: it starts after the starvation age, not before. File
-six at once: lanes come up one decision at a time, not six at once.
+**Acceptance** — file two eligible tasks with every lane vacant: exactly one new
+occupant starts. File one and wait: one starts after the starvation age, not
+before. Let any turn exit, including code zero: its lane becomes vacant. File a
+burst at once: occupants still come up one decision at a time.
 
 > **Rendering never launches is the invariant most likely to be lost.** It is
-> very natural to let a lane "ensure" its agent while rendering. That makes
+> very natural to let a lane "ensure" an occupant while rendering. That makes
 > opening a browser tab a
 > side-effecting act and turns a refresh into a fleet-wide launch storm.
 
@@ -204,8 +337,9 @@ six at once: lanes come up one decision at a time, not six at once.
 
 ## L-LANE — the place
 
-**Intent.** The lane is the operator's, not the agent's. It is the stable
-address for attention, drafts, filters, and history.
+**Intent.** A lane is an independently steerable worktree seat, not the agent.
+It is the stable address for attention, drafts, and history; a team or lineage
+groups one or more lanes into one console and owns their shared task policy.
 
 ```mermaid
 flowchart LR
@@ -214,29 +348,36 @@ flowchart LR
   O -->|"renewal"| OR["occupied<br/>(successor replaces occupant)"]
   O -->|"team merged"| F["fused"]
   F -->|"team split"| OS["occupied"]
-  O -->|"team closed"| X(("closed"))
+  O -.->|"Close team"| H["hidden<br/>(this browser only)"]
+  F -.->|"Close team"| H
 ```
 
 **Invariants**
 
-- Lane is not agent. Renewal replaces the occupant; history, drafts, filters,
-   scroll position, and speech state survive.
-- A lane is a **team of worktrees**, not one worktree. A team may hold
-   many members; the singular case is the degenerate one, not the model.
-- Topology is server truth. The client never mounts a lane from local
-   storage; local storage holds presentation preferences only.
+- Lane is not agent. Renewal replaces the occupant; history, drafts, and scroll
+   position survive. The lineage and its shared task policy also remain because
+   renewal does not move the lane. Moving a lane to another lineage subjects it
+   to that lineage's policy; policy never follows the lane across that move.
+- A lane names exactly one worktree seat. A team may hold one or many lanes;
+   the singular team is the degenerate topology, not a different type.
+- Topology is server truth. The client never mounts a lane from local storage;
+   local storage holds only bounded narration cursors, while in-memory reducers
+   hold presentation preferences.
 - A fused team renders one merged stream on one host; every member
    remains its own concrete send address.
-- Member order is one ordering, used for composer order, accent
-   assignment, and attribution — and it is stable across transient refreshes. A
+- Member order controls composer order only. Message chronology, accent, and
+   attribution do not derive from position. Accent derives from stable lane
+   identity, may repeat, and never substitutes for explicit lane attribution. A
    member that momentarily fails to resolve keeps its seat rather than
    re-entering at the tail.
-- Closing is requested, not performed. The lane disappears when the
-   authority says so, and a lane holding unsubmitted intent resists removal.
+- `Close team` only inserts the lineage into that browser reducer's hidden set.
+   It sends no authority command, changes no membership, and neither inspects
+   nor erases a draft. A fresh browser mount renders the authoritative
+   subscription set again.
 - Message order is a pure function of the messages, never of member
    order. Reordering composers must not reorder the stream.
 
-**Policy** — six members maximum, matching the six-slot accent palette.
+**Policy** — membership is not bounded by the finite accent palette.
 
 **Incidental** — tiling, fuse gestures, menu placement, the accent palette
 itself.
@@ -272,40 +413,47 @@ stateDiagram-v2
 
 - One shard per member; each shard is a concrete send address. Nothing
    is ever broadcast to a team.
-- A draft is detached at submit and restored intact on failure —
-   including attachments and quote drafts, concatenated newest-last.
+- A draft is detached at submit. A typed wake, residency, or write refusal or
+   fault restores it intact — including attachments and quote drafts,
+   concatenated newest-last. Transport loss requeues in memory instead.
 - Sends drain serially per lane. A rejection stops the queue and returns
    every undelivered draft.
 - The pending count is a floor over backend truth, retired by key
    identity — never by decrement, never by timeout.
-- Unsubmitted intent is protected: closing a lane or leaving the page
-   requires confirmation.
+- Unsubmitted intent is protected on page exit: an unsafe draft or queued
+   submission installs the browser's `beforeunload` confirmation guard.
+   Browser-local `Close team` only suppresses rendering and does not erase it.
 - A late completion never steals focus the operator has since moved.
-- Shard order is member order is accent — so the colour of a card in the
-   stream identifies the shard that would answer it.
+- Shard order follows member order. Accent follows stable lane identity and may
+   repeat, so every card explicitly names the lane that would answer it.
 - The band reports state the operator did not ask for: age, run state,
    pending, claimed task. It is a status surface first and a composer second.
 
-**Policy** — 8 attachments, 8 MB each.
+**Policy** — up to 8 attachments per message, 8 MiB each after decoding.
 
 **Incidental** — the strip's geometry, which fields show, truncation, iconography.
 
-**Acceptance** — submit into a dead backend: the text comes back. Submit to a
-fused team: exactly one worktree receives it. Reorder shards: the stream does not
-move, but accents follow.
+**Acceptance** — after the browser accepts the submission action, a transport
+loss requeues the submission for socket replay rather than returning it to the
+composer. A typed wake, residency, or write refusal restores the affected text.
+Submit a fused team with several nonempty shards: the gesture enqueues one
+concrete-addressed submission per nonempty shard. Each resulting message
+reaches exactly one worktree and is never broadcast. Reorder shards: neither
+the stream nor existing accents change.
 
 ---
 
 ## L-MESSAGE — the mosaic
 
 **Intent.** Many concurrent agents produce messages continuously; the reader
-must be able to hold their place. The lattice exists so that new content does
-not move old content.
+must be able to hold their place. The lattice latches each card's horizontal
+placement, while same-frame scroll compensation preserves an off-top reader's
+viewport as vertical growth settles.
 
 ```mermaid
 flowchart TD
   M["message arrives"] --> S{"what changed?"}
-  S -- "newest only" --> I["insert, existing cards untouched"]
+  S -- "newest only" --> I["insert, existing spans stay latched"]
   S -- "older batch" --> B["backfill downward"]
   S -- "content only" --> C["re-measure that card alone"]
   S -- "geometry" --> F["full replay, pure in creation order"]
@@ -321,28 +469,37 @@ flowchart TD
    Enforced by skipping the write, not by relying on idempotence.
 - New content places by insert. Existing cards are never re-decided,
    re-measured, or re-spanned.
-- A card's column and span are decided once. Only its vertical position
-   may settle afterwards. Nothing hops sideways.
-- Growth pushes down transitively along the original layout; shrink
-   keeps the reserved space. Zero movement outranks reclaiming a row.
-- Layout is a pure function of (creation order, measured content,
-   geometry). Same inputs, same layout, on any machine, in any order of arrival.
-- Pending content reserves its footprint so resolution is exact or
-   shrinking. A card is always measured whole, never as its placeholder alone.
-- A scrolled reader is compensated in the same frame; a reader at the
-   top sees the push-down, because there it is the signal.
-- Nothing animates until the board first settles, and an unmeasurable
-   surface renders nothing at all rather than guessing.
+- A card's column and span stay latched between full geometry replays. During
+   incremental content changes, only its vertical position may settle; nothing
+   hops sideways.
+- Growth pushes down transitively along the original layout. A frozen card's
+   shrink keeps its reserved rows; a liquid card adopts the smaller height and
+   replays the liquid region. Preserving a frozen card's reservation outranks
+   reclaiming a row.
+- Layout is a pure function of committed creation order, measured content, and
+   geometry. Replays of that same ordered input produce the same layout on any
+   machine; arrival order itself is an input, and later source-vector reorder
+   does not rewrite it.
+- A pending image uses a generic placeholder. Load or error increments the
+   content revision and remeasures the whole card at its latched horizontal
+   span; changed height may grow or shrink and settles vertically.
+- A reader more than 80px from the top is compensated in the same frame.
+   Positions from 0 through 80px use near-top behavior and show the push-down,
+   because there it is the signal.
+- Nothing transitions until the board first settles. An unmeasurable surface
+   keeps cards readable in ordinary base flow but commits no lattice geometry
+   or fingerprint until a measurable width arrives.
 
-**Policy** — 12 tracks, wide tier at twice the width when a card measures tall, freeze
-depth 2, settle 500ms or first deliberate gesture, resize debounce 200ms.
+**Policy** — 12 tracks, wide tier at twice the width when a card measures tall,
+freeze depth 2, resize debounce 200ms.
 
 **Incidental** — track count, span ladder, the placement key's tie-breakers,
 tween duration, the entire visual style.
 
 **Acceptance** — replay a recorded event log: identical positions. Resolve two
-pending cards in either order: identical layout. Scroll and let content arrive:
-the viewport does not move.
+pending cards in either order: identical layout. Let content arrive while more
+than 80px from the top: the visible anchor keeps its viewport offset. Repeat
+from 0 through 80px: the push-down appears without a position tween.
 
 ---
 
@@ -353,7 +510,7 @@ appliance's most distinctive quality and the hardest to recover once lost.
 
 ```mermaid
 flowchart LR
-  J["reader's frame of reference"] --> Movement["content never moves<br/>unless it changed"]
+  J["reader's frame of reference"] --> Movement["motion names real change<br/>off-top reading stays anchored"]
   J --> Overlays["overlays never displace"]
   J --> LiveText["live text never resizes"]
   J --> Counts["counts never reflow"]
@@ -366,57 +523,72 @@ flowchart LR
    ghost is positioned out of the document flow, so opening one cannot reflow
    the board. This is why they read as *in-place*. The single in-flow menu is
    bounded to its own shard and can never disturb a sibling.
-- **Live text lives in fixed slots.** Per-second ages render into
-   fixed-width single-line slots, padded, so ticking never changes a box.
-- **Counts have fixed footprints.** The pill triple always renders all
-   three slots; a count moving between slots must not resize the pill.
+- **Live text lives in fixed slots.** Relative ages schedule only the next
+   instant their visible spelling can change: each second while seconds-old,
+   then at minute, hour, or day boundaries, and never after saturation. Every
+   label renders into a padded, fixed-width single-line slot, so an update never
+   changes a box.
+- **Task counts spell all three slots.** A public pill renders one unpadded
+   `ready · active · unavailable` string. Its width is content-driven, so a
+   digit-width change may resize it.
 - **Presentation changes never touch identity.** Recolouring, attribution
    toggles, and member-count changes must not enter any fingerprint that would
    force a re-measure.
 - **Programmatic scroll is not a gesture.** Compensation and restore must
    be excluded from anything that reads user intent, or the surface competes
    with itself.
-- **Batch, then paint once.** Multiple arrivals coalesce into one paint per
-   surface. Trickling is jitter with extra steps.
-- **Hidden means untouched.** A surface that cannot be measured is not
-   guessed at; it renders nothing and repaints on reveal as a correction.
+- **Publish each changed frame.** Every admitted stream frame that changes the
+   runtime immediately sets the browser surface. There is no arrival batch or
+   animation-frame coalescing guarantee.
+- **Unmeasurable means uncommitted.** Cards remain readable in ordinary base
+   flow while the surface is too narrow to measure. No lattice fingerprint is
+   committed; a measurable reveal establishes the plane as a correction.
 
 **Acceptance** — instrument style writes per frame. A no-op refresh must produce
-zero. An agent joining a six-member team must move nothing that already existed.
+zero. Insert new content: existing columns and spans remain latched. More than
+80px from the top, the visible anchor retains its viewport offset; near the top,
+the push-down is immediate and untweened.
 
 ---
 
-## The three surfaces
+## The Canvas surface hierarchy
 
 What the operator actually manipulates, stated as a component contract.
 
 ```mermaid
 block-beta
   columns 1
-  C["TEAM CONSOLE, one lane"]
-  R["mode rail, compose | filters | metrics | info, badges are live counts"]
-  W["WATCHBAND, one card per agent, status face + composer"]
+  G["CANVAS VIEW RAIL, agents | magnitude | flow | topology | chronology"]
+  C["AGENTS VIEW, one console per live team"]
+  R["team mode rail, compose | tasks | metrics | info, badges are live counts"]
+  W["COMPOSE, one member shard per lane, status face + composer"]
   A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
   S["status line, age + latest action"]
-  M["MOSAIC, merged stream, newest first, accent = author"]
+  M["MOSAIC, merged stream, newest first, explicit lane attribution"]
 ```
 
 **Contract**
 
-- **The console is the unit of tiling.** Consoles sit side by side; each is a
-  complete operator surface for one team. Adding an agent widens a console; it
-  does not add a column to the page.
-- **The rail's badges are the summary.** Compose shows pending, filters shows
-  assigned routes, info shows member count. A badge is only present when its
-  count is non-zero, so an empty rail means a quiet lane.
-- **The watchband is the identity layer.** Every question of *who* — which
-  agent, which branch, which task, which driver, how stale — is answered there,
-  not in the stream.
+- **The Canvas rail is the global view vocabulary.** Agents is the conversation
+   surface; Magnitude, Flow, Topology, and Chronology are the complete closed
+   analytical axes. A pane belongs to one of those axes rather than inventing a
+   fifth.
+- **The team console is the unit of tiling in Agents.** Consoles sit side by
+   side; each is the complete operator surface for one live lineage containing
+   one or more member lanes. Adding an agent widens its team console through the
+   six-share visual ceiling; later members retain that maximum rather than
+   narrowing it. Membership never adds another peer console.
+- **The team rail's badges are the summary.** Compose shows pending direction, Tasks
+   shows active work, Metrics shows held claims, and Info shows member count. A badge is only present when its
+   count is non-zero, so an empty rail means a quiet team.
+- **The member shards are the identity layer.** Every question of *who* — which
+   agent, which branch, which task, which vendor, how stale — is answered there,
+   not in the stream.
 - **The mosaic is the evidence layer.** It answers *what happened*, attributed
-  by accent to the watchband card that owns it.
+  explicitly to the watchband card that owns it; accent is redundant continuity.
 - **Autonomy is never implicit.** The submit control carries the lifetime's own
   name, so intent cannot be sent without its autonomy being visible in the same
   gesture.
 
-**Incidental** — orientation, tiling rules, iconography, colour, whether the
-watchband is horizontal.
+**Incidental** — orientation, tiling rules, iconography, colour, and member-shard
+orientation.

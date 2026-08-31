@@ -579,8 +579,36 @@ pub fn run_strict(selector: Selector) -> Result<BatteryReport, RunError> {
     run_with_mode(selector, InputMode::Strict)
 }
 
+/// Execute the strict self-hosting battery from one explicitly admitted
+/// repository directory.
+///
+/// # Errors
+///
+/// Returns the exact rim acquisition or battery refusal. The caller-supplied
+/// directory, rather than ambient process location, owns repository discovery.
+pub fn run_strict_at(directory: &Path, selector: Selector) -> Result<BatteryReport, RunError> {
+    let compiler_environment = compiler_environment();
+    let capture = capture::capture_at_inner(
+        directory,
+        selector,
+        InputMode::Strict,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    run_prepared(PreparedBattery {
+        capture,
+        compiler_environment,
+        cargo_jobs: None,
+    })
+}
+
 fn run_with_mode(selector: Selector, input_mode: InputMode) -> Result<BatteryReport, RunError> {
-    let mut prepared = prepare_with_mode(selector, input_mode)?;
+    run_prepared(prepare_with_mode(selector, input_mode)?)
+}
+
+fn run_prepared(mut prepared: PreparedBattery<'_>) -> Result<BatteryReport, RunError> {
     let report = prepared.execute()?;
     if report.admits() {
         prepared.accept_state()?;

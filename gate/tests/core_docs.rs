@@ -21,10 +21,10 @@ use support::{
 ///
 /// Elastic headroom is seeded from the actor that is acting, so the same
 /// oversized document is judged against a different cap for each of them. Both
-/// expected caps are the predecessor `jittered_flex_limit(10000, 15000,
-/// "DOCTRINE.md", actor, jitter_percent=5)` for that actor's spelling. An engine
-/// seeded from the document's own path instead hands every actor 14800, so it
-/// can produce neither number and cannot make both assertions hold at once.
+/// expected caps come from the checked actor-seeded limit for the fixture path.
+/// An engine seeded from the document's own path instead hands every actor
+/// 14800, so it can produce neither number and cannot make both assertions hold
+/// at once.
 #[test]
 fn repository_documents_are_selected_measured_and_judged_only_by_the_engine() {
     let repository = contract_repository("core-acquire-repo-docs");
@@ -69,7 +69,7 @@ fn assert_repository_documents(repository: &Tree, actor: &str, active_limit: u64
         RepoDocLimit::AtMost {
             characters: active_limit
         },
-        "{actor} received a cap no predecessor run seeded from that actor produces"
+        "{actor} received a cap the actor-seeded decision does not produce"
     );
     assert!(!bounded.peer_claim());
     assert_eq!(unlimited.path(), "docs/reference/generated/REFERENCE.md");
@@ -416,7 +416,7 @@ fn every_measured_document_carries_the_bound_decision_it_was_judged_against() {
     assert_eq!(
         bounded.elastic_limit(),
         14_850,
-        "the ratchet headroom this actor was lent is the predecessor's jitter, not the whole flex"
+        "the ratchet headroom this actor was lent is the checked jitter, not the whole flex"
     );
     assert_eq!(bounded.active_limit(), 14_850);
     assert!(!bounded.unlimited());

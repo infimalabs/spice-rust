@@ -17,6 +17,9 @@ use super::{
     RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance, SelectorSpecificity,
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone)]
 struct CompiledRule {
     declaration: RuleDeclaration,
@@ -891,7 +894,7 @@ fn narrowness_with_path(
 
 fn scaled(base: u64, multiplier: f64, metric: &str) -> Result<u64, ResolveError> {
     let scaled = (base as f64) * multiplier;
-    if !scaled.is_finite() || scaled > u64::MAX as f64 {
+    if !scaled.is_finite() || scaled >= u64::MAX as f64 {
         return Err(ResolveError::calculation(
             metric,
             format!("{base} multiplied by {multiplier} exceeds u64"),

@@ -10,9 +10,9 @@ every tool it will run. Seal the runner from the repository root:
 dist/proof-runner/build.sh
 ```
 
-The command refuses anything but native arm64 macOS, a tracked tree at `HEAD`,
-and untracked files outside release output. It writes the runner, its vendored
-closure, and a readable copy of the pin document under
+The command requires native arm64 macOS, a tracked tree at `HEAD`, and no
+non-ignored untracked files outside release output. It writes the runner, its
+vendored closure, and a readable copy of the pin document under
 `target/proof-native-darwin/`, then exercises the runner protocol end to end
 before reporting the runner's identity.
 

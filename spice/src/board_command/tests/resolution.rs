@@ -800,20 +800,130 @@ fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
     let initial = apply_document(
         &bus,
         epoch,
-        "# Goal\n\n- First task\n- Second task\n  After: first-task\n",
+        "# Goal\n\n- First task\n  Acceptance: original acceptance\n  Flow: todo, review\n  Tags: original\n- Second task\n  After: first-task\n",
         &initial_board,
     );
     assert_initial_document(&bus, &initial);
     let edited = apply_document(
         &bus,
         epoch,
-        "# Goal\n\n- First task\n  Tags: revised\n- Second task\n  After: first-task\n",
+        "# Goal\n\n- First task\n  Flow: verify\n  Tags: revised\n- Second task\n",
         &initial.board,
     );
     assert_edited_document(&bus, &initial, &edited);
     assert_idempotent_document(&bus, epoch, &edited);
     assert_stale_document_refused(&bus, epoch, &initial_board);
     assert_ledger_contains(&bus, epoch, &initial.answer.touched[1], "# First task");
+    clean(&root, bus);
+}
+
+#[test]
+fn authored_document_apply_refuses_to_edit_a_withdrawn_task() {
+    let (root, bus, epoch, _) = fixture("document-withdrawn", 0);
+    let initial_board = board(&bus, epoch, Actor::Operator);
+    let initial = apply_document(
+        &bus,
+        epoch,
+        "# Goal\n\n- First task\n  Tags: original\n",
+        &initial_board,
+    );
+    let withdrawn = initial
+        .answer
+        .touched
+        .last()
+        .expect("document creates one authored task")
+        .clone();
+    let visible = board(&bus, epoch, Actor::Operator);
+    let heads = at(&visible, &withdrawn);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDelete,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskDelete {
+            task: withdrawn,
+            reason: "the document task was withdrawn".to_owned(),
+            force_claimed: false,
+        },
+    ));
+
+    let barrier = board(&bus, epoch, Actor::Operator);
+    let changed = board::Preview::classify("# Goal\n\n- First task\n  Tags: revised\n")
+        .expect("changed document previews");
+    let document = dialect::emit(changed.document());
+    let changed = board::Preview::classify(&document).expect("normal document previews");
+    let before = bus
+        .fact_snapshot()
+        .expect("facts before settled document refusal")
+        .facts()
+        .len();
+    let outcome = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::DocApply,
+        vec![
+            Witness::Preview {
+                digest: changed.digest().clone(),
+            },
+            Witness::Barrier {
+                name: "board".parse().expect("board barrier name"),
+                digest: board_barrier(&barrier),
+            },
+        ],
+        &DocApply {
+            preview: changed.digest().clone(),
+            document,
+        },
+    );
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(ref refusal) if refusal.reason() == "doc::settled-task"
+    ));
+    assert_eq!(
+        bus.fact_snapshot()
+            .expect("facts after settled document refusal")
+            .facts()
+            .len(),
+        before,
+        "a withdrawn document task refuses the whole authored batch",
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn document_ledger_reports_a_board_flow_outside_its_closed_dialect() {
+    let (root, bus, epoch, _) = fixture("document-ledger-vocabulary", 0);
+    let task = add_raw_task(
+        &bus,
+        epoch,
+        "DOCLEDGER-1kLGp001",
+        "Deploy through an ordinary board phase",
+        &["deployment is complete"],
+        Some("deploy"),
+    );
+
+    let outcome = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::DocLedger,
+        Vec::new(),
+        &DocLedger { task },
+    );
+    assert!(matches!(
+        outcome,
+        Outcome::Fault(Fault {
+            class: FaultClass::Store,
+            ref reason,
+            ..
+        }) if reason == "doc::ledger-unrepresentable"
+    ));
     clean(&root, bus);
 }
 
@@ -1259,12 +1369,40 @@ fn assert_edited_document(bus: &Bus, initial: &AppliedDocument, edited: &Applied
     assert_ne!(edited.preview.digest(), initial.preview.digest());
     assert_eq!(edited.answer.touched, initial.answer.touched);
     assert_eq!(edited.board.tasks.len(), 3);
+    let first = at(&edited.board, &edited.answer.touched[1]);
+    assert!(first.statement.body.tags.contains(&"revised".to_owned()));
+    assert!(!first.statement.body.tags.contains(&"original".to_owned()));
     assert!(
-        at(&edited.board, &edited.answer.touched[1])
+        first.statement.body.acceptance.is_empty(),
+        "document edits replace absent acceptance instead of treating it as a patch"
+    );
+    assert_eq!(
+        first
+            .workflow
+            .body
+            .flow
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec!["todo".to_owned(), "review".to_owned()],
+        "document edits do not replace an existing workflow flow"
+    );
+    assert_eq!(
+        first.statement.body.provenance,
+        at(&initial.board, &initial.answer.touched[1])
             .statement
             .body
-            .tags
-            .contains(&"revised".to_owned())
+            .provenance,
+        "a changed document digest does not namespace project-plus-slug identity"
+    );
+    let first_born = first.statement.body.born.clone();
+    assert!(
+        !at(&edited.board, &edited.answer.touched[2])
+            .statement
+            .body
+            .dependencies
+            .contains(&first_born),
+        "omitting an explicit document edge removes that dependency"
     );
     let facts = bus.fact_snapshot().expect("document edit facts read");
     assert_eq!(

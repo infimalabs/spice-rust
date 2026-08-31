@@ -1014,7 +1014,7 @@ fn edit_doc_task(
     spec: DocTaskSpec,
     cause: FactCause,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
-    if existing.workflow().status == "completed" {
+    if existing.workflow().status != "pending" {
         return Err(refusal(
             "doc::settled-task",
             Some(spec.task.to_string()),

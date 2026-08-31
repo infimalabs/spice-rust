@@ -924,7 +924,7 @@ pub(super) fn resolve_creation_origin(
     Err(refusal(
         "task::origin-required",
         Some(actor.to_string()),
-        "supply --origin ack:<steering-key> or --origin task:<parent-inception-stamp>, or create while holding one active claim",
+        "supply --origin ack:<steering-key> or --origin task:<parent-born-stamp>, or create while holding one active claim",
     ))
 }
 

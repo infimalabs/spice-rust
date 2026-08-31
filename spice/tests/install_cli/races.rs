@@ -158,14 +158,44 @@ fn age_and_diagnose_publication(fixture: &Fixture, temporary: &Path) -> u64 {
         panic!("aged crashed publication must require input");
     };
     assert!(reason.contains("1 stale install publication file(s)"));
-    assert!(reason.contains("run spice install once"));
+    assert!(reason.contains(
+        "reclaim through its admitted current direction: preview plus exact digest-bound apply, or `spice install --unapply` for an in-progress reversal"
+    ));
     assert!(reason.contains("receipt diagnosis: not-applicable: installation receipt is absent"));
     assert_eq!(temporary_snapshot(temporary), aged_snapshot);
     aged
 }
 
-fn reclaim_publication(fixture: &Fixture, aged: u64) {
-    let _: InstallPreview = reply_body(invoke_at(fixture, &["--json", "install"], aged));
+fn preview_then_reclaim_publication(fixture: &Fixture, temporary: &Path, aged: u64) {
+    let before = temporary_snapshot(temporary);
+    let preview: InstallPreview = reply_body(invoke_at(fixture, &["--json", "install"], aged));
+    assert_eq!(
+        temporary_snapshot(temporary),
+        before,
+        "preview must be read-only"
+    );
+    let moved = alternate_digest(preview.digest().as_str());
+    let refused = invoke_at(
+        fixture,
+        &["--json", "install", &format!("--apply={moved}")],
+        aged,
+    );
+    assert_eq!(refused.code, Some(2));
+    assert_refusal(&refused.err, "install::digest-moved");
+    assert_eq!(
+        temporary_snapshot(temporary),
+        before,
+        "a refused digest must not admit reclamation"
+    );
+    let _: InstallReceipt = reply_body(invoke_at(
+        fixture,
+        &[
+            "--json",
+            "install",
+            &format!("--apply={}", preview.digest()),
+        ],
+        aged,
+    ));
     assert!(record_temps(fixture).is_empty());
 }
 
@@ -174,5 +204,5 @@ fn killed_record_publication_is_reported_then_reclaimed() {
     let fixture = Fixture::new("crashed-record-publication");
     let temporary = crash_large_record_publication(&fixture);
     let aged = age_and_diagnose_publication(&fixture, &temporary);
-    reclaim_publication(&fixture, aged);
+    preview_then_reclaim_publication(&fixture, &temporary, aged);
 }

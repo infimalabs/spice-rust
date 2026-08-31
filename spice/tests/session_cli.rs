@@ -299,7 +299,7 @@ fn codex_second_turn_rows() -> Vec<Value> {
             json!({
                 "type": "exec_command_end",
                 "turn_id": "turn-two",
-                "command": "spice agent run -- cargo test | spice agent run -- rg ok",
+                "command": "spice run -- cargo test | spice run -- rg ok",
                 "cwd": "/repo",
                 "exit_code": 0,
                 "status": "completed",
@@ -392,7 +392,7 @@ fn claude_rows() -> Vec<Value> {
                         "id": "claude-command",
                         "name": "Bash",
                         "input": {
-                            "command": "spice agent run -- cargo check",
+                            "command": "spice run -- cargo check",
                             "cwd": "/repo",
                         },
                     },

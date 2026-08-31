@@ -2,62 +2,32 @@
 
 [Spice product model](README.md)
 
-This file records how the Rust appliance applies the product model. The model is
-the default: every implementation-independent invariant applies unless this
-file names an exception. An exception is not permission to drift further; it is
-the exact replacement contract Rust must preserve.
+The product model and this profile form one contract. The model fixes portable
+behavior; this profile fixes the concrete choices left to the Rust appliance.
+A disagreement with either document is a defect, not an undocumented option.
 
-The corpus was imported from `spice-z` at
-`8119859e21eaff5058274473eaa8b56a144eea3a`; its curated product-model commit is
-`9394ea696dce37b19efbb163b0ccc96b8b568e78`. Rust-specific status is intentionally
-not written back into the shared model.
+Python implementations and their ambient state, configuration, and conventions
+are non-authoritative and must be ignored.
 
-## Applicability decision
+## Verification boundary
 
-| Corpus area | Rust disposition |
-| --- | --- |
-| Value, loops, model, planes, interfaces, stories | **Applies.** These state product behavior independently of language and storage. |
-| Invariant register and case battery | **Applies except for the two exception families below.** Existing Rust tests are the implementation evidence; the case prose is not a second test runner. |
-| Checks | **Applies with the selected-gate and accepted-state replacements below.** Instrument membership and thresholds remain repository policy. |
-| Surface mechanics | **Not imported.** That tree named another client's subscription protocol, facet authorities, functions, and constants. The surface and jitter invariants remain applicable; Rust mechanics live in `wire`, `app`, `canvas`, and their tests. |
+The ordinary commit gate captures one immutable staged tree, computes its
+digest, and maps every recognized path to a deterministic local set of canonical
+gate arms and Cargo targets. A known selection, policy, build, or toolchain
+authority selects every applicable arm and target with explicit exhaustive
+reach. An unclassified path or a Rust/manifest path outside the workspace
+refuses before work begins; unknown impact never guesses at coverage.
 
-No other copied product document is implementation-specific. A disagreement
-outside the exception register is a Rust defect, not an undocumented choice.
+Selection, policy, tests, and the final report consume the same captured bytes.
+A moving index or source mismatch refuses. Selected arms retain canonical order
+and collect every selected finding. Package checks and explicitly named study
+arms are separate bounded surfaces; the unscoped repository verifier refuses
+before launching work.
 
-## Exception register
-
-### Checks: local selected evidence replaces the complete commit-time roster
-
-The product description presents a [fixed commit-time roster](checks.md#what-it-is).
-Rust's ordinary hook instead captures the staged source once and maps recognized
-paths to a deterministic local set of canonical gate arms and Cargo targets.
-Selector or toolchain authority, an unclassified path, or a Rust/manifest path
-outside the workspace refuses before any selected work begins. It never widens
-an unknown change into an unbounded repository run.
-
-The replacement contract is:
-
-- one immutable staged tree and digest feed selection, policy, tests, and the
-  final report;
-- selection is a pure exact-path mapping, and unknown impact is a refusal;
-- selected arms retain canonical order and collect their selected findings;
-- package checks and explicitly named study arms are separate, bounded
-  surfaces; the unscoped repository verifier is retired and refuses before it
-  launches work; and
-- ordinary completion evidence never escalates from the changed slice to a
-  complete repository battery.
-
-This also replaces the product study rule that [selects names from Git but reads
-content from the working tree](checks.md#what-a-study-sees). Rust measures the
-captured staged bytes. A moving index or a mismatch between selection and
-content refuses; it cannot report on a hybrid tree.
-
-Finally, Rust makes durable gate state stricter than the product's immediate
-in-scan latch retirement. Latch creation, hold, healing, rename transfer, and
-claim changes are proposed in memory and published as one typed transaction
-only when the enclosing selected run accepts. A refused run is byte-preserving,
-including proposed healing. Partial accepted runs reconcile only the keys they
-observed and cannot prune unrelated state.
+Gate-state changes are proposed in memory and published as one typed
+transaction only when the selected run accepts. A refusal is byte-preserving,
+including proposed healing. An accepted partial run reconciles only observed
+keys and never prunes unrelated state.
 
 Authorities: [`gate/src/change_selection.rs`](../../gate/src/change_selection.rs),
 [`gate/src/state.rs`](../../gate/src/state.rs),
@@ -67,43 +37,76 @@ Authorities: [`gate/src/change_selection.rs`](../../gate/src/change_selection.rs
 [`gate/tests/report_authority.rs`](../../gate/tests/report_authority.rs), and
 [`spice/tests/gate_selection_cli.rs`](../../spice/tests/gate_selection_cli.rs).
 
-### Session: completion learnings are not a current Rust product
+## Task identity codec
 
-The model includes [completion-time learning distillation and a bounded
-store](invariants/session.md#session-learnings-are-distilled-at-task-completion-and-held-in-a-bounded-store).
-Rust deliberately does not distil or persist completion learnings. Its session
-surface is daemonless and read-only; the optional learning field in older task
-answers is decoding compatibility only and current completion never produces
-it. The retired `.spice-rs/learnings` path is not owned or created.
+Rust stores every task's `born` identity as exactly eight ASCII characters. It
+encodes a nonnegative epoch millisecond in fixed-width base 52 with the exact
+ordered alphabet
+`0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz`. Ordinary string order
+therefore equals inception order, and the omitted vowels keep a minted stamp
+out of prose-shaped words. An instant outside the eight-character space
+refuses. When minting collides with an existing stamp, Rust advances the
+represented instant by exactly one millisecond until the stamp is free; it
+never appends randomness or entropy.
 
-Briefing, bounded transcript windows, compaction reconstruction, message-shape
-classification, task-effort accounting, the working-state meter, taste
-evidence, and maxim mining remain current. Adding completion learnings requires
-a new product decision and a durable authority; it must not be smuggled in as a
-session-report side effect.
+Authority: [`wire/src/witness.rs`](../../wire/src/witness.rs). Executable
+coverage lives in
+[`spice/src/board_command/tests/task_listing.rs`](../../spice/src/board_command/tests/task_listing.rs).
+
+## Session boundary
+
+Session reporting is daemonless and read-only. It briefs from admitted
+transcript and repository evidence, reconstructs bounded windows across
+compaction, and reports message, phase, command, commit, and token views. It
+never distils or persists completion learnings and owns no learning store.
+Decodable fields that have no producer are inert input, not product behavior.
 
 Authorities: [`spice/src/session_command.rs`](../../spice/src/session_command.rs),
 [`wire/src/intent/task.rs`](../../wire/src/intent/task.rs), and
 [`spice/src/repository_tests.rs`](../../spice/src/repository_tests.rs).
 
-## Rust selections that do not change the product contract
+## Authored task documents
 
-These choices are free under [What is fixed and what is
-free](planes/principles.md#what-is-fixed-and-what-is-free), but they are
-load-bearing for this implementation.
+The Rust `doc` command classifies without an external family context, so its
+project is `task.document`. Each non-synthetic node matches an existing row by
+that exact project plus the internal `document-slug:<slug>` tag. A changed
+document digest edits the same matching row; origin remains creation provenance
+and is not a matching namespace.
 
-### Authority and storage
+Apply is a replacement projection, not a patch or a lossless board import. It
+binds the named document digest and the board barrier captured during that apply
+invocation; the public preview does not seal a board barrier across invocations.
+New rows receive the ordinary acceptance-sensitive flow default when flow is
+absent. Existing rows replace title, acceptance, authored tags, priority tag,
+and parsed dependencies, while their workflow flow and current phase remain
+unchanged. The dialect accepts only `design`, `plan`, `todo`, `verify`, and
+`review` in `Flow:`; that closed input grammar is separate from the board's open
+phase vocabulary. Dialect descriptions, due values, and annotations do not
+enter board heads. `doc ledger HANDLE` emits only a dialect-representable task's
+title, current flow, and tags and is not an inverse family export; an
+unrepresentable current head set reports `doc::ledger-unrepresentable` rather
+than widening the dialect.
 
-One foreground resident holds the kernel lock and is the sole writer to one
-SQLite journal. A command transaction commits immutable facts, authoritative
-heads, coordination heads, its result, and the wake cursor together. The board
-reads those heads directly. Disposable folds live in a separate store and can
-be rebuilt from admitted journal history; transcript tape preserves vendor
-bytes without becoming semantic authority.
+Authorities: [`board/src/apply.rs`](../../board/src/apply.rs),
+[`spice/src/board_command/client_document.rs`](../../spice/src/board_command/client_document.rs),
+[`spice/src/board_command/progress.rs`](../../spice/src/board_command/progress.rs),
+and [`spice/src/board_command/read_guard.rs`](../../spice/src/board_command/read_guard.rs).
+Executable coverage lives in
+[`dialect/tests/classification.rs`](../../dialect/tests/classification.rs) and
+[`spice/src/board_command/tests/resolution.rs`](../../spice/src/board_command/tests/resolution.rs).
 
-The journal accepts one current schema and an ordered one-way migration chain.
-Wire and browser compatibility have independent current versions and resident
-epochs; there are no negotiated or release-specific runtime arms.
+## Authority and storage
+
+One resident holds the kernel lock and is the sole writer to one SQLite journal.
+A command transaction commits immutable facts, authoritative heads,
+coordination heads, its result, and the wake cursor together. The board reads
+those heads directly. Disposable folds live in a separate store and can be
+rebuilt from admitted journal history; transcript tape preserves vendor bytes
+without becoming semantic authority.
+
+The journal accepts one schema and an ordered one-way migration chain. Wire and
+browser compatibility have independent versions and resident epochs; runtime
+behavior never branches by release.
 
 Authorities: [`journal/src/guard.rs`](../../journal/src/guard.rs),
 [`journal/src/replay.rs`](../../journal/src/replay.rs),
@@ -111,108 +114,135 @@ Authorities: [`journal/src/guard.rs`](../../journal/src/guard.rs),
 [`fold/src/store.rs`](../../fold/src/store.rs), and
 [`wire/src/hello.rs`](../../wire/src/hello.rs).
 
-### Principals and process life
+## Principals and process life
 
-Rust assumes cooperative occupants running as one Unix user. Capabilities bind
-attribution, lane, occupant, and epoch; they are workflow interlocks, not a
-claim of adversarial isolation between same-user processes. Session authority
-comes only from an admitted live vendor identity. Transcript prose may select
-evidence but can never impersonate the caller.
+Occupants cooperate under one Unix user. Capabilities bind attribution, lane,
+occupant, and epoch; they are workflow interlocks, not adversarial isolation
+between same-user processes. Session authority comes only from an admitted live
+vendor identity. Transcript prose may select evidence but cannot impersonate
+the caller.
 
 The resident runs in the foreground of its owning process boundary. `spice up`
-may detach that exact process; `spice down` owns the semantic shutdown. Operating
-system service managers may own restart policy outside the appliance. Rendering
+may detach that exact process; `spice down` owns semantic shutdown. An operating
+system service manager may own restart policy outside the appliance. Rendering
 and observation never launch an occupant.
 
 Authorities: [`spice/src/session_command/authority.rs`](../../spice/src/session_command/authority.rs),
 [`spice/src/resident.rs`](../../spice/src/resident.rs), and
 [`spice/src/resident/lifecycle.rs`](../../spice/src/resident/lifecycle.rs).
 
-### Extensions and command routing
+## Extensions and command routing
 
-Vendors, wrappers, and gates are typed values in one compiled registry.
-Repository command mounts merge into the generated CLI only after collision and
-configuration admission. Built-in verbs win at every depth. Rust does not use a
-language package's entry-point discovery as runtime command authority.
+One compiled extension registry owns vendors, wrappers, and gates. A separate
+closed command-contract registry owns built-in CLI verbs. Repository command
+mounts merge into the generated CLI only after collision and configuration
+admission. Built-in paths are reserved; any colliding repository mount refuses
+before dispatch. The compiled registries and admitted repository mounts are the
+entire command vocabulary.
 
 Authorities: [`spice/src/extension.rs`](../../spice/src/extension.rs),
 [`spice/src/cli.rs`](../../spice/src/cli.rs), and
 [`spice/src/cli/mounts.rs`](../../spice/src/cli/mounts.rs).
 
-### Canvas and transport
+## Canvas and transport
 
-Rust/WASM is the only production browser client. JavaScript is browser-test
-code, not a second product runtime. `wire` is the sole protocol vocabulary; the
+Rust/WASM is the sole production browser client. JavaScript is browser-test
+code, not a second runtime. `wire` owns the complete protocol vocabulary; the
 browser imports its closed DTOs and the resident serves one immutable app
-generation. The client uses one authenticated, epoch-bound stream socket with
-bounded pages and retention, one correlation identity per request, explicit
-reconnect pacing, and a liveness probe that turns a half-open connection into
-the ordinary reconnect path.
+generation. One authenticated, epoch-bound stream socket carries bounded pages
+and retention with one correlation identity per request. Explicit reconnect
+pacing and a liveness probe turn a half-open connection into the ordinary
+reconnect path.
 
-The model's lane/team, durable draft, attribution, reading, motion, scroll, and
-no-launch invariants still bind this implementation. The removed mechanics
-documents' `lanes.subscribe` frames, per-facet chrome reducer, and numeric
-constant table do not.
+Lane/team topology and attribution remain server-owned product invariants.
+Reading, motion, scroll, no-launch behavior, and composer-draft restoration bind
+the browser client. Drafts survive lane reorder and renewal within the live
+client; browser death may discard them.
 
 Authorities: [`wire/src/stream.rs`](../../wire/src/stream.rs),
 [`canvas/src/stream.rs`](../../canvas/src/stream.rs),
 [`app/src/browser.rs`](../../app/src/browser.rs),
 [`app/src/runtime.rs`](../../app/src/runtime.rs), and
 [`app/src/mosaic.rs`](../../app/src/mosaic.rs). Browser-edge coverage lives in
-[`app/browser/canvas.spec.mjs`](../../app/browser/canvas.spec.mjs) and the other
-focused modules beside it.
+[`app/browser/canvas.spec.mjs`](../../app/browser/canvas.spec.mjs) and its
+focused neighboring modules.
 
-### Steering and claim warnings
+## Steering and warnings
 
 Durable direction and semantic retirement follow the product loop. Filesystem
 inboxes are delivery materializations; journal facts own lifecycle history.
-Current lease warnings are read-only command-stderr decoration produced by the
-working-state meter. The resident does not append a warning fact or turn a
-warning into steering. Older Rust warning facts remain decodable as retained
-journal evidence but have no current producer.
+Lease warnings are read-only command-stderr decoration produced by the
+working-state meter. The resident never appends a warning fact or turns a
+warning into steering. Decodable warning facts with no producer are retained
+journal evidence only.
 
 Authorities: [`steer/src/directives.rs`](../../steer/src/directives.rs),
 [`spice/src/session_meter.rs`](../../spice/src/session_meter.rs), and
 [`spice/src/run_meter.rs`](../../spice/src/run_meter.rs).
 
-### Installation, coexistence, and current command ownership
+## Installation and command authority
 
-Install preview is read-only and apply is bound to the exact preview digest.
-Assets publish before the common Git hook path switches; reversal restores the
-first captured prior state and reports modified residue. Installing Rust does
-not import, stop, or delete predecessor state. Python and Rust keep distinct
-state roots, databases, inboxes, discovery, configuration, Git shadows, and
-receipts. Retiring either runtime is a separate operator-authorized act.
+Install preview is read-only and apply is bound to its exact digest. Immutable
+content-addressed rollback material may be staged before receipt acceptance, but
+it has no installation authority until the canonical receipt authenticates it;
+no receipt-owned asset or hook effect precedes that acceptance. Assets publish
+before the common Git hook path switches. Install owns declared assets, receipt
+state, and hook selection, and observes every linked worktree's effective hook
+selection as an activation precondition. It never incidentally imports or
+deletes foreign process, configuration, or state.
 
-The repository is currently hybrid. In an ambient Python-controlled harness,
-unqualified `spice session`, `spice task`, and `spice steering` remain Python
-control-plane commands. Rust-only `dev cargo` and `dev xtask` must use the exact
-non-symbolic executable at the Git-common `.spice-install/bin/spice`. Its
-existence does not establish a Rust lane, session, or task claim. A missing or
-invalid asset is a hard stop; do not search `PATH` or select another Cargo home.
+Reversal is strict. If a receipt-owned target no longer has the exact installed
+identity, unapply returns a typed drift refusal, preserves the changed target and
+current receipt, and publishes no terminal `uninstalled` status. After the
+operator restores or deliberately reconciles the named evidence, the same
+receipt resumes. An ordinary in-place refresh retains each operation's original
+pre-first-install image and binds the installed image it supersedes; unapply
+therefore restores the filesystem first observed and publishes the current
+receipt terminal. Only migration from the admitted version-7 receipt carries a
+digest-bound rollback snapshot. Reversing that migration restores the exact
+pre-migration assets and version-7 receipt as one prior state, rather than
+running the older shape through the current appliance.
+
+The compiled CLI exposes the sole Spice command vocabulary. The active harness
+owns task, session, and steering state; an installed Spice bootstrap explicitly
+authorizes an agent to use the corresponding commands. Native harness authority
+remains in force otherwise. Merely finding the binary establishes no task,
+lane, session, or claim.
+
+Repository development commands that may touch Cargo use the exact regular,
+non-symbolic executable at Git-common `.spice-install/bin/spice` and its `dev
+cargo` or `dev xtask` surface. A missing or invalid asset is a hard stop; never
+search `PATH` or select another Cargo home.
 
 Authorities: [`spice/src/repository.rs`](../../spice/src/repository.rs),
 [`spice/src/install.rs`](../../spice/src/install.rs),
-[`spice/src/cargo_isolation.rs`](../../spice/src/cargo_isolation.rs),
-[`spice/tests/coexistence.rs`](../../spice/tests/coexistence.rs), and
+[`spice/src/cargo_isolation.rs`](../../spice/src/cargo_isolation.rs), and
 [`spice/CARGO_ISOLATION.md`](../../spice/CARGO_ISOLATION.md).
 
-### Release and proof
+## Release and proof
 
-Rust specializes the generic release loop as a multi-target sealed appliance.
-Each target payload binds the native binary, app generation, toolchain, and
-environment. Proof runs outside the candidate, emits a detached receipt, and a
-post-proof seal composes the target manifest. Publication consumes only that
-sealed object through the same digest-bound, resumable plan it previewed.
+Release is a sealed two-target appliance. Each target payload binds source, the
+native binary, app generation, and build pins. Proof runs outside the candidate
+in the target's exact proof environment and emits a detached receipt; a
+post-proof seal composes both target payloads and receipts into one release
+manifest. Publication consumes only that sealed object through the same
+digest-bound, resumable plan it previewed.
+
+Execution runs the complete canonical strict gate battery over the exact source
+commit named by the accepted plan before changing the version or crossing an
+external publication boundary. The release root is explicit rather than
+ambient, a completed red report is a refusal, and only admission followed by an
+unchanged clean source can publish the plan-specific correctness receipt.
 
 Authorities: [`dist/src/release.rs`](../../dist/src/release.rs),
 [`proof/src/lib.rs`](../../proof/src/lib.rs), and
-[`spice/src/release_command.rs`](../../spice/src/release_command.rs).
+[`spice/src/release_command.rs`](../../spice/src/release_command.rs),
+[`spice/src/release_execution.rs`](../../spice/src/release_execution.rs), and
+[`spice/src/gate.rs`](../../spice/src/gate.rs).
 
 ## Review rule
 
-When Rust changes in one of these areas, review the product invariant first and
-this profile second. A new disagreement must be resolved as one of three things
-in the same change: repair Rust, amend the shared product model at its source,
-or add a narrowly stated exception here with executable evidence. Silence is
-not a fourth disposition.
+Review the product invariant first and this profile second. Resolve every
+disagreement in the same change by repairing Rust, refining the portable model,
+or changing an explicit implementation choice here together with executable
+evidence. Silence is not a disposition.

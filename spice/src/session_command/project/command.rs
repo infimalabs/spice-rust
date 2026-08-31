@@ -199,10 +199,7 @@ fn starts_with_wrapper(command: &str) -> bool {
         .map(String::as_str)
         .skip_while(|word| environment_assignment(word))
         .collect::<Vec<_>>();
-    (words.starts_with(&["spice", "agent", "run"])
-        && (words.len() == 3 || words.get(3) == Some(&"--")))
-        || (words.starts_with(&["uv", "run", "spice", "agent", "run"])
-            && (words.len() == 5 || words.get(5) == Some(&"--")))
+    words.starts_with(&["spice", "run"])
 }
 
 fn environment_assignment(word: &str) -> bool {
@@ -217,7 +214,7 @@ fn environment_assignment(word: &str) -> bool {
 
 fn command_label(command: &str) -> String {
     if starts_with_wrapper(command) {
-        return "spice agent run".to_owned();
+        return "spice run".to_owned();
     }
     shell_words::split(command)
         .unwrap_or_else(|_| command.split_whitespace().map(str::to_owned).collect())

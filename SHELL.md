@@ -1,21 +1,39 @@
 # Shell boundary inventory
 
-Every shell file is either retired into a named Rust entry point or remains at
-a boundary that Rust cannot cross without adding a prior binary artifact or
-losing source-in-the-current-shell behavior. This is the complete inventory;
-`xtask/tests/shell_inventory.rs` compares its live entries with the Git index.
+Every tracked shell file remains only at a boundary Rust cannot cross without
+adding a prior binary artifact or losing source-in-the-current-shell behavior.
+This is the complete inventory; `xtask/tests/shell_inventory.rs` compares it
+with the Git index.
 
 ## Generated Git-hook launchers
 
 `spice install` generates `pre-commit`, `commit-msg`, and
 `reference-transaction` under the Git-common `.spice-install/git-hooks`. These
-are installed artifacts rather than tracked shell files. Their exact two-line
-forms (shown with a representative absolute Git-common prefix) are:
+are installed artifacts rather than tracked shell files. Their exact forms are
+shown with a representative absolute Git-common prefix. `pre-commit` first
+normalizes Git and Command Line Tools environment inherited from the hook:
 
 ```sh
 #!/bin/sh -eu
+SPICE_SHELL_HOOK_INSTALLED_APPLIANCE=1
+export SPICE_SHELL_HOOK_INSTALLED_APPLIANCE
+git_exec_path=${GIT_EXEC_PATH-}
+case ${PATH-} in
+  "$git_exec_path":*) PATH=${PATH#"$git_exec_path":}; export PATH ;;
+esac
+unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX
+case $git_exec_path in
+  /Library/Developer/CommandLineTools/*)
+    [ "${CPATH-}" != /usr/local/include ] || unset CPATH
+    [ "${LIBRARY_PATH-}" != /usr/local/lib ] || unset LIBRARY_PATH
+    case ${SDKROOT-} in /Library/Developer/CommandLineTools/*) unset SDKROOT ;; esac
+    case ${MANPATH-} in *Library/Developer/CommandLineTools*) unset MANPATH ;; esac
+    ;;
+esac
 exec '/absolute/git-common/.spice-install/bin/spice' gate pre-commit "$@"
 ```
+
+The other launchers are exactly two lines:
 
 ```sh
 #!/bin/sh -eu
@@ -27,71 +45,29 @@ exec '/absolute/git-common/.spice-install/bin/spice' gate commit-msg "$@"
 exec '/absolute/git-common/.spice-install/bin/spice' gate reference-transaction "$@"
 ```
 
-Each `exec` preserves Spice's exit status, stdout, and stderr and forwards Git's
-exact argv. `pre-commit` receives no operands; its Rust dispatcher captures the
-staged index. `commit-msg`
-receives exactly the message-file path. Both inherit standard input without
-reading it. `reference-transaction` receives exactly one state operand and
-preserves Git's update records on standard input; the Rust gate consumes them
-only for `prepared`, while `committed` and `aborted` are inert. No launcher reads
-policy or performs fallback routing.
+Each final `exec` preserves Spice's exit status, stdout, and stderr and forwards
+Git's exact argv. `pre-commit` receives no operands; its Rust dispatcher captures
+the staged index. `commit-msg` receives exactly the message-file path. Both
+inherit standard input without reading it. `reference-transaction` receives
+exactly one state operand and preserves Git's update records on standard input;
+the Rust gate consumes them only for `prepared`, while `committed` and `aborted`
+are inert. No launcher reads policy or performs fallback routing.
 
 The short `#!/bin/sh -eu` line names a stable system interpreter and makes a
-failed expansion or command fatal. The shell performs no policy: its one command
-quotes and `exec`s the explicit absolute appliance path. Putting that long path
-in the shebang would depend on kernel shebang length and argument-parsing rules,
-could not portably encode the `gate HOOK` subcommand, and would leave repository
-relocation hidden inside kernel launch failure. The generated body instead makes
-that absolute, non-portable identity inspectable and repairable through a fresh
-digest-bound install plan.
+failed expansion or command fatal. The shell performs no policy: `pre-commit`
+only removes inherited environment that would select a different Git/toolchain
+context, and every launcher quotes and `exec`s the explicit absolute appliance
+path. Putting that long path in the shebang would depend on kernel shebang length
+and argument-parsing rules, could not portably encode the `gate HOOK` subcommand,
+and would leave repository relocation hidden inside kernel launch failure. The
+generated body makes that absolute, non-portable identity inspectable and
+repairable through a fresh digest-bound install plan.
 
 The tracked `.githooks` files are development launchers, not installed assets.
 They resolve the Git common directory and dispatch directly to its installed
 Spice. They never invoke Cargo or `xtask`; current-source policy is the separate
-configured `cargo run --quiet --locked --package spice --bin spice -- gate
-selection` leaf.
-
-## `dist/proof-image/build.sh`
-
-Caller: Release operator, formerly documented by
-`dist/proof-image/README.md`, and proof recovery diagnostics.
-
-Disposition: Ported to Rust and deleted.
-
-Reason: installed Spice `dev xtask -- proof-image build` now assembles the context, invokes
-Docker, admits `identity.txt`, exercises the image, and writes the archive
-sidecars.
-
-## `dist/proof-image/load.sh`
-
-Caller: Release operator and proof recovery diagnostics.
-
-Disposition: Ported to Rust and deleted.
-
-Reason: installed Spice `dev xtask -- proof-image load ARCHIVE` now verifies the archive
-checksum and identity before loading and reinspecting it.
-
-## `scripts/install-hooks.sh`
-
-Caller: Repository installer operator, `README.md`, and `INSTALL.md`.
-
-Disposition: Ported to Rust and deleted.
-
-Reason: installed `spice install` owns one digest-bound asset and activation
-plan. It verifies every linked-worktree selection, publishes the executable and
-hooks, retires obsolete hook-runtime files, clears admitted worktree overrides,
-switches the common path last, and records exact reversal state. The verifier
-audits that receipt against the freshly built Spice binary.
-
-## `scripts/verify.sh`
-
-Caller: Developer documentation.
-
-Disposition: Ported to Rust and deleted.
-
-Reason: The script was an alternate repository-wide verification spelling.
-That surface is retired; callers now use staged selection, named package
-checks, or explicit study arms.
+configured `spice dev cargo -- run --quiet --locked --package spice --bin spice
+-- gate selection` leaf.
 
 ## `dist/proof-image/cargo-wrapper.sh`
 
@@ -129,9 +105,9 @@ Disposition: Irreducible glue.
 Reason: It receives the shell tool's complete argument vector before the native
 command shell exists, then replaces itself with `spice run` and the separately
 packaged inner stage. `spice run` first gives the complete top-level command to
-the optional configured RTK selector and falls back unchanged with a diagnostic
-for every unusable answer. A Rust child cannot replace the shell process that
-chose to start it.
+the optional configured RTK selector; every unusable answer reports a
+degradation and runs the original argv unchanged. A Rust child cannot replace
+the shell process that chose to start it.
 
 ## `steer/hooks/static/stage.sh`
 
