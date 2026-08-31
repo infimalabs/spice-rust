@@ -14,6 +14,7 @@ import {
   waitForMosaicReady,
 } from "./agent-conversation-mosaic.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
+import { assertReferenceMessageCard } from "./message-card-reference.mjs";
 import { assertSyntheticComposerObservation } from "./composer-shards.mjs";
 import {
   chooseCanvasView,
@@ -454,7 +455,7 @@ export async function assertAgentConversation(
   const producerIds = new Set(await authored.evaluateAll((cards) =>
     cards.map((card) => card.getAttribute("data-producer-target-id")),
   ));
-  const producerNames = new Set(await authored.locator(".message-author").allTextContents());
+  const producerNames = new Set(await authored.locator(".message-agent-name").allTextContents());
   assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
   assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
   await assertSyntheticComposerObservation(
@@ -581,13 +582,13 @@ export async function assertAgentConversation(
   // The first and fourth lanes hold one slot between them, by the construction
   // teamLaneIds explains. That is the ordinary case for a lineage, so the
   // colour is decoration and the assertions below are what an operator and a
-  // test actually read to tell the two apart. A message card names its producer
-  // as the worktree leaf beside the short author.
+  // test actually read to tell the two apart. A message card names its
+  // configured producer without exposing the UUID in ordinary reading flow.
   const messageChrome = await console.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => ({
       lane: card.dataset.agentLane,
       accent: card.dataset.accent,
-      producer: card.querySelector(".message-author")?.textContent?.trim() ?? "",
+      producer: card.querySelector(".message-agent-name")?.textContent?.trim() ?? "",
     })),
   );
   const sharedSlot = [seated[0].lane, seated[3].lane].map(
@@ -605,7 +606,7 @@ export async function assertAgentConversation(
   );
   const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
   const actionCard = console.locator('[data-card-kind="agent-message"]').first();
-  assert.ok((await actionCard.locator(".message-author").innerText()).trim());
+  assert.ok((await actionCard.locator(".message-agent-name").innerText()).trim());
   assert.deepEqual(
     await actionCard.locator(".message-actions button").evaluateAll(
       (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
@@ -613,6 +614,7 @@ export async function assertAgentConversation(
     expectedActions,
     "assistant cards expose the reference speak, quote, and copy controls",
   );
+  await assertReferenceMessageCard(page, console, actionCard, artifacts, agentNames);
 
   const scroller = plane;
   const compensationViewport = page.viewportSize();

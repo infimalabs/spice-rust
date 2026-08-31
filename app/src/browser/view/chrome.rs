@@ -410,7 +410,6 @@ fn ticker(class: &'static str, title: &str, detail: &str) -> Html {
 /// operator addressed.
 #[derive(Clone, PartialEq)]
 pub(in crate::browser) struct Correspondent {
-    pub(in crate::browser) name: String,
     pub(in crate::browser) accent: usize,
     pub(in crate::browser) speak: Callback<String>,
     pub(in crate::browser) quote: Callback<()>,
@@ -447,7 +446,7 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
 /// Reached reflectively rather than through a typed binding: `web-sys` gates
 /// the clipboard behind an unstable-API flag that would have to be set for the
 /// whole build, and the call is three property reads either way.
-fn copy_text(text: &str) {
+pub(in crate::browser) fn copy_text(text: &str) {
     let Some(window) = web_sys::window() else {
         return;
     };
