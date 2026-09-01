@@ -673,13 +673,24 @@ fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
     fs::write(
         &rtk,
         format!(
-            "#!/bin/sh\nprintf '%s\\n%s\\n' \"$*\" \"$RTK_DB_PATH\" > '{}'\nprintf '%s\\n' 'printf rewritten'\nexit 73\n",
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$1\" = --version ]; then printf '\\377'; exit 0; fi\n",
+                "printf '%s\\n%s\\n' \"$*\" \"$RTK_DB_PATH\" > '{}'\n",
+                "printf '%s\\n' \"/bin/sh -c 'printf rewritten; exit 23'\"\n",
+                "exit 73\n",
+            ),
             calls.display()
         ),
     )
     .expect("write RTK fixture");
     fs::set_permissions(&rtk, fs::Permissions::from_mode(0o700))
         .expect("make RTK fixture executable");
+
+    let health = spice::rtk::probe_health(rtk.as_os_str(), scratch.path());
+    assert_eq!(health.state(), spice::rtk::HealthState::Active);
+    assert_eq!(health.version(), None);
+    assert!(health.detail().contains("selector stdout was not UTF-8"));
 
     let rewritten = Command::new(env!("CARGO_BIN_EXE_spice"))
         .args(["run", "--", "/bin/sh", "-c", "printf native"])
@@ -688,7 +699,7 @@ fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
         .env(spice::rtk::HISTORY_VARIABLE, &history)
         .output()
         .expect("run through RTK");
-    assert!(rewritten.status.success());
+    assert_eq!(rewritten.status.code(), Some(23));
     assert_eq!(rewritten.stdout, b"rewritten");
     assert!(rewritten.stderr.is_empty());
     assert_eq!(

@@ -7,7 +7,7 @@ use super::*;
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn present_configured_rtk_remains_hooked_and_published_despite_advisory_version_status() {
+fn present_configured_rtk_remains_hooked_after_version_observation_failure() {
     let fixture = AdvisoryRtkFixture::new();
     let launch = occupant_launch(
         &fixture.paths,
