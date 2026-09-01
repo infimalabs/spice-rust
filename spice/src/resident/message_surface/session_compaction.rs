@@ -99,22 +99,21 @@ impl FileStamp {
         })
     }
 
-    fn observe(&mut self, observed: Self, prefix_length: u64) -> bool {
+    fn extension(&self, observed: Self, prefix_length: u64) -> Option<Self> {
         if observed.length < prefix_length {
-            return false;
+            return None;
         }
         #[cfg(unix)]
         if observed.device != self.device || observed.inode != self.inode {
-            return false;
+            return None;
         }
         if observed == *self {
-            return true;
+            return Some(*self);
         }
         if observed.length <= self.length {
-            return false;
+            return None;
         }
-        *self = observed;
-        true
+        Some(observed)
     }
 }
 
@@ -344,10 +343,8 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
         .as_mut()
         .expect("prefix validation advances only while pending");
     let mut file = File::open(&cursor.path)?;
-    if !validation
-        .stamp
-        .observe(FileStamp::read(&file)?, validation.length)
-    {
+    let observed = validation.observed.clone().finalize();
+    if !admit_validation_stamp(&mut file, validation, validation.offset, observed)? {
         reset(cursor);
         return Ok(Vec::new());
     }
@@ -360,17 +357,17 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
         reset(cursor);
         return Ok(Vec::new());
     }
-    if !validation
-        .stamp
-        .observe(FileStamp::read(&file)?, validation.length)
-    {
+    let mut observed = validation.observed.clone();
+    observed.update(&bytes);
+    let offset = validation
+        .offset
+        .saturating_add(u64::try_from(bytes.len()).expect("a validation buffer fits u64"));
+    if !admit_validation_stamp(&mut file, validation, offset, observed.clone().finalize())? {
         reset(cursor);
         return Ok(Vec::new());
     }
-    validation.observed.update(&bytes);
-    validation.offset = validation
-        .offset
-        .saturating_add(u64::try_from(bytes.len()).expect("a validation buffer fits u64"));
+    validation.observed = observed;
+    validation.offset = offset;
     if validation.offset < validation.length {
         return Ok(Vec::new());
     }
@@ -383,6 +380,43 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
         .take()
         .expect("completed validation remains pending")
         .records)
+}
+
+fn admit_validation_stamp(
+    file: &mut File,
+    validation: &mut PrefixValidation,
+    observed_length: u64,
+    observed_hash: blake3::Hash,
+) -> io::Result<bool> {
+    let stamp = FileStamp::read(file)?;
+    let Some(extension) = validation.stamp.extension(stamp, validation.length) else {
+        return Ok(false);
+    };
+    if extension == validation.stamp {
+        return Ok(true);
+    }
+
+    // Extent growth alone cannot prove that earlier writes were append-only.
+    file.seek(SeekFrom::Start(0))?;
+    let mut remaining = observed_length;
+    let mut hasher = blake3::Hasher::new();
+    let mut bytes = vec![0; VALIDATION_BYTE_BUDGET];
+    let capacity = u64::try_from(bytes.len()).expect("validation budget fits u64");
+    while remaining > 0 {
+        let length = usize::try_from(remaining.min(capacity))
+            .expect("the bounded validation read fits usize");
+        if file.read_exact(&mut bytes[..length]).is_err() {
+            return Ok(false);
+        }
+        hasher.update(&bytes[..length]);
+        remaining =
+            remaining.saturating_sub(u64::try_from(length).expect("a validation buffer fits u64"));
+    }
+    if hasher.finalize() != observed_hash {
+        return Ok(false);
+    }
+    validation.stamp = extension;
+    Ok(true)
 }
 
 fn guard_matches(file: &mut File, cursor: &Cursor) -> io::Result<bool> {

@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write as _;
+use std::io::{Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -418,6 +418,53 @@ fn same_length_mutation_after_admitted_growth_resets_validation() {
     assert_eq!(cursor.next, 0, "mixed-generation scan state is discarded");
     assert!(cursor.validation.is_none());
     assert!(advanced > VALIDATION_BYTE_BUDGET as u64);
+}
+
+#[test]
+fn prefix_mutation_hidden_by_growth_resets_validation() {
+    const SUFFIX: &str = "{\"type\":\"progress\",\"serial\":1}\n";
+    let scratch = Scratch::new("mutation-with-append");
+    let transcript = scratch.transcript();
+    let original = large_claude_transcript_with_pending('x', 192);
+    let mutation = u64::try_from(original.find("xxxx").expect("fixture text exists"))
+        .expect("fixture offset fits u64");
+    fs::write(&transcript, original).expect("large original transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    for _ in 0..8 {
+        assert!(scan(&mut cursor).expect("prefix scans").is_empty());
+        if cursor.validation.is_some() {
+            break;
+        }
+    }
+    append(&transcript, SUFFIX.as_bytes());
+    assert!(scan(&mut cursor).expect("append advances").is_empty());
+    let advanced = cursor
+        .validation
+        .as_ref()
+        .expect("validation remains pending")
+        .offset;
+    assert!(mutation < advanced);
+
+    let mut rewritten = OpenOptions::new()
+        .write(true)
+        .open(&transcript)
+        .expect("transcript opens for a prefix rewrite");
+    rewritten
+        .seek(std::io::SeekFrom::Start(mutation))
+        .expect("prefix mutation seeks");
+    rewritten.write_all(b"y").expect("prefix mutation writes");
+    drop(rewritten);
+    append(&transcript, SUFFIX.as_bytes());
+
+    assert!(scan(&mut cursor).expect("mixed growth refuses").is_empty());
+    assert_eq!(cursor.next, 0, "mixed-generation scan state is discarded");
+    assert_eq!(cursor.next_call, 0);
+    assert!(cursor.pending.is_empty());
+    assert!(cursor.validation.is_none());
+
+    let records = scan_until_boundary(&mut cursor, "rewritten generation replays");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].unavailable_tool_terminals, ["Read: held.rs"]);
 }
 
 #[test]
