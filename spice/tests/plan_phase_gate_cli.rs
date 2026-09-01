@@ -1,11 +1,12 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use gix::bstr::BStr;
+use gix::object::tree::EntryKind;
 use journal::{FactCause, Journal, JournalWrite};
 use wire::body::{ClaimWon, SourceBoundary, TaskAdded};
 use wire::{
@@ -52,35 +53,7 @@ impl Fixture {
         fs::write(root.join("implementation.txt"), "opening\n")
             .expect("write implementation fixture");
 
-        let hook = root.join(".githooks/pre-commit");
-        fs::create_dir_all(hook.parent().expect("hook has parent")).expect("create hook directory");
-        fs::write(
-            &hook,
-            format!(
-                "#!/bin/sh\nexec {} gate pre-commit\n",
-                shell_quote(env!("CARGO_BIN_EXE_spice")),
-            ),
-        )
-        .expect("write fixture pre-commit hook");
-        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
-            .expect("make fixture hook executable");
-
-        git_ok(&root, &["config", "core.hooksPath", ".githooks"]);
-        git_ok(&root, &["add", "."]);
-        git_ok(
-            &root,
-            &[
-                "-c",
-                "user.name=Spice Test",
-                "-c",
-                "user.email=spice@example.invalid",
-                "commit",
-                "--no-verify",
-                "-m",
-                "fixture opening",
-            ],
-        );
-        let opening = git_text(&root, &["rev-parse", "HEAD"]);
+        let opening = commit_all(&root);
 
         let repository =
             spice::repository::Repository::discover(&root).expect("discover plan hook fixture");
@@ -96,27 +69,18 @@ impl Fixture {
         }
     }
 
-    fn attempt_commit(&self) -> Output {
+    fn run_pre_commit(&self) -> Output {
         fs::write(self.root.join("implementation.txt"), "implementation\n")
             .expect("write attempted implementation");
-        git_ok(&self.root, &["add", "implementation.txt"]);
-        Command::new("git")
-            .arg("-C")
-            .arg(&self.root)
-            .args([
-                "-c",
-                "user.name=Spice Test",
-                "-c",
-                "user.email=spice@example.invalid",
-                "commit",
-                "-m",
-                "implementation during plan",
-            ])
+        stage_all(&self.root);
+        Command::new(env!("CARGO_BIN_EXE_spice"))
+            .args(["gate", "pre-commit"])
+            .current_dir(&self.root)
             .env(wire::SpiceVariable::Lane.as_str(), self.lane.to_string())
             .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
             .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
             .output()
-            .expect("attempt commit through fixture hook")
+            .expect("run plan-phase pre-commit gate")
     }
 }
 
@@ -127,24 +91,21 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn git_hook_captures_the_plan_claim_and_refuses_the_commit() {
+fn pre_commit_gate_captures_the_plan_claim_and_preserves_the_staged_attempt() {
     let fixture = Fixture::new();
-    let output = fixture.attempt_commit();
+    let output = fixture.run_pre_commit();
     let rendered = streams(&output);
     assert!(
         !output.status.success(),
-        "plan commit unexpectedly succeeded: {rendered}"
+        "plan-phase gate unexpectedly succeeded: {rendered}"
     );
     assert!(rendered.contains("git commit refused"), "{rendered}");
     assert!(rendered.contains(fixture.task.as_str()), "{rendered}");
+    assert_eq!(head(&fixture.root), fixture.opening);
     assert_eq!(
-        git_text(&fixture.root, &["rev-parse", "HEAD"]),
-        fixture.opening
-    );
-    assert_eq!(
-        git_text(&fixture.root, &["diff", "--cached", "--name-only"]),
-        "implementation.txt",
-        "the refusing hook must leave the attempted implementation staged",
+        staged_blob(&fixture.root, "implementation.txt"),
+        b"implementation\n",
+        "the refusing gate must leave the attempted implementation staged",
     );
 }
 
@@ -256,39 +217,118 @@ fn seed_plan_claim(path: &Path, lane: CanonicalUuid) -> TaskHandle {
     TaskHandle::for_project(project, &task)
 }
 
-fn git_ok(root: &Path, arguments: &[&str]) {
-    let output = git(root, arguments);
-    assert!(
-        output.status.success(),
-        "git {arguments:?} failed: {}",
-        streams(&output)
-    );
+fn commit_all(root: &Path) -> String {
+    let repository = open_repository(root);
+    let tree = snapshot_tree(&repository, root);
+    let identity = gix::actor::SignatureRef {
+        name: "Spice Test".into(),
+        email: "spice@example.invalid".into(),
+        time: "0 +0000",
+    };
+    let commit = repository
+        .commit_as(
+            identity,
+            identity,
+            "refs/heads/main",
+            "fixture opening",
+            tree,
+            gix::commit::NO_PARENT_IDS,
+        )
+        .expect("commit in-process plan fixture")
+        .detach()
+        .to_string();
+    write_index(&repository, tree);
+    commit
 }
 
-fn git_text(root: &Path, arguments: &[&str]) -> String {
-    let output = git(root, arguments);
-    assert!(
-        output.status.success(),
-        "git {arguments:?} failed: {}",
-        streams(&output)
-    );
-    String::from_utf8(output.stdout)
-        .expect("fixture Git output is UTF-8")
-        .trim()
-        .to_owned()
+fn stage_all(root: &Path) {
+    let repository = open_repository(root);
+    let tree = snapshot_tree(&repository, root);
+    write_index(&repository, tree);
 }
 
-fn git(root: &Path, arguments: &[&str]) -> Output {
-    Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(arguments)
-        .output()
-        .expect("launch fixture Git")
+fn snapshot_tree(repository: &gix::Repository, root: &Path) -> gix::ObjectId {
+    write_tree(repository, root, root)
 }
 
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
+fn write_tree(repository: &gix::Repository, root: &Path, directory: &Path) -> gix::ObjectId {
+    let mut entries = fs::read_dir(directory)
+        .expect("read plan fixture directory")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read plan fixture entries");
+    entries.sort_by_key(fs::DirEntry::file_name);
+    let mut tree_entries = entries
+        .into_iter()
+        .filter(|entry| directory != root || entry.file_name() != ".git")
+        .map(|entry| {
+            let path = entry.path();
+            let (kind, oid) = if entry
+                .file_type()
+                .expect("inspect plan fixture entry")
+                .is_dir()
+            {
+                (EntryKind::Tree, write_tree(repository, root, &path))
+            } else {
+                let blob = repository
+                    .write_blob(fs::read(&path).expect("read plan fixture file"))
+                    .expect("write plan fixture blob");
+                (EntryKind::Blob, blob.detach())
+            };
+            gix::objs::tree::Entry {
+                mode: kind.into(),
+                filename: entry
+                    .file_name()
+                    .to_str()
+                    .expect("plan fixture paths are UTF-8")
+                    .into(),
+                oid,
+            }
+        })
+        .collect::<Vec<_>>();
+    tree_entries.sort();
+    repository
+        .write_object(gix::objs::Tree {
+            entries: tree_entries,
+        })
+        .expect("write plan fixture tree")
+        .detach()
+}
+
+fn write_index(repository: &gix::Repository, tree: gix::ObjectId) {
+    let mut index = repository
+        .index_from_tree(&tree)
+        .expect("derive plan fixture index from tree");
+    index.set_path(repository.index_path());
+    index
+        .write(Default::default())
+        .expect("write plan fixture index");
+}
+
+fn open_repository(root: &Path) -> gix::Repository {
+    gix::open_opts(root, gix::open::Options::isolated()).expect("open in-process plan repository")
+}
+
+fn head(root: &Path) -> String {
+    open_repository(root)
+        .head_id()
+        .expect("plan fixture HEAD resolves")
+        .detach()
+        .to_string()
+}
+
+fn staged_blob(root: &Path, path: &str) -> Vec<u8> {
+    let repository = open_repository(root);
+    let index = repository.index().expect("open plan fixture index");
+    let entry = index
+        .entry_index_by_path(BStr::new(path.as_bytes()))
+        .ok()
+        .map(|position| index.entry(position))
+        .expect("plan fixture path is staged");
+    repository
+        .find_blob(entry.id)
+        .expect("read staged plan fixture blob")
+        .data
+        .to_vec()
 }
 
 fn streams(output: &Output) -> String {
