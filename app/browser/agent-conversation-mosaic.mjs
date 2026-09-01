@@ -177,6 +177,102 @@ export function assertMosaicLifecycleAdvanced(before, after, label) {
   );
 }
 
+async function hydrationPlacement(plane) {
+  return plane.evaluate((element) => ({
+    commits: Number(element.dataset.planeCommits),
+    transition: element.dataset.planeTransition,
+    cards: [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')]
+      .map((card) => ({
+        key: card.dataset.mosaicCardKey,
+        track: card.dataset.track,
+        span: card.dataset.span,
+        base: card.dataset.base,
+        rows: card.dataset.rows,
+      })),
+  }));
+}
+
+async function waitForHydration(page, expectedKeys) {
+  await waitForPage(page, "staged Mosaic hydration settles in total chronology", TRANSITION_MS,
+    (expected) => {
+      const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+      if (plane?.dataset.measurementPhase !== "ready"
+        || plane.dataset.measurementPending !== "0") return false;
+      const cards = [...plane.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')];
+      return cards.length === expected.length
+        && cards.every((card, index) => card.dataset.mosaicCardKey === expected[index]);
+    }, expectedKeys);
+}
+
+export async function assertStagedMosaicHydration(page, team, activityReplay) {
+  const plane = team.locator(".lane-mosaic-plane");
+  const hydration = activityReplay.stagedHydration();
+  await plane.evaluate((element) => {
+    window.__stagedHydrationViolations = [];
+    window.__stagedHydrationExpected = [];
+    let pending = false;
+    const inspect = () => {
+      pending = false;
+      if (element.dataset.measurementPhase !== "ready"
+        || element.dataset.measurementPending !== "0") return;
+      const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')];
+      const keys = cards.map((card) => card.dataset.mosaicCardKey);
+      const expected = window.__stagedHydrationExpected;
+      if (expected.length > 0 && JSON.stringify(keys) !== JSON.stringify(expected)) {
+        window.__stagedHydrationViolations.push({ expected, keys });
+      }
+      if (new Set(keys).size !== keys.length) {
+        window.__stagedHydrationViolations.push({ duplicateKeys: keys });
+      }
+    };
+    const observer = new MutationObserver((mutations) => {
+      if (!mutations.some((mutation) => mutation.target === element
+        && mutation.attributeName === "data-plane-commits")) return;
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(inspect);
+    });
+    observer.observe(element, { attributes: true, attributeFilter: ["data-plane-commits"] });
+    element.__stagedHydrationObserver = observer;
+  });
+
+  const apply = async (messages, expectedTransition = null) => {
+    const keys = hydration.keys(messages);
+    await page.evaluate((expected) => { window.__stagedHydrationExpected = expected; }, keys);
+    await hydration.send(page, messages);
+    await waitForHydration(page, keys);
+    const snapshot = await hydrationPlacement(plane);
+    if (expectedTransition) assert.equal(snapshot.transition, expectedTransition);
+    return snapshot;
+  };
+
+  await apply(hydration.stages[0]);
+  await apply(hydration.stages[1], "append");
+  const staged = await apply(hydration.stages[2], "full-replay");
+  const commits = staged.commits;
+  await hydration.send(page, hydration.stages[2]);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  assert.equal(Number(await plane.getAttribute("data-plane-commits")), commits,
+    "an unchanged complete hydration snapshot commits no plane");
+
+  await page.evaluate(() => { window.__stagedHydrationExpected = []; });
+  await hydration.send(page, []);
+  await waitForPage(page, "the one-shot hydration reference starts empty", TRANSITION_MS,
+    () => document.querySelectorAll(
+      '[data-pane="agent-console"] .mosaic-message-card[data-layout-phase="committed"]',
+    ).length === 0);
+  const oneShot = await apply(hydration.chronological);
+  assert.deepEqual(oneShot.cards, staged.cards,
+    "staged hydration converges to byte-identical one-shot Mosaic placement");
+  assert.deepEqual(await plane.evaluate((element) => {
+    element.__stagedHydrationObserver.disconnect();
+    delete element.__stagedHydrationObserver;
+    return window.__stagedHydrationViolations;
+  }), [], "hydration never exposes duplicate or misordered cards after settlement");
+  await activityReplay.restoreProseSnapshot(page);
+  await waitForMosaicReady(page);
+}
+
 export async function assertCompactionBoundary(
   page,
   fixture,

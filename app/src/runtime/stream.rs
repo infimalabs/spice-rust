@@ -591,6 +591,7 @@ impl CanvasRuntime {
                 }
             }
         }
+        messages.sort_by_key(|message| message_chronology_key(message));
         let activity_count = activities.len();
         self.messages.iter().map(Rc::as_ref).eq(messages)
             && self
@@ -650,12 +651,13 @@ impl CanvasRuntime {
     }
 }
 
-fn message_chronology_key(message: &AgentMessage) -> (i64, CanonicalUuid, u64, u64, u32) {
+fn message_chronology_key(message: &AgentMessage) -> (i64, CanonicalUuid, u64, u64, u64, u32) {
     (
         agent_message_display_millis(message),
         message.lane,
         message.locus.member,
         message.locus.offset,
+        message.locus.length,
         message.locus.event,
     )
 }
@@ -825,6 +827,50 @@ mod message_retention_tests {
             text: offset.to_string(),
             media: Vec::new(),
         }
+    }
+
+    #[test]
+    fn equal_time_message_chronology_uses_the_complete_admitted_identity() {
+        let lane_a = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("lane a");
+        let lane_b = "018f82d4-6f59-7d06-92e3-bce9131163e6"
+            .parse()
+            .expect("lane b");
+        let mut offset_ten = message(lane_a, 10);
+        offset_ten.locus.length = 2;
+        let mut longer_same_offset = offset_ten.clone();
+        longer_same_offset.locus.length = 3;
+        let mut later_event = longer_same_offset.clone();
+        later_event.locus.event = 1;
+        let mut messages = [
+            message(lane_b, 1),
+            later_event,
+            longer_same_offset,
+            offset_ten,
+            message(lane_a, 2),
+        ];
+
+        messages.sort_by_key(message_chronology_key);
+
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| (
+                    message.lane,
+                    message.locus.offset,
+                    message.locus.length,
+                    message.locus.event,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (lane_a, 2, 1, 0),
+                (lane_a, 10, 2, 0),
+                (lane_a, 10, 3, 0),
+                (lane_a, 10, 3, 1),
+                (lane_b, 1, 1, 0),
+            ]
+        );
     }
 
     #[test]

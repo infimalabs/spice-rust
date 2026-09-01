@@ -6,6 +6,7 @@
 //! whose extent comes from the same engine result.
 
 use crate::mosaic::{self, Candidate, Card, TRACK_COUNT};
+use std::collections::BTreeSet;
 
 /// One measured card offered to a persistent lane plane.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,7 +115,7 @@ impl<K> PersistentLanePlane<K> {
     }
 }
 
-impl<K: Clone + Eq> PersistentLanePlane<K> {
+impl<K: Clone + Ord> PersistentLanePlane<K> {
     /// Create the first committed plane at one measurable geometry.
     #[must_use]
     pub fn new(geometry: i32, measured: &[MeasuredCard<K>]) -> Self {
@@ -125,44 +126,32 @@ impl<K: Clone + Eq> PersistentLanePlane<K> {
     #[must_use]
     pub fn reconcile(&self, geometry: i32, measured: &[MeasuredCard<K>]) -> Self {
         assert_unique(measured);
-        if geometry != self.geometry
-            || self
-                .cards
-                .iter()
-                .any(|entry| measured.iter().all(|item| item.key != entry.key))
-            || self.cards.iter().any(|entry| {
-                measured
-                    .iter()
-                    .find(|item| item.key == entry.key)
-                    .is_some_and(|item| item.boundary != entry.boundary)
-            })
+        if geometry != self.geometry {
+            return Self::full_replay(geometry, measured, self.commits + 1);
+        }
+
+        let Some((backfill_count, append_start)) = edge_additions(&self.cards, measured) else {
+            return Self::full_replay(geometry, measured, self.commits + 1);
+        };
+        let retained = &measured[backfill_count..append_start];
+        if self
+            .cards
+            .iter()
+            .zip(retained)
+            .any(|(entry, item)| entry.boundary != item.boundary)
         {
             return Self::full_replay(geometry, measured, self.commits + 1);
         }
 
         let mut next = self.clone();
-        let changed_content = apply_content(&mut next.cards, measured);
-        let new_items = measured
-            .iter()
-            .filter(|item| next.cards.iter().all(|entry| entry.key != item.key))
-            .cloned()
-            .collect::<Vec<_>>();
-        let backfill_count = prefix_backfill_count(&self.cards, measured);
+        let changed_content = apply_content(&mut next.cards, retained);
         let mut transition = changed_content.then_some(Transition::ContentResize);
         if backfill_count > 0 {
             apply_backfill(&mut next.cards, &measured[..backfill_count]);
             transition = Some(Transition::Backfill);
         }
-        let appended = if backfill_count > 0 {
-            new_items
-                .into_iter()
-                .skip(backfill_count)
-                .collect::<Vec<_>>()
-        } else {
-            new_items
-        };
-        if !appended.is_empty() {
-            apply_append(&mut next.cards, &appended);
+        if append_start < measured.len() {
+            apply_append(&mut next.cards, &measured[append_start..]);
             transition = Some(Transition::Append);
         }
         let Some(transition) = transition else {
@@ -209,13 +198,17 @@ fn apply_content<K: Clone + Eq>(
     entries: &mut [PlaneCard<K>],
     measured: &[MeasuredCard<K>],
 ) -> bool {
+    assert_eq!(entries.len(), measured.len());
+    assert!(
+        entries
+            .iter()
+            .zip(measured)
+            .all(|(entry, item)| entry.key == item.key),
+        "Mosaic content reconciliation receives the committed key sequence"
+    );
     let mut cards = placed_cards(entries);
     let mut changed = false;
-    for entry in entries.iter_mut() {
-        let current = measured
-            .iter()
-            .find(|item| item.key == entry.key)
-            .expect("removed keys take the full-replay path");
+    for (index, (entry, current)) in entries.iter_mut().zip(measured).enumerate() {
         if current.candidates == entry.card.candidates
             && current.latched == entry.latched
             && current.content_revision == entry.content_revision
@@ -225,10 +218,6 @@ fn apply_content<K: Clone + Eq>(
         changed = true;
         entry.latched = current.latched;
         entry.content_revision = current.content_revision;
-        let index = cards
-            .iter()
-            .position(|card| card.creation_index == entry.card.creation_index)
-            .expect("persistent plane keeps every keyed placement");
         let desired = current
             .latched
             .filter(|candidate| candidate.span == cards[index].span)
@@ -255,21 +244,26 @@ fn apply_content<K: Clone + Eq>(
     changed
 }
 
-fn prefix_backfill_count<K: Eq>(committed: &[PlaneCard<K>], measured: &[MeasuredCard<K>]) -> usize {
-    let count = measured
-        .iter()
-        .take_while(|item| committed.iter().all(|entry| entry.key != item.key))
-        .count();
-    let retains_creation_order = measured[count..]
-        .iter()
-        .filter(|item| committed.iter().any(|entry| entry.key == item.key))
-        .map(|item| &item.key)
-        .eq(committed.iter().map(|entry| &entry.key));
-    if count > 0 && retains_creation_order {
-        count
-    } else {
-        0
+/// Return the contiguous older prefix and newer suffix around the complete
+/// committed key sequence. An unseen middle key or retained-order change is a
+/// structural insertion and must replay the complete chronological snapshot.
+fn edge_additions<K: Eq>(
+    committed: &[PlaneCard<K>],
+    measured: &[MeasuredCard<K>],
+) -> Option<(usize, usize)> {
+    if committed.is_empty() {
+        return Some((0, 0));
     }
+    let backfill_count = measured
+        .iter()
+        .position(|item| item.key == committed[0].key)?;
+    let append_start = backfill_count.checked_add(committed.len())?;
+    (append_start <= measured.len()
+        && measured[backfill_count..append_start]
+            .iter()
+            .zip(committed)
+            .all(|(item, entry)| item.key == entry.key))
+    .then_some((backfill_count, append_start))
 }
 
 fn apply_backfill<K: Clone>(entries: &mut Vec<PlaneCard<K>>, older: &[MeasuredCard<K>]) {
@@ -372,10 +366,11 @@ fn assert_boundary_floors<K>(entries: &[PlaneCard<K>]) {
     }
 }
 
-fn assert_unique<K: Eq>(measured: &[MeasuredCard<K>]) {
-    for (index, item) in measured.iter().enumerate() {
+fn assert_unique<K: Ord>(measured: &[MeasuredCard<K>]) {
+    let mut keys = BTreeSet::new();
+    for item in measured {
         assert!(
-            measured[..index].iter().all(|other| other.key != item.key),
+            keys.insert(&item.key),
             "persistent Mosaic input contains a duplicate card identity"
         );
         assert!(

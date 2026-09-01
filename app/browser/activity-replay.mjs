@@ -7,6 +7,17 @@ function decodeServerFrame(message) {
   return JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
 }
 
+function agentMessageKey(message) {
+  return [
+    "message-agent",
+    message.lane,
+    message.locus.member,
+    message.locus.offset,
+    message.locus.length,
+    message.locus.event,
+  ].join("-");
+}
+
 /// Forward the production socket unchanged while retaining one real older tool
 /// frame that the assertion can redeliver to the same browser connection.
 export async function installActivityReplay(context) {
@@ -75,14 +86,7 @@ export async function installActivityReplay(context) {
       delete frame.message.observed;
       frame.message.locus.event += injectedEvent;
       injectedEvent += 1;
-      const expectedKey = [
-        "message-agent",
-        frame.message.lane,
-        frame.message.locus.member,
-        frame.message.locus.offset,
-        frame.message.locus.length,
-        frame.message.locus.event,
-      ].join("-");
+      const expectedKey = agentMessageKey(frame.message);
       activeSocket.send(Buffer.from(JSON.stringify(frame)));
       await waitForPageFunction(
         page,
@@ -105,6 +109,107 @@ export async function installActivityReplay(context) {
         },
       );
       return { key: expectedKey };
+    },
+    stagedHydration() {
+      const sources = [...proseFrames.values()].sort(
+        (left, right) => left.message.lane.localeCompare(right.message.lane),
+      );
+      assert.ok(sources.length >= 2, "staged hydration retained two agent transports");
+      const source = sources[0];
+      const base = Date.parse("2031-05-17T12:00:00.000Z");
+      const make = (frame, label, millis, offset, activity = "prose") => {
+        const message = JSON.parse(JSON.stringify(frame.message));
+        message.text = label;
+        message.activity = activity;
+        message.media = [];
+        message.authored = new Date(millis).toISOString();
+        message.authored_synthetic = false;
+        message.observed = new Date(millis).toISOString();
+        message.locus = {
+          member: message.locus.member,
+          offset,
+          length: label.length + 1,
+          event: injectedEvent,
+        };
+        injectedEvent += 1;
+        return message;
+      };
+      const older = make(sources[0], "hydration older edge", base, 60_000);
+      const old = make(sources[1], "hydration retained old", base + 1_000, 60_010);
+      const boundary = make(
+        sources[0], "", base + 2_000, 60_020, "compaction",
+      );
+      const equalA = make(sources[0], "hydration equal time a", base + 3_000, 60_030);
+      const equalB = make(sources[1], "hydration equal time b", base + 3_000, 60_001);
+      const recent = make(sources[0], "hydration retained recent", base + 4_000, 60_040);
+      const newer = make(sources[1], "hydration newer edge", base + 5_000, 60_050);
+      const chronological = [older, old, boundary, equalA, equalB, recent, newer].sort(
+        (left, right) => left.observed.localeCompare(right.observed)
+          || left.lane.localeCompare(right.lane)
+          || left.locus.member - right.locus.member
+          || left.locus.offset - right.locus.offset
+          || left.locus.length - right.locus.length
+          || left.locus.event - right.locus.event,
+      );
+      const chronologyRank = new Map(
+        chronological.map((message, index) => [agentMessageKey(message), index]),
+      );
+      const rank = (message) => {
+        const value = chronologyRank.get(agentMessageKey(message));
+        assert.ok(Number.isInteger(value), "hydration stage contains only its admitted messages");
+        return value;
+      };
+      const stages = [
+        [old, boundary, recent],
+        [newer, recent, boundary, old, older],
+        [...chronological].reverse(),
+      ];
+      const frameFor = (messages) => ({
+        stream: "messages",
+        v: source.v,
+        id: source.id,
+        epoch: source.epoch,
+        limit: 256,
+        messages,
+      });
+      return {
+        chronological,
+        stages,
+        keys(messages) {
+          return [...messages]
+            .sort((left, right) => rank(left) - rank(right))
+            .map(agentMessageKey);
+        },
+        async send(page, messages) {
+          assert.ok(activeSocket, "staged hydration retains the current browser WebSocket");
+          const token = crypto.randomUUID();
+          await page.evaluate((expected) => {
+            const socket = window.__canvasSockets.at(-1);
+            if (!socket) throw new Error("canvas WebSocket was not captured");
+            window.__stagedHydrationReceipt = null;
+            const observe = async (event) => {
+              const text = typeof event.data === "string"
+                ? event.data
+                : event.data instanceof Blob
+                  ? await event.data.text()
+                  : new TextDecoder().decode(event.data);
+              const frame = JSON.parse(text);
+              if (frame.stream !== "messages" || frame.messages.length !== expected.count) return;
+              socket.removeEventListener("message", observe);
+              window.__stagedHydrationReceipt = expected.token;
+            };
+            socket.addEventListener("message", observe);
+          }, { token, count: messages.length });
+          activeSocket.send(Buffer.from(JSON.stringify(frameFor(messages))));
+          await waitForPageFunction(
+            page,
+            "the staged hydration snapshot reaches the browser",
+            TRANSITION_MS,
+            (expected) => window.__stagedHydrationReceipt === expected,
+            token,
+          );
+        },
+      };
     },
     async injectSyntheticSnapshot(page, lane, text) {
       const source = proseFrames.get(lane);

@@ -206,15 +206,12 @@ fn render_compose(
     }
 }
 
-/// Every stable assistant-authored record the lineage can render in source chronology.
+/// Every stable assistant-authored record the lineage can render in total chronology.
 ///
-/// That order reaches the plane only as the order *unseen* keys are offered:
-/// the plane keeps its own creation order and `render_activity_cards` renders
-/// from that, so this chain is not the order an operator sees. A message
-/// arriving while another record is visible therefore appends to the lattice
-/// tail rather than displacing it, which is decided behavior — see the
-/// tail-by-decision case in `app/tests/mosaic_plane.rs` for why honoring this
-/// order instead would repack the plane on its ordinary path.
+/// Observation time is the primary display order. The admitted lane and source
+/// locus break equal-time ties without parsing a rendered DOM identity. The
+/// persistent plane uses this complete order to distinguish edge additions
+/// from structural middle insertions during staged hydration.
 fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
     let mut cards = runtime
         .messages()

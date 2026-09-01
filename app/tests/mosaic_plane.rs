@@ -90,7 +90,7 @@ fn persistent_noop_and_append_never_repack_committed_cards() {
 }
 
 #[test]
-fn incremental_frames_preserve_order_and_freeze_without_repacking() {
+fn retained_order_changes_replay_while_tail_appends_preserve_geometry() {
     let initial = [
         measured("a", candidates(12, 2)),
         measured("b", candidates(12, 2)),
@@ -101,16 +101,16 @@ fn incremental_frames_preserve_order_and_freeze_without_repacking() {
         900,
         &[initial[2].clone(), initial[0].clone(), initial[1].clone()],
     );
-    assert_eq!(reordered_frame, plane, "source-vector churn is a no-op");
     assert_eq!(
         reordered_frame
             .cards()
             .iter()
             .map(|entry| entry.key)
             .collect::<Vec<_>>(),
-        vec!["a", "b", "c"],
-        "the committed creation order owns rendering order",
+        vec!["c", "a", "b"],
+        "a retained-order change adopts the complete chronological snapshot",
     );
+    assert_eq!(reordered_frame.transition(), Transition::FullReplay);
 
     let committed_geometry = plane
         .cards()
@@ -170,42 +170,20 @@ fn incremental_frames_preserve_order_and_freeze_without_repacking() {
     );
 }
 
-/// The plane renders arrival order, not the order `activity_cards` chains.
-///
-/// `activity_cards` builds its vector as every agent message and then every
-/// pending directive, so a message arriving while a directive is pending sits
-/// *between* committed cards in that source order. The plane appends it to the
-/// tail instead. That is the decided behavior, not a defect to refile: the
-/// source order is only how unseen keys reach the plane, while
-/// `render_activity_cards` renders by `cards()`, so what the operator sees is
-/// arrival order and the DOM order still matches the creation order.
-///
-/// Honoring the source order instead would repack on the ordinary path — an
-/// operator steers, the agent answers — which is what a persistent plane exists
-/// to avoid, and there is no durable key to interleave the two kinds by: a
-/// directive carries the commit instant of the fact that authored it, while a
-/// message carries only a tape position.
-///
-/// The cost, accepted here rather than hidden: until the directive clears, the
-/// later message renders below it, and the removal's full replay then moves it
-/// back above.
 #[test]
-fn a_message_measured_between_committed_cards_takes_the_tail_by_decision() {
+fn a_key_discovered_between_committed_cards_replays_true_chronology() {
     let initial = [
         measured("message-a", candidates(6, 3)),
-        measured("directive-x", candidates(6, 4)),
+        measured("message-c", candidates(6, 4)),
     ];
     let plane = PersistentLanePlane::new(900, &initial);
-    let committed = plane.cards().to_vec();
-
-    let inserted = plane.reconcile(
-        900,
-        &[
-            initial[0].clone(),
-            measured("message-b", candidates(12, 2)),
-            initial[1].clone(),
-        ],
-    );
+    let complete = [
+        initial[0].clone(),
+        measured("message-b", candidates(12, 2)),
+        initial[1].clone(),
+    ];
+    let inserted = plane.reconcile(900, &complete);
+    let one_shot = PersistentLanePlane::new(900, &complete);
 
     assert_eq!(
         inserted
@@ -213,11 +191,93 @@ fn a_message_measured_between_committed_cards_takes_the_tail_by_decision() {
             .iter()
             .map(|entry| entry.key)
             .collect::<Vec<_>>(),
-        vec!["message-a", "directive-x", "message-b"],
-        "the later message takes the lattice tail, not the measured middle"
+        vec!["message-a", "message-b", "message-c"],
+        "the plane renders the complete chronological snapshot"
     );
-    assert_eq!(&inserted.cards()[..2], committed);
-    assert_eq!(inserted.transition(), Transition::Append);
+    assert_eq!(inserted.cards(), one_shot.cards());
+    assert_eq!(inserted.transition(), Transition::FullReplay);
+}
+
+#[test]
+fn staged_edge_batches_converge_to_one_shot_before_a_middle_replay() {
+    let b = measured("b", candidates(6, 3));
+    let d = measured("d", candidates(6, 4));
+    let initial = PersistentLanePlane::new(900, &[b.clone(), d.clone()]);
+    let committed = initial.cards().to_vec();
+    let edge_snapshot = [
+        measured("a", candidates(12, 2)),
+        b.clone(),
+        d.clone(),
+        measured("e", candidates(3, 3)),
+    ];
+    let edged = initial.reconcile(900, &edge_snapshot);
+    assert_eq!(
+        edged.cards()[1..3]
+            .iter()
+            .map(|entry| {
+                (
+                    entry.card.track,
+                    entry.card.span,
+                    entry.card.base,
+                    entry.card.rows,
+                )
+            })
+            .collect::<Vec<_>>(),
+        committed
+            .iter()
+            .map(|entry| {
+                (
+                    entry.card.track,
+                    entry.card.span,
+                    entry.card.base,
+                    entry.card.rows,
+                )
+            })
+            .collect::<Vec<_>>(),
+        "edge additions retain committed placement geometry",
+    );
+    assert_eq!(edged.transition(), Transition::Append);
+
+    let complete = [
+        edge_snapshot[0].clone(),
+        b,
+        measured("c", candidates(3, 5)),
+        d,
+        edge_snapshot[3].clone(),
+    ];
+    let settled = edged.reconcile(900, &complete);
+    let one_shot = PersistentLanePlane::new(900, &complete);
+    assert_eq!(settled.cards(), one_shot.cards());
+    assert_eq!(settled.transition(), Transition::FullReplay);
+    assert_eq!(settled.reconcile(900, &complete), settled);
+}
+
+#[test]
+fn interleaved_hydration_replays_deterministically_across_a_compaction_epoch() {
+    let old = measured("old", candidates(12, 2));
+    let compact = boundary("compact", 1);
+    let recent = measured("recent", candidates(6, 3));
+    let initial = PersistentLanePlane::new(900, &[old.clone(), compact.clone(), recent.clone()]);
+    let complete = [
+        old,
+        compact,
+        measured("middle-a", candidates(3, 4)),
+        measured("middle-b", candidates(3, 2)),
+        recent,
+    ];
+
+    let staged = initial.reconcile(900, &complete);
+    let one_shot = PersistentLanePlane::new(900, &complete);
+
+    assert_eq!(staged.transition(), Transition::FullReplay);
+    assert_eq!(staged.cards(), one_shot.cards());
+    let divider = &staged.cards()[1].card;
+    assert!(
+        staged.cards()[2..]
+            .iter()
+            .all(|entry| entry.card.base >= divider.base + divider.rows),
+        "the replayed middle batch stays inside the post-compaction epoch",
+    );
 }
 
 #[test]
