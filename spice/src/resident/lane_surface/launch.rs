@@ -217,10 +217,29 @@ fn launch_plan(
 }
 
 fn rtk_hook_health(dialect: listen::Dialect, health: spice::rtk::Health) -> spice::rtk::Health {
-    if dialect == listen::Dialect::Codex {
-        health.with_hook(spice::rtk::HookState::Installed)
-    } else {
-        health
+    if dialect != listen::Dialect::Codex {
+        return health;
+    }
+    codex_rtk_hook_health(
+        health,
+        crate::steering_command::validate_codex_rtk_hook_contract(),
+    )
+}
+
+fn codex_rtk_hook_health(
+    health: spice::rtk::Health,
+    contract: Result<(), String>,
+) -> spice::rtk::Health {
+    match contract {
+        Ok(()) => health.with_hook(spice::rtk::HookState::Installed),
+        Err(error) => spice::rtk::Health::new(
+            spice::rtk::HealthState::ProtocolInvalid,
+            health.version().map(str::to_owned),
+            format!(
+                "{}; Codex PreToolUse RTK response is not consumable: {error}",
+                health.detail()
+            ),
+        ),
     }
 }
 
@@ -480,6 +499,28 @@ mod rtk_environment_tests {
         assert_eq!(
             serde_json::to_value(installed).expect("health encodes")["hook"],
             "installed"
+        );
+    }
+
+    #[test]
+    fn invalid_codex_response_contract_cannot_report_an_installed_hook() {
+        let launched_only = spice::rtk::Health::new(
+            spice::rtk::HealthState::Active,
+            Some("0.45.0".to_owned()),
+            "fixture executable launched",
+        );
+        let rejected = codex_rtk_hook_health(
+            launched_only,
+            Err("updatedInput lacks permissionDecision:allow".to_owned()),
+        );
+
+        assert_eq!(rejected.state(), spice::rtk::HealthState::ProtocolInvalid);
+        assert_eq!(rejected.version(), Some("0.45.0"));
+        assert_eq!(rejected.hook(), None);
+        assert!(
+            rejected
+                .detail()
+                .contains("updatedInput lacks permissionDecision:allow")
         );
     }
 
