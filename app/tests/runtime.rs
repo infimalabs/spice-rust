@@ -13,7 +13,8 @@ use wire::{
 mod effort;
 #[path = "runtime/invalidation_and_chronology.rs"]
 mod invalidation_and_chronology;
-mod runtime_message_history;
+#[path = "runtime/message_history.rs"]
+mod message_history;
 #[path = "runtime/stream_terminal.rs"]
 mod stream_terminal;
 mod support;
