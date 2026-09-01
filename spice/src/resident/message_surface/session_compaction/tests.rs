@@ -315,6 +315,112 @@ fn large_prefix_validation_is_bounded_and_restarts_after_generation_movement() {
 }
 
 #[test]
+fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
+    const LATER_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"later\",\"name\":\"Read\",\"input\":{\"path\":\"later.rs\"}}]}}\n";
+    const LATER_BOUNDARY: &str = "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    let scratch = Scratch::new("append-during-validation");
+    let transcript = scratch.transcript();
+    fs::write(&transcript, large_claude_transcript_with_pending('x', 192))
+        .expect("large active transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+
+    for _ in 0..8 {
+        assert!(scan(&mut cursor).expect("prefix scans").is_empty());
+        if cursor.validation.is_some() {
+            break;
+        }
+    }
+    let validation = cursor
+        .validation
+        .as_ref()
+        .expect("large boundary validation is pending");
+    assert_eq!(validation.offset, VALIDATION_BYTE_BUDGET as u64);
+    assert_eq!(
+        validation.records[0].unavailable_tool_terminals,
+        ["Read: held.rs"]
+    );
+    let frozen_next = cursor.next;
+    let frozen_next_call = cursor.next_call;
+
+    let mut records = Vec::new();
+    for serial in 0..8 {
+        let suffix = if serial == 0 {
+            LATER_CALL.to_owned()
+        } else {
+            format!("{{\"type\":\"progress\",\"serial\":{serial}}}\n")
+        };
+        append(&transcript, suffix.as_bytes());
+        let previous = cursor
+            .validation
+            .as_ref()
+            .expect("validation remains pending before the poll")
+            .offset;
+        records = scan(&mut cursor).expect("growing transcript validates");
+        assert_eq!(cursor.next, frozen_next, "suffix remains unconsumed");
+        assert_eq!(cursor.next_call, frozen_next_call);
+        if !records.is_empty() {
+            assert!(serial >= 2, "validation spans repeated append polls");
+            break;
+        }
+        assert!(
+            cursor
+                .validation
+                .as_ref()
+                .expect("validation remains pending")
+                .offset
+                > previous,
+            "each append-only poll preserves and advances validation",
+        );
+    }
+    assert_eq!(records.len(), 1, "the held boundary eventually publishes");
+    assert_eq!(
+        records[0].unavailable_tool_terminals,
+        ["Read: held.rs"],
+        "the appended call cannot enter the held boundary",
+    );
+
+    append(&transcript, LATER_BOUNDARY.as_bytes());
+    let later = scan_until_boundary(&mut cursor, "appended records scan after validation");
+    assert_eq!(later.len(), 1);
+    assert_eq!(later[0].unavailable_tool_terminals, ["Read: later.rs"]);
+    assert!(scan(&mut cursor).expect("settled poll scans").is_empty());
+}
+
+#[test]
+fn same_length_mutation_after_admitted_growth_resets_validation() {
+    const SUFFIX: &str = "{\"type\":\"progress\",\"serial\":1}\n";
+    let scratch = Scratch::new("mutation-after-append");
+    let transcript = scratch.transcript();
+    fs::write(&transcript, large_claude_transcript_with_pending('x', 192))
+        .expect("large original transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    for _ in 0..8 {
+        assert!(scan(&mut cursor).expect("prefix scans").is_empty());
+        if cursor.validation.is_some() {
+            break;
+        }
+    }
+    append(&transcript, SUFFIX.as_bytes());
+    assert!(
+        scan(&mut cursor)
+            .expect("append growth validates")
+            .is_empty()
+    );
+    let advanced = cursor
+        .validation
+        .as_ref()
+        .expect("validation remains pending")
+        .offset;
+
+    let replacement = format!("{}{SUFFIX}", large_claude_transcript_with_pending('y', 192));
+    fs::write(&transcript, replacement).expect("same-length mutation is written in place");
+    assert!(scan(&mut cursor).expect("mutation refuses").is_empty());
+    assert_eq!(cursor.next, 0, "mixed-generation scan state is discarded");
+    assert!(cursor.validation.is_none());
+    assert!(advanced > VALIDATION_BYTE_BUDGET as u64);
+}
+
+#[test]
 fn claude_preserved_boundary_uses_the_same_typed_projection() {
     let scratch = Scratch::new("claude");
     let transcript = scratch.transcript();
@@ -580,6 +686,16 @@ fn large_claude_transcript(fill: char) -> String {
         "{}{{\"type\":\"system\",\"subtype\":\"compact_boundary\"}}\n",
         record.repeat(96),
     )
+}
+
+fn large_claude_transcript_with_pending(fill: char, records: usize) -> String {
+    const PENDING_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"held\",\"name\":\"Read\",\"input\":{\"path\":\"held.rs\"}}]}}\n";
+    const BOUNDARY: &str = "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    let text = fill.to_string().repeat(4 * 1024);
+    let record = format!(
+        "{{\"type\":\"assistant\",\"message\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}\n",
+    );
+    format!("{}{PENDING_CALL}{BOUNDARY}", record.repeat(records))
 }
 
 fn uuid(value: &str) -> CanonicalUuid {
