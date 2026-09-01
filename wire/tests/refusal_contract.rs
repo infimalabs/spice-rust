@@ -92,7 +92,30 @@ fn each_form_requires_its_own_fields_and_rejects_every_other_shape() {
 
 #[test]
 fn repair_commands_cannot_be_empty_or_option_shaped() {
-    assert!(SpiceCommand::new("task", ["next"]).is_ok());
+    let command = SpiceCommand::new("task", ["next"]).expect("repair command is valid");
+    let refusal = Refusal::repairable(
+        command.clone(),
+        wire::RefusalDiagnostic::new("claim::not-held", None, None, None),
+    );
+    assert_eq!(refusal.command(), Some(&command));
+    assert_eq!(
+        Refusal::bare(wire::RefusalDiagnostic::new(
+            "claim::not-held",
+            None,
+            None,
+            None,
+        ))
+        .command(),
+        None,
+    );
+    assert_eq!(
+        Refusal::invocation("gate::invalid", "provide one instrument").command(),
+        None,
+    );
+    assert_eq!(
+        Refusal::evidence("gate::regressed", "finding", "repair the finding").command(),
+        None,
+    );
     assert!(SpiceCommand::new("", std::iter::empty::<&str>()).is_err());
     assert!(SpiceCommand::new("--json", ["task", "next"]).is_err());
     assert!(SpiceCommand::new("task next", std::iter::empty::<&str>()).is_err());
