@@ -25,7 +25,7 @@ import {
   waitForLocator as waitForElement,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
-import { assertAgentPageBottomSpacing } from "./canvas-readiness.mjs";
+import { assertAgentWorkspaceGeometry } from "./canvas-readiness.mjs";
 
 const AGENT_SEAT_MS = 15_000;
 
@@ -709,11 +709,14 @@ export async function assertAgentConversation(
     const viewport = element.getBoundingClientRect();
     const box = card?.getBoundingClientRect();
     return {
+      card: box ? { bottom: box.bottom, top: box.top } : null,
       scrollTop: element.scrollTop,
+      viewport: { bottom: viewport.bottom, top: viewport.top },
       visible: Boolean(box && box.bottom > viewport.top && box.top < viewport.bottom),
     };
   }, await topCard.getAttribute("data-mosaic-card-key"));
-  assert.deepEqual(topFollow, { scrollTop: 0, visible: true }, "at-top activity follows visibly");
+  assert.equal(topFollow.scrollTop, 0, "at-top activity remains at the plane origin");
+  assert.ok(topFollow.visible, `at-top activity follows visibly: ${JSON.stringify(topFollow)}`);
   await topCard.waitFor({ timeout: TRANSITION_MS });
 
   await assertMosaicScrollInputs(page, scroller);
@@ -810,7 +813,7 @@ export async function assertAgentConversation(
   await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
-  await assertAgentPageBottomSpacing(page, "populated desktop Agents page");
+  await assertAgentWorkspaceGeometry(page, "populated desktop Agents page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   await activityReplay.assertOlderToolIgnored(page, console);
   const restoredProse = await activityReplay.restoreProseSnapshot(page);

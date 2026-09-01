@@ -70,7 +70,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
         .map(|lanes| lanes.topology_revision.to_string());
     html! {
         <div
-            class="shell"
+            class={classes!("shell", (**render.mosaic).then_some("shell--mosaic"))}
             data-topology-revision={topology_revision}
             data-unsafe-intent={render.unsafe_intent.to_string()}
             data-submission-count={render.submissions.status.len().to_string()}

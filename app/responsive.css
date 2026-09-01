@@ -1,6 +1,74 @@
+/* Below the plane's minimum useful block size, the fixed controls and a
+   readable history viewport cannot share one screen. Return that dimension to
+   document flow instead of clipping either surface or inventing a second
+   inner scroller. */
+@media (max-height: 440px) {
+  html:has(.shell--mosaic),
+  body:has(.shell--mosaic),
+  #app:has(> .shell--mosaic) {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+  .shell--mosaic {
+    position: static;
+    height: auto;
+    min-height: 100vh;
+    width: auto;
+    overflow: visible;
+  }
+  .mosaic-workspace,
+  .mosaic-workspace .content,
+  .lineage-fleet,
+  .team-pane,
+  .team-compose,
+  .team-activity-grid { flex: 0 0 auto; min-height: auto; }
+  .team-pane > .empty { flex: 0 0 auto; }
+  .lane-mosaic-plane {
+    flex: 0 1 auto;
+    max-height: max(12rem, calc(100vh - 20rem));
+  }
+}
+
 @media (max-width: 900px) {
   .lineage-fleet { flex-direction: column; }
-  .team-surface { flex: 0 0 auto; width: 100%; }
+  .team-surface { width: 100%; }
+  /* One team still owns the available viewport. Two or more teams need their
+     ordinary stacked document extent, with each plane retaining its own
+     bounded history scroller. */
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) {
+    position: static;
+    height: auto;
+    min-height: 100vh;
+    width: auto;
+    overflow: visible;
+  }
+  html:has(.shell--mosaic .lineage-fleet > .team-surface:nth-child(2)),
+  body:has(.shell--mosaic .lineage-fleet > .team-surface:nth-child(2)),
+  #app:has(> .shell--mosaic .lineage-fleet > .team-surface:nth-child(2)) {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .mosaic-workspace,
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .content,
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .lineage-fleet,
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .team-pane,
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .team-compose,
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .team-activity-grid {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .team-surface {
+    flex: 0 0 auto;
+  }
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .team-pane > .empty {
+    flex: 0 0 auto;
+  }
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .lane-mosaic-plane {
+    flex: 0 1 auto;
+    max-height: max(12rem, calc(100vh - 20rem));
+  }
   .commandbar { gap: 10px; padding: 8px 12px; }
   .bar-meta { display: none; }
   .axis-button { padding: 0 11px; }
@@ -12,7 +80,6 @@
 }
 
 @media (max-width: 560px) {
-  .shell { min-height: 100vh; }
   .brand-name { display: none; }
   .axis-button { min-height: 40px; padding: 0 9px; font-size: .74rem; }
   .commandbar--mosaic .axis-button { min-height: 26px; }
