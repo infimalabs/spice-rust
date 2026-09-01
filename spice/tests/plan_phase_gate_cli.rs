@@ -134,6 +134,9 @@ fn seed_plan_claim(path: &Path, lane: CanonicalUuid) -> TaskHandle {
                 flow: flow.clone(),
                 phase: plan.clone(),
                 revision: 1,
+                creation: wire::body::TaskCreationContext::unavailable(
+                    wire::body::TaskCreationUnavailable::OperatorActor,
+                ),
             },
             FactCause::Root,
         )
@@ -149,6 +152,9 @@ fn seed_plan_claim(path: &Path, lane: CanonicalUuid) -> TaskHandle {
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: origin,
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::OperatorActor,
+        ),
         revision,
     });
     let workflow_task = task.clone();

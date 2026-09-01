@@ -384,8 +384,8 @@ pub(in crate::board_command) fn task_show(
         format!("version {}", statement.revision),
         format!("claim {}", claim_line(task)),
         format!("claim_thread {}", claim_thread(task)),
-        format!("creator_context {}", task.origin_thread),
     ];
+    lines.extend(creation_context_lines(statement));
     if statement.tags.is_empty() {
         lines.push("tags -".to_owned());
     } else {
@@ -431,6 +431,30 @@ pub(in crate::board_command) fn task_show(
     lines.extend(phase_guidance_lines(task));
     lines.push(next_command_line(board, task));
     lines.join("\n")
+}
+
+fn creation_context_lines(statement: &wire::intent::BoardStatement) -> Vec<String> {
+    let output = task_creation_context_output(&statement.creation);
+    match &statement.creation {
+        body::TaskCreationContext::Unavailable { .. } => {
+            vec![format!("creation_context {output}")]
+        }
+        body::TaskCreationContext::Transcript { session, boundary } => {
+            vec![
+                format!(
+                    "creation_context session={} lane={} vendor={} stream={} source={} member={} offset={}",
+                    session,
+                    boundary.lane,
+                    boundary.vendor,
+                    boundary.stream,
+                    boundary.source,
+                    boundary.next.member,
+                    boundary.next.offset,
+                ),
+                output.into(),
+            ]
+        }
+    }
 }
 
 fn claim_line(task: &BoardTask) -> String {

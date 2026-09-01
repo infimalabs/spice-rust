@@ -196,6 +196,7 @@ fn refusal_reason(outcome: CommitOutcome) -> String {
 fn an_unmoved_observation_lets_the_allocator_write_commit() {
     let (_root, bus, epoch, seats) = fixture("allocation-guard-quiet", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
@@ -222,6 +223,7 @@ fn an_unmoved_observation_lets_the_allocator_write_commit() {
 fn a_task_added_after_the_observation_refuses_the_allocator_write() {
     let (_root, bus, epoch, seats) = fixture("allocation-guard-heads", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
@@ -259,6 +261,7 @@ fn a_task_added_after_the_observation_refuses_the_allocator_write() {
 fn a_residency_head_moved_after_the_observation_refuses_the_allocator_write() {
     let (_root, bus, epoch, seats) = fixture("allocation-guard-residency", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
@@ -302,6 +305,7 @@ fn a_residency_head_moved_after_the_observation_refuses_the_allocator_write() {
 fn a_winner_that_was_never_the_selection_refuses_the_allocator_write() {
     let (_root, bus, epoch, seats) = fixture("allocation-guard-winner", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
@@ -470,6 +474,7 @@ fn commit_planned_claim(bus: &Bus, command: &wire::AdmittedCommand, plan: ClaimP
 fn task_next_refuses_when_the_actor_already_holds_one_active_claim() {
     let (root, bus, epoch, seats) = fixture("claim-one-active-plan", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "ACTIVE-1", "first", None);
     add(&bus, epoch, actor.clone(), "ACTIVE-2", "second", None);
 
@@ -526,6 +531,7 @@ fn task_next_refuses_when_the_actor_already_holds_one_active_claim() {
 fn an_active_claim_in_the_commit_read_refuses_even_when_heads_match() {
     let (root, bus, epoch, seats) = fixture("claim-one-active-guard", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "ACTIVE-guard1", "first", None);
     add(&bus, epoch, actor.clone(), "ACTIVE-guard2", "second", None);
 
@@ -713,6 +719,7 @@ fn task_status_and_progress_select_the_actor_claim_when_peers_are_active() {
 fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     let (root, bus, epoch, seats) = fixture("claim-plan-heads", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
@@ -761,6 +768,7 @@ fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
 fn a_reseat_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     let (root, bus, epoch, seats) = fixture("claim-plan-residency", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
@@ -804,6 +812,7 @@ fn a_reseat_between_the_claim_plan_and_its_commit_refuses_the_claim() {
 fn a_moved_witness_refuses_before_any_allocator_comparison_is_reached() {
     let (root, bus, epoch, seats) = fixture("claim-plan-witness", 1);
     let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 

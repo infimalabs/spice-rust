@@ -822,6 +822,9 @@ fn seed_write_with_lanes(authority: &Authority, lanes: Vec<LaneResidency>) -> Jo
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
                 revision: 1,
             },
             FactCause::Root,
@@ -894,6 +897,7 @@ fn attach_heads(
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: statement_origin,
+        creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,
     });
     let workflow_task = authority.born();

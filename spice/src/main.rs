@@ -347,6 +347,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         ["session"]
         | ["session", "briefing"]
         | ["session", "commands"]
+        | ["session", "context"]
         | ["session", "commits"]
         | ["session", "compactions"]
         | ["session", "messages"]

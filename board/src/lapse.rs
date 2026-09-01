@@ -368,6 +368,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
                 holder,
                 expiry: None,
                 warnings: Box::default(),
+                creation_context: None,
                 next: None,
             },
         )
@@ -557,6 +558,7 @@ mod tests {
                     holder: actor,
                     expiry: None,
                     warnings: Box::default(),
+                    creation_context: None,
                     next: None,
                 },
             )
@@ -587,6 +589,9 @@ mod tests {
                     flow: vec![phase.clone()],
                     phase: phase.clone(),
                     revision: 1,
+                    creation: body::TaskCreationContext::unavailable(
+                        body::TaskCreationUnavailable::SpiceActor,
+                    ),
                 },
                 FactCause::Root,
             )
@@ -601,6 +606,9 @@ mod tests {
             tags: Vec::new(),
             dependencies: Vec::new(),
             provenance: origin,
+            creation: body::TaskCreationContext::unavailable(
+                body::TaskCreationUnavailable::SpiceActor,
+            ),
             revision: position,
         });
         write.workflow_head(born(), fact, move |_| WorkflowHead {

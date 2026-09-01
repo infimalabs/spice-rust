@@ -94,6 +94,7 @@ pub(super) fn claim_free(
         holder: command.actor().clone(),
         expiry: None,
         warnings: Box::default(),
+        creation_context: None,
         next,
     };
     if let Err(error) = write.command_result(
@@ -103,7 +104,7 @@ pub(super) fn claim_free(
     ) {
         return store_fault("claim::free-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Claim(answer))
+    committed(bus, write, CommandAnswer::Claim(Box::new(answer)))
 }
 
 pub(super) fn claim_reclaim(
@@ -155,6 +156,7 @@ pub(super) fn claim_reclaim_with_clock(
         holder: command.actor().clone(),
         expiry: Some(Box::new(until)),
         warnings: Box::default(),
+        creation_context: None,
         next: None,
     };
     if let Err(error) = write.command_result(
@@ -164,7 +166,7 @@ pub(super) fn claim_reclaim_with_clock(
     ) {
         return store_fault("claim::reclaim-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Claim(answer))
+    committed(bus, write, CommandAnswer::Claim(Box::new(answer)))
 }
 
 // Reclaim admission and head publication live in `progress/reclaim.rs` so the
@@ -620,6 +622,19 @@ fn review_verdict(
     Ok((verdict, finding))
 }
 
+fn review_followup_creation(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    snapshot: &ValidatedSnapshot,
+    review: &TaskReview,
+) -> Result<Option<TaskCreationCapture>, Outcome<CommandAnswer>> {
+    if review.then.is_empty() {
+        Ok(None)
+    } else {
+        task_creation_capture(bus, command, snapshot).map(Some)
+    }
+}
+
 pub(super) fn task_review(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -656,6 +671,10 @@ pub(super) fn task_review(
         Ok(git) => git,
         Err(outcome) => return outcome,
     };
+    let creation = match review_followup_creation(bus, command, &snapshot, review) {
+        Ok(creation) => creation,
+        Err(outcome) => return outcome,
+    };
     let mut write = JournalWrite::new(
         command.actor().clone(),
         origin.clone(),
@@ -663,6 +682,9 @@ pub(super) fn task_review(
         Producer::CommandDoor,
     );
     guard(&mut write, command.expected().to_vec());
+    if let Some(creation) = &creation {
+        creation.guard(&mut write);
+    }
     let reviewed = match write.fact(
         body::TaskReviewed {
             task: entry.born().clone(),
@@ -703,7 +725,14 @@ pub(super) fn task_review(
         ..claim
     });
     let tracking = record_followups(
-        &mut write, command, &snapshot, review, reviewed, &origin, projects,
+        &mut write,
+        command,
+        &snapshot,
+        review,
+        reviewed,
+        &origin,
+        creation.as_ref(),
+        projects,
     );
     if let Err(outcome) = tracking {
         return outcome;
@@ -903,6 +932,24 @@ fn commit_doc_plan(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
+    let creates = plan.preview.document().nodes.iter().any(|node| {
+        node.kind != dialect::NodeKind::SyntheticRoot
+            && plan.handles.get(&node.id).is_some_and(|handle| {
+                !plan
+                    .snapshot
+                    .entries
+                    .iter()
+                    .any(|entry| entry.handle() == handle)
+            })
+    });
+    let creation = if creates {
+        match task_creation_capture(bus, command, &plan.snapshot) {
+            Ok(creation) => Some(creation),
+            Err(outcome) => return outcome,
+        }
+    } else {
+        None
+    };
     let mut write = JournalWrite::new(
         command.actor().clone(),
         origin.clone(),
@@ -910,6 +957,9 @@ fn commit_doc_plan(
         Producer::CommandDoor,
     );
     guard(&mut write, command.expected().to_vec());
+    if let Some(creation) = &creation {
+        creation.guard(&mut write);
+    }
     let mut previous = None;
     let mut operations = 0_u32;
     for node in plan
@@ -923,10 +973,11 @@ fn commit_doc_plan(
             Ok(spec) => spec,
             Err(outcome) => return outcome,
         };
-        previous = match write_doc_task(&mut write, plan, spec, &origin, previous) {
-            Ok(fact) => Some(fact),
-            Err(outcome) => return outcome,
-        };
+        previous =
+            match write_doc_task(&mut write, plan, spec, &origin, creation.as_ref(), previous) {
+                Ok(fact) => Some(fact),
+                Err(outcome) => return outcome,
+            };
         operations = operations.saturating_add(1);
     }
     finish_doc_commit(bus, command, apply, plan, write, previous, operations)
@@ -994,6 +1045,7 @@ fn write_doc_task(
     plan: &DocPlan,
     spec: DocTaskSpec,
     origin: &wire::Origin,
+    creation: Option<&TaskCreationCapture>,
     previous: Option<PendingFact>,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
     let cause = previous.map_or(FactCause::Root, FactCause::Pending);
@@ -1004,7 +1056,7 @@ fn write_doc_task(
         .find(|entry| entry.handle() == &spec.task);
     match existing {
         Some(entry) => edit_doc_task(write, entry, spec, cause),
-        None => add_doc_task(write, spec, origin, cause),
+        None => add_doc_task(write, spec, origin, creation, cause),
     }
 }
 
@@ -1050,8 +1102,15 @@ fn add_doc_task(
     write: &mut JournalWrite,
     spec: DocTaskSpec,
     origin: &wire::Origin,
+    creation: Option<&TaskCreationCapture>,
     cause: FactCause,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
+    let creation = creation.ok_or_else(|| {
+        protocol_fault(
+            "doc::creation-context-missing",
+            "a newly authored document task has no creation-time transcript capture",
+        )
+    })?;
     let added = write
         .fact(
             body::TaskAdded {
@@ -1065,12 +1124,14 @@ fn add_doc_task(
                 flow: spec.flow.clone(),
                 phase: spec.initial.clone(),
                 revision: 1,
+                creation: creation.context(),
             },
             cause,
         )
         .map_err(|error| store_fault("doc::add-build", &error.to_string()))?;
     let statement_task = spec.born.clone();
     let statement_origin = origin.clone();
+    let statement_creation = creation.context();
     write.task_head(added, move |position| TaskHead {
         born: statement_task,
         queue_origin: position,
@@ -1081,6 +1142,7 @@ fn add_doc_task(
         tags: spec.tags,
         dependencies: spec.dependencies,
         provenance: statement_origin,
+        creation: statement_creation,
         revision: position,
     });
     write.workflow_head(spec.born, added, move |_| WorkflowHead {

@@ -150,6 +150,7 @@ fn a_completed_review_records_the_reviewing_lanes_own_closing_boundary() {
     let lane_one = Actor::Lane(seats[0].lane);
     let lane_two = Actor::Lane(seats[1].lane);
     seed_transcript(&bus, seats[1].lane);
+    declare_session(&bus, epoch, &seats[1], uuid(9_201), 201);
     let task = add(
         &bus,
         epoch,

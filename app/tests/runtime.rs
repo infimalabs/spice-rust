@@ -311,6 +311,9 @@ fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::inten
                 tags: Vec::new(),
                 dependencies: Vec::new(),
                 provenance: format!("task:{born}").parse().expect("fixture origin"),
+                creation: wire::body::TaskCreationContext::unavailable(
+                    wire::body::TaskCreationUnavailable::OperatorActor,
+                ),
                 revision: seq(1),
             },
         },

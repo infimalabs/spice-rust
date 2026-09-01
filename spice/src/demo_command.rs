@@ -652,6 +652,9 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
                 revision: 1,
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
             },
             FactCause::Root,
         )
@@ -670,6 +673,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         tags: vec!["demo".to_owned()],
         dependencies: Vec::new(),
         provenance: statement_origin,
+        creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision,
     });
     write.workflow_head(workflow_task, added, move |_| WorkflowHead {

@@ -114,6 +114,9 @@ fn fixture() -> Journal {
                     flow: flow.flow.clone(),
                     phase: flow.phase.clone(),
                     revision: 1,
+                    creation: body::TaskCreationContext::unavailable(
+                        body::TaskCreationUnavailable::SpiceActor,
+                    ),
                 },
                 FactCause::Root,
             )
@@ -130,6 +133,9 @@ fn fixture() -> Journal {
             tags: vec![priority.to_owned()],
             dependencies: Vec::new(),
             provenance: statement_origin,
+            creation: body::TaskCreationContext::unavailable(
+                body::TaskCreationUnavailable::SpiceActor,
+            ),
             revision: position,
         });
         write.workflow_head(task, fact, move |_| flow);

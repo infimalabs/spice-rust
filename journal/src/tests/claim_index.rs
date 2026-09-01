@@ -233,6 +233,9 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
                 depends: Vec::new(),
                 flow: flow.clone(),
                 phase: phase("todo"),
+                creation: wire::body::TaskCreationContext::unavailable(
+                    wire::body::TaskCreationUnavailable::OperatorActor,
+                ),
                 revision: 1,
             },
             FactCause::Root,
@@ -249,6 +252,9 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: "task:claim-index-scale".parse().expect("scale provenance"),
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::OperatorActor,
+        ),
         revision,
     });
     let workflow_task = task.clone();

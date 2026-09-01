@@ -702,6 +702,13 @@ pub struct ClaimAnswer {
     /// Non-blocking overlap warnings discovered from the claim-time board.
     #[serde(default, skip_serializing_if = "claim_warnings_empty")]
     pub warnings: Box<[ClaimWarning]>,
+    /// Executable creation-context command or stable unavailable reason on fresh assignment.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub creation_context: Option<Box<str>>,
     /// Exact CLI command admitted as the next action, when one is available.
     #[serde(
         default,

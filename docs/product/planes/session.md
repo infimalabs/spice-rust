@@ -72,6 +72,35 @@ directive.
 a count. The briefing orients one agent, and another agent's task is not this
 agent's business.
 
+### Task creation deep links
+
+A task retains the transcript boundary at which it was created. For a
+lane-authored task, admission binds the authenticated lane to its current
+occupant, causal vendor session, and exactly one accounted lane/vendor source
+head. The immutable context carries session identity, lane, vendor, logical
+stream, source-generation UUID, and the next complete-record member/offset.
+`task show` renders those values as a shell-executable `spice session context`
+command; operator- and Spice-authored tasks instead render a stable unavailable
+reason.
+
+**Invariant —** Creation context is written on `TaskAdded` and copied to every
+statement projection. Edits, workflow transitions, claims, reviews, completion,
+and later source-head movement cannot rewrite it.
+
+**Invariant —** Rehydration reads only the current repository's retained
+lane/vendor tape, verifies the exact source generation and complete-record
+boundary, and returns a bounded surrounding window. A missing, replaced,
+truncated, undecodable, or mid-record source refuses by name rather than
+searching another transcript.
+
+**Invariant —** Schema-12 migration is one-way. It derives context only from
+immutable facts ordered before each `TaskAdded`: occupant lifecycle, causal
+session declaration, and valid source-head continuations. Current heads,
+timestamps, configured windows, filesystem state, and predecessor code are not
+evidence. Operator and Spice actors receive explicit reasons; a legacy lane
+whose retained facts do not prove one boundary receives
+`legacy-evidence-missing`. Once migrated, no legacy execution arm remains.
+
 ### The window
 
 ```mermaid

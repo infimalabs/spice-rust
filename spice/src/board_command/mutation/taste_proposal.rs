@@ -92,7 +92,11 @@ pub(in crate::board_command) fn taste_proposal_add(
             Ok(origin) => origin,
             Err(outcome) => return outcome,
         };
-    let prepared = match prepare_task(command, &normalized, &project, projects, origin) {
+    let creation = match task_creation_capture(bus, command, &snapshot) {
+        Ok(creation) => creation,
+        Err(outcome) => return outcome,
+    };
+    let prepared = match prepare_task(command, &normalized, &project, projects, origin, creation) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };

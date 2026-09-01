@@ -123,6 +123,9 @@ fn seed_task(write: &mut JournalWrite, task: &wire::TaskStamp) -> journal::Pendi
                 depends: Vec::new(),
                 flow: vec!["todo".parse().expect("fixture phase")],
                 phase: "todo".parse().expect("fixture phase"),
+                creation: wire::body::TaskCreationContext::unavailable(
+                    wire::body::TaskCreationUnavailable::SpiceActor,
+                ),
                 revision: 1,
             },
             FactCause::Root,
@@ -141,6 +144,9 @@ fn seed_task(write: &mut JournalWrite, task: &wire::TaskStamp) -> journal::Pendi
         provenance: "resident:018f82d4-6f59-7d06-92e3-000000000001"
             .parse()
             .expect("fixture origin"),
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::SpiceActor,
+        ),
         revision: position,
     });
     let born = task.clone();

@@ -202,6 +202,9 @@ fn seed_task_claim(
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: origin,
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::SpiceActor,
+        ),
         revision: position,
     });
     let workflow_task = task.clone();
@@ -266,6 +269,9 @@ fn append_seed_claim_facts(
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
+                creation: wire::body::TaskCreationContext::unavailable(
+                    wire::body::TaskCreationUnavailable::SpiceActor,
+                ),
                 revision: 1,
             },
             FactCause::Root,

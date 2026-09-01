@@ -25,6 +25,7 @@ use crate::{
 mod allocation_migration;
 mod boundary;
 mod claim_index;
+mod creation_context_migration;
 mod identity_migration;
 mod lineage_migration;
 mod read;
@@ -705,6 +706,7 @@ fn legacy_fact(seq: i64, bytes: &[u8]) -> (Value, String) {
         .expect("fact body object");
     legacy_task_stamp(fact, "task");
     if fact.get("kind").and_then(Value::as_str) == Some("task::added") {
+        fact.remove("creation");
         fact.insert(
             "uuid".to_owned(),
             Value::String(format!("018f82d4-6f59-7d06-92e3-{seq:012x}")),
@@ -768,6 +770,7 @@ fn store_legacy_task_heads(connection: &Connection, rows: Vec<HeadRow>) {
         let handle = legacy_handle(&stamp);
         let mut document: Value = serde_json::from_slice(&bytes).expect("decode current task head");
         let head = document.as_object_mut().expect("task head object");
+        head.remove("creation");
         head.remove("born").expect("current task head stamp");
         head.insert("handle".to_owned(), Value::String(handle.to_string()));
         head.insert(
@@ -1075,6 +1078,9 @@ fn task_head() -> TaskHead {
         tags: vec!["journal".to_owned()],
         dependencies: Vec::new(),
         provenance: "task:1kKRRsDP".parse().expect("provenance"),
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::SpiceActor,
+        ),
         revision: Seq::new(1).expect("revision"),
     }
 }

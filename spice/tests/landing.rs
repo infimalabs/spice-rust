@@ -41,6 +41,13 @@ const CASES: &[Case] = &[
     case("session", &["session"]),
     case("session briefing", &["session", "briefing"]),
     case("session commands", &["session", "commands"]),
+    case(
+        "session context",
+        &[
+            "session", "context", "retained", "--lane", UUID, "--vendor", "codex", "--stream",
+            "session", "--source", UUID, "--member", "1", "--offset", "0",
+        ],
+    ),
     case("session commits", &["session", "commits"]),
     case("session compactions", &["session", "compactions"]),
     case("session messages", &["session", "messages"]),

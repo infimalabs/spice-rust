@@ -1,0 +1,168 @@
+use super::*;
+
+fn capture_reason(result: Result<TaskCreationCapture, Outcome<CommandAnswer>>) -> String {
+    match result {
+        Err(Outcome::Refusal(refusal)) => refusal.reason().to_owned(),
+        Err(Outcome::Fault(fault)) => fault.reason,
+        Err(Outcome::Reply(_)) => panic!("creation capture cannot reply"),
+        Ok(_) => panic!("creation capture unexpectedly admitted"),
+    }
+}
+
+fn add_command(epoch: CanonicalUuid, lane: CanonicalUuid) -> wire::AdmittedCommand {
+    fixture_command(
+        epoch,
+        Actor::Lane(lane),
+        CommandKind::TaskAdd,
+        vec![Witness::Absence {
+            task: stamp("creation-context-command"),
+        }],
+        &TaskAdd {
+            title: "Capture exact creation authority".to_owned(),
+            project: Some("task.provenance".to_owned()),
+            description: None,
+            acceptance: Vec::new(),
+            origin: Some("fixture:creation-context".parse().expect("fixture origin")),
+            flow: Some("todo".to_owned()),
+            depends: Vec::new(),
+        },
+    )
+}
+
+#[test]
+fn lane_creation_refuses_missing_session_and_missing_accounted_source() {
+    let (root, bus, epoch, seats) = fixture("creation-context-missing", 1);
+    let lane = seats[0].lane;
+    let command = add_command(epoch, lane);
+    let snapshot = validated_snapshot(
+        &bus,
+        Actor::Lane(lane),
+        &guard_projects(),
+        &board::NextConfig::default(),
+    )
+    .expect("fixture snapshot validates");
+    assert_eq!(
+        capture_reason(task_creation_capture(&bus, &command, &snapshot)),
+        "task::creation-context-session-missing"
+    );
+
+    declare_session(&bus, epoch, &seats[0], uuid(9_301), 301);
+    let snapshot = validated_snapshot(
+        &bus,
+        Actor::Lane(lane),
+        &guard_projects(),
+        &board::NextConfig::default(),
+    )
+    .expect("session snapshot validates");
+    assert_eq!(
+        capture_reason(task_creation_capture(&bus, &command, &snapshot)),
+        "task::creation-context-source-ambiguous"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn lane_creation_refuses_a_causal_session_that_disagrees_with_its_occupant() {
+    let (root, bus, epoch, seats) = fixture("creation-context-mismatch", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    let lane = seats[0].lane;
+    let command = add_command(epoch, lane);
+    let mut snapshot = validated_snapshot(
+        &bus,
+        Actor::Lane(lane),
+        &guard_projects(),
+        &board::NextConfig::default(),
+    )
+    .expect("fixture snapshot validates");
+    snapshot.answer.residency.body.lanes[0]
+        .session
+        .as_mut()
+        .expect("fixture session")
+        .occupant = uuid(9_399);
+    assert_eq!(
+        capture_reason(task_creation_capture(&bus, &command, &snapshot)),
+        "task::creation-context-session-mismatch"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn lane_creation_guard_refuses_when_the_accounted_source_moves_before_commit() {
+    let (root, bus, epoch, seats) = fixture("creation-context-source-race", 1);
+    let expected = authorize_lane_creation(&bus, epoch, &seats[0]);
+    let lane = seats[0].lane;
+    let command = add_command(epoch, lane);
+    let snapshot = validated_snapshot(
+        &bus,
+        Actor::Lane(lane),
+        &guard_projects(),
+        &board::NextConfig::default(),
+    )
+    .expect("fixture snapshot validates");
+    let capture = task_creation_capture(&bus, &command, &snapshot)
+        .expect("exact lane creation context admits");
+    let body::TaskCreationContext::Transcript { boundary, .. } = expected else {
+        unreachable!("lane authorization returns transcript context")
+    };
+    let moved = body::TranscriptPosition {
+        member: boundary.next.member,
+        offset: boundary.next.offset + 128,
+    };
+    let mut accounting = JournalWrite::new(
+        Actor::Spice,
+        format!("lane:{lane}").parse().expect("fixture origin"),
+        Instant::new(jiff::Timestamp::now()).expect("current fixture instant"),
+        Producer::ResidentRecognition,
+    );
+    let ingested = accounting
+        .fact(
+            body::JournalIngested {
+                lane,
+                vendor: boundary.vendor.clone(),
+                stream: boundary.stream.clone(),
+                source: boundary.source,
+                supersedes: None,
+                from: boundary.next,
+                to: moved,
+                usage: Vec::new(),
+                non_usage_records: 1,
+                residue_records: 0,
+            },
+            FactCause::Root,
+        )
+        .expect("source continuation builds");
+    accounting.transcript_source_head(ingested, move |_| wire::TranscriptSourceHead {
+        next: moved,
+        ..boundary
+    });
+    assert!(matches!(
+        bus.commit(accounting)
+            .expect("source continuation reaches writer"),
+        CommitOutcome::Committed(_)
+    ));
+
+    let mut guarded = JournalWrite::new(
+        Actor::Lane(lane),
+        "fixture:creation-context-guard"
+            .parse()
+            .expect("fixture origin"),
+        Instant::new(jiff::Timestamp::now()).expect("current fixture instant"),
+        Producer::CommandDoor,
+    );
+    capture.guard(&mut guarded);
+    guarded
+        .fact(
+            body::TaskNoted {
+                task: stamp("creation-context-guard"),
+                note: "must never commit".to_owned(),
+            },
+            FactCause::Root,
+        )
+        .expect("guarded proposal builds");
+    let outcome = bus.commit(guarded).expect("guarded write reaches writer");
+    let CommitOutcome::Refused(refusal) = outcome else {
+        panic!("moved creation source must refuse, found {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "task::creation-context-source-moved");
+    clean(&root, bus);
+}

@@ -51,6 +51,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
           "tags": ["binding"],
           "dependencies": ["1kKRRsDQ"],
           "provenance": "task:1kKRRsDP",
+          "creation": { "kind": "unavailable", "reason": "operator-actor" },
           "revision": 2
         }
       },

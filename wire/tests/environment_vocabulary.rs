@@ -77,6 +77,10 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "SPICE_LANE",                                   // env-policy: allow
     "SPICE_MOUNTED_COMMAND",                        // env-policy: allow
     "SPICE_NATIVE_SHELL",                           // env-policy: allow
+    "SPICE_PRE_COMMIT_PARENT_TEST_EXE",             // env-policy: allow
+    "SPICE_PRE_COMMIT_PARENT_TEST_ROLE",            // env-policy: allow
+    "SPICE_PRE_COMMIT_PARENT_TEST_ROOT",            // env-policy: allow
+    "SPICE_PRE_COMMIT_PARENT_TEST_SOCKET",          // env-policy: allow
     "SPICE_PROOF",                                  // env-policy: allow
     "SPICE_RUNTIME_PYTHON",                         // env-policy: allow
     "SPICE_SELFEXEC_ROOT",                          // env-policy: allow

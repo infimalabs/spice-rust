@@ -30,6 +30,7 @@ struct PreparedTask {
     flow: Vec<wire::Phase>,
     phase: wire::Phase,
     origin: wire::Origin,
+    creation: TaskCreationCapture,
     at: Instant,
     statement: TaskHead,
     workflow: WorkflowHead,
@@ -127,7 +128,11 @@ fn create_task<B: serde::Serialize>(
             Ok(origin) => origin,
             Err(outcome) => return outcome,
         };
-    let prepared = match prepare_task(command, add, &project, projects, origin) {
+    let creation = match task_creation_capture(bus, command, &snapshot) {
+        Ok(creation) => creation,
+        Err(outcome) => return outcome,
+    };
+    let prepared = match prepare_task(command, add, &project, projects, origin, creation) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
@@ -179,6 +184,7 @@ where
         Producer::CommandDoor,
     );
     guard(&mut write, command.expected().to_vec());
+    prepared.creation.guard(&mut write);
     extra_guard(&mut write);
     let added = match write.fact(
         body::TaskAdded {
@@ -192,6 +198,7 @@ where
             flow: prepared.flow,
             phase: prepared.phase,
             revision: 1,
+            creation: prepared.creation.context(),
         },
         FactCause::Root,
     ) {
@@ -232,6 +239,7 @@ fn prepare_task(
     project: &Project,
     projects: &ProjectPolicy,
     origin: wire::Origin,
+    creation: TaskCreationCapture,
 ) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let handles = command
         .expected()
@@ -281,6 +289,7 @@ fn prepare_task(
                 )
             })?,
         provenance: origin.clone(),
+        creation: creation.context(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
     let workflow = WorkflowHead {
@@ -306,6 +315,7 @@ fn prepare_task(
         flow,
         phase,
         origin,
+        creation,
         at,
         statement,
         workflow,

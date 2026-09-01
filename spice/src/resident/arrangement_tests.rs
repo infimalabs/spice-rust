@@ -206,6 +206,9 @@ impl Arranged {
                     depends: Vec::new(),
                     flow: vec!["todo".parse().expect("fixture phase")],
                     phase: "todo".parse().expect("fixture phase"),
+                    creation: wire::body::TaskCreationContext::unavailable(
+                        wire::body::TaskCreationUnavailable::OperatorActor,
+                    ),
                     revision: 1,
                 },
                 FactCause::Root,
@@ -222,6 +225,9 @@ impl Arranged {
             tags: Vec::new(),
             dependencies: Vec::new(),
             provenance: "operator:fixture".parse().expect("fixture origin"),
+            creation: wire::body::TaskCreationContext::unavailable(
+                wire::body::TaskCreationUnavailable::OperatorActor,
+            ),
             revision: position,
         });
         let task_for_workflow = task.clone();

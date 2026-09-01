@@ -174,6 +174,9 @@ fn seed_write() -> JournalWrite {
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
                 revision: 1,
             },
             FactCause::Root,
@@ -253,6 +256,9 @@ fn invalid_late_suffix() -> JournalWrite {
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
                 revision: 1,
             },
             FactCause::Pending(sent),
@@ -301,6 +307,7 @@ fn attach_task_heads_with_project(
         tags: Vec::new(),
         dependencies,
         provenance: origin,
+        creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,
     });
     write.workflow_head(task, added, move |_| WorkflowHead {

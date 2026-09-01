@@ -141,6 +141,7 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
     let (root, bus, epoch, seats) = fixture("subscription-scopes", 1);
     let seat = &seats[0];
     let lane = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
     configure_subscription(
         &bus,
         epoch,

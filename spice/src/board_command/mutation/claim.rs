@@ -201,6 +201,7 @@ pub(in crate::board_command) fn commit_claim(
             })
             .collect::<Vec<_>>()
             .into_boxed_slice(),
+        creation_context: Some(task_creation_context_output(&selected.statement().creation)),
         next,
     };
     if let Err(error) = write.command_result(
@@ -210,7 +211,7 @@ pub(in crate::board_command) fn commit_claim(
     ) {
         return store_fault("claim::win-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Claim(answer))
+    committed(bus, write, CommandAnswer::Claim(Box::new(answer)))
 }
 
 fn claim_activation_next_action(selected: &Entry) -> Box<str> {

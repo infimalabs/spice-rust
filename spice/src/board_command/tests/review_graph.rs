@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn review_graph_preserves_reviewer_to_phase_author_after_assignment_clears_and_restart() {
     let (root, bus, epoch, seats) = fixture("review-graph-history", 2);
+    authorize_lane_creation(&bus, epoch, &seats[1]);
     let author = Actor::Lane(seats[0].lane);
     let reviewer = Actor::Lane(seats[1].lane);
     let task = add(

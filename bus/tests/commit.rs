@@ -338,6 +338,9 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
                 revision: 1,
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::OperatorActor,
+                ),
             },
             FactCause::Root,
         )
@@ -355,6 +358,9 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         tags: vec!["journal".to_owned()],
         dependencies: Vec::new(),
         provenance: origin_for_head,
+        creation: body::TaskCreationContext::unavailable(
+            body::TaskCreationUnavailable::OperatorActor,
+        ),
         revision: seq,
     });
     let phase_for_head = phase.clone();

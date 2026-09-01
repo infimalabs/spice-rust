@@ -73,6 +73,9 @@ impl RepositoryFixture {
             provenance: "task:phase-boundary-fixture"
                 .parse()
                 .expect("fixture provenance"),
+            creation: wire::body::TaskCreationContext::unavailable(
+                wire::body::TaskCreationUnavailable::SpiceActor,
+            ),
             revision: seq(1),
         };
         let workflow = WorkflowHead {

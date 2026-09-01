@@ -123,6 +123,173 @@ pub(super) fn validated_snapshot_from(
     })
 }
 
+#[derive(Clone)]
+pub(super) struct TaskCreationCapture {
+    context: body::TaskCreationContext,
+    residency: Option<Seq>,
+    source: Option<(wire::CanonicalUuid, body::SourceBoundary)>,
+}
+
+impl TaskCreationCapture {
+    pub(super) fn context(&self) -> body::TaskCreationContext {
+        self.context.clone()
+    }
+
+    pub(super) fn guard(&self, write: &mut JournalWrite) {
+        let Some(expected_residency) = self.residency else {
+            return;
+        };
+        let (lane, expected_source) = self
+            .source
+            .clone()
+            .expect("a lane creation capture carries a source boundary");
+        write.guard(JournalGuard::new(move |read| {
+            let residency = read.residency_head()?.ok_or_else(|| {
+                journal::GuardError::Invalid(
+                    "task creation context has no current residency head".to_owned(),
+                )
+            })?;
+            if residency.position() != expected_residency {
+                return Err(journal::GuardError::refused(
+                    "task::creation-context-residency-moved",
+                ));
+            }
+            if read.source_boundary(&lane)? != expected_source {
+                return Err(journal::GuardError::refused(
+                    "task::creation-context-source-moved",
+                ));
+            }
+            Ok(())
+        }));
+    }
+}
+
+pub(super) fn task_creation_context_output(context: &body::TaskCreationContext) -> Box<str> {
+    match context {
+        body::TaskCreationContext::Unavailable { reason } => {
+            format!("unavailable {}", reason.as_str()).into_boxed_str()
+        }
+        body::TaskCreationContext::Transcript { session, boundary } => shell_words::join([
+            "spice".to_owned(),
+            "session".to_owned(),
+            "context".to_owned(),
+            session.clone(),
+            "--lane".to_owned(),
+            boundary.lane.to_string(),
+            "--vendor".to_owned(),
+            boundary.vendor.to_string(),
+            "--stream".to_owned(),
+            boundary.stream.clone(),
+            "--source".to_owned(),
+            boundary.source.to_string(),
+            "--member".to_owned(),
+            boundary.next.member.to_string(),
+            "--offset".to_owned(),
+            boundary.next.offset.to_string(),
+        ])
+        .into_boxed_str(),
+    }
+}
+
+pub(super) fn task_creation_capture(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    snapshot: &ValidatedSnapshot,
+) -> Result<TaskCreationCapture, Outcome<CommandAnswer>> {
+    let lane = match command.actor() {
+        Actor::Operator => {
+            return Ok(TaskCreationCapture {
+                context: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::OperatorActor,
+                ),
+                residency: None,
+                source: None,
+            });
+        }
+        Actor::Spice => {
+            return Ok(TaskCreationCapture {
+                context: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
+                residency: None,
+                source: None,
+            });
+        }
+        Actor::Lane(lane) => *lane,
+    };
+    let row = snapshot
+        .answer
+        .residency
+        .body
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane)
+        .ok_or_else(|| {
+            protocol_fault(
+                "task::creation-context-lane-missing",
+                "the authenticated task actor has no current residency row",
+            )
+        })?;
+    let session = row.session.as_ref().ok_or_else(|| {
+        refusal(
+            "task::creation-context-session-missing",
+            Some(lane.to_string()),
+            "re-seat the lane under current session authority before creating tasks",
+        )
+    })?;
+    let current_occupant = row.occupant.ok_or_else(|| {
+        protocol_fault(
+            "task::creation-context-occupant-missing",
+            "the authenticated task actor has no current occupant",
+        )
+    })?;
+    if session.lane != lane
+        || session.occupant != current_occupant
+        || session.vendor != row.vendor
+        || session.identity.is_empty()
+    {
+        return Err(protocol_fault(
+            "task::creation-context-session-mismatch",
+            "the authenticated lane, occupant, vendor, and causal session disagree",
+        ));
+    }
+    let source = bus.source_boundary(&lane).map_err(|error| {
+        store_fault(
+            "task::creation-context-source-unreadable",
+            &error.to_string(),
+        )
+    })?;
+    let body::SourceBoundary::Proven { heads } = &source else {
+        return Err(protocol_fault(
+            "task::creation-context-source-incomplete",
+            "a live lane task boundary is not proven",
+        ));
+    };
+    let matching = heads
+        .iter()
+        .filter(|head| head.lane == lane && head.vendor == session.vendor)
+        .collect::<Vec<_>>();
+    let [boundary] = matching.as_slice() else {
+        return Err(refusal(
+            "task::creation-context-source-ambiguous",
+            Some(format!(
+                "lane={lane} vendor={} matching_heads={}",
+                session.vendor,
+                matching.len()
+            )),
+            "account exactly one selected lane/vendor transcript stream before creating tasks",
+        ));
+    };
+    Ok(TaskCreationCapture {
+        context: body::TaskCreationContext::Transcript {
+            session: session.identity.clone(),
+            boundary: (*boundary).clone(),
+        },
+        residency: Some(snapshot.answer.residency.position),
+        source: Some((lane, source)),
+    })
+}
+
 pub(super) fn actor_route(
     principal: &wire::Actor,
     residency: &wire::ResidencyHead,

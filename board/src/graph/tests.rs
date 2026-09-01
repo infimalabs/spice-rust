@@ -35,6 +35,7 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: origin,
+        creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: Seq::new(1).expect("nonzero sequence"),
     };
     let workflow = WorkflowHead {
@@ -85,6 +86,9 @@ fn added(position: u64, task: TaskStamp) -> Envelope<AnyFact> {
             flow: vec![phase("todo"), phase("review")],
             phase: phase("todo"),
             revision: 1,
+            creation: body::TaskCreationContext::unavailable(
+                body::TaskCreationUnavailable::SpiceActor,
+            ),
         },
     )
 }
