@@ -70,6 +70,28 @@ fn installed_spice_is_the_one_repository_local_executable() {
 }
 
 #[test]
+fn installed_skill_bounds_discretionary_review_corrections() {
+    let scratch = applied("review-correction-guidance");
+    let repository = scratch.repository();
+    let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
+    let guidance_text = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    for guidance in [
+        "While holding the active review claim",
+        "a very small, low-risk finding",
+        "commit it under the review claim before",
+        "Larger, behavior-changing, cross-ownership, or",
+        "separately reviewable work remains an unclean review",
+        "durably track it in the same invocation",
+    ] {
+        assert!(
+            guidance_text.contains(guidance),
+            "installed skill omitted {guidance:?}"
+        );
+    }
+}
+
+#[test]
 fn linked_worktrees_share_one_common_install_and_receipt() {
     let scratch = Scratch::new("linked");
     let common = scratch.join(".git");
