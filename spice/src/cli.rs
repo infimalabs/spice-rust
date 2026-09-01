@@ -310,6 +310,7 @@ fn repository_landed(path: &[&str]) -> bool {
             | ["config"]
             | ["config", "migrate-tasks"]
             | ["trust"]
+            | ["trust", "pend"]
             | ["trust", "grant"]
             | ["trust", "revoke"]
             | ["backup"]

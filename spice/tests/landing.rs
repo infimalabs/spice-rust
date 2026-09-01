@@ -186,6 +186,7 @@ const CASES: &[Case] = &[
     case("taste drop", &["taste", "drop", "readiness"]),
     case("taste mine", &["taste", "mine"]),
     case("trust", &["trust"]),
+    case("trust pend", &["trust", "pend"]),
     case("trust grant", &["trust", "grant", DIGEST]),
     case("trust revoke", &["trust", "revoke", DIGEST]),
     case("backup", &["backup", "readiness-backup"]),

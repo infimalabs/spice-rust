@@ -200,6 +200,33 @@ fn mapping_enforces_the_wire_witness_law() {
 }
 
 #[test]
+fn trust_pend_maps_the_current_digest_to_the_existing_pended_witness() {
+    let contract = crate::cli::contract(&["trust", "pend"])
+        .expect("the generated CLI registry carries trust pend");
+    let digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        .parse::<wire::Digest>()
+        .expect("fixture digest is canonical");
+    let mapped = MappedCommand::selected(contract, SelectedCommand::TrustPend { digest: &digest })
+        .expect("trust pend maps before resident discovery");
+
+    assert_eq!(mapped.kind, CommandKind::TrustPend);
+    assert_eq!(
+        mapped.expected,
+        [Witness::Trust {
+            digest: digest.clone(),
+            standing: wire::TrustState::Pended,
+        }],
+    );
+    assert_eq!(
+        wire::decode::<wire::intent::TrustRef>(
+            &wire::encode(&mapped.body).expect("mapped body encodes")
+        )
+        .expect("mapped body retains TrustRef"),
+        wire::intent::TrustRef { digest },
+    );
+}
+
+#[test]
 fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
     let expected = [
         (&["board"][..], CommandKind::BoardRead),

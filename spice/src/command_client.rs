@@ -89,6 +89,8 @@ pub(crate) enum SelectedCommand<'a> {
         key: &'a steer::Key,
         disposition: Disposition,
     },
+    /// The operator quarantines the exact current executable digest.
+    TrustPend { digest: &'a wire::Digest },
     /// The operator approves one exact pended executable digest.
     TrustGrant { digest: &'a wire::Digest },
     /// The operator withdraws approval from one exact granted digest.

@@ -211,6 +211,15 @@ impl<'a> Surface<'a> {
                     decide,
                 ))
             }
+            (CommandKind::TrustPend, Intent::TrustRef(reference)) => {
+                Some(policy_surface::trust_pend(
+                    self.bus,
+                    self.repository,
+                    self.epoch,
+                    command,
+                    reference,
+                ))
+            }
             (CommandKind::TrustGrant | CommandKind::TrustRevoke, Intent::TrustRef(reference)) => {
                 Some(policy_surface::trust_rule(
                     self.bus,

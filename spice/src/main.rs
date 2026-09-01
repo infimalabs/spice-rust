@@ -416,6 +416,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
             deliver_inbox_hook(&outcome, harness, form)
         }
         ["trust"] => deliver(&trust_command::report(contract), form),
+        ["trust", "pend"] => deliver(&trust_command::pend(contract), form),
         ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
         ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
         ["taste"] => deliver(&taste_command::report(contract), form),

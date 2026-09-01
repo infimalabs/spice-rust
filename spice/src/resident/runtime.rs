@@ -876,7 +876,9 @@ where
     })
 }
 
-fn latest_surface_digest(snapshot: &journal::FactSnapshot) -> CommandResult<Option<wire::Digest>> {
+pub(super) fn latest_surface_digest(
+    snapshot: &journal::FactSnapshot,
+) -> CommandResult<Option<wire::Digest>> {
     for envelope in snapshot
         .facts()
         .iter()

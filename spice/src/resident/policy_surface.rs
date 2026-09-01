@@ -6,13 +6,13 @@ use journal::{FactCause, GuardError, JournalGuard, JournalHead, JournalWrite};
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, ConsentAnswer, ConsentDecide, TrustAnswer, TrustRef};
 use wire::{
-    CanonicalUuid, Command, CommandKind, Outcome, Producer, Refusal, Reply, ReplyPosition,
+    Actor, CanonicalUuid, Command, CommandKind, Outcome, Producer, Refusal, Reply, ReplyPosition,
     SeqRange, TrustHead, TrustState, Witness,
 };
 
 use super::{
     commit, read_materializations::CurrentReads, seq, typed_outcome, typed_protocol_fault,
-    typed_store_fault, write_at_origin,
+    typed_store_fault, write, write_at_origin,
 };
 
 type SurfaceResult<T> = Result<T, Outcome<CommandAnswer>>;
@@ -94,6 +94,122 @@ pub(super) fn trust_rule(
     reference: &TrustRef,
 ) -> Outcome<CommandAnswer> {
     trust_rule_with(bus, repository, epoch, command, reference, || {})
+}
+
+pub(super) fn trust_pend(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    reference: &TrustRef,
+) -> Outcome<CommandAnswer> {
+    trust_pend_with(bus, repository, epoch, command, reference, || {})
+}
+
+pub(super) fn trust_pend_with<F>(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    reference: &TrustRef,
+    before_commit: F,
+) -> Outcome<CommandAnswer>
+where
+    F: FnOnce(),
+{
+    if !matches!(command.actor(), Actor::Operator) {
+        return trust_refusal(
+            "trust::operator-required",
+            Some("operator".to_owned()),
+            Some(command.actor().to_string()),
+            "submit trust pend through the current operator discovery",
+        );
+    }
+    let surface = match crate::trust_command::Surface::load(repository) {
+        Ok(surface) => surface,
+        Err(error) => return crate::trust_command::load_failure(&error),
+    };
+    if reference.digest != *surface.digest() {
+        return trust_refusal(
+            "trust::digest-not-current",
+            Some(surface.digest().to_string()),
+            Some(reference.digest.to_string()),
+            &format!(
+                "rerun `spice trust pend` from worktree {}",
+                repository.worktree_root().display(),
+            ),
+        );
+    }
+    let expected = Witness::Trust {
+        digest: reference.digest.clone(),
+        standing: TrustState::Pended,
+    };
+    if command.expected() != [expected] {
+        return trust_refusal(
+            "trust::witness-moved",
+            Some(format!("{}:pended", reference.digest)),
+            Some(format!("{:?}", command.expected())),
+            "recapture the current executable surface before pending it",
+        );
+    }
+    if let Err(outcome) = admit_epoch(bus, command, epoch) {
+        return outcome;
+    }
+    match bus.trust_head(&reference.digest) {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return trust_refusal(
+                "trust::digest-already-pended",
+                Some("one previously unseen current digest".to_owned()),
+                Some(reference.digest.to_string()),
+                "read the current trust report before issuing another ruling",
+            );
+        }
+        Err(error) => return typed_store_fault("trust::head-unreadable", &error.to_string()),
+    }
+    let snapshot = match bus.fact_snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return typed_store_fault("trust::journal-unreadable", &error.to_string()),
+    };
+    let previous = match super::latest_surface_digest(&snapshot) {
+        Ok(previous) => previous,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let mut proposal = match write(command.actor().clone(), epoch, Producer::CommandDoor) {
+        Ok(proposal) => proposal,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    proposal.guard(trust_pend_guard(
+        repository.clone(),
+        surface,
+        reference.digest.clone(),
+        epoch,
+    ));
+    let fact = match proposal.fact(
+        wire::body::TrustPended {
+            surface: crate::trust_command::SURFACE_NAME.to_owned(),
+            digest: reference.digest.clone(),
+            previous,
+        },
+        FactCause::Root,
+    ) {
+        Ok(fact) => fact,
+        Err(error) => return typed_store_fault("trust::fact-invalid", &error.to_string()),
+    };
+    let digest = reference.digest.clone();
+    proposal.trust_head(fact, move |_| TrustHead {
+        digest,
+        state: TrustState::Pended,
+    });
+    let answer = TrustAnswer {
+        digest: reference.digest.clone(),
+        standing: TrustState::Pended,
+    };
+    if let Err(error) = trust_receipt(&mut proposal, command, reference, epoch, &answer) {
+        return typed_store_fault("trust::receipt-invalid", &error.to_string());
+    }
+    before_commit();
+    committed_answer(bus, proposal, CommandAnswer::Trust(answer))
 }
 
 pub(super) fn trust_rule_with<F>(
@@ -366,6 +482,27 @@ fn trust_guard(
             .ok_or_else(|| GuardError::refused("trust::digest-unknown"))?;
         if current.body().state != from {
             return Err(GuardError::refused("trust::standing-moved"));
+        }
+        let residency = read
+            .residency_head()?
+            .ok_or_else(|| GuardError::refused("resident::head-missing"))?;
+        if residency.body().epoch != epoch {
+            return Err(GuardError::refused("resident::epoch-moved"));
+        }
+        Ok(())
+    })
+}
+
+fn trust_pend_guard(
+    repository: Repository,
+    surface: crate::trust_command::Surface,
+    digest: wire::Digest,
+    epoch: CanonicalUuid,
+) -> JournalGuard {
+    JournalGuard::new(move |read| {
+        super::require_current_surface(&repository, &surface)?;
+        if read.trust_head(&digest)?.is_some() {
+            return Err(GuardError::refused("trust::digest-already-pended"));
         }
         let residency = read
             .residency_head()?

@@ -35,6 +35,9 @@ impl MappedCommand {
                 "command::mapping-unsupported",
                 "steering preflight must select its authenticated mapping path",
             )),
+            SelectedCommand::TrustPend { digest } => {
+                Self::trust_rule(contract, digest, TrustState::Pended, CommandKind::TrustPend)
+            }
             SelectedCommand::TrustGrant { digest } => Self::trust_rule(
                 contract,
                 digest,
@@ -219,9 +222,10 @@ impl MappedCommand {
         kind: CommandKind,
     ) -> ClientResult<Self> {
         let path = match kind {
+            CommandKind::TrustPend => &["trust", "pend"][..],
             CommandKind::TrustGrant => &["trust", "grant"][..],
             CommandKind::TrustRevoke => &["trust", "revoke"][..],
-            _ => unreachable!("trust mapping receives only grant or revoke"),
+            _ => unreachable!("trust mapping receives only pend, grant, or revoke"),
         };
         Self::new(
             contract,

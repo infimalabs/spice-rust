@@ -244,6 +244,7 @@ struct DispatchPolicy {
     builtins: bool,
     surface: Surface,
     spice: Option<SpiceRoute>,
+    worktree: PathBuf,
     configuration: PathBuf,
     source: ConfigSource,
     tracked: Option<String>,
@@ -340,6 +341,7 @@ impl DispatchPolicy {
             builtins,
             surface: Surface::from_loaded(&loaded),
             spice,
+            worktree: repository.worktree_root().to_path_buf(),
             configuration,
             source,
             tracked: loaded.tracked().map(ToOwned::to_owned),
@@ -438,11 +440,12 @@ impl DispatchPolicy {
         format!(
             concat!(
                 "surface=configuration digest={} standing={} provenance={} ",
-                "configuration={} commands={}; run `spice trust grant {}` only after reviewing these exact bytes and command words"
+                "worktree={} configuration={} commands={}; from that worktree run `spice trust pend` when standing is absent, then run `spice trust grant {}` only after reviewing these exact bytes and command words"
             ),
             self.surface.digest(),
             standing.map_or("absent", trust_state_name),
             self.source.as_str(),
+            json(&self.worktree.display().to_string()),
             json(&self.configuration.display().to_string()),
             json(&self.commands),
             self.surface.digest(),
