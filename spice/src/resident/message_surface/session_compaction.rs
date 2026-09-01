@@ -1,9 +1,13 @@
 //! Structured compaction boundaries recovered from preserved vendor sessions.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, BufRead as _, BufReader, Read as _, Seek as _, SeekFrom};
 use std::path::PathBuf;
+use std::time::SystemTime;
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
 
 use super::*;
 
@@ -34,7 +38,9 @@ struct Cursor {
     next: u64,
     next_call: u64,
     pending: BTreeMap<String, PendingTool>,
+    prefix: blake3::Hasher,
     guard: Option<RecordGuard>,
+    validation: Option<PrefixValidation>,
 }
 
 struct PendingTool {
@@ -49,6 +55,50 @@ struct RecordGuard {
 }
 
 const RECORD_GUARD_BYTES: usize = 256;
+const SCAN_BYTE_BUDGET: usize = 256 * 1024;
+const SCAN_RECORD_BUDGET: usize = 128;
+const VALIDATION_BYTE_BUDGET: usize = 256 * 1024;
+
+struct PrefixValidation {
+    length: u64,
+    expected: blake3::Hash,
+    offset: u64,
+    observed: blake3::Hasher,
+    stamp: FileStamp,
+    records: Vec<CompactionRecord>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    length: u64,
+    modified: SystemTime,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    changed_seconds: i64,
+    #[cfg(unix)]
+    changed_nanoseconds: i64,
+}
+
+impl FileStamp {
+    fn read(file: &File) -> io::Result<Self> {
+        let metadata = file.metadata()?;
+        Ok(Self {
+            length: metadata.len(),
+            modified: metadata.modified()?,
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+            #[cfg(unix)]
+            changed_seconds: metadata.ctime(),
+            #[cfg(unix)]
+            changed_nanoseconds: metadata.ctime_nsec(),
+        })
+    }
+}
 
 impl SessionCompactions {
     pub(in crate::resident) fn new(environment: crate::session_command::Environment) -> Self {
@@ -130,7 +180,9 @@ impl SessionCompactions {
                         next: 0,
                         next_call: 0,
                         pending: BTreeMap::new(),
+                        prefix: blake3::Hasher::new(),
                         guard: None,
+                        validation: None,
                     },
                 );
             }
@@ -158,22 +210,26 @@ struct CompactionRecord {
 }
 
 fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
-    let metadata = fs::metadata(&cursor.path)?;
-    if metadata.len() < cursor.next || !guard_matches(cursor)? {
-        reset(cursor);
+    if cursor.validation.is_some() {
+        return advance_validation(cursor);
     }
     let mut file = File::open(&cursor.path)?;
+    if file.metadata()?.len() < cursor.next || !guard_matches(&mut file, cursor)? {
+        reset(cursor);
+    }
     file.seek(SeekFrom::Start(cursor.next))?;
     let mut reader = BufReader::new(file);
     let mut records = Vec::new();
     let mut bytes = Vec::new();
-    loop {
+    let mut scanned = 0_usize;
+    for _ in 0..SCAN_RECORD_BUDGET {
         bytes.clear();
         let read = reader.read_until(b'\n', &mut bytes)?;
         if read == 0 || bytes.last() != Some(&b'\n') {
             break;
         }
         let length = u64::try_from(read).expect("a record buffer length fits u64");
+        scanned = scanned.saturating_add(read);
         let locus = listen::Locus {
             member: cursor.member,
             offset: cursor.next,
@@ -181,6 +237,7 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
         };
         let offset = cursor.next;
         cursor.next = cursor.next.saturating_add(length);
+        cursor.prefix.update(&bytes);
         cursor.guard = Some(RecordGuard {
             offset,
             length,
@@ -213,8 +270,24 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
                 _ => {}
             }
         }
+        if !records.is_empty() || scanned >= SCAN_BYTE_BUDGET {
+            break;
+        }
     }
-    Ok(records)
+    if records.is_empty() {
+        return Ok(records);
+    }
+    let stamp = FileStamp::read(reader.get_ref())?;
+    drop(reader);
+    cursor.validation = Some(PrefixValidation {
+        length: cursor.next,
+        expected: cursor.prefix.clone().finalize(),
+        offset: 0,
+        observed: blake3::Hasher::new(),
+        stamp,
+        records,
+    });
+    advance_validation(cursor)
 }
 
 fn fold_tool(cursor: &mut Cursor, tool: &listen::Tool) {
@@ -242,14 +315,56 @@ fn reset(cursor: &mut Cursor) {
     cursor.next = 0;
     cursor.next_call = 0;
     cursor.pending.clear();
+    cursor.prefix = blake3::Hasher::new();
     cursor.guard = None;
+    cursor.validation = None;
 }
 
-fn guard_matches(cursor: &Cursor) -> io::Result<bool> {
-    let Some(guard) = &cursor.guard else {
-        return Ok(true);
-    };
+fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
+    let validation = cursor
+        .validation
+        .as_mut()
+        .expect("prefix validation advances only while pending");
     let mut file = File::open(&cursor.path)?;
+    if FileStamp::read(&file)? != validation.stamp {
+        reset(cursor);
+        return Ok(Vec::new());
+    }
+    file.seek(SeekFrom::Start(validation.offset))?;
+    let remaining = validation.length.saturating_sub(validation.offset);
+    let limit = usize::try_from(remaining.min(VALIDATION_BYTE_BUDGET as u64))
+        .expect("the bounded validation read fits usize");
+    let mut bytes = vec![0; limit];
+    if file.read_exact(&mut bytes).is_err() {
+        reset(cursor);
+        return Ok(Vec::new());
+    }
+    if FileStamp::read(&file)? != validation.stamp {
+        reset(cursor);
+        return Ok(Vec::new());
+    }
+    validation.observed.update(&bytes);
+    validation.offset = validation
+        .offset
+        .saturating_add(u64::try_from(bytes.len()).expect("a validation buffer fits u64"));
+    if validation.offset < validation.length {
+        return Ok(Vec::new());
+    }
+    if validation.observed.finalize() != validation.expected {
+        reset(cursor);
+        return Ok(Vec::new());
+    }
+    Ok(cursor
+        .validation
+        .take()
+        .expect("completed validation remains pending")
+        .records)
+}
+
+fn guard_matches(file: &mut File, cursor: &Cursor) -> io::Result<bool> {
+    let Some(guard) = &cursor.guard else {
+        return Ok(cursor.next == 0);
+    };
     file.seek(SeekFrom::Start(guard.offset))?;
     let length = usize::try_from(guard.length)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
