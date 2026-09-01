@@ -10,7 +10,9 @@ use listen::Dialect;
 use sill::Running;
 
 use crate::launch::{
-    Launch, McpServer, POST_TOOL_HOOK_STATUS_MESSAGE, POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook,
+    Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
+    POST_TOOL_HOOK_TIMEOUT_SECONDS, PRE_TOOL_HOOK_EVENT, PRE_TOOL_HOOK_STATUS_MESSAGE,
+    PRE_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook,
 };
 use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
@@ -20,6 +22,9 @@ use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 /// named tool a boundary after which steering never arrives, so every
 /// completion is deliberately a steering checkpoint.
 pub const POST_TOOL_HOOK_MATCHER: &str = "*";
+
+/// Canonical Codex hook name for shell-like tool commands.
+pub const PRE_TOOL_HOOK_MATCHER: &str = "^Bash$";
 
 /// Build the exact current Codex invocation without performing I/O.
 ///
@@ -80,6 +85,7 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 #[must_use]
 pub fn config_overrides(launch: &Launch) -> Vec<String> {
     let mut overrides = vec![
+        pre_tool_hook_override(&launch.hook),
         post_tool_hook_override(&launch.hook),
         format!("model_reasoning_effort=\"{}\"", launch.effort.as_str()),
     ];
@@ -90,6 +96,19 @@ pub fn config_overrides(launch: &Launch) -> Vec<String> {
     overrides
 }
 
+/// The dotted override installing dynamic RTK dispatch before shell execution.
+#[must_use]
+pub fn pre_tool_hook_override(hook: &SteeringHook) -> String {
+    format!(
+        "hooks.{PRE_TOOL_HOOK_EVENT}=[{{matcher={matcher},hooks=[{{type={kind},command={command},\
+         timeout={PRE_TOOL_HOOK_TIMEOUT_SECONDS},statusMessage={status}}}]}}]",
+        matcher = toml_string(PRE_TOOL_HOOK_MATCHER),
+        kind = toml_string("command"),
+        command = toml_string(&hook.command),
+        status = toml_string(PRE_TOOL_HOOK_STATUS_MESSAGE),
+    )
+}
+
 /// The dotted override installing the steering hook.
 ///
 /// This is Codex's spelling of the same hook Claude takes inside `--settings`:
@@ -97,7 +116,7 @@ pub fn config_overrides(launch: &Launch) -> Vec<String> {
 #[must_use]
 pub fn post_tool_hook_override(hook: &SteeringHook) -> String {
     format!(
-        "hooks.PostToolUse=[{{matcher={matcher},hooks=[{{type={kind},command={command},\
+        "hooks.{POST_TOOL_HOOK_EVENT}=[{{matcher={matcher},hooks=[{{type={kind},command={command},\
          timeout={POST_TOOL_HOOK_TIMEOUT_SECONDS},statusMessage={status}}}]}}]",
         matcher = toml_string(POST_TOOL_HOOK_MATCHER),
         kind = toml_string("command"),

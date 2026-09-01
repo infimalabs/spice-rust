@@ -165,6 +165,14 @@ impl RtkHealthState {
     }
 }
 
+/// Harness route that can submit ordinary tool commands to RTK.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RtkHookState {
+    /// The supervised launch installs Spice under Codex `PreToolUse`.
+    Installed,
+}
+
 /// Exact launch-time RTK health verdict published by the resident.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -178,6 +186,13 @@ pub struct RtkHealth {
         deserialize_with = "crate::optional::present"
     )]
     version: Option<String>,
+    /// Separately observed harness installation; executable launch alone does not set it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    hook: Option<RtkHookState>,
     /// Source-grounded launch verdict and any advisory version observation detail.
     detail: String,
 }
@@ -188,11 +203,19 @@ impl RtkHealth {
         Self {
             state,
             version,
+            hook: None,
             detail: detail.into(),
         }
     }
 
-    /// Whether supervised shells may enable RTK rewriting.
+    /// Record that the rendered vendor launch installs the RTK hook route.
+    #[must_use]
+    pub fn with_hook(mut self, hook: RtkHookState) -> Self {
+        self.hook = Some(hook);
+        self
+    }
+
+    /// Whether the configured executable launched during the initial probe.
     #[must_use]
     pub const fn active(&self) -> bool {
         matches!(self.state, RtkHealthState::Active)
@@ -208,6 +231,12 @@ impl RtkHealth {
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
+    }
+
+    /// Harness hook state observed independently from executable launchability.
+    #[must_use]
+    pub const fn hook(&self) -> Option<RtkHookState> {
+        self.hook
     }
 
     /// Source-grounded launch verdict and any advisory version observation detail.

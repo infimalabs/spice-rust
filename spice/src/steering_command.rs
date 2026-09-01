@@ -12,8 +12,18 @@ use wire::{CanonicalUuid, Disposition, Fault, FaultClass, Outcome, Refusal};
 
 use crate::command_client::{SelectedCommand, execute_steering};
 
+mod codex_hook;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use codex_hook::Invocation as HookInvocation;
+
+pub(crate) fn read_hook_invocation(
+    reader: &mut impl io::Read,
+    harness: &str,
+) -> Result<HookInvocation, String> {
+    codex_hook::read(reader, harness)
+}
 
 #[derive(serde::Serialize)]
 struct HookOutput {
