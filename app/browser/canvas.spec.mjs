@@ -11,11 +11,11 @@ import {
   longWorktreeBasename, nestedQuoteMessage, nestedQuotePreview, seatAgentTeam, seatLeaseAgent,
 } from "./agent-conversation.mjs";
 import {
-  assertCompactionBoundary,
   assertCompactionBoundaryPersistence,
   assertStagedMosaicHydration,
   installPersistedMosaicImageRoutes,
 } from "./agent-conversation-mosaic.mjs";
+import { assertCompactionBoundary } from "./mosaic-transitions.mjs";
 import {
   assertFirefoxRestoredMosaic,
   captureFirefoxAgentPageSpacing,
@@ -506,11 +506,6 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   const quoteActivity = team.locator(
     `.mosaic-message-card[data-agent-lane="${seeded.quoteLane}"]`,
   );
-  const quoteSource = team.locator(
-    `.mosaic-message-card[data-card-kind="agent-message"][data-agent-lane="${seeded.lane}"]`,
-  ).first();
-  await quoteSource.waitFor();
-
   await assertComposerShards({
     page,
     fixture,
@@ -526,9 +521,16 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   });
 
   await assertStagedMosaicHydration(page, team, activityReplay);
+  const quoteSourceCandidate = team.locator(
+    `.mosaic-message-card[data-card-kind="agent-message"][data-agent-lane="${seeded.lane}"]`,
+  ).first();
+  await quoteSourceCandidate.waitFor();
+  const quoteSourceKey = await quoteSourceCandidate.getAttribute("data-mosaic-card-key");
+  assert.ok(quoteSourceKey, "the quote source has one stable Mosaic identity");
+  const quoteSource = team.locator(`[data-mosaic-card-key="${quoteSourceKey}"]`);
 
   const compactionBoundary = await assertCompactionBoundary(
-    page, fixture, team, seeded, artifacts, activityReplay,
+    page, fixture, team, seeded, artifacts,
   );
 
   const quoteSourceBody = (await quoteSource.locator(".message-body").innerText()).trim();

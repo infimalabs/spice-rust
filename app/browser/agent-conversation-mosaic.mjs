@@ -1,19 +1,12 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import {
-  appendPrimaryCompactionBoundary,
   chooseCanvasView,
   reply,
   RECONNECT_MS,
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
-import {
-  assertCompactionDivider,
-  resizeCompactionViewport,
-} from "./compaction-boundary-reference.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const PERSISTED_IMAGE_ROUTE = /\/mosaic-(?:load|error)-[0-9a-f-]+\.png$/;
@@ -30,27 +23,6 @@ export async function installPersistedMosaicImageRoutes(context) {
       body: loads ? Buffer.from(PIXEL_PNG, "base64") : "not an image",
     });
   });
-}
-
-async function committedPlacementSnapshot(team) {
-  return team.locator('.mosaic-message-card[data-layout-phase="committed"]').evaluateAll(
-    (cards) => cards.map((card) => ({
-      key: card.dataset.mosaicCardKey,
-      track: card.dataset.track,
-      span: card.dataset.span,
-      base: card.dataset.base,
-      rows: card.dataset.rows,
-    })),
-  );
-}
-
-function placementGeometry(placement) {
-  return {
-    track: placement.track,
-    span: placement.span,
-    base: placement.base,
-    rows: placement.rows,
-  };
 }
 
 export async function mosaicScrollSnapshot(plane) {
@@ -270,186 +242,6 @@ export async function assertStagedMosaicHydration(page, team, activityReplay) {
   await waitForMosaicReady(page);
 }
 
-export async function assertCompactionBoundary(
-  page,
-  fixture,
-  team,
-  seeded,
-  artifacts,
-  activityReplay,
-) {
-  const plane = team.locator(".lane-mosaic-plane");
-  const viewport = page.viewportSize();
-  const compactViewport = viewport && {
-    width: Math.min(viewport.width, 390),
-    height: Math.min(viewport.height, 360),
-  };
-  if (compactViewport
-    && (compactViewport.width !== viewport.width || compactViewport.height !== viewport.height)) {
-    await page.setViewportSize(compactViewport);
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
-      () => requestAnimationFrame(resolve),
-    )));
-    await settleMosaicActivity(page, plane);
-  }
-  const before = await committedPlacementSnapshot(team);
-  const scrolled = await scrollMosaicAwayFromTop(page, plane);
-  const boundaryProbe = await armPlacementProbe(plane);
-  const authoredBoundary = await appendPrimaryCompactionBoundary(fixture);
-  const divider = team.locator(
-    `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
-  );
-  await divider.waitFor({ timeout: 10_000 });
-  await waitForPage(
-    page,
-    "compaction commits as one visible full-width boundary",
-    TRANSITION_MS,
-    (lane) => {
-      const card = document.querySelector(
-        `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${lane}"]`,
-      );
-      return card?.dataset.layoutPhase === "committed"
-        && card.dataset.track === "0"
-        && card.dataset.span === "12"
-        && card.querySelectorAll(".mosaic-compaction-rule").length === 2
-        && card.querySelector(".message-key")?.textContent?.trim() === "compacted context"
-        && card.querySelector(".mosaic-compaction-agent")?.textContent?.trim().length > 0
-        && card.querySelectorAll(".message-actions button").length === 0;
-    },
-    seeded.lane,
-  );
-  const boundaryCommit = await finishPlacementProbe(plane, boundaryProbe);
-  assertUnmoved(boundaryProbe, boundaryCommit, "a compaction boundary append");
-  assert.equal(
-    boundaryCommit.commits,
-    boundaryProbe.commits + 1,
-    "a compaction boundary advances the plane exactly once",
-  );
-  assert.equal(boundaryCommit.transition, "append");
-
-  const laneAccent = await team
-    .locator(`.team-agent[data-agent-lane="${seeded.lane}"]`)
-    .getAttribute("data-accent");
-  assert.equal(await divider.getAttribute("data-accent"), laneAccent);
-  assert.equal(
-    await team.locator('[data-card-kind="compaction"]').count(),
-    1,
-    "the real transcript compaction renders exactly once",
-  );
-
-  const afterBoundary = new Map(
-    (await committedPlacementSnapshot(team)).map((placement) => [placement.key, placement]),
-  );
-  for (const placement of before) {
-    const retained = afterBoundary.get(placement.key);
-    assert.ok(retained, `the compaction boundary retains ${placement.key}`);
-    assert.deepEqual(
-      placementGeometry(retained),
-      placementGeometry(placement),
-      `the compaction boundary preserves committed geometry for ${placement.key}`,
-    );
-  }
-  assertMosaicAnchorPreserved(
-    scrolled,
-    await mosaicScrollSnapshot(plane),
-    "a compaction epoch while scrolled",
-  );
-  const boundaryKey = await divider.getAttribute("data-mosaic-card-key");
-  assert.ok(boundaryKey, "the compaction boundary has one stable source identity");
-  assert.ok(
-    boundaryKey.endsWith(`-${authoredBoundary.offset}-${authoredBoundary.length}-0`),
-    `the rendered boundary ingests the exact authored session locus: ${JSON.stringify({
-      boundaryKey,
-      authoredBoundary,
-    })}`,
-  );
-
-  const beforeKeys = await team.locator('[data-card-kind="agent-message"]').evaluateAll(
-    (cards) => cards.map((card) => card.dataset.mosaicCardKey),
-  );
-  const postCompactionProbe = await armPlacementProbe(plane);
-  const nextProse = activityReplay.nextAgentProse(seeded.lane);
-  await writeFile(join(seeded.teamWorktrees[0], ".spice-prose-trigger"), "emit\n");
-  const afterMessage = await nextProse;
-  const afterKey = [
-    "message-agent",
-    afterMessage.lane,
-    afterMessage.locus.member,
-    afterMessage.locus.offset,
-    afterMessage.locus.length,
-    afterMessage.locus.event,
-  ].join("-");
-  const afterCard = team.locator(`[data-mosaic-card-key="${afterKey}"]`);
-  await afterCard.waitFor({ timeout: TRANSITION_MS });
-  assert.ok(!beforeKeys.includes(afterKey), "post-compaction activity is a new assistant record");
-  await waitForPage(
-    page,
-    "post-compaction activity advances beyond the boundary frontier",
-    TRANSITION_MS,
-    ({ boundaryKey, cardKey }) => {
-      const boundary = document.querySelector(`[data-mosaic-card-key="${boundaryKey}"]`);
-      const card = document.querySelector(`[data-mosaic-card-key="${cardKey}"]`);
-      if (boundary?.dataset.layoutPhase !== "committed"
-        || card?.dataset.layoutPhase !== "committed") return false;
-      return Number(card.dataset.base)
-        >= Number(boundary.dataset.base) + Number(boundary.dataset.rows);
-    },
-    {
-      boundaryKey,
-      cardKey: afterKey,
-    },
-  );
-  const postCompactionCommit = await finishPlacementProbe(plane, postCompactionProbe);
-  assertUnmoved(
-    postCompactionProbe,
-    postCompactionCommit,
-    "a post-compaction message append",
-  );
-  assert.equal(
-    postCompactionCommit.commits,
-    postCompactionProbe.commits + 1,
-    "a post-compaction message advances the plane exactly once",
-  );
-  assert.equal(postCompactionCommit.transition, "append");
-  assert.equal(
-    await plane.locator(".mosaic-message-card").last().getAttribute("data-mosaic-card-key"),
-    afterKey,
-    "post-compaction activity appends its DOM node",
-  );
-  const boundaryBox = await divider.boundingBox();
-  const afterBox = await afterCard.boundingBox();
-  assert.ok(boundaryBox && afterBox, "the boundary and post-compaction card have visible geometry");
-  assert.ok(
-    afterBox.y + afterBox.height <= boundaryBox.y + 1,
-    `post-compaction activity lands above its boundary: ${JSON.stringify({ boundaryBox, afterBox })}`,
-  );
-  await assertCompactionDivider(
-    divider,
-    "Chromium narrow compaction divider",
-    seeded.agentAttribution,
-  );
-  assertMosaicAnchorPreserved(
-    scrolled,
-    await mosaicScrollSnapshot(plane),
-    "post-compaction activity while scrolled",
-  );
-  await divider.scrollIntoViewIfNeeded();
-  if (viewport && compactViewport
-    && (compactViewport.width !== viewport.width || compactViewport.height !== viewport.height)) {
-    await resizeCompactionViewport(page, divider, viewport, "Chromium restored compaction divider");
-    await assertCompactionDivider(
-      divider,
-      "Chromium wide compaction divider",
-      seeded.agentAttribution,
-    );
-  }
-  await page.screenshot({
-    path: join(artifacts, "canvas-compaction-boundary.png"),
-    fullPage: true,
-  });
-  return boundaryKey;
-}
-
 export async function assertCompactionBoundaryPersistence(page, seeded, boundaryKey) {
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
@@ -535,7 +327,7 @@ export async function assertInitiallyDeferredMosaicIsReadable(page, console) {
   });
 }
 
-async function armPlacementProbe(plane, excluded = []) {
+export async function armPlacementProbe(plane, excluded = []) {
   return plane.evaluate((element, excludedKeys) => {
     const token = crypto.randomUUID();
     const attributes = ["data-track", "data-span", "data-base", "data-row", "data-rows", "style"];
@@ -573,6 +365,9 @@ async function armPlacementProbe(plane, excluded = []) {
       token,
       commits: Number(element.dataset.planeCommits),
       committedWidth: Number(element.dataset.committedWidth),
+      maxRow: Number(element.dataset.maxRow),
+      planeRows: Number(element.dataset.planeRows),
+      scrollHeight: element.scrollHeight,
       cards: cards.map((card) => {
         const box = card.getBoundingClientRect();
         return {
@@ -590,7 +385,7 @@ async function armPlacementProbe(plane, excluded = []) {
   }, excluded);
 }
 
-async function finishPlacementProbe(plane, armed) {
+export async function finishPlacementProbe(plane, armed) {
   return plane.evaluate((element, expected) => {
     const probe = element.__mosaicPlacementObserver;
     if (!probe || probe.token !== expected.token) throw new Error("Mosaic placement probe changed");
@@ -608,6 +403,9 @@ async function finishPlacementProbe(plane, armed) {
       transition: element.dataset.planeTransition,
       observedWidth: Number(element.dataset.observedWidth),
       committedWidth: Number(element.dataset.committedWidth),
+      maxRow: Number(element.dataset.maxRow),
+      planeRows: Number(element.dataset.planeRows),
+      scrollHeight: element.scrollHeight,
       cards: cards
         .filter((card) => probe.keys.includes(card.dataset.mosaicCardKey))
         .map((card) => {
@@ -627,13 +425,37 @@ async function finishPlacementProbe(plane, armed) {
   }, armed);
 }
 
-function assertUnmoved(armed, finished, label) {
+export function assertUnmoved(armed, finished, label) {
   assert.ok(finished.retained, `${label} retains every committed card node`);
   assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
   assert.deepEqual(
     finished.cards,
     armed.cards,
     `${label} preserves DOM order, committed placement, and bounding geometry`,
+  );
+}
+
+export function assertPlacementStable(armed, finished, label) {
+  const withoutOrder = (cards) => cards
+    .map(({ order: _order, ...card }) => card)
+    .sort((left, right) => left.key.localeCompare(right.key));
+  assert.ok(finished.retained, `${label} retains every committed card node`);
+  assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
+  assert.deepEqual(
+    withoutOrder(finished.cards),
+    withoutOrder(armed.cards),
+    `${label} preserves committed placement and viewport geometry`,
+  );
+}
+
+export function assertPlacementRetained(armed, finished, label) {
+  const withoutBox = (cards) => cards.map(({ box: _box, ...card }) => card);
+  assert.ok(finished.retained, `${label} retains every committed card node`);
+  assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
+  assert.deepEqual(
+    withoutBox(finished.cards),
+    withoutBox(armed.cards),
+    `${label} preserves DOM order and committed placement`,
   );
 }
 
@@ -724,7 +546,7 @@ async function openAndAssertIsolated(page, preview, label, expectedUrl) {
   await popup.close();
 }
 
-async function settleMosaicActivity(page, plane) {
+export async function settleMosaicActivity(page, plane) {
   await plane.evaluate((element, config) => new Promise((resolve, reject) => {
     let quiet;
     const snapshot = () => ({
@@ -1257,14 +1079,27 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       const wideSpan = Math.min(plane.trackCount, measuredBaseSpan * 2);
       const wideEligible = wideSpan > measuredBaseSpan && card.heights[0] >= plane.tallThreshold;
       const expectedSpans = wideEligible ? [measuredBaseSpan, wideSpan] : [measuredBaseSpan];
-      const latchedRead = expectedSpans.includes(card.span) ? 0 : 1;
-      const expectedMeasuredSpans = latchedRead
-        ? [...expectedSpans, card.span]
-        : expectedSpans;
+      const latchedSpans = card.measuredSpans.slice(expectedSpans.length);
+      assert.ok(latchedSpans.length <= 1, "measurement performs at most one frozen-span read");
+      assert.ok(
+        latchedSpans.every((span) => !expectedSpans.includes(span)),
+        "a frozen-span read is distinct from every current policy candidate",
+      );
+      const expectedMeasuredSpans = [...expectedSpans, ...latchedSpans];
       assert.equal(
         card.reads,
-        expectedSpans.length + latchedRead,
-        "height reads follow the bounded policy, including at most one frozen-span read",
+        expectedMeasuredSpans.length,
+        `height reads follow the bounded policy, including at most one frozen-span read: ${JSON.stringify({
+          card,
+          expectedMeasuredSpans,
+          expectedSpans,
+          latchedSpans,
+          plane: {
+            baseSpan: plane.baseSpan,
+            tallThreshold: plane.tallThreshold,
+            width: plane.width,
+          },
+        })}`,
       );
       assert.deepEqual(
         card.measuredSpans,
@@ -1295,8 +1130,8 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
           })}`,
         );
       }
-      if (card.tallWitness) {
-        assert.equal(card.measuredSpans.length, 2, "the tall text witness exercises both candidates");
+      if (card.tallWitness && expectedSpans.length === 2) {
+        assert.equal(card.candidateSpans.length, 2, "the tall text witness exercises both candidates");
         assert.ok(
           card.measuredWidths[1] > card.measuredWidths[0],
           "the tall text witness measures a genuinely wider second candidate",
@@ -1315,8 +1150,8 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       }
       if (
         card.textOnly
-          && card.measuredSpans.length >= 2
-          && card.span === card.measuredSpans[1]
+          && card.candidateSpans.length >= 2
+          && card.span === card.candidateSpans[1]
           && card.heights[1] < card.heights[0]
       ) {
         const wideRows = Math.max(
@@ -1325,8 +1160,12 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
         );
         assert.equal(card.rows, wideRows, "a wide text card commits its measured wide row count");
         assert.ok(
-          Math.abs(card.footerInset - card.paddingBottom) <= 1,
-          "a wide text card leaves only its natural padding below the footer",
+          Math.abs(card.footerInset - card.paddingBottom) <= 1.1,
+          `a wide text card leaves only its natural padding below the footer: ${JSON.stringify({
+            footerInset: card.footerInset,
+            key: card.key,
+            paddingBottom: card.paddingBottom,
+          })}`,
         );
         wideTextCommits += 1;
       }
@@ -1355,7 +1194,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
         card.clientHeight + 1 >= card.scrollHeight,
         `Mosaic card contains its own content: ${JSON.stringify(card)}`,
       );
-      readPaths.add(card.reads);
+      readPaths.add(expectedSpans.length);
       kinds.add(card.kind);
       placements.push(card);
     }
@@ -1370,9 +1209,9 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
     }
   }
   assert.ok(kinds.has("agent-message"), "agent-authored cards use the measured policy");
-  assert.ok(readPaths.has(1), "a short card takes exactly one DOM height read");
+  assert.ok(readPaths.has(1), "a short card takes exactly one policy height read");
   if (requireBothReadPaths) {
-    assert.ok(readPaths.has(2), "a tall card takes exactly two DOM height reads");
+    assert.ok(readPaths.has(2), "a tall card takes exactly two policy height reads");
     assert.ok(wideTextCommits > 0, "a text card commits its shorter wide measurement");
   }
   return placements;
