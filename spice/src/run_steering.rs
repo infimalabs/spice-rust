@@ -3,14 +3,18 @@
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::Path;
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, SyncSender};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
-const SCAN_INTERVAL: Duration = Duration::from_millis(100);
+use notify::{RecursiveMode, Watcher as _};
+
+enum Signal {
+    Changed,
+    Stop,
+}
 
 pub(super) struct Runtime {
-    stop: Option<Sender<()>>,
+    stop: Option<SyncSender<Signal>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -20,18 +24,34 @@ impl Runtime {
             return Self::empty();
         };
         let rendering = rendering.to_path_buf();
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let changed = sender.clone();
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            if event.is_ok() {
+                let _ = changed.try_send(Signal::Changed);
+            }
+        })
+        .and_then(|mut watcher| {
+            let parent = rendering
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            watcher.watch(parent, RecursiveMode::NonRecursive)?;
+            Ok(watcher)
+        });
         let mut last = None;
         emit_current(&rendering, &mut last);
+        let Ok(watcher) = watcher else {
+            return Self::empty();
+        };
         let worker = match thread::Builder::new()
             .name("spice-run-steering".to_owned())
             .spawn(move || {
-                loop {
-                    match receiver.recv_timeout(SCAN_INTERVAL) {
-                        Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
-                        Err(RecvTimeoutError::Timeout) => {
-                            emit_current(&rendering, &mut last);
-                        }
+                let _watcher = watcher;
+                while let Ok(signal) = receiver.recv() {
+                    match signal {
+                        Signal::Changed => emit_current(&rendering, &mut last),
+                        Signal::Stop => break,
                     }
                 }
             }) {
@@ -46,7 +66,7 @@ impl Runtime {
 
     pub(super) fn stop(&mut self) {
         if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
+            let _ = stop.send(Signal::Stop);
         }
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -58,6 +78,12 @@ impl Runtime {
             stop: None,
             worker: None,
         }
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

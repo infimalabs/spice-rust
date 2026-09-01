@@ -566,10 +566,12 @@ fn run_streams_direction_authored_while_its_immediate_child_is_active() {
             expected
         );
     }
+    fs::write(scratch.path().join("unrelated"), b"parent-directory churn")
+        .expect("unrelated parent entry writes");
     assert_eq!(
         receiver.recv_timeout(Duration::from_millis(350)),
         Err(mpsc::RecvTimeoutError::Timeout),
-        "unchanged steering repeated while the child remained active"
+        "unrelated watcher events repeated unchanged steering"
     );
 
     child
