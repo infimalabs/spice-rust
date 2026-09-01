@@ -54,7 +54,7 @@ export function processIdsMatchingPaths(table, paths) {
 }
 
 export async function auditOwnership(name, ownership) {
-  const pids = ownership.pids.filter((pid) => pid !== process.pid);
+  const pids = ownership.pids;
   assert.deepEqual(pids.filter(alive), [], `${name} leaves no captured process alive`);
   assert.equal(await absent(ownership.fixture), true, `${name} removes its fixture`);
   assert.equal(await absent(ownership.linkedRoot), true, `${name} removes its lanes`);

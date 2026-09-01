@@ -62,6 +62,7 @@ import { assertCanonicalInlineTaskCode } from "./control-reference.mjs";
 import { assertLiveThreadCoalescing } from "./live-thread-coalescing.mjs";
 import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
 import { assertBoundaryLoadReading, withLoadReading } from "./canvas-load.mjs";
+import { auditOwnership } from "./canvas-process-ownership.mjs";
 import { descendantPids, emitShardEvent, startShardWorker } from "./canvas-shards.mjs";
 import { assertSignalExitedChildSkipsTeardown } from "./canvas-signal-teardown.mjs";
 import { assertFixtureTeardownReaps } from "./canvas-teardown.mjs";
@@ -1177,13 +1178,22 @@ try {
   throw withLoadReading(error);
 } finally {
   if (owner) {
-    const pids = [...new Set([process.pid, resident?.child.pid,
+    const pids = [...new Set([resident?.child.pid,
       ...await recordedVendorPids(fixture), ...descendantPids()])].filter(Number.isInteger);
     try {
       if (browser) await browser.close();
     } finally {
       await owner.cleanup();
-      emitShardEvent({ kind: "ownership", shard: run.shard.name, pids, fixture, linkedRoot });
+      const ownership = {
+        kind: "ownership",
+        shard: run.shard.name,
+        workerPid: process.pid,
+        pids,
+        fixture,
+        linkedRoot,
+      };
+      await auditOwnership(run.shard.name, ownership);
+      emitShardEvent(ownership);
     }
   }
 }

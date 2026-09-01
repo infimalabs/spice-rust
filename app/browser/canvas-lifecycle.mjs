@@ -158,6 +158,7 @@ export function ownFixture({
     linkedRoot,
     resident: null,
     cleaned: false,
+    cleanupPromise: null,
 
     /// Record the resident this fixture is responsible for.
     ///
@@ -175,21 +176,32 @@ export function ownFixture({
     /// the ordinary `finally` path and a signal that raced it cannot both drive
     /// teardown. Never throws, because it runs on the failure path and an error
     /// raised here would replace the failure the caller is trying to report.
-    async cleanup() {
-      if (owner.cleaned) return;
-      owner.cleaned = true;
-      outstanding.delete(owner);
-      if (outstanding.size === 0) removeHandlers();
-
-      // Read the ledger before anything is removed: it lives inside the
-      // fixture directory, and it is the only record of what to reap.
-      const vendors = await recordedVendorPids(fixture);
-      await attempt(() => stopOwnedResident(owner, stop), "could not stop its resident");
-      await attempt(() => reapRecordedVendors(vendors, processes), "could not reap its stand-ins");
-      await attempt(() => rm(fixture, { recursive: true, force: true }), `left ${fixture}`);
-      if (linkedRoot) {
-        await attempt(() => rm(linkedRoot, { recursive: true, force: true }), `left ${linkedRoot}`);
-      }
+    cleanup() {
+      if (owner.cleanupPromise) return owner.cleanupPromise;
+      owner.cleanupPromise = (async () => {
+        try {
+          // Read the ledger before anything is removed: it lives inside the
+          // fixture directory, and it is the only record of what to reap.
+          const vendors = await recordedVendorPids(fixture);
+          await attempt(() => stopOwnedResident(owner, stop), "could not stop its resident");
+          await attempt(
+            () => reapRecordedVendors(vendors, processes),
+            "could not reap its stand-ins",
+          );
+          await attempt(() => rm(fixture, { recursive: true, force: true }), `left ${fixture}`);
+          if (linkedRoot) {
+            await attempt(
+              () => rm(linkedRoot, { recursive: true, force: true }),
+              `left ${linkedRoot}`,
+            );
+          }
+        } finally {
+          owner.cleaned = true;
+          outstanding.delete(owner);
+          if (outstanding.size === 0) removeHandlers();
+        }
+      })();
+      return owner.cleanupPromise;
     },
   };
   outstanding.add(owner);

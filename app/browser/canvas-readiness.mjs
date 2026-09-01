@@ -335,6 +335,9 @@ export async function assertAgentSpacingRejectsFallbackOnlyMarkup(page, state) {
     const pane = document.createElement("div");
     pane.className = "team-pane";
     pane.dataset.teamMode = "Compose";
+    const mode = document.createElement("div");
+    mode.className = "team-mode-pane";
+    mode.dataset.mode = "Compose";
     const compose = document.createElement("div");
     compose.className = "team-compose";
     const activity = document.createElement("div");
@@ -348,7 +351,8 @@ export async function assertAgentSpacingRejectsFallbackOnlyMarkup(page, state) {
     plane.append(fallback);
     activity.append(plane);
     compose.append(activity);
-    pane.append(compose);
+    mode.append(compose);
+    pane.append(mode);
     surface.append(pane);
     host.append(surface);
   }, marker);
