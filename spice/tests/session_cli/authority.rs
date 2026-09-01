@@ -319,6 +319,12 @@ fn renew_held_claim_for_meter(path: &Path, seconds: i64) {
         .checked_add(jiff::SignedDuration::from_secs(seconds))
         .expect("meter deadline shifts");
     let until = Instant::new(deadline).expect("meter deadline is canonical");
+    let maximum = Instant::new(
+        deadline
+            .checked_add(jiff::SignedDuration::from_secs(3_600))
+            .expect("meter maximum shifts"),
+    )
+    .expect("meter maximum is canonical");
     let mut write = JournalWrite::new(
         Actor::Spice,
         "task:SESSION-fixture"
@@ -333,7 +339,7 @@ fn renew_held_claim_for_meter(path: &Path, seconds: i64) {
                 task: task.clone(),
                 epoch: lease.body().epoch,
                 until,
-                maximum: until,
+                maximum,
             },
             FactCause::Root,
         )
@@ -341,7 +347,7 @@ fn renew_held_claim_for_meter(path: &Path, seconds: i64) {
     let mut next = lease.body().clone();
     next.renewal = now;
     next.expiry = until;
-    next.maximum = until;
+    next.maximum = maximum;
     write.lease_head(task, renewed, move |_| next);
     let mut journal = journal;
     journal.apply(write).expect("meter renewal commits");
@@ -462,7 +468,11 @@ fn real_run_stream_reports_working_state_and_wakes_at_warning_boundary() {
     assert!(!lines[0].contains("CLAIM LEASE"));
     assert!(lines[1].contains("CLAIM LEASE WARNING"));
     let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
-    assert!(lines[1].contains(&format!("run spice task reclaim {handle}")));
+    assert!(
+        lines[1].contains(&format!("run spice task reclaim {handle}")),
+        "warning recommends reclaiming the fixture claim: {:?}",
+        lines[1]
+    );
 
     scratch.remove();
 }
@@ -494,7 +504,10 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     assert_eq!(warning.lines().count(), 1);
     assert!(warning.contains("CLAIM LEASE WARNING"));
     assert!(warning.contains("s remaining"));
-    assert!(warning.contains(&format!("run spice task reclaim {handle}")));
+    assert!(
+        warning.contains(&format!("run spice task reclaim {handle}")),
+        "warning recommends reclaiming the fixture claim: {warning:?}"
+    );
     assert!(!warning.contains(" ACK"));
     assert!(!warning.contains(" NACK"));
     assert!(second.err.is_empty(), "same tier is durably suppressed");
@@ -502,7 +515,10 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     assert_eq!(urgent.lines().count(), 1);
     assert!(urgent.contains("CLAIM LEASE URGENT"));
     assert!(urgent.contains("s remaining"));
-    assert!(urgent.contains(&format!("run spice task reclaim {handle}")));
+    assert!(
+        urgent.contains(&format!("run spice task reclaim {handle}")),
+        "urgent warning recommends reclaiming the fixture claim: {urgent:?}"
+    );
     assert!(!urgent.contains(" ACK"));
     assert!(!urgent.contains(" NACK"));
     assert_eq!(fact_count(&authority), urgent_generation_facts);
