@@ -119,6 +119,30 @@ fn invoke_configured(argv: &[&str], inbox: Option<&OsStr>, current_dir: Option<&
     }
 }
 
+#[cfg(unix)]
+fn invoke_isolated_rtk_run(
+    working: &Path,
+    executable: &Path,
+    history: Option<&Path>,
+) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
+        .args(["run", "--", "/bin/sh", "-c", "printf native"])
+        .current_dir(working)
+        .env_remove(steer::hook::INBOX)
+        .env_remove(steer::hook::LANE)
+        .env_remove("CODEX_THREAD_ID") // env-policy: allow
+        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
+        .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
+        .env_remove(spice::rtk::EXECUTABLE_VARIABLE)
+        .env_remove(spice::rtk::HISTORY_VARIABLE)
+        .env(spice::rtk::EXECUTABLE_VARIABLE, executable);
+    if let Some(history) = history {
+        command.env(spice::rtk::HISTORY_VARIABLE, history);
+    }
+    command.output().expect("isolated RTK run launches")
+}
+
 fn utf8(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).expect("spice speaks UTF-8")
 }
@@ -687,18 +711,16 @@ fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
     fs::set_permissions(&rtk, fs::Permissions::from_mode(0o700))
         .expect("make RTK fixture executable");
 
-    let health = spice::rtk::probe_health(rtk.as_os_str(), scratch.path());
+    let health = spice::rtk::probe_health_in_environment(
+        rtk.as_os_str(),
+        scratch.path(),
+        &sill::Environment::empty(),
+    );
     assert_eq!(health.state(), spice::rtk::HealthState::Active);
     assert_eq!(health.version(), None);
     assert!(health.detail().contains("selector stdout was not UTF-8"));
 
-    let rewritten = Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args(["run", "--", "/bin/sh", "-c", "printf native"])
-        .env_remove(steer::hook::INBOX)
-        .env(spice::rtk::EXECUTABLE_VARIABLE, &rtk)
-        .env(spice::rtk::HISTORY_VARIABLE, &history)
-        .output()
-        .expect("run through RTK");
+    let rewritten = invoke_isolated_rtk_run(scratch.path(), &rtk, Some(&history));
     assert_eq!(rewritten.status.code(), Some(23));
     assert_eq!(rewritten.stdout, b"rewritten");
     assert!(rewritten.stderr.is_empty());
@@ -734,35 +756,19 @@ fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
     fs::set_permissions(&recovering, fs::Permissions::from_mode(0o700))
         .expect("make recovering RTK fixture executable");
 
-    let degraded = Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args(["run", "--", "/bin/sh", "-c", "printf native"])
-        .env_remove(steer::hook::INBOX)
-        .env(spice::rtk::EXECUTABLE_VARIABLE, &recovering)
-        .output()
-        .expect("malformed rewrite degrades locally");
+    let degraded = invoke_isolated_rtk_run(scratch.path(), &recovering, None);
     assert!(degraded.status.success());
     assert_eq!(degraded.stdout, b"native");
     assert!(String::from_utf8_lossy(&degraded.stderr).contains("degraded to native"));
 
-    let recovered = Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args(["run", "--", "/bin/sh", "-c", "printf native"])
-        .env_remove(steer::hook::INBOX)
-        .env(spice::rtk::EXECUTABLE_VARIABLE, &recovering)
-        .output()
-        .expect("later nonzero rewrite remains eligible");
+    let recovered = invoke_isolated_rtk_run(scratch.path(), &recovering, None);
     assert_eq!(recovered.status.code(), Some(23));
     assert_eq!(recovered.stdout, b"recovered");
     assert!(recovered.stderr.is_empty());
     assert_eq!(fs::read_to_string(&attempts).expect("read attempts"), "2\n");
 
     let missing = scratch.path().join("missing-rtk");
-    let native = Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args(["run", "--", "/bin/sh", "-c", "printf native"])
-        .env_remove(steer::hook::INBOX)
-        .env(spice::rtk::EXECUTABLE_VARIABLE, &missing)
-        .env(spice::rtk::HISTORY_VARIABLE, &history)
-        .output()
-        .expect("missing RTK degrades to native");
+    let native = invoke_isolated_rtk_run(scratch.path(), &missing, Some(&history));
     assert!(native.status.success());
     assert_eq!(native.stdout, b"native");
     assert!(String::from_utf8_lossy(&native.stderr).contains("RTK rewrite degraded to native"));
