@@ -199,6 +199,16 @@ impl<T> JournalHead<T> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuardRefusal {
     reason: String,
+    context: Option<Box<GuardRefusalContext>>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct GuardRefusalContext {
+    witness: Option<String>,
+    expected: Option<String>,
+    observed: Option<String>,
+    detail: Option<String>,
+    recovery: Option<wire::SpiceCommand>,
 }
 
 impl GuardRefusal {
@@ -207,13 +217,65 @@ impl GuardRefusal {
     pub fn new(reason: impl Into<String>) -> Self {
         Self {
             reason: reason.into(),
+            context: None,
         }
+    }
+
+    /// Attach the failed predicate evidence retained by the command surface.
+    #[must_use]
+    pub fn with_evidence(
+        mut self,
+        witness: impl Into<String>,
+        expected: Option<String>,
+        observed: Option<String>,
+    ) -> Self {
+        let context = self.context();
+        context.witness = Some(witness.into());
+        context.expected = expected;
+        context.observed = observed;
+        self
+    }
+
+    /// Attach human context that is not itself the runnable recovery command.
+    #[must_use]
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.context().detail = Some(detail.into());
+        self
+    }
+
+    /// Attach the exact Spice command that can recover from this refusal.
+    #[must_use]
+    pub fn with_recovery(mut self, recovery: wire::SpiceCommand) -> Self {
+        self.context().recovery = Some(recovery);
+        self
     }
 
     /// Stable refusal text supplied by the guard.
     #[must_use]
     pub fn reason(&self) -> &str {
         &self.reason
+    }
+
+    /// Consume this refusal into the wire diagnostic and optional recovery it retained.
+    #[must_use]
+    pub fn into_diagnostic(self) -> (wire::RefusalDiagnostic, Option<wire::SpiceCommand>) {
+        let context = self.context.map(|context| *context).unwrap_or_default();
+        let diagnostic = wire::RefusalDiagnostic::new(
+            self.reason,
+            context.witness.or_else(|| Some("journal-guard".to_owned())),
+            context.expected,
+            context.observed,
+        );
+        let diagnostic = match context.detail {
+            Some(detail) => diagnostic.with_detail(detail),
+            None => diagnostic,
+        };
+        (diagnostic, context.recovery)
+    }
+
+    fn context(&mut self) -> &mut GuardRefusalContext {
+        self.context
+            .get_or_insert_with(|| Box::new(GuardRefusalContext::default()))
     }
 }
 

@@ -348,14 +348,14 @@ pub(super) fn commit(bus: &Bus, write: JournalWrite) -> CommandResult<JournalCom
         .map_err(|error| store_fault("bus::commit-failed", &error.to_string()))?
     {
         CommitOutcome::Committed(committed) => Ok(committed),
-        CommitOutcome::Refused(refusal) => Err(Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                refusal.reason().to_owned(),
-                Some("journal-guard".to_owned()),
-                None,
-                None,
-            ),
-        ))),
+        CommitOutcome::Refused(refusal) => {
+            let (diagnostic, recovery) = refusal.into_diagnostic();
+            let refusal = match recovery {
+                Some(command) => Refusal::repairable(command, diagnostic),
+                None => Refusal::bare(diagnostic),
+            };
+            Err(Outcome::Refusal(refusal))
+        }
         CommitOutcome::Fault(fault) => Err(store_fault("journal::commit-failed", fault.detail())),
     }
 }
