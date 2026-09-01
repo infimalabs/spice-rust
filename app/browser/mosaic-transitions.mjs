@@ -17,6 +17,7 @@ import {
 } from "./agent-conversation-mosaic.mjs";
 import {
   appendPrimaryCompactionBoundary,
+  appendPrimaryEmptyCompactionBoundary,
   chooseCanvasView,
   monitorPage,
   TRANSITION_MS,
@@ -24,6 +25,7 @@ import {
 } from "./canvas-fixture.mjs";
 import {
   assertCompactionDivider,
+  assertNoUnavailableToolTerminal,
   assertUnavailableToolTerminal,
   waitForCompactionReady,
 } from "./compaction-boundary-reference.mjs";
@@ -448,6 +450,92 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
         COMPACTED_TOOL_PREVIEW,
       );
     }
+
+    const emptyProbes = await scrollAndArmTransitionWitnesses(witnesses);
+    const authoredEmptyBoundary = await appendPrimaryEmptyCompactionBoundary(fixture);
+    const emptyDividers = await Promise.all(emptyProbes.map(({ witness }) => (
+      waitForAuthoredCard(
+        witness,
+        authoredEmptyBoundary,
+        seeded.lane,
+        "empty compaction boundary",
+      )
+    )));
+    const emptyBoundaryKeys = [];
+    for (const [index, { witness, scroll, armed }] of emptyProbes.entries()) {
+      const divider = emptyDividers[index];
+      const finished = await finishPlacementProbe(witness.plane, armed);
+      const card = await appendedCardSnapshot(witness.plane, divider);
+      const label = `${witness.label} narrow empty compaction boundary`;
+      assertUnmoved(armed, finished, label);
+      assert.equal(finished.commits, armed.commits + 1, `${label} commits exactly once`);
+      assert.equal(finished.transition, "append", `${label} takes the append path`);
+      assert.ok(finished.maxRow > armed.maxRow, `${label} advances the upper frontier`);
+      assertVisuallyTopmost(card, label);
+      await waitForCompactionReady(witness.page, divider, label);
+      const laneAccent = await witness.team
+        .locator(`.team-agent[data-agent-lane="${seeded.lane}"]`)
+        .getAttribute("data-accent");
+      assert.equal(await divider.getAttribute("data-accent"), laneAccent, `${label} uses its lane accent`);
+      assert.equal(
+        await witness.team.locator('[data-card-kind="compaction"]').count(),
+        2,
+        `${label} renders both distinct boundaries exactly once`,
+      );
+      assertMosaicAnchorPreserved(
+        scroll,
+        await mosaicScrollSnapshot(witness.plane),
+        `${label} while scrolled`,
+      );
+      emptyBoundaryKeys.push(card.key);
+      await assertMosaicLattice(witness.page, false);
+    }
+    assert.equal(
+      emptyBoundaryKeys[1],
+      emptyBoundaryKeys[0],
+      "both engines ingest the same empty compaction locus",
+    );
+    assert.notEqual(
+      emptyBoundaryKeys[0],
+      boundaryKeys[0],
+      "the pending-call-free epoch has a distinct compaction identity",
+    );
+    assert.ok(
+      emptyBoundaryKeys[0].endsWith(authoredLocusSuffix(authoredEmptyBoundary)),
+      `both engines render the exact authored empty compaction locus: ${JSON.stringify({
+        boundaryKey: emptyBoundaryKeys[0],
+        authoredBoundary: authoredEmptyBoundary,
+      })}`,
+    );
+
+    await assertSharedProseAppend(
+      witnesses,
+      primaryWorktree,
+      seeded.lane,
+      "narrow post-empty-compaction append",
+    );
+    for (const [index, witness] of witnesses.entries()) {
+      await assertCompactionDivider(
+        dividers[index],
+        `${witness.label} narrow unresolved compaction boundary after empty boundary`,
+        seeded.agentAttribution,
+      );
+      await assertUnavailableToolTerminal(
+        dividers[index],
+        `${witness.label} narrow unresolved compaction boundary after empty boundary`,
+        COMPACTED_TOOL_PREVIEW,
+      );
+      await assertCompactionDivider(
+        emptyDividers[index],
+        `${witness.label} narrow empty compaction boundary`,
+        seeded.agentAttribution,
+      );
+      await assertNoUnavailableToolTerminal(
+        emptyDividers[index],
+        `${witness.label} narrow empty compaction boundary`,
+        seeded.agentAttribution,
+      );
+    }
     await resizeTransitionWitnesses(witnesses, TRANSITION_WIDE, "restored wide viewport");
     for (const [index, witness] of witnesses.entries()) {
       await assertCompactionDivider(
@@ -459,6 +547,16 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
         dividers[index],
         `${witness.label} wide compaction boundary`,
         COMPACTED_TOOL_PREVIEW,
+      );
+      await assertCompactionDivider(
+        emptyDividers[index],
+        `${witness.label} wide empty compaction boundary`,
+        seeded.agentAttribution,
+      );
+      await assertNoUnavailableToolTerminal(
+        emptyDividers[index],
+        `${witness.label} wide empty compaction boundary`,
+        seeded.agentAttribution,
       );
     }
     await assertSharedProseAppend(
@@ -481,7 +579,10 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
     });
     firefox.monitor.assertClean();
     complete = true;
-    return boundaryKeys[0];
+    return {
+      unresolved: boundaryKeys[0],
+      empty: emptyBoundaryKeys[0],
+    };
   } finally {
     if (originalViewport && page.viewportSize()
       && (page.viewportSize().width !== originalViewport.width

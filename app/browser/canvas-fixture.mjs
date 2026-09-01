@@ -70,16 +70,14 @@ export function fixtureCommandEnv(lane, fixture) {
   return env;
 }
 
-/// Author one unresolved call plus its real preserved-session compaction record.
-export async function appendPrimaryCompactionBoundary(fixture) {
+async function appendPrimaryCompactionRecords(fixture, prefix) {
   const transcript = join(
     fixture,
     ".git/spice-home/.claude/projects/canvas",
     `${PRIMARY_FIXTURE_SESSION}.jsonl`,
   );
-  const call = Buffer.from(UNAVAILABLE_TOOL_CALL_RECORD);
   const boundary = Buffer.from(COMPACTION_BOUNDARY_RECORD);
-  const record = Buffer.concat([call, boundary]);
+  const record = Buffer.concat([prefix, boundary]);
   const file = await open(transcript, "a");
   let offset;
   try {
@@ -92,7 +90,20 @@ export async function appendPrimaryCompactionBoundary(fixture) {
   }
   const authored = (await readFile(transcript)).subarray(offset, offset + record.length);
   assert.deepEqual(authored, record, "the preserved session contains the exact authored record");
-  return { transcript, offset: offset + call.length, length: boundary.length };
+  return { transcript, offset: offset + prefix.length, length: boundary.length };
+}
+
+/// Author one unresolved call plus its real preserved-session compaction record.
+export async function appendPrimaryCompactionBoundary(fixture) {
+  return appendPrimaryCompactionRecords(
+    fixture,
+    Buffer.from(UNAVAILABLE_TOOL_CALL_RECORD),
+  );
+}
+
+/// Author a real preserved-session compaction record with no unresolved calls.
+export async function appendPrimaryEmptyCompactionBoundary(fixture) {
+  return appendPrimaryCompactionRecords(fixture, Buffer.alloc(0));
 }
 
 /// Trigger one exact assistant record through the running fixture vendor.
