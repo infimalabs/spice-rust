@@ -42,7 +42,7 @@ pub(crate) fn claim_automatic(
         prepared.task.clone(),
         prepared.actor,
     );
-    match committed(bus, prepared.write, CommandAnswer::Claim(answer)) {
+    match committed(bus, prepared.write, CommandAnswer::Claim(Box::new(answer))) {
         Outcome::Reply(_) => Ok(AutomaticClaim {
             task: prepared.born,
             lane,
@@ -324,6 +324,7 @@ fn automatic_answer(
             })
             .collect::<Vec<_>>()
             .into_boxed_slice(),
+        creation_context: None,
         next: None,
     }
 }
@@ -362,9 +363,10 @@ pub(crate) fn release_automatic(
         holder: actor,
         expiry: None,
         warnings: Box::default(),
+        creation_context: None,
         next: None,
     };
-    match committed(bus, write, CommandAnswer::Claim(answer)) {
+    match committed(bus, write, CommandAnswer::Claim(Box::new(answer))) {
         Outcome::Reply(_) => Ok(()),
         Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),

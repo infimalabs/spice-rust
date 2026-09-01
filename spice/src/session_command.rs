@@ -12,6 +12,7 @@ use clap::ArgMatches;
 use wire::{Outcome, Refusal, Reply, ReplyPosition};
 
 mod authority;
+mod context;
 mod dataset;
 mod model;
 mod project;
@@ -106,7 +107,9 @@ pub(crate) fn run(
     environment: &Environment,
 ) -> Outcome<Report> {
     let action = path.get(1).copied().unwrap_or("briefing");
-    let result = if matches!(action, "briefing" | "sweep") {
+    let result = if action == "context" {
+        context::build(matches)
+    } else if matches!(action, "briefing" | "sweep") {
         deadline_build(matches, path, action, environment)
     } else {
         build(matches, path, action, environment)

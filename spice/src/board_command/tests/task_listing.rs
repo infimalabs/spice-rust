@@ -179,9 +179,15 @@ fn active_todo_task_show_prints_the_parser_owned_done_command() {
     );
     let claim = capture_for(&bus, epoch, &seats[0], &task);
     assert_eq!(claim.task, task);
+    assert_eq!(
+        claim.creation_context.as_deref(),
+        Some("unavailable operator-actor"),
+        "assignment projects an explicit unavailable creation reason"
+    );
 
     let claimed = board(&bus, epoch, Actor::Lane(seats[0].lane));
     let shown = task_show(&claimed, at(&claimed, &task), &[]);
+    assert!(shown.contains("creation_context unavailable operator-actor"));
     assert!(
         shown.contains("next: spice task done --validation \"...\""),
         "the detail packet exposes the parser-owned task done form: {shown}"
@@ -189,6 +195,106 @@ fn active_todo_task_show_prints_the_parser_owned_done_command() {
     assert!(
         !shown.contains(&format!("next: spice task done {task}")),
         "the detail packet must not advertise the rejected handle form: {shown}"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn task_show_prints_creation_context_as_one_shell_executable_current_command() {
+    let (root, bus, epoch, _) = fixture("task-show-creation-command", 0);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "SHOW-context01",
+        "Render exact creation context",
+        Some("todo"),
+    );
+    let answer = board(&bus, epoch, Actor::Operator);
+    let mut row = at(&answer, &task).clone();
+    let lane = uuid(9_401);
+    let source = uuid(9_402);
+    row.statement.body.creation = body::TaskCreationContext::Transcript {
+        session: "session with ' quote".to_owned(),
+        boundary: wire::TranscriptSourceHead {
+            lane,
+            vendor: "codex".parse().expect("fixture vendor"),
+            stream: "session".to_owned(),
+            source,
+            next: body::TranscriptPosition {
+                member: 4,
+                offset: 512,
+            },
+        },
+    };
+    let shown = task_show(&answer, &row, &[]);
+    let command = shown
+        .lines()
+        .find(|line| line.starts_with("spice session context "))
+        .expect("task show carries one executable context command");
+    assert_eq!(
+        shell_words::split(command).expect("rendered command is valid shell words"),
+        vec![
+            "spice".to_owned(),
+            "session".to_owned(),
+            "context".to_owned(),
+            "session with ' quote".to_owned(),
+            "--lane".to_owned(),
+            lane.to_string(),
+            "--vendor".to_owned(),
+            "codex".to_owned(),
+            "--stream".to_owned(),
+            "session".to_owned(),
+            "--source".to_owned(),
+            source.to_string(),
+            "--member".to_owned(),
+            "4".to_owned(),
+            "--offset".to_owned(),
+            "512".to_owned(),
+        ]
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn allocator_assignment_prints_the_lane_tasks_exact_creation_command() {
+    let (root, bus, epoch, seats) = fixture("task-next-creation-command", 1);
+    let expected = authorize_lane_creation(&bus, epoch, &seats[0]);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        lane.clone(),
+        "NEXT-context01",
+        "Assign exact creation context",
+        Some("todo"),
+    );
+    let available = board(&bus, epoch, lane.clone());
+    let answer = assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::ClaimWin,
+        claim_expected(&available, &task, &seats[0]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+    let CommandAnswer::Claim(claim) = answer else {
+        panic!("claim win returned another answer shape");
+    };
+    let output = claim
+        .creation_context
+        .as_deref()
+        .expect("fresh assignment carries creation context");
+    assert_eq!(output, task_creation_context_output(&expected).as_ref());
+    assert_eq!(
+        shell_words::split(output)
+            .expect("assignment context is shell executable")
+            .first()
+            .map(String::as_str),
+        Some("spice")
     );
     clean(&root, bus);
 }
@@ -421,6 +527,7 @@ fn lane_task_origin_thread_comes_from_its_durable_creation_session() {
     let (root, bus, epoch, seats) = fixture("task-origin-session", 1);
     let first_identity = uuid(9_101);
     declare_session(&bus, epoch, &seats[0], first_identity, 101);
+    seed_creation_transcript(&bus, seats[0].lane);
     let first = add(
         &bus,
         epoch,

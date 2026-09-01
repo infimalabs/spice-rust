@@ -107,6 +107,9 @@ fn task_added(
                 flow: workflow.flow.clone(),
                 phase: workflow.phase.clone(),
                 revision: 1,
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
             },
             FactCause::Root,
         )
@@ -122,6 +125,7 @@ fn task_added(
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: origin,
+        creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,
     });
     write.workflow_head(task, fact, move |_| workflow);

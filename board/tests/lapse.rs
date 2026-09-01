@@ -152,6 +152,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
                 holder: actor,
                 expiry: None,
                 warnings: Box::default(),
+                creation_context: None,
                 next: None,
             },
         )
@@ -235,6 +236,7 @@ fn free(journal: &mut Journal, command: u8) {
                 holder: actor,
                 expiry: None,
                 warnings: Box::default(),
+                creation_context: None,
                 next: None,
             },
         )
@@ -290,6 +292,7 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
                 holder: actor,
                 expiry: None,
                 warnings: Box::default(),
+                creation_context: None,
                 next: None,
             },
         )
@@ -343,6 +346,9 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
                 revision: 1,
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
             },
             FactCause::Root,
         )
@@ -358,6 +364,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
         tags: vec!["priority:high".to_owned()],
         dependencies: Vec::new(),
         provenance: statement_origin,
+        creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,
     });
     write.workflow_head(born(), fact, move |_| WorkflowHead {
@@ -942,6 +949,7 @@ fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
                 holder,
                 expiry: None,
                 warnings: Box::default(),
+                creation_context: None,
                 next: None,
             },
         )

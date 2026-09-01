@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn drain_guidance_follows_lane_ownership_across_add_release_and_wake() {
     let (root, bus, epoch, seats) = fixture("drain-continuation", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     let lane = Actor::Lane(seats[0].lane);
     let first_stamp = stamp("DRAIN-first001");
     let first = TaskHandle::for_project("board.test", &first_stamp);

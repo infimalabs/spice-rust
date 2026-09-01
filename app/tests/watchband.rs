@@ -154,6 +154,10 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
                 "tags": [],
                 "dependencies": [],
                 "provenance": format!("task:{born}"),
+                "creation": {
+                    "kind": "unavailable",
+                    "reason": "operator-actor",
+                },
                 "revision": 1,
             },
         },

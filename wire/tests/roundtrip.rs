@@ -1028,3 +1028,30 @@ fn task_effort_read_and_answer_have_one_strict_current_wire_shape() {
         "session absence is omission rather than null"
     );
 }
+
+#[test]
+fn a_pre_context_task_fact_decodes_only_as_explicit_legacy_unavailable() {
+    let document = r#"{
+        "task":"1kKRRsDP",
+        "title":"Legacy task",
+        "project":"task.legacy",
+        "tags":[],
+        "depends":[],
+        "flow":["todo"],
+        "phase":"todo",
+        "revision":1
+    }"#;
+    let added: body::TaskAdded = wire::decode(document.as_bytes()).expect("legacy task decodes");
+    assert_eq!(
+        added.creation,
+        body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::LegacyWireOmitted,)
+    );
+    let encoded: serde_json::Value = serde_json::from_slice(
+        &wire::encode(&added).expect("legacy marker remains wire-compatible"),
+    )
+    .expect("task fact re-encodes as JSON");
+    assert!(
+        encoded.get("creation").is_none(),
+        "only schema migration may turn omitted legacy evidence into current authority"
+    );
+}

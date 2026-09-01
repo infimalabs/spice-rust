@@ -414,6 +414,17 @@ pub(crate) struct ThreadView {
     reason = "boxing a complete typed CLI document would add a second representation at the serialization boundary"
 )]
 pub(crate) enum Report {
+    Context {
+        identity: String,
+        lane: String,
+        vendor: String,
+        stream: String,
+        source: String,
+        member: u64,
+        offset: u64,
+        before: Vec<String>,
+        after: Vec<String>,
+    },
     Recall {
         sources: Vec<SourceView>,
         horizon_basis: String,

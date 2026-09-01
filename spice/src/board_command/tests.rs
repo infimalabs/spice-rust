@@ -34,6 +34,7 @@ mod task_listing;
 // contract on `ClaimGrant`, and a caller sees only the first refusal, so it
 // is pinned apart from the scenarios that drive a claim that succeeds.
 mod claim_grant;
+mod creation_context;
 
 fn at<'a>(answer: &'a BoardAnswer, task: &TaskHandle) -> &'a BoardTask {
     task_heads(answer, task).expect("fixture task is visible")
@@ -112,6 +113,80 @@ fn declare_session(
         bus.commit(write).expect("session declaration commits"),
         CommitOutcome::Committed(_)
     ));
+}
+
+fn seed_creation_transcript(bus: &Bus, lane: CanonicalUuid) -> body::TaskCreationContext {
+    let vendor: wire::Name = "claude".parse().expect("fixture vendor");
+    let source = uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed));
+    let next = body::TranscriptPosition {
+        member: 1,
+        offset: 128,
+    };
+    let head = wire::TranscriptSourceHead {
+        lane,
+        vendor: vendor.clone(),
+        stream: "session".to_owned(),
+        source,
+        next,
+    };
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("lane:{lane}").parse().expect("fixture origin"),
+        Instant::new(jiff::Timestamp::now()).expect("current fixture instant"),
+        Producer::ResidentRecognition,
+    );
+    let ingested = write
+        .fact(
+            body::JournalIngested {
+                lane,
+                vendor,
+                stream: "session".to_owned(),
+                source,
+                supersedes: None,
+                from: body::TranscriptPosition {
+                    member: 1,
+                    offset: 0,
+                },
+                to: next,
+                usage: Vec::new(),
+                non_usage_records: 1,
+                residue_records: 0,
+            },
+            FactCause::Root,
+        )
+        .expect("fixture ingestion fact builds");
+    write.transcript_source_head(ingested, move |_| head.clone());
+    assert!(matches!(
+        bus.commit(write).expect("fixture transcript commits"),
+        CommitOutcome::Committed(_)
+    ));
+    body::TaskCreationContext::Transcript {
+        session: String::new(),
+        boundary: wire::TranscriptSourceHead {
+            lane,
+            vendor: "claude".parse().expect("fixture vendor"),
+            stream: "session".to_owned(),
+            source,
+            next,
+        },
+    }
+}
+
+fn authorize_lane_creation(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+) -> body::TaskCreationContext {
+    let identity = uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed));
+    let group = u32::try_from(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed))
+        .expect("fixture group fits u32");
+    declare_session(bus, epoch, seat, identity, group);
+    let mut context = seed_creation_transcript(bus, seat.lane);
+    let body::TaskCreationContext::Transcript { session, .. } = &mut context else {
+        unreachable!("fixture transcript helper returns transcript authority")
+    };
+    *session = identity.to_string();
+    context
 }
 
 fn claim_expected(answer: &BoardAnswer, task: &TaskHandle, seat: &Seat) -> Vec<Witness> {
@@ -639,7 +714,7 @@ fn capture_for(
     let CommandAnswer::Claim(answer) = answer else {
         panic!("claim win returned another answer shape: {answer:?}");
     };
-    answer
+    *answer
 }
 
 #[test]

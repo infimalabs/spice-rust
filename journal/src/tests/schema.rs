@@ -49,6 +49,7 @@ fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() 
         .expect("downgrade source-unaware fixture identity");
     let mut before = table_census(&journal.connection);
     before.remove("journal_schema");
+    remove_creation_context_carriers(&mut before);
     drop(journal);
 
     let journal = Journal::open(&path).expect("schema-nine authority migrates");
@@ -60,10 +61,12 @@ fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() 
     );
     let mut after = table_census(&journal.connection);
     after.remove("journal_schema");
+    remove_creation_context_carriers(&mut after);
     assert_eq!(
         after, before,
-        "the wire-only step rewrites no authority row"
+        "the migration chain rewrites no unrelated authority row"
     );
+    assert_fixture_creation_context_migrated(&journal);
     journal
         .verify()
         .expect("migrated authority remains coherent");
@@ -83,6 +86,7 @@ fn schema_ten_steps_to_fanout_aware_steering_without_rewriting_authority() {
         .expect("downgrade fanout-unaware fixture identity");
     let mut before = table_census(&journal.connection);
     before.remove("journal_schema");
+    remove_creation_context_carriers(&mut before);
     drop(journal);
 
     let journal = Journal::open(&path).expect("schema-ten authority migrates");
@@ -94,10 +98,12 @@ fn schema_ten_steps_to_fanout_aware_steering_without_rewriting_authority() {
     );
     let mut after = table_census(&journal.connection);
     after.remove("journal_schema");
+    remove_creation_context_carriers(&mut after);
     assert_eq!(
         after, before,
-        "the fanout wire step rewrites no authority row"
+        "the migration chain rewrites no unrelated authority row"
     );
+    assert_fixture_creation_context_migrated(&journal);
     journal
         .verify()
         .expect("fanout-aware authority remains coherent");
@@ -117,6 +123,7 @@ fn schema_eleven_steps_to_worktree_aware_trust_without_guessing_legacy_identity(
         .expect("downgrade worktree-unaware fixture identity");
     let mut before = table_census(&journal.connection);
     before.remove("journal_schema");
+    remove_creation_context_carriers(&mut before);
     drop(journal);
 
     let journal = Journal::open(&path).expect("schema-eleven authority migrates");
@@ -130,10 +137,12 @@ fn schema_eleven_steps_to_worktree_aware_trust_without_guessing_legacy_identity(
     assert_eq!(head.worktree, None, "migration never guesses a producer");
     let mut after = table_census(&journal.connection);
     after.remove("journal_schema");
+    remove_creation_context_carriers(&mut after);
     assert_eq!(
         after, before,
-        "the trust wire step rewrites no authority row"
+        "the migration chain rewrites no unrelated authority row"
     );
+    assert_fixture_creation_context_migrated(&journal);
     journal
         .verify()
         .expect("worktree-aware authority remains coherent");
@@ -175,6 +184,41 @@ fn table_census(connection: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::t
             (table, rows)
         })
         .collect()
+}
+
+fn remove_creation_context_carriers(
+    census: &mut BTreeMap<String, Vec<Vec<rusqlite::types::Value>>>,
+) {
+    for table in ["fact_envelopes", "task_heads"] {
+        assert!(
+            census.remove(table).is_some(),
+            "authority census contains {table}"
+        );
+    }
+}
+
+fn assert_fixture_creation_context_migrated(journal: &Journal) {
+    let expected = wire::body::TaskCreationContext::unavailable(
+        wire::body::TaskCreationUnavailable::SpiceActor,
+    );
+    let snapshot = journal.fact_snapshot().expect("migrated facts read");
+    let added = snapshot
+        .facts()
+        .iter()
+        .find_map(|envelope| envelope.fact.read::<wire::body::TaskAdded>())
+        .expect("fixture task-added fact remains present");
+    assert_eq!(added.creation, expected, "creation fact context migrates");
+
+    let task = "1kKRRsDP".parse().expect("fixture task stamp");
+    let head = journal
+        .read(|read| read.task_head(&task))
+        .expect("migrated task head reads")
+        .expect("fixture task head remains present");
+    assert_eq!(
+        head.body().creation,
+        expected,
+        "creation head context migrates"
+    );
 }
 
 /// An authority at schema 1, carrying the rows a schema-1 build would have.

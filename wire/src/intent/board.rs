@@ -123,6 +123,8 @@ pub struct BoardStatement {
     pub dependencies: Vec<crate::TaskStamp>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: crate::Origin,
+    /// Creation-time transcript authority, immutable across statement revisions.
+    pub creation: crate::body::TaskCreationContext,
     /// Fact that established this statement revision.
     pub revision: crate::Seq,
 }
@@ -139,6 +141,7 @@ impl From<&crate::TaskHead> for BoardStatement {
             tags: statement.tags.clone(),
             dependencies: statement.dependencies.clone(),
             provenance: statement.provenance.clone(),
+            creation: statement.creation.clone(),
             revision: statement.revision,
         }
     }
@@ -158,6 +161,7 @@ impl BoardStatement {
             tags: self.tags.clone(),
             dependencies: self.dependencies.clone(),
             provenance: self.provenance.clone(),
+            creation: self.creation.clone(),
             revision: self.revision,
         }
     }

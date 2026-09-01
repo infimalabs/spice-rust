@@ -532,6 +532,9 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 tags: vec!["binding".to_owned()],
                 dependencies: vec!["1kKRRsDQ".parse().expect("a task stamp")],
                 provenance: "task:1kKRRsDP".parse().expect("an origin"),
+                creation: wire::body::TaskCreationContext::unavailable(
+                    wire::body::TaskCreationUnavailable::OperatorActor,
+                ),
                 revision: seq(2),
             },
         },

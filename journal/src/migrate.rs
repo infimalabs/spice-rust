@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use crate::SCHEMA_VERSION;
 
 mod claim_index;
+mod creation_context;
 mod identity_stamp;
 mod release_notes;
 mod residency_lineage;
@@ -473,6 +474,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (9, MigrationStep::Sql(MIGRATE_9_TO_10_SQL)),
     (10, MigrationStep::Sql(MIGRATE_10_TO_11_SQL)),
     (11, MigrationStep::Sql(MIGRATE_11_TO_12_SQL)),
+    (12, MigrationStep::Rust(creation_context::migrate)),
 ];
 
 /// Schema 11 to 12: producing-worktree identity on durable trust authority.
@@ -703,8 +705,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 12, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 13, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 12;
+PRAGMA user_version = 13;
 "#;

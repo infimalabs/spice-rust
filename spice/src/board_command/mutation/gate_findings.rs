@@ -216,6 +216,7 @@ struct PreparedFindingFold {
     at: Instant,
     until: Instant,
     origin: wire::Origin,
+    creation: Option<TaskCreationCapture>,
     plans: Vec<GateFindingPlan>,
     instrument: gate::GateId,
     source: wire::intent::GateFindingSource,
@@ -296,6 +297,11 @@ fn prepare_finding_fold(
         .iter()
         .filter(|plan| matches!(plan.action, GateFindingAction::Created { .. }))
         .count();
+    let creation = if created == 0 {
+        None
+    } else {
+        Some(task_creation_capture(bus, command, &snapshot)?)
+    };
     let updated = plans
         .iter()
         .filter(|plan| matches!(plan.action, GateFindingAction::Updated { .. }))
@@ -337,6 +343,7 @@ fn prepare_finding_fold(
         at,
         until,
         origin,
+        creation,
         plans,
         instrument,
         source: dispatch.source.clone(),
@@ -366,6 +373,9 @@ fn commit_finding_fold(
         prepared.at,
         Producer::CommandDoor,
     );
+    if let Some(creation) = &prepared.creation {
+        creation.guard(&mut write);
+    }
     guard_gate_finding_plan(
         &mut write,
         prepared.plans.clone(),
@@ -402,6 +412,7 @@ fn commit_finding_fold(
                 finding,
                 predecessor.as_ref(),
                 &prepared.origin,
+                prepared.creation.as_ref(),
                 prepared.until,
                 &dispatch.report,
                 instrument,
@@ -928,11 +939,18 @@ fn write_gate_finding_task(
     finding: &FindingRow,
     predecessor: Option<&TaskHandle>,
     origin: &wire::Origin,
+    creation: Option<&TaskCreationCapture>,
     until: Instant,
     report: &Digest,
     instrument: gate::GateId,
     source: &wire::intent::GateFindingSource,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    let creation = creation.ok_or_else(|| {
+        protocol_fault(
+            "gate::finding-creation-context-missing",
+            "a new gate finding task has no creation-time transcript capture",
+        )
+    })?;
     let flow = phases(Some("todo,review"))?;
     let phase = flow[0].clone();
     let description = gate_finding_description(finding, predecessor, report, instrument, source);
@@ -950,6 +968,7 @@ fn write_gate_finding_task(
                 flow: flow.clone(),
                 phase: phase.clone(),
                 revision: 1,
+                creation: creation.context(),
             },
             FactCause::Pending(cause),
         )
@@ -964,6 +983,7 @@ fn write_gate_finding_task(
         tags,
         dependencies: Vec::new(),
         provenance: origin.clone(),
+        creation: creation.context(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
     write.task_head(added, move |position| TaskHead {

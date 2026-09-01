@@ -37,7 +37,8 @@ fn grant_fixture(
 ) -> (Bus, Repository, ValidatedSnapshot, wire::AdmittedCommand) {
     let (root, bus, epoch, seats) = fixture(name, 2);
     let actor = Actor::Lane(seats[0].lane);
-    add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    add(&bus, epoch, Actor::Operator, "GUARD-1", "first", None);
 
     fs::create_dir_all(root.join(".git")).expect("claim grant fixture is a repository");
     let resident = Repository::discover(&root).expect("claim grant fixture repository resolves");

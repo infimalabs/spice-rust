@@ -7,6 +7,78 @@
 use super::*;
 use crate::intent::TaskGuidance;
 
+/// Why no executable transcript coordinate can be retained for a task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TaskCreationUnavailable {
+    /// The operator created the task outside an authenticated lane transcript.
+    OperatorActor,
+    /// Spice created the task without a lane-authored command.
+    SpiceActor,
+    /// The task predates creation-context authority and immutable history proves no boundary.
+    LegacyEvidenceMissing,
+    /// Wire-only marker for a task fact or head not yet crossed by schema migration.
+    LegacyWireOmitted,
+}
+
+impl TaskCreationUnavailable {
+    /// Stable reason-code spelling used by human and machine task reads.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OperatorActor => "operator-actor",
+            Self::SpiceActor => "spice-actor",
+            Self::LegacyEvidenceMissing => "legacy-evidence-missing",
+            Self::LegacyWireOmitted => "legacy-wire-omitted",
+        }
+    }
+}
+
+/// Immutable transcript authority captured when a task is created.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum TaskCreationContext {
+    /// A lane-authored task was admitted after this exact accounted boundary.
+    Transcript {
+        /// Exact vendor session identity causally active for the creating lane.
+        session: String,
+        /// Source-aware position of the next complete record at task admission.
+        boundary: TranscriptSourceHead,
+    },
+    /// No authoritative transcript coordinate exists for this task.
+    Unavailable {
+        /// Closed reason no executable rehydration command can be offered.
+        reason: TaskCreationUnavailable,
+    },
+}
+
+impl TaskCreationContext {
+    /// Decode a pre-context task fact or head without inventing provenance.
+    #[must_use]
+    pub fn legacy_unavailable() -> Self {
+        Self::Unavailable {
+            reason: TaskCreationUnavailable::LegacyWireOmitted,
+        }
+    }
+
+    /// Build one explicit unavailable context.
+    #[must_use]
+    pub const fn unavailable(reason: TaskCreationUnavailable) -> Self {
+        Self::Unavailable { reason }
+    }
+
+    /// Whether this value came from an omitted legacy wire field.
+    #[must_use]
+    pub const fn is_legacy_unavailable(&self) -> bool {
+        matches!(
+            self,
+            Self::Unavailable {
+                reason: TaskCreationUnavailable::LegacyWireOmitted
+            }
+        )
+    }
+}
+
 /// How a review closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -70,6 +142,12 @@ pub struct TaskAdded {
     pub phase: Phase,
     /// Statement revision the head opens at.
     pub revision: u32,
+    /// Creation-time transcript authority, immutable for the task's lifetime.
+    #[serde(
+        default = "TaskCreationContext::legacy_unavailable",
+        skip_serializing_if = "TaskCreationContext::is_legacy_unavailable"
+    )]
+    pub creation: TaskCreationContext,
 }
 
 /// A claimed phase completed and workflow advanced.

@@ -578,6 +578,7 @@ fn gate_findings_use_the_active_claim_as_origin_when_present() {
     // GOV-50 / CASE 255.
     let (root, bus, epoch, seats) = fixture("gate-findings-origin", 1);
     let lane = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
     let parent = add_project_with_acceptance(
         &bus,
         epoch,

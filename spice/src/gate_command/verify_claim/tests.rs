@@ -176,6 +176,9 @@ fn statement() -> TaskHead {
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: "task:fixture".parse().expect("fixture origin"),
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::SpiceActor,
+        ),
         revision: seq(1),
     }
 }

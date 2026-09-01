@@ -49,6 +49,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "rim::session_commands"
     ),
     local_direct!(
+        ["session", "context"],
+        "session context SESSION [--lane UUID] [--vendor NAME] [--stream NAME] [--source UUID] \
+         [--member N] [--offset N]",
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_context"
+    ),
+    local_direct!(
         ["session", "commits"],
         "session commits [FILES...] [--limit N]",
         [Daemonless, Offline],

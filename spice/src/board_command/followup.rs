@@ -135,6 +135,10 @@ pub(super) fn plan_followup_edges(
 }
 
 /// Create the `--then` statements and wire the `--followup` edges.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "review follow-ups retain the enclosing transaction's exact authority inputs"
+)]
 pub(super) fn record_followups(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
@@ -142,6 +146,7 @@ pub(super) fn record_followups(
     review: &TaskReview,
     reviewed: PendingFact,
     origin: &wire::Origin,
+    creation: Option<&TaskCreationCapture>,
     projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let context = FollowupContext {
@@ -150,6 +155,7 @@ pub(super) fn record_followups(
         review,
         reviewed,
         origin,
+        creation,
         projects,
     };
     for followup in &review.then {
@@ -167,6 +173,7 @@ struct FollowupContext<'a> {
     review: &'a TaskReview,
     reviewed: PendingFact,
     origin: &'a wire::Origin,
+    creation: Option<&'a TaskCreationCapture>,
     projects: &'a ProjectPolicy,
 }
 
@@ -198,6 +205,12 @@ fn create_followup(
                 "name a public project for each review follow-up, or leave it private",
             )
         })?;
+    let creation = context.creation.ok_or_else(|| {
+        protocol_fault(
+            "review::followup-context-missing",
+            "a review follow-up has no creation-time transcript capture",
+        )
+    })?;
     let reviewed_entry = context
         .snapshot
         .entries
@@ -221,6 +234,7 @@ fn create_followup(
         tags: Vec::new(),
         dependencies: vec![reviewed_entry.born().clone()],
         provenance: context.origin.clone(),
+        creation: creation.context(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
     let workflow = WorkflowHead {
@@ -258,6 +272,7 @@ fn create_followup(
                 flow,
                 phase,
                 revision: 1,
+                creation: creation.context(),
             },
             FactCause::Pending(context.reviewed),
         )

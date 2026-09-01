@@ -163,7 +163,7 @@ pub enum CommandAnswer {
     /// [`AnswerShape::Task`]
     Task(TaskAnswer),
     /// [`AnswerShape::Claim`]
-    Claim(ClaimAnswer),
+    Claim(Box<ClaimAnswer>),
     /// [`AnswerShape::Doc`]
     Doc(DocAnswer),
     /// [`AnswerShape::Directive`]
@@ -261,7 +261,7 @@ impl AnswerShape {
             Self::Board => CommandAnswer::Board(Box::new(crate::decode(bytes)?)),
             Self::Text => CommandAnswer::Text(crate::decode(bytes)?),
             Self::Task => CommandAnswer::Task(crate::decode(bytes)?),
-            Self::Claim => CommandAnswer::Claim(crate::decode(bytes)?),
+            Self::Claim => CommandAnswer::Claim(Box::new(crate::decode(bytes)?)),
             Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
             Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
             Self::Inbox => CommandAnswer::Inbox(crate::decode(bytes)?),

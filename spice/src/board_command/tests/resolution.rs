@@ -8,6 +8,7 @@ mod plan_advance;
 #[test]
 fn lane_claim_free_done_and_review_finding_survive_restart() {
     let (root, bus, epoch, seats) = fixture("workflow", 2);
+    authorize_lane_creation(&bus, epoch, &seats[1]);
     let lane_one = Actor::Lane(seats[0].lane);
     let lane_two = Actor::Lane(seats[1].lane);
     assert_lane_resolution(&bus, epoch, &seats, &lane_one);
@@ -415,6 +416,7 @@ fn an_unclean_review_needs_follow_up_tracking_and_clean_does_not() {
 #[test]
 fn a_review_creates_and_links_its_follow_up_tracking() {
     let (root, bus, epoch, seats) = fixture("review-followup-persistence", 2);
+    authorize_lane_creation(&bus, epoch, &seats[1]);
     let implementer = Actor::Lane(seats[0].lane);
     let reviewer = Actor::Lane(seats[1].lane);
     assert_lane_resolution(&bus, epoch, &seats, &implementer);

@@ -70,6 +70,9 @@ fn statement(name: &str) -> TaskHead {
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: "task:BOARD-root".parse::<Origin>().expect("origin"),
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::SpiceActor,
+        ),
         revision: seq(1),
     }
 }

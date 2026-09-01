@@ -291,6 +291,9 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
                 tags: vec!["guard".to_owned()],
                 dependencies: Vec::new(),
                 provenance: "repo:genesis".parse().expect("origin"),
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::OperatorActor,
+                ),
                 revision: seq(10),
             },
             TaskHead {
@@ -303,6 +306,9 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
                 tags: vec!["guard".to_owned(), "review".to_owned()],
                 dependencies: vec![stamp("1kKRRsDQ")],
                 provenance: "task:1kKRRsDP".parse().expect("origin"),
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::OperatorActor,
+                ),
                 revision: seq(11),
             },
         ],

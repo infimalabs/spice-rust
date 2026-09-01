@@ -359,6 +359,7 @@ fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
 
     assert_manual_system_project_refuses(&bus, epoch, &lane);
     assert_forged_hidden_route_refuses(&bus, epoch, &lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
 
     let ungrounded = stamp("SYSTEM-oops0");
     let before = facts_len(&bus, "facts before ungrounded oops");

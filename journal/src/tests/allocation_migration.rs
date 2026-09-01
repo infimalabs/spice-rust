@@ -94,6 +94,9 @@ fn seed_task(journal: &mut Journal, fixture: &AllocationFixture) {
                 depends: Vec::new(),
                 flow: vec![fixture.cell.phase.clone()],
                 phase: fixture.cell.phase.clone(),
+                creation: wire::body::TaskCreationContext::unavailable(
+                    wire::body::TaskCreationUnavailable::SpiceActor,
+                ),
                 revision: 1,
             },
             crate::FactCause::Root,
@@ -112,6 +115,9 @@ fn seed_task(journal: &mut Journal, fixture: &AllocationFixture) {
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: origin,
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::SpiceActor,
+        ),
         revision: position,
     });
     let workflow_task = fixture.task.clone();

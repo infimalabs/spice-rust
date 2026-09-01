@@ -885,6 +885,9 @@ impl Facts {
             flow: vec![phase("todo"), phase("review")],
             phase: phase("todo"),
             revision: 1,
+            creation: body::TaskCreationContext::unavailable(
+                body::TaskCreationUnavailable::SpiceActor,
+            ),
         });
     }
 

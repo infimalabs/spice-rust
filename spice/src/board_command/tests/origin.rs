@@ -135,6 +135,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
 #[test]
 fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
     let (root, bus, epoch, seats) = fixture("task-causal-origin", 1);
+    let expected_creation = authorize_lane_creation(&bus, epoch, &seats[0]);
     let dependency = add(
         &bus,
         epoch,
@@ -168,6 +169,10 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
     assert_eq!(at(&current, &parent).statement.body.provenance, ack);
     assert_eq!(creation_fact_origin(&bus, &parent), ack);
     assert_eq!(at(&current, &child).statement.body.provenance, causal);
+    assert_eq!(
+        at(&current, &child).statement.body.creation,
+        expected_creation
+    );
     assert_eq!(creation_fact_origin(&bus, &child), causal);
     assert_eq!(
         at(&current, &child).statement.body.dependencies,
@@ -175,6 +180,29 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
             .born()
             .expect("dependency handle carries a birth stamp")],
         "causal provenance was inferred from a scheduling edge"
+    );
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(at(&current, &child))],
+        &TaskEdit {
+            task: child.clone(),
+            title: Some("Create the same causal child after correction".to_owned()),
+            description: None,
+            acceptance: Vec::new(),
+            priority: None,
+            project: None,
+        },
+    ));
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &child)
+            .statement
+            .body
+            .creation,
+        expected_creation,
+        "later statement revisions cannot rewrite creation authority"
     );
     assert_invalid_creation_origins_refuse(&bus, epoch);
     clean(&root, bus);

@@ -267,6 +267,7 @@ fn observation_landed(path: &[&str]) -> bool {
             | ["session"]
             | ["session", "briefing"]
             | ["session", "commands"]
+            | ["session", "context"]
             | ["session", "commits"]
             | ["session", "compactions"]
             | ["session", "messages"]

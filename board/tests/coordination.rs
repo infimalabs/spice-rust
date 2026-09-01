@@ -93,6 +93,7 @@ fn statement(name: &str) -> TaskHead {
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: format!("task:{born}").parse::<Origin>().expect("origin"),
+        creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: seq(1),
     }
 }
@@ -185,6 +186,7 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
                 flow: workflow.flow.clone(),
                 phase: workflow.phase.clone(),
                 revision: 1,
+                creation: statement.creation.clone(),
             },
             FactCause::Root,
         )
