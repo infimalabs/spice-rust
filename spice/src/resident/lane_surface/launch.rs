@@ -212,7 +212,16 @@ fn launch_plan(
         }
         other => store_fault("lane::launch-invalid", &other.to_string()),
     })?;
+    let rtk = rtk_hook_health(plan.vendor().dialect(), rtk);
     Ok((plan, rtk))
+}
+
+fn rtk_hook_health(dialect: listen::Dialect, health: spice::rtk::Health) -> spice::rtk::Health {
+    if dialect == listen::Dialect::Codex {
+        health.with_hook(spice::rtk::HookState::Installed)
+    } else {
+        health
+    }
 }
 
 /// Require the initialized Git-common skill before composing any vendor argv.
@@ -406,7 +415,6 @@ fn launch_environment(
         repository.worktree_root(),
         &probe_environment,
     );
-    let environment = rtk_environment(environment, &health);
     Ok((environment, health))
 }
 
@@ -420,22 +428,6 @@ fn rtk_probe_environment(environment: &Environment) -> Environment {
             .cloned(),
     )
     .expect("filtering one valid environment entry preserves validity")
-}
-
-fn rtk_environment(environment: Environment, health: &spice::rtk::Health) -> Environment {
-    if health.active() {
-        return environment;
-    }
-    Environment::new(
-        environment
-            .entries()
-            .iter()
-            .filter(|(name, _)| {
-                name != spice::rtk::EXECUTABLE_VARIABLE && name != spice::rtk::HISTORY_VARIABLE
-            })
-            .cloned(),
-    )
-    .expect("filtering valid environment entries preserves their validity")
 }
 
 #[cfg(test)]
@@ -452,27 +444,43 @@ mod rtk_environment_tests {
     }
 
     #[test]
-    fn only_an_active_health_verdict_exports_rtk_to_the_lane() {
-        let active_health = spice::rtk::Health::new(
-            spice::rtk::HealthState::Active,
-            Some("0.45.0".to_owned()),
-            "fixture active",
+    fn configured_rtk_remains_available_after_an_inactive_launch_probe() {
+        let health = spice::rtk::Health::new(
+            spice::rtk::HealthState::Missing,
+            None,
+            "fixture executable unavailable during launch",
         );
-        let active = rtk_environment(fixture(), &active_health);
+        assert!(!health.active());
+        let environment = fixture();
         assert!(
-            active
+            environment
                 .entries()
                 .iter()
                 .any(|(name, _)| { name == spice::rtk::EXECUTABLE_VARIABLE })
         );
-
-        let native_health = spice::rtk::Health::new(
-            spice::rtk::HealthState::Obsolete,
-            Some("0.44.9".to_owned()),
-            "fixture native",
+        assert!(
+            environment
+                .entries()
+                .iter()
+                .any(|(name, _)| name == spice::rtk::HISTORY_VARIABLE)
         );
-        let native = rtk_environment(fixture(), &native_health);
-        assert_eq!(native.entries(), [("PATH".into(), "/fixture/bin".into())]);
+    }
+
+    #[test]
+    fn codex_hook_installation_is_reported_separately_from_executable_health() {
+        let launched_only = spice::rtk::Health::new(
+            spice::rtk::HealthState::Active,
+            Some("0.45.0".to_owned()),
+            "fixture executable launched",
+        );
+        assert_eq!(launched_only.hook(), None);
+        let installed = rtk_hook_health(listen::Dialect::Codex, launched_only);
+        assert_eq!(installed.state(), spice::rtk::HealthState::Active);
+        assert_eq!(installed.hook(), Some(spice::rtk::HookState::Installed));
+        assert_eq!(
+            serde_json::to_value(installed).expect("health encodes")["hook"],
+            "installed"
+        );
     }
 
     #[test]

@@ -35,6 +35,7 @@ const CLAUDE_SETTINGS: &str = r#"{"hooks":{"PostToolUse":[{"hooks":[{"command":"
 const CLAUDE_SETTINGS_WITHOUT_ATTRIBUTION: &str = r#"{"attribution":{"commit":"","sessionUrl":false},"hooks":{"PostToolUse":[{"hooks":[{"command":"/usr/bin/spice agent post-tool-hook --repo-root /worktree","statusMessage":"Checking spice steering","timeout":30,"type":"command"}],"matcher":"*"}]},"permissions":{"deny":["Task","Agent","TaskCreate","TaskGet","TaskList","TaskUpdate","TaskOutput","TaskStop","Monitor"]}}"#;
 
 const CODEX_HOOK_OVERRIDE: &str = r#"hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="/usr/bin/spice agent post-tool-hook --repo-root /worktree",timeout=30,statusMessage="Checking spice steering"}]}]"#;
+const CODEX_RTK_HOOK_OVERRIDE: &str = r#"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",command="/usr/bin/spice agent post-tool-hook --repo-root /worktree",timeout=10,statusMessage="Checking RTK command rewrite"}]}]"#;
 const CODEX_MCP_COMMAND_OVERRIDE: &str = r#"mcp_servers.playwright.command="npx""#;
 const CODEX_MCP_ARGS_OVERRIDE: &str =
     r#"mcp_servers.playwright.args=["@playwright/mcp@latest","--isolated","--headless"]"#;
@@ -110,6 +111,8 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "gpt-5-codex",
             "--json",
             "--config",
+            CODEX_RTK_HOOK_OVERRIDE,
+            "--config",
             CODEX_HOOK_OVERRIDE,
             "--config",
             r#"model_reasoning_effort="high""#,
@@ -146,6 +149,8 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "--model",
             "gpt-5-codex",
             "--json",
+            "--config",
+            CODEX_RTK_HOOK_OVERRIDE,
             "--config",
             CODEX_HOOK_OVERRIDE,
             "--config",

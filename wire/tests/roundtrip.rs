@@ -859,6 +859,27 @@ fn a_reversed_committed_range_does_not_decode() {
     );
 }
 
+fn assert_pre_hook_rtk_health_decodes(complete: &serde_json::Value) {
+    let mut pre_hook = complete.clone();
+    pre_hook["rtk"]
+        .as_object_mut()
+        .expect("RTK fixture is an object")
+        .remove("hook");
+    let bytes = serde_json::to_vec(&pre_hook).expect("fixture encodes");
+    let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
+        .expect("a declaration recorded before hook health still decodes");
+    assert_eq!(
+        recorded
+            .launch
+            .expect("launch identity remains")
+            .rtk
+            .expect("executable health remains")
+            .hook(),
+        None,
+        "compatibility does not invent hook installation"
+    );
+}
+
 #[test]
 fn a_declared_session_requires_one_complete_launch_identity() {
     let pre_extension = br#"{
@@ -888,13 +909,14 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
         "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c3",
         "worktree": "/worktrees/lane-a",
-        "vendor": "claude",
-        "model": "sonnet",
+        "vendor": "codex",
+        "model": "gpt-5-codex",
         "effort": "high",
         "git": "current",
         "rtk": {
             "state": "active",
             "version": "0.45.0",
+            "hook": "installed",
             "detail": "rewrite protocol and answer fidelity passed"
         },
         "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c4",
@@ -914,14 +936,18 @@ fn a_declared_session_requires_one_complete_launch_identity() {
             launch.effort.as_str(),
             launch.git.as_deref(),
             launch.rtk.as_ref().map(wire::body::RtkHealth::state),
+            launch.rtk.as_ref().and_then(wire::body::RtkHealth::hook),
         ),
         (
-            "sonnet",
+            "gpt-5-codex",
             "high",
             Some("current"),
             Some(wire::body::RtkHealthState::Active),
+            Some(wire::body::RtkHookState::Installed),
         )
     );
+
+    assert_pre_hook_rtk_health_decodes(&complete);
 
     let mut pre_note = complete.clone();
     pre_note

@@ -408,12 +408,40 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
             form,
         ),
         ["hook"] => {
-            let outcome =
-                steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE));
             let harness = leaf
                 .get_one::<String>("HARNESS")
                 .expect("clap requires a hook harness");
-            deliver_inbox_hook(&outcome, harness, form)
+            let invocation =
+                match steering_command::read_hook_invocation(&mut io::stdin().lock(), harness) {
+                    Ok(invocation) => invocation,
+                    Err(error) => deliver_fault(render_fault(error), Form::Text),
+                };
+            match invocation {
+                steering_command::HookInvocation::Steering => {
+                    let outcome = steering_command::run(
+                        leaf,
+                        contract,
+                        bootstrap_environment(steer::hook::LANE),
+                    );
+                    deliver_inbox_hook(&outcome, harness, form)
+                }
+                steering_command::HookInvocation::Rewrite(request) => {
+                    let executable = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE);
+                    match request.answer(executable.as_deref()) {
+                        Ok(reply) => {
+                            if let Some(diagnostic) = reply.diagnostic() {
+                                let _ = writeln!(io::stderr().lock(), "{diagnostic}");
+                            }
+                            let mut stdout = io::stdout().lock();
+                            let _ = stdout.write_all(reply.document());
+                            let _ = stdout.flush();
+                            terminate_code(REPLY_EXIT)
+                        }
+                        Err(error) => deliver_fault(render_fault(error), Form::Text),
+                    }
+                }
+                steering_command::HookInvocation::Ignore => terminate_code(REPLY_EXIT),
+            }
         }
         ["trust"] => deliver(&trust_command::report(contract), form),
         ["trust", "pend"] => deliver(&trust_command::pend(contract), form),

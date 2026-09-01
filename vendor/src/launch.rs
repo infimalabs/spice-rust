@@ -12,6 +12,15 @@ use crate::Resume;
 /// Event name both dialects install the steering hook under.
 pub const POST_TOOL_HOOK_EVENT: &str = "PostToolUse";
 
+/// Codex event that may replace one pending shell command before execution.
+pub const PRE_TOOL_HOOK_EVENT: &str = "PreToolUse";
+
+/// Seconds Codex allows Spice and RTK to select a command rewrite.
+pub const PRE_TOOL_HOOK_TIMEOUT_SECONDS: u32 = 10;
+
+/// What Codex shows while Spice asks RTK for a command rewrite.
+pub const PRE_TOOL_HOOK_STATUS_MESSAGE: &str = "Checking RTK command rewrite";
+
 /// Seconds a steering delivery may take before the vendor abandons it.
 pub const POST_TOOL_HOOK_TIMEOUT_SECONDS: u32 = 30;
 
