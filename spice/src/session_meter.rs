@@ -78,6 +78,8 @@ pub struct ClaimState {
     pub elapsed: Option<Duration>,
     /// Time until this claim expires, when its timestamp was valid.
     pub remaining: Option<Duration>,
+    /// Whether the default task reclaim can extend expiry within the durable maximum.
+    pub reclaim_extends: bool,
 }
 
 /// One active-claim observation read from the command boundary's live board.
@@ -370,6 +372,7 @@ struct StateKey {
     claim_phase: String,
     last_taste: String,
     tier: LeaseTier,
+    reclaim_extends: bool,
 }
 
 impl From<&WorkingState> for StateKey {
@@ -382,6 +385,7 @@ impl From<&WorkingState> for StateKey {
             claim_phase: claim.map_or_else(String::new, |claim| clean(&claim.phase)),
             last_taste: clean(&snapshot.last_taste),
             tier: LeaseTier::from_remaining(claim.and_then(|claim| claim.remaining)),
+            reclaim_extends: claim.is_some_and(|claim| claim.reclaim_extends),
         }
     }
 }
@@ -427,9 +431,14 @@ fn render(snapshot: &WorkingState) -> String {
             parts.push(text);
             let tier = LeaseTier::from_remaining(claim.remaining);
             if let (Some(label), Some(remaining)) = (tier.label(), claim.remaining) {
+                let recovery = if claim.reclaim_extends {
+                    format!("run spice task reclaim {handle}")
+                } else {
+                    format!("run spice task free {handle}, then spice task next")
+                };
                 parts.push(format!(
-                    "CLAIM LEASE {label}: {handle} has {}s remaining; run spice task reclaim {handle}",
-                    remaining.as_secs()
+                    "CLAIM LEASE {label}: {handle} has {}s remaining; {recovery}",
+                    remaining.as_secs(),
                 ));
             }
         }
@@ -521,6 +530,7 @@ mod tests {
                 phase: "todo".to_owned(),
                 elapsed: Some(Duration::from_secs(90)),
                 remaining: remaining.map(Duration::from_secs),
+                reclaim_extends: true,
             }),
             last_taste: "fallbacks".to_owned(),
         }
@@ -770,6 +780,36 @@ mod tests {
                 .is_some_and(|line| !line.contains("CLAIM LEASE"))
         );
         assert_eq!(renewed.announcement, None);
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn maximum_bound_claim_names_free_and_next_instead_of_reclaim() {
+        let root = fixture("maximum-recovery");
+        let path = root.join("working-state.json");
+        let meter = Meter::new(&path);
+        let remaining = (CLAIM_CRITICAL_BOUNDARY + CLAIM_CRITICAL_REPEAT).as_secs();
+        let extendable = meter
+            .evaluate(&state(Some(remaining)), Duration::ZERO)
+            .expect("extendable warning evaluates")
+            .announcement
+            .expect("extendable warning speaks");
+        let mut maximum_bound = state(Some(remaining));
+        maximum_bound
+            .claim
+            .as_mut()
+            .expect("fixture claim")
+            .reclaim_extends = false;
+
+        let line = meter
+            .evaluate(&maximum_bound, Duration::ZERO)
+            .expect("maximum-bound state evaluates")
+            .announcement
+            .expect("maximum transition speaks in the same lease tier");
+
+        assert!(extendable.contains("run spice task reclaim METER-00000001"));
+        assert!(line.contains("run spice task free METER-00000001, then spice task next"));
+        assert!(!line.contains("task reclaim"));
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

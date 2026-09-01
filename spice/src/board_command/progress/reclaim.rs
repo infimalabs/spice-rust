@@ -79,11 +79,29 @@ pub(super) fn reclaim_window(
     let requested = std::cmp::min(instant_after(at, seconds)?, lease.maximum);
     let until = match residency {
         ReclaimResidency::Exact if requested <= lease.expiry => {
-            return Err(refusal(
-                "claim::lease-nonextending",
-                Some(lease.expiry.to_string()),
-                "request an extension before the durable maximum",
-            ));
+            if lease.expiry < lease.maximum {
+                return Err(refusal(
+                    "claim::lease-nonextending",
+                    Some(lease.expiry.to_string()),
+                    "request a duration that extends expiry before the durable maximum",
+                ));
+            }
+            let command =
+                wire::SpiceCommand::new("task", ["free".to_owned(), renew.task.to_string()])
+                    .expect("task free is a structural Spice recovery command");
+            return Err(Outcome::Refusal(Refusal::repairable(
+                command,
+                wire::RefusalDiagnostic::new(
+                    "claim::lease-nonextending",
+                    None,
+                    Some("expiry before the durable maximum".to_owned()),
+                    Some(format!(
+                        "expiry={} maximum={}",
+                        lease.expiry, lease.maximum
+                    )),
+                )
+                .with_detail("the claim is already at its durable maximum; free it, then run spice task next for a fresh allocation lease"),
+            )));
         }
         ReclaimResidency::Rebound { .. } => std::cmp::max(requested, lease.expiry),
         ReclaimResidency::Exact => requested,

@@ -209,6 +209,7 @@ fn collect(
             phase: heads.workflow().body().phase.to_string(),
             elapsed: duration_since(now, lease.start.get()),
             remaining: duration_since(lease.expiry.get(), now).or(Some(Duration::ZERO)),
+            reclaim_extends: lease.expiry < lease.maximum,
         })
     });
     Ok(BoardObservation {
