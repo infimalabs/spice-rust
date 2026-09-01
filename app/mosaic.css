@@ -233,7 +233,7 @@
 .commandbar--mosaic {
   min-height: 30px;
   gap: 7px;
-  padding: 3px 6px;
+  padding: 3px var(--canvas-chrome-edge-inline);
   background: var(--page);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -248,6 +248,9 @@ body:has(.shell--mosaic),
   overflow: hidden;
 }
 .shell--mosaic {
+  --canvas-chrome-edge-inline: 10px;
+  --canvas-frame-edge-block-end: 10px;
+  --canvas-frame-edge-inline: 10px;
   position: fixed;
   inset: 0;
   height: 100vh;
@@ -468,7 +471,7 @@ body:has(.shell--mosaic),
   min-height: 0;
   width: 100%;
   max-width: none;
-  padding: 4px 6px 6px;
+  padding: 0 var(--canvas-frame-edge-inline) var(--canvas-frame-edge-block-end);
 }
 
 .mosaic-workspace {
