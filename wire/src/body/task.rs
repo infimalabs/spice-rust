@@ -7,6 +7,9 @@
 use super::*;
 use crate::intent::TaskGuidance;
 
+/// The sole transcript stream retained as executable task creation context.
+pub const TASK_CREATION_CONTEXT_STREAM: &str = "session";
+
 /// Why no executable transcript coordinate can be retained for a task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -17,6 +20,8 @@ pub enum TaskCreationUnavailable {
     SpiceActor,
     /// The task predates creation-context authority and immutable history proves no boundary.
     LegacyEvidenceMissing,
+    /// Legacy evidence names only a stream the current context command cannot rehydrate.
+    LegacyStreamUnregistered,
     /// Wire-only marker for a task fact or head not yet crossed by schema migration.
     LegacyWireOmitted,
 }
@@ -29,6 +34,7 @@ impl TaskCreationUnavailable {
             Self::OperatorActor => "operator-actor",
             Self::SpiceActor => "spice-actor",
             Self::LegacyEvidenceMissing => "legacy-evidence-missing",
+            Self::LegacyStreamUnregistered => "legacy-stream-unregistered",
             Self::LegacyWireOmitted => "legacy-wire-omitted",
         }
     }

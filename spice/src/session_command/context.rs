@@ -3,7 +3,6 @@ use spice::repository::Repository;
 
 const WINDOW_BYTES: u64 = 256 * 1024;
 const WINDOW_RECORDS: usize = 8;
-const ACCOUNTED_STREAM: &str = "session";
 
 pub(super) fn build(matches: &ArgMatches) -> Result<Report, Refusal> {
     let session = required(matches, "SESSION")?;
@@ -13,7 +12,7 @@ pub(super) fn build(matches: &ArgMatches) -> Result<Report, Refusal> {
     let source = parse::<wire::CanonicalUuid>(matches, "source")?;
     let member = parse::<u64>(matches, "member")?;
     let offset = parse::<u64>(matches, "offset")?;
-    if stream != ACCOUNTED_STREAM {
+    if stream != wire::body::TASK_CREATION_CONTEXT_STREAM {
         return Err(refusal(
             "session::context-stream-unregistered",
             Some(stream),
