@@ -98,6 +98,24 @@ impl FileStamp {
             changed_nanoseconds: metadata.ctime_nsec(),
         })
     }
+
+    fn observe(&mut self, observed: Self, prefix_length: u64) -> bool {
+        if observed.length < prefix_length {
+            return false;
+        }
+        #[cfg(unix)]
+        if observed.device != self.device || observed.inode != self.inode {
+            return false;
+        }
+        if observed == *self {
+            return true;
+        }
+        if observed.length <= self.length {
+            return false;
+        }
+        *self = observed;
+        true
+    }
 }
 
 impl SessionCompactions {
@@ -326,7 +344,10 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
         .as_mut()
         .expect("prefix validation advances only while pending");
     let mut file = File::open(&cursor.path)?;
-    if FileStamp::read(&file)? != validation.stamp {
+    if !validation
+        .stamp
+        .observe(FileStamp::read(&file)?, validation.length)
+    {
         reset(cursor);
         return Ok(Vec::new());
     }
@@ -339,7 +360,10 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
         reset(cursor);
         return Ok(Vec::new());
     }
-    if FileStamp::read(&file)? != validation.stamp {
+    if !validation
+        .stamp
+        .observe(FileStamp::read(&file)?, validation.length)
+    {
         reset(cursor);
         return Ok(Vec::new());
     }
