@@ -169,6 +169,15 @@ pub(super) fn task_creation_context_output(context: &body::TaskCreationContext) 
         body::TaskCreationContext::Unavailable { reason } => {
             format!("unavailable {}", reason.as_str()).into_boxed_str()
         }
+        body::TaskCreationContext::Transcript { boundary, .. }
+            if boundary.stream != body::TASK_CREATION_CONTEXT_STREAM =>
+        {
+            format!(
+                "unavailable {}",
+                body::TaskCreationUnavailable::LegacyStreamUnregistered.as_str()
+            )
+            .into_boxed_str()
+        }
         body::TaskCreationContext::Transcript { session, boundary } => shell_words::join([
             "spice".to_owned(),
             "session".to_owned(),
@@ -269,21 +278,37 @@ pub(super) fn task_creation_capture(
         .iter()
         .filter(|head| head.lane == lane && head.vendor == session.vendor)
         .collect::<Vec<_>>();
-    let [boundary] = matching.as_slice() else {
+    let registered = matching
+        .iter()
+        .filter(|head| head.stream == body::TASK_CREATION_CONTEXT_STREAM)
+        .copied()
+        .collect::<Vec<_>>();
+    if registered.is_empty() && !matching.is_empty() {
         return Err(refusal(
-            "task::creation-context-source-ambiguous",
+            "task::creation-context-stream-unregistered",
             Some(format!(
                 "lane={lane} vendor={} matching_heads={}",
                 session.vendor,
                 matching.len()
             )),
-            "account exactly one selected lane/vendor transcript stream before creating tasks",
+            "account the selected session stream before creating tasks",
+        ));
+    }
+    let [boundary] = registered.as_slice() else {
+        return Err(refusal(
+            "task::creation-context-source-ambiguous",
+            Some(format!(
+                "lane={lane} vendor={} registered_heads={}",
+                session.vendor,
+                registered.len()
+            )),
+            "account exactly one selected session stream before creating tasks",
         ));
     };
     Ok(TaskCreationCapture {
         context: body::TaskCreationContext::Transcript {
             session: session.identity.clone(),
-            boundary: (*boundary).clone(),
+            boundary: (**boundary).clone(),
         },
         residency: Some(snapshot.answer.residency.position),
         source: Some((lane, source)),

@@ -211,12 +211,22 @@ impl History {
             .values()
             .filter(|head| head.lane == *lane && head.vendor == session.vendor)
             .collect::<Vec<_>>();
-        let [boundary] = matching.as_slice() else {
+        let registered = matching
+            .iter()
+            .filter(|head| head.stream == wire::body::TASK_CREATION_CONTEXT_STREAM)
+            .copied()
+            .collect::<Vec<_>>();
+        if registered.is_empty() && !matching.is_empty() {
+            return TaskCreationContext::unavailable(
+                TaskCreationUnavailable::LegacyStreamUnregistered,
+            );
+        }
+        let [boundary] = registered.as_slice() else {
             return unavailable();
         };
         TaskCreationContext::Transcript {
             session: session.identity.clone(),
-            boundary: (*boundary).clone(),
+            boundary: (**boundary).clone(),
         }
     }
 }

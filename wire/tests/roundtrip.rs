@@ -1055,3 +1055,16 @@ fn a_pre_context_task_fact_decodes_only_as_explicit_legacy_unavailable() {
         "only schema migration may turn omitted legacy evidence into current authority"
     );
 }
+
+#[test]
+fn an_unregistered_legacy_task_stream_has_one_stable_unavailable_spelling() {
+    let reason = body::TaskCreationUnavailable::LegacyStreamUnregistered;
+    let encoded = wire::encode(&reason).expect("unavailable reason encodes");
+    assert_eq!(encoded, br#""legacy-stream-unregistered""#);
+    assert_eq!(
+        wire::decode::<body::TaskCreationUnavailable>(&encoded)
+            .expect("unavailable reason decodes"),
+        reason,
+    );
+    assert_eq!(reason.as_str(), "legacy-stream-unregistered");
+}

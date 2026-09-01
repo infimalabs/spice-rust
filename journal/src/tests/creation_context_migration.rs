@@ -78,11 +78,65 @@ fn schema_twelve_reconstructs_creation_context_only_from_pre_creation_facts() {
     );
 }
 
+#[test]
+fn schema_twelve_marks_a_sole_unregistered_stream_unavailable() {
+    let scratch = Scratch::new();
+    let path = scratch
+        .path()
+        .join("creation-context-unregistered-stream.sqlite3");
+    let mut journal = Journal::open(&path).expect("current authority opens");
+    let (lane, legacy_context) = seed_creation_history(
+        &mut journal,
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163a1"),
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163a2"),
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163a3"),
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163a4"),
+        "stdout",
+        "unregistered-stream-session",
+    );
+    let task = TaskStamp::for_millis(14).expect("unregistered stream task stamp");
+    seed_task(&mut journal, Actor::Lane(lane), &task, legacy_context);
+    remove_current_context(&journal.connection);
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 12 WHERE singleton = 1;
+             PRAGMA user_version = 12;",
+        )
+        .expect("fixture downgrades to schema twelve");
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("schema twelve creation context migrates");
+    assert_migrated_contexts(
+        &journal,
+        &[(
+            task,
+            TaskCreationContext::unavailable(TaskCreationUnavailable::LegacyStreamUnregistered),
+        )],
+    );
+}
+
 fn seed_proven_creation_history(journal: &mut Journal) -> (CanonicalUuid, TaskCreationContext) {
-    let lane = uuid("018f82d4-6f59-7d06-92e3-bce913116371");
-    let occupant = uuid("018f82d4-6f59-7d06-92e3-bce913116372");
-    let epoch = uuid("018f82d4-6f59-7d06-92e3-bce913116373");
-    let source = uuid("018f82d4-6f59-7d06-92e3-bce913116374");
+    seed_creation_history(
+        journal,
+        uuid("018f82d4-6f59-7d06-92e3-bce913116371"),
+        uuid("018f82d4-6f59-7d06-92e3-bce913116372"),
+        uuid("018f82d4-6f59-7d06-92e3-bce913116373"),
+        uuid("018f82d4-6f59-7d06-92e3-bce913116374"),
+        wire::body::TASK_CREATION_CONTEXT_STREAM,
+        "session-migration",
+    )
+}
+
+fn seed_creation_history(
+    journal: &mut Journal,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    source: CanonicalUuid,
+    stream: &str,
+    identity: &str,
+) -> (CanonicalUuid, TaskCreationContext) {
     let vendor: wire::Name = "codex".parse().expect("fixture vendor");
     let next = TranscriptPosition {
         member: 1,
@@ -91,12 +145,12 @@ fn seed_proven_creation_history(journal: &mut Journal) -> (CanonicalUuid, TaskCr
     let boundary = TranscriptSourceHead {
         lane,
         vendor: vendor.clone(),
-        stream: "session".to_owned(),
+        stream: stream.to_owned(),
         source,
         next,
     };
     let expected = TaskCreationContext::Transcript {
-        session: "session-migration".to_owned(),
+        session: identity.to_owned(),
         boundary: boundary.clone(),
     };
     let mut history = crate::JournalWrite::new(
@@ -126,7 +180,7 @@ fn seed_proven_creation_history(journal: &mut Journal) -> (CanonicalUuid, TaskCr
                 launch: None,
                 epoch,
                 stream: "stdout".to_owned(),
-                identity: "session-migration".to_owned(),
+                identity: identity.to_owned(),
                 member: 1,
                 offset: 0,
                 length: 64,
@@ -139,7 +193,7 @@ fn seed_proven_creation_history(journal: &mut Journal) -> (CanonicalUuid, TaskCr
             JournalIngested {
                 lane,
                 vendor: vendor.clone(),
-                stream: "session".to_owned(),
+                stream: stream.to_owned(),
                 source,
                 supersedes: None,
                 from: TranscriptPosition {
@@ -165,7 +219,7 @@ fn assert_migrated_contexts(
 ) {
     for (task, expected) in expected_by_task {
         let head = journal
-            .read(|read| read.task_head(&task))
+            .read(|read| read.task_head(task))
             .expect("migrated task head reads")
             .expect("migrated task head exists");
         assert_eq!(&head.body().creation, expected);

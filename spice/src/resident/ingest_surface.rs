@@ -1,8 +1,5 @@
 use super::*;
 
-/// The one logical stream a lane's selected capture writes.
-const INGEST_STREAM: &str = "session";
-
 /// One durable accounting range and the wall-clock instant that observed it.
 #[derive(Clone, Debug)]
 pub(super) struct TranscriptObservation {
@@ -136,7 +133,7 @@ fn ingest_lane_transcript(
     let ingestion = lane::ingest::Ingestion {
         lane: row.lane,
         vendor: row.vendor.clone(),
-        stream: INGEST_STREAM.to_owned(),
+        stream: wire::body::TASK_CREATION_CONTEXT_STREAM.to_owned(),
         root,
         dialect: vendor.dialect(),
         actor: Actor::Spice,

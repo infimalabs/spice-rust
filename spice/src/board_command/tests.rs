@@ -116,6 +116,10 @@ fn declare_session(
 }
 
 fn seed_creation_transcript(bus: &Bus, lane: CanonicalUuid) -> body::TaskCreationContext {
+    seed_creation_stream(bus, lane, body::TASK_CREATION_CONTEXT_STREAM)
+}
+
+fn seed_creation_stream(bus: &Bus, lane: CanonicalUuid, stream: &str) -> body::TaskCreationContext {
     let vendor: wire::Name = "claude".parse().expect("fixture vendor");
     let source = uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed));
     let next = body::TranscriptPosition {
@@ -125,7 +129,7 @@ fn seed_creation_transcript(bus: &Bus, lane: CanonicalUuid) -> body::TaskCreatio
     let head = wire::TranscriptSourceHead {
         lane,
         vendor: vendor.clone(),
-        stream: "session".to_owned(),
+        stream: stream.to_owned(),
         source,
         next,
     };
@@ -140,7 +144,7 @@ fn seed_creation_transcript(bus: &Bus, lane: CanonicalUuid) -> body::TaskCreatio
             body::JournalIngested {
                 lane,
                 vendor,
-                stream: "session".to_owned(),
+                stream: stream.to_owned(),
                 source,
                 supersedes: None,
                 from: body::TranscriptPosition {
@@ -165,7 +169,7 @@ fn seed_creation_transcript(bus: &Bus, lane: CanonicalUuid) -> body::TaskCreatio
         boundary: wire::TranscriptSourceHead {
             lane,
             vendor: "claude".parse().expect("fixture vendor"),
-            stream: "session".to_owned(),
+            stream: stream.to_owned(),
             source,
             next,
         },
