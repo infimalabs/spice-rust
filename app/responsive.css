@@ -76,7 +76,10 @@
     max-height: max(12rem, calc(100vh - 20rem));
   }
   .commandbar { gap: 10px; padding: 8px 12px; }
-  .commandbar--mosaic { padding-inline: var(--canvas-chrome-edge-inline); }
+  .commandbar--mosaic {
+    gap: 7px;
+    padding-inline: var(--canvas-chrome-edge-inline);
+  }
   .bar-meta { display: none; }
   .axis-button { padding: 0 11px; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -97,6 +100,13 @@
 @media (max-width: 560px) {
   .brand-name { display: none; }
   .axis-button { min-height: 40px; padding: 0 9px; font-size: .74rem; }
+  .commandbar--mosaic { flex-wrap: wrap; }
+  .commandbar--mosaic .task-pill-strip { flex-basis: 100%; }
+  .commandbar--mosaic .canvas-shortcuts {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow-x: auto;
+  }
   .commandbar--mosaic .axis-button { min-height: 26px; }
   .topbar { min-height: 58px; padding: 0 14px; }
   .mobile-brand { display: block; }

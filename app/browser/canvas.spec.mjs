@@ -957,7 +957,7 @@ try {
           pointerLane,
           pointerLane.locator(".composer-shard--primary"),
         );
-        await assertTeamMenu(lightPage, fixture);
+        await assertTeamMenu(lightPage, fixture, artifacts);
       });
       await run.scenario("reference-composer", async () => {
         const reference = await browser.newContext({ colorScheme: "dark", viewport: { width: 1000, height: 568 } });

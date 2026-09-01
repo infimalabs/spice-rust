@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 
 import {
   chooseCanvasView,
@@ -15,6 +16,129 @@ async function openSpiceMenu(page) {
   const panel = menu.locator(".canvas-menu-panel");
   await panel.waitFor({ timeout: TRANSITION_MS });
   return panel;
+}
+
+async function assertTopChromeSpacing(page, artifacts) {
+  const previous = page.viewportSize();
+  assert.ok(previous, "top chrome has a viewport to restore");
+  const viewports = [
+    ["desktop", previous],
+    ["332px narrow", { width: 332, height: Math.max(previous.height, 720) }],
+  ];
+  try {
+    for (const [label, viewport] of viewports) {
+      await page.setViewportSize(viewport);
+      const bar = page.locator(".commandbar--mosaic");
+      const geometry = await bar.evaluate((node) => {
+        const box = (element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+          };
+        };
+        const strip = node.querySelector(".task-pill-strip");
+        const shortcuts = node.querySelector(".canvas-shortcuts");
+        const summary = node.querySelector(".canvas-menu > summary");
+        const pill = strip.querySelector(".task-pill");
+        const style = getComputedStyle(node);
+        return {
+          viewportWidth: innerWidth,
+          bar: box(node),
+          strip: box(strip),
+          shortcuts: box(shortcuts),
+          summary: box(summary),
+          paddingTop: style.paddingTop,
+          paddingBottom: style.paddingBottom,
+          paddingLeft: style.paddingLeft,
+          paddingRight: style.paddingRight,
+          gap: style.gap,
+          stripGap: getComputedStyle(strip).gap,
+          shortcutGap: getComputedStyle(shortcuts).gap,
+          pillPaddingTop: getComputedStyle(pill).paddingTop,
+          pillPaddingLeft: getComputedStyle(pill).paddingLeft,
+          stripClientWidth: strip.clientWidth,
+          stripScrollWidth: strip.scrollWidth,
+        };
+      });
+      assert.equal(geometry.paddingTop, "8px", `${label} gives top-level pills 8px above`);
+      assert.equal(geometry.paddingBottom, "8px", `${label} gives top-level pills 8px below`);
+      assert.equal(geometry.gap, "7px", `${label} preserves the top-level control gap`);
+      assert.equal(geometry.stripGap, "6px", `${label} preserves the task-pill gap`);
+      assert.equal(geometry.shortcutGap, "3px", `${label} preserves the Canvas shortcut gap`);
+      assert.equal(geometry.pillPaddingTop, "2px", `${label} preserves task-pill block padding`);
+      assert.equal(geometry.pillPaddingLeft, "10px", `${label} preserves task-pill inline padding`);
+      assert.ok(
+        geometry.stripClientWidth >= 64 && geometry.stripScrollWidth >= geometry.stripClientWidth,
+        `${label} gives the horizontally scrollable task strip a visible viewport`,
+      );
+      const taskStripPrecedesShortcuts = viewport.width <= 560
+        ? geometry.strip.bottom <= geometry.shortcuts.top + 1
+        : geometry.strip.right <= geometry.shortcuts.left + 1;
+      assert.ok(taskStripPrecedesShortcuts, `${label} keeps task pills clear of Canvas shortcuts`);
+      assert.ok(
+        geometry.shortcuts.right <= geometry.summary.left + 1,
+        `${label} keeps Canvas shortcuts clear of the Spice menu`,
+      );
+      assert.ok(
+        geometry.bar.left >= -0.5 && geometry.bar.right <= geometry.viewportWidth + 0.5,
+        `${label} keeps the top chrome inside the viewport`,
+      );
+      assert.equal(
+        geometry.paddingLeft,
+        viewport.width <= 720 ? "8px" : "10px",
+        `${label} keeps its responsive inline edge`,
+      );
+      assert.equal(geometry.paddingRight, geometry.paddingLeft, `${label} has symmetric inline edges`);
+
+      const strip = page.locator(".task-pill-strip");
+      await strip.evaluate((node) => { node.scrollLeft = 0; });
+      const first = await strip.locator(".task-pill").first().boundingBox();
+      const stripStart = await strip.boundingBox();
+      assert.ok(first && stripStart && first.x >= stripStart.x - 0.5, `${label} shows the first task pill`);
+      await strip.evaluate((node) => { node.scrollLeft = node.scrollWidth; });
+      const last = await strip.locator(".task-pill").last().boundingBox();
+      const stripEnd = await strip.boundingBox();
+      assert.ok(
+        last && stripEnd && last.x + last.width <= stripEnd.x + stripEnd.width + 0.5,
+        `${label} can reveal the complete last task pill`,
+      );
+      await strip.evaluate((node) => { node.scrollLeft = 0; });
+
+      const panel = await openSpiceMenu(page);
+      const panelGeometry = await panel.evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        const summary = node.parentElement.querySelector(":scope > summary").getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          summaryBottom: summary.bottom,
+          viewportWidth: innerWidth,
+          viewportHeight: innerHeight,
+        };
+      });
+      assert.ok(
+        panelGeometry.left >= -0.5 && panelGeometry.right <= panelGeometry.viewportWidth + 0.5,
+        `${label} keeps the Spice menu inside the horizontal viewport`,
+      );
+      assert.ok(
+        panelGeometry.top >= panelGeometry.summaryBottom + 3.5
+          && panelGeometry.bottom <= panelGeometry.viewportHeight + 0.5,
+        `${label} anchors and bounds the Spice menu below its summary`,
+      );
+      await page.screenshot({
+        path: join(artifacts, `canvas-top-chrome-${viewport.width}px.png`),
+        fullPage: false,
+      });
+      await page.locator(".canvas-menu > summary").click();
+    }
+  } finally {
+    await page.setViewportSize(previous);
+  }
 }
 
 async function assertAxisMenu(page, view, copy) {
@@ -53,7 +177,7 @@ async function assertResidentLineage(fixture, lane, lineage, policyLineage, reas
 }
 
 /** Exercise the Agents-page Spice panel, shared navigation, and durable team moves. */
-export async function assertTeamMenu(page, fixture) {
+export async function assertTeamMenu(page, fixture, artifacts) {
   await chooseCanvasView(page, "Agents");
   const shortcuts = page.locator(".canvas-shortcuts");
   assert.deepEqual(
@@ -61,6 +185,7 @@ export async function assertTeamMenu(page, fixture) {
     ["Agents", "Topology", "Chronology"],
     "Agents, Topology, and Chronology share one rail left of the primary Spice menu",
   );
+  await assertTopChromeSpacing(page, artifacts);
   const chromeOrder = await page.locator(".commandbar--mosaic").evaluate((bar) => {
     const topology = bar.querySelector('.canvas-shortcuts button:nth-child(2)').getBoundingClientRect();
     const chronology = bar.querySelector('.canvas-shortcuts button:last-child').getBoundingClientRect();
