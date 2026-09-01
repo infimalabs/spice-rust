@@ -846,6 +846,15 @@ impl Refusal {
         }
     }
 
+    /// Runnable recovery command carried only by the repairable form.
+    #[must_use]
+    pub fn command(&self) -> Option<&SpiceCommand> {
+        match self {
+            Self::Repairable { command, .. } => Some(command),
+            Self::Bare { .. } | Self::Invocation { .. } | Self::Evidence { .. } => None,
+        }
+    }
+
     /// Mutably narrow to the predicate diagnostic carried by diagnostic forms.
     #[must_use]
     pub fn diagnostic_mut(&mut self) -> Option<&mut RefusalDiagnostic> {

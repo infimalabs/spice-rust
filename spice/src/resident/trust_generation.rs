@@ -993,13 +993,15 @@ fn assert_trust_refusal(
     worktree: Option<&str>,
     arguments: &[&str],
 ) {
-    let Outcome::Refusal(wire::Refusal::Repairable {
-        command,
-        diagnostic,
-    }) = outcome
-    else {
+    let Outcome::Refusal(refusal) = outcome else {
         panic!("trust refusal is not repairable: {outcome:?}");
     };
+    let command = refusal
+        .command()
+        .unwrap_or_else(|| panic!("trust refusal is not repairable: {outcome:?}"));
+    let diagnostic = refusal
+        .diagnostic()
+        .expect("repairable trust refusal carries a diagnostic");
     assert_eq!(diagnostic.reason(), reason);
     assert_eq!(diagnostic.witness(), Some("executable-policy"));
     let detail = diagnostic
