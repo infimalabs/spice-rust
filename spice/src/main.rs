@@ -66,6 +66,8 @@ mod rtk_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod run_meter;
 #[cfg(not(target_arch = "wasm32"))]
+mod run_steering;
+#[cfg(not(target_arch = "wasm32"))]
 mod session_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod steering_command;
@@ -707,13 +709,11 @@ fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> 
     }
 }
 
-/// Emits pending direction to this wrapper's stderr and waits on its one child.
+/// Streams pending direction to this wrapper's stderr while waiting on one child.
 #[cfg(not(target_arch = "wasm32"))]
 fn run(command: Vec<OsString>) -> ! {
-    if let Some(rendering) = bootstrap_environment(steer::hook::INBOX) {
-        let mut stderr = io::stderr().lock();
-        let _ = steer::run::emit(Path::new(&rendering), &mut stderr);
-    }
+    let rendering = bootstrap_environment(steer::hook::INBOX).map(PathBuf::from);
+    let mut steering = run_steering::Runtime::start(rendering.as_deref());
 
     let rewritten = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE)
         .map(|executable| spice::rtk::rewrite(&command, &executable));
@@ -746,7 +746,9 @@ fn run(command: Vec<OsString>) -> ! {
         .split_first()
         .expect("clap requires the run command operand");
 
-    match steer::run::hand(program, arguments) {
+    let result = steer::run::hand_with_exit(program, arguments, || steering.stop());
+    steering.stop();
+    match result {
         Ok(status) => {
             meter.stop();
             terminate_child(status)

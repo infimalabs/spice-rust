@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -486,7 +486,7 @@ fn run_emits_pending_direction_then_inherits_the_childs_streams_and_exit() {
             "--",
             "/bin/sh",
             "-c",
-            "printf child-out; printf child-err >&2; exit 7",
+            "printf child-out; printf child-err >&2; sleep 0.35; exit 7",
         ],
         Some(inbox.as_os_str()),
     );
@@ -497,6 +497,100 @@ fn run_emits_pending_direction_then_inherits_the_childs_streams_and_exit() {
         spoken.err,
         b"<run-test>\npending direction\n</run-test>\nchild-err"
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn run_streams_direction_authored_while_its_immediate_child_is_active() {
+    let scratch = Scratch::new("active-child-steering");
+    let inbox = scratch.path().join("inbox");
+    fs::write(&inbox, b"").expect("empty inbox fixture writes");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
+        .args([
+            "run",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf 'child-start\n' >&2; printf 'ready\n'; IFS= read -r _; \
+             printf 'child-end\n' >&2",
+        ])
+        .env(steer::hook::INBOX, &inbox)
+        .env_remove(steer::hook::LANE)
+        .env_remove("CODEX_THREAD_ID") // env-policy: allow
+        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
+        .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
+        .env_remove(spice::rtk::EXECUTABLE_VARIABLE)
+        .env_remove(spice::rtk::HISTORY_VARIABLE)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("spice run fixture launches");
+    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout is piped"));
+    let mut ready = String::new();
+    stdout
+        .read_line(&mut ready)
+        .expect("child readiness reaches the caller");
+    assert_eq!(ready, "ready\n");
+
+    let stderr = child.stderr.take().expect("child stderr is piped");
+    let (sender, receiver) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut captured = Vec::new();
+        for line in BufReader::new(stderr).lines() {
+            let line = line.expect("wrapper stderr stays readable");
+            sender
+                .send(line.clone())
+                .expect("test still receives wrapper stderr");
+            captured.push(line);
+        }
+        captured
+    });
+    assert_eq!(
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("child start reaches wrapper stderr"),
+        "child-start"
+    );
+
+    let rendering = b"<late-run-test>\nlate direction\n</late-run-test>\n";
+    atomic::Destination::new(&inbox)
+        .expect("inbox destination admits")
+        .publish(|staged| staged.write_all(rendering))
+        .expect("late inbox atomically publishes");
+    for expected in ["<late-run-test>", "late direction", "</late-run-test>"] {
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("late steering reaches the active wrapper"),
+            expected
+        );
+    }
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_millis(350)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "unchanged steering repeated while the child remained active"
+    );
+
+    child
+        .stdin
+        .as_mut()
+        .expect("child stdin is piped")
+        .write_all(b"release\n")
+        .expect("child release writes");
+    let status = child.wait().expect("spice run fixture exits");
+    assert_eq!(status.code(), Some(0));
+    assert_eq!(
+        reader.join().expect("stderr reader joins"),
+        [
+            "child-start",
+            "<late-run-test>",
+            "late direction",
+            "</late-run-test>",
+            "child-end",
+        ]
+    );
+    scratch.remove();
 }
 
 #[test]
