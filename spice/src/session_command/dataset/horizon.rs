@@ -177,8 +177,9 @@ fn read_recent_compaction_markers(
     }
     let source_name = source.path.display().to_string();
     let mut markers = Vec::new();
-    reverse_lines(&source.path, |line, offset, _| {
-        if let Some(marker) = marker_from_line(source, &source_name, line, offset)?
+    reverse_lines(&source.path, |line, offset, _, terminal| {
+        let live_tail = source.thread.is_some() && terminal;
+        if let Some(marker) = marker_from_line(source, &source_name, line, offset, live_tail)?
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
             markers.push(marker);
@@ -239,7 +240,7 @@ fn start_offset_after_prior_timestamp(
     start: &str,
 ) -> Result<u64, Refusal> {
     let mut offset = 0_u64;
-    reverse_lines(&source.path, |line, _, next| {
+    reverse_lines(&source.path, |line, _, next, _| {
         if let Some(ts) = timestamp_from_line(source, line)
             && ts.as_str() < start
         {
@@ -253,7 +254,7 @@ fn start_offset_after_prior_timestamp(
 
 fn reverse_lines<F>(path: &Path, mut visit: F) -> Result<(), Refusal>
 where
-    F: FnMut(&[u8], u64, u64) -> Result<bool, Refusal>,
+    F: FnMut(&[u8], u64, u64, bool) -> Result<bool, Refusal>,
 {
     let mut file = File::open(path).map_err(|error| {
         refusal(
@@ -272,6 +273,7 @@ where
             )
         })?
         .len();
+    let transcript_length = position;
     let mut carry = Vec::new();
     while position > 0 {
         let read = position.min(BACKWARD_CHUNK_BYTES);
@@ -319,10 +321,12 @@ where
             if start == end {
                 continue;
             }
+            let next = position.saturating_add(next as u64);
             if !visit(
                 &block[start..end],
                 position.saturating_add(start as u64),
-                position.saturating_add(next as u64),
+                next,
+                next == transcript_length,
             )? {
                 return Ok(());
             }
@@ -350,6 +354,7 @@ fn marker_from_line(
     source_name: &str,
     line: &[u8],
     offset: u64,
+    live_tail: bool,
 ) -> Result<Option<Marker>, Refusal> {
     if line.len() > MAX_LINE_BYTES {
         return Err(refusal(
@@ -362,8 +367,13 @@ fn marker_from_line(
         ));
     }
     let locus = listen::Locus::new(1, 0, line.len() as u64);
-    let detected = listen::decode_record(source.dialect, line, locus)
-        .map_err(|error| record_refusal(&source.path, 1, &error))?;
+    let detected = match listen::decode_record(source.dialect, line, locus) {
+        Ok(detected) => detected,
+        Err(RecordDecodeError::Invalid {
+            kind: ResidueKind::Truncated,
+        }) if live_tail => return Ok(None),
+        Err(error) => return Err(record_refusal(&source.path, 1, &error)),
+    };
     let Decoded::Events { context, events } = detected.decoded else {
         return Ok(None);
     };
@@ -405,5 +415,52 @@ fn timestamp_from_line(source: &ResolvedSource, line: &[u8]) -> Option<String> {
 fn trim_oldest<T>(rows: &mut Vec<T>, count: usize) {
     if rows.len() > count {
         rows.drain(..rows.len() - count);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn live_truncated_tail_cannot_outrank_the_one_complete_marker() {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "spice-session-horizon-{}-{}.jsonl",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-01-01T00:00:01Z\",\"type\":\"compacted\",\"payload\":{}}\n",
+                "{\"timestamp\":\"2026-01-01T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"context_compacted\"}}\n",
+                "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"type\":\"compacted\"",
+            ),
+        )
+        .expect("live transcript is written");
+        let source = ResolvedSource {
+            path: path.clone(),
+            vendor: Vendor::UNKNOWN,
+            dialect: Some(listen::Dialect::Codex),
+            thread: Some("018f7777-7777-7444-8888-999999999999".to_owned()),
+        };
+
+        let horizon = recent_compaction_horizon(std::slice::from_ref(&source), 3, None)
+            .expect("bounded horizon scans");
+        assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
+        let (records, residues, _) = read_records(&source, None).expect("forward dataset scans");
+        assert_eq!(
+            records.iter().filter_map(marker_from_record).count(),
+            1,
+            "the forward decoder sees the same canonical marker",
+        );
+        assert_eq!(residues.len(), 1);
+        assert_eq!(residues[0].kind, "live-tail-truncated");
+
+        fs::remove_file(path).expect("fixture transcript is removed");
     }
 }

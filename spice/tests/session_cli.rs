@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 
 #[path = "session_cli/authority.rs"]
 mod authority;
+#[path = "session_cli/compaction_authority.rs"]
+mod compaction_authority;
 #[path = "session_cli/discovery.rs"]
 mod discovery;
 #[path = "session_cli/fixtures.rs"]
