@@ -529,6 +529,7 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
         emptyDividers[index],
         `${witness.label} narrow empty compaction boundary`,
         seeded.agentAttribution,
+        { expectAttributionTruncated: true },
       );
       await assertNoUnavailableToolTerminal(
         emptyDividers[index],

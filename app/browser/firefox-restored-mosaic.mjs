@@ -168,7 +168,12 @@ async function assertFirefoxImageFixture(fixture, label) {
     `${label} keeps image stacks inside their cards: ${JSON.stringify(observed)}`);
 }
 
-async function assertFirefoxCompactionBoundaries(console, label, expectedAttribution) {
+async function assertFirefoxCompactionBoundaries(
+  console,
+  label,
+  expectedAttribution,
+  { expectEmptyAttributionTruncated = false } = {},
+) {
   const boundaries = console.locator('[data-card-kind="compaction"]');
   const unresolved = console.locator(
     '[data-card-kind="compaction"]:has([data-terminal-status="unavailable-after-compaction"])',
@@ -193,7 +198,12 @@ async function assertFirefoxCompactionBoundaries(console, label, expectedAttribu
     `${label} unresolved divider`,
     COMPACTED_TOOL_PREVIEW,
   );
-  await assertCompactionDivider(empty, `${label} empty divider`, expectedAttribution);
+  await assertCompactionDivider(
+    empty,
+    `${label} empty divider`,
+    expectedAttribution,
+    { expectAttributionTruncated: expectEmptyAttributionTruncated },
+  );
   await assertNoUnavailableToolTerminal(
     empty,
     `${label} empty divider`,
@@ -281,7 +291,12 @@ export async function assertFirefoxRestoredMosaic(
       { width: 390, height: 720 },
       "Firefox narrow compaction divider",
     );
-    await assertFirefoxCompactionBoundaries(console, "Firefox narrow", expectedAttribution);
+    await assertFirefoxCompactionBoundaries(
+      console,
+      "Firefox narrow",
+      expectedAttribution,
+      { expectEmptyAttributionTruncated: true },
+    );
     await assertNaturalMessageFooterInsets(console, "Firefox narrow restored Mosaic");
     await assertQuoteBlockDensity(quoteCards, "Firefox narrow Mosaic");
     await captureQuoteBlockDensity(page, quoteCards, artifacts, "firefox-quotes-narrow");
