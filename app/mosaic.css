@@ -236,7 +236,7 @@
 .commandbar--mosaic {
   min-height: 30px;
   gap: 7px;
-  padding: 3px var(--canvas-chrome-edge-inline);
+  padding: 8px var(--canvas-chrome-edge-inline);
   background: var(--page);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
