@@ -250,14 +250,15 @@ export async function configureFixture(
   fixture,
   linkedRoot,
   memberCount = 5,
-  { laneLease = "5s", noCardMember = null } = {},
+  { laneLease = "5s", noCardMember = null, worktreeNames = {} } = {},
 ) {
   assert.ok(
     noCardMember === null
       || (Number.isInteger(noCardMember) && noCardMember >= 2 && noCardMember <= memberCount),
     "a no-card fixture member names one linked worktree",
   );
-  const noCardWorktree = noCardMember === null ? "" : `lane-${noCardMember}`;
+  const worktreeName = (index) => worktreeNames[index] ?? `lane-${index}`;
+  const noCardWorktree = noCardMember === null ? "" : worktreeName(noCardMember);
   const triggeredActivity = JSON.parse(triggeredActivityRecord);
   delete triggeredActivity.timestamp;
   const triggeredActivityTail = JSON.stringify(triggeredActivity).slice(1);
@@ -290,7 +291,7 @@ export async function configureFixture(
     'printf \'%s\\n\' "$$" >> "$vendors"',
     "name=${PWD##*/}",
     'case "$name" in',
-    '  lane-*) session_id=$(printf \'018f7777-7777-7444-8888-%012d\' "${name#lane-}") ;;',
+    '  lane-*) ordinal=${name#lane-}; ordinal=${ordinal%%-*}; session_id=$(printf \'018f7777-7777-7444-8888-%012d\' "$ordinal") ;;',
     `  *) session_id=${PRIMARY_FIXTURE_SESSION} ;;`,
     "esac",
     "session_dir=$HOME/.claude/projects/canvas",
@@ -388,7 +389,7 @@ export async function configureFixture(
   await cp(join(root, "spice/agent/SKILL.md"), skill);
   const worktrees = [fixture];
   for (let index = 2; index <= memberCount; index += 1) {
-    const worktree = join(linkedRoot, `lane-${index}`);
+    const worktree = join(linkedRoot, worktreeName(index));
     await execute("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: fixture });
     worktrees.push(await realpath(worktree));
   }
