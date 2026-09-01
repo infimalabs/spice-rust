@@ -349,6 +349,7 @@ struct PartialStateContext<'a> {
     selection: &'a ChangeSelectionReport,
     source: &'a wire::Digest,
     surface: SelectionSurface,
+    claim: gate::ClaimCapture,
     budget: CargoBudget,
 }
 
@@ -369,7 +370,19 @@ struct PackagedPolicy {
 /// Returns repository/environment faults, selected-source movement, incomplete
 /// test reach, or canonical focused-arm acquisition failures.
 pub fn run(progress: &mut (impl Write + Send)) -> Result<ChangeGateReport, ChangeGateError> {
-    run_with_selection(progress, SelectionSurface::Packaged)
+    run_with_claim(progress, gate::ClaimCapture::Idle)
+}
+
+/// Execute the staged-change gate with the board claim captured by its caller.
+///
+/// # Errors
+///
+/// Returns the same staged selection, test, policy, and capture failures as [`run`].
+pub fn run_with_claim(
+    progress: &mut (impl Write + Send),
+    claim: gate::ClaimCapture,
+) -> Result<ChangeGateReport, ChangeGateError> {
+    run_with_selection(progress, SelectionSurface::Packaged, claim)
 }
 
 /// Execute the richer current-source selector from the explicit xtask rim.
@@ -383,7 +396,11 @@ pub fn run(progress: &mut (impl Write + Send)) -> Result<ChangeGateReport, Chang
 pub fn run_current_source(
     progress: &mut (impl Write + Send),
 ) -> Result<ChangeGateReport, ChangeGateError> {
-    run_with_selection(progress, SelectionSurface::CurrentSource)
+    run_with_selection(
+        progress,
+        SelectionSurface::CurrentSource,
+        gate::ClaimCapture::Idle,
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -393,9 +410,14 @@ enum SelectionSurface {
 }
 
 impl SelectionSurface {
-    fn prepare_anchor(self) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
+    fn prepare_anchor(
+        self,
+        claim: gate::ClaimCapture,
+    ) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
         match self {
-            Self::Packaged => crate::gate::prepare_arm(Selector::staged(), GateId::Staging),
+            Self::Packaged => {
+                crate::gate::prepare_arm_with_claim(Selector::staged(), GateId::Staging, claim)
+            }
             Self::CurrentSource => {
                 crate::gate::prepare_arm_strict(Selector::staged(), GateId::Staging)
             }
@@ -406,6 +428,7 @@ impl SelectionSurface {
 fn run_with_selection(
     progress: &mut (impl Write + Send),
     surface: SelectionSurface,
+    claim: gate::ClaimCapture,
 ) -> Result<ChangeGateReport, ChangeGateError> {
     let total_started = Instant::now();
     publish_phase(progress, "capture", None)?;
@@ -416,7 +439,10 @@ fn run_with_selection(
         budget,
         "prioritized-bounded-policy-overlapped-tests",
     )?;
-    let mut anchor = surface.prepare_anchor().map_err(ChangeGateError::gate)?;
+    let retry_claim = claim.clone();
+    let mut anchor = surface
+        .prepare_anchor(claim)
+        .map_err(ChangeGateError::gate)?;
     publish_phase_terminal(progress, "capture", capture_started, "success")?;
     publish_phase(progress, "selection", Some(anchor.changes().len()))?;
     let selection_started = Instant::now();
@@ -494,6 +520,7 @@ fn run_with_selection(
             selection: &selection,
             source: &source,
             surface,
+            claim: retry_claim,
             budget,
         },
         policy,
@@ -539,7 +566,7 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
 
                 let mut retry = context
                     .surface
-                    .prepare_anchor()
+                    .prepare_anchor(context.claim.clone())
                     .map_err(ChangeGateError::gate)?;
                 let (retry_selection, _) = select_changes(&retry, context.surface)?;
                 if &retry_selection != context.selection || retry.source() != context.source {

@@ -295,6 +295,13 @@ fn client_capture(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
+    let board = match current_board(repository) {
+        Ok(board) => board,
+        Err(outcome) => return outcome,
+    };
+    if let Err(outcome) = require_no_plan_implementation(&board, "task capture") {
+        return outcome;
+    }
     let stealing = matches.get_flag("steal");
     let task = match matches.get_one::<String>("HANDLE") {
         Some(written) => {
@@ -373,6 +380,7 @@ fn client_capture(
         }
     };
     mutate_from_board(repository, contract, |board| {
+        require_no_plan_implementation(&board, "task capture")?;
         let heads = task_heads(&board, &task)?;
         let (lane, occupant) = actor_seat(&board)?;
         let rule = if stealing { "steal" } else { "capture" }

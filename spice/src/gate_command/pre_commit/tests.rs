@@ -42,6 +42,27 @@ fn appliance_generation_fence_is_canonical_bound_or_explicitly_unbound() {
 }
 
 #[test]
+fn board_claim_capture_round_trips_through_the_worker_argument() {
+    let captures = [
+        ClaimCapture::Idle,
+        ClaimCapture::Absent {
+            reason: "resident has not answered".to_owned(),
+        },
+        ClaimCapture::Active {
+            task: "PHASE-1kRKw9Qj".parse().expect("fixture task handle"),
+            phase: "plan".parse().expect("fixture phase"),
+        },
+    ];
+    for capture in captures {
+        let encoded = encode_claim_capture(&capture).expect("encode claim capture");
+        assert_eq!(
+            decode_claim_capture(&encoded).expect("decode claim capture"),
+            capture,
+        );
+    }
+}
+
+#[test]
 fn run_enters_supervision_with_only_private_worker_artifacts() {
     let phase = Cell::new(0);
     let answer = run_with(|files| {

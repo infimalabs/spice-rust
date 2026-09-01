@@ -8,7 +8,7 @@ use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use gate::{ArmFamily, GateId};
+use gate::{ArmFamily, ClaimCapture, GateId};
 use serde::{Deserialize, Serialize};
 use sill::{
     Acquisition, Argv, Cancellation, Completion, Deadlines, Environment, LockFile, LockName,
@@ -16,7 +16,10 @@ use sill::{
     StreamPolicy, WaitOutcome, WaitPolicy,
 };
 use spice::repository::Repository;
-use wire::{Digest, Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply, ReplyPosition};
+use wire::{
+    Actor, CanonicalUuid, Digest, Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply,
+    ReplyPosition, TaskHandle,
+};
 
 mod configured;
 mod dispatch;
@@ -240,6 +243,23 @@ impl ApplianceGenerationFence {
     }
 }
 
+fn encode_claim_capture(claim: &ClaimCapture) -> Result<OsString, String> {
+    let bytes = wire::encode(claim).map_err(|error| error.to_string())?;
+    String::from_utf8(bytes)
+        .map(OsString::from)
+        .map_err(|error| error.to_string())
+}
+
+fn decode_claim_capture(document: &OsStr) -> Result<ClaimCapture, String> {
+    let bytes = document.as_encoded_bytes();
+    let claim = wire::decode(bytes).map_err(|error| error.to_string())?;
+    let canonical = wire::encode(&claim).map_err(|error| error.to_string())?;
+    if canonical != bytes {
+        return Err("board claim capture is not canonical".to_owned());
+    }
+    Ok(claim)
+}
+
 struct WorkerFiles {
     root: PathBuf,
     progress: PathBuf,
@@ -315,11 +335,64 @@ pub(super) fn run() -> Outcome<Report> {
     } else {
         ApplianceGenerationFence::unbound()
     };
+    let current = match env::current_dir() {
+        Ok(current) => current,
+        Err(error) => return fault("gate::pre-commit-working-directory-unavailable", error),
+    };
+    let repository = match Repository::discover(&current) {
+        Ok(repository) => repository,
+        Err(error) => return fault("gate::pre-commit-repository-unresolved", error),
+    };
+    let claim = match capture_gate_claim(&repository) {
+        Ok(claim) => claim,
+        Err(failure) => return worker_failure(failure),
+    };
     let _dispatch = match DispatchGuard::acquire() {
         Ok(dispatch) => dispatch,
         Err(outcome) => return outcome,
     };
-    run_with(|files| supervise(files, &generation))
+    run_with(|files| supervise(files, &generation, &claim))
+}
+
+fn capture_gate_claim(repository: &Repository) -> Result<ClaimCapture, WorkerFailure> {
+    let Some(lane) = crate::bootstrap_environment(wire::SpiceVariable::Lane.as_str()) else {
+        return Ok(ClaimCapture::Idle);
+    };
+    let lane = lane.to_str().ok_or_else(|| WorkerFailure {
+        reason: "gate::pre-commit-claim-capture-invalid".to_owned(),
+        detail: "lane identity is not UTF-8".to_owned(),
+        fault: false,
+    })?;
+    let lane: CanonicalUuid = lane.parse().map_err(|_| WorkerFailure {
+        reason: "gate::pre-commit-claim-capture-invalid".to_owned(),
+        detail: format!("lane identity is invalid: {lane:?}"),
+        fault: false,
+    })?;
+    let state = repository.admit_state().map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-claim-capture-unavailable".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    let reader = journal::JournalReader::open(state.journal()).map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-claim-capture-unavailable".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    let heads = reader
+        .read(|read| read.active_claim_for_actor(&Actor::Lane(lane)))
+        .map_err(|error| WorkerFailure {
+            reason: "gate::pre-commit-claim-capture-unavailable".to_owned(),
+            detail: error.to_string(),
+            fault: true,
+        })?;
+    let Some(heads) = heads else {
+        return Ok(ClaimCapture::Idle);
+    };
+    let (statement, workflow, _, _) = heads.into_bodies();
+    Ok(ClaimCapture::Active {
+        task: TaskHandle::for_project(&statement.project, &statement.born),
+        phase: workflow.phase,
+    })
 }
 
 #[derive(Debug)]
@@ -400,6 +473,11 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         eprintln!("commit-gate worker requires an appliance generation fence");
         return Some(1);
     }
+    let claim = arguments.next();
+    if claim.is_none() {
+        eprintln!("commit-gate worker requires a board claim capture");
+        return Some(1);
+    }
     if arguments.next().is_some() {
         eprintln!("commit-gate worker received trailing arguments");
         return Some(1);
@@ -410,6 +488,9 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         generation
             .as_deref()
             .expect("the pre-commit worker requires its appliance generation fence"),
+        claim
+            .as_deref()
+            .expect("the pre-commit worker requires its board claim capture"),
     );
     Some(match result {
         Ok(()) => 0,
@@ -420,13 +501,21 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
     })
 }
 
-fn supervise(files: &WorkerFiles, generation: &ApplianceGenerationFence) -> Outcome<Report> {
+fn supervise(
+    files: &WorkerFiles,
+    generation: &ApplianceGenerationFence,
+    claim: &ClaimCapture,
+) -> Outcome<Report> {
     let executable = match env::current_exe() {
         Ok(executable) => executable,
         Err(error) => return fault("gate::pre-commit-executable-unavailable", error),
     };
     let generation = match generation.encode() {
         Ok(generation) => generation,
+        Err(error) => return fault("gate::pre-commit-worker-invalid", error),
+    };
+    let claim = match encode_claim_capture(claim) {
+        Ok(claim) => claim,
         Err(error) => return fault("gate::pre-commit-worker-invalid", error),
     };
     let spec = match worker_spec(
@@ -436,6 +525,7 @@ fn supervise(files: &WorkerFiles, generation: &ApplianceGenerationFence) -> Outc
             files.progress.as_os_str().to_owned(),
             files.terminal.as_os_str().to_owned(),
             generation,
+            claim,
         ],
         ProcessBounds::production(),
     ) {
@@ -458,7 +548,12 @@ fn supervise(files: &WorkerFiles, generation: &ApplianceGenerationFence) -> Outc
     classify(files, &waited)
 }
 
-fn worker_run(progress_path: &Path, terminal: &Path, generation: &OsStr) -> io::Result<()> {
+fn worker_run(
+    progress_path: &Path,
+    terminal: &Path,
+    generation: &OsStr,
+    claim: &OsStr,
+) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
     let mut progress = OpenOptions::new().append(true).open(progress_path)?;
     let started = Instant::now();
@@ -470,8 +565,13 @@ fn worker_run(progress_path: &Path, terminal: &Path, generation: &OsStr) -> io::
         })
         .and_then(|generation| {
             verify_appliance_generation_fence(&generation)?;
+            let claim = decode_claim_capture(claim).map_err(|detail| WorkerFailure {
+                reason: "gate::pre-commit-claim-capture-invalid".to_owned(),
+                detail,
+                fault: true,
+            })?;
             write_phase(&mut progress, &WorkerPhase::Capture).map_err(worker_io_failure)?;
-            dispatch(&mut progress, started)
+            dispatch(&mut progress, started, claim)
         });
     match result {
         Ok(report) => {

@@ -1,6 +1,85 @@
 use super::*;
 
 #[test]
+fn plan_claim_allows_board_organization_but_classifies_repository_work_as_forbidden() {
+    let (root, bus, epoch, seats) = fixture("plan-organization-contract", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let plan = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Qj",
+        "Organize implementation work",
+        &["implementation is decomposed"],
+        Some("plan,todo"),
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &plan);
+
+    let held = board(&bus, epoch, lane.clone());
+    assert_eq!(
+        claim_capture_from_board(&held),
+        gate::ClaimCapture::Active {
+            task: plan.clone(),
+            phase: "plan".parse().expect("fixture plan phase"),
+        },
+    );
+    let Err(Outcome::Refusal(refusal)) = require_no_plan_implementation(&held, "task capture")
+    else {
+        panic!("plan claim must refuse repository capture");
+    };
+    assert_eq!(refusal.reason(), "task::plan-implementation");
+
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskEdit,
+        vec![statement_witness(at(&held, &plan))],
+        &TaskEdit {
+            task: plan.clone(),
+            title: None,
+            description: Some("Sequence the implementation children".to_owned()),
+            acceptance: Vec::new(),
+            priority: None,
+            project: None,
+        },
+    ));
+    let edited = board(&bus, epoch, lane.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskNote,
+        vec![Witness::Existence {
+            task: at(&edited, &plan).statement.body.born.clone(),
+        }],
+        &TaskNote {
+            task: plan.clone(),
+            note: "The implementation boundary is explicit".to_owned(),
+        },
+    ));
+    let child = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Qk",
+        "Implement the organized change",
+        &["repository behavior is verified"],
+        None,
+    );
+    connect_child(&bus, epoch, &plan, &child);
+
+    let organized = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&organized, &plan).statement.body.description.as_deref(),
+        Some("Sequence the implementation children"),
+    );
+    assert_eq!(
+        at(&organized, &plan).statement.body.dependencies,
+        vec![at(&organized, &child).statement.body.born.clone()],
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn plan_advance_warns_that_next_may_select_a_competing_eligible_task() {
     let (root, bus, epoch, seats) = fixture("plan-advance-ownership", 1);
     let lane = Actor::Lane(seats[0].lane);

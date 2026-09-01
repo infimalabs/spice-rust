@@ -418,6 +418,34 @@ pub fn prepare_arm(selector: Selector, gate_id: GateId) -> Result<PreparedArm<'s
     prepare_arm_with_mode(selector, gate_id, InputMode::Generic)
 }
 
+/// Capture one selected arm with the board claim observed by the command rim.
+///
+/// # Errors
+///
+/// Returns the same rim and selected-arm capture failures as [`prepare_arm`].
+pub fn prepare_arm_with_claim(
+    selector: Selector,
+    gate_id: GateId,
+    claim: ClaimCapture,
+) -> Result<PreparedArm<'static>, RunError> {
+    let compiler_environment = compiler_environment();
+    capture::capture_inner_with_reach_and_claim(
+        selector,
+        InputMode::Generic,
+        Some(gate_id),
+        None,
+        None,
+        None,
+        claim,
+    )
+    .map(|capture| PreparedArm {
+        capture,
+        gate_id,
+        compiler_environment,
+        cargo_jobs: None,
+    })
+}
+
 /// Capture one selected arm from an explicitly admitted repository directory.
 pub fn prepare_arm_at(
     directory: &Path,

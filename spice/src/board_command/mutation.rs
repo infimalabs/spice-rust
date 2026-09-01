@@ -17,6 +17,7 @@ pub(super) use taste_proposal::taste_proposal_add;
 /// One actor-filtered board snapshot whose cursor and entries were validated together.
 pub(super) struct ValidatedSnapshot {
     pub(super) cursor: wire::Seq,
+    pub(super) facts: bus::TaskFacts,
     pub(super) answer: BoardAnswer,
     pub(super) entries: Vec<Entry>,
     pub(super) review_history: Result<Vec<board::graph::ReviewEdge>, String>,
