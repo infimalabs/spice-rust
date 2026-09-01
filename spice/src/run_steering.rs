@@ -60,9 +60,14 @@ impl Runtime {
     }
 
     pub(super) fn stop(&mut self) {
+        self.stop_with(|| {});
+    }
+
+    fn stop_with(&mut self, after_signal: impl FnOnce()) {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(Signal::Stop);
         }
+        after_signal();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -249,52 +254,67 @@ mod tests {
 
     #[test]
     fn an_inflight_change_finishes_once_before_a_queued_stop_joins() {
-        let (signals, receiver) = mpsc::sync_channel(2);
+        let signal = Arc::new(Mutex::new(None));
+        let reads = Arc::new(AtomicUsize::new(0));
         let (entered, observed) = mpsc::sync_channel(0);
         let (release, released) = mpsc::sync_channel(0);
         let outputs = Arc::new(Mutex::new(Vec::new()));
         let dropped = Arc::new(AtomicUsize::new(0));
-        signals.send(Signal::Changed).expect("change queues");
 
-        let worker = {
-            let outputs = Arc::clone(&outputs);
-            let dropped = Arc::clone(&dropped);
-            let callback = signals.clone();
-            thread::spawn(move || {
-                drive(
-                    FakeWatcher {
+        let mut runtime = Runtime::start_with(
+            Some(Path::new("/fixture/inbox")),
+            {
+                let signal = Arc::clone(&signal);
+                let dropped = Arc::clone(&dropped);
+                move |_, changed| {
+                    *signal.lock().expect("fixture signal lock") = Some(changed.clone());
+                    Some(FakeWatcher {
                         dropped,
-                        _changed: callback,
-                    },
-                    receiver,
-                    PathBuf::from("/fixture/inbox"),
-                    Some(b"initial".to_vec()),
-                    move |_| {
+                        _changed: changed,
+                    })
+                }
+            },
+            {
+                let reads = Arc::clone(&reads);
+                move |_| match reads.fetch_add(1, Ordering::SeqCst) {
+                    0 => Some(b"initial".to_vec()),
+                    1 => {
                         entered.send(()).expect("inflight read announces");
                         released.recv().expect("inflight read releases");
                         Some(b"changed".to_vec())
-                    },
-                    move |bytes| {
-                        outputs
-                            .lock()
-                            .expect("fixture output lock")
-                            .push(bytes.to_vec());
-                    },
-                );
-            })
-        };
+                    }
+                    call => panic!("unexpected fixture read {call}"),
+                }
+            },
+            {
+                let outputs = Arc::clone(&outputs);
+                move |bytes| {
+                    outputs
+                        .lock()
+                        .expect("fixture output lock")
+                        .push(bytes.to_vec());
+                }
+            },
+        );
+        let changed = signal
+            .lock()
+            .expect("fixture signal lock")
+            .as_ref()
+            .expect("watcher signal captured")
+            .clone();
+        changed.send(Signal::Changed).expect("change queues");
         observed.recv().expect("change read is in flight");
-        signals
-            .send(Signal::Stop)
-            .expect("stop queues behind change");
-        release.send(()).expect("inflight read release sends");
-        worker.join().expect("worker joins after queued stop");
+        runtime.stop_with(|| release.send(()).expect("inflight read release sends"));
 
         assert_eq!(
             *outputs.lock().expect("fixture output lock"),
-            [b"changed".to_vec()]
+            [b"initial".to_vec(), b"changed".to_vec()]
         );
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            changed.try_send(Signal::Changed),
+            Err(mpsc::TrySendError::Disconnected(Signal::Changed))
+        ));
     }
 
     fn idle_runtime(dropped: Arc<AtomicUsize>) -> Runtime {
