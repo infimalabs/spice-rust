@@ -914,6 +914,58 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
 }
 
 #[test]
+fn taste_acknowledgement_and_quoted_feedback_do_not_refire_but_new_prose_does() {
+    let fixture = Fixture::new("acknowledgement-provenance");
+    let bag = bag(&[
+        ("polling", &["polling"], "Wait for the terminal event."),
+        ("fallbacks", &["fallback"], "Keep one current path."),
+        ("handoffs", &["handoff"], "Keep ownership explicit."),
+    ]);
+    fixture.recognize(
+        &bag,
+        &prose_record(fixture.lane, fixture.occupant, "polling with a fallback"),
+    );
+    let first = fixture.reminders();
+    let polling = first
+        .iter()
+        .find(|reminder| reminder.taste == "polling")
+        .expect("polling reminder exists");
+    let fallback = first
+        .iter()
+        .find(|reminder| reminder.taste == "fallbacks")
+        .expect("fallback reminder exists");
+
+    let response = format!(
+        concat!(
+            "> {}\n",
+            "A separate handoff is now explicit. ",
+            "ACK {}: I will avoid polling and fallback churn."
+        ),
+        polling.text, fallback.key,
+    );
+    fixture.recognize(
+        &bag,
+        &prose_record(fixture.lane, fixture.occupant, &response),
+    );
+
+    let reminders = fixture.reminders();
+    assert_eq!(reminders.len(), 3);
+    assert_eq!(
+        reminders
+            .iter()
+            .map(|reminder| reminder.taste.as_str())
+            .collect::<Vec<_>>(),
+        ["polling", "fallbacks", "handoffs"],
+    );
+    assert!(
+        reminders
+            .iter()
+            .all(|reminder| reminder.compaction == fixture.anchor.get())
+    );
+    fixture.finish();
+}
+
+#[test]
 fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
     let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let lane = uuid(90);
