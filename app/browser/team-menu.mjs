@@ -18,12 +18,63 @@ async function openSpiceMenu(page) {
   return panel;
 }
 
+async function addOverflowControls(panel) {
+  await panel.evaluate((node) => {
+    const fixture = document.createElement("section");
+    fixture.className = "canvas-menu-section";
+    fixture.dataset.menuOverflowFixture = "true";
+    for (let index = 1; index <= 14; index += 1) {
+      const control = document.createElement("button");
+      control.className = "axis-button";
+      control.type = "button";
+      control.textContent = `Overflow control ${index}`;
+      fixture.append(control);
+    }
+    node.querySelector(".canvas-menu-page").append(fixture);
+  });
+}
+
+async function assertOverflowReachability(panel, label) {
+  const first = panel.locator("button").first();
+  const last = panel.locator('[data-menu-overflow-fixture] > button').last();
+  const scrollGeometry = await panel.evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    overflowY: getComputedStyle(node).overflowY,
+    scrollHeight: node.scrollHeight,
+  }));
+  assert.equal(scrollGeometry.overflowY, "auto", `${label} keeps menu overflow internal`);
+  assert.ok(
+    scrollGeometry.scrollHeight > scrollGeometry.clientHeight,
+    `${label} has real overflow content to scroll`,
+  );
+
+  await panel.evaluate((node) => { node.scrollTop = 0; });
+  const panelTop = await panel.boundingBox();
+  const firstBox = await first.boundingBox();
+  assert.ok(
+    panelTop && firstBox
+      && firstBox.y >= panelTop.y - 0.5
+      && firstBox.y + firstBox.height <= panelTop.y + panelTop.height + 0.5,
+    `${label} keeps the first menu control reachable`,
+  );
+
+  await panel.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  const panelBottom = await panel.boundingBox();
+  const lastBox = await last.boundingBox();
+  assert.ok(
+    panelBottom && lastBox
+      && lastBox.y + lastBox.height <= panelBottom.y + panelBottom.height + 0.5,
+    `${label} keeps the last overflow control reachable`,
+  );
+  await panel.evaluate((node) => { node.scrollTop = 0; });
+}
+
 async function assertTopChromeSpacing(page, artifacts) {
   const previous = page.viewportSize();
   assert.ok(previous, "top chrome has a viewport to restore");
   const viewports = [
     ["desktop", previous],
-    ["332px narrow", { width: 332, height: Math.max(previous.height, 720) }],
+    ["332px narrow", { width: 332, height: 720 }],
   ];
   try {
     for (const [label, viewport] of viewports) {
@@ -108,6 +159,9 @@ async function assertTopChromeSpacing(page, artifacts) {
       await strip.evaluate((node) => { node.scrollLeft = 0; });
 
       const panel = await openSpiceMenu(page);
+      if (viewport.width <= 560) {
+        await addOverflowControls(panel);
+      }
       const panelGeometry = await panel.evaluate((node) => {
         const rect = node.getBoundingClientRect();
         const summary = node.parentElement.querySelector(":scope > summary").getBoundingClientRect();
@@ -130,9 +184,20 @@ async function assertTopChromeSpacing(page, artifacts) {
           && panelGeometry.bottom <= panelGeometry.viewportHeight + 0.5,
         `${label} anchors and bounds the Spice menu below its summary`,
       );
+      if (viewport.width <= 560) {
+        await assertOverflowReachability(panel, label);
+      }
       await page.screenshot({
-        path: join(artifacts, `canvas-top-chrome-${viewport.width}px.png`),
+        path: join(
+          artifacts,
+          viewport.width <= 560
+            ? `canvas-menu-overflow-${viewport.width}x${viewport.height}.png`
+            : `canvas-menu-desktop-${viewport.width}x${viewport.height}.png`,
+        ),
         fullPage: false,
+      });
+      await panel.locator('[data-menu-overflow-fixture]').evaluateAll((fixtures) => {
+        for (const fixture of fixtures) fixture.remove();
       });
       await page.locator(".canvas-menu > summary").click();
     }

@@ -101,6 +101,10 @@
   .brand-name { display: none; }
   .axis-button { min-height: 40px; padding: 0 9px; font-size: .74rem; }
   .commandbar--mosaic { flex-wrap: wrap; }
+  .commandbar--mosaic .canvas-menu-panel {
+    max-height: calc(100vh - 76px);
+    max-height: calc(100dvh - 76px);
+  }
   .commandbar--mosaic .task-pill-strip { flex-basis: 100%; }
   .commandbar--mosaic .canvas-shortcuts {
     flex: 1 1 0;
