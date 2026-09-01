@@ -63,12 +63,15 @@ impl ActivityCard {
         }
     }
 
-    pub(super) fn chronology_key(&self) -> (i64, u8, String) {
+    pub(super) fn chronology_key(&self) -> (i64, CanonicalUuid, u64, u64, u64, u32) {
         match self {
             Self::Agent { message, .. } => (
                 crate::runtime::agent_message_display_millis(message),
-                1,
-                self.key(),
+                message.lane,
+                message.locus.member,
+                message.locus.offset,
+                message.locus.length,
+                message.locus.event,
             ),
         }
     }

@@ -13,6 +13,7 @@ import {
 import {
   assertCompactionBoundary,
   assertCompactionBoundaryPersistence,
+  assertStagedMosaicHydration,
   installPersistedMosaicImageRoutes,
 } from "./agent-conversation-mosaic.mjs";
 import {
@@ -523,6 +524,8 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     latestPrimaryProse: seeded.quoteProse,
     activityReplay,
   });
+
+  await assertStagedMosaicHydration(page, team, activityReplay);
 
   const compactionBoundary = await assertCompactionBoundary(
     page, fixture, team, seeded, artifacts, activityReplay,
