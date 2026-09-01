@@ -233,7 +233,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
         `${state} stacked surface follows its content: ${JSON.stringify(surface)}`,
       );
     }
-    return;
+    return geometry;
   }
 
   if (geometry.externalBodyLayout <= 1) {
@@ -277,6 +277,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
       );
     }
   }
+  return geometry;
 }
 
 export async function assertAgentSpacingRejectsFallbackOnlyMarkup(page, state) {

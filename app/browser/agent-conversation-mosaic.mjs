@@ -205,7 +205,50 @@ async function waitForHydration(page, expectedKeys) {
     }, expectedKeys);
 }
 
-export async function assertStagedMosaicHydration(page, team, activityReplay) {
+async function assertHydrationEdge(page, plane, hydration, initial, armed, snapshot) {
+  const edge = await finishPlacementProbe(plane, armed);
+  assert.ok(edge.retained, "edge hydration retains every committed card node");
+  assert.deepEqual(edge.writes, [], "edge hydration writes no retained card placement");
+  const stablePlacement = ({ key, track, span, base, row, rows }) => (
+    { key, track, span, base, row, rows }
+  );
+  assert.deepEqual(
+    edge.cards.map(stablePlacement),
+    armed.cards.map(stablePlacement),
+    "edge hydration preserves every retained committed placement",
+  );
+  assert.equal(snapshot.cards.at(-1)?.key, hydration.newestKey,
+    "the newest transport edge appends its DOM node");
+  const visual = await plane.evaluate((element, { newestKey, retainedKeys }) => {
+    const boxFor = (key) => element
+      .querySelector(`[data-mosaic-card-key="${key}"]`)
+      ?.getBoundingClientRect();
+    const newest = boxFor(newestKey);
+    const retained = retainedKeys.map(boxFor).filter(Boolean);
+    return {
+      newest: newest ? { bottom: newest.bottom, top: newest.top } : null,
+      retained: retained.map((box) => ({ bottom: box.bottom, top: box.top })),
+    };
+  }, { newestKey: hydration.newestKey, retainedKeys: initial.cards.map((card) => card.key) });
+  assert.ok(visual.newest && visual.retained.length === initial.cards.length,
+    `edge hydration renders every visual witness: ${JSON.stringify(visual)}`);
+  assert.ok(
+    visual.newest.top <= Math.min(...visual.retained.map((box) => box.top)) + 1,
+    `the newest transport edge leads the visual stack: ${JSON.stringify(visual)}`,
+  );
+  return {
+    committedWidth: edge.committedWidth,
+    commits: edge.commits,
+    retained: edge.retained,
+    retainedCards: edge.cards,
+    transition: edge.transition,
+    visual,
+    writes: edge.writes,
+  };
+}
+
+export async function assertStagedMosaicHydration(page, team, activityReplay, inspectOneShot) {
+  assert.equal(typeof inspectOneShot, "function", "hydration supplies an integrated proof sink");
   const plane = team.locator(".lane-mosaic-plane");
   const hydration = activityReplay.stagedHydration();
   await plane.evaluate((element) => {
@@ -243,8 +286,12 @@ export async function assertStagedMosaicHydration(page, team, activityReplay) {
     return snapshot;
   };
 
-  await apply(hydration.stages[0]);
-  await apply(hydration.stages[1], "append");
+  const initial = await apply(hydration.stages[0]);
+  const edgeProbe = await armPlacementProbe(plane);
+  const edgeSnapshot = await apply(hydration.stages[1], "append");
+  const edge = await assertHydrationEdge(
+    page, plane, hydration, initial, edgeProbe, edgeSnapshot,
+  );
   const staged = await apply(hydration.stages[2], "full-replay");
   const commits = staged.commits;
   await hydration.send(page, hydration.stages[2]);
@@ -266,6 +313,12 @@ export async function assertStagedMosaicHydration(page, team, activityReplay) {
     delete element.__stagedHydrationObserver;
     return window.__stagedHydrationViolations;
   }), [], "hydration never exposes duplicate or misordered cards after settlement");
+  await inspectOneShot({
+    edge,
+    oneShot,
+    staged,
+    stageSizes: hydration.stages.map((stage) => stage.length),
+  });
   await activityReplay.restoreProseSnapshot(page);
   await waitForMosaicReady(page);
 }
@@ -1385,7 +1438,8 @@ export async function waitForMosaicReady(page) {
     )];
     return planes.length > 0 && planes.every(
       (plane) => plane.dataset.measurementPhase === "ready"
-        && plane.dataset.measurementPending === "0",
+        && plane.dataset.measurementPending === "0"
+        && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1,
     );
   });
 }

@@ -8,13 +8,15 @@ import { installActivityReplay } from "./activity-replay.mjs";
 import { assertAgesTickWhileTheResidentIsSilent } from "./age-ticker.mjs";
 import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
-  longWorktreeBasename, nestedQuoteMessage, nestedQuotePreview, seatAgentTeam, seatLeaseAgent,
+  longAgentName, longWorktreeBasename, nestedQuoteMessage, nestedQuotePreview,
+  seatAgentTeam, seatLeaseAgent,
 } from "./agent-conversation.mjs";
 import {
   assertCompactionBoundary,
   assertCompactionBoundaryPersistence,
   assertStagedMosaicHydration,
   installPersistedMosaicImageRoutes,
+  waitForMosaicReady,
 } from "./agent-conversation-mosaic.mjs";
 import {
   assertFirefoxRestoredMosaic,
@@ -40,6 +42,7 @@ import {
   captureReferenceViewport,
 } from "./canvas-watchbands.mjs";
 import { assertMotionPreference } from "./mosaic-motion.mjs";
+import { assertIntegratedMosaicProof } from "./mosaic-integrated-proof.mjs";
 import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
 import { assertTaskNotes } from "./task-notes.mjs";
@@ -525,7 +528,24 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     activityReplay,
   });
 
-  await assertStagedMosaicHydration(page, team, activityReplay);
+  const originalViewport = page.viewportSize();
+  assert.ok(originalViewport, "the integrated Mosaic proof has a viewport to restore");
+  try {
+    await page.setViewportSize({ width: 2018, height: 1728 });
+    await waitForMosaicReady(page);
+    await assertStagedMosaicHydration(page, team, activityReplay, (hydration) => (
+      assertIntegratedMosaicProof(
+        page,
+        team,
+        artifacts,
+        [longAgentName, longWorktreeBasename],
+        hydration,
+      )
+    ));
+  } finally {
+    await page.setViewportSize(originalViewport);
+    await waitForMosaicReady(page);
+  }
 
   const compactionBoundary = await assertCompactionBoundary(
     page, fixture, team, seeded, artifacts, activityReplay,
