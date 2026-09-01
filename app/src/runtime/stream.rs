@@ -199,28 +199,17 @@ impl CanvasRuntime {
             } => self.apply_direction_snapshot(*limit as usize, directions),
             StreamFrame::Trust { packed, .. } => self.apply_trust_page(admitted, packed, epoch),
             StreamFrame::Messages {
-                limit, messages, ..
-            } => {
-                let limit = *limit as usize;
-                let changed = !self.message_snapshot_matches(limit, messages);
-                self.message_limit = Some(limit);
-                if changed {
-                    let previous = std::mem::take(&mut self.messages);
-                    self.activities.clear();
-                    for message in messages {
-                        let retained = previous
-                            .iter()
-                            .find(|existing| {
-                                existing.lane == message.lane
-                                    && existing.locus == message.locus
-                                    && existing.as_ref() == message
-                            })
-                            .cloned();
-                        self.observe_message_with_retained(message, retained);
-                    }
-                }
-                StreamApplication::new(Vec::new(), changed)
-            }
+                limit,
+                messages,
+                more,
+                ..
+            } => self.apply_message_snapshot(*limit as usize, messages, more),
+            StreamFrame::MessageHistory {
+                lane,
+                more,
+                messages,
+                ..
+            } => self.apply_message_history(*lane, messages, *more),
             StreamFrame::Thread { packed, .. } => self.apply_thread_page(admitted, packed, epoch),
             StreamFrame::Fact { fact, .. } => {
                 let operator_changed = self.observe_operator_rows(std::slice::from_ref(fact));
@@ -480,6 +469,55 @@ impl CanvasRuntime {
         self.observe_message_with_retained(message, None)
     }
 
+    fn apply_message_snapshot(
+        &mut self,
+        limit: usize,
+        messages: &[AgentMessage],
+        more: &[CanonicalUuid],
+    ) -> StreamApplication {
+        let next_more = more.iter().copied().collect::<BTreeSet<_>>();
+        let history_changed = self.message_history_more != next_more;
+        let changed = !self.message_snapshot_matches(limit, messages);
+        self.message_limit = Some(limit);
+        self.message_history_more = next_more;
+        if changed {
+            let previous = std::mem::take(&mut self.messages);
+            self.activities.clear();
+            for message in messages {
+                let retained = previous
+                    .iter()
+                    .find(|existing| {
+                        existing.lane == message.lane
+                            && existing.locus == message.locus
+                            && existing.as_ref() == message
+                    })
+                    .cloned();
+                self.observe_message_with_retained(message, retained);
+            }
+        }
+        StreamApplication::new(Vec::new(), changed || history_changed)
+    }
+
+    fn apply_message_history(
+        &mut self,
+        lane: CanonicalUuid,
+        messages: &[AgentMessage],
+        more: bool,
+    ) -> StreamApplication {
+        let mut changed = false;
+        for message in messages {
+            if message.lane == lane {
+                changed |= self.observe_history_message(message);
+            }
+        }
+        let history_changed = if more {
+            self.message_history_more.insert(lane)
+        } else {
+            self.message_history_more.remove(&lane)
+        };
+        StreamApplication::new(Vec::new(), changed || history_changed)
+    }
+
     fn observe_message_with_retained(
         &mut self,
         message: &AgentMessage,
@@ -523,6 +561,29 @@ impl CanvasRuntime {
             })
             .unwrap_or(self.messages.len());
         self.messages.insert(insertion, retained);
+        if let Some(limit) = self.message_limit {
+            trim_agent_message_lane(&mut self.messages, message.lane, limit);
+        }
+        true
+    }
+
+    /// Merge an older visible card without walking the live status strip backwards.
+    fn observe_history_message(&mut self, message: &AgentMessage) -> bool {
+        if !visible_message_card(message)
+            || self.message_limit == Some(0)
+            || self
+                .messages
+                .iter()
+                .any(|existing| existing.lane == message.lane && existing.locus == message.locus)
+        {
+            return false;
+        }
+        let insertion = self
+            .messages
+            .iter()
+            .position(|existing| message_chronology_key(existing) > message_chronology_key(message))
+            .unwrap_or(self.messages.len());
+        self.messages.insert(insertion, Rc::new(message.clone()));
         if let Some(limit) = self.message_limit {
             trim_agent_message_lane(&mut self.messages, message.lane, limit);
         }

@@ -846,8 +846,8 @@ fn stream_request_samples(
     first_id: CanonicalUuid,
     second_id: CanonicalUuid,
     cursor: StreamCursor,
-) -> [StreamRequest; 4] {
-    [
+) -> Vec<StreamRequest> {
+    vec![
         StreamRequest::Subscribe {
             v: WireVersion::CURRENT,
             id: first_id,
@@ -875,6 +875,18 @@ fn stream_request_samples(
             epoch,
             cursor,
         },
+        StreamRequest::MessageHistory {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            lane: second_id,
+            before: MessageLocus {
+                member: 1,
+                offset: 2,
+                length: 3,
+                event: 4,
+            },
+        },
     ]
 }
 
@@ -886,6 +898,22 @@ fn stream_data_samples(
     facts: Packed<StreamFact>,
     trust: Packed<TrustView>,
 ) -> Vec<StreamFrame> {
+    let history_message = wire::AgentMessage {
+        lane: second_id,
+        author: first_id,
+        locus: MessageLocus {
+            member: 1,
+            offset: 2,
+            length: 3,
+            event: 4,
+        },
+        authored: at("2030-04-12T18:44:09.271Z"),
+        authored_synthetic: false,
+        observed: None,
+        activity: wire::AgentActivityKind::Prose,
+        text: "older retained prose".to_owned(),
+        media: Vec::new(),
+    };
     vec![
         StreamFrame::Facts {
             v: WireVersion::CURRENT,
@@ -904,6 +932,20 @@ fn stream_data_samples(
             id: second_id,
             epoch,
             packed: facts,
+        },
+        StreamFrame::MessageHistory {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            lane: second_id,
+            before: MessageLocus {
+                member: 5,
+                offset: 6,
+                length: 7,
+                event: 8,
+            },
+            more: true,
+            messages: vec![history_message],
         },
         StreamFrame::Fact {
             v: WireVersion::CURRENT,

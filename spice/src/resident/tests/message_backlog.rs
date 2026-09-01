@@ -13,6 +13,47 @@ const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"
 const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK\t1kQwPZtK nope 1kQwPZtM: One response.\nNACK\t1kQwPZtL: Unsafe."}}
 "#;
 
+fn complete_message_history(
+    source: &canvas::stream::Source,
+    accepted: &wire::Accepted,
+    epoch: wire::CanonicalUuid,
+    lane: wire::CanonicalUuid,
+    initial: &[wire::AgentMessage],
+) -> Vec<wire::AgentMessage> {
+    let mut window = initial.to_vec();
+    let mut before = window[0].locus;
+    let mut more = true;
+    let mut page = 0_u8;
+    while more {
+        let frame = source
+            .message_history(
+                accepted,
+                &wire::StreamRequest::MessageHistory {
+                    v: wire::WireVersion::CURRENT,
+                    id: test_uuid(70 + page),
+                    epoch,
+                    lane,
+                    before,
+                },
+            )
+            .expect("older compaction history reads");
+        let wire::StreamFrame::MessageHistory {
+            messages,
+            more: page_more,
+            ..
+        } = frame
+        else {
+            panic!("expected message history page")
+        };
+        assert!(messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
+        before = messages[0].locus;
+        more = page_more;
+        window.splice(0..0, messages);
+        page += 1;
+    }
+    window
+}
+
 #[test]
 fn each_resident_generation_restores_durable_prose_before_canvas_subscription() {
     let (root, paths) = resident_fixture("message-backlog");
@@ -170,18 +211,24 @@ fn each_resident_generation_restores_the_same_complete_compaction_window() {
             .begin(&accepted, &request)
             .expect("Canvas subscription begins");
         let wire::StreamFrame::Messages {
-            limit, messages, ..
+            limit,
+            messages,
+            more,
+            ..
         } = &frames[0]
         else {
             panic!("expected message snapshot")
         };
         assert_eq!(*limit as usize, canvas::stream::MESSAGE_CAPACITY);
-        assert_eq!(messages.len(), 220);
-        assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
-        assert_eq!(messages[0].text, "Context compacted");
-        assert_eq!(messages[140].activity, wire::AgentActivityKind::Compaction);
-        assert!(messages[219].text.starts_with("message 299 "));
-        generation_windows.push(messages.clone());
+        assert_eq!(messages.len(), canvas::stream::INITIAL_MESSAGE_LIMIT);
+        assert_eq!(more, &[lane]);
+        let window = complete_message_history(&source, &accepted, epoch, lane, messages);
+        assert_eq!(window.len(), 220);
+        assert_eq!(window[0].activity, wire::AgentActivityKind::Compaction);
+        assert_eq!(window[0].text, "Context compacted");
+        assert_eq!(window[140].activity, wire::AgentActivityKind::Compaction);
+        assert!(window[219].text.starts_with("message 299 "));
+        generation_windows.push(window);
         drop(source);
     }
     assert_eq!(

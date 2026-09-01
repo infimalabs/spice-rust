@@ -15,7 +15,10 @@ use wire::{
 mod message;
 mod policy;
 
-pub use message::{MESSAGE_CAPACITY, MessagePublishError, MessagePublisher};
+pub use message::{
+    INITIAL_MESSAGE_LIMIT, MESSAGE_CAPACITY, MESSAGE_HISTORY_PAGE_LIMIT, MessagePublishError,
+    MessagePublisher,
+};
 use message::{MessageFeed, message_snapshot_fault};
 pub use policy::Failure;
 use policy::{
@@ -140,14 +143,21 @@ impl Source {
                         .expect("the fixed direction capacity fits in the wire field"),
                     directions: self.directions()?,
                 },
-                ViewSubject::Messages => StreamFrame::Messages {
-                    v: WireVersion::CURRENT,
-                    id: *id,
-                    epoch: self.epoch,
-                    limit: u32::try_from(MESSAGE_CAPACITY)
-                        .expect("the fixed message capacity fits in the wire field"),
-                    messages: self.messages.snapshot().map_err(message_snapshot_fault)?,
-                },
+                ViewSubject::Messages => {
+                    let snapshot = self
+                        .messages
+                        .initial_snapshot()
+                        .map_err(message_snapshot_fault)?;
+                    StreamFrame::Messages {
+                        v: WireVersion::CURRENT,
+                        id: *id,
+                        epoch: self.epoch,
+                        limit: u32::try_from(MESSAGE_CAPACITY)
+                            .expect("the fixed message capacity fits in the wire field"),
+                        messages: snapshot.messages,
+                        more: snapshot.more,
+                    }
+                }
                 ViewSubject::Facts | ViewSubject::Trust => {
                     subscription.page(self, subject, None, *id)?
                 }
@@ -187,6 +197,44 @@ impl Source {
             id: *id,
             epoch: self.epoch,
             packed: present_facts(packed),
+        })
+    }
+
+    /// Answer one member-local retained transcript history request.
+    pub fn message_history(
+        &self,
+        accepted: &Accepted,
+        request: &StreamRequest,
+    ) -> Result<StreamFrame, Failure> {
+        request.admit(self.epoch).map_err(Failure::admission)?;
+        let StreamRequest::MessageHistory {
+            id, lane, before, ..
+        } = request
+        else {
+            return Err(Failure::Refusal(refusal(
+                "stream::message-history-required",
+                "send one message-history request",
+            )));
+        };
+        admit_subject(&accepted.actor, ViewSubject::Messages)?;
+        let page = self
+            .messages
+            .history(*lane, *before)
+            .map_err(message_snapshot_fault)?
+            .ok_or_else(|| {
+                Failure::Refusal(refusal(
+                    "stream::message-cursor-unknown",
+                    "the lane does not retain the requested oldest message",
+                ))
+            })?;
+        Ok(StreamFrame::MessageHistory {
+            v: WireVersion::CURRENT,
+            id: *id,
+            epoch: self.epoch,
+            lane: *lane,
+            before: *before,
+            more: page.more,
+            messages: page.messages,
         })
     }
 
@@ -684,7 +732,7 @@ mod tests {
                 &request(0xc4, vec![ViewSubject::Messages], None),
             )
             .expect("message subscription begins");
-        let StreamFrame::Messages { messages, .. } = &frames[0] else {
+        let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
             panic!("expected retained message snapshot")
         };
         assert_eq!(
@@ -692,8 +740,9 @@ mod tests {
                 .iter()
                 .filter(|message| message.activity.is_prose())
                 .count(),
-            MESSAGE_CAPACITY,
+            INITIAL_MESSAGE_LIMIT,
         );
+        assert_eq!(more, &[message(0xe5, 0).lane]);
         assert_eq!(
             messages
                 .iter()

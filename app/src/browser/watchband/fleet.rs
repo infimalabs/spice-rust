@@ -147,8 +147,14 @@ pub(super) fn render_populated_fleet(
                             render,
                         )}
                         <div class="team-pane" data-team-mode={mode.label()}>
-                            {match mode {
-                                LineageMode::Compose => render_compose(
+                            <div
+                                class="team-mode-pane"
+                                data-mode="Compose"
+                                data-active={(mode == LineageMode::Compose).to_string()}
+                                aria-hidden={(mode != LineageMode::Compose).to_string()}
+                                inert={(mode != LineageMode::Compose).then_some("true")}
+                            >
+                                {render_compose(
                                     render.runtime,
                                     lineage,
                                     &lineage_standings,
@@ -163,36 +169,33 @@ pub(super) fn render_populated_fleet(
                                     render.lineage_controls,
                                     render.can_configure,
                                     render.controls,
-                                ),
-                                LineageMode::Tasks => html! {
-                                    <>
-                                        {view::chrome::render_lineage_ticker(
-                                            render.runtime,
-                                            lineage,
-                                        )}
-                                        {render_tasks(
+                                )}
+                            </div>
+                            if mode != LineageMode::Compose {
+                                <div
+                                    class="team-mode-pane"
+                                    data-mode={mode.label()}
+                                    data-active="true"
+                                    aria-hidden="false"
+                                >
+                                    {view::chrome::render_lineage_ticker(render.runtime, lineage)}
+                                    {match mode {
+                                        LineageMode::Tasks => render_tasks(
                                             render.runtime,
                                             lineage,
                                             &lineage_standings,
-                                        )}
-                                    </>
-                                },
-                                LineageMode::Metrics | LineageMode::Info => html! {
-                                    <>
-                                        {view::chrome::render_lineage_ticker(
-                                            render.runtime,
-                                            lineage,
-                                        )}
-                                        {render_details(
+                                        ),
+                                        LineageMode::Metrics | LineageMode::Info => render_details(
                                             render.runtime,
                                             lineage,
                                             &lineage_standings,
                                             mode,
                                             render.controls,
-                                        )}
-                                    </>
-                                },
-                            }}
+                                        ),
+                                        LineageMode::Compose => Html::default(),
+                                    }}
+                                </div>
+                            }
                         </div>
                     </section>
                 }

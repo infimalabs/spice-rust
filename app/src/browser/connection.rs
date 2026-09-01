@@ -387,6 +387,19 @@ async fn dispatch_action(
         }
         ClientAction::Refresh => send_refresh(principal, writer, pending, submissions).await,
         ClientAction::Effort => send_effort(principal, writer, pending).await,
+        ClientAction::MessageHistory { lane, before } => {
+            send_stream_request(
+                writer,
+                &StreamRequest::MessageHistory {
+                    v: WireVersion::CURRENT,
+                    id: random_uuid()?,
+                    epoch: principal.epoch(),
+                    lane,
+                    before,
+                },
+            )
+            .await
+        }
         ClientAction::Seat {
             topology_revision,
             name,

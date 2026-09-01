@@ -12,7 +12,8 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const artifacts = join(root, "artifacts/canvas");
 const agentGeometryOwners = Object.freeze({
-  activity: ':scope > .team-pane[data-team-mode="Compose"] > .team-compose > .team-activity-grid',
+  activity: ':scope > .team-pane[data-team-mode="Compose"] '
+    + '> .team-mode-pane[data-mode="Compose"] > .team-compose > .team-activity-grid',
   committedCard: ':scope > .lane-mosaic-plane > .mosaic-message-card[data-layout-phase="committed"]',
   emptyActivity: ":scope > .mosaic-message-empty",
   emptyFleet: ':scope > .team-pane[data-team-mode="Compose"] > .empty',

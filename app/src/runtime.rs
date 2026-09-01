@@ -473,6 +473,8 @@ pub struct CanvasRuntime {
     operator_messages: Vec<OperatorMessage>,
     /// Absent until the retained message page announces its exact capacity.
     message_limit: Option<usize>,
+    /// Member lanes whose retained history extends behind the visible oldest card.
+    message_history_more: BTreeSet<CanonicalUuid>,
     thread_pages: Vec<BrowserState<FactRow>>,
     facts: BrowserState<FactRow>,
     thread: BrowserState<FactRow>,
@@ -503,6 +505,7 @@ impl CanvasRuntime {
             messages: Vec::new(),
             operator_messages: Vec::new(),
             message_limit: None,
+            message_history_more: BTreeSet::new(),
             thread_pages: Vec::new(),
             facts: BrowserState::new(accepted),
             thread: BrowserState::new(accepted),
@@ -586,6 +589,12 @@ impl CanvasRuntime {
             epoch: self.principal.epoch(),
             seq,
         })
+    }
+
+    /// Whether one member can request another retained history page.
+    #[must_use]
+    pub fn message_history_more(&self, lane: CanonicalUuid) -> bool {
+        self.message_history_more.contains(&lane)
     }
 
     #[must_use]
