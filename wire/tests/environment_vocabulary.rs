@@ -42,12 +42,13 @@ struct EnvironmentPolicy {
 /// The workspace-test coordinator also passes its writable fixture root and
 /// shared-output authority while compiling tests from an immutable selected
 /// tree. The generated-hook process fixture contributes three private log and
-/// exit-control names, and the installed pre-commit launcher contributes its
-/// private appliance marker. Those references oblige the ledger to account all
-/// twenty original names. Compiler-receipt admission also observes six
-/// operational launcher and fixture names which remain outside the typed
-/// product-variable vocabulary. RTK's upstream history override is the
-/// twenty-eighth foreign name. The Bash and zsh startup selectors are the final
+/// exit-control names, the pre-commit parent fixture contributes three private
+/// role, root, and socket names, and the installed pre-commit launcher
+/// contributes its private appliance marker. Those references oblige the ledger
+/// to account all twenty-three original names. Compiler-receipt admission also
+/// observes six operational launcher and fixture names which remain outside the
+/// typed product-variable vocabulary. RTK's upstream history override is the
+/// thirty-first foreign name. The Bash and zsh startup selectors are the final
 /// two foreign names. All are named here rather than added to
 /// [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
@@ -77,7 +78,6 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "SPICE_LANE",                                   // env-policy: allow
     "SPICE_MOUNTED_COMMAND",                        // env-policy: allow
     "SPICE_NATIVE_SHELL",                           // env-policy: allow
-    "SPICE_PRE_COMMIT_PARENT_TEST_EXE",             // env-policy: allow
     "SPICE_PRE_COMMIT_PARENT_TEST_ROLE",            // env-policy: allow
     "SPICE_PRE_COMMIT_PARENT_TEST_ROOT",            // env-policy: allow
     "SPICE_PRE_COMMIT_PARENT_TEST_SOCKET",          // env-policy: allow
