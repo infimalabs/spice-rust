@@ -141,6 +141,20 @@ pub(crate) enum CurrentSourceSelectionReport {
 
 pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
     let supervised = configured_selection_progress();
+    let _containment = if supervised {
+        match gate::measure::inherit_process_group() {
+            Ok(containment) => Some(containment),
+            Err(detail) => {
+                return Outcome::Fault(Fault {
+                    class: FaultClass::Environment,
+                    reason: "gate::selection-containment-unavailable".to_owned(),
+                    detail: detail.to_owned(),
+                });
+            }
+        }
+    } else {
+        None
+    };
     let mut progress = SelectionProgress::new(supervised);
     match spice::change_gate::run_current_source(&mut progress) {
         Ok(report) if report.admits() && supervised => {

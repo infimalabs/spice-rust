@@ -83,6 +83,7 @@ fn rust_typecheck_with_workspace(
     let analysis = match rust_environment(cargo, &workspace, resources.environment()) {
         Err(reason) => Analysis::terminal(ArmOutcome::ParseFailure, reason),
         Ok(environment) => {
+            let compiler_bounds = bounds.without_runtime_deadline_under_outer_supervisor();
             let reach = crate::workspace_tests::workspace_package_reach_at(
                 &workspace.source,
                 base,
@@ -117,7 +118,7 @@ fn rust_typecheck_with_workspace(
                             declaration.id,
                             &workspace.source,
                             invocation,
-                            bounds,
+                            &compiler_bounds,
                             &environment,
                             |code, message| FindingDetail::RustTypeOutput { code, message },
                             wait.clone(),
@@ -148,7 +149,7 @@ fn rust_typecheck_with_workspace(
                         )
                     });
                     if observed_units > 0 {
-                        analysis.timed(timing(elapsed, bounds, observed_units))
+                        analysis.timed(timing(elapsed, &compiler_bounds, observed_units))
                     } else {
                         analysis
                     }
@@ -535,8 +536,10 @@ fn rust_environment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use std::thread;
 
+    use crate::measure::inherit_process_group;
     use crate::toolchain::{ArmFinding, GateId, declaration, exclusive_scratch_root};
     use sill::{Cancellation, CancellationToken, Deadlines, RestartDisposition, WaitPolicy};
 
@@ -852,11 +855,15 @@ mod tests {
         }
 
         fn sleeping_cargo(&self, label: &str) -> PathBuf {
+            self.sleeping_cargo_for(label, "5")
+        }
+
+        fn sleeping_cargo_for(&self, label: &str, seconds: &str) -> PathBuf {
             let path = self.root.join(label);
             let cargo = env!("CARGO");
             assert!(
-                !cargo.contains('\''),
-                "fixture Cargo path must be shell-safe"
+                !cargo.contains('\'') && !seconds.contains('\''),
+                "fixture Cargo path and duration must be shell-safe"
             );
             fs::write(
                 &path,
@@ -866,9 +873,10 @@ mod tests {
                         "if [ \"$1\" = metadata ]; then\n",
                         "  exec '{cargo}' \"$@\"\n",
                         "fi\n",
-                        "/bin/sleep 5\n",
+                        "/bin/sleep '{seconds}'\n",
                     ),
                     cargo = cargo,
+                    seconds = seconds,
                 ),
             )
             .expect("write sleeping Cargo");
@@ -1015,6 +1023,56 @@ mod tests {
         let timing = analysis.timing.expect("a timed-out compiler reports time");
         assert!(timing.elapsed_ms > 0);
         assert!(timing.elapsed_ms <= timing.observation_bound_ms);
+    }
+
+    const OUTER_SUPERVISOR_FIXTURE: &str =
+        "toolchain::analyze::rust::tests::outer_supervisor_owns_native_runtime_fixture";
+
+    #[test]
+    fn outer_supervisor_owns_native_runtime_beyond_inner_bound() {
+        let output = Command::new(std::env::current_exe().expect("current gate test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                OUTER_SUPERVISOR_FIXTURE,
+                "--nocapture",
+            ])
+            .output()
+            .expect("launch isolated outer-supervisor fixture");
+
+        assert!(
+            output.status.success(),
+            "outer-supervisor fixture failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture isolates process-global pre-commit containment"]
+    fn outer_supervisor_owns_native_runtime_fixture() {
+        let _containment =
+            inherit_process_group().expect("isolated fixture enters pre-commit containment");
+        let fixture = RustFixture::new("outer-supervisor-runtime");
+        fixture.source(REMOVED_PLANT);
+        let cargo = fixture.sleeping_cargo_for("cargo-slow-clean", "1");
+        let bounds = rust_bounds_with_runtime(Duration::from_millis(25));
+
+        let analysis = fixture.analyze_with(
+            cargo.to_str().expect("sleeping Cargo path is UTF-8"),
+            &bounds,
+            None,
+        );
+
+        assert_eq!(analysis.outcome, ArmOutcome::Passed);
+        let timing = analysis
+            .timing
+            .expect("the completed compiler reports its outliving wall time");
+        assert!(
+            timing.elapsed_ms >= milliseconds(Duration::from_secs(1)),
+            "timing={timing:?}"
+        );
+        assert_eq!(timing.observation_bound_ms, u64::MAX);
     }
 
     #[test]

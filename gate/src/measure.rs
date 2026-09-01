@@ -174,6 +174,27 @@ impl Bounds {
         self.capture
     }
 
+    /// Remove the child runtime deadline when an outer supervisor owns it.
+    ///
+    /// The inherited process-group scope is entered only by the isolated
+    /// pre-commit worker. Its supervisor already bounds and terminates the
+    /// worker's complete descendant group, so a second wall-clock decision in
+    /// a long-running child can only misclassify machine delay as source
+    /// evidence. Ordinary callers retain this value unchanged.
+    pub(crate) fn without_runtime_deadline_under_outer_supervisor(&self) -> Self {
+        if !INHERIT_PROCESS_GROUP.load(Ordering::Acquire) {
+            return self.clone();
+        }
+        let mut supervised = self.clone();
+        supervised.deadlines = Deadlines::new(
+            Duration::MAX,
+            self.deadlines.output_drain(),
+            self.deadlines.reap(),
+        )
+        .expect("existing nonzero drain and reap deadlines remain valid");
+        supervised
+    }
+
     /// Canonical declaration of every process bound.
     #[must_use]
     pub fn render(&self) -> String {
