@@ -62,10 +62,13 @@
   margin: 6px 0; padding: var(--mosaic-quote-pad-block) var(--mosaic-quote-inline);
   border-left: var(--mosaic-quote-rail) solid color-mix(in srgb, var(--accent) 72%, var(--line));
   background: color-mix(in srgb, var(--accent) 8%, var(--panel)); color: var(--muted);
+  /* Drop the quote tier once; nested rails inherit this size without compounding it. */
+  font-size: .8125rem; line-height: 1.34;
 }
 .markdown-body blockquote blockquote {
   margin: 6px 0 6px var(--mosaic-quote-indent);
   padding-inline: var(--mosaic-quote-nested-inline);
+  font-size: inherit;
   border-left-color: color-mix(in srgb, var(--accent) 88%, white); background: color-mix(in srgb, var(--accent) 12%, var(--panel));
 }
 .markdown-body blockquote blockquote blockquote {
