@@ -92,6 +92,30 @@ export async function appendPrimaryCompactionBoundary(fixture) {
   return { transcript, offset, length: record.length };
 }
 
+/// Trigger one exact assistant record through the running fixture vendor.
+export async function triggerPrimaryAgentProse(worktree, text, timestamp = null) {
+  const record = {
+    timestamp: timestamp ?? new Date().toISOString(),
+    type: "assistant",
+    message: {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text }],
+      usage: {
+        input_tokens: 1,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        output_tokens: 1,
+      },
+    },
+  };
+  await writeFile(
+    join(worktree, ".spice-authored-prose-trigger"),
+    `${JSON.stringify(record)}\n`,
+  );
+  return { text, timestamp: record.timestamp };
+}
+
 function waitForDiscovery(child, canvas, timeout = 30_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
@@ -341,6 +365,10 @@ export async function configureFixture(
     "    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')",
     `    printf '{"timestamp":"%s",%s\\n' "$timestamp" '${triggeredActivityTail}'`,
     "  fi",
+    "  if [ -f .spice-authored-prose-trigger ]; then",
+    "    cat .spice-authored-prose-trigger",
+    "    rm -f .spice-authored-prose-trigger",
+    "  fi",
     "  if [ -f .spice-ack-trigger ]; then",
     "    key=$(cat .spice-ack-trigger)",
     "    rm -f .spice-ack-trigger",
@@ -382,6 +410,7 @@ export async function configureFixture(
       "dist/stage-app",
       ".spice-tool-trigger",
       ".spice-prose-trigger",
+      ".spice-authored-prose-trigger",
       ".spice-ack-trigger",
       VENDOR_PID_LEDGER,
       "",
