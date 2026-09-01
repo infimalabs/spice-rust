@@ -19,6 +19,8 @@ async function observeQuoteCard(card) {
       return {
         borderLeft: number(style.borderLeftWidth),
         clientWidth: quote.clientWidth,
+        fontSize: number(style.fontSize),
+        lineHeight: number(style.lineHeight),
         marginBottom: number(style.marginBottom),
         marginTop: number(style.marginTop),
         paddingBottom: number(style.paddingBottom),
@@ -31,9 +33,14 @@ async function observeQuoteCard(card) {
         width: box.width,
       };
     });
-    const paragraphs = [...element.querySelectorAll("blockquote p")].map((paragraph) => ({
-      marginBottom: number(getComputedStyle(paragraph).marginBottom),
-    }));
+    const paragraphs = [...element.querySelectorAll("blockquote p")].map((paragraph) => {
+      const style = getComputedStyle(paragraph);
+      return {
+        fontSize: number(style.fontSize),
+        lineHeight: number(style.lineHeight),
+        marginBottom: number(style.marginBottom),
+      };
+    });
     const lists = [...element.querySelectorAll("blockquote ul, blockquote ol")].map((list) => {
       const style = getComputedStyle(list);
       return {
@@ -41,6 +48,17 @@ async function observeQuoteCard(card) {
         paddingLeft: number(style.paddingLeft),
       };
     });
+    const body = element.querySelector(".markdown-body");
+    const bodyStyle = getComputedStyle(body);
+    const outsideParagraphs = [...body.children]
+      .filter((child) => child.tagName === "P")
+      .map((paragraph) => {
+        const style = getComputedStyle(paragraph);
+        return {
+          fontSize: number(style.fontSize),
+          lineHeight: number(style.lineHeight),
+        };
+      });
     return {
       card: {
         clientHeight: element.clientHeight,
@@ -56,6 +74,12 @@ async function observeQuoteCard(card) {
       },
       paragraphs,
       lists,
+      typography: {
+        bodyFontSize: number(bodyStyle.fontSize),
+        codeFontSizes: [...element.querySelectorAll("blockquote code")]
+          .map((code) => number(getComputedStyle(code).fontSize)),
+        outsideParagraphs,
+      },
       quotes,
     };
   });
@@ -69,6 +93,10 @@ export async function assertQuoteBlockDensity(cards, label) {
     observations[kind] = observed;
     assert.ok(observed.quotes.length >= 2, `${label} ${kind} preserves nested quote depth`);
     assert.ok(
+      observed.typography.outsideParagraphs.length > 0,
+      `${label} ${kind} retains prose outside its quote stack`,
+    );
+    assert.ok(
       observed.card.scrollWidth <= observed.card.clientWidth + 1,
       `${label} ${kind} card has no horizontal overflow: ${JSON.stringify(observed.card)}`,
     );
@@ -78,6 +106,14 @@ export async function assertQuoteBlockDensity(cards, label) {
     );
     for (const [index, quote] of observed.quotes.entries()) {
       assert.ok(near(quote.borderLeft, 3), `${label} ${kind} quote ${index} keeps a 3px rail`);
+      assert.ok(
+        near(quote.fontSize, 13) && quote.fontSize < observed.typography.bodyFontSize,
+        `${label} ${kind} quote ${index} is one compact 13px tier: ${quote.fontSize}`,
+      );
+      assert.ok(
+        near(quote.fontSize, observed.quotes[0].fontSize),
+        `${label} ${kind} quote ${index} does not recursively shrink: ${quote.fontSize}`,
+      );
       assert.ok(
         index === 0
           ? quote.marginTop >= 0 && quote.marginTop <= 6 + PIXEL_TOLERANCE
@@ -102,8 +138,22 @@ export async function assertQuoteBlockDensity(cards, label) {
           `${label} ${kind} quote ${index} retains usable line width`);
       }
     }
-    assert.ok(observed.paragraphs.every(({ marginBottom }) => marginBottom <= 6 + PIXEL_TOLERANCE),
+    assert.ok(observed.paragraphs.every(({ fontSize, lineHeight, marginBottom }) => (
+      near(fontSize, 13) &&
+      lineHeight < observed.typography.outsideParagraphs[0].lineHeight &&
+      marginBottom <= 6 + PIXEL_TOLERANCE
+    )),
       `${label} ${kind} quote paragraphs keep a six-pixel rhythm`);
+    assert.ok(
+      observed.typography.outsideParagraphs.every(({ fontSize }) => (
+        near(fontSize, observed.typography.bodyFontSize)
+      )),
+      `${label} ${kind} prose outside quotes retains the body type tier`,
+    );
+    assert.ok(
+      observed.typography.codeFontSizes.every((fontSize) => near(fontSize, 12)),
+      `${label} ${kind} quote code retains its 12px monospace tier`,
+    );
     assert.ok(observed.lists.every(({ marginBottom, paddingLeft }) => (
       marginBottom <= 6 + PIXEL_TOLERANCE && near(paddingLeft, 18)
     )), `${label} ${kind} quote lists stay compact`);
