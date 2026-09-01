@@ -137,11 +137,12 @@ Disposition: Irreducible glue.
 
 Reason: It receives the shell tool's complete argument vector before the native
 command shell exists, then replaces itself with `spice run` and the separately
-packaged inner stage. When the configured RTK executable passed launch-time
-health admission, `spice run` first gives it the complete top-level command;
-every unusable rewrite answer reports a degradation and runs the original argv
-unchanged. Inactive health leaves native argv outside the per-command selector.
-A Rust child cannot replace the shell process that chose to start it.
+packaged inner stage. When the configured RTK executable can be launched,
+`spice run` first gives it the complete top-level command through this hook;
+every unusable rewrite answer reports a command-local degradation and runs the
+original argv unchanged. Only an unlaunchable executable removes the selector
+from the lane. A Rust child cannot replace the shell process that chose to
+start it.
 
 ## `steer/hooks/static/stage.sh`
 

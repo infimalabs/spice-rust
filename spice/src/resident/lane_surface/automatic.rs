@@ -459,12 +459,12 @@ fn commit_automatic_wake(
 
 #[cfg(test)]
 mod tests {
-    use super::super::launch::test_support::{InactiveRtkFixture, assert_obsolete_health};
+    use super::super::launch::test_support::{AdvisoryRtkFixture, assert_advisory_health};
     use super::*;
 
     #[test]
-    fn automatic_wake_commits_inactive_rtk_for_capability_free_readback_without_reprobe() {
-        let fixture = InactiveRtkFixture::new();
+    fn automatic_wake_commits_advisory_rtk_for_capability_free_readback_without_reprobe() {
+        let fixture = AdvisoryRtkFixture::new();
         let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
             .expect("fixture bus starts");
         seed_vacant_lane(&bus, &fixture, "drive");
@@ -488,20 +488,20 @@ mod tests {
             None,
             None,
         )
-        .expect("automatic inactive-RTK launch commits");
+        .expect("automatic advisory-RTK launch commits");
 
         match result {
             AutomaticWake::Started => {}
             AutomaticWake::Unstarted(outcome) => {
-                panic!("automatic inactive-RTK launch did not start: {outcome:?}")
+                panic!("automatic advisory-RTK launch did not start: {outcome:?}")
             }
         }
-        fixture.assert_occupant_started_without_rtk();
+        fixture.assert_occupant_started_with_rtk();
         fixture.assert_one_configured_probe_from_launch_worktree();
         let residency = current_residency(&bus, fixture.epoch).expect("committed residency reads");
         let answer = answer(residency.body(), None, &seats).expect("capability-free lane readback");
         let row = answer.lanes.first().expect("automatic lane projects");
-        assert_obsolete_health(row.rtk.as_ref().expect("readback retains RTK health"));
+        assert_advisory_health(row.rtk.as_ref().expect("readback retains RTK health"));
         let encoded = serde_json::to_string(&answer).expect("lane readback encodes");
         assert!(
             !encoded.contains(&fixture.capability.to_string()),
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn explicit_wake_starts_an_already_seated_drain_lane() {
-        let fixture = InactiveRtkFixture::new();
+        let fixture = AdvisoryRtkFixture::new();
         let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
             .expect("fixture bus starts");
         seed_vacant_lane(&bus, &fixture, "drain");
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn automatic_wake_refuses_an_already_seated_drain_lane() {
-        let fixture = InactiveRtkFixture::new();
+        let fixture = AdvisoryRtkFixture::new();
         let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
             .expect("fixture bus starts");
         seed_vacant_lane(&bus, &fixture, "drain");
@@ -599,7 +599,7 @@ mod tests {
     }
 
     fn admitted_operator_wake(
-        fixture: &InactiveRtkFixture,
+        fixture: &AdvisoryRtkFixture,
         request: &LaneState,
     ) -> wire::AdmittedCommand {
         Command {
@@ -618,7 +618,7 @@ mod tests {
         .expect("operator wake intent admits")
     }
 
-    fn seed_vacant_lane(bus: &Bus, fixture: &InactiveRtkFixture, life: &str) {
+    fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture, life: &str) {
         let mut write = write(Actor::Spice, fixture.epoch, Producer::CommandDoor)
             .expect("fixture write starts");
         let seated = write

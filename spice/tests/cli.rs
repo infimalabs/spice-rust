@@ -628,7 +628,7 @@ fn direct_zsh_and_bash_command_shells_cross_the_rtk_wrapper_once() {
                 "#!/bin/sh\n",
                 "printf '%s\\n' \"$*\" >> \"$RTK_DB_PATH\"\n",
                 "printf '%s\\n' 'printf rewritten'\n",
-                "exit 3\n",
+                "exit 73\n",
             ),
         )
         .expect("RTK fixture writes");
@@ -673,7 +673,7 @@ fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
     fs::write(
         &rtk,
         format!(
-            "#!/bin/sh\nprintf '%s\\n%s\\n' \"$*\" \"$RTK_DB_PATH\" > '{}'\nprintf '%s\\n' 'printf rewritten'\nexit 3\n",
+            "#!/bin/sh\nprintf '%s\\n%s\\n' \"$*\" \"$RTK_DB_PATH\" > '{}'\nprintf '%s\\n' 'printf rewritten'\nexit 73\n",
             calls.display()
         ),
     )
@@ -695,6 +695,54 @@ fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
         fs::read_to_string(&calls).expect("read RTK call"),
         format!("rewrite -- printf native\n{}\n", history.display())
     );
+
+    let attempts = scratch.path().join("rewrite-attempts");
+    let recovering = scratch.path().join("recovering-rtk");
+    fs::write(
+        &recovering,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "attempt=0\n",
+                "if [ -f '{}' ]; then attempt=$(cat '{}'); fi\n",
+                "attempt=$((attempt + 1))\n",
+                "printf '%s\\n' \"$attempt\" > '{}'\n",
+                "if [ \"$attempt\" -eq 1 ]; then\n",
+                "  printf '%s\\n' \"rtk 'unterminated\"\n",
+                "  exit 41\n",
+                "fi\n",
+                "printf '%s\\n' \"/bin/sh -c 'printf recovered; exit 23'\"\n",
+                "exit 97\n",
+            ),
+            attempts.display(),
+            attempts.display(),
+            attempts.display(),
+        ),
+    )
+    .expect("write recovering RTK fixture");
+    fs::set_permissions(&recovering, fs::Permissions::from_mode(0o700))
+        .expect("make recovering RTK fixture executable");
+
+    let degraded = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(["run", "--", "/bin/sh", "-c", "printf native"])
+        .env_remove(steer::hook::INBOX)
+        .env(spice::rtk::EXECUTABLE_VARIABLE, &recovering)
+        .output()
+        .expect("malformed rewrite degrades locally");
+    assert!(degraded.status.success());
+    assert_eq!(degraded.stdout, b"native");
+    assert!(String::from_utf8_lossy(&degraded.stderr).contains("degraded to native"));
+
+    let recovered = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(["run", "--", "/bin/sh", "-c", "printf native"])
+        .env_remove(steer::hook::INBOX)
+        .env(spice::rtk::EXECUTABLE_VARIABLE, &recovering)
+        .output()
+        .expect("later nonzero rewrite remains eligible");
+    assert_eq!(recovered.status.code(), Some(23));
+    assert_eq!(recovered.stdout, b"recovered");
+    assert!(recovered.stderr.is_empty());
+    assert_eq!(fs::read_to_string(&attempts).expect("read attempts"), "2\n");
 
     let missing = scratch.path().join("missing-rtk");
     let native = Command::new(env!("CARGO_BIN_EXE_spice"))

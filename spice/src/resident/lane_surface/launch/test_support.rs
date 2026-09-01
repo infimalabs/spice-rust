@@ -13,7 +13,7 @@ use super::*;
 pub(in crate::resident) const SESSION: &str = "018f7777-7777-7444-8888-999999999999";
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
-pub(in crate::resident) struct InactiveRtkFixture {
+pub(in crate::resident) struct AdvisoryRtkFixture {
     pub(in crate::resident) root: PathBuf,
     pub(in crate::resident) paths: RuntimePaths,
     pub(in crate::resident) epoch: CanonicalUuid,
@@ -25,10 +25,10 @@ pub(in crate::resident) struct InactiveRtkFixture {
     occupant_environment: PathBuf,
 }
 
-impl InactiveRtkFixture {
+impl AdvisoryRtkFixture {
     pub(in crate::resident) fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
-            "spice-resident-inactive-rtk-{}-{}",
+            "spice-resident-advisory-rtk-{}-{}",
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
         ));
@@ -36,19 +36,19 @@ impl InactiveRtkFixture {
         let root = fs::canonicalize(root).expect("fixture root canonicalizes");
         fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = \"resident-inactive-rtk\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+            "[package]\nname = \"resident-advisory-rtk\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
         )
         .expect("fixture manifest writes");
         fs::write(
             root.join("Cargo.lock"),
-            "version = 4\n\n[[package]]\nname = \"resident-inactive-rtk\"\nversion = \"0.0.0\"\n",
+            "version = 4\n\n[[package]]\nname = \"resident-advisory-rtk\"\nversion = \"0.0.0\"\n",
         )
         .expect("fixture lockfile writes");
         fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture source writes");
         fs::create_dir(root.join(".git")).expect("fixture Git directory creates");
 
         let probe_log = root.join("rtk-probes");
-        let rtk = root.join("obsolete-rtk");
+        let rtk = root.join("advisory-rtk");
         fs::write(
             &rtk,
             format!(
@@ -58,7 +58,7 @@ impl InactiveRtkFixture {
                     "printf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\n",
                     "if [ \"$#\" -eq 1 ] && [ \"$1\" = --version ]; then\n",
                     "  printf '%s\\n' 'rtk 0.44.9'\n",
-                    "  exit 0\n",
+                    "  exit 73\n",
                     "fi\n",
                     "exit 91\n",
                 ),
@@ -79,9 +79,10 @@ impl InactiveRtkFixture {
                     "if [ \"${{SPICE_RS_RTK_EXECUTABLE+x}}\" = x ] || ",
                     "[ \"${{RTK_DB_PATH+x}}\" = x ]; then\n",
                     "  printf '%s\\n' present > '{}'\n",
+                    "else\n",
+                    "  printf '%s\\n' absent > '{}'\n",
                     "  exit 92\n",
                     "fi\n",
-                    "printf '%s\\n' absent > '{}'\n",
                     "printf '%s\\n' '",
                     "{{\"type\":\"system\",\"subtype\":\"init\",",
                     "\"session_id\":\"{}\"}}'\n",
@@ -148,11 +149,11 @@ impl InactiveRtkFixture {
         );
     }
 
-    pub(in crate::resident) fn assert_occupant_started_without_rtk(&self) {
+    pub(in crate::resident) fn assert_occupant_started_with_rtk(&self) {
         assert_eq!(
             fs::read_to_string(&self.occupant_environment)
                 .expect("occupant published its environment verdict"),
-            "absent\n"
+            "present\n"
         );
     }
 
@@ -172,16 +173,19 @@ impl InactiveRtkFixture {
     }
 }
 
-impl Drop for InactiveRtkFixture {
+impl Drop for AdvisoryRtkFixture {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).expect("inactive RTK fixture removes");
+        fs::remove_dir_all(&self.root).expect("advisory RTK fixture removes");
     }
 }
 
-pub(in crate::resident) fn assert_obsolete_health(health: &wire::body::RtkHealth) {
-    assert_eq!(health.state(), wire::body::RtkHealthState::Obsolete);
+pub(in crate::resident) fn assert_advisory_health(health: &wire::body::RtkHealth) {
+    assert_eq!(health.state(), wire::body::RtkHealthState::Active);
     assert_eq!(health.version(), Some("0.44.9"));
-    assert_eq!(health.detail(), "RTK 0.44.9 is older than required 0.45.0");
+    assert_eq!(
+        health.detail(),
+        "executable launched as RTK 0.44.9 with exit 73; rewrites are validated per command"
+    );
     assert!(health.detail().chars().count() <= 1024);
 }
 
