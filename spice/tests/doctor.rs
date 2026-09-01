@@ -333,7 +333,7 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
     // accounts the ones its fixtures, Git shadow, and predecessor development
     // bridge use. The gate's name ledger is pinned separately in
     // wire/tests/environment_vocabulary.rs.
-    const UNOWNED: [&str; 30] = [
+    const UNOWNED: [&str; 34] = [
         "BASH_ENV",                                     // env-policy: allow
         "GIT_CONFIG_COUNT",                             // env-policy: allow
         "GIT_CONFIG_SYSTEM",                            // env-policy: allow
@@ -353,6 +353,10 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
         "SPICE_LANE",                                   // env-policy: allow
         "SPICE_MOUNTED_COMMAND",                        // env-policy: allow
         "SPICE_NATIVE_SHELL",                           // env-policy: allow
+        "SPICE_PRE_COMMIT_PARENT_TEST_EXE",             // env-policy: allow
+        "SPICE_PRE_COMMIT_PARENT_TEST_ROLE",            // env-policy: allow
+        "SPICE_PRE_COMMIT_PARENT_TEST_ROOT",            // env-policy: allow
+        "SPICE_PRE_COMMIT_PARENT_TEST_SOCKET",          // env-policy: allow
         "SPICE_PROOF",                                  // env-policy: allow
         "SPICE_RUNTIME_PYTHON",                         // env-policy: allow
         "SPICE_SELFEXEC_ROOT",                          // env-policy: allow

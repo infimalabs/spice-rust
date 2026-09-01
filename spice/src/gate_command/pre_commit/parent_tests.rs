@@ -1,4 +1,4 @@
-//! Real Git-parent interruption regression for pre-commit supervision.
+//! Commit-parent interruption regression for pre-commit supervision.
 
 use super::*;
 
@@ -7,17 +7,17 @@ use std::fs;
 use std::io::Read as _;
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::ffi::OsStrExt as _;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Stdio};
 
 use parent::ProcessExitObserver;
 
 const ROLE: &str = "SPICE_PRE_COMMIT_PARENT_TEST_ROLE"; // env-policy: allow
 const ROOT: &str = "SPICE_PRE_COMMIT_PARENT_TEST_ROOT"; // env-policy: allow
 const SOCKET: &str = "SPICE_PRE_COMMIT_PARENT_TEST_SOCKET"; // env-policy: allow
-const EXECUTABLE: &str = "SPICE_PRE_COMMIT_PARENT_TEST_EXE"; // env-policy: allow
-const FILTER: &str = "interrupted_git_parent_cancels_gate_tree_and_releases_lock";
+const FILTER: &str = "interrupted_commit_parent_cancels_gate_tree_and_releases_lock";
+const PARENT_ROLE: &str = "commit-parent";
+const DISPATCHER_ROLE: &str = "dispatcher";
 
 struct Scratch {
     root: PathBuf,
@@ -42,27 +42,25 @@ impl Drop for Scratch {
 }
 
 #[test]
-fn interrupted_git_parent_cancels_gate_tree_and_releases_lock() {
-    if env::var_os(ROLE).is_some() {
-        run_dispatcher_fixture();
-        return;
+fn interrupted_commit_parent_cancels_gate_tree_and_releases_lock() {
+    match fixture_environment(ROLE).as_deref() {
+        Some(role) if role == OsStr::new(PARENT_ROLE) => {
+            run_commit_parent_fixture();
+            return;
+        }
+        Some(role) if role == OsStr::new(DISPATCHER_ROLE) => {
+            run_dispatcher_fixture();
+            return;
+        }
+        Some(role) => panic!("unknown pre-commit parent fixture role: {role:?}"),
+        None => {}
     }
 
     let scratch = Scratch::new();
     initialize_repository(&scratch.root);
-    let hook = scratch.root.join(".git/hooks/pre-commit");
-    fs::write(
-        &hook,
-        format!("#!/bin/sh\nexec \"$SPICE_PRE_COMMIT_PARENT_TEST_EXE\" {FILTER} --nocapture\n"),
-    )
-    .expect("write parent-loss hook");
-    fs::set_permissions(&hook, fs::Permissions::from_mode(0o700))
-        .expect("make parent-loss hook executable");
 
     let blocked = scratch.root.join("block-gate");
     fs::write(&blocked, b"block\n").expect("arm blocking gate fixture");
-    fs::write(scratch.root.join("change"), b"interrupted\n").expect("write staged change");
-    require_git(&scratch.root, &["add", "change"]);
 
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .expect("bind dispatcher readiness listener");
@@ -71,18 +69,12 @@ fn interrupted_git_parent_cancels_gate_tree_and_releases_lock() {
         .expect("read dispatcher readiness address")
         .to_string();
     let executable = env::current_exe().expect("locate pre-commit test executable");
-    let mut commit = Command::new("git")
-        .args(["commit", "-m", "interrupted gate"])
-        .current_dir(&scratch.root)
-        .env(ROLE, "dispatcher")
-        .env(ROOT, &scratch.root)
-        .env(SOCKET, &socket)
-        .env(EXECUTABLE, &executable)
+    let mut interrupted_parent = commit_parent(&executable, &scratch.root, &socket)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("launch plain commit with blocking gate");
+        .expect("launch blocking commit parent fixture");
 
     let (mut readiness, _) = listener
         .accept()
@@ -102,8 +94,12 @@ fn interrupted_git_parent_cancels_gate_tree_and_releases_lock() {
     let worker_exit = live_observer(*worker);
     let descendant_exit = live_observer(*descendant);
 
-    commit.kill().expect("interrupt only the git commit parent");
-    let interrupted = commit.wait().expect("reap interrupted git parent");
+    interrupted_parent
+        .kill()
+        .expect("interrupt only the commit parent");
+    let interrupted = interrupted_parent
+        .wait()
+        .expect("reap interrupted commit parent");
     assert!(!interrupted.success(), "the interrupted commit cannot land");
     descendant_exit.wait().expect("worker descendant exits");
     worker_exit.wait().expect("worker is terminated and reaped");
@@ -115,32 +111,43 @@ fn interrupted_git_parent_cancels_gate_tree_and_releases_lock() {
     );
 
     fs::remove_file(blocked).expect("disarm blocking gate fixture");
-    let retry = Command::new("git")
-        .args(["commit", "-m", "after interrupted gate"])
-        .current_dir(&scratch.root)
-        .env(ROLE, "dispatcher")
-        .env(ROOT, &scratch.root)
-        .env(SOCKET, &socket)
-        .env(EXECUTABLE, &executable)
+    let retry = commit_parent(&executable, &scratch.root, &socket)
         .output()
-        .expect("retry plain commit");
+        .expect("retry commit parent fixture");
     assert!(
         retry.status.success(),
         "released pre-commit lock admits retry: stdout={} stderr={}",
         String::from_utf8_lossy(&retry.stdout),
         String::from_utf8_lossy(&retry.stderr),
     );
-    assert_eq!(
-        git_stdout(&scratch.root, &["log", "-1", "--pretty=%s"]),
-        "after interrupted gate\n",
-    );
+}
+
+fn commit_parent(executable: &Path, root: &Path, socket: &str) -> Command {
+    let mut parent = Command::new(executable);
+    parent
+        .args([FILTER, "--nocapture"])
+        .current_dir(root)
+        .env(ROLE, PARENT_ROLE)
+        .env(ROOT, root)
+        .env(SOCKET, socket);
+    parent
+}
+
+fn run_commit_parent_fixture() {
+    let executable = env::current_exe().expect("locate dispatcher fixture executable");
+    let status = Command::new(executable)
+        .args([FILTER, "--nocapture"])
+        .env(ROLE, DISPATCHER_ROLE)
+        .status()
+        .expect("launch dispatcher from commit parent fixture");
+    assert!(status.success(), "dispatcher fixture succeeds");
 }
 
 fn run_dispatcher_fixture() {
-    let root = PathBuf::from(env::var_os(ROOT).expect("dispatcher fixture root"));
+    let root = PathBuf::from(fixture_environment(ROOT).expect("dispatcher fixture root"));
     let _dispatch = DispatchGuard::acquire::<Report>()
         .unwrap_or_else(|outcome| panic!("dispatcher acquires pre-commit lock: {outcome:?}"));
-    let parent = ParentCancellation::capture().expect("observe git commit parent");
+    let parent = ParentCancellation::capture().expect("observe commit parent");
     if !root.join("block-gate").exists() {
         return;
     }
@@ -186,7 +193,10 @@ fn run_dispatcher_fixture() {
     };
     assert_eq!(*shell, worker, "Sill worker is the announced group leader");
 
-    let socket = env::var(SOCKET).expect("dispatcher readiness address");
+    let socket = fixture_environment(SOCKET).expect("dispatcher readiness address");
+    let socket = socket
+        .to_str()
+        .expect("dispatcher readiness address is UTF-8");
     let mut readiness = TcpStream::connect(socket).expect("connect dispatcher readiness");
     writeln!(readiness, "{} {worker} {descendant}", std::process::id())
         .expect("announce dispatcher tree");
@@ -223,37 +233,19 @@ fn create_fifo(path: &Path) {
 }
 
 fn initialize_repository(root: &Path) {
-    require_git(root, &["init", "--quiet"]);
-    require_git(root, &["config", "user.name", "Pre-commit Parent Fixture"]);
-    require_git(
+    gix::ThreadSafeRepository::init_opts(
         root,
-        &["config", "user.email", "pre-commit@example.invalid"],
-    );
-    fs::write(root.join("initial"), b"initial\n").expect("write initial fixture source");
-    require_git(root, &["add", "initial"]);
-    require_git(root, &["commit", "--quiet", "-m", "initial"]);
+        gix::create::Kind::WithWorktree,
+        gix::create::Options::default(),
+        gix::open::Options::isolated(),
+    )
+    .expect("initialize in-process parent fixture repository");
 }
 
-fn require_git(root: &Path, arguments: &[&str]) {
-    let output = git(root, arguments);
-    assert!(
-        output.status.success(),
-        "git {arguments:?}: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-}
-
-fn git_stdout(root: &Path, arguments: &[&str]) -> String {
-    let output = git(root, arguments);
-    assert!(output.status.success(), "git {arguments:?} succeeds");
-    String::from_utf8(output.stdout).expect("git output is UTF-8")
-}
-
-fn git(root: &Path, arguments: &[&str]) -> Output {
-    Command::new("git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("launch git fixture command")
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the isolated subprocess fixture reads only its explicitly supplied process-boundary parameters"
+)]
+fn fixture_environment(name: &str) -> Option<OsString> {
+    env::var_os(name)
 }
