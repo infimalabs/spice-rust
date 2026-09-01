@@ -8,6 +8,8 @@ import { assertAgentWorkspaceGeometry } from "./canvas-readiness.mjs";
 import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import {
   assertCompactionDivider,
+  assertNoUnavailableToolTerminal,
+  assertUnavailableToolTerminal,
   resizeCompactionViewport,
   waitForCompactionReady,
 } from "./compaction-boundary-reference.mjs";
@@ -32,6 +34,7 @@ const ARRIVAL_QUIET_MS = 500;
 const ARRIVAL_DEADLINE_MS = 15_000;
 const ARRIVAL_PROBE_MS = 125;
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const COMPACTED_TOOL_PREVIEW = "Bash: cargo test --locked -p spice";
 
 function mosaicCardCount(page) {
   return page.locator('[data-pane="agent-console"] .mosaic-message-card').count();
@@ -165,6 +168,40 @@ async function assertFirefoxImageFixture(fixture, label) {
     `${label} keeps image stacks inside their cards: ${JSON.stringify(observed)}`);
 }
 
+async function assertFirefoxCompactionBoundaries(console, label, expectedAttribution) {
+  const boundaries = console.locator('[data-card-kind="compaction"]');
+  const unresolved = console.locator(
+    '[data-card-kind="compaction"]:has([data-terminal-status="unavailable-after-compaction"])',
+  );
+  const empty = console.locator(
+    '[data-card-kind="compaction"]:not(:has([data-terminal-status]))',
+  );
+  assert.equal(await boundaries.count(), 2, `${label} has both real compaction boundaries`);
+  assert.equal(await unresolved.count(), 1, `${label} has one unresolved compaction boundary`);
+  assert.equal(await empty.count(), 1, `${label} has one empty compaction boundary`);
+  await Promise.all([
+    waitForCompactionReady(console.page(), unresolved, `${label} unresolved divider`),
+    waitForCompactionReady(console.page(), empty, `${label} empty divider`),
+  ]);
+  await assertCompactionDivider(
+    unresolved,
+    `${label} unresolved divider`,
+    expectedAttribution,
+  );
+  await assertUnavailableToolTerminal(
+    unresolved,
+    `${label} unresolved divider`,
+    COMPACTED_TOOL_PREVIEW,
+  );
+  await assertCompactionDivider(empty, `${label} empty divider`, expectedAttribution);
+  await assertNoUnavailableToolTerminal(
+    empty,
+    `${label} empty divider`,
+    expectedAttribution,
+  );
+  return { empty, unresolved };
+}
+
 export async function captureFirefoxAgentPageSpacing(
   endpoint,
   artifacts,
@@ -233,17 +270,18 @@ export async function assertFirefoxRestoredMosaic(
     const imageFixture = await installFirefoxImageFixture(page);
     await assertFirefoxImageFixture(imageFixture, "Firefox wide image fixture");
     await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-wide.png") });
-    const boundary = console.locator('[data-card-kind="compaction"]');
-    assert.equal(await boundary.count(), 1, "Firefox restores the real compaction exactly once");
-    await waitForCompactionReady(page, boundary, "Firefox wide compaction divider");
-    await assertCompactionDivider(boundary, "Firefox wide compaction divider", expectedAttribution);
+    const boundaries = await assertFirefoxCompactionBoundaries(
+      console,
+      "Firefox wide",
+      expectedAttribution,
+    );
     await resizeCompactionViewport(
       page,
-      boundary,
+      boundaries.unresolved,
       { width: 390, height: 720 },
       "Firefox narrow compaction divider",
     );
-    await assertCompactionDivider(boundary, "Firefox narrow compaction divider", expectedAttribution);
+    await assertFirefoxCompactionBoundaries(console, "Firefox narrow", expectedAttribution);
     await assertNaturalMessageFooterInsets(console, "Firefox narrow restored Mosaic");
     await assertQuoteBlockDensity(quoteCards, "Firefox narrow Mosaic");
     await captureQuoteBlockDensity(page, quoteCards, artifacts, "firefox-quotes-narrow");
@@ -251,14 +289,14 @@ export async function assertFirefoxRestoredMosaic(
     await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-narrow.png") });
     await resizeCompactionViewport(
       page,
-      boundary,
+      boundaries.unresolved,
       { width: 1717, height: 1470 },
       "Firefox restored compaction divider",
     );
-    await assertCompactionDivider(boundary, "Firefox restored compaction divider", expectedAttribution);
+    await assertFirefoxCompactionBoundaries(console, "Firefox restored", expectedAttribution);
     await resizeCompactionViewport(
       page,
-      boundary,
+      boundaries.unresolved,
       { width: 480, height: 468 },
       "Firefox reported Agents viewport",
     );
@@ -266,7 +304,7 @@ export async function assertFirefoxRestoredMosaic(
     await page.screenshot({ path: join(artifacts, "firefox-agents-reported-480x468.png") });
     await resizeCompactionViewport(
       page,
-      boundary,
+      boundaries.unresolved,
       { width: 1717, height: 1470 },
       "Firefox restored Agents viewport",
     );
@@ -284,9 +322,11 @@ export async function assertFirefoxRestoredMosaic(
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
     await assertNaturalMessageFooterInsets(console, "Firefox reloaded Mosaic");
-    assert.equal(await boundary.count(), 1, "Firefox reload keeps one compaction divider");
-    await waitForCompactionReady(page, boundary, "Firefox replayed compaction divider");
-    await assertCompactionDivider(boundary, "Firefox replayed compaction divider", expectedAttribution);
+    const reloadedBoundaries = await assertFirefoxCompactionBoundaries(
+      console,
+      "Firefox reloaded",
+      expectedAttribution,
+    );
 
     await page.clock.fastForward(LIVENESS_PROBE_MS + 500);
     const settled = await assertMosaicLattice(page, false);
@@ -300,7 +340,12 @@ export async function assertFirefoxRestoredMosaic(
       "the liveness heartbeat never removes a restored Firefox card",
     );
     await page.screenshot({ path: join(artifacts, "firefox-restored-mosaic.png"), fullPage: true });
-    await boundary.screenshot({ path: join(artifacts, "firefox-compaction-boundary.png") });
+    await reloadedBoundaries.unresolved.screenshot({
+      path: join(artifacts, "firefox-compaction-boundary.png"),
+    });
+    await reloadedBoundaries.empty.screenshot({
+      path: join(artifacts, "firefox-empty-compaction-boundary.png"),
+    });
     monitor.assertClean();
   } finally {
     await context.close();

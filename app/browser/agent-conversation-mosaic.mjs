@@ -7,7 +7,10 @@ import {
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
-import { assertUnavailableToolTerminal } from "./compaction-boundary-reference.mjs";
+import {
+  assertNoUnavailableToolTerminal,
+  assertUnavailableToolTerminal,
+} from "./compaction-boundary-reference.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const PERSISTED_IMAGE_ROUTE = /\/mosaic-(?:load|error)-[0-9a-f-]+\.png$/;
@@ -342,26 +345,44 @@ export async function assertStagedMosaicHydration(page, team, activityReplay, in
   await waitForMosaicReady(page);
 }
 
-export async function assertCompactionBoundaryPersistence(page, seeded, boundaryKey) {
+export async function assertCompactionBoundaryPersistence(page, seeded, boundaryKeys) {
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
   const restoredTeam = page.locator('[data-pane="agent-console"]');
   await restoredTeam.getByRole("tab", { name: /^Compose/ }).click();
-  const restored = restoredTeam.locator(`[data-mosaic-card-key="${boundaryKey}"]`);
-  await restored.waitFor({ timeout: RECONNECT_MS });
+  const restoredUnresolved = restoredTeam.locator(
+    `[data-mosaic-card-key="${boundaryKeys.unresolved}"]`,
+  );
+  const restoredEmpty = restoredTeam.locator(
+    `[data-mosaic-card-key="${boundaryKeys.empty}"]`,
+  );
+  await Promise.all([
+    restoredUnresolved.waitFor({ timeout: RECONNECT_MS }),
+    restoredEmpty.waitFor({ timeout: RECONNECT_MS }),
+  ]);
   assert.equal(
     await restoredTeam.locator(
       `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
     ).count(),
-    1,
-    "reload restores the compaction boundary exactly once",
+    2,
+    "reload restores both compaction boundaries exactly once",
   );
-  assert.equal(await restored.getAttribute("data-span"), "12");
-  assert.equal((await restored.locator(".message-key").innerText()).trim(), "compacted context");
+  for (const boundary of [restoredUnresolved, restoredEmpty]) {
+    assert.equal(await boundary.getAttribute("data-span"), "12");
+    assert.equal(
+      (await boundary.locator(".message-key").innerText()).trim(),
+      "compacted context",
+    );
+  }
   await assertUnavailableToolTerminal(
-    restored,
-    "reloaded compaction boundary",
+    restoredUnresolved,
+    "reloaded unresolved compaction boundary",
     "Bash: cargo test --locked -p spice",
+  );
+  await assertNoUnavailableToolTerminal(
+    restoredEmpty,
+    "reloaded empty compaction boundary",
+    seeded.agentAttribution,
   );
 
   const socketCount = await page.evaluate(() => window.__canvasSockets?.length ?? 0);
@@ -371,18 +392,25 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
     page,
     "compaction boundary survives an in-place reconnect",
     RECONNECT_MS,
-    ({ expectedKey, previousSockets }) => (
+    ({ expectedKeys, previousSockets }) => (
       (window.__canvasSockets?.length ?? 0) > previousSockets
-      && document.querySelectorAll(`[data-mosaic-card-key="${expectedKey}"]`).length === 1
-      && document.querySelector(`[data-mosaic-card-key="${expectedKey}"]`)
-        ?.dataset.layoutPhase === "committed"
+      && expectedKeys.every((expectedKey) => (
+        document.querySelectorAll(`[data-mosaic-card-key="${expectedKey}"]`).length === 1
+        && document.querySelector(`[data-mosaic-card-key="${expectedKey}"]`)
+          ?.dataset.layoutPhase === "committed"
+      ))
     ),
-    { expectedKey: boundaryKey, previousSockets: socketCount },
+    { expectedKeys: Object.values(boundaryKeys), previousSockets: socketCount },
   );
   await assertUnavailableToolTerminal(
-    restored,
-    "reconnected compaction boundary",
+    restoredUnresolved,
+    "reconnected unresolved compaction boundary",
     "Bash: cargo test --locked -p spice",
+  );
+  await assertNoUnavailableToolTerminal(
+    restoredEmpty,
+    "reconnected empty compaction boundary",
+    seeded.agentAttribution,
   );
 }
 

@@ -281,3 +281,94 @@ export async function assertUnavailableToolTerminal(boundary, label, expectedPre
   assert.ok(geometry.item.bottom <= geometry.boundary.bottom + 0.5);
   assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, `${label} status does not overflow`);
 }
+
+export async function assertNoUnavailableToolTerminal(boundary, label, expectedAttribution) {
+  const geometry = await boundary.evaluate((card) => {
+    const rect = (node) => {
+      const box = node.getBoundingClientRect();
+      return {
+        top: box.top,
+        right: box.right,
+        bottom: box.bottom,
+        left: box.left,
+        width: box.width,
+        height: box.height,
+      };
+    };
+    return {
+      article: {
+        ...rect(card),
+        tag: card.tagName,
+        label: card.getAttribute("aria-label"),
+        rows: card.dataset.rows,
+      },
+      lattice: (() => {
+        const plane = card.closest(".lane-mosaic-plane");
+        return {
+          gap: Number.parseFloat(getComputedStyle(plane).rowGap),
+          module: Number(plane.dataset.module),
+        };
+      })(),
+      children: [...card.children].map((child) => ({
+        ...rect(child),
+        tag: child.tagName,
+        className: child.className,
+      })),
+      terminalLists: card.querySelectorAll(".mosaic-compaction-terminals").length,
+      terminalStatuses: card.querySelectorAll("[data-terminal-status]").length,
+      unavailableLabels: [...card.querySelectorAll("[aria-label]")]
+        .map((node) => node.getAttribute("aria-label"))
+        .filter((value) => value?.toLowerCase().includes("unavailable")),
+      text: card.textContent.trim().replace(/\s+/g, " "),
+    };
+  });
+  assert.equal(geometry.article.tag, "ARTICLE", `${label} remains an article`);
+  assert.equal(
+    geometry.article.label,
+    `Context compacted by ${expectedAttribution}`,
+    `${label} retains its accessible article label`,
+  );
+  assert.deepEqual(
+    geometry.children.map(({ tag, className }) => [tag, className]),
+    [
+      ["SPAN", "mosaic-compaction-rule"],
+      ["SPAN", "mosaic-compaction-label"],
+      ["SPAN", "mosaic-compaction-rule"],
+    ],
+    `${label} contains only two rules and the center label`,
+  );
+  assert.equal(geometry.terminalLists, 0, `${label} has no terminal list`);
+  assert.equal(geometry.terminalStatuses, 0, `${label} has no terminal status marker`);
+  assert.deepEqual(geometry.unavailableLabels, [], `${label} has no hidden unavailable label`);
+  assert.doesNotMatch(
+    geometry.text,
+    /terminal result unavailable after context compaction/i,
+    `${label} has no hidden unavailable status text`,
+  );
+  const childTop = Math.min(...geometry.children.map((child) => child.top));
+  const childBottom = Math.max(...geometry.children.map((child) => child.bottom));
+  const expectedRows = Math.max(
+    1,
+    Math.ceil((geometry.children[1].height + geometry.lattice.gap) / geometry.lattice.module),
+  );
+  assert.equal(
+    Number(geometry.article.rows),
+    expectedRows,
+    `${label} allocates rows from only its center label`,
+  );
+  assert.ok(
+    Math.abs(
+      geometry.article.height
+        - (expectedRows * geometry.lattice.module - geometry.lattice.gap),
+    ) <= 0.5,
+    `${label} has exactly its label-derived lattice height: ${JSON.stringify(geometry)}`,
+  );
+  assert.ok(
+    childTop >= geometry.article.top - 0.5
+      && childBottom <= geometry.article.bottom + 0.5
+      && Math.abs(
+        (childTop - geometry.article.top) - (geometry.article.bottom - childBottom),
+      ) <= 0.5,
+    `${label} centers its only row without terminal-row height: ${JSON.stringify(geometry)}`,
+  );
+}
