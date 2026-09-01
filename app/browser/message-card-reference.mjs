@@ -103,6 +103,9 @@ async function assertMessageCardLayout(console, label) {
         ".message-footer time",
         ".message-footer-separator",
       ].join(", "))];
+      const paintedBoxes = painted
+        .map((child) => child.getBoundingClientRect())
+        .filter((child) => child.width > 0 || child.height > 0);
       return {
         key: card.dataset.mosaicCardKey,
         left: box.left,
@@ -110,15 +113,15 @@ async function assertMessageCardLayout(console, label) {
         top: box.top,
         bottom: box.bottom,
         innerBottom: box.bottom - Number.parseFloat(style.borderBottomWidth),
-        contentBottom: Math.max(...painted.map(
-          (child) => child.getBoundingClientRect().bottom,
-        )),
+        contentBottom: paintedBoxes.length > 0
+          ? Math.max(...paintedBoxes.map((child) => child.bottom))
+          : null,
       };
     }))
   ));
   for (const cards of planes) {
     assert.ok(
-      cards.every((card) => card.contentBottom <= card.innerBottom + 0.5),
+      cards.every((card) => card.contentBottom === null || card.contentBottom <= card.innerBottom + 0.5),
       `${label} cards contain their visible content: ${JSON.stringify(cards)}`,
     );
     for (let left = 0; left < cards.length; left += 1) {
@@ -227,8 +230,8 @@ function assertReferenceGeometry(geometry, agentLabels) {
   assert.match(geometry.inlineCode.fontFamily, /monospace/);
   assert.ok(geometry.inlineCodeText, "the inline-code treatment is measured on real prose");
 
-  assert.equal(geometry.footer.display, "flex");
-  assert.equal(geometry.footer.height, 32, "the footer follows the natural action height");
+  assert.equal(geometry.footer.display, "grid");
+  assert.ok(geometry.footer.height >= 32, "the footer contains the natural action height");
   assert.equal(geometry.footer.fontSize, "12px");
   assert.equal(geometry.footer.marginTop, "8px");
   assert.deepEqual(
@@ -253,12 +256,14 @@ function assertReferenceGeometry(geometry, agentLabels) {
     "the accessible copy control retains the complete unellipsized attribution",
   );
   assert.match(geometry.agent.title, /^Copy agent id\n[0-9a-f-]{36}$/);
-  assert.equal(geometry.agent.overflow, "hidden");
-  assert.equal(geometry.agent.textOverflow, "ellipsis");
-  assert.equal(geometry.agent.whiteSpace, "nowrap");
+  assert.equal(geometry.agent.overflow, "visible");
+  assert.equal(geometry.agent.overflowWrap, "anywhere");
+  assert.equal(geometry.agent.textOverflow, "clip");
+  assert.equal(geometry.agent.whiteSpace, "normal");
   assert.ok(
-    geometry.agent.scrollWidth <= geometry.agent.clientWidth,
-    "the compact visible identity fits without ellipsis",
+    geometry.agent.scrollWidth <= geometry.agent.clientWidth + 1
+      && geometry.agent.scrollHeight <= geometry.agent.clientHeight + 1,
+    "the complete visible identity fits without clipping",
   );
   assert.equal(geometry.actions.gap, "6px");
   assert.equal(geometry.actions.buttons.length, 3);
@@ -327,7 +332,7 @@ async function waitForCommittedResize(page, console, viewport) {
     }, priorWidths);
 }
 
-async function captureReferenceView(page, console, artifacts, viewport, mode) {
+async function captureReferenceView(page, console, artifacts, viewport, mode, agentLabels) {
   await waitForCommittedResize(page, console, viewport);
   await assertMessageCardLayout(console, viewport.label);
   await assertNaturalMessageFooterInsets(console, `${mode} ${viewport.label}`);
@@ -335,14 +340,39 @@ async function captureReferenceView(page, console, artifacts, viewport, mode) {
   const cards = console.locator(
     '[data-card-kind="agent-message"][data-layout-phase="committed"]',
   );
-  const fits = await cards.evaluateAll((articles) => articles.map((article) => ({
-    key: article.dataset.mosaicCardKey,
-    width: article.getBoundingClientRect().width,
-    cardClientWidth: article.clientWidth,
-    cardScrollWidth: article.scrollWidth,
-    footerClientWidth: article.querySelector(".message-footer").clientWidth,
-    footerScrollWidth: article.querySelector(".message-footer").scrollWidth,
-  })));
+  const fits = await cards.evaluateAll((articles) => articles.map((article) => {
+    const agent = article.querySelector(".message-agent-name");
+    const age = article.querySelector(".message-age");
+    const ageBox = age.getBoundingClientRect();
+    return {
+      key: article.dataset.mosaicCardKey,
+      width: article.getBoundingClientRect().width,
+      cardClientWidth: article.clientWidth,
+      cardScrollWidth: article.scrollWidth,
+      footerClientWidth: article.querySelector(".message-footer").clientWidth,
+      footerScrollWidth: article.querySelector(".message-footer").scrollWidth,
+      agent: {
+        ariaLabel: agent.getAttribute("aria-label"),
+        clientHeight: agent.clientHeight,
+        clientWidth: agent.clientWidth,
+        scrollHeight: agent.scrollHeight,
+        scrollWidth: agent.scrollWidth,
+        text: agent.textContent.trim(),
+      },
+      age: {
+        height: ageBox.height,
+        width: ageBox.width,
+      },
+      actions: [...article.querySelectorAll(".message-actions button")].map((button) => {
+        const box = button.getBoundingClientRect();
+        return {
+          ariaLabel: button.getAttribute("aria-label"),
+          height: box.height,
+          width: box.width,
+        };
+      }),
+    };
+  }));
   assert.ok(
     fits.every((fit) => fit.cardScrollWidth <= fit.cardClientWidth + 1),
     `${viewport.label} cards have no horizontal overflow: ${JSON.stringify(fits)}`,
@@ -351,10 +381,44 @@ async function captureReferenceView(page, console, artifacts, viewport, mode) {
     fits.every((fit) => fit.footerScrollWidth <= fit.footerClientWidth + 1),
     `${viewport.label} footers have no horizontal overflow: ${JSON.stringify(fits)}`,
   );
-  const widest = fits.reduce((selected, candidate) => (
-    candidate.width > selected.width ? candidate : selected
+  assert.ok(
+    fits.every((fit) => (
+      agentLabels.includes(fit.agent.text)
+        && fit.agent.ariaLabel.endsWith(` · ${fit.agent.text}`)
+        && fit.agent.scrollWidth <= fit.agent.clientWidth + 1
+        && fit.agent.scrollHeight <= fit.agent.clientHeight + 1
+    )),
+    `${viewport.label} renders every exact agent label without clipping: ${JSON.stringify(fits)}`,
+  );
+  assert.ok(
+    agentLabels.every((label) => fits.some((fit) => fit.agent.text === label)),
+    `${viewport.label} exercises each configured name and worktree fallback`,
+  );
+  assert.equal(
+    new Set(fits.map((fit) => fit.age.width)).size,
+    1,
+    `${viewport.label} message ages share one fixed-width slot`,
+  );
+  assert.ok(
+    fits.every((fit) => fit.age.width > 0 && fit.age.height > 0),
+    `${viewport.label} message ages remain visible`,
+  );
+  const actionLabels = ["Speak this message", "Quote this message", "Copy this message"];
+  assert.ok(
+    fits.every((fit) => (
+      fit.actions.length === actionLabels.length
+        && fit.actions.every((action, index) => (
+          action.ariaLabel === actionLabels[index]
+            && action.width === 32
+            && action.height === 32
+        ))
+    )),
+    `${viewport.label} keeps accessible 32px actions in keyboard order: ${JSON.stringify(fits)}`,
+  );
+  const screenshotTarget = fits.reduce((selected, candidate) => (
+    candidate.agent.text.length > selected.agent.text.length ? candidate : selected
   ));
-  const screenshotCard = console.locator(`[data-mosaic-card-key="${widest.key}"]`);
+  const screenshotCard = console.locator(`[data-mosaic-card-key="${screenshotTarget.key}"]`);
   assert.equal(
     await screenshotCard.evaluate((article) => getComputedStyle(article).backgroundColor),
     referencePalettes[mode].panel,
@@ -421,8 +485,11 @@ export async function assertReferenceMessageCard(
       agent: {
         ...measured(agent),
         ariaLabel: agent.getAttribute("aria-label"),
+        clientHeight: agent.clientHeight,
         clientWidth: agent.clientWidth,
         overflow: getComputedStyle(agent).overflow,
+        overflowWrap: getComputedStyle(agent).overflowWrap,
+        scrollHeight: agent.scrollHeight,
         scrollWidth: agent.scrollWidth,
         text: agent.innerText,
         textOverflow: getComputedStyle(agent).textOverflow,
@@ -445,10 +512,10 @@ export async function assertReferenceMessageCard(
     await page.emulateMedia({ colorScheme: mode });
     await captureReferenceView(page, console, artifacts, {
       label: "reference", width: 648, height: 726,
-    }, mode);
+    }, mode, agentLabels);
     await captureReferenceView(page, console, artifacts, {
       label: "mobile", width: 390, height: 720,
-    }, mode);
+    }, mode, agentLabels);
   }
   await waitForCommittedResize(page, console, { label: "restored reference", ...original });
   await assertMessageCardLayout(console, "restored reference");

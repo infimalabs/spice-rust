@@ -171,11 +171,21 @@ async function observeOneBoundary(card, lane) {
       `.team-agent[data-agent-lane="${config.lane}"] .composer-shard-age-label[data-age-slot]`,
     );
     if (!age) throw new Error("the agent composer renders no age slot");
+    const messageAge = element.querySelector(".message-age[data-age-slot]");
+    if (!messageAge) throw new Error("the agent message renders no age slot");
     const authored = Number(age.dataset.ageAuthored);
     if (!Number.isFinite(authored)) throw new Error("the age slot carries no authored instant");
+    const messageAuthored = Number(messageAge.dataset.ageAuthored);
+    if (!Number.isFinite(messageAuthored)) {
+      throw new Error("the message age slot carries no authored instant");
+    }
     const snapshot = () => ({
       label: age.textContent?.trim(),
       box: roundBox(age.getBoundingClientRect()),
+      messageAge: {
+        label: messageAge.textContent?.trim(),
+        box: roundBox(messageAge.getBoundingClientRect()),
+      },
       cardBox: roundBox(element.getBoundingClientRect()),
       placement: Object.fromEntries(
         config.attributes.map((name) => [name, element.getAttribute(name)]),
@@ -210,12 +220,17 @@ async function observeOneBoundary(card, lane) {
     await new Promise((resolve) => {
       let timeout;
       const labelObserver = new MutationObserver(() => {
-        if (snapshot().label === before.label) return;
+        const current = snapshot();
+        if (
+          current.label === before.label
+            || current.messageAge.label === before.messageAge.label
+        ) return;
         clearTimeout(timeout);
         labelObserver.disconnect();
         resolve();
       });
       labelObserver.observe(age, { childList: true, characterData: true, subtree: true });
+      labelObserver.observe(messageAge, { childList: true, characterData: true, subtree: true });
       timeout = setTimeout(() => {
         labelObserver.disconnect();
         resolve();
@@ -236,6 +251,7 @@ async function observeOneBoundary(card, lane) {
       elapsed,
       writes,
       authored,
+      messageAuthored,
       // What the page's own clock implies for the label just read, which is
       // what binds the observed text to a cause: a label that changed for any
       // other reason -- a re-render carrying stale text, a server frame that
@@ -250,6 +266,10 @@ async function observeOneBoundary(card, lane) {
       expected: [
         elapsedLabel(Date.now() - authored),
         elapsedLabel(Date.now() - config.tickMs - authored),
+      ],
+      messageExpected: [
+        elapsedLabel(Date.now() - messageAuthored),
+        elapsedLabel(Date.now() - config.tickMs - messageAuthored),
       ],
       connected: element.isConnected,
     };
@@ -292,6 +312,15 @@ function assertAdvancedLocally(advance, transport) {
     advance.expected.includes(advance.after.label),
     `the advanced label is what the browser's own clock implies: ${JSON.stringify(advance)}`,
   );
+  assert.notEqual(
+    advance.after.messageAge.label,
+    advance.before.messageAge.label,
+    `the message age advances within ${BOUNDARY_WAIT_MS}ms of silence: ${JSON.stringify(advance)}`,
+  );
+  assert.ok(
+    advance.messageExpected.includes(advance.after.messageAge.label),
+    `the advanced message age is what the browser's clock implies: ${JSON.stringify(advance)}`,
+  );
   assert.ok(
     advance.elapsed <= BOUNDARY_WAIT_MS,
     `the advance arrived on the tick rather than late: ${JSON.stringify(advance)}`,
@@ -301,6 +330,11 @@ function assertAdvancedLocally(advance, transport) {
     advance.after.box,
     advance.before.box,
     `the age slot keeps its bounding box across the tick: ${JSON.stringify(advance)}`,
+  );
+  assert.deepEqual(
+    advance.after.messageAge.box,
+    advance.before.messageAge.box,
+    `the message age keeps its fixed bounding box across the tick: ${JSON.stringify(advance)}`,
   );
   assert.deepEqual(
     advance.after.cardBox,

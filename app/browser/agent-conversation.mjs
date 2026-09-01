@@ -30,7 +30,9 @@ import { assertAgentPageBottomSpacing } from "./canvas-readiness.mjs";
 const AGENT_SEAT_MS = 15_000;
 
 export { assertMosaicLattice };
-export const agentNames = ["Ava", "Bex", "Cy"];
+export const longAgentName = "Bexley Integration Reliability Operator";
+export const longWorktreeBasename = "lane-4-release-observability-and-follow-through";
+export const agentNames = ["Ava", longAgentName, "Cy"];
 const teamSeatNames = [...agentNames, undefined];
 
 function canonicalAgentAttribution(member) {
@@ -214,6 +216,12 @@ export async function seatAgentTeam(
   assert.deepEqual(seated.map((lane) => lane.lane), teamLaneIds, "four fixed lane identities render");
   assert.ok(seated.every((lane) => lane.lineage_id === host.lineage_id), "one lineage renders");
   assert.deepEqual(seated.map((lane) => lane.name), teamSeatNames);
+  assert.equal(seated[1].name, longAgentName, "the fixture admits a long configured agent name");
+  assert.equal(
+    messageFooterLabel(seated[3]),
+    longWorktreeBasename,
+    "the unnamed fixture lane exposes a long worktree basename",
+  );
   assert.ok(seated.every((lane) => lane.vendor === "claude"));
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
   assert.equal(

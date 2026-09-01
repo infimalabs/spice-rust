@@ -8,7 +8,7 @@ import { installActivityReplay } from "./activity-replay.mjs";
 import { assertAgesTickWhileTheResidentIsSilent } from "./age-ticker.mjs";
 import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
-  nestedQuoteMessage, nestedQuotePreview, seatAgentTeam, seatLeaseAgent,
+  longWorktreeBasename, nestedQuoteMessage, nestedQuotePreview, seatAgentTeam, seatLeaseAgent,
 } from "./agent-conversation.mjs";
 import {
   assertCompactionBoundary,
@@ -842,6 +842,9 @@ try {
         ? "5m"
         : "5s",
       noCardMember: 5,
+      worktreeNames: {
+        4: longWorktreeBasename,
+      },
     });
     resident = owner.ownResident(await startResident(fixture));
     const seeded = await seedAuthority(fixture);
