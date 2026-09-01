@@ -946,6 +946,11 @@
 .lane-mosaic-plane .mosaic-message-card[data-layout-phase="measuring"] {
   visibility: hidden; pointer-events: none;
 }
+.lane-mosaic-plane .mosaic-message-card[data-mosaic-measurement-active="true"] {
+  top: 0; height: auto;
+  grid-column-start: 1;
+  grid-column-end: span var(--mosaic-measure-span);
+}
 .lane-mosaic-plane[data-measurement-phase="base"]
   .mosaic-message-card[data-layout-phase="measuring"] {
   position: relative; top: auto;

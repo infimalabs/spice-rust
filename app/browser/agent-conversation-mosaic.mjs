@@ -1086,6 +1086,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
         cards: [...plane.querySelectorAll(".mosaic-message-card")].map((card) => {
           const box = card.getBoundingClientRect();
           const style = getComputedStyle(card);
+          const footer = card.querySelector(".message-footer")?.getBoundingClientRect();
           return {
             key: card.dataset.mosaicCardKey,
             kind: card.dataset.cardKind,
@@ -1097,8 +1098,15 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
             row: Number(card.dataset.row),
             rows: Number(card.dataset.rows),
             reads: Number(card.dataset.measurementReads),
+            measuredSpans: card.dataset.measuredSpans.split(",").filter(Boolean).map(Number),
+            measuredWidths: card.dataset.measuredWidths.split(",").filter(Boolean).map(Number),
             heights: card.dataset.measuredHeights.split(",").filter(Boolean).map(Number),
             candidateSpans: card.dataset.candidateSpans.split(",").filter(Boolean).map(Number),
+            measureSpan: Number(card.dataset.measureSpan),
+            measureProperty: style.getPropertyValue("--mosaic-measure-span"),
+            measurementActive: card.hasAttribute("data-mosaic-measurement-active"),
+            tallWitness: card.querySelector("h2")?.textContent?.trim() === "Measured lattice witness",
+            textOnly: card.querySelector(".message-image") === null,
             columnStart: Number(style.gridColumnStart),
             columnEnd: style.gridColumnEnd,
             rowStart: Number(style.gridRowStart),
@@ -1113,6 +1121,8 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
             },
             clientHeight: card.clientHeight,
             scrollHeight: card.scrollHeight,
+            footerInset: footer ? box.bottom - footer.bottom : null,
+            paddingBottom: Number.parseFloat(style.paddingBottom),
           };
         }),
       };
@@ -1129,6 +1139,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
   const readPaths = new Set();
   const kinds = new Set();
   const placements = [];
+  let wideTextCommits = 0;
   for (const plane of snapshot.planes) {
     assert.equal(plane.trackCount, 12, "the browser renders the twelve-track lattice");
     assert.equal(plane.columnGap, 12, "the horizontal lattice keeps the predecessor gap");
@@ -1147,13 +1158,78 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       const wideEligible = wideSpan > measuredBaseSpan && card.heights[0] >= plane.tallThreshold;
       const expectedSpans = wideEligible ? [measuredBaseSpan, wideSpan] : [measuredBaseSpan];
       const latchedRead = expectedSpans.includes(card.span) ? 0 : 1;
+      const expectedMeasuredSpans = latchedRead
+        ? [...expectedSpans, card.span]
+        : expectedSpans;
       assert.equal(
         card.reads,
         expectedSpans.length + latchedRead,
         "height reads follow the bounded policy, including at most one frozen-span read",
       );
+      assert.deepEqual(
+        card.measuredSpans,
+        expectedMeasuredSpans,
+        "every DOM read reports the span applied through the measurement layout channel",
+      );
+      assert.equal(card.measuredWidths.length, card.reads, "every DOM read records its real width");
       assert.equal(card.heights.length, card.reads, "every instrumented read records one height");
       assert.deepEqual(card.candidateSpans, expectedSpans, "height alone admits the wide tier");
+      assert.equal(card.measureSpan, measuredBaseSpan, "measurement restores the base diagnostic span");
+      assert.equal(
+        Number(card.measureProperty),
+        card.measureSpan,
+        "the restored diagnostic and CSP-safe measurement property agree",
+      );
+      assert.equal(card.measurementActive, false, "measurement mode exits before committed paint");
+      const trackWidth = (
+        plane.width - plane.columnGap * (plane.trackCount - 1)
+      ) / plane.trackCount;
+      for (const [index, span] of card.measuredSpans.entries()) {
+        const expectedWidth = trackWidth * span + plane.columnGap * (span - 1);
+        assert.ok(
+          Math.abs(card.measuredWidths[index] - expectedWidth) <= 1,
+          `measurement read ${index} uses span ${span}'s rendered width: ${JSON.stringify({
+            expectedWidth,
+            plane,
+            card,
+          })}`,
+        );
+      }
+      if (card.tallWitness) {
+        assert.equal(card.measuredSpans.length, 2, "the tall text witness exercises both candidates");
+        assert.ok(
+          card.measuredWidths[1] > card.measuredWidths[0],
+          "the tall text witness measures a genuinely wider second candidate",
+        );
+        assert.ok(
+          card.heights[1] < card.heights[0],
+          "the tall text witness becomes naturally shorter at double width",
+        );
+        const rowsFor = (height) => Math.max(
+          plane.minCardRows,
+          Math.ceil((height + plane.columnGap) / plane.module),
+        );
+        const baseRows = rowsFor(card.heights[0]);
+        const wideRows = rowsFor(card.heights[1]);
+        assert.ok(wideRows < baseRows, "the wide text witness has a smaller natural row count");
+      }
+      if (
+        card.textOnly
+          && card.measuredSpans.length >= 2
+          && card.span === card.measuredSpans[1]
+          && card.heights[1] < card.heights[0]
+      ) {
+        const wideRows = Math.max(
+          plane.minCardRows,
+          Math.ceil((card.heights[1] + plane.columnGap) / plane.module),
+        );
+        assert.equal(card.rows, wideRows, "a wide text card commits its measured wide row count");
+        assert.ok(
+          Math.abs(card.footerInset - card.paddingBottom) <= 1,
+          "a wide text card leaves only its natural padding below the footer",
+        );
+        wideTextCommits += 1;
+      }
       assert.ok(card.track >= 0 && card.track + card.span <= plane.trackCount);
       if (card.kind === "compaction") {
         assert.ok(card.rows >= 1, "a compaction divider keeps a nonzero row reservation");
@@ -1197,6 +1273,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
   assert.ok(readPaths.has(1), "a short card takes exactly one DOM height read");
   if (requireBothReadPaths) {
     assert.ok(readPaths.has(2), "a tall card takes exactly two DOM height reads");
+    assert.ok(wideTextCommits > 0, "a text card commits its shorter wide measurement");
   }
   return placements;
 }

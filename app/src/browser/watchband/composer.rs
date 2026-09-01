@@ -206,6 +206,8 @@ fn render_agent_message_card(
             data-creation-index={layout.measurement_index.to_string()}
             data-mosaic-measure-index={layout.measurement_index.to_string()}
             data-measurement-reads={layout.measurement_reads.to_string()}
+            data-measured-spans={layout.measured_spans.clone()}
+            data-measured-widths={layout.measured_widths.clone()}
             data-measured-heights={layout.measured_heights.clone()}
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
