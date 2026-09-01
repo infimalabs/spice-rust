@@ -152,14 +152,14 @@ the whole design.
 flowchart TD
   A["the agent's top-level shell command"] --> R["redirector"]
   R --> W["the wrapper — ONE hop, exactly once"]
-  W --> Q{"initial rendering nonempty?"}
+  W --> P["arm the bounded filesystem watcher"]
+  P --> Q{"initial rendering nonempty?"}
   I["rendered inbox file"] --> Q
   Q -- yes --> S["write the whole rendering<br/>to wrapper stderr"]
-  Q -- no --> P["arm the bounded projection scanner"]
-  S --> P
-  P --> RW["optional rewrite decision"]
+  Q -- no --> RW["optional rewrite decision"]
+  S --> RW
   RW --> C["spawn one immediate command shell<br/>over private stdout/stderr relays"]
-  C --> L["bounded scanner remains active"]
+  C --> L["bounded watcher remains active"]
   I --> U["atomic replacement while<br/>the immediate child runs"]
   U --> CH{"changed and nonempty?"}
   CH -- yes --> E["write the whole rendering<br/>to wrapper stderr"]
@@ -169,7 +169,7 @@ flowchart TD
   C --> EX["an executed script, a child shell"]
   EX --> NAT["starts NATIVELY —<br/>the user's shell, no second interception"]
   L --> X["immediate child exits"]
-  X --> V["stop the projection scanner;<br/>revoke descendant relay writers;<br/>drain relays and finish"]
+  X --> V["stop the filesystem watcher;<br/>revoke descendant relay writers;<br/>drain relays and finish"]
 ```
 
 **Invariant —** Instrumentation is **one-shot, at the agent's own command
@@ -191,10 +191,11 @@ shell's functions and options. The boundary being drawn is the **process**
 boundary, and sourcing does not cross it.
 
 **Invariant —** Shell-boundary steering is bounded by the immediate child. The
-wrapper writes the initial nonempty disposable rendered inbox, arms a bounded
-scanner before spawn, and writes each changed nonempty whole rendering while
-the child remains active. Identical bytes are suppressed within that command.
-The scanner never reads the journal and ends before relay cleanup begins.
+wrapper arms a bounded filesystem watcher, writes the initial nonempty
+disposable rendered inbox before spawn, and writes each changed nonempty whole
+rendering while the child remains active. Identical bytes are suppressed within
+that command. The watcher never reads the journal and ends before relay cleanup
+begins.
 
 **Invariant —** The wrapper waits on that one immediate process identity while
 private relays carry its output. The wait survives the child forking, waiting,
@@ -227,7 +228,7 @@ flowchart TD
   B --> C["active or next top-level shell command"]
   T --> HS["locked hook-delivery suppression"]
   HS --> HR["eligible post-tool readout"]
-  C --> SR["independent bounded projection scanner;<br/>initial pre-spawn read plus changed renderings during the child"]
+  C --> SR["independent bounded filesystem watcher;<br/>initial pre-spawn read plus changed renderings during the child"]
   HR --> O["observation only;<br/>durable lifecycle stays live"]
   SR --> O
   D --> N["neither delivery path occurs"]
