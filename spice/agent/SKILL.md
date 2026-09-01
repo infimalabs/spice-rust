@@ -63,9 +63,14 @@ If continuity is clipped, recover only the detail needed to proceed with
   operator steering explicitly authorizes another path.
 - Complete implementation with `spice task done --validation TEXT`. Complete an
   assigned clean review with
-  `spice task review HANDLE --finding clean --note NOTE`. An unclean review uses
-  `--finding FINDING --note NOTE` and must durably track that finding in the same
-  invocation with `--then "title=... | project=..."` or `--followup HANDLE`.
+  `spice task review HANDLE --finding clean --note NOTE`. While holding the
+  active review claim, a reviewer may directly correct a very small, low-risk
+  finding when that is more proportionate than a follow-up. Validate the
+  correction proportionately and commit it under the review claim before
+  recording the clean verdict. Larger, behavior-changing, cross-ownership, or
+  separately reviewable work remains an unclean review: use
+  `--finding FINDING --note NOTE` and durably track it in the same invocation
+  with `--then "title=... | project=..."` or `--followup HANDLE`.
   Then run `spice task next` again and keep draining until `allocator-empty` or a
   real blocker. A clean review requires inspecting the integrated diff and
   independently checking proportionate evidence.
