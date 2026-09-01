@@ -109,13 +109,15 @@ async function terminateAll(signal = "SIGTERM") {
   await Promise.all([...active.values()].map(({ child }) => terminate(child, signal)));
 }
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
-    void terminateAll(signal).finally(() => {
-      process.removeAllListeners(signal);
-      process.kill(process.pid, signal);
+function installTerminationHandlers() {
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, () => {
+      void terminateAll(signal).finally(() => {
+        process.removeAllListeners(signal);
+        process.kill(process.pid, signal);
+      });
     });
-  });
+  }
 }
 
 function observeEvents(child, state) {
@@ -178,6 +180,11 @@ async function runShard(shard) {
     assert.ok(state.ownership, `${shard.name} reports its exact descendant and fixture ownership`);
   }
   if (state.ownership) {
+    assert.equal(
+      state.ownership.workerPid,
+      child.pid,
+      `${shard.name} reports the worker whose close event is its completion boundary`,
+    );
     const pids = await auditOwnership(shard.name, state.ownership);
     process.stdout.write(
       `canvas ownership audit name=${shard.name} pids=${pids.join(",")} fixture=absent lanes=absent process_table=clean\n`,
@@ -186,7 +193,32 @@ async function runShard(shard) {
   return { shard: shard.name, elapsedMs, ...state.summary, scenarios: state.scenarios };
 }
 
+/// Stop assigning work after the first failure, but drain every shard already running.
+///
+/// A worker owns its fixture until its final command and teardown complete. Ending
+/// peers merely because an unrelated worker failed lets signal teardown race those
+/// commands and remove their discovery files underneath them. External coordinator
+/// termination still uses `terminateAll`; an ordinary shard failure stays local.
+export async function drainShardQueue(queue, concurrency, run) {
+  const results = [];
+  let firstFailure = null;
+  const runners = Array.from({ length: concurrency }, async () => {
+    while (queue.length > 0 && firstFailure === null) {
+      const shard = queue.shift();
+      try {
+        results.push(await run(shard));
+      } catch (error) {
+        if (firstFailure === null) firstFailure = error;
+      }
+    }
+  });
+  await Promise.all(runners);
+  if (firstFailure) throw firstFailure;
+  return results;
+}
+
 async function coordinate() {
+  installTerminationHandlers();
   assertShardInventory();
   assertShardMutationGuard();
   const { concurrency, prebuiltApp, receipt } = invocation(process.argv.slice(2));
@@ -198,7 +230,7 @@ async function coordinate() {
     `canvas coordinator start concurrency=${concurrency} shards=${CANVAS_SHARDS.length}\n`,
   );
   let peak = 0;
-  const results = [];
+  let results = [];
   const queue = [...CANVAS_SHARDS];
   const progress = setInterval(() => {
     const running = [...active.keys()];
@@ -213,17 +245,10 @@ async function coordinate() {
     void terminateAll();
   }, COORDINATOR_TIMEOUT_MS - buildElapsedMs);
   try {
-    const runners = Array.from({ length: concurrency }, async () => {
-      while (queue.length > 0) {
-        const shard = queue.shift();
-        peak = Math.max(peak, active.size + 1);
-        results.push(await runShard(shard));
-      }
+    results = await drainShardQueue(queue, concurrency, async (shard) => {
+      peak = Math.max(peak, active.size + 1);
+      return runShard(shard);
     });
-    await Promise.all(runners);
-  } catch (error) {
-    await terminateAll();
-    throw error;
   } finally {
     clearInterval(progress);
     clearTimeout(overall);
@@ -250,4 +275,6 @@ async function coordinate() {
   if (receipt) await writeFile(receipt, COVERAGE_RECEIPT);
 }
 
-await coordinate();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await coordinate();
+}
