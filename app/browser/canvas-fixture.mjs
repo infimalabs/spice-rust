@@ -48,6 +48,7 @@ export { monitorPage } from "./canvas-monitor.mjs";
 /// reads it back to decide exactly which processes this run is responsible for.
 export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
 const PRIMARY_FIXTURE_SESSION = "018f7777-7777-7444-8888-999999999999";
+const UNAVAILABLE_TOOL_CALL_RECORD = '{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"call-compacted-verifier","name":"Bash","input":{"command":"cargo test --locked -p spice"}}]}}\n';
 const COMPACTION_BOUNDARY_RECORD = '{"type":"system","subtype":"compact_boundary"}\n';
 
 const execute = promisify(execFile);
@@ -69,14 +70,16 @@ export function fixtureCommandEnv(lane, fixture) {
   return env;
 }
 
-/// Author one real preserved-session compaction record and prove its bytes.
+/// Author one unresolved call plus its real preserved-session compaction record.
 export async function appendPrimaryCompactionBoundary(fixture) {
   const transcript = join(
     fixture,
     ".git/spice-home/.claude/projects/canvas",
     `${PRIMARY_FIXTURE_SESSION}.jsonl`,
   );
-  const record = Buffer.from(COMPACTION_BOUNDARY_RECORD);
+  const call = Buffer.from(UNAVAILABLE_TOOL_CALL_RECORD);
+  const boundary = Buffer.from(COMPACTION_BOUNDARY_RECORD);
+  const record = Buffer.concat([call, boundary]);
   const file = await open(transcript, "a");
   let offset;
   try {
@@ -89,7 +92,7 @@ export async function appendPrimaryCompactionBoundary(fixture) {
   }
   const authored = (await readFile(transcript)).subarray(offset, offset + record.length);
   assert.deepEqual(authored, record, "the preserved session contains the exact authored record");
-  return { transcript, offset, length: record.length };
+  return { transcript, offset: offset + call.length, length: boundary.length };
 }
 
 /// Trigger one exact assistant record through the running fixture vendor.

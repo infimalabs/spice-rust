@@ -886,6 +886,7 @@ mod message_retention_tests {
             observed: None,
             activity: AgentActivityKind::Prose,
             text: offset.to_string(),
+            unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
         }
     }

@@ -687,6 +687,7 @@ mod tests {
             observed: None,
             activity: wire::AgentActivityKind::Prose,
             text: format!("lane {lane:02x} message {offset}"),
+            unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
         }
     }

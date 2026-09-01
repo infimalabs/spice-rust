@@ -270,6 +270,7 @@ pub(super) fn publish_agent_messages(
                 authored,
                 observed: None,
                 observations: &state.observations,
+                unavailable_tool_terminals: &[],
             },
             &mut state.previews,
             steering,
@@ -287,6 +288,7 @@ struct AgentEvent<'a> {
     authored: Option<&'a str>,
     observed: Option<wire::Instant>,
     observations: &'a MessageObservations,
+    unavailable_tool_terminals: &'a [String],
 }
 
 /// Project one typed tape event through the sole live/restored message policy.
@@ -305,6 +307,7 @@ fn publish_agent_event(
         authored,
         observed,
         observations,
+        unavailable_tool_terminals,
     } = event;
     let (activity, locus, text, media) = match decoded {
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => (
@@ -364,6 +367,7 @@ fn publish_agent_event(
             observed,
             activity,
             text,
+            unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
             media,
         })
         .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;

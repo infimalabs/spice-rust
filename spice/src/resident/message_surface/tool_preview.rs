@@ -85,7 +85,7 @@ pub(super) fn activity(
     }
 }
 
-fn call_preview(name: &str, arguments: &str) -> String {
+pub(super) fn call_preview(name: &str, arguments: &str) -> String {
     let name = name.trim().replace('_', " ");
     let arguments = argument_preview(arguments);
     if name.is_empty() {

@@ -159,6 +159,7 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         observed: None,
         activity: AgentActivityKind::Prose,
         text: "settled".to_owned(),
+        unavailable_tool_terminals: Vec::new(),
         media: Vec::new(),
     };
     let encoded = wire::encode(&prose).expect("prose activity encodes");
@@ -174,6 +175,10 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
     assert!(
         !encoded_text.contains("observed"),
         "source-authored messages do not grow an observation field"
+    );
+    assert!(
+        !encoded_text.contains("unavailable_tool_terminals"),
+        "ordinary messages keep the established wire shape"
     );
     let decoded_prose = wire::decode::<AgentMessage>(&encoded).expect("default prose decodes");
     assert_eq!(decoded_prose.activity, AgentActivityKind::Prose);
@@ -227,10 +232,17 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
     let compaction = AgentMessage {
         activity: AgentActivityKind::Compaction,
         text: "Context compacted".to_owned(),
+        unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
         ..prose
     };
     let encoded = wire::encode(&compaction).expect("compaction activity encodes");
     assert!(String::from_utf8_lossy(&encoded).contains(r#""activity":"compaction""#));
+    assert_eq!(
+        wire::decode::<AgentMessage>(&encoded)
+            .expect("explicit compaction decodes")
+            .unavailable_tool_terminals,
+        ["Bash: cargo test"],
+    );
     assert_eq!(
         wire::decode::<AgentMessage>(&encoded)
             .expect("explicit compaction decodes")

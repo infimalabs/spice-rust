@@ -24,6 +24,7 @@ import {
 } from "./canvas-fixture.mjs";
 import {
   assertCompactionDivider,
+  assertUnavailableToolTerminal,
   waitForCompactionReady,
 } from "./compaction-boundary-reference.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
@@ -32,6 +33,7 @@ const ACTIVITY_DEADLINE_MS = 15_000;
 const TRANSITION_WIDE = Object.freeze({ width: 1440, height: 360 });
 const TRANSITION_NARROW = Object.freeze({ width: 390, height: 360 });
 const TRANSITION_PROSE_ROWS = 48;
+const COMPACTED_TOOL_PREVIEW = "Bash: cargo test --locked -p spice";
 
 function transitionProse(label, rows = TRANSITION_PROSE_ROWS) {
   return [
@@ -440,6 +442,11 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
         `${witness.label} narrow compaction boundary`,
         seeded.agentAttribution,
       );
+      await assertUnavailableToolTerminal(
+        dividers[index],
+        `${witness.label} narrow compaction boundary`,
+        COMPACTED_TOOL_PREVIEW,
+      );
     }
     await resizeTransitionWitnesses(witnesses, TRANSITION_WIDE, "restored wide viewport");
     for (const [index, witness] of witnesses.entries()) {
@@ -447,6 +454,11 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
         dividers[index],
         `${witness.label} wide compaction boundary`,
         seeded.agentAttribution,
+      );
+      await assertUnavailableToolTerminal(
+        dividers[index],
+        `${witness.label} wide compaction boundary`,
+        COMPACTED_TOOL_PREVIEW,
       );
     }
     await assertSharedProseAppend(

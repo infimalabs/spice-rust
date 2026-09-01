@@ -99,6 +99,7 @@ fn real_codex_rollout_compaction_is_published_once_from_complete_jsonl() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
     assert_eq!(messages[0].text, "Context compacted");
+    assert!(messages[0].unavailable_tool_terminals.is_empty());
     drop(messages);
 
     assert!(
@@ -124,6 +125,86 @@ fn incomplete_boundary_waits_for_its_jsonl_delimiter() {
     assert_eq!(cursor.next, 0, "pending bytes never advance the cursor");
     append(&transcript, b"acted\",\"payload\":{}}\n");
     assert_eq!(scan(&mut cursor).expect("completed scan succeeds").len(), 1,);
+}
+
+#[test]
+fn mixed_claude_calls_report_only_terminals_unavailable_at_each_boundary() {
+    let scratch = Scratch::new("claude-unavailable");
+    let transcript = scratch.transcript();
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[",
+            "{\"type\":\"tool_use\",\"id\":\"call-a\",\"name\":\"Bash\",\"input\":{\"command\":\"cargo test\"}},",
+            "{\"type\":\"tool_use\",\"id\":\"call-b\",\"name\":\"Read\",\"input\":{\"path\":\"Cargo.toml\"}}]}}\n",
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"call-b\",\"content\":\"ok\",\"is_error\":false}]}}\n",
+            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+            "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[",
+            "{\"type\":\"tool_use\",\"id\":\"call-c\",\"name\":\"Read\",\"input\":{\"path\":\"src/lib.rs\"}}]}}\n",
+            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        ),
+    )
+    .expect("mixed Claude transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+
+    let records = scan(&mut cursor).expect("mixed Claude transcript scans");
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        records[0].unavailable_tool_terminals,
+        ["Bash: cargo test"],
+        "the concrete Read result wins while the long command remains neutral",
+    );
+    assert_eq!(
+        records[1].unavailable_tool_terminals,
+        ["Read: src/lib.rs"],
+        "the first boundary clears its context epoch",
+    );
+}
+
+#[test]
+fn codex_terminal_result_prevents_an_unavailable_marker() {
+    let scratch = Scratch::new("codex-resolved");
+    let transcript = scratch.transcript();
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"timestamp\":\"2030-04-12T18:44:08.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\"}\",\"call_id\":\"call-a\"}}\n",
+            "{\"timestamp\":\"2030-04-12T18:44:08.500Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-a\",\"output\":\"Process exited with code 0\"}}\n",
+            "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n",
+        ),
+    )
+    .expect("resolved Codex transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+
+    let records = scan(&mut cursor).expect("resolved Codex transcript scans");
+    assert_eq!(records.len(), 1);
+    assert!(records[0].unavailable_tool_terminals.is_empty());
+}
+
+#[test]
+fn replacement_before_a_boundary_rebuilds_pending_calls_from_canonical_bytes() {
+    let scratch = Scratch::new("replacement");
+    let transcript = scratch.transcript();
+    fs::write(
+        &transcript,
+        b"{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"old\",\"name\":\"Read\",\"input\":{\"path\":\"old.rs\"}}]}}\n",
+    )
+    .expect("initial transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    assert!(scan(&mut cursor).expect("initial call scans").is_empty());
+
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"new\",\"name\":\"Read\",\"input\":{\"path\":\"new.rs\"}}]}}\n",
+            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        ),
+    )
+    .expect("replacement transcript is written");
+
+    let records = scan(&mut cursor).expect("replacement transcript rescans");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].unavailable_tool_terminals, ["Read: new.rs"]);
 }
 
 #[test]
@@ -155,6 +236,7 @@ fn claude_preserved_boundary_uses_the_same_typed_projection() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
     assert!(messages[0].authored_synthetic);
+    assert!(messages[0].unavailable_tool_terminals.is_empty());
     assert_eq!(
         messages[0].locus.member,
         session_member("018f7777-7777-7444-8888-999999999999"),
@@ -193,7 +275,11 @@ fn timestamp_less_claude_boundary_survives_live_poll_and_resident_reload_once() 
         .expect("initial synchronization remains live before a boundary");
     append(
         &transcript,
-        b"{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        concat!(
+            "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"call-live\",\"name\":\"Bash\",\"input\":{\"command\":\"cargo test\"}}]}}\n",
+            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        )
+        .as_bytes(),
     );
     compactions
         .synchronize(&residency, &publisher, &mut state, &mut diagnostic)
@@ -216,6 +302,11 @@ fn timestamp_less_claude_boundary_survives_live_poll_and_resident_reload_once() 
     assert_eq!(messages.len(), 1, "poll and reload retain one boundary");
     assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
     assert!(messages[0].authored_synthetic);
+    assert_eq!(
+        messages[0].unavailable_tool_terminals,
+        ["Bash: cargo test"],
+        "reload replays the same boundary-bound unavailable terminal",
+    );
     assert_eq!(
         messages[0].observed,
         Some(observation_instant()),
@@ -314,6 +405,9 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         member: session_member("018f7777-7777-7444-8888-999999999999"),
         next: 0,
+        next_call: 0,
+        pending: BTreeMap::new(),
+        guard: None,
     }
 }
 

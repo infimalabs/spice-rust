@@ -245,3 +245,39 @@ export async function assertCompactionDivider(divider, label, expectedAttributio
   }
   return geometry;
 }
+
+export async function assertUnavailableToolTerminal(boundary, label, expectedPreview) {
+  const terminal = boundary.locator(
+    '[data-terminal-status="unavailable-after-compaction"]',
+  );
+  assert.equal(await terminal.count(), 1, `${label} has one unresolved terminal observation`);
+  const geometry = await terminal.evaluate((item) => {
+    const rect = (node) => {
+      const box = node.getBoundingClientRect();
+      return { top: box.top, right: box.right, bottom: box.bottom, left: box.left };
+    };
+    const boundary = item.closest('[data-card-kind="compaction"]');
+    const dividerLabel = boundary.querySelector(".mosaic-compaction-label");
+    const preview = item.querySelector(".mosaic-compaction-tool");
+    const status = item.querySelector(".mosaic-compaction-status");
+    return {
+      item: rect(item),
+      boundary: rect(boundary),
+      label: rect(dividerLabel),
+      preview: { ...rect(preview), text: preview.textContent.trim() },
+      status: { ...rect(status), text: status.textContent.trim() },
+      scrollWidth: boundary.scrollWidth,
+      clientWidth: boundary.clientWidth,
+    };
+  });
+  assert.equal(geometry.preview.text, expectedPreview);
+  assert.equal(
+    geometry.status.text,
+    "terminal result unavailable after context compaction",
+  );
+  assert.ok(geometry.item.top >= geometry.label.bottom - 0.5, `${label} status follows its divider`);
+  assert.ok(geometry.item.left >= geometry.boundary.left - 0.5);
+  assert.ok(geometry.item.right <= geometry.boundary.right + 0.5);
+  assert.ok(geometry.item.bottom <= geometry.boundary.bottom + 0.5);
+  assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, `${label} status does not overflow`);
+}
