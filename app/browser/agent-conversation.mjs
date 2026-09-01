@@ -26,6 +26,7 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 import { assertAgentWorkspaceGeometry } from "./canvas-readiness.mjs";
+import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
 
 const AGENT_SEAT_MS = 15_000;
 
@@ -620,6 +621,7 @@ export async function assertAgentConversation(
     assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
   }
   await assertPersistentMosaic(page, fixture, console, plane, seated[0], activityReplay);
+  await assertCandidateMeasurementPaintAtomic(page, "chromium");
 
   // The first and fourth lanes hold one slot between them, by the construction
   // teamLaneIds explains. That is the ordinary case for a lineage, so the

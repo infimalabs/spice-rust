@@ -22,6 +22,7 @@ import {
   assertFirefoxRestoredMosaic,
   captureFirefoxAgentPageSpacing,
 } from "./firefox-restored-mosaic.mjs";
+import { assertCandidateMeasurementPaintEngineInventory } from "./mosaic-candidate-paint.mjs";
 import {
   assertComposerPointerSelection,
   assertComposerShards,
@@ -978,6 +979,7 @@ try {
           artifacts,
           seeded.agentAttribution,
         );
+        assertCandidateMeasurementPaintEngineInventory();
       });
       await run.scenario("authority-task-flow", async () => {
         await assertLiveThreadCoalescing(
