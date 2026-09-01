@@ -14,10 +14,24 @@ pub(super) fn codex_event(timestamp: &str, kind: &str, payload: Value) -> Value 
 }
 
 pub(super) fn codex_message(timestamp: &str, role: &str, phase: Option<&str>, text: &str) -> Value {
+    codex_message_content(
+        timestamp,
+        role,
+        phase,
+        json!([{"type": "output_text", "text": text}]),
+    )
+}
+
+pub(super) fn codex_message_content(
+    timestamp: &str,
+    role: &str,
+    phase: Option<&str>,
+    content: Value,
+) -> Value {
     let mut payload = json!({
         "type": "message",
         "role": role,
-        "content": [{"type": "output_text", "text": text}],
+        "content": content,
     });
     if let Some(phase) = phase {
         payload["phase"] = Value::String(phase.to_owned());

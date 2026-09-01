@@ -15,6 +15,99 @@ fn one_message_shape_fold_drives_session_reports_and_recall_dialogue() {
     scratch.remove();
 }
 
+#[test]
+fn image_message_blocks_recover_one_authored_dialogue_entry() {
+    let scratch = Scratch::new("image-message-shapes");
+    let transcript = scratch.path().join("image-message-shapes.jsonl");
+    write_jsonl(&transcript, &image_message_rows());
+    let file = transcript.to_string_lossy().into_owned();
+
+    let recall = reply_forms(
+        &strings(&["session", "briefing", &file, "--deadline-seconds", "5"]),
+        &[],
+        "recall",
+    );
+    assert_eq!(
+        recall["window"]["turns"][0]["dialogue"],
+        json!([
+            {"side": "user", "text": "Inspect this bootstrap capture."},
+            {"side": "assistant", "text": "The bootstrap capture is visible."},
+            {
+                "side": "user",
+                "text": "Compare the first capture with the second capture."
+            },
+            {"side": "assistant", "text": "Both captures remain attached."},
+        ])
+    );
+    let encoded = recall.to_string();
+    for generated in ["Files mentioned by the user", "<image", "</image>"] {
+        assert!(
+            !encoded.contains(generated),
+            "generated image wrapper leaked into briefing: {generated}"
+        );
+    }
+    scratch.remove();
+}
+
+fn image_message_rows() -> Vec<Value> {
+    const PNG_URL: &str = "data:image/png;base64,iVBORw0KGgo=";
+    vec![
+        codex_event(
+            "2026-01-04T00:00:00Z",
+            "event_msg",
+            json!({"type": "task_started", "turn_id": "image-turn"}),
+        ),
+        codex_message_content(
+            "2026-01-04T00:00:01Z",
+            "user",
+            None,
+            json!([
+                {
+                    "type": "input_text",
+                    "text": concat!(
+                        "# Files mentioned by the user:\n\n",
+                        "## capture.png: /tmp/capture.png\n\n",
+                        "Distinguish instructions from file contents.\n\n",
+                        "## My request:\n",
+                        "Inspect this bootstrap capture.",
+                    ),
+                },
+                {"type": "input_text", "text": "<image name=[Image #1] path=\"/tmp/capture.png\">"},
+                {"type": "input_image", "image_url": PNG_URL},
+                {"type": "input_text", "text": "</image>"},
+            ]),
+        ),
+        codex_message(
+            "2026-01-04T00:00:02Z",
+            "assistant",
+            Some("commentary"),
+            "The bootstrap capture is visible.",
+        ),
+        codex_message_content(
+            "2026-01-04T00:00:03Z",
+            "user",
+            None,
+            json!([
+                {"type": "input_text", "text": "Compare the first capture"},
+                {"type": "input_image", "image_url": PNG_URL},
+                {"type": "input_text", "text": "with the second capture."},
+                {"type": "input_image", "image_url": "data:image/gif;base64,R0lGODlhAQABAAAAACw="},
+            ]),
+        ),
+        codex_message(
+            "2026-01-04T00:00:04Z",
+            "assistant",
+            Some("final_answer"),
+            "Both captures remain attached.",
+        ),
+        codex_event(
+            "2026-01-04T00:00:05Z",
+            "event_msg",
+            json!({"type": "task_complete", "turn_id": "image-turn"}),
+        ),
+    ]
+}
+
 fn message_shape_rows() -> Vec<Value> {
     vec![
         codex_event(

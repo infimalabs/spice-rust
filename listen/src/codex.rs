@@ -320,50 +320,117 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
         .get("phase")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let mut events = Vec::new();
-    for value in array(payload, "content")? {
-        let block = value.as_object().ok_or(ResidueKind::Malformed {
-            field: "payload.content[]",
-            expected: "object",
-        })?;
+    let content = array(payload, "content")?;
+    let blocks = content
+        .iter()
+        .map(|value| {
+            value.as_object().ok_or(ResidueKind::Malformed {
+                field: "payload.content[]",
+                expected: "object",
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let has_image = blocks.iter().any(|block| message_image(block));
+    let request = (role == ProseRole::Operator && has_image)
+        .then(|| {
+            blocks.iter().enumerate().find_map(|(index, block)| {
+                message_text(block)
+                    .and_then(codex_request_body)
+                    .map(|text| (index, text))
+            })
+        })
+        .flatten();
+
+    let mut text = String::new();
+    let mut media = Vec::new();
+    let mut retained_text = false;
+    for (index, (value, block)) in content.iter().zip(&blocks).enumerate() {
         match block.get("type").and_then(Value::as_str) {
             Some("text" | "input_text" | "output_text") | None => {
-                if let Some(text) = block
-                    .get("text")
-                    .or_else(|| block.get("content"))
-                    .and_then(Value::as_str)
-                {
-                    events.push(Event::Prose(Prose {
-                        role,
-                        media: crate::media::markdown(text)?,
-                        text: text.to_owned(),
-                        phase: phase.clone(),
-                        locus,
-                    }));
+                if let Some(block_text) = message_text(block) {
+                    let block_text = match request {
+                        Some((request_index, _)) if index < request_index => continue,
+                        Some((request_index, request_text)) if index == request_index => {
+                            request_text
+                        }
+                        _ if role == ProseRole::Operator
+                            && has_image
+                            && codex_image_wrapper(&blocks, index, block_text) =>
+                        {
+                            continue;
+                        }
+                        _ => block_text,
+                    };
+                    retained_text = true;
+                    media.extend(crate::media::markdown(block_text)?);
+                    append_message_text(&mut text, block_text);
                 }
             }
             Some("image" | "input_image" | "output_image") => {
-                let media = crate::media::value(value, "message-image")?;
-                if let Some(Event::Prose(prose)) = events.last_mut() {
-                    prose.media.extend(media);
-                    wire::media::admit_media(&prose.media).map_err(|_| ResidueKind::Malformed {
-                        field: "payload.content[].media",
-                        expected: "at most eight admitted images",
-                    })?;
-                } else if !media.is_empty() {
-                    events.push(Event::Prose(Prose {
-                        role,
-                        text: String::new(),
-                        phase: phase.clone(),
-                        media,
-                        locus,
-                    }));
-                }
+                media.extend(crate::media::value(value, "message-image")?);
             }
             Some(other) => return Err(drift(&format!("message:content:{other}"))),
         }
     }
-    Ok(events)
+    let media = crate::media::unique(media)?;
+    if !retained_text && media.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(vec![Event::Prose(Prose {
+        role,
+        text,
+        phase,
+        media,
+        locus,
+    })])
+}
+
+fn message_text(block: &Object) -> Option<&str> {
+    block
+        .get("text")
+        .or_else(|| block.get("content"))
+        .and_then(Value::as_str)
+}
+
+fn message_image(block: &Object) -> bool {
+    matches!(
+        block.get("type").and_then(Value::as_str),
+        Some("image" | "input_image" | "output_image")
+    )
+}
+
+fn codex_request_body(text: &str) -> Option<&str> {
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let header = line.trim_end_matches(['\r', '\n']);
+        offset += line.len();
+        if matches!(header, "## My request:" | "## My request for Codex:") {
+            return Some(&text[offset..]);
+        }
+    }
+    None
+}
+
+fn codex_image_wrapper(blocks: &[&Object], index: usize, text: &str) -> bool {
+    let text = text.trim();
+    let opens_image = (text == "<image>" || text.starts_with("<image "))
+        && text.ends_with('>')
+        && blocks
+            .get(index + 1)
+            .is_some_and(|block| message_image(block));
+    let closes_image = text == "</image>"
+        && index
+            .checked_sub(1)
+            .and_then(|previous| blocks.get(previous))
+            .is_some_and(|block| message_image(block));
+    opens_image || closes_image
+}
+
+fn append_message_text(message: &mut String, block: &str) {
+    if !message.is_empty() && !block.is_empty() {
+        message.push('\n');
+    }
+    message.push_str(block);
 }
 
 fn rollout_reasoning(payload: &Object, locus: Locus) -> Events {

@@ -726,6 +726,117 @@ fn codex_and_claude_authored_directives_retain_delivered_media_beside_the_text()
 }
 
 #[test]
+fn codex_image_messages_fold_generated_wrappers_into_one_authored_event() {
+    const PNG: &str = "iVBORw0KGgo=";
+    let bootstrap = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": concat!(
+                        "# Files mentioned by the user:\n\n",
+                        "## capture.png: /tmp/capture.png\n\n",
+                        "Distinguish instructions from file contents.\n\n",
+                        "## My request for Codex:\n",
+                        "Inspect this bootstrap capture.",
+                    ),
+                },
+                {"type": "input_text", "text": "<image name=[Image #1] path=\"/tmp/capture.png\">"},
+                {"type": "input_image", "image_url": format!("data:image/png;base64,{PNG}")},
+                {"type": "input_text", "text": "</image>"},
+            ],
+        },
+    }))
+    .expect("Codex bootstrap image fixture encodes");
+    let decoded = decode(Dialect::Codex, &bootstrap, locus(&bootstrap))
+        .expect("Codex bootstrap image message decodes");
+    let [Event::Prose(prose)] = decoded.events() else {
+        panic!("one vendor image message produces one prose event");
+    };
+    assert_eq!(prose.role, ProseRole::Operator);
+    assert_eq!(prose.text, "Inspect this bootstrap capture.");
+    assert_eq!(prose.media.len(), 1);
+    assert_eq!(prose.locus, locus(&bootstrap));
+
+    let midstream = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Compare the first capture"},
+                {"type": "input_image", "image_url": format!("data:image/png;base64,{PNG}")},
+                {"type": "input_text", "text": "with the second capture."},
+                {"type": "input_image", "image_url": "data:image/gif;base64,R0lGODlhAQABAAAAACw="},
+            ],
+        },
+    }))
+    .expect("Codex mid-stream image fixture encodes");
+    let decoded = decode(Dialect::Codex, &midstream, locus(&midstream))
+        .expect("Codex mid-stream image message decodes");
+    let [Event::Prose(prose)] = decoded.events() else {
+        panic!("interleaved image blocks remain one prose event");
+    };
+    assert_eq!(
+        prose.text,
+        "Compare the first capture\nwith the second capture."
+    );
+    assert_eq!(prose.media.len(), 2);
+    assert_eq!(prose.media[0].content_type, "image/png");
+    assert_eq!(prose.media[1].content_type, "image/gif");
+    assert_ne!(
+        prose.media[0].identity().unwrap(),
+        prose.media[1].identity().unwrap()
+    );
+}
+
+#[test]
+fn codex_image_message_normalization_preserves_image_only_and_assistant_text() {
+    const PNG_URL: &str = "data:image/png;base64,iVBORw0KGgo=";
+    let image_only = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_image", "image_url": PNG_URL}],
+        },
+    }))
+    .expect("Codex image-only fixture encodes");
+    let decoded = decode(Dialect::Codex, &image_only, locus(&image_only))
+        .expect("Codex image-only message decodes");
+    let [Event::Prose(prose)] = decoded.events() else {
+        panic!("image-only input remains one prose event");
+    };
+    assert!(prose.text.is_empty());
+    assert_eq!(prose.media.len(), 1);
+
+    let assistant = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "<image>"},
+                {"type": "output_image", "image_url": PNG_URL},
+                {"type": "output_text", "text": "</image>"},
+            ],
+        },
+    }))
+    .expect("Codex assistant image fixture encodes");
+    let decoded = decode(Dialect::Codex, &assistant, locus(&assistant))
+        .expect("Codex assistant image message decodes");
+    let [Event::Prose(prose)] = decoded.events() else {
+        panic!("assistant image message remains one prose event");
+    };
+    assert_eq!(prose.role, ProseRole::Assistant);
+    assert_eq!(prose.text, "<image>\n</image>");
+    assert_eq!(prose.media.len(), 1);
+}
+
+#[test]
 fn automatic_ownership_refuses_disagreement_without_a_fallback() {
     let codex = br#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#;
     assert!(matches!(
