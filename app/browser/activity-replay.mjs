@@ -141,9 +141,28 @@ export async function installActivityReplay(context) {
       );
       const equalA = make(sources[0], "hydration equal time a", base + 3_000, 60_030);
       const equalB = make(sources[1], "hydration equal time b", base + 3_000, 60_001);
+      const middle = Array.from({ length: 40 }, (_, index) => {
+        const label = index === 17
+          ? [
+            "## Measured lattice witness",
+            ...Array.from({ length: 8 }, (_, paragraph) => [
+              "",
+              `Integrated hydration paragraph ${paragraph + 1} preserves deterministic chronology`,
+              "while enough ordinary words wrap naturally across the narrow and wide lattice candidates.",
+            ].join(" ")),
+          ].join("\n")
+          : `hydration interleaved batch record ${index + 1}`;
+        return make(
+          sources[index % sources.length],
+          label,
+          index === 17 ? base - 100 : base + 2_100 + Math.floor(index / sources.length) * 100,
+          61_000 + (39 - index) * 17,
+        );
+      });
+      const tall = middle[17];
       const recent = make(sources[0], "hydration retained recent", base + 4_000, 60_040);
       const newer = make(sources[1], "hydration newer edge", base + 5_000, 60_050);
-      const chronological = [older, old, boundary, equalA, equalB, recent, newer].sort(
+      const chronological = [older, old, boundary, ...middle, equalA, equalB, recent, newer].sort(
         (left, right) => left.observed.localeCompare(right.observed)
           || left.lane.localeCompare(right.lane)
           || left.locus.member - right.locus.member
@@ -160,8 +179,8 @@ export async function installActivityReplay(context) {
         return value;
       };
       const stages = [
-        [old, boundary, recent],
-        [newer, recent, boundary, old, older],
+        [tall, old, boundary, recent],
+        [newer, recent, boundary, old, tall],
         [...chronological].reverse(),
       ];
       const frameFor = (messages) => ({
@@ -174,6 +193,7 @@ export async function installActivityReplay(context) {
       });
       return {
         chronological,
+        newestKey: agentMessageKey(newer),
         stages,
         keys(messages) {
           return [...messages]
