@@ -62,6 +62,7 @@ fn stream_write(note: &str, trust: bool) -> journal::JournalWrite {
                 wire::body::TrustPended {
                     surface: "config".to_owned(),
                     digest: digest.clone(),
+                    worktree: None,
                     previous: None,
                 },
                 journal::FactCause::Root,
@@ -70,6 +71,7 @@ fn stream_write(note: &str, trust: bool) -> journal::JournalWrite {
         write.trust_head(fact, move |_| wire::TrustHead {
             digest,
             state: wire::TrustState::Pended,
+            worktree: None,
         });
     }
     write

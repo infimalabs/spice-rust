@@ -818,6 +818,16 @@ where
         .trust_head(surface.digest())
         .map_err(|error| store_fault("trust::head-unreadable", &error.to_string()))?;
     if trust.is_none() {
+        let worktree = repository
+            .worktree_root()
+            .to_str()
+            .ok_or_else(|| {
+                store_fault(
+                    "trust::worktree-unrepresentable",
+                    "resident worktree root is not UTF-8",
+                )
+            })?
+            .to_owned();
         let snapshot = bus
             .fact_snapshot()
             .map_err(|error| store_fault("trust::journal-unreadable", &error.to_string()))?;
@@ -838,6 +848,7 @@ where
                 wire::body::TrustPended {
                     surface: crate::trust_command::SURFACE_NAME.to_owned(),
                     digest: digest.clone(),
+                    worktree: Some(worktree.clone()),
                     previous,
                 },
                 cause,
@@ -846,6 +857,7 @@ where
         pending.trust_head(pended, move |_| TrustHead {
             digest,
             state: TrustState::Pended,
+            worktree: Some(worktree),
         });
         let committed = commit(bus, pending)?;
         first.get_or_insert_with(|| committed.first());

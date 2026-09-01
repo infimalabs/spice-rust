@@ -255,11 +255,22 @@ pub(crate) fn pend(contract: &Contract) -> Outcome<TrustAnswer> {
         Ok(state) => state,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
+    let Some(worktree) = repository.worktree_root().to_str() else {
+        return fault(
+            FaultClass::Environment,
+            "trust::worktree-unrepresentable",
+            format!(
+                "worktree root is not UTF-8: {}",
+                repository.worktree_root().display()
+            ),
+        );
+    };
     trust_answer(crate::command_client::execute(
         state.canvas(),
         contract,
         crate::command_client::SelectedCommand::TrustPend {
             digest: surface.digest(),
+            worktree,
         },
     ))
 }

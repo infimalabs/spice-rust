@@ -977,6 +977,7 @@ fn insert_heads(journal: &Journal) {
         &TrustHead {
             digest: trust_digest.clone(),
             state: TrustState::Pended,
+            worktree: None,
         },
     );
     insert_head(

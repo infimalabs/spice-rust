@@ -1,6 +1,8 @@
 //! Resident-owned consent decisions and executable-policy rulings.
 //! Trust rulings commit through one generation-guarded path.
 
+use std::path::{Path, PathBuf};
+
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalHead, JournalWrite};
 use spice::repository::Repository;
@@ -117,70 +119,22 @@ pub(super) fn trust_pend_with<F>(
 where
     F: FnOnce(),
 {
-    if !matches!(command.actor(), Actor::Operator) {
-        return trust_refusal(
-            "trust::operator-required",
-            Some("operator".to_owned()),
-            Some(command.actor().to_string()),
-            "submit trust pend through the current operator discovery",
-        );
-    }
-    let surface = match crate::trust_command::Surface::load(repository) {
-        Ok(surface) => surface,
-        Err(error) => return crate::trust_command::load_failure(&error),
+    let admission = match admit_trust_pend(bus, repository, epoch, command, reference) {
+        Ok(admission) => admission,
+        Err(outcome) => return outcome,
     };
-    if reference.digest != *surface.digest() {
-        return trust_refusal(
-            "trust::digest-not-current",
-            Some(surface.digest().to_string()),
-            Some(reference.digest.to_string()),
-            &format!(
-                "rerun `spice trust pend` from worktree {}",
-                repository.worktree_root().display(),
-            ),
-        );
-    }
-    let expected = Witness::Trust {
-        digest: reference.digest.clone(),
-        standing: TrustState::Pended,
-    };
-    if command.expected() != [expected] {
-        return trust_refusal(
-            "trust::witness-moved",
-            Some(format!("{}:pended", reference.digest)),
-            Some(format!("{:?}", command.expected())),
-            "recapture the current executable surface before pending it",
-        );
-    }
-    if let Err(outcome) = admit_epoch(bus, command, epoch) {
-        return outcome;
-    }
-    match bus.trust_head(&reference.digest) {
-        Ok(None) => {}
-        Ok(Some(_)) => {
-            return trust_refusal(
-                "trust::digest-already-pended",
-                Some("one previously unseen current digest".to_owned()),
-                Some(reference.digest.to_string()),
-                "read the current trust report before issuing another ruling",
-            );
-        }
-        Err(error) => return typed_store_fault("trust::head-unreadable", &error.to_string()),
-    }
-    let snapshot = match bus.fact_snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(error) => return typed_store_fault("trust::journal-unreadable", &error.to_string()),
-    };
-    let previous = match super::latest_surface_digest(&snapshot) {
-        Ok(previous) => previous,
-        Err(outcome) => return typed_outcome(outcome),
-    };
+    let TrustPendAdmission {
+        worktree,
+        surface,
+        previous,
+    } = admission;
     let mut proposal = match write(command.actor().clone(), epoch, Producer::CommandDoor) {
         Ok(proposal) => proposal,
         Err(outcome) => return typed_outcome(outcome),
     };
     proposal.guard(trust_pend_guard(
-        repository.clone(),
+        repository.common_dir().to_path_buf(),
+        worktree.clone(),
         surface,
         reference.digest.clone(),
         epoch,
@@ -189,6 +143,7 @@ where
         wire::body::TrustPended {
             surface: crate::trust_command::SURFACE_NAME.to_owned(),
             digest: reference.digest.clone(),
+            worktree: Some(worktree.clone()),
             previous,
         },
         FactCause::Root,
@@ -200,6 +155,7 @@ where
     proposal.trust_head(fact, move |_| TrustHead {
         digest,
         state: TrustState::Pended,
+        worktree: Some(worktree),
     });
     let answer = TrustAnswer {
         digest: reference.digest.clone(),
@@ -236,7 +192,8 @@ where
         Err(outcome) => return typed_outcome(outcome),
     };
     proposal.guard(trust_guard(
-        repository.clone(),
+        repository.common_dir().to_path_buf(),
+        admission.worktree.clone(),
         admission.surface,
         reference.digest.clone(),
         admission.from,
@@ -253,9 +210,11 @@ where
     };
     let digest = reference.digest.clone();
     let standing = admission.to;
+    let worktree = admission.worktree;
     proposal.trust_head(fact, move |_| TrustHead {
         digest,
         state: standing,
+        worktree: Some(worktree),
     });
     let answer = TrustAnswer {
         digest: reference.digest.clone(),
@@ -348,6 +307,91 @@ struct TrustAdmission {
     surface: crate::trust_command::Surface,
     head: JournalHead<TrustHead>,
     origin: wire::Origin,
+    worktree: String,
+}
+
+struct TrustPendAdmission {
+    worktree: String,
+    surface: crate::trust_command::Surface,
+    previous: Option<wire::Digest>,
+}
+
+fn admit_trust_pend(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    reference: &TrustRef,
+) -> SurfaceResult<TrustPendAdmission> {
+    if !matches!(command.actor(), Actor::Operator) {
+        return Err(trust_refusal(
+            "trust::operator-required",
+            Some("operator".to_owned()),
+            Some(command.actor().to_string()),
+            "submit trust pend through the current operator discovery",
+        ));
+    }
+    let worktree = reference.worktree.clone().ok_or_else(|| {
+        trust_refusal(
+            "trust::worktree-missing",
+            Some("the canonical producing worktree root".to_owned()),
+            None,
+            "rerun `spice trust pend` from the worktree that produced the digest",
+        )
+    })?;
+    let producing_repository = admit_trust_worktree(repository, &worktree)?;
+    let surface = crate::trust_command::Surface::load(&producing_repository)
+        .map_err(|error| crate::trust_command::load_failure(&error))?;
+    if reference.digest != *surface.digest() {
+        return Err(trust_refusal(
+            "trust::digest-not-current",
+            Some(surface.digest().to_string()),
+            Some(reference.digest.to_string()),
+            &format!(
+                "rerun `spice trust pend` from worktree {}",
+                producing_repository.worktree_root().display(),
+            ),
+        ));
+    }
+    let expected = Witness::Trust {
+        digest: reference.digest.clone(),
+        standing: TrustState::Pended,
+    };
+    if command.expected() != [expected] {
+        return Err(trust_refusal(
+            "trust::witness-moved",
+            Some(format!("{}:pended", reference.digest)),
+            Some(format!("{:?}", command.expected())),
+            "recapture the current executable surface before pending it",
+        ));
+    }
+    admit_epoch(bus, command, epoch)?;
+    match bus.trust_head(&reference.digest) {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return Err(trust_refusal(
+                "trust::digest-already-pended",
+                Some("one previously unseen current digest".to_owned()),
+                Some(reference.digest.to_string()),
+                "read the current trust report before issuing another ruling",
+            ));
+        }
+        Err(error) => {
+            return Err(typed_store_fault(
+                "trust::head-unreadable",
+                &error.to_string(),
+            ));
+        }
+    }
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| typed_store_fault("trust::journal-unreadable", &error.to_string()))?;
+    let previous = super::latest_surface_digest(&snapshot).map_err(typed_outcome)?;
+    Ok(TrustPendAdmission {
+        worktree,
+        surface,
+        previous,
+    })
 }
 
 fn admit_trust(
@@ -357,10 +401,37 @@ fn admit_trust(
     command: &wire::AdmittedCommand,
     reference: &TrustRef,
 ) -> SurfaceResult<TrustAdmission> {
+    if reference.worktree.is_some() {
+        return Err(trust_refusal(
+            "trust::worktree-unexpected",
+            Some("grant and revoke name only the exact digest".to_owned()),
+            reference.worktree.clone(),
+            "retry the unchanged exact-digest trust ruling command",
+        ));
+    }
     let (from, to) = trust_transition(command.kind());
-    let surface = crate::trust_command::Surface::load(repository)
+    let head = admit_trust_head(bus, command, reference, from)?;
+    let worktree = head.body().worktree.clone().ok_or_else(|| {
+        trust_refusal(
+            "trust::worktree-unbound",
+            Some("schema 12 trust authority with a producing worktree".to_owned()),
+            Some(format!("schema 11 digest {}", reference.digest)),
+            "use the release that owns journal schema 11 to retire the legacy ruling, then pend the current digest with this release",
+        )
+    })?;
+    let producing_repository = admit_trust_worktree(repository, &worktree)?;
+    let surface = crate::trust_command::Surface::load(&producing_repository)
         .map_err(|error| crate::trust_command::load_failure(&error))?;
-    let head = admit_trust_head(bus, command, reference, &surface, from)?;
+    if reference.digest != *surface.digest() {
+        return Err(trust_refusal(
+            "trust::digest-not-current",
+            Some(surface.digest().to_string()),
+            Some(reference.digest.to_string()),
+            &format!(
+                "run spice trust from producing worktree {worktree} and rule on its exact current digest"
+            ),
+        ));
+    }
     let origin = trust_head_origin(bus, &head)?;
     admit_epoch(bus, command, epoch)?;
     Ok(TrustAdmission {
@@ -369,7 +440,39 @@ fn admit_trust(
         surface,
         head,
         origin,
+        worktree,
     })
+}
+
+fn admit_trust_worktree(
+    resident_repository: &Repository,
+    worktree: &str,
+) -> SurfaceResult<Repository> {
+    let repository = Repository::discover(worktree).map_err(|error| {
+        trust_refusal(
+            "trust::worktree-unresolved",
+            Some("one current linked worktree root".to_owned()),
+            Some(worktree.to_owned()),
+            &format!("restore the producing worktree and retry: {error}"),
+        )
+    })?;
+    if repository.worktree_root() != Path::new(worktree) {
+        return Err(trust_refusal(
+            "trust::worktree-not-root",
+            Some(repository.worktree_root().display().to_string()),
+            Some(worktree.to_owned()),
+            "rerun `spice trust pend` from the canonical producing worktree root",
+        ));
+    }
+    if repository.common_dir() != resident_repository.common_dir() {
+        return Err(trust_refusal(
+            "trust::foreign-worktree",
+            Some(resident_repository.common_dir().display().to_string()),
+            Some(repository.common_dir().display().to_string()),
+            "run `spice trust pend` through the resident that owns the producing repository",
+        ));
+    }
+    Ok(repository)
 }
 
 fn trust_head_origin(bus: &Bus, head: &JournalHead<TrustHead>) -> SurfaceResult<wire::Origin> {
@@ -400,17 +503,8 @@ fn admit_trust_head(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     reference: &TrustRef,
-    surface: &crate::trust_command::Surface,
     from: TrustState,
 ) -> SurfaceResult<JournalHead<TrustHead>> {
-    if reference.digest != *surface.digest() {
-        return Err(trust_refusal(
-            "trust::digest-not-current",
-            Some(surface.digest().to_string()),
-            Some(reference.digest.to_string()),
-            "run spice trust and rule on its exact current digest",
-        ));
-    }
     let head = bus
         .trust_head(&reference.digest)
         .map_err(|error| typed_store_fault("trust::head-unreadable", &error.to_string()))?
@@ -469,19 +563,24 @@ fn admit_epoch(
 }
 
 fn trust_guard(
-    repository: Repository,
+    common: PathBuf,
+    worktree: String,
     surface: crate::trust_command::Surface,
     digest: wire::Digest,
     from: TrustState,
     epoch: CanonicalUuid,
 ) -> JournalGuard {
     JournalGuard::new(move |read| {
+        let repository = guarded_trust_worktree(&common, &worktree)?;
         super::require_current_surface(&repository, &surface)?;
         let current = read
             .trust_head(&digest)?
             .ok_or_else(|| GuardError::refused("trust::digest-unknown"))?;
         if current.body().state != from {
             return Err(GuardError::refused("trust::standing-moved"));
+        }
+        if current.body().worktree.as_deref() != Some(worktree.as_str()) {
+            return Err(GuardError::refused("trust::worktree-moved"));
         }
         let residency = read
             .residency_head()?
@@ -494,12 +593,14 @@ fn trust_guard(
 }
 
 fn trust_pend_guard(
-    repository: Repository,
+    common: PathBuf,
+    worktree: String,
     surface: crate::trust_command::Surface,
     digest: wire::Digest,
     epoch: CanonicalUuid,
 ) -> JournalGuard {
     JournalGuard::new(move |read| {
+        let repository = guarded_trust_worktree(&common, &worktree)?;
         super::require_current_surface(&repository, &surface)?;
         if read.trust_head(&digest)?.is_some() {
             return Err(GuardError::refused("trust::digest-already-pended"));
@@ -512,6 +613,18 @@ fn trust_pend_guard(
         }
         Ok(())
     })
+}
+
+fn guarded_trust_worktree(common: &Path, worktree: &str) -> Result<Repository, GuardError> {
+    let repository = Repository::discover(worktree)
+        .map_err(|_| GuardError::refused("trust::worktree-unresolved"))?;
+    if repository.worktree_root() != Path::new(worktree) {
+        return Err(GuardError::refused("trust::worktree-not-root"));
+    }
+    if repository.common_dir() != common {
+        return Err(GuardError::refused("trust::foreign-worktree"));
+    }
+    Ok(repository)
 }
 
 fn trust_fact(

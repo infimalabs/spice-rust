@@ -295,6 +295,7 @@ fn staged_app_seed_callers_are_fully_inventoried() {
             "steering.rs",
             "task_artifact_cli.rs",
             "taste_cli.rs",
+            "trust_cli.rs",
         ]
         .map(std::ffi::OsString::from)
     );

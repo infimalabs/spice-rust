@@ -837,20 +837,25 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
     .expect("write executable policy fixture");
     let policy = DispatchPolicy::load(&repository).expect("load executable policy");
 
-    let absent = policy.trust_refusal_detail(None);
+    let absent = policy.trust_refusal_detail(None, None);
     assert!(absent.contains("standing=absent"), "{absent}");
+    assert!(absent.contains("producer_worktree=absent"), "{absent}");
     assert!(
         absent.contains(&scratch.root.display().to_string()),
         "{absent}"
     );
     assert!(absent.contains("spice trust pend"), "{absent}");
 
-    let detail = policy.trust_refusal_detail(Some(TrustState::Pended));
+    let detail = policy.trust_refusal_detail(Some(TrustState::Pended), Some("/worktrees/producer"));
     assert!(
         detail.contains(&policy.surface.digest().to_string()),
         "{detail}"
     );
     assert!(detail.contains("standing=pended"), "{detail}");
+    assert!(
+        detail.contains("producer_worktree=\"/worktrees/producer\""),
+        "{detail}"
+    );
     assert!(detail.contains("provenance=tracked"), "{detail}");
     assert!(
         detail.contains(&scratch.root.display().to_string()),
@@ -904,6 +909,7 @@ fn durable_trust_is_read_only_and_required_before_execution() {
             wire::body::TrustPended {
                 surface: crate::trust_command::SURFACE_NAME.to_owned(),
                 digest: policy.surface.digest().clone(),
+                worktree: None,
                 previous: None,
             },
             journal::FactCause::Root,
@@ -913,10 +919,66 @@ fn durable_trust_is_read_only_and_required_before_execution() {
     write.trust_head(pended, move |_| wire::TrustHead {
         digest,
         state: TrustState::Granted,
+        worktree: None,
     });
     authority.apply(write).expect("commit fixture trust grant");
     drop(authority);
-    let granted = fs::read(state.journal()).expect("read granted authority");
+    let legacy = fs::read(state.journal()).expect("read legacy authority");
+
+    let refusal = policy
+        .require_approved(&repository)
+        .expect_err("an unbound legacy grant must not arm execution");
+    assert_eq!(refusal.reason(), "gate::pre-commit-configuration-untrusted");
+    assert!(
+        refusal.detail().contains("producer_worktree=unbound"),
+        "{}",
+        refusal.detail()
+    );
+    for evidence in ["schema 11", "release", "legacy ruling"] {
+        assert!(refusal.detail().contains(evidence), "{}", refusal.detail());
+    }
+    assert_eq!(
+        fs::read(state.journal()).expect("reread legacy authority"),
+        legacy,
+        "legacy trust admission must be read-only",
+    );
+
+    let worktree = policy
+        .worktree
+        .to_str()
+        .expect("fixture worktree is UTF-8")
+        .to_owned();
+    let mut authority = journal::Journal::open(state.journal()).expect("reopen fixture authority");
+    let mut write = journal::JournalWrite::new(
+        wire::Actor::Spice,
+        "recovery:configured-bound-trust-fixture"
+            .parse()
+            .expect("fixture origin"),
+        "2030-04-12T18:44:02.271Z".parse().expect("fixture instant"),
+        wire::Producer::CommandDoor,
+    );
+    let pended = write
+        .fact(
+            wire::body::TrustPended {
+                surface: crate::trust_command::SURFACE_NAME.to_owned(),
+                digest: policy.surface.digest().clone(),
+                worktree: Some(worktree.clone()),
+                previous: None,
+            },
+            journal::FactCause::Root,
+        )
+        .expect("build bound trust fact");
+    let digest = policy.surface.digest().clone();
+    write.trust_head(pended, move |_| wire::TrustHead {
+        digest,
+        state: TrustState::Granted,
+        worktree: Some(worktree),
+    });
+    authority
+        .apply(write)
+        .expect("commit bound fixture trust grant");
+    drop(authority);
+    let granted = fs::read(state.journal()).expect("read bound granted authority");
 
     policy
         .require_approved(&repository)

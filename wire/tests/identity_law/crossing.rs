@@ -427,10 +427,12 @@ fn cover_policy_heads(covered: &mut BTreeSet<String>) {
             TrustHead {
                 digest: digest("a"),
                 state: TrustState::Pended,
+                worktree: None,
             },
             TrustHead {
                 digest: digest("b"),
                 state: TrustState::Granted,
+                worktree: Some("/worktrees/trust-b".to_owned()),
             },
         ],
     );
@@ -797,6 +799,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
             head: TrustHead {
                 digest: digest("a"),
                 state: TrustState::Granted,
+                worktree: Some("/worktrees/trust-a".to_owned()),
             },
         }],
         overflow: None,

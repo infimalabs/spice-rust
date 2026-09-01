@@ -472,7 +472,16 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (8, MigrationStep::Rust(vocabulary::migrate)),
     (9, MigrationStep::Sql(MIGRATE_9_TO_10_SQL)),
     (10, MigrationStep::Sql(MIGRATE_10_TO_11_SQL)),
+    (11, MigrationStep::Sql(MIGRATE_11_TO_12_SQL)),
 ];
+
+/// Schema 11 to 12: producing-worktree identity on durable trust authority.
+///
+/// Existing trust rows omit the optional identity and decode as explicitly
+/// unbound current authority. New trust transitions always write it. The
+/// schema step prevents older releases from decoding the expanded wire shape;
+/// current rulings refuse an unbound row rather than guessing its producer.
+const MIGRATE_11_TO_12_SQL: &str = "SELECT 1;";
 
 /// Schema 10 to 11: operator fanout identity in steering facts and heads.
 ///
@@ -694,8 +703,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 11, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 12, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 11;
+PRAGMA user_version = 12;
 "#;
