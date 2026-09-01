@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  appendPrimaryCompactionBoundary,
   chooseCanvasView,
   reply,
   RECONNECT_MS,
@@ -210,14 +211,11 @@ export async function assertStagedMosaicHydration(page, team, activityReplay) {
   await plane.evaluate((element) => {
     window.__stagedHydrationViolations = [];
     window.__stagedHydrationExpected = [];
-    let pending = false;
-    const inspect = () => {
-      pending = false;
+    const inspect = (expected) => {
       if (element.dataset.measurementPhase !== "ready"
         || element.dataset.measurementPending !== "0") return;
       const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')];
       const keys = cards.map((card) => card.dataset.mosaicCardKey);
-      const expected = window.__stagedHydrationExpected;
       if (expected.length > 0 && JSON.stringify(keys) !== JSON.stringify(expected)) {
         window.__stagedHydrationViolations.push({ expected, keys });
       }
@@ -228,9 +226,8 @@ export async function assertStagedMosaicHydration(page, team, activityReplay) {
     const observer = new MutationObserver((mutations) => {
       if (!mutations.some((mutation) => mutation.target === element
         && mutation.attributeName === "data-plane-commits")) return;
-      if (pending) return;
-      pending = true;
-      requestAnimationFrame(inspect);
+      const expected = [...window.__stagedHydrationExpected];
+      inspect(expected);
     });
     observer.observe(element, { attributes: true, attributeFilter: ["data-plane-commits"] });
     element.__stagedHydrationObserver = observer;
@@ -298,7 +295,7 @@ export async function assertCompactionBoundary(
   const before = await committedPlacementSnapshot(team);
   const scrolled = await scrollMosaicAwayFromTop(page, plane);
   const boundaryProbe = await armPlacementProbe(plane);
-  await writeFile(join(seeded.teamWorktrees[0], ".spice-compaction-trigger"), "");
+  const authoredBoundary = await appendPrimaryCompactionBoundary(fixture);
   const divider = team.locator(
     `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
   );
@@ -359,6 +356,13 @@ export async function assertCompactionBoundary(
   );
   const boundaryKey = await divider.getAttribute("data-mosaic-card-key");
   assert.ok(boundaryKey, "the compaction boundary has one stable source identity");
+  assert.ok(
+    boundaryKey.endsWith(`-${authoredBoundary.offset}-${authoredBoundary.length}-0`),
+    `the rendered boundary ingests the exact authored session locus: ${JSON.stringify({
+      boundaryKey,
+      authoredBoundary,
+    })}`,
+  );
 
   const beforeKeys = await team.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => card.dataset.mosaicCardKey),
