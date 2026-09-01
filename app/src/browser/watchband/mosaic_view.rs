@@ -112,6 +112,8 @@ struct ActivityMeasurement {
     image_revision: u64,
     candidates: Vec<crate::mosaic::Candidate>,
     latched: Option<crate::mosaic::Candidate>,
+    spans: Vec<usize>,
+    widths: Vec<i32>,
     heights: Vec<i32>,
 }
 
@@ -126,6 +128,8 @@ pub(super) struct CardLayout {
     pub(super) lifecycle: crate::mosaic::Lifecycle,
     pub(super) measurement_index: usize,
     pub(super) measurement_reads: usize,
+    pub(super) measured_spans: String,
+    pub(super) measured_widths: String,
     pub(super) measured_heights: String,
     pub(super) candidate_spans: String,
     pub(super) measure_span: usize,
@@ -143,6 +147,8 @@ impl CardLayout {
             lifecycle: crate::mosaic::Lifecycle::Liquid,
             measurement_index,
             measurement_reads: 0,
+            measured_spans: String::new(),
+            measured_widths: String::new(),
             measured_heights: String::new(),
             candidate_spans: String::new(),
             measure_span: base_span,
@@ -165,6 +171,18 @@ impl CardLayout {
             lifecycle: card.lifecycle,
             measurement_index,
             measurement_reads: measurement.heights.len(),
+            measured_spans: measurement
+                .spans
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+            measured_widths: measurement
+                .widths
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
             measured_heights: measurement
                 .heights
                 .iter()
@@ -959,9 +977,16 @@ fn measure_element(
         return None;
     }
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
+    element
+        .set_attribute("data-mosaic-measurement-active", "true")
+        .expect("the fixed Mosaic measurement attribute is valid");
+    let mut spans = Vec::with_capacity(3);
+    let mut widths = Vec::with_capacity(3);
     let mut heights = Vec::with_capacity(3);
     let mut measure = |span: usize| {
-        let _ = element.set_attribute("data-measure-span", &span.to_string());
+        set_measure_span(element, span);
+        spans.push(span);
+        widths.push(element.offset_width());
         let height = element.offset_height();
         heights.push(height);
         f64::from(height)
@@ -977,20 +1002,21 @@ fn measure_element(
             },
         }]
     } else {
-        crate::mosaic::span_candidates(&geometry, measure)
+        crate::mosaic::span_candidates(&geometry, &mut measure)
     };
     let latched = latched_span
         .filter(|span| candidates.iter().all(|candidate| candidate.span != *span))
         .map(|span| {
-            let _ = element.set_attribute("data-measure-span", &span.to_string());
-            let height = element.offset_height();
-            heights.push(height);
+            let height = measure(span);
             crate::mosaic::Candidate {
                 span,
-                rows: crate::mosaic::rows_for(height.into(), geometry.gap, geometry.module),
+                rows: crate::mosaic::rows_for(height, geometry.gap, geometry.module),
             }
         });
-    let _ = element.set_attribute("data-measure-span", &geometry.base_span.to_string());
+    set_measure_span(element, activity.base_span(&geometry));
+    element
+        .remove_attribute("data-mosaic-measurement-active")
+        .expect("the fixed Mosaic measurement attribute is valid");
     Some(ActivityMeasurement {
         width,
         key: activity.key(),
@@ -998,8 +1024,21 @@ fn measure_element(
         image_revision,
         candidates,
         latched,
+        spans,
+        widths,
         heights,
     })
+}
+
+fn set_measure_span(element: &web_sys::HtmlElement, span: usize) {
+    let span = span.to_string();
+    element
+        .set_attribute("data-measure-span", &span)
+        .expect("the fixed Mosaic measurement attribute is valid");
+    element
+        .style()
+        .set_property("--mosaic-measure-span", &span)
+        .expect("Mosaic measurement writes its CSP-safe span property");
 }
 
 fn prepare_images(element: &web_sys::HtmlElement) -> bool {
