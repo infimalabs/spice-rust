@@ -173,6 +173,13 @@ async function observeOneBoundary(card, lane) {
     if (!age) throw new Error("the agent composer renders no age slot");
     const messageAge = element.querySelector(".message-age[data-age-slot]");
     if (!messageAge) throw new Error("the agent message renders no age slot");
+    const messageFooter = element.querySelector(".message-footer");
+    const messageFooterRight = element.querySelector(".message-footer-right");
+    const messageAgent = element.querySelector(".message-agent-name");
+    const messageActions = element.querySelector(".message-actions");
+    if (!messageFooter || !messageFooterRight || !messageAgent || !messageActions) {
+      throw new Error("the agent message renders no complete footer row");
+    }
     const authored = Number(age.dataset.ageAuthored);
     if (!Number.isFinite(authored)) throw new Error("the age slot carries no authored instant");
     const messageAuthored = Number(messageAge.dataset.ageAuthored);
@@ -185,6 +192,12 @@ async function observeOneBoundary(card, lane) {
       messageAge: {
         label: messageAge.textContent?.trim(),
         box: roundBox(messageAge.getBoundingClientRect()),
+      },
+      messageFooter: {
+        box: roundBox(messageFooter.getBoundingClientRect()),
+        right: roundBox(messageFooterRight.getBoundingClientRect()),
+        agent: roundBox(messageAgent.getBoundingClientRect()),
+        actions: roundBox(messageActions.getBoundingClientRect()),
       },
       cardBox: roundBox(element.getBoundingClientRect()),
       placement: Object.fromEntries(
@@ -335,6 +348,11 @@ function assertAdvancedLocally(advance, transport) {
     advance.after.messageAge.box,
     advance.before.messageAge.box,
     `the message age keeps its fixed bounding box across the tick: ${JSON.stringify(advance)}`,
+  );
+  assert.deepEqual(
+    advance.after.messageFooter,
+    advance.before.messageFooter,
+    `the complete one-row footer keeps its geometry across the tick: ${JSON.stringify(advance)}`,
   );
   assert.deepEqual(
     advance.after.cardBox,

@@ -231,7 +231,7 @@ function assertReferenceGeometry(geometry, agentLabels) {
   assert.ok(geometry.inlineCodeText, "the inline-code treatment is measured on real prose");
 
   assert.equal(geometry.footer.display, "grid");
-  assert.ok(geometry.footer.height >= 32, "the footer contains the natural action height");
+  assert.equal(geometry.footer.height, 32, "the footer is exactly one natural action row");
   assert.equal(geometry.footer.fontSize, "12px");
   assert.equal(geometry.footer.marginTop, "8px");
   assert.deepEqual(
@@ -256,15 +256,11 @@ function assertReferenceGeometry(geometry, agentLabels) {
     "the accessible copy control retains the complete unellipsized attribution",
   );
   assert.match(geometry.agent.title, /^Copy agent id\n[0-9a-f-]{36}$/);
-  assert.equal(geometry.agent.overflow, "visible");
-  assert.equal(geometry.agent.overflowWrap, "anywhere");
-  assert.equal(geometry.agent.textOverflow, "clip");
-  assert.equal(geometry.agent.whiteSpace, "normal");
-  assert.ok(
-    geometry.agent.scrollWidth <= geometry.agent.clientWidth + 1
-      && geometry.agent.scrollHeight <= geometry.agent.clientHeight + 1,
-    "the complete visible identity fits without clipping",
-  );
+  assert.equal(geometry.agent.overflow, "hidden");
+  assert.equal(geometry.agent.overflowWrap, "normal");
+  assert.equal(geometry.agent.textOverflow, "ellipsis");
+  assert.equal(geometry.agent.whiteSpace, "nowrap");
+  assert.ok(geometry.agent.height <= geometry.footer.height, "identity stays inside one row");
   assert.equal(geometry.actions.gap, "6px");
   assert.equal(geometry.actions.buttons.length, 3);
   assert.ok(
@@ -286,6 +282,24 @@ function assertReferenceGeometry(geometry, agentLabels) {
 async function assertActionInteraction(page, card) {
   const producer = card.locator(".message-agent-name");
   const labels = ["Speak this message", "Quote this message", "Copy this message"];
+  const rowGeometry = () => card.evaluate((article) => {
+    const cardBox = article.getBoundingClientRect();
+    const box = (node) => {
+      const bounds = node.getBoundingClientRect();
+      return {
+        bottom: Math.round(bounds.bottom - cardBox.top),
+        height: Math.round(bounds.height),
+        top: Math.round(bounds.top - cardBox.top),
+      };
+    };
+    return {
+      cardHeight: Math.round(cardBox.height),
+      footer: box(article.querySelector(".message-footer")),
+      right: box(article.querySelector(".message-footer-right")),
+      actions: box(article.querySelector(".message-actions")),
+    };
+  });
+  const before = await rowGeometry();
   await producer.focus();
   for (const label of labels) {
     await page.keyboard.press("Tab");
@@ -312,6 +326,11 @@ async function assertActionInteraction(page, card) {
   assert.notEqual(pressed, resting, "pointer press gives the quote control visible feedback");
   await page.mouse.move(0, 0);
   await page.mouse.up();
+  assert.deepEqual(
+    await rowGeometry(),
+    before,
+    "focus, hover, and pressed action states keep the footer on its original row",
+  );
 }
 
 async function waitForCommittedResize(page, console, viewport) {
@@ -341,34 +360,56 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
     '[data-card-kind="agent-message"][data-layout-phase="committed"]',
   );
   const fits = await cards.evaluateAll((articles) => articles.map((article) => {
+    const bounds = (node) => {
+      const box = node.getBoundingClientRect();
+      return {
+        bottom: box.bottom,
+        height: box.height,
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        width: box.width,
+      };
+    };
+    const footer = article.querySelector(".message-footer");
+    const footerLeft = article.querySelector(".message-footer-left");
+    const footerRight = article.querySelector(".message-footer-right");
     const agent = article.querySelector(".message-agent-name");
     const age = article.querySelector(".message-age");
-    const ageBox = age.getBoundingClientRect();
+    const actions = article.querySelector(".message-actions");
     return {
       key: article.dataset.mosaicCardKey,
       width: article.getBoundingClientRect().width,
       cardClientWidth: article.clientWidth,
       cardScrollWidth: article.scrollWidth,
-      footerClientWidth: article.querySelector(".message-footer").clientWidth,
-      footerScrollWidth: article.querySelector(".message-footer").scrollWidth,
+      footer: {
+        ...bounds(footer),
+        clientWidth: footer.clientWidth,
+        scrollWidth: footer.scrollWidth,
+      },
+      footerLeft: bounds(footerLeft),
+      footerRight: {
+        ...bounds(footerRight),
+        flexWrap: getComputedStyle(footerRight).flexWrap,
+      },
       agent: {
+        ...bounds(agent),
         ariaLabel: agent.getAttribute("aria-label"),
         clientHeight: agent.clientHeight,
         clientWidth: agent.clientWidth,
+        overflow: getComputedStyle(agent).overflow,
         scrollHeight: agent.scrollHeight,
         scrollWidth: agent.scrollWidth,
         text: agent.textContent.trim(),
+        textOverflow: getComputedStyle(agent).textOverflow,
+        whiteSpace: getComputedStyle(agent).whiteSpace,
       },
-      age: {
-        height: ageBox.height,
-        width: ageBox.width,
-      },
+      age: bounds(age),
+      actionGroup: bounds(actions),
       actions: [...article.querySelectorAll(".message-actions button")].map((button) => {
-        const box = button.getBoundingClientRect();
         return {
           ariaLabel: button.getAttribute("aria-label"),
-          height: box.height,
-          width: box.width,
+          ...bounds(button),
         };
       }),
     };
@@ -378,17 +419,18 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
     `${viewport.label} cards have no horizontal overflow: ${JSON.stringify(fits)}`,
   );
   assert.ok(
-    fits.every((fit) => fit.footerScrollWidth <= fit.footerClientWidth + 1),
+    fits.every((fit) => fit.footer.scrollWidth <= fit.footer.clientWidth + 1),
     `${viewport.label} footers have no horizontal overflow: ${JSON.stringify(fits)}`,
   );
   assert.ok(
     fits.every((fit) => (
       agentLabels.includes(fit.agent.text)
         && fit.agent.ariaLabel.endsWith(` · ${fit.agent.text}`)
-        && fit.agent.scrollWidth <= fit.agent.clientWidth + 1
-        && fit.agent.scrollHeight <= fit.agent.clientHeight + 1
+        && fit.agent.overflow === "hidden"
+        && fit.agent.textOverflow === "ellipsis"
+        && fit.agent.whiteSpace === "nowrap"
     )),
-    `${viewport.label} renders every exact agent label without clipping: ${JSON.stringify(fits)}`,
+    `${viewport.label} preserves exact agent identity behind one-line truncation: ${JSON.stringify(fits)}`,
   );
   assert.ok(
     agentLabels.every((label) => fits.some((fit) => fit.agent.text === label)),
@@ -403,6 +445,22 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
     fits.every((fit) => fit.age.width > 0 && fit.age.height > 0),
     `${viewport.label} message ages remain visible`,
   );
+  assert.ok(
+    fits.every((fit) => (
+      fit.footer.height === 32
+        && fit.footerLeft.bottom === fit.footer.bottom
+        && fit.footerRight.bottom === fit.footer.bottom
+        && fit.footerRight.height === 32
+        && fit.footerRight.flexWrap === "nowrap"
+        && fit.agent.top >= fit.footer.top
+        && fit.agent.bottom <= fit.footer.bottom
+        && fit.actionGroup.top >= fit.footer.top
+        && fit.actionGroup.bottom <= fit.footer.bottom
+        && fit.age.right <= fit.footerRight.left
+        && fit.agent.right <= fit.actionGroup.left
+    )),
+    `${viewport.label} footer content occupies one non-overlapping row: ${JSON.stringify(fits)}`,
+  );
   const actionLabels = ["Speak this message", "Quote this message", "Copy this message"];
   assert.ok(
     fits.every((fit) => (
@@ -415,6 +473,12 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
     )),
     `${viewport.label} keeps accessible 32px actions in keyboard order: ${JSON.stringify(fits)}`,
   );
+  if (viewport.label === "mobile") {
+    assert.ok(
+      fits.some((fit) => fit.agent.scrollWidth > fit.agent.clientWidth + 1),
+      `mobile proves long identity truncates only after filling its row: ${JSON.stringify(fits)}`,
+    );
+  }
   const screenshotTarget = fits.reduce((selected, candidate) => (
     candidate.agent.text.length > selected.agent.text.length ? candidate : selected
   ));
