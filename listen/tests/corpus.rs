@@ -837,6 +837,63 @@ fn codex_image_message_normalization_preserves_image_only_and_assistant_text() {
 }
 
 #[test]
+fn codex_image_normalization_preserves_authored_request_headers_and_image_tags() {
+    const PNG_URL: &str = "data:image/png;base64,iVBORw0KGgo=";
+    let authored_request = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Preface\n## My request:\nKeep this complete authored request.",
+                },
+                {"type": "input_image", "image_url": PNG_URL},
+                {"type": "input_text", "text": "Afterword"},
+            ],
+        },
+    }))
+    .expect("authored Codex request fixture encodes");
+    let decoded = decode(Dialect::Codex, &authored_request, locus(&authored_request))
+        .expect("authored Codex request message decodes");
+    let [Event::Prose(prose)] = decoded.events() else {
+        panic!("authored request remains one prose event");
+    };
+    assert_eq!(
+        prose.text,
+        "Preface\n## My request:\nKeep this complete authored request.\nAfterword"
+    );
+    assert_eq!(prose.media.len(), 1);
+
+    let authored_tags = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Literal tags follow."},
+                {"type": "input_text", "text": "<image>"},
+                {"type": "input_image", "image_url": PNG_URL},
+                {"type": "input_text", "text": "</image>"},
+                {"type": "input_text", "text": "Literal tags preceded this."},
+            ],
+        },
+    }))
+    .expect("authored Codex image-tag fixture encodes");
+    let decoded = decode(Dialect::Codex, &authored_tags, locus(&authored_tags))
+        .expect("authored Codex image-tag message decodes");
+    let [Event::Prose(prose)] = decoded.events() else {
+        panic!("authored image tags remain one prose event");
+    };
+    assert_eq!(
+        prose.text,
+        "Literal tags follow.\n<image>\n</image>\nLiteral tags preceded this."
+    );
+    assert_eq!(prose.media.len(), 1);
+}
+
+#[test]
 fn automatic_ownership_refuses_disagreement_without_a_fallback() {
     let codex = br#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#;
     assert!(matches!(
