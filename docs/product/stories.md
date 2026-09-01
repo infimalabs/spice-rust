@@ -67,10 +67,10 @@ with backlog depth.
 
 *As the agent, I want to remain reachable during tool work without instrumenting
 descendants twice.* — Pending intent is eligible at the vendor's post-tool hook
-and the next top-level shell command. Post-tool delivery alone uses the locked
-durable suppression record; every top-level shell command independently rereads
-the rendered inbox and may repeat it while nonempty. Descendant shells remain
-unmodified.
+and throughout each top-level shell command's immediate-child lifetime.
+Post-tool delivery alone uses the locked durable suppression record; each shell
+command independently streams changed rendered-inbox bytes and may repeat live
+content already seen by another command. Descendant shells remain unmodified.
 
 ### Work
 

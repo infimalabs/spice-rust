@@ -44,7 +44,7 @@ flowchart TD
   J --> F["filesystem inbox projects<br/>the still-live directive"]
   F --> B{"next admitted agent boundary"}
   B --> V["vendor post-tool hook"]
-  B --> S["next top-level shell command"]
+  B --> S["active or next top-level shell command"]
   V --> K["agent ACKs or declines<br/>operator may cancel"]
   S --> K
   K --> T["journal records the typed disposition"]
@@ -54,11 +54,12 @@ flowchart TD
 ```
 
 The directive is accepted in the journal before its disposable inbox projection
-is delivered. Delivery is eligible at both the vendor's post-tool hook and the
-next top-level shell command. They share the same live content, not a suppression
-decision: vendor hooks consult a locked durable hook-delivery record, while each
-shell command independently rereads the rendered inbox and may repeat it while
-nonempty. A *read* never changes disposition. `acked`, `declined`,
+is delivered. Delivery is eligible at both the vendor's post-tool hook and an
+active or next top-level shell command. They share the same live content, not a
+suppression decision: vendor hooks consult a locked durable hook-delivery
+record, while each shell command independently streams changed rendered-inbox
+bytes throughout its immediate-child lifetime and may repeat live content seen
+by another command. A *read* never changes disposition. `acked`, `declined`,
 `canceled`, `lapsed`, `deadlettered`, and recovery are distinct durable facts,
 and a `PendingInbox` automatic wake that returns `Unstarted` or a terminal-class
 start failure deadletters every pending directive on that lane from its retained

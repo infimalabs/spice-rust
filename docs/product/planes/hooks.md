@@ -152,17 +152,24 @@ the whole design.
 flowchart TD
   A["the agent's top-level shell command"] --> R["redirector"]
   R --> W["the wrapper — ONE hop, exactly once"]
-  I["rendered inbox file"] --> P{"nonempty rendering?"}
-  W --> P
-  P -- yes --> S["read the rendering once;<br/>write it to wrapper stderr"]
-  P -- no --> RW["optional rewrite decision"]
-  S --> RW
+  W --> Q{"initial rendering nonempty?"}
+  I["rendered inbox file"] --> Q
+  Q -- yes --> S["write the whole rendering<br/>to wrapper stderr"]
+  Q -- no --> P["arm the bounded projection scanner"]
+  S --> P
+  P --> RW["optional rewrite decision"]
   RW --> C["spawn one immediate command shell<br/>over private stdout/stderr relays"]
+  C --> L["bounded scanner remains active"]
+  I --> U["atomic replacement while<br/>the immediate child runs"]
+  U --> CH{"changed and nonempty?"}
+  CH -- yes --> E["write the whole rendering<br/>to wrapper stderr"]
+  CH -- no --> L
+  E --> L
   C --> SRC["a SOURCED script<br/>shares this shell's functions:<br/>sourcing creates no process"]
-  C --> D["an executed script, a child shell"]
-  D --> NAT["starts NATIVELY —<br/>the user's shell, no second interception"]
-  C --> X["immediate child exits"]
-  X --> V["revoke descendant relay writers;<br/>drain relays and finish"]
+  C --> EX["an executed script, a child shell"]
+  EX --> NAT["starts NATIVELY —<br/>the user's shell, no second interception"]
+  L --> X["immediate child exits"]
+  X --> V["stop the projection scanner;<br/>revoke descendant relay writers;<br/>drain relays and finish"]
 ```
 
 **Invariant —** Instrumentation is **one-shot, at the agent's own command
@@ -183,9 +190,11 @@ outside the agent, which is what makes leaving the instrumentation on safe.
 shell's functions and options. The boundary being drawn is the **process**
 boundary, and sourcing does not cross it.
 
-**Invariant —** Shell-boundary steering is one pre-spawn operation: the wrapper
-reads the rendered inbox once and writes those bytes to its own error stream
-before it starts the immediate child. No steering connection follows the child.
+**Invariant —** Shell-boundary steering is bounded by the immediate child. The
+wrapper writes the initial nonempty disposable rendered inbox, arms a bounded
+scanner before spawn, and writes each changed nonempty whole rendering while
+the child remains active. Identical bytes are suppressed within that command.
+The scanner never reads the journal and ends before relay cleanup begins.
 
 **Invariant —** The wrapper waits on that one immediate process identity while
 private relays carry its output. The wait survives the child forking, waiting,
@@ -205,22 +214,23 @@ process.
 
 #### Cadence is reachability
 
-A live directive may be rendered at whichever admitted agent boundary occurs
-next. Vendor post-tool hooks keep non-shell tool sequences reachable between
-calls; the one-shot wrapper covers the next top-level shell command. Only a
-stretch that crosses neither boundary offers no delivery opportunity.
+A live directive may be rendered through whichever admitted delivery path is
+active or occurs next. Vendor post-tool hooks keep non-shell tool sequences
+reachable between calls; the one-shot wrapper covers its top-level shell
+command throughout the immediate child's lifetime. Only a stretch that crosses
+neither path offers no delivery opportunity.
 
 ```mermaid
 flowchart TD
-  D["live steering in the disposable projection"] --> B{"next admitted boundary"}
+  D["live steering in the disposable projection"] --> B{"active or next admitted delivery path"}
   B --> T["vendor post-tool hook"]
-  B --> C["next top-level shell command"]
+  B --> C["active or next top-level shell command"]
   T --> HS["locked hook-delivery suppression"]
   HS --> HR["eligible post-tool readout"]
-  C --> SR["independent pre-spawn file read/write;<br/>may repeat while the rendering is nonempty"]
+  C --> SR["independent bounded projection scanner;<br/>initial pre-spawn read plus changed renderings during the child"]
   HR --> O["observation only;<br/>durable lifecycle stays live"]
   SR --> O
-  D --> N["neither boundary occurs"]
+  D --> N["neither delivery path occurs"]
   N --> W["delivery waits;<br/>durable lifecycle stays live"]
   C --> BG["the agent backgrounds the work<br/>and ends its turn"]
   BG --> S(["the resident vacates the lane"])
@@ -228,16 +238,17 @@ flowchart TD
   X --> RL["only a later lifecycle decision may launch an occupant<br/>for steering, active-claim recovery, capacity, or operator direction"]
 ```
 
-**Invariant —** Boundary cadence is delivery cadence, not command cadence alone.
-Non-shell work remains reachable between calls at vendor post-tool boundaries.
-If neither a post-tool hook nor a top-level shell-command boundary occurs, the
-directive remains live and its delivery waits without fabricating a lifecycle
-transition.
+**Invariant —** Admitted-path cadence is delivery cadence, not command cadence
+alone. Non-shell work remains reachable between calls at vendor post-tool
+boundaries. If neither a post-tool hook nor an active or next top-level shell
+command offers a delivery span, the directive remains live and its delivery
+waits without fabricating a lifecycle transition.
 
-**Invariant —** The two boundaries share the same live directive content, not
-one suppression decision. Post-tool delivery consults its locked durable hook
-record; every top-level shell command independently rereads and rewrites the
-current rendered inbox, so it may repeat while that file remains nonempty.
+**Invariant —** The two paths share the same live directive content, not one
+suppression decision. Post-tool delivery consults its locked durable hook
+record; every top-level shell command independently streams changed bytes from
+the current rendered inbox, so it may repeat live content seen by another
+command while suppressing identical bytes during its own child lifetime.
 
 **Invariant —** Every turn exit vacates the lane, including exit code zero, and
 a backgrounded command's later exit is **not** a wake signal. Long work runs in

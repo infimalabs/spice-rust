@@ -221,10 +221,11 @@ flowchart LR
    capacity, operator-start, nonterminal-error, and arbitrary delivery-failure
    paths do not deadletter.
 - Delivery is eligible at each admitted agent boundary: the vendor's post-tool
-   hook and the next top-level shell command. They share live content, not a
-   suppression decision: the hook consults its locked durable delivery record,
-   while each shell command independently rereads the rendered inbox and may
-   repeat it while nonempty. Descendant shells remain unmodified and cannot
+   hook and an active or next top-level shell command. They share live content,
+   not a suppression decision: the hook consults its locked durable delivery
+   record, while each shell command independently streams changed rendered-inbox
+   bytes throughout its immediate-child lifetime and may repeat live content
+   seen by another command. Descendant shells remain unmodified and cannot
    duplicate the wrapper.
 - Submit cost is independent of backlog depth; the journal allocates identity
    without reading queued bodies.

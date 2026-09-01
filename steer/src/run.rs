@@ -73,21 +73,49 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    hand_with_exit(program, arguments, || {})
+}
+
+/// Runs the wrapped command and reports when its immediate-child wait ends.
+///
+/// The callback runs before private relay cleanup, so child-scoped observers
+/// can end without inheriting even the bounded relay-drain lifetime.
+///
+/// # Errors
+///
+/// Returns the error when the command cannot be spawned.
+pub fn hand_with_exit<I, S, F>(
+    program: &OsStr,
+    arguments: I,
+    immediate_child_exited: F,
+) -> io::Result<ExitStatus>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+    F: FnOnce(),
+{
     #[cfg(unix)]
-    return hand_relayed(program, arguments);
+    return hand_relayed(program, arguments, immediate_child_exited);
 
     #[cfg(not(unix))]
     {
         let mut child = Command::new(program).args(arguments).spawn()?;
-        child.wait()
+        let status = child.wait();
+        immediate_child_exited();
+        status
     }
 }
 
 #[cfg(unix)]
-fn hand_relayed<I, S>(program: &OsStr, arguments: I) -> io::Result<ExitStatus>
+fn hand_relayed<I, S, F>(
+    program: &OsStr,
+    arguments: I,
+    immediate_child_exited: F,
+) -> io::Result<ExitStatus>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
+    F: FnOnce(),
 {
     let (stdout_read, stdout_write) = UnixStream::pair()?;
     let (stderr_read, stderr_write) = UnixStream::pair()?;
@@ -107,6 +135,7 @@ where
         spawn_relay(stderr_read, RelayTarget { stderr: true }, sender),
     ];
     let status = child.wait();
+    immediate_child_exited();
     let relayed = close_descendant_writers(&stops).and_then(|()| finish_relays(&receiver, relays));
     match (status, relayed) {
         (Err(error), _) | (Ok(_), Err(error)) => Err(error),
