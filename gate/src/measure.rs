@@ -72,6 +72,15 @@ pub(crate) fn bounded_process_group() -> ProcessGroup {
     }
 }
 
+/// Runtime deadline owned by a bounded child or its enclosing supervisor.
+pub(crate) fn bounded_runtime_deadline(runtime: Duration) -> Duration {
+    if INHERIT_PROCESS_GROUP.load(Ordering::Acquire) {
+        Duration::MAX
+    } else {
+        runtime
+    }
+}
+
 /// The external program that turns a file list into one number.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parser {
@@ -182,12 +191,13 @@ impl Bounds {
     /// a long-running child can only misclassify machine delay as source
     /// evidence. Ordinary callers retain this value unchanged.
     pub(crate) fn without_runtime_deadline_under_outer_supervisor(&self) -> Self {
-        if !INHERIT_PROCESS_GROUP.load(Ordering::Acquire) {
+        let runtime = bounded_runtime_deadline(self.deadlines.runtime());
+        if runtime == self.deadlines.runtime() {
             return self.clone();
         }
         let mut supervised = self.clone();
         supervised.deadlines = Deadlines::new(
-            Duration::MAX,
+            runtime,
             self.deadlines.output_drain(),
             self.deadlines.reap(),
         )

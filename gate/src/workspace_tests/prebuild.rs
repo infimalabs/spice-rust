@@ -880,7 +880,7 @@ where
     writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
     output.flush().map_err(output_error)?;
     let started = Instant::now();
-    let spec = process_spec(
+    let spec = prebuild_process_spec(
         cargo,
         arguments,
         root,
@@ -930,6 +930,32 @@ where
             captured_excerpt(outcome.stderr()),
         ))),
     }
+}
+
+fn prebuild_process_spec<I, S>(
+    cargo: &OsStr,
+    arguments: I,
+    root: &Path,
+    environment: Environment,
+    runtime: Duration,
+    cancellation: Cancellation,
+    owner: &str,
+) -> Result<Spec, WorkspaceTestError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    let mut spec = process_spec(
+        cargo,
+        arguments,
+        root,
+        environment,
+        crate::measure::bounded_runtime_deadline(runtime),
+        cancellation,
+        owner,
+    )?;
+    spec.group = crate::measure::bounded_process_group();
+    Ok(spec)
 }
 
 #[derive(Clone, Debug)]
