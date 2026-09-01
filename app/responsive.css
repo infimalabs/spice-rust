@@ -23,6 +23,7 @@
   .team-pane,
   .team-compose,
   .team-activity-grid { flex: 0 0 auto; min-height: auto; }
+  .team-mode-pane[data-active="true"] { position: relative; inset: auto; }
   .team-pane > .empty { flex: 0 0 auto; }
   .lane-mosaic-plane {
     flex: 0 1 auto;
@@ -58,6 +59,11 @@
   .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .team-activity-grid {
     flex: 0 0 auto;
     min-height: auto;
+  }
+  .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2))
+    .team-mode-pane[data-active="true"] {
+    position: relative;
+    inset: auto;
   }
   .shell--mosaic:has(.lineage-fleet > .team-surface:nth-child(2)) .team-surface {
     flex: 0 0 auto;

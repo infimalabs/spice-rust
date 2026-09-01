@@ -25,7 +25,7 @@ use controls::{LineageLife, LineageSpeech, render_lineage_controls};
 use fleet::{
     FleetRender, LineageMode, carries_lineage, render_empty_fleet, render_populated_fleet,
 };
-use mosaic_view::{ActivityCard, CardLayout, MosaicPlane};
+use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
@@ -154,6 +154,12 @@ fn render_compose(
                     .is_some_and(|draft| !compose(draft).trim().is_empty())
         });
     let cards = activity_cards(runtime, lineage);
+    let history_more = lineage
+        .members
+        .iter()
+        .filter(|member| runtime.message_history_more(member.lane))
+        .map(|member| member.lane)
+        .collect();
     html! {
         <div class="team-compose">
             <form class="team-composer" onsubmit={submit.clone()}>
@@ -201,6 +207,10 @@ fn render_compose(
                 controls,
                 control.speech,
                 control.life,
+                HistoryPaging {
+                    sender,
+                    more: history_more,
+                },
             )}
         </div>
     }
@@ -213,7 +223,7 @@ fn render_compose(
 /// persistent plane uses this complete order to distinguish edge additions
 /// from structural middle insertions during staged hydration.
 fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
-    let mut cards = runtime
+    runtime
         .messages()
         .iter()
         .filter_map(|message| {
@@ -224,9 +234,7 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
                 message: Rc::clone(message),
             })
         })
-        .collect::<Vec<_>>();
-    cards.sort_by_key(ActivityCard::chronology_key);
-    cards
+        .collect()
 }
 
 fn render_activity(
@@ -236,9 +244,11 @@ fn render_activity(
     controls: &view::AgentControls,
     speech: LineageSpeech,
     life: LineageLife,
+    history: HistoryPaging<'_>,
 ) -> Html {
     let empty = cards.is_empty();
     let narrate = controls.narrate.clone();
+    let history_sender = HistorySender::new(history.sender.clone());
     html! {
         <div
             id={format!("lineage-stream-{}", lineage.lane)}
@@ -260,9 +270,16 @@ fn render_activity(
                 speak={controls.speak.clone()}
                 {narrate}
                 {speech}
+                history_more={history.more}
+                history={history_sender}
             />
         </div>
     }
+}
+
+struct HistoryPaging<'a> {
+    sender: &'a SenderHandle,
+    more: BTreeSet<CanonicalUuid>,
 }
 
 fn render_details(

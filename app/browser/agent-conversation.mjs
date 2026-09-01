@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import {
-  assertInitiallyDeferredMosaicIsReadable,
+  assertModeSwitchPreservesDeferredMosaic,
   assertMosaicAnchorPreserved,
   assertMosaicLattice,
   assertMosaicLifecycleAdvanced,
@@ -530,7 +530,7 @@ export async function assertAgentConversation(
     )),
   ]);
   await Promise.all(currentProse);
-  await assertInitiallyDeferredMosaicIsReadable(page, console);
+  await assertModeSwitchPreservesDeferredMosaic(page, console);
   await assertRosterPips(page, console, seated);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
   for (const name of producerNames) {

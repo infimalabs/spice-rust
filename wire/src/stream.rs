@@ -244,6 +244,19 @@ pub enum StreamRequest {
         /// First causal position for this page.
         cursor: StreamCursor,
     },
+    /// Fetch the retained page immediately older than one lane-local message.
+    MessageHistory {
+        /// Current wire version.
+        v: WireVersion,
+        /// Correlation identity for this request.
+        id: CanonicalUuid,
+        /// Resident generation being addressed.
+        epoch: CanonicalUuid,
+        /// Independently paged member lane.
+        lane: CanonicalUuid,
+        /// Oldest message this browser has already admitted for that lane.
+        before: MessageLocus,
+    },
     /// Ask the resident to prove it is still reading this socket.
     ///
     /// A half-open socket stays open and simply stops delivering, so silence on
@@ -274,6 +287,7 @@ impl StreamRequest {
             Self::Subscribe { id, .. }
             | Self::Continue { id, .. }
             | Self::Thread { id, .. }
+            | Self::MessageHistory { id, .. }
             | Self::Ping { id, .. } => *id,
         }
     }
@@ -293,7 +307,9 @@ impl StreamRequest {
             | Self::Thread {
                 v, epoch, cursor, ..
             } => (*v, *epoch, Some(*cursor)),
-            Self::Ping { v, epoch, .. } => (*v, *epoch, None),
+            Self::MessageHistory { v, epoch, .. } | Self::Ping { v, epoch, .. } => {
+                (*v, *epoch, None)
+            }
         };
         if !wire.is_current() {
             return Err(StreamAdmissionError::Wire(Refusal::bare(
@@ -589,6 +605,21 @@ pub enum StreamFrame {
         epoch: CanonicalUuid,
         /// Maximum number of newest visible cards retained for each lane by this generation.
         limit: u32,
+        messages: Vec<AgentMessage>,
+        /// Member lanes with retained cards older than this initial projection.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        more: Vec<CanonicalUuid>,
+    },
+    /// One lane-local retained history page merged behind the current snapshot.
+    MessageHistory {
+        v: WireVersion,
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
+        lane: CanonicalUuid,
+        /// Cursor this page was requested immediately before.
+        before: MessageLocus,
+        /// Whether another older page remains after this one.
+        more: bool,
         messages: Vec<AgentMessage>,
     },
     /// One causal thread page.

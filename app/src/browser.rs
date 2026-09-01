@@ -354,6 +354,11 @@ enum ClientAction {
     Refresh,
     /// Derive the expensive task-effort answer on explicit Magnitude demand.
     Effort,
+    /// Fetch the next retained page behind one member's oldest visible card.
+    MessageHistory {
+        lane: CanonicalUuid,
+        before: wire::MessageLocus,
+    },
     Seat {
         topology_revision: u64,
         name: Option<String>,

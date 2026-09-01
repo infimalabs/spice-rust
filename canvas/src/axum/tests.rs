@@ -11,6 +11,8 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use super::*;
 use crate::APP;
 
+mod message_history;
+
 type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 const ASSERTION_DEADLINE: Duration = Duration::from_secs(2);

@@ -5,6 +5,52 @@ const QUIET_HISTORY_LENGTH: u64 = 40;
 const FIRST_RETAINED_BOUNDARY: u64 = 80;
 const SECOND_RETAINED_BOUNDARY: u64 = 220;
 
+fn complete_lane_history(
+    source: &Source,
+    lane: wire::CanonicalUuid,
+    initial: &[AgentMessage],
+    advertised_more: &[wire::CanonicalUuid],
+) -> Vec<AgentMessage> {
+    let mut messages = initial
+        .iter()
+        .filter(|message| message.lane == lane)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut more = advertised_more.contains(&lane);
+    while more {
+        let before = messages
+            .first()
+            .expect("paged lane has an oldest card")
+            .locus;
+        let request = StreamRequest::MessageHistory {
+            v: WireVersion::CURRENT,
+            id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+            epoch: epoch(),
+            lane,
+            before,
+        };
+        let frame = source
+            .message_history(&accepted(Actor::Operator), &request)
+            .expect("older message page answers");
+        let StreamFrame::MessageHistory {
+            lane: answered,
+            before: answered_before,
+            messages: older,
+            more: page_more,
+            ..
+        } = frame
+        else {
+            panic!("expected older message page")
+        };
+        assert_eq!(answered, lane);
+        assert_eq!(answered_before, before);
+        assert!(older.iter().all(|message| message.lane == lane));
+        messages.splice(0..0, older);
+        more = page_more;
+    }
+    messages
+}
+
 #[test]
 fn retained_message_capacity_is_independent_for_each_lane() {
     let bus = fixture(1);
@@ -31,13 +77,17 @@ fn retained_message_capacity_is_independent_for_each_lane() {
         )
         .expect("message subscription begins");
     let StreamFrame::Messages {
-        limit, messages, ..
+        limit,
+        messages,
+        more,
+        ..
     } = &frames[0]
     else {
         panic!("expected retained message snapshot")
     };
     assert_eq!(*limit as usize, MESSAGE_CAPACITY);
-    assert_eq!(messages.len(), MESSAGE_CAPACITY * 2);
+    assert_eq!(messages.len(), INITIAL_MESSAGE_LIMIT * 2);
+    assert_eq!(more.len(), 2);
     for lane in [0xe5, 0xe6] {
         let lane = message(lane, 0).lane;
         assert_eq!(
@@ -45,7 +95,11 @@ fn retained_message_capacity_is_independent_for_each_lane() {
                 .iter()
                 .filter(|message| message.lane == lane)
                 .count(),
-            MESSAGE_CAPACITY,
+            25
+        );
+        assert_eq!(
+            complete_lane_history(&source, lane, messages, more).len(),
+            256
         );
     }
     let busy_lane = message(0xe5, 0).lane;
@@ -89,16 +143,16 @@ fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
         )
         .expect("message subscription begins");
     let StreamFrame::Messages {
-        limit, messages, ..
+        limit,
+        messages,
+        more,
+        ..
     } = &frames[0]
     else {
         panic!("expected retained message snapshot")
     };
     assert_eq!(*limit as usize, MESSAGE_CAPACITY);
-    let busy = messages
-        .iter()
-        .filter(|message| message.lane == busy_lane)
-        .collect::<Vec<_>>();
+    let busy = complete_lane_history(&source, busy_lane, messages, more);
     assert_eq!(busy.len(), 220);
     assert_eq!(busy[0].locus.offset, FIRST_RETAINED_BOUNDARY);
     assert_eq!(busy[0].activity, wire::AgentActivityKind::Compaction);
@@ -109,9 +163,8 @@ fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
         HISTORY_LENGTH - 1
     );
     assert_eq!(
-        messages
+        complete_lane_history(&source, quiet_lane, messages, more)
             .iter()
-            .filter(|message| message.lane == quiet_lane)
             .map(|message| message.locus.offset)
             .collect::<Vec<_>>(),
         (0..QUIET_HISTORY_LENGTH).collect::<Vec<_>>(),
@@ -148,13 +201,10 @@ fn late_session_boundaries_are_inserted_before_retention_selects_its_floor() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
-    let retained = messages
-        .iter()
-        .filter(|row| row.lane == message(0xe5, 0).lane)
-        .collect::<Vec<_>>();
+    let retained = complete_lane_history(&source, message(0xe5, 0).lane, messages, more);
     assert_eq!(retained[0].locus.offset, FIRST_RETAINED_BOUNDARY);
     assert_eq!(retained[0].activity, wire::AgentActivityKind::Compaction);
     assert_eq!(retained[140].locus.offset, SECOND_RETAINED_BOUNDARY);

@@ -98,7 +98,53 @@ export async function assertMosaicScrollInputs(page, plane) {
     () => document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')?.scrollTop > 80);
 
   await plane.evaluate((element) => element.scrollTo(0, 0));
-  await plane.hover();
+  const wheelTarget = await plane.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const left = Math.max(0, Math.ceil(bounds.left));
+    const right = Math.min(innerWidth, Math.floor(bounds.right));
+    const top = Math.max(0, Math.ceil(bounds.top));
+    const bottom = Math.min(innerHeight, Math.floor(bounds.bottom));
+    for (let y = top + 1; y < bottom; y += 8) {
+      for (let x = left + 1; x < right; x += 8) {
+        if (document.elementFromPoint(x, y)?.closest(".lane-mosaic-plane") === element) {
+          return { point: { x, y } };
+        }
+      }
+    }
+    const describe = (node) => {
+      const box = node?.getBoundingClientRect();
+      const style = node ? getComputedStyle(node) : null;
+      return box && style ? {
+        bottom: box.bottom,
+        display: style.display,
+        flex: style.flex,
+        height: box.height,
+        overflow: style.overflow,
+        top: box.top,
+      } : null;
+    };
+    return {
+      diagnostics: {
+        activity: describe(element.closest(".team-activity-grid")),
+        compose: describe(element.closest(".team-compose")),
+        content: describe(element.closest(".content")),
+        fleet: describe(element.closest(".lineage-fleet")),
+        mode: describe(element.closest(".team-mode-pane")),
+        pane: describe(element.closest(".team-pane")),
+        plane: describe(element),
+        shell: describe(element.closest(".shell")),
+        surface: describe(element.closest(".team-surface")),
+        viewport: { height: innerHeight, width: innerWidth },
+        workspace: describe(element.closest(".workspace")),
+      },
+      point: null,
+    };
+  });
+  assert.ok(
+    wheelTarget.point,
+    `the Mosaic exposes a pixel for physical wheel input: ${JSON.stringify(wheelTarget.diagnostics)}`,
+  );
+  await page.mouse.move(wheelTarget.point.x, wheelTarget.point.y);
   await plane.evaluate((element) => {
     window.__mosaicWheelProbe = null;
     element.addEventListener("wheel", (event) => {
@@ -329,7 +375,18 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
   );
 }
 
-export async function assertInitiallyDeferredMosaicIsReadable(page, console) {
+export async function assertModeSwitchPreservesDeferredMosaic(page, console) {
+  const plane = console.locator(".lane-mosaic-plane");
+  const before = await plane.evaluate((element) => {
+    element.dataset.modeSwitchIdentity = crypto.randomUUID();
+    return {
+      identity: element.dataset.modeSwitchIdentity,
+      commits: element.dataset.planeCommits,
+      committedWidth: element.dataset.committedWidth,
+      keys: [...element.querySelectorAll(".mosaic-message-card")]
+        .map((card) => card.dataset.mosaicCardKey),
+    };
+  });
   await console.getByRole("tab", { name: /^Info/ }).click();
   const rule = await page.evaluate(() => {
     const sheet = [...document.styleSheets]
@@ -340,31 +397,38 @@ export async function assertInitiallyDeferredMosaicIsReadable(page, console) {
     return index;
   });
   await console.getByRole("tab", { name: /^Compose/ }).click();
-  const plane = console.locator(".lane-mosaic-plane");
-  await plane.waitFor({ state: "attached" });
-  await waitForPage(page, "fresh Mosaic defers below its measurable width", TRANSITION_MS, () => {
+  await waitForPage(page, "mounted Mosaic observes the deferred width", TRANSITION_MS, () => {
     const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-    return plane?.dataset.measurementPhase === "base"
-      && Number(plane.dataset.observedWidth) < 24;
+    return Number(plane?.dataset.observedWidth) < 24;
   });
-  const cards = plane.locator(".mosaic-message-card");
-  assert.ok(await cards.count(), "the initially deferred plane retains transcript cards");
-  const fallback = await cards.evaluateAll((nodes) => nodes.map((node) => {
-    const box = node.getBoundingClientRect();
-    return {
-      visibility: getComputedStyle(node).visibility,
-      top: box.top,
-      bottom: box.bottom,
-      height: box.height,
-    };
+  const deferred = await plane.evaluate((element) => ({
+    identity: element.dataset.modeSwitchIdentity,
+    phase: element.dataset.measurementPhase,
+    commits: element.dataset.planeCommits,
+    committedWidth: element.dataset.committedWidth,
+    keys: [...element.querySelectorAll(".mosaic-message-card")]
+      .map((card) => card.dataset.mosaicCardKey),
+    cards: [...element.querySelectorAll(".mosaic-message-card")].map((card) => {
+      const box = card.getBoundingClientRect();
+      return {
+        visibility: getComputedStyle(card).visibility,
+        height: box.height,
+      };
+    }),
   }));
-  assert.ok(
-    fallback.every((card) => card.visibility === "visible" && card.height > 0),
-    "an initially unmeasurable plane keeps every transcript card readable",
+  assert.equal(deferred.identity, before.identity, "mode switching retains the Mosaic node");
+  assert.equal(deferred.phase, "ready", "width deferral retains the committed plane");
+  assert.equal(deferred.commits, before.commits, "width deferral commits no guessed plane");
+  assert.equal(
+    deferred.committedWidth,
+    before.committedWidth,
+    "width deferral retains the last measurable geometry",
   );
+  assert.deepEqual(deferred.keys, before.keys, "mode switching retains every transcript card");
+  assert.ok(deferred.cards.length, "the deferred plane retains transcript cards");
   assert.ok(
-    fallback.slice(1).every((card, index) => card.top >= fallback[index].bottom),
-    "deferred transcript cards occupy non-overlapping flow rows",
+    deferred.cards.every((card) => card.visibility === "visible" && card.height > 0),
+    "the deferred plane keeps every transcript card readable",
   );
   await page.evaluate((index) => {
     const sheet = [...document.styleSheets]
@@ -372,11 +436,9 @@ export async function assertInitiallyDeferredMosaicIsReadable(page, console) {
     if (!sheet) throw new Error("the Mosaic stylesheet is unavailable");
     sheet.deleteRule(index);
   }, rule);
-  await waitForPage(page, "fresh Mosaic commits after becoming measurable", TRANSITION_MS, () => {
+  await waitForPage(page, "mounted Mosaic returns to measurable width", TRANSITION_MS, () => {
     const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-    return plane?.dataset.measurementPhase === "ready"
-      && [...plane.querySelectorAll(".mosaic-message-card")]
-        .every((card) => card.dataset.layoutPhase === "committed");
+    return Number(plane?.dataset.observedWidth) >= 24;
   });
 }
 

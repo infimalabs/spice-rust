@@ -821,6 +821,7 @@ async fn route_stream(
             ))),
         },
         wire::StreamRequest::Thread { .. } => source.thread(accepted, &request),
+        wire::StreamRequest::MessageHistory { .. } => source.message_history(accepted, &request),
         // Admitted like every other request, so a probe from a replaced
         // generation is told so rather than being reassured by a Pong. The
         // client only needs *an* answer to prove the socket still carries

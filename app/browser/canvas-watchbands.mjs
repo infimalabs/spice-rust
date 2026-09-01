@@ -624,7 +624,7 @@ export async function captureReferenceViewport(page, artifacts) {
   const team = page.locator('[data-pane="agent-console"]');
   await team.getByRole("tab", { name: /^Info/ }).click();
   for (const name of agentNames) {
-    await team.getByText(name, { exact: true }).waitFor();
+    await team.locator(".team-detail-card").getByText(name, { exact: true }).waitFor();
   }
   await team.getByText("0 pending", { exact: true }).waitFor();
   await team.getByText("running", { exact: true }).first().waitFor();
