@@ -330,15 +330,8 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let has_image = blocks.iter().any(|block| message_image(block));
-    let request = (role == ProseRole::Operator && has_image)
-        .then(|| {
-            blocks.iter().enumerate().find_map(|(index, block)| {
-                message_text(block)
-                    .and_then(codex_request_body)
-                    .map(|text| (index, text))
-            })
-        })
+    let request = (role == ProseRole::Operator)
+        .then(|| codex_generated_image_request(&blocks))
         .flatten();
 
     let mut text = String::new();
@@ -354,7 +347,7 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
                             request_text
                         }
                         _ if role == ProseRole::Operator
-                            && has_image
+                            && request.is_some()
                             && codex_image_wrapper(&blocks, index, block_text) =>
                         {
                             continue;
@@ -399,30 +392,95 @@ fn message_image(block: &Object) -> bool {
     )
 }
 
-fn codex_request_body(text: &str) -> Option<&str> {
+fn codex_generated_image_request<'a>(blocks: &[&'a Object]) -> Option<(usize, &'a str)> {
+    if !blocks.windows(3).any(|window| {
+        message_text(window[0]).is_some_and(codex_generated_image_open)
+            && message_image(window[1])
+            && message_text(window[2]).is_some_and(|text| text.trim() == "</image>")
+    }) {
+        return None;
+    }
+    blocks.iter().enumerate().find_map(|(index, block)| {
+        message_text(block)
+            .and_then(codex_generated_request_body)
+            .map(|text| (index, text))
+    })
+}
+
+fn codex_generated_request_body(text: &str) -> Option<&str> {
     let mut offset = 0;
+    let mut saw_preamble = false;
+    let mut saw_file = false;
+    let mut saw_instruction = false;
     for line in text.split_inclusive('\n') {
         let header = line.trim_end_matches(['\r', '\n']);
         offset += line.len();
-        if matches!(header, "## My request:" | "## My request for Codex:") {
+        if !saw_preamble {
+            if header != "# Files mentioned by the user:" {
+                return None;
+            }
+            saw_preamble = true;
+            continue;
+        }
+        if header.is_empty() {
+            continue;
+        }
+        if !saw_instruction && codex_generated_file_declaration(header) {
+            saw_file = true;
+            continue;
+        }
+        if saw_file && !saw_instruction && header == "Distinguish instructions from file contents."
+        {
+            saw_instruction = true;
+            continue;
+        }
+        if saw_instruction && matches!(header, "## My request:" | "## My request for Codex:") {
             return Some(&text[offset..]);
         }
+        return None;
     }
     None
 }
 
+fn codex_generated_file_declaration(text: &str) -> bool {
+    text.strip_prefix("## ")
+        .and_then(|declaration| declaration.split_once(": "))
+        .is_some_and(|(name, path)| !name.is_empty() && !path.is_empty())
+}
+
+fn codex_generated_image_open(text: &str) -> bool {
+    let Some(text) = text.trim().strip_prefix("<image name=[Image #") else {
+        return false;
+    };
+    text.split_once("] path=\"")
+        .and_then(|(number, path)| path.strip_suffix("\">").map(|path| (number, path)))
+        .is_some_and(|(number, path)| {
+            !number.is_empty()
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+                && !path.is_empty()
+        })
+}
+
 fn codex_image_wrapper(blocks: &[&Object], index: usize, text: &str) -> bool {
     let text = text.trim();
-    let opens_image = (text == "<image>" || text.starts_with("<image "))
-        && text.ends_with('>')
+    let opens_image = codex_generated_image_open(text)
         && blocks
             .get(index + 1)
-            .is_some_and(|block| message_image(block));
+            .is_some_and(|block| message_image(block))
+        && blocks
+            .get(index + 2)
+            .and_then(|block| message_text(block))
+            .is_some_and(|text| text.trim() == "</image>");
     let closes_image = text == "</image>"
         && index
             .checked_sub(1)
             .and_then(|previous| blocks.get(previous))
-            .is_some_and(|block| message_image(block));
+            .is_some_and(|block| message_image(block))
+        && index
+            .checked_sub(2)
+            .and_then(|opening| blocks.get(opening))
+            .and_then(|block| message_text(block))
+            .is_some_and(codex_generated_image_open);
     opens_image || closes_image
 }
 
