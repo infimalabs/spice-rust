@@ -14,6 +14,7 @@ import {
 import { assertComposerPointerSelection } from "./composer-shards.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 import { assertNaturalMessageFooterInsets } from "./message-card-reference.mjs";
+import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
 
 /// A ready lattice settles layout, not delivery: under verifier load the
 /// initial card stream can still be arriving when measurements first report
@@ -168,6 +169,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     await console.getByRole("tab", { name: /^Compose/ }).click();
     const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
+    await assertCandidateMeasurementPaintAtomic(page, "firefox");
     await assertNaturalMessageFooterInsets(console, "Firefox wide restored Mosaic");
     const imageFixture = await installFirefoxImageFixture(page);
     await assertFirefoxImageFixture(imageFixture, "Firefox wide image fixture");
