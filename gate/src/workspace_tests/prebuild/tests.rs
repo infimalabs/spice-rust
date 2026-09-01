@@ -7,6 +7,14 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::process::{Command, Stdio};
 
 #[cfg(unix)]
+const OUTER_SUPERVISOR_PREBUILD_FIXTURE: &str = concat!(
+    "workspace_tests::prebuild::tests::",
+    "outer_supervisor_owns_selected_prebuild_runtime_fixture",
+);
+#[cfg(unix)]
+const RETIRED_PREBUILD_FIXTURE_DEADLINE: Duration = Duration::from_millis(25);
+
+#[cfg(unix)]
 struct DiscoveryFixture {
     root: PathBuf,
 }
@@ -102,6 +110,91 @@ fn process_is_alive(pid: u32) -> bool {
         .status()
         .expect("inspect fixture process")
         .success()
+}
+
+#[test]
+fn standalone_prebuild_retains_its_local_shard_bound() {
+    let spec = prebuild_process_spec(
+        OsStr::new("cargo"),
+        std::iter::empty::<OsString>(),
+        Path::new("."),
+        Environment::empty(),
+        SHARD_DEADLINE,
+        Cancellation::Never,
+        "standalone prebuild fixture",
+    )
+    .expect("standalone prebuild spec is valid");
+
+    assert_eq!(SHARD_DEADLINE, Duration::from_secs(180));
+    assert_eq!(spec.group, ProcessGroup::New);
+    assert_eq!(spec.deadlines.runtime(), SHARD_DEADLINE);
+}
+
+#[cfg(unix)]
+#[test]
+fn outer_supervisor_owns_selected_prebuild_runtime() {
+    let output = Command::new(std::env::current_exe().expect("current gate test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            OUTER_SUPERVISOR_PREBUILD_FIXTURE,
+            "--nocapture",
+        ])
+        .output()
+        .expect("launch isolated outer-supervisor prebuild fixture");
+
+    assert!(
+        output.status.success(),
+        "outer-supervisor prebuild fixture failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "subprocess fixture isolates process-global pre-commit containment"]
+fn outer_supervisor_owns_selected_prebuild_runtime_fixture() {
+    let _containment = crate::measure::inherit_process_group()
+        .expect("isolated fixture enters pre-commit containment");
+    let fixture = DiscoveryFixture::new();
+    let cargo = fixture.script(
+        "cold-cargo",
+        concat!(
+            "/bin/sleep 0.1\n",
+            "printf '%s\\n' '{\"reason\":\"compiler-artifact\"}'\n",
+        ),
+    );
+    let started = Instant::now();
+    let spec = prebuild_process_spec(
+        cargo.as_os_str(),
+        std::iter::empty::<OsString>(),
+        &fixture.root,
+        empty_environment(),
+        RETIRED_PREBUILD_FIXTURE_DEADLINE,
+        Cancellation::Never,
+        "cold selected prebuild fixture",
+    )
+    .expect("supervised prebuild spec is valid");
+    assert_eq!(spec.group, ProcessGroup::Inherit);
+    assert_eq!(spec.deadlines.runtime(), Duration::MAX);
+
+    let outcome = sill::spawn(spec)
+        .expect("cold selected prebuild launches")
+        .wait()
+        .expect("outer supervisor owns the complete wait");
+
+    assert!(started.elapsed() > RETIRED_PREBUILD_FIXTURE_DEADLINE);
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    assert!(outcome.outputs_drained());
+    assert_eq!(
+        outcome.stdout().map(|output| output.bytes()),
+        Some(b"{\"reason\":\"compiler-artifact\"}\n".as_slice()),
+    );
+    assert_eq!(
+        outcome.stderr().map(|output| output.bytes()),
+        Some(b"".as_slice()),
+    );
 }
 
 #[test]
