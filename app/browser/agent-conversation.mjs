@@ -27,6 +27,10 @@ import {
 } from "./canvas-fixture.mjs";
 import { assertAgentWorkspaceGeometry } from "./canvas-readiness.mjs";
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
+import {
+  assertQuoteBlockDensity,
+  captureQuoteBlockDensity,
+} from "./quote-block-density.mjs";
 
 const AGENT_SEAT_MS = 15_000;
 
@@ -67,6 +71,19 @@ export const nestedQuoteMessage = [
   "> Why it matters: nested context remains visible.",
   "",
   nestedQuotePreview,
+].join("\n");
+const quoteDensityPreview = "The authored conclusion remains outside the quote stack.";
+const quoteDensityMessage = [
+  "> > > Deep context advances by one compact rail.",
+  "> >",
+  "> > The first nested paragraph stays close to its successor.",
+  "> >",
+  "> > The second keeps **inline emphasis** and `code` inside the quote.",
+  ">",
+  "> - Nested lists retain compact spacing.",
+  "> - A deliberately long list item demonstrates that useful line width remains available instead of disappearing into progressively wider indentation.",
+  "",
+  quoteDensityPreview,
 ].join("\n");
 export const entirelyQuotedMessage = [
   "> > Borrowed context has no authored preview.",
@@ -462,6 +479,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
     "durable replay keeps protocol framing hidden",
   );
   assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
+  return replyText;
 }
 
 export async function assertAgentConversation(
@@ -515,7 +533,7 @@ export async function assertAgentConversation(
     seated[0].lane,
     activityReplay,
   );
-  await assertExternalOperatorReplay(
+  const acknowledgementReply = await assertExternalOperatorReplay(
     page,
     fixture,
     console,
@@ -787,6 +805,42 @@ export async function assertAgentConversation(
     )?.dataset.committedWidth) > narrowWidth,
     narrow.committedWidth);
   await compensationCard.waitFor({ timeout: TRANSITION_MS });
+
+  await activityReplay.injectAgentProse(page, seated[3].lane, quoteDensityMessage);
+  const quoteDensityCard = console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[3].lane}"]`)
+    .filter({ hasText: quoteDensityPreview });
+  await quoteDensityCard.waitFor({ timeout: 10_000 });
+  await waitForPage(page, "quote density card commits", TRANSITION_MS, (preview) => {
+    const card = [...document.querySelectorAll(".mosaic-message-card")]
+      .find((candidate) => candidate.textContent?.includes(preview));
+    return card?.dataset.layoutPhase === "committed";
+  }, quoteDensityPreview);
+  const quoteCards = {
+    ack: console.locator('[data-card-kind="agent-message"]')
+      .filter({ hasText: acknowledgementReply }),
+    user: quoteDensityCard,
+  };
+  await assertQuoteBlockDensity(quoteCards, "Chromium wide Mosaic");
+  await captureQuoteBlockDensity(page, quoteCards, artifacts, "chromium-quotes-wide");
+  const quoteDesktopWidth = Number(await scroller.getAttribute("data-committed-width"));
+  await page.setViewportSize({ width: 520, height: 360 });
+  await waitForPage(page, "narrow quote density Mosaic commits", TRANSITION_MS,
+    (desktopWidth) => {
+      const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+      return plane?.dataset.measurementPhase === "ready"
+        && Number(plane.dataset.committedWidth) < desktopWidth;
+    }, quoteDesktopWidth);
+  await assertQuoteBlockDensity(quoteCards, "Chromium narrow Mosaic");
+  await captureQuoteBlockDensity(page, quoteCards, artifacts, "chromium-quotes-narrow");
+  const quoteNarrowWidth = Number(await scroller.getAttribute("data-committed-width"));
+  await page.setViewportSize(compensationViewport);
+  await waitForPage(page, "desktop quote density Mosaic is restored", TRANSITION_MS,
+    (narrowWidth) => Number(document.querySelector(
+      '[data-pane="agent-console"] .lane-mosaic-plane',
+    )?.dataset.committedWidth) > narrowWidth,
+    quoteNarrowWidth);
+
   await page.locator('.task-pill[data-task-stem="app"]').waitFor();
   await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
   assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
@@ -841,6 +895,7 @@ export async function assertAgentConversation(
     agentName: team.agentName,
     agentAttribution: team.agentAttribution,
     quoteProse: restoredQuoteProse,
+    acknowledgementReply,
     primaryHeadings: restoredProse,
     teamWorktrees,
   };

@@ -981,6 +981,7 @@ try {
           resident.discovery.endpoint,
           artifacts,
           seeded.agentAttribution,
+          seeded.acknowledgementReply,
         );
         assertCandidateMeasurementPaintEngineInventory();
       });
