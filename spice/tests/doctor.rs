@@ -794,7 +794,7 @@ fn doctor_runs_the_health_contract_against_the_exact_configured_rtk_path() {
 }
 
 #[test]
-fn doctor_reports_an_actionable_native_verdict_for_obsolete_rtk() {
+fn doctor_keeps_a_launchable_older_rtk_ready_for_command_local_selection() {
     use std::os::unix::fs::PermissionsExt;
 
     let repository = Scratch::repository("obsolete-rtk");
@@ -824,17 +824,7 @@ fn doctor_reports_an_actionable_native_verdict_for_obsolete_rtk() {
         .find(|tool| tool.name == "rtk")
         .expect("RTK tool row");
 
-    assert!(
-        matches!(
-            rtk.observation,
-            DoctorObservation::Unavailable { ref reason }
-                if reason.contains("state=obsolete")
-                    && reason.contains("version=0.44.9")
-                    && reason.contains("required 0.45.0")
-        ),
-        "unexpected RTK observation: {:?}",
-        rtk.observation
-    );
+    assert!(matches!(rtk.observation, DoctorObservation::Ready {}));
 }
 
 #[test]

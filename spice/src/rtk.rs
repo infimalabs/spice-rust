@@ -25,16 +25,6 @@ const TERMINATE_GRACE: Duration = Duration::from_millis(100);
 const MAX_SELECTOR_OUTPUT: usize = 64 * 1024;
 const MAX_DIAGNOSTIC_EXECUTABLE_CHARS: usize = 160;
 const MAX_HEALTH_DETAIL_CHARS: usize = 1024;
-// Earlier RTK rewrote `rg` through a basic-dialect grep path and changed valid
-// extended-regex answers. 0.45.0 is the first source release that routes this
-// probe through its answer-preserving `rtk rg` protocol.
-const MINIMUM_VERSION: [u32; 3] = [0, 45, 0];
-const MINIMUM_VERSION_TEXT: &str = "0.45.0";
-const PROTOCOL_PROBE: [&str; 2] = ["git", "status"];
-// `+` distinguishes extended from basic regex and stdin keeps the probe
-// checkout-independent: the written command counts one match, not zero.
-const FIDELITY_PROBE: [&str; 4] = ["rg", "--count", "al+pha", "-"];
-const FIDELITY_SUBJECT: &[u8] = b"alpha\nbeta\n";
 const EXTENDED_REGEX_OPERATORS: &str = "|+?(){}";
 
 /// Command selected for execution and an optional non-blocking degradation notice.
@@ -65,7 +55,7 @@ struct SelectorResult {
     stderr: String,
 }
 
-/// Decide whether the exact configured executable may rewrite supervised commands.
+/// Observe whether the exact configured executable can join supervised commands.
 #[must_use]
 pub fn probe_health(executable: &OsStr, working: &Path) -> Health {
     let environment = match ambient_environment() {
@@ -81,7 +71,7 @@ pub fn probe_health(executable: &OsStr, working: &Path) -> Health {
     probe_health_in_environment(executable, working, &environment)
 }
 
-/// Decide RTK admission under the exact environment a supervised lane will use.
+/// Observe RTK launchability under the exact environment a supervised lane will use.
 #[must_use]
 pub fn probe_health_in_environment(
     executable: &OsStr,
@@ -110,158 +100,35 @@ fn probe_health_with<F>(executable: &OsStr, mut invoke: F) -> Health
 where
     F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
 {
-    let version_text = match admitted_version(executable, &mut invoke) {
-        Ok(version) => version,
-        Err(verdict) => return verdict,
-    };
-    let protocol_exit = match admitted_protocol(executable, &version_text, &mut invoke) {
-        Ok(code) => code,
-        Err(verdict) => return verdict,
-    };
-    let fidelity = match answer_fidelity(executable, &version_text, &mut invoke) {
-        Ok(detail) => detail,
-        Err(verdict) => return verdict,
-    };
-    health(
-        HealthState::Active,
-        Some(version_text),
-        format!("rewrite protocol valid (exit {protocol_exit}); {fidelity}"),
-    )
-}
-
-fn admitted_version<F>(executable: &OsStr, invoke: &mut F) -> Result<String, Health>
-where
-    F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
-{
+    // spice-z tied hook enablement to version, protocol, and answer probes. The
+    // Rust hook is structural, so only launchability is a lane-wide fact;
+    // status, output shape, and fidelity are validated for each actual command.
     let version_result = match invoke(executable, &["--version".into()], None) {
         Ok(result) => result,
-        Err(reason) => return Err(health(HealthState::Missing, None, reason)),
+        Err(reason) => return health(HealthState::Missing, None, reason),
     };
     let version_output = if version_result.stdout.trim().is_empty() {
         version_result.stderr.trim()
     } else {
         version_result.stdout.trim()
     };
-    let Some(version) = (version_result.code == 0)
-        .then(|| parse_version(version_output))
-        .flatten()
-    else {
-        return Err(health(
-            HealthState::ProtocolInvalid,
-            None,
-            format!("could not validate RTK version from {version_output:?}"),
-        ));
-    };
-    let version_text = format!("{}.{}.{}", version[0], version[1], version[2]);
-    if version < MINIMUM_VERSION {
-        return Err(health(
-            HealthState::Obsolete,
-            Some(version_text.clone()),
-            format!("RTK {version_text} is older than required {MINIMUM_VERSION_TEXT}"),
-        ));
-    }
-    Ok(version_text)
-}
-
-fn admitted_protocol<F>(executable: &OsStr, version: &str, invoke: &mut F) -> Result<i32, Health>
-where
-    F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
-{
-    let protocol_arguments = rewrite_arguments(&PROTOCOL_PROBE);
-    let protocol = match invoke(executable, &protocol_arguments, None) {
-        Ok(result) => result,
-        Err(reason) => {
-            return Err(health(
-                HealthState::ProtocolInvalid,
-                Some(version.to_owned()),
-                format!("rewrite protocol probe failed: {reason}"),
-            ));
-        }
-    };
-    let protocol_stdout = protocol.stdout.trim();
-    if !matches!(protocol.code, 0 | 3) || protocol_stdout.is_empty() {
-        return Err(health(
-            HealthState::ProtocolInvalid,
-            Some(version.to_owned()),
+    let version = parse_version(version_output)
+        .map(|parts| format!("{}.{}.{}", parts[0], parts[1], parts[2]));
+    let detail = version.as_ref().map_or_else(
+        || {
             format!(
-                "rewrite probe returned exit {} with {} stdout; expected exit 0 or 3 with nonempty stdout",
-                protocol.code,
-                if protocol_stdout.is_empty() {
-                    "empty"
-                } else {
-                    "nonempty"
-                }
-            ),
-        ));
-    }
-    Ok(protocol.code)
-}
-
-fn answer_fidelity<F>(executable: &OsStr, version: &str, invoke: &mut F) -> Result<String, Health>
-where
-    F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
-{
-    let written = match search_count(
-        invoke,
-        OsStr::new(FIDELITY_PROBE[0]),
-        &FIDELITY_PROBE[1..]
-            .iter()
-            .map(OsString::from)
-            .collect::<Vec<_>>(),
-    ) {
-        Ok(count) => count,
-        Err(_) => {
-            return Ok(format!(
-                "answer unchecked: {} reported no count",
-                FIDELITY_PROBE.join(" ")
-            ));
-        }
-    };
-    let Some(rewritten) = rewritten_fidelity_count(executable, invoke) else {
-        return Ok("answer unchecked: the rewrite reported no count".to_owned());
-    };
-    if rewritten != written {
-        return Err(health(
-            HealthState::RewriteUnfaithful,
-            Some(version.to_owned()),
+                "executable launched with exit {}; version unrecognized from {version_output:?}; rewrites are validated per command",
+                version_result.code
+            )
+        },
+        |version| {
             format!(
-                "rewriting {} changed its answer: as written it counted {written}, rewritten it counted {rewritten}",
-                FIDELITY_PROBE.join(" ")
-            ),
-        ));
-    }
-    Ok(format!("rewrite preserved the answer (counted {written})"))
-}
-
-fn rewritten_fidelity_count<F>(executable: &OsStr, invoke: &mut F) -> Option<u64>
-where
-    F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
-{
-    let fidelity_arguments = rewrite_arguments(&FIDELITY_PROBE);
-    let fidelity = match invoke(executable, &fidelity_arguments, None) {
-        Ok(result) if matches!(result.code, 0 | 3) && !result.stdout.trim().is_empty() => result,
-        Ok(_) | Err(_) => return None,
-    };
-    let rewritten = fidelity.stdout.trim();
-    if rewrite_fidelity(
-        &FIDELITY_PROBE
-            .iter()
-            .map(OsString::from)
-            .collect::<Vec<_>>(),
-        rewritten,
-    )
-    .is_err()
-    {
-        return None;
-    }
-    let mut parsed = match shell_words::split(rewritten) {
-        Ok(parsed) if !parsed.is_empty() => parsed,
-        Ok(_) | Err(_) => return None,
-    };
-    remap_direct_frontend(&mut parsed, executable);
-    let rewritten_program = OsStr::new(&parsed[0]);
-    let rewritten_arguments = parsed[1..].iter().map(OsString::from).collect::<Vec<_>>();
-    search_count(invoke, rewritten_program, &rewritten_arguments).ok()
+                "executable launched as RTK {version} with exit {}; rewrites are validated per command",
+                version_result.code
+            )
+        },
+    );
+    health(HealthState::Active, version, detail)
 }
 
 fn health(state: HealthState, version: Option<String>, detail: impl Into<String>) -> Health {
@@ -274,14 +141,6 @@ fn health(state: HealthState, version: Option<String>, detail: impl Into<String>
         detail.push_str("...");
     }
     Health::new(state, version, detail)
-}
-
-fn rewrite_arguments(probe: &[&str]) -> Vec<OsString> {
-    ["rewrite", "--"]
-        .into_iter()
-        .chain(probe.iter().copied())
-        .map(OsString::from)
-        .collect()
 }
 
 fn parse_version(output: &str) -> Option<[u32; 3]> {
@@ -299,24 +158,6 @@ fn parse_version(output: &str) -> Option<[u32; 3]> {
         return parts.next().is_none().then_some(version);
     }
     None
-}
-
-fn search_count<F>(invoke: &mut F, program: &OsStr, arguments: &[OsString]) -> Result<u64, String>
-where
-    F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
-{
-    let result = invoke(program, arguments, Some(FIDELITY_SUBJECT))?;
-    let stdout = result.stdout.trim();
-    if let Ok(count) = stdout.parse() {
-        return Ok(count);
-    }
-    if result.code == 1 && stdout.is_empty() {
-        return Ok(0);
-    }
-    Err(format!(
-        "search returned exit {} without one numeric count",
-        result.code
-    ))
 }
 
 /// Ask the configured RTK executable to rewrite one command.
@@ -346,19 +187,11 @@ where
     if result.code == 1 && rewritten.is_empty() {
         return native();
     }
-    if !matches!(result.code, 0 | 3) || rewritten.is_empty() {
+    if rewritten.is_empty() {
         return degraded(
             command,
             executable,
-            &format!(
-                "rewrite returned exit {} with {} stdout",
-                result.code,
-                if rewritten.is_empty() {
-                    "empty"
-                } else {
-                    "nonempty"
-                }
-            ),
+            &format!("rewrite returned exit {} with empty stdout", result.code),
         );
     }
     if let Err(reason) = rewrite_fidelity(command, rewritten) {
@@ -666,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn health_admits_the_exact_supported_answer_preserving_executable() {
+    fn health_enables_the_exact_executable_after_one_launch_regardless_of_status_or_version() {
         let executable = OsStr::new("/opt/RTK Tools/rtk");
         let mut stage = 0;
         let observed = probe_health_with(executable, |program, arguments, input| {
@@ -674,119 +507,42 @@ mod tests {
                 .iter()
                 .map(|argument| argument.to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
-            let response = match stage {
-                0 => {
-                    assert_eq!(program, executable);
-                    assert_eq!(arguments, ["--version"]);
-                    assert_eq!(input, None);
-                    result(0, "rtk 0.45.0\n")
-                }
-                1 => {
-                    assert_eq!(program, executable);
-                    assert_eq!(arguments, ["rewrite", "--", "git", "status"]);
-                    assert_eq!(input, None);
-                    result(3, "rtk git status --short\n")
-                }
-                2 => {
-                    assert_eq!(program, "rg");
-                    assert_eq!(arguments, ["--count", "al+pha", "-"]);
-                    assert_eq!(input, Some(FIDELITY_SUBJECT));
-                    result(0, "1\n")
-                }
-                3 => {
-                    assert_eq!(program, executable);
-                    assert_eq!(arguments, ["rewrite", "--", "rg", "--count", "al+pha", "-"]);
-                    assert_eq!(input, None);
-                    result(0, "rtk grep --count -E al+pha -\n")
-                }
-                4 => {
-                    assert_eq!(program, executable);
-                    assert_eq!(arguments, ["grep", "--count", "-E", "al+pha", "-"]);
-                    assert_eq!(input, Some(FIDELITY_SUBJECT));
-                    result(0, "1\n")
-                }
-                _ => panic!("health performed an unexpected probe stage"),
-            };
+            assert_eq!(
+                stage, 0,
+                "health must not globally probe individual rewrites"
+            );
+            assert_eq!(program, executable);
+            assert_eq!(arguments, ["--version"]);
+            assert_eq!(input, None);
             stage += 1;
-            Ok(response)
+            Ok(result(73, "rtk 0.41.0\n"))
         });
 
-        assert_eq!(stage, 5);
+        assert_eq!(stage, 1);
         assert_eq!(observed.state(), HealthState::Active);
-        assert_eq!(observed.version(), Some("0.45.0"));
-        assert!(observed.detail().contains("preserved the answer"));
+        assert_eq!(observed.version(), Some("0.41.0"));
+        assert!(observed.detail().contains("exit 73"));
+        assert!(observed.detail().contains("validated per command"));
     }
 
     #[test]
-    fn health_refuses_missing_obsolete_and_protocol_invalid_executables() {
+    fn health_disables_only_an_executable_that_cannot_launch() {
         let missing = probe_health_with(OsStr::new("missing-rtk"), |_, _, _| {
             Err("selector launch failed: not found".to_owned())
         });
         assert_eq!(missing.state(), HealthState::Missing);
-
-        let obsolete = probe_health_with(OsStr::new("old-rtk"), |_, arguments, _| {
-            assert_eq!(arguments, [OsString::from("--version")]);
-            Ok(result(0, "rtk 0.44.9\n"))
-        });
-        assert_eq!(obsolete.state(), HealthState::Obsolete);
-        assert_eq!(obsolete.version(), Some("0.44.9"));
-
-        let mut stage = 0;
-        let invalid = probe_health_with(OsStr::new("broken-rtk"), |_, _, _| {
-            let response = if stage == 0 {
-                result(0, "rtk 0.45.0\n")
-            } else {
-                result(1, "unexpected\n")
-            };
-            stage += 1;
-            Ok(response)
-        });
-        assert_eq!(invalid.state(), HealthState::ProtocolInvalid);
-        assert!(invalid.detail().contains("exit 1 with nonempty stdout"));
     }
 
     #[test]
-    fn health_refuses_a_rewrite_that_changes_the_probe_answer() {
-        let mut stage = 0;
-        let observed = probe_health_with(OsStr::new("rtk"), |_, _, _| {
-            let response = match stage {
-                0 => result(0, "rtk 0.45.0\n"),
-                1 => result(0, "rtk git status --short\n"),
-                2 => result(0, "1\n"),
-                3 => result(0, "rtk grep --count -E al+pha -\n"),
-                4 => result(1, ""),
-                _ => panic!("health performed an unexpected probe stage"),
-            };
-            stage += 1;
-            Ok(response)
-        });
-
-        assert_eq!(observed.state(), HealthState::RewriteUnfaithful);
-        assert!(observed.detail().contains("counted 1"));
-        assert!(observed.detail().contains("counted 0"));
-    }
-
-    #[test]
-    fn health_keeps_rewriting_active_when_the_fidelity_probe_has_no_count() {
-        for missing_stage in [2, 4] {
-            let mut stage = 0;
-            let observed = probe_health_with(OsStr::new("rtk"), |_, _, _| {
-                let response = match stage {
-                    0 => result(0, "rtk 0.45.0\n"),
-                    1 => result(0, "rtk git status --short\n"),
-                    2 if missing_stage == 2 => result(2, "probe unavailable\n"),
-                    2 => result(0, "1\n"),
-                    3 => result(0, "rtk rg --count al+pha -\n"),
-                    4 => result(2, "probe unavailable\n"),
-                    _ => panic!("health performed an unexpected probe stage"),
-                };
-                stage += 1;
-                Ok(response)
+    fn health_keeps_unrecognized_and_silent_version_answers_active() {
+        for answer in [result(19, "unknown version\n"), result(29, "")] {
+            let observed = probe_health_with(OsStr::new("rtk"), |_, arguments, _| {
+                assert_eq!(arguments, [OsString::from("--version")]);
+                Ok(answer.clone())
             });
-
             assert_eq!(observed.state(), HealthState::Active);
-            assert!(observed.detail().contains("answer unchecked"));
-            assert_eq!(stage, if missing_stage == 2 { 3 } else { 5 });
+            assert_eq!(observed.version(), None);
+            assert!(observed.detail().contains("version unrecognized"));
         }
     }
 
@@ -806,7 +562,7 @@ mod tests {
         let direct = words(&["git", "status"]);
         let selected = rewrite_with(&direct, OsStr::new("alternate-rtk"), |arguments| {
             assert_eq!(arguments, ["git", "status"]);
-            answer(3, "rtk git status\n")
+            answer(73, "rtk git status\n")
         });
         assert_eq!(
             selected.command(),
@@ -817,7 +573,7 @@ mod tests {
         let shell = words(&["/installed/static/stage.sh", "-c", "git status"]);
         let selected = rewrite_with(&shell, OsStr::new("/opt/RTK Tools/rtk"), |arguments| {
             assert_eq!(arguments, ["git status"]);
-            answer(0, "rtk git status\n")
+            answer(29, "rtk git status\n")
         });
         assert_eq!(
             selected.command()[2],
@@ -826,17 +582,21 @@ mod tests {
     }
 
     #[test]
-    fn no_match_and_every_invalid_answer_preserve_the_native_command() {
+    fn nonempty_rewrites_ignore_status_while_empty_and_unavailable_answers_stay_native() {
         let native = words(&["git", "status"]);
         let no_match = rewrite_with(&native, OsStr::new("rtk"), |_| answer(1, ""));
         assert_eq!(no_match.command(), native);
         assert_eq!(no_match.diagnostic(), None);
 
-        for response in [
-            answer(0, ""),
-            answer(1, "rtk git status"),
-            answer(9, "broken"),
-        ] {
+        for code in [0, 1, 3, 9, 73] {
+            let decision = rewrite_with(&native, OsStr::new("rtk"), |_| {
+                answer(code, "rtk git status")
+            });
+            assert_eq!(decision.command(), words(&["rtk", "git", "status"]));
+            assert_eq!(decision.diagnostic(), None);
+        }
+
+        for response in [answer(0, ""), answer(9, "")] {
             let decision = rewrite_with(&native, OsStr::new("rtk"), |_| response);
             assert_eq!(decision.command(), native);
             assert!(

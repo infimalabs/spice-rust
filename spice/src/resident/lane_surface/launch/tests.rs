@@ -1,20 +1,20 @@
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::test_support::{InactiveRtkFixture, assert_obsolete_health};
+use super::test_support::{AdvisoryRtkFixture, assert_advisory_health};
 use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn inactive_configured_rtk_is_removed_from_the_occupant_and_published_by_launch() {
-    let fixture = InactiveRtkFixture::new();
+fn present_configured_rtk_remains_hooked_and_published_despite_advisory_version_status() {
+    let fixture = AdvisoryRtkFixture::new();
     let launch = occupant_launch(
         &fixture.paths,
         fixture.request(vendor::Resume::Fresh),
         fixture.reporter(),
     )
-    .expect("inactive RTK does not block occupant launch");
+    .expect("advisory RTK does not block occupant launch");
     let proof = launch.session;
     let running = sill::spawn_observed(launch.spec, launch.observation)
         .expect("fixture occupant starts under the composed process contract");
@@ -26,15 +26,15 @@ fn inactive_configured_rtk_is_removed_from_the_occupant_and_published_by_launch(
         "fixture occupant ended as {:?}",
         outcome.completion()
     );
-    fixture.assert_occupant_started_without_rtk();
+    fixture.assert_occupant_started_with_rtk();
     fixture.assert_one_configured_probe_from_launch_worktree();
     fixture.assert_rust_native_history_path_prepared();
     let health = session
         .launch
         .as_ref()
         .and_then(|launch| launch.rtk.as_ref())
-        .expect("launch result publishes inactive RTK health");
-    assert_obsolete_health(health);
+        .expect("launch result publishes advisory RTK health");
+    assert_advisory_health(health);
 }
 
 #[test]

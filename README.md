@@ -64,16 +64,18 @@ resident child's argv and environment and from discovery, log URLs, and replies.
 `--open` places it in the URL fragment, outside the HTTP origin.
 
 Supervised shells may use an optional configured
-[RTK](https://github.com/rtk-ai/rtk) executable. When that executable passes
-health admission, each top-level shell command crosses a bounded `rtk rewrite
--- ...` selector. Exit 0 or 3 with nonempty output selects the rewrite; exit 1
-with empty output keeps the native command.
-Launch, timeout, protocol, and parsing failures report
+[RTK](https://github.com/rtk-ai/rtk) executable. When that executable can be
+launched, the installed shell hooks route each top-level command across a
+bounded `rtk rewrite -- ...` selector. Any nonempty, parseable, faithful output
+selects the rewrite regardless of selector status; exit 1 with empty output
+keeps the native command without a diagnostic. Other empty answers, launch
+failures, timeouts, and unusable rewrites report
 `RTK rewrite degraded to native` and execute the original argv unchanged. RTK
 is not an appliance asset. Its lane-specific history is isolated at
 `<git-common>/.spice-rs/rtk/<lane>/history.db` through `RTK_DB_PATH`, and
-`spice doctor` probes the exact configured executable through the same bounded
-health contract without starting a resident.
+`spice doctor` observes the exact configured executable through one bounded
+launch check without starting a resident. Version and rewrite statuses are
+advisory; rewrite validation belongs to the command that will execute it.
 
 Activation requires all three installed hooks. Pre-commit runs the staged
 selector: recognized paths execute their affected Cargo targets and policy
