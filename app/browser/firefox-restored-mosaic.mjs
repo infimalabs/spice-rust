@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { assertMosaicLattice } from "./agent-conversation.mjs";
 import { installPersistedMosaicImageRoutes } from "./agent-conversation-mosaic.mjs";
 import { chooseCanvasView, CONNECT_MS, monitorPage } from "./canvas-fixture.mjs";
-import { assertAgentPageBottomSpacing } from "./canvas-readiness.mjs";
+import { assertAgentWorkspaceGeometry } from "./canvas-readiness.mjs";
 import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import {
   assertCompactionDivider,
@@ -142,7 +142,7 @@ export async function captureFirefoxAgentPageSpacing(
     } else {
       assert.equal(await committed.count(), 0, `${state} has zero committed Mosaic cards`);
     }
-    await assertAgentPageBottomSpacing(page, state);
+    await assertAgentWorkspaceGeometry(page, state);
     await page.screenshot({ path: join(artifacts, file) });
     monitor.assertClean();
   } finally {
@@ -199,7 +199,7 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
       { width: 480, height: 468 },
       "Firefox reported Agents viewport",
     );
-    await assertAgentPageBottomSpacing(page, "Firefox reported Agents viewport");
+    await assertAgentWorkspaceGeometry(page, "Firefox reported Agents viewport");
     await page.screenshot({ path: join(artifacts, "firefox-agents-reported-480x468.png") });
     await resizeCompactionViewport(
       page,

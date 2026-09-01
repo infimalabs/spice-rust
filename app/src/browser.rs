@@ -552,6 +552,7 @@ fn canvas_app() -> Html {
     );
     use_lineage_speech_abandonment(&surface, speech_runtime.clone());
     use_speech_reset(speech.clone(), speech_runtime.clone());
+    use_mosaic_root_scroll(*mosaic);
 
     let refresh = refresh_callback(sender.clone(), axis.clone());
     let submit_note = note_submit_callback(
@@ -711,6 +712,67 @@ fn use_unsafe_intent_guard(unsafe_intent: bool) {
                     "beforeunload",
                     callback.as_ref().unchecked_ref(),
                 );
+            }
+        }
+    });
+}
+
+fn clamp_fixed_mosaic_root(window: &web_sys::Window) {
+    let Some(document) = window.document() else {
+        return;
+    };
+    let Ok(Some(shell)) = document.query_selector(".shell--mosaic") else {
+        return;
+    };
+    let fixed = window
+        .get_computed_style(&shell)
+        .ok()
+        .flatten()
+        .is_some_and(|style| {
+            style
+                .get_property_value("position")
+                .is_ok_and(|value| value == "fixed")
+        });
+    if fixed && window.scroll_y().unwrap_or_default() != 0.0 {
+        window.scroll_to_with_x_and_y(0.0, 0.0);
+    }
+}
+
+#[hook]
+fn use_mosaic_root_scroll(mosaic: bool) {
+    use_effect_with(mosaic, move |mosaic| {
+        let registration = (*mosaic)
+            .then(|| {
+                let window = web_sys::window()?;
+                clamp_fixed_mosaic_root(&window);
+                let callback_window = window.clone();
+                let callback = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                    clamp_fixed_mosaic_root(&callback_window);
+                });
+                window
+                    .add_event_listener_with_callback("resize", callback.as_ref().unchecked_ref())
+                    .ok()?;
+                if window
+                    .add_event_listener_with_callback("scroll", callback.as_ref().unchecked_ref())
+                    .is_err()
+                {
+                    let _ = window.remove_event_listener_with_callback(
+                        "resize",
+                        callback.as_ref().unchecked_ref(),
+                    );
+                    return None;
+                }
+                Some((window, callback))
+            })
+            .flatten();
+        move || {
+            if let Some((window, callback)) = registration {
+                for event in ["resize", "scroll"] {
+                    let _ = window.remove_event_listener_with_callback(
+                        event,
+                        callback.as_ref().unchecked_ref(),
+                    );
+                }
             }
         }
     });

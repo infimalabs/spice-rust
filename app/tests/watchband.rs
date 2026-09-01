@@ -605,14 +605,17 @@ fn the_command_bar_is_not_delineated_from_the_canvas() {
 }
 
 #[test]
-fn agent_surfaces_do_not_reserve_unused_viewport_height() {
+fn agent_surfaces_have_one_bounded_vertical_ownership_chain() {
     const STYLESHEET: &str = include_str!("../mosaic.css");
 
     for selector in [
+        ".mosaic-workspace .content {",
         ".lineage-fleet {",
         ".team-surface {",
         ".team-pane {",
-        ".team-detail-pane {",
+        ".team-compose {",
+        ".team-activity-grid {",
+        "\n.lane-mosaic-plane {",
     ] {
         let rule = STYLESHEET
             .split_once(selector)
@@ -623,21 +626,28 @@ fn agent_surfaces_do_not_reserve_unused_viewport_height() {
             .0;
 
         assert!(
-            !rule.contains("min-height"),
-            "the {selector} rule reserves empty vertical space"
+            rule.contains("flex:") && rule.contains("min-height: 0"),
+            "the {selector} rule participates in the bounded vertical flex chain"
         );
     }
 
-    let narrow_team_surface = include_str!("../responsive.css")
-        .split_once(".team-surface {")
-        .expect("responsive.css should define the narrow team surface")
+    let plane = STYLESHEET
+        .split_once("\n.lane-mosaic-plane {")
+        .expect("mosaic.css should define the lane Mosaic plane")
         .1
         .split_once('}')
-        .expect("the narrow team surface rule should be closed")
+        .expect("the lane Mosaic plane rule should be closed")
         .0;
     assert!(
-        narrow_team_surface.contains("flex: 0 0 auto;"),
-        "stacked narrow team surfaces must size to their content instead of inheriting the desktop zero flex basis"
+        plane.contains("overflow-y: auto") && plane.contains("max-height: none"),
+        "the desktop lane plane alone owns long-history scrolling"
+    );
+
+    let responsive = include_str!("../responsive.css");
+    assert!(
+        responsive.contains("@media (max-height: 440px)")
+            && responsive.contains(".team-surface:nth-child(2)"),
+        "unsatisfiable heights and multi-team narrow stacks explicitly return to intrinsic flow"
     );
 }
 

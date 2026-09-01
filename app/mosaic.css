@@ -217,6 +217,22 @@
 
 .commandbar--mosaic .bar-meta { font-size: .6rem; }
 
+html:has(.shell--mosaic),
+body:has(.shell--mosaic),
+#app:has(> .shell--mosaic) {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.shell--mosaic {
+  position: fixed;
+  inset: 0;
+  height: 100vh;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
 .task-pill-strip {
   display: flex;
   flex: 1 1 auto;
@@ -423,18 +439,27 @@
 
 .mosaic-workspace .content {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
+  flex: 1 1 auto;
   gap: 8px;
+  min-height: 0;
   width: 100%;
   max-width: none;
   padding: 4px 6px 6px;
 }
 
+.mosaic-workspace {
+  display: flex;
+  min-height: 0;
+}
+
 .lineage-fleet {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
+  flex: 1 1 auto;
   gap: 8px;
   width: 100%;
+  min-height: 0;
   min-width: 0;
 }
 
@@ -443,8 +468,11 @@
   /* Match the predecessor's weighted swimlanes: each lineage receives one
      share per member, up to the six-member visual contract, while the fleet
      can carry any number of sibling lineage surfaces. */
+  display: flex;
   flex: var(--lineage-weight, 4) 1 0;
+  flex-direction: column;
   width: auto;
+  min-height: 0;
   min-width: 0;
   max-width: 100%;
   container-type: inline-size;
@@ -581,12 +609,22 @@
   font-size: .65rem;
 }
 
-.team-pane { background: var(--panel); }
+.team-pane {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--panel);
+}
 .team-pane[data-team-mode="Compose"] { overflow: hidden; }
+.team-pane > .empty { flex: 1 1 auto; }
 
 .team-compose {
-  max-height: calc(100vh - 108px);
-  overflow-y: auto;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* The control column sizes itself from the pills rather than a pinned track, so
@@ -595,6 +633,7 @@
 .team-composer {
   --team-composer-block-size: 120px;
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   padding: 8px 8px 0;
@@ -919,7 +958,8 @@
   .team-send { padding: 5px 8px; }
 }
 .team-activity-grid {
-  position: relative; display: block;
+  position: relative; display: flex;
+  flex: 1 1 auto; min-height: 0; flex-direction: column;
   padding: 11px; border-top: 1px solid var(--line);
 }
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
@@ -929,11 +969,11 @@
   /* Rust copies the integer geometry into custom properties through CSSOM.
      Typed attr() collapses this plane in Firefox, while style attributes are
      deliberately refused by the Canvas CSP. */
-  position: relative; display: grid; min-width: 0;
+  position: relative; display: grid; flex: 1 1 auto; min-height: 0; min-width: 0;
   height: calc(var(--mosaic-plane-rows) * var(--mosaic-module) - var(--mosaic-gap));
   grid-template-columns: repeat(12, minmax(0, 1fr));
   column-gap: var(--mosaic-gap); row-gap: var(--mosaic-gap);
-  max-height: max(12rem, calc(100vh - 20rem));
+  max-height: none;
   overflow-y: auto; overflow-anchor: none;
 }
 .lane-mosaic-plane[data-measurement-phase="base"] {
