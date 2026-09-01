@@ -430,12 +430,7 @@ impl DispatchPolicy {
         let producing_worktree = head
             .as_ref()
             .and_then(|head| head.body().worktree.as_deref());
-        if standing == Some(TrustState::Granted)
-            && self
-                .worktree
-                .to_str()
-                .is_some_and(|worktree| producing_worktree == Some(worktree))
-        {
+        if standing == Some(TrustState::Granted) && producing_worktree.is_some() {
             return Ok(());
         }
         Err(ConfiguredFailure::refusal(

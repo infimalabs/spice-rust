@@ -90,6 +90,39 @@ fn initialize_repository(root: &Path) -> Repository {
     Repository::discover(root).expect("discover configured-command fixture")
 }
 
+fn append_granted_trust(
+    journal_path: &Path,
+    digest: Digest,
+    worktree: Option<String>,
+    origin: &str,
+    instant: &str,
+) {
+    let mut authority = journal::Journal::open(journal_path).expect("open fixture authority");
+    let mut write = journal::JournalWrite::new(
+        wire::Actor::Spice,
+        origin.parse().expect("fixture origin"),
+        instant.parse().expect("fixture instant"),
+        wire::Producer::CommandDoor,
+    );
+    let pended = write
+        .fact(
+            wire::body::TrustPended {
+                surface: crate::trust_command::SURFACE_NAME.to_owned(),
+                digest: digest.clone(),
+                worktree: worktree.clone(),
+                previous: None,
+            },
+            journal::FactCause::Root,
+        )
+        .expect("build fixture trust fact");
+    write.trust_head(pended, move |_| wire::TrustHead {
+        digest,
+        state: TrustState::Granted,
+        worktree,
+    });
+    authority.apply(write).expect("commit fixture trust grant");
+}
+
 #[cfg(unix)]
 fn publish_executable(path: &Path, body: &[u8]) {
     fs::create_dir_all(path.parent().expect("executable has a parent"))
@@ -895,34 +928,13 @@ fn durable_trust_is_read_only_and_required_before_execution() {
         "trust admission must not auto-pend or auto-grant the digest",
     );
 
-    let mut authority = journal::Journal::open(state.journal()).expect("open fixture authority");
-    let mut write = journal::JournalWrite::new(
-        wire::Actor::Spice,
-        "recovery:configured-trust-fixture"
-            .parse()
-            .expect("fixture origin"),
-        "2030-04-12T18:44:01.271Z".parse().expect("fixture instant"),
-        wire::Producer::CommandDoor,
+    append_granted_trust(
+        state.journal(),
+        policy.surface.digest().clone(),
+        None,
+        "recovery:configured-trust-fixture",
+        "2030-04-12T18:44:01.271Z",
     );
-    let pended = write
-        .fact(
-            wire::body::TrustPended {
-                surface: crate::trust_command::SURFACE_NAME.to_owned(),
-                digest: policy.surface.digest().clone(),
-                worktree: None,
-                previous: None,
-            },
-            journal::FactCause::Root,
-        )
-        .expect("build fixture trust fact");
-    let digest = policy.surface.digest().clone();
-    write.trust_head(pended, move |_| wire::TrustHead {
-        digest,
-        state: TrustState::Granted,
-        worktree: None,
-    });
-    authority.apply(write).expect("commit fixture trust grant");
-    drop(authority);
     let legacy = fs::read(state.journal()).expect("read legacy authority");
 
     let refusal = policy
@@ -943,51 +955,59 @@ fn durable_trust_is_read_only_and_required_before_execution() {
         "legacy trust admission must be read-only",
     );
 
-    let worktree = policy
-        .worktree
-        .to_str()
-        .expect("fixture worktree is UTF-8")
-        .to_owned();
-    let mut authority = journal::Journal::open(state.journal()).expect("reopen fixture authority");
-    let mut write = journal::JournalWrite::new(
-        wire::Actor::Spice,
-        "recovery:configured-bound-trust-fixture"
-            .parse()
-            .expect("fixture origin"),
-        "2030-04-12T18:44:02.271Z".parse().expect("fixture instant"),
-        wire::Producer::CommandDoor,
+    append_granted_trust(
+        state.journal(),
+        policy.surface.digest().clone(),
+        Some("/worktrees/producer".to_owned()),
+        "recovery:configured-bound-trust-fixture",
+        "2030-04-12T18:44:02.271Z",
     );
-    let pended = write
-        .fact(
-            wire::body::TrustPended {
-                surface: crate::trust_command::SURFACE_NAME.to_owned(),
-                digest: policy.surface.digest().clone(),
-                worktree: Some(worktree.clone()),
-                previous: None,
-            },
-            journal::FactCause::Root,
-        )
-        .expect("build bound trust fact");
-    let digest = policy.surface.digest().clone();
-    write.trust_head(pended, move |_| wire::TrustHead {
-        digest,
-        state: TrustState::Granted,
-        worktree: Some(worktree),
-    });
-    authority
-        .apply(write)
-        .expect("commit bound fixture trust grant");
-    drop(authority);
     let granted = fs::read(state.journal()).expect("read bound granted authority");
 
     policy
         .require_approved(&repository)
-        .expect("the exact durable grant admits execution");
+        .expect("the exact durable grant admits a sibling worktree");
     assert_eq!(
         fs::read(state.journal()).expect("reread granted authority"),
         granted,
         "approval checks are read-only",
     );
+}
+
+#[test]
+fn a_bound_grant_does_not_admit_changed_command_words() {
+    let scratch = Scratch::new("changed-digest-trust");
+    let repository = initialize_repository(&scratch.root);
+    let policy_path = scratch.root.join("spice-rust.toml");
+    fs::write(
+        &policy_path,
+        "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n",
+    )
+    .expect("write trusted policy fixture");
+    let trusted = DispatchPolicy::load(&repository).expect("load trusted executable policy");
+    let state = repository.admit_state().expect("admit fixture state paths");
+    fs::create_dir_all(state.data()).expect("create fixture authority parent");
+    append_granted_trust(
+        state.journal(),
+        trusted.surface.digest().clone(),
+        Some("/worktrees/producer".to_owned()),
+        "recovery:configured-changed-trust-fixture",
+        "2030-04-12T18:44:03.271Z",
+    );
+
+    fs::write(
+        policy_path,
+        "[policy]\npre_commit = [{ label = 'changed', run = ['/bin/false'] }]\n",
+    )
+    .expect("change executable policy command words");
+    let changed = DispatchPolicy::load(&repository).expect("load changed executable policy");
+    assert_ne!(changed.surface.digest(), trusted.surface.digest());
+    let refusal = changed
+        .require_approved(&repository)
+        .expect_err("a sibling's different digest remains untrusted");
+    assert_eq!(refusal.reason(), "gate::pre-commit-configuration-untrusted");
+    assert!(refusal.detail().contains("standing=absent"));
+    assert!(refusal.detail().contains("/bin/false"));
 }
 
 #[test]
