@@ -292,6 +292,7 @@ mod tests {
             observed: None,
             activity: wire::AgentActivityKind::Prose,
             text: "quoted prose".to_owned(),
+            unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
         }
     }

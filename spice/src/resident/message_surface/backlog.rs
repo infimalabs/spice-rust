@@ -172,6 +172,7 @@ fn publish_scan(
                     authored: sourced.context.timestamp.as_deref(),
                     observed: None,
                     observations: &reader.state.observations,
+                    unavailable_tool_terminals: &[],
                 },
                 &mut reader.state.previews,
                 Some(&reader.steering),

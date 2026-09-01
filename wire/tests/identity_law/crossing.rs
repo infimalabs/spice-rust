@@ -736,6 +736,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 observed: None,
                 activity: AgentActivityKind::Prose,
                 text: "settled".to_owned(),
+                unavailable_tool_terminals: Vec::new(),
                 media: Vec::new(),
             },
             AgentMessage {
@@ -752,6 +753,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 observed: None,
                 activity: AgentActivityKind::Tool,
                 text: "Bash".to_owned(),
+                unavailable_tool_terminals: Vec::new(),
                 media: Vec::new(),
             },
             AgentMessage {
@@ -768,6 +770,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 observed: None,
                 activity: AgentActivityKind::Compaction,
                 text: "Context compacted".to_owned(),
+                unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
                 media: Vec::new(),
             },
         ],
@@ -912,6 +915,7 @@ fn stream_data_samples(
         observed: None,
         activity: wire::AgentActivityKind::Prose,
         text: "older retained prose".to_owned(),
+        unavailable_tool_terminals: Vec::new(),
         media: Vec::new(),
     };
     vec![

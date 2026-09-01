@@ -118,6 +118,13 @@ pub struct AgentMessage {
     pub activity: AgentActivityKind,
     /// Visible assistant prose or concise tool preview.
     pub text: String,
+    /// Tool calls whose terminal result was unavailable at this compaction boundary.
+    ///
+    /// This projection is evidence of an absent terminal record, not an inferred
+    /// failure or cancellation. It is carried by the boundary so retention cannot
+    /// preserve the context transition while discarding the unresolved status.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable_tool_terminals: Vec<String>,
     /// Admitted media carried beside this exact transcript event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<crate::Media>,

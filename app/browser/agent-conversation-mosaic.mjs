@@ -7,6 +7,7 @@ import {
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
+import { assertUnavailableToolTerminal } from "./compaction-boundary-reference.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const PERSISTED_IMAGE_ROUTE = /\/mosaic-(?:load|error)-[0-9a-f-]+\.png$/;
@@ -357,6 +358,11 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
   );
   assert.equal(await restored.getAttribute("data-span"), "12");
   assert.equal((await restored.locator(".message-key").innerText()).trim(), "compacted context");
+  await assertUnavailableToolTerminal(
+    restored,
+    "reloaded compaction boundary",
+    "Bash: cargo test --locked -p spice",
+  );
 
   const socketCount = await page.evaluate(() => window.__canvasSockets?.length ?? 0);
   assert.ok(socketCount > 0, "the browser fixture captures the active Canvas socket");
@@ -372,6 +378,11 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
         ?.dataset.layoutPhase === "committed"
     ),
     { expectedKey: boundaryKey, previousSockets: socketCount },
+  );
+  await assertUnavailableToolTerminal(
+    restored,
+    "reconnected compaction boundary",
+    "Bash: cargo test --locked -p spice",
   );
 }
 
