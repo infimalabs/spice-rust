@@ -8,6 +8,7 @@ import {
   chmod,
   cp,
   mkdir,
+  open,
   readFile,
   readdir,
   realpath,
@@ -47,6 +48,7 @@ export { monitorPage } from "./canvas-monitor.mjs";
 /// reads it back to decide exactly which processes this run is responsible for.
 export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
 const PRIMARY_FIXTURE_SESSION = "018f7777-7777-7444-8888-999999999999";
+const COMPACTION_BOUNDARY_RECORD = '{"type":"system","subtype":"compact_boundary"}\n';
 
 const execute = promisify(execFile);
 const SHUTDOWN_COMMAND_MS = 25_000;
@@ -65,6 +67,29 @@ export function fixtureCommandEnv(lane, fixture) {
     delete env.CLAUDE_CONFIG_DIR;
   }
   return env;
+}
+
+/// Author one real preserved-session compaction record and prove its bytes.
+export async function appendPrimaryCompactionBoundary(fixture) {
+  const transcript = join(
+    fixture,
+    ".git/spice-home/.claude/projects/canvas",
+    `${PRIMARY_FIXTURE_SESSION}.jsonl`,
+  );
+  const record = Buffer.from(COMPACTION_BOUNDARY_RECORD);
+  const file = await open(transcript, "a");
+  let offset;
+  try {
+    offset = (await file.stat()).size;
+    const { bytesWritten } = await file.write(record);
+    assert.equal(bytesWritten, record.length, "the fixture authors the complete compaction record");
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  const authored = (await readFile(transcript)).subarray(offset, offset + record.length);
+  assert.deepEqual(authored, record, "the preserved session contains the exact authored record");
+  return { transcript, offset, length: record.length };
 }
 
 function waitForDiscovery(child, canvas, timeout = 30_000) {
@@ -321,10 +346,6 @@ export async function configureFixture(
     "    rm -f .spice-ack-trigger",
     "    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')",
     `    printf '{"timestamp":"%s","type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK %s: applied"}],"usage":{"input_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":1}}}\\n' "$timestamp" "$key"`,
-    "  fi",
-    "  if [ -f .spice-compaction-trigger ]; then",
-    "    rm -f .spice-compaction-trigger",
-    "    printf '{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\\n' >> \"$session_transcript\"",
     "  fi",
     "  sleep 1",
     "done",
