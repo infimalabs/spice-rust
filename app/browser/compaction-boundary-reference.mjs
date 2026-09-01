@@ -64,7 +64,12 @@ export async function resizeCompactionViewport(page, divider, viewport, label) {
   }, { key, before });
 }
 
-export async function assertCompactionDivider(divider, label, expectedAttribution) {
+export async function assertCompactionDivider(
+  divider,
+  label,
+  expectedAttribution,
+  { expectAttributionTruncated = false } = {},
+) {
   const geometry = await divider.evaluate((boundary) => {
     const rect = (node) => {
       const box = node.getBoundingClientRect();
@@ -103,6 +108,7 @@ export async function assertCompactionDivider(divider, label, expectedAttributio
     const plane = boundary.closest(".lane-mosaic-plane");
     const labelNode = boundary.querySelector(".mosaic-compaction-label");
     const agent = boundary.querySelector(".mosaic-compaction-agent");
+    const agentStyle = getComputedStyle(agent);
     const context = boundary.querySelector(".message-key");
     const pageProbe = document.createElement("span");
     pageProbe.style.background = "var(--page)";
@@ -131,7 +137,15 @@ export async function assertCompactionDivider(divider, label, expectedAttributio
         text: labelNode.textContent.trim().replace(/\s+/g, " "),
         childClasses: [...labelNode.children].map((node) => node.className),
       },
-      agent: { ...measured(agent), text: agent?.textContent?.trim() },
+      agent: {
+        ...measured(agent),
+        clientWidth: agent.clientWidth,
+        scrollWidth: agent.scrollWidth,
+        overflow: agentStyle.overflow,
+        textOverflow: agentStyle.textOverflow,
+        whiteSpace: agentStyle.whiteSpace,
+        text: agent.textContent.trim(),
+      },
       context: { ...measured(context), text: context?.textContent?.trim() },
       contextGroup: measured(boundary.querySelector(".mosaic-compaction-context")),
       rules: [...boundary.querySelectorAll(".mosaic-compaction-rule")].map(measured),
@@ -185,6 +199,32 @@ export async function assertCompactionDivider(divider, label, expectedAttributio
     `${label} keeps age, separator, and compacted-context hierarchy`,
   );
   assert.equal(geometry.agent.text, expectedAttribution);
+  const attributionEvidence = JSON.stringify({
+    agent: geometry.agent,
+    contextGroup: geometry.contextGroup,
+  });
+  assert.equal(geometry.agent.overflow, "hidden", `${label} hides excess attribution text`);
+  assert.equal(geometry.agent.textOverflow, "ellipsis", `${label} ellipsizes attribution text`);
+  assert.equal(geometry.agent.whiteSpace, "nowrap", `${label} keeps attribution on one line`);
+  assert.ok(
+    geometry.agent.width > 0 && geometry.agent.clientWidth > 0,
+    `${label} paints a measurable attribution node: ${attributionEvidence}`,
+  );
+  assert.ok(
+    geometry.agent.left >= geometry.contextGroup.left - 0.5
+      && geometry.agent.right <= geometry.contextGroup.right + 0.5,
+    `${label} bounds the attribution node inside its context group: ${attributionEvidence}`,
+  );
+  assert.ok(
+    geometry.agent.scrollWidth >= geometry.agent.clientWidth,
+    `${label} reports coherent attribution widths: ${attributionEvidence}`,
+  );
+  if (expectAttributionTruncated) {
+    assert.ok(
+      geometry.agent.scrollWidth > geometry.agent.clientWidth + 1,
+      `${label} visibly truncates attribution text: ${attributionEvidence}`,
+    );
+  }
   assert.equal(geometry.context.text, "compacted context");
   assert.ok(Number.parseFloat(geometry.contextGroup.gap) > 0, `${label} separates agent and context`);
   assert.match(geometry.label.fontFamily, /system-ui/);
