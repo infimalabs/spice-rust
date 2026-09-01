@@ -291,7 +291,7 @@ fn a_content_revision_commits_even_when_the_lattice_rows_are_unchanged() {
 }
 
 #[test]
-fn compaction_boundary_resets_the_incremental_plane_floor() {
+fn compaction_boundary_preserves_the_upward_append_coordinate() {
     let initial = [
         measured("a", candidates(12, 2)),
         measured("b", candidates(12, 2)),
@@ -343,7 +343,7 @@ fn compaction_boundary_resets_the_incremental_plane_floor() {
     assert!(with_boundary.cards()[4].boundary);
     assert_eq!((divider.track, divider.span), (0, 12));
     assert_eq!(divider.base, 8);
-    assert_eq!(with_boundary.cards()[4].display_base, -1);
+    assert_eq!(with_boundary.max_row(), divider.base + divider.rows);
 
     let after = with_boundary.reconcile(
         900,
@@ -359,7 +359,11 @@ fn compaction_boundary_resets_the_incremental_plane_floor() {
     assert_eq!(&after.cards()[..frozen.len()], frozen);
     assert_eq!(&after.cards()[4].card, divider);
     assert!(after.cards()[5].card.base >= divider.base + divider.rows);
-    assert!(after.cards()[5].display_base < after.cards()[4].display_base);
+    assert_eq!(
+        after.max_row(),
+        after.cards()[5].card.base + after.cards()[5].card.rows,
+        "the plane frontier advances with the appended card",
+    );
     assert_eq!(after.transition(), Transition::Append);
 
     let replayed = after.reconcile(
@@ -374,7 +378,11 @@ fn compaction_boundary_resets_the_incremental_plane_floor() {
         ],
     );
     assert_eq!(replayed.transition(), Transition::FullReplay);
-    assert!(replayed.cards()[5].display_base < replayed.cards()[4].display_base);
+    assert!(
+        replayed.cards()[5].card.base
+            >= replayed.cards()[4].card.base + replayed.cards()[4].card.rows,
+        "a full replay keeps post-compaction cards on the same upward coordinate",
+    );
 }
 
 #[test]

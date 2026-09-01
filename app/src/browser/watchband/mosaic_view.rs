@@ -152,15 +152,14 @@ impl CardLayout {
     fn placed(
         measurement_index: usize,
         card: &crate::mosaic::Card,
-        display_base: i32,
         measurement: &ActivityMeasurement,
     ) -> Self {
         Self {
             committed: true,
             track: card.track,
             span: card.span,
-            base: display_base,
-            row: display_base,
+            base: card.base,
+            row: card.base,
             rows: card.rows,
             lifecycle: card.lifecycle,
             measurement_index,
@@ -1129,12 +1128,9 @@ fn render_activity_cards(
                 })
                 .or_else(|| measurement_index.latest(&key, activity));
             let layout = match (placement, measurement) {
-                (Some((_plane, entry)), Some(measurement)) => CardLayout::placed(
-                    entry.card.creation_index,
-                    &entry.card,
-                    entry.display_base,
-                    measurement,
-                ),
+                (Some((_plane, entry)), Some(measurement)) => {
+                    CardLayout::placed(entry.card.creation_index, &entry.card, measurement)
+                }
                 _ => CardLayout::measuring(order, activity.base_span(geometry)),
             };
             let quote_order = u64::try_from(layout.measurement_index)
