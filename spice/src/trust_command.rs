@@ -203,7 +203,10 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
             "trust::digest-unknown",
             Some(surface.digest().to_string()),
             None,
-            "restart the resident to pend the exact current policy surface before ruling",
+            &format!(
+                "run `spice trust pend` from worktree {} before ruling",
+                repository.worktree_root().display(),
+            ),
         );
     };
     let current = match surface.is_current(&repository) {
@@ -238,6 +241,29 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
     })
 }
 
+/// Pend the exact executable surface currently present in this worktree.
+pub(crate) fn pend(contract: &Contract) -> Outcome<TrustAnswer> {
+    let repository = match current_repository() {
+        Ok(repository) => repository,
+        Err(outcome) => return outcome,
+    };
+    let surface = match Surface::load(&repository) {
+        Ok(surface) => surface,
+        Err(error) => return load_failure(&error),
+    };
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return crate::state_failure(&error).outcome(),
+    };
+    trust_answer(crate::command_client::execute(
+        state.canvas(),
+        contract,
+        crate::command_client::SelectedCommand::TrustPend {
+            digest: surface.digest(),
+        },
+    ))
+}
+
 /// Apply one exact grant or revoke through the resident command path.
 pub(crate) fn rule(matches: &ArgMatches, contract: &Contract, grant: bool) -> Outcome<TrustAnswer> {
     let digest = match matches
@@ -268,7 +294,15 @@ pub(crate) fn rule(matches: &ArgMatches, contract: &Contract, grant: bool) -> Ou
     } else {
         crate::command_client::SelectedCommand::TrustRevoke { digest: &digest }
     };
-    match crate::command_client::execute(state.canvas(), contract, selected) {
+    trust_answer(crate::command_client::execute(
+        state.canvas(),
+        contract,
+        selected,
+    ))
+}
+
+fn trust_answer(outcome: Outcome<CommandAnswer>) -> Outcome<TrustAnswer> {
+    match outcome {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::Trust(answer) => Outcome::Reply(Reply {
                 position: reply.position,

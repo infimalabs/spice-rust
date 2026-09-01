@@ -9,7 +9,7 @@ use spice::repository::Repository;
 use wire::intent::TrustRef;
 use wire::{Actor, CanonicalUuid, CommandKind, Outcome, TrustState, Witness};
 
-use super::policy_surface::{trust_rule, trust_rule_with};
+use super::policy_surface::{trust_pend, trust_pend_with, trust_rule, trust_rule_with};
 use super::{RuntimePaths, commit_startup, commit_startup_with};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -184,6 +184,105 @@ fn equal_byte_replacement_with_an_existing_head_refuses_zero_write_seating() {
 }
 
 #[test]
+fn running_resident_pends_current_surface_then_existing_grant_succeeds() {
+    let (root, paths) = resident_fixture("trust-live-pend");
+    let tracked = root.join("spice-rust.toml");
+    fs::write(&tracked, "# initial policy\n").expect("write initial policy");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let initial = crate::trust_command::Surface::load(&repository).expect("initial surface loads");
+    let epoch = test_uuid(30);
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    commit_startup(&bus, &repository, &initial, epoch, None)
+        .expect("resident seats with initial surface");
+
+    let current_bytes = "# changed executable policy\n";
+    replace_policy(&tracked, current_bytes);
+    let current = crate::trust_command::Surface::load(&repository).expect("changed surface loads");
+    let digest = current.digest().clone();
+    let reference = TrustRef {
+        digest: digest.clone(),
+    };
+    let lane_pend = admitted_trust_command_as(
+        CommandKind::TrustPend,
+        digest.clone(),
+        TrustState::Pended,
+        epoch,
+        test_uuid(31),
+        Actor::Lane(test_uuid(32)),
+    );
+    let before_lane = bus.fact_snapshot().expect("facts before lane pend");
+    let refused = trust_pend(&bus, &repository, epoch, &lane_pend, &reference);
+    assert!(matches!(
+        refused,
+        Outcome::Refusal(ref refusal) if refusal.reason() == "trust::operator-required"
+    ));
+    assert_eq!(
+        bus.fact_snapshot().expect("facts after lane pend"),
+        before_lane
+    );
+
+    let pend = admitted_trust_command(
+        CommandKind::TrustPend,
+        digest.clone(),
+        TrustState::Pended,
+        epoch,
+        test_uuid(33),
+    );
+    let before_movement = bus.fact_snapshot().expect("facts before moved pend");
+    let head_before_movement = bus
+        .trust_head(&digest)
+        .expect("head before moved pend reads");
+    let receipts_before_movement = receipt_count(&paths.journal);
+    let refused = trust_pend_with(&bus, &repository, epoch, &pend, &reference, || {
+        replace_policy(&tracked, current_bytes)
+    });
+    assert!(matches!(
+        refused,
+        Outcome::Refusal(ref refusal) if refusal.reason() == "trust::surface-moved"
+    ));
+    assert_eq!(
+        bus.fact_snapshot().expect("facts after moved pend"),
+        before_movement
+    );
+    assert_eq!(
+        bus.trust_head(&digest)
+            .expect("head after moved pend reads"),
+        head_before_movement,
+    );
+    assert_eq!(receipt_count(&paths.journal), receipts_before_movement);
+
+    let pended = trust_pend(&bus, &repository, epoch, &pend, &reference);
+    assert!(matches!(pended, Outcome::Reply(_)));
+    let pended_head = bus
+        .trust_head(&digest)
+        .expect("pended head reads")
+        .expect("pended head exists");
+    assert_eq!(pended_head.body().state, TrustState::Pended);
+    let grant = admitted_trust_command(
+        CommandKind::TrustGrant,
+        digest.clone(),
+        TrustState::Pended,
+        epoch,
+        test_uuid(34),
+    );
+    let granted = trust_rule(&bus, &repository, epoch, &grant, &reference);
+    assert!(matches!(granted, Outcome::Reply(_)));
+    assert_eq!(
+        bus.trust_head(&digest)
+            .expect("granted head reads")
+            .expect("granted head exists")
+            .body()
+            .state,
+        TrustState::Granted,
+    );
+    bus.verify()
+        .expect("live pend and grant authority verifies");
+    bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
 fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
     let (root, paths) = resident_fixture("trust-ruling-generation");
     let tracked = root.join("spice-rust.toml");
@@ -345,6 +444,17 @@ fn admitted_trust_command(
     epoch: CanonicalUuid,
     id: CanonicalUuid,
 ) -> wire::AdmittedCommand {
+    admitted_trust_command_as(kind, digest, standing, epoch, id, Actor::Operator)
+}
+
+fn admitted_trust_command_as(
+    kind: CommandKind,
+    digest: wire::Digest,
+    standing: TrustState,
+    epoch: CanonicalUuid,
+    id: CanonicalUuid,
+    actor: Actor,
+) -> wire::AdmittedCommand {
     let reference = TrustRef {
         digest: digest.clone(),
     };
@@ -358,7 +468,7 @@ fn admitted_trust_command(
     }
     .admit(&wire::Accepted {
         wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
+        actor,
         epoch,
     })
     .expect("fixture trust command admits")

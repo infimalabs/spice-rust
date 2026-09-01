@@ -837,6 +837,14 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
     .expect("write executable policy fixture");
     let policy = DispatchPolicy::load(&repository).expect("load executable policy");
 
+    let absent = policy.trust_refusal_detail(None);
+    assert!(absent.contains("standing=absent"), "{absent}");
+    assert!(
+        absent.contains(&scratch.root.display().to_string()),
+        "{absent}"
+    );
+    assert!(absent.contains("spice trust pend"), "{absent}");
+
     let detail = policy.trust_refusal_detail(Some(TrustState::Pended));
     assert!(
         detail.contains(&policy.surface.digest().to_string()),
@@ -844,10 +852,15 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
     );
     assert!(detail.contains("standing=pended"), "{detail}");
     assert!(detail.contains("provenance=tracked"), "{detail}");
+    assert!(
+        detail.contains(&scratch.root.display().to_string()),
+        "{detail}"
+    );
     assert!(detail.contains("spice-rust.toml"), "{detail}");
     for word in ["exact", "/bin/echo", "one", "two"] {
         assert!(detail.contains(word), "{detail}");
     }
+    assert!(detail.contains("spice trust pend"), "{detail}");
     assert!(detail.contains("spice trust grant"), "{detail}");
 }
 

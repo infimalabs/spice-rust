@@ -908,6 +908,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "spice::trust"
     ),
     row!(
+        ["trust", "pend"],
+        "trust pend",
+        Operator,
+        Command,
+        [TrustPended],
+        [Resident, OperatorCapability],
+        Reply,
+        "spice::trust_pend"
+    ),
+    row!(
         ["trust", "grant"],
         "trust grant DIGEST",
         Operator,
