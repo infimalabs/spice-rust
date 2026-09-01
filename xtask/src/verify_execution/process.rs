@@ -188,26 +188,7 @@ where
     S: Into<OsString>,
     P: Into<OsString>,
 {
-    let mut environment = ambient_environment()?
-        .entries()
-        .iter()
-        .cloned()
-        .collect::<BTreeMap<_, _>>();
-    if let Some(cargo_jobs) = cargo_jobs {
-        environment.insert(
-            OsString::from("CARGO_BUILD_JOBS"),
-            OsString::from(cargo_jobs.to_string()),
-        );
-    }
-    for (key, value) in overrides {
-        environment.insert(OsString::from(key), (*value).to_owned());
-    }
-    let environment = Environment::new(environment).map_err(|error| {
-        RunError::Launch(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            error.to_string(),
-        ))
-    })?;
+    let environment = selected_process_environment(ambient_environment()?, cargo_jobs, overrides)?;
     let deadlines =
         Deadlines::new(bounds.runtime, bounds.output_drain, bounds.reap).map_err(|error| {
             RunError::Launch(io::Error::new(
@@ -250,6 +231,37 @@ where
         redaction: Redaction::None,
         grace: bounds.grace,
     })
+}
+
+fn selected_process_environment(
+    environment: Environment,
+    cargo_jobs: Option<usize>,
+    overrides: &[(&str, &OsStr)],
+) -> Result<Environment, RunError> {
+    let mut environment = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<_, _>>();
+    for variable in spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES {
+        environment.remove(OsStr::new(variable));
+    }
+    if let Some(cargo_jobs) = cargo_jobs {
+        environment.insert(
+            OsString::from("CARGO_BUILD_JOBS"),
+            OsString::from(cargo_jobs.to_string()),
+        );
+    }
+    for (key, value) in overrides {
+        environment.insert(OsString::from(key), (*value).to_owned());
+    }
+    let environment = Environment::new(environment).map_err(|error| {
+        RunError::Launch(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            error.to_string(),
+        ))
+    })?;
+    Ok(environment)
 }
 
 fn command_run_from_outcome(
@@ -366,5 +378,54 @@ impl SignalGuard {
         _interrupted: Arc<AtomicBool>,
     ) -> Result<Self, VerifyError> {
         Ok(Self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const INBOX: &str = wire::SpiceVariable::Inbox.as_str();
+
+    fn fixture_environment() -> Environment {
+        Environment::new([
+            ("BASH_ENV", "/fixture/bash-env"),
+            ("PATH", "/fixture/bin"),
+            (INBOX, "/fixture/live-inbox"),
+            ("ZDOTDIR", "/fixture/zdotdir"),
+        ])
+        .expect("fixture environment")
+    }
+
+    fn value<'a>(environment: &'a Environment, name: &str) -> Option<&'a OsStr> {
+        environment
+            .entries()
+            .iter()
+            .find_map(|(key, value)| (key == name).then_some(value.as_os_str()))
+    }
+
+    #[test]
+    fn verifier_children_exclude_supervisor_state_unless_the_caller_opts_in() {
+        let isolated = selected_process_environment(fixture_environment(), Some(3), &[])
+            .expect("isolated environment");
+
+        assert_eq!(value(&isolated, "PATH"), Some(OsStr::new("/fixture/bin")));
+        assert_eq!(value(&isolated, "CARGO_BUILD_JOBS"), Some(OsStr::new("3")));
+        for variable in spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES {
+            assert_eq!(value(&isolated, variable), None);
+        }
+
+        let opted_in = selected_process_environment(
+            fixture_environment(),
+            None,
+            &[(INBOX, OsStr::new("/fixture/owned-inbox"))],
+        )
+        .expect("opted-in environment");
+        assert_eq!(
+            value(&opted_in, INBOX),
+            Some(OsStr::new("/fixture/owned-inbox"))
+        );
+        assert_eq!(value(&opted_in, "BASH_ENV"), None);
+        assert_eq!(value(&opted_in, "ZDOTDIR"), None);
     }
 }

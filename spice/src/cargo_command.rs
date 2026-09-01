@@ -111,6 +111,13 @@ fn run_arguments(arguments: Vec<OsString>) -> RunResult {
     }
 }
 
+/// Developer toolchains and their tests must opt into lane interception state.
+fn isolate_developer_environment(command: &mut Command) {
+    for variable in spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES {
+        command.env_remove(variable);
+    }
+}
+
 #[expect(
     clippy::disallowed_methods,
     reason = "the native binary rim captures the exact Cargo seed environment"
@@ -191,6 +198,7 @@ fn run_inner(arguments: Vec<OsString>) -> Result<ExitStatus, (Outcome<()>, i32)>
         .env(NATIVE_RUSTDOC_VARIABLE, host.rustdoc())
         .env(RUSTC_VARIABLE, host.rustc())
         .env(RUSTDOC_VARIABLE, host.rustdoc());
+    isolate_developer_environment(&mut command);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
@@ -275,6 +283,39 @@ fn rejected(class: FaultClass, reason: &str, detail: String, code: i32) -> (Outc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn developer_children_begin_outside_supervised_shell_state_and_may_opt_in() {
+        let mut command = Command::new("cargo");
+        command
+            .env(steer::hook::BASH_ENV, "/fixture/bash-env")
+            .env(steer::hook::ZDOTDIR, "/fixture/zdotdir")
+            .env(steer::hook::INBOX, "/fixture/live-inbox");
+        isolate_developer_environment(&mut command);
+
+        assert_eq!(
+            spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES,
+            [
+                steer::hook::BASH_ENV,
+                steer::hook::ZDOTDIR,
+                steer::hook::INBOX,
+            ]
+        );
+        for variable in spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(name, value)| name == variable && value.is_none()),
+                "developer child does not inherit {variable}"
+            );
+        }
+
+        command.env(steer::hook::INBOX, "/fixture/owned-inbox");
+        assert!(command.get_envs().any(|(name, value)| {
+            name == steer::hook::INBOX
+                && value == Some(std::ffi::OsStr::new("/fixture/owned-inbox"))
+        }));
+    }
 
     #[test]
     fn launch_failures_preserve_shell_status_conventions() {
