@@ -71,14 +71,14 @@ const REAL_PROCESSES = {
   settled: (predicate) => settles(predicate, ESCALATION_MS),
 };
 
-/// Whether a pid still names a live process.
+/// Whether a pid or negative process-group id still names a live process.
 ///
 /// Signal 0 performs the permission and existence check without delivering
 /// anything, so this asks the kernel rather than inferring liveness from an
 /// exit event that a detached or reparented process would never send us.
-function alive(pid, processes) {
+function alive(target, processes) {
   try {
-    processes.kill(pid, 0);
+    processes.kill(target, 0);
     return true;
   } catch (error) {
     // EPERM means the process exists and is simply not ours to signal, which is
@@ -262,7 +262,9 @@ async function stopOwnedResident(owner, stop) {
 /// run to discover it, so the survivors are named and raised, and `attempt`
 /// turns that into a stderr line without ending the rest of cleanup.
 async function reapRecordedVendors(vendors, processes) {
-  const living = () => vendors.filter((pid) => alive(pid, processes));
+  // A leader can exit while a child remains in its group. Probe the negative
+  // group id so settlement means every member is gone, not merely the leader.
+  const living = () => vendors.filter((pid) => alive(-pid, processes));
   if (living().length === 0) return;
   for (const signal of ["SIGTERM", "SIGKILL"]) {
     for (const pid of living()) signalGroup(pid, signal, processes);
