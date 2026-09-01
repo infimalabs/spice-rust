@@ -66,6 +66,44 @@ struct Opening {
     key: steer::Key,
 }
 
+#[derive(Debug, Default)]
+struct TasteDirectiveProvenance {
+    keys: BTreeSet<steer::Key>,
+}
+
+impl steer::Standing for TasteDirectiveProvenance {
+    fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
+        self.keys.contains(key).then_some(wire::Disposition::Live)
+    }
+}
+
+impl TasteDirectiveProvenance {
+    fn from_snapshot(snapshot: &journal::FactSnapshot) -> CommandResult<Self> {
+        let mut provenance = Self::default();
+        for envelope in snapshot.facts() {
+            let key = if let Some(body) = envelope.fact.read::<wire::body::TasteReminded>() {
+                Some(body.key)
+            } else if let Some(body) = envelope.fact.read::<TasteJudged>() {
+                match body.decision {
+                    TasteDecision::Confirmed { key, .. } => Some(key),
+                    TasteDecision::Cleared => None,
+                }
+            } else {
+                None
+            };
+            let Some(key) = key else {
+                continue;
+            };
+            provenance
+                .keys
+                .insert(key.parse::<steer::Key>().map_err(|error| {
+                    store_fault("taste::directive-key-invalid", &error.to_string())
+                })?);
+        }
+        Ok(provenance)
+    }
+}
+
 pub(super) trait Adjudicator {
     fn adjudicate(&mut self, candidate: &Candidate) -> Result<Judgment, crate::judge::Error>;
 }
@@ -344,12 +382,29 @@ pub(super) fn recognize(
 }
 
 fn has_authored_prose(record: &lane::capture::CaptureRecord) -> bool {
+    let provenance = TasteDirectiveProvenance::default();
     record.decoded.events().iter().any(|event| {
         let listen::Event::Prose(prose) = event else {
             return false;
         };
-        authored_prose(prose).is_some()
+        authored_prose(prose, &provenance).is_some()
     })
+}
+
+fn taste_directive_provenance(
+    bus: &Bus,
+    record: &lane::capture::CaptureRecord,
+) -> CommandResult<TasteDirectiveProvenance> {
+    let has_acknowledgement = record.decoded.events().iter().any(|event| {
+        matches!(event, listen::Event::Prose(prose) if steer::has_acknowledgement(&prose.text))
+    });
+    if !has_acknowledgement {
+        return Ok(TasteDirectiveProvenance::default());
+    }
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
+    TasteDirectiveProvenance::from_snapshot(&snapshot)
 }
 
 fn applicability_context(
@@ -402,7 +457,8 @@ where
     }
     let observed = current_residency(bus, epoch)?;
     let context = applicability_context(observed.body(), record)?;
-    let candidates = candidates(bag, &context, record)?;
+    let provenance = taste_directive_provenance(bus, record)?;
+    let candidates = candidates_with_provenance(bag, &context, record, &provenance)?;
     if candidates.is_empty() {
         return Ok(());
     }
@@ -679,7 +735,8 @@ fn prepare_judgment(
     }
     let observed = current_residency(bus, epoch)?;
     let context = applicability_context(observed.body(), record)?;
-    let candidates = candidates(bag, &context, record)?;
+    let provenance = taste_directive_provenance(bus, record)?;
+    let candidates = candidates_with_provenance(bag, &context, record, &provenance)?;
     if candidates.is_empty() {
         return Ok(None);
     }
@@ -798,10 +855,20 @@ fn judgment_key(candidate: &Candidate, anchor: Seq) -> (Digest, Digest, u64) {
     )
 }
 
+#[cfg(test)]
 fn candidates(
     bag: &taste::Bag,
     context: &gate::PolicyContext,
     record: &lane::capture::CaptureRecord,
+) -> CommandResult<Vec<Candidate>> {
+    candidates_with_provenance(bag, context, record, &TasteDirectiveProvenance::default())
+}
+
+fn candidates_with_provenance(
+    bag: &taste::Bag,
+    context: &gate::PolicyContext,
+    record: &lane::capture::CaptureRecord,
+    provenance: &TasteDirectiveProvenance,
 ) -> CommandResult<Vec<Candidate>> {
     if bag.tastes().is_empty() {
         return Ok(Vec::new());
@@ -812,7 +879,7 @@ fn candidates(
         let listen::Event::Prose(prose) = decoded else {
             continue;
         };
-        let Some(authored) = authored_prose(prose) else {
+        let Some(authored) = authored_prose(prose, provenance) else {
             continue;
         };
         let authored = listen::Event::Prose(listen::Prose {
@@ -858,11 +925,32 @@ fn candidates(
     Ok(candidates)
 }
 
-fn authored_prose(prose: &listen::Prose) -> Option<String> {
+fn authored_prose(prose: &listen::Prose, provenance: &TasteDirectiveProvenance) -> Option<String> {
     let authored = classify(&prose.text).authored?;
-    // Echo classification precedes bag matching. No trigger can make a
-    // resident-authored reminder become a candidate again.
-    (!taste::is_reminder_echo(&authored)).then_some(authored)
+    let mut eligible = String::with_capacity(authored.len());
+    for terminated in authored.split_inclusive('\n') {
+        let line = terminated.strip_suffix('\n').unwrap_or(terminated);
+        let quoted = line.trim_start().starts_with('>') || taste::is_reminder_echo(line);
+        if !quoted {
+            let response = steer::ack::scan::scan_acknowledgements(line, provenance)
+                .into_iter()
+                .find(|acknowledgement| {
+                    acknowledgement.recognitions.iter().any(|recognition| {
+                        matches!(
+                            recognition.outcome,
+                            steer::ack::scan::Outcome::Retired { .. }
+                        )
+                    })
+                })
+                .map_or(line.len(), |acknowledgement| acknowledgement.start);
+            eligible.push_str(&line[..response]);
+        }
+        if terminated.ends_with('\n') {
+            eligible.push('\n');
+        }
+    }
+    let eligible = eligible.trim();
+    (!eligible.is_empty()).then(|| eligible.to_owned())
 }
 
 fn adjudicate_candidates(
