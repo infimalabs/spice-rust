@@ -136,9 +136,12 @@ pub struct LaneArranged {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RtkHealthState {
-    /// The configured executable passed every health probe.
+    /// The configured executable launched and remains eligible for command-local rewrites.
+    ///
+    /// Version output and post-launch observation failures are advisory details
+    /// and do not change this state.
     Active,
-    /// The configured executable could not be started.
+    /// The configured executable was missing or could not be started.
     Missing,
     /// The configured executable predates the supported rewrite contract.
     Obsolete,
@@ -168,14 +171,14 @@ impl RtkHealthState {
 pub struct RtkHealth {
     /// Closed admission state observed for the configured executable.
     state: RtkHealthState,
-    /// Validated executable version, when version admission reached that far.
+    /// Observed executable version, when the advisory version probe supplied one.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     version: Option<String>,
-    /// Source-grounded reason for the verdict.
+    /// Source-grounded launch verdict and any advisory version observation detail.
     detail: String,
 }
 
@@ -201,13 +204,13 @@ impl RtkHealth {
         self.state
     }
 
-    /// Validated RTK version, when version admission reached that far.
+    /// Observed RTK version, when the advisory version probe supplied one.
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
     }
 
-    /// Source-grounded reason for this verdict.
+    /// Source-grounded launch verdict and any advisory version observation detail.
     #[must_use]
     pub fn detail(&self) -> &str {
         &self.detail

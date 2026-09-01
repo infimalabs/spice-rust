@@ -57,8 +57,8 @@ impl AdvisoryRtkFixture {
                     "set -eu\n",
                     "printf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\n",
                     "if [ \"$#\" -eq 1 ] && [ \"$1\" = --version ]; then\n",
-                    "  printf '%s\\n' 'rtk 0.44.9'\n",
-                    "  exit 73\n",
+                    "  printf '\\377'\n",
+                    "  exit 0\n",
                     "fi\n",
                     "exit 91\n",
                 ),
@@ -181,10 +181,10 @@ impl Drop for AdvisoryRtkFixture {
 
 pub(in crate::resident) fn assert_advisory_health(health: &wire::body::RtkHealth) {
     assert_eq!(health.state(), wire::body::RtkHealthState::Active);
-    assert_eq!(health.version(), Some("0.44.9"));
+    assert_eq!(health.version(), None);
     assert_eq!(
         health.detail(),
-        "executable launched as RTK 0.44.9 with exit 73; rewrites are validated per command"
+        "executable launched; version observation unavailable: selector stdout was not UTF-8; rewrites are validated per command"
     );
     assert!(health.detail().chars().count() <= 1024);
 }

@@ -55,6 +55,20 @@ struct SelectorResult {
     stderr: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum InvocationFailure {
+    Launch(String),
+    Observation(String),
+}
+
+impl InvocationFailure {
+    fn detail(self) -> String {
+        match self {
+            Self::Launch(detail) | Self::Observation(detail) => detail,
+        }
+    }
+}
+
 /// Observe whether the exact configured executable can join supervised commands.
 #[must_use]
 pub fn probe_health(executable: &OsStr, working: &Path) -> Health {
@@ -82,7 +96,9 @@ pub fn probe_health_in_environment(
     probe_health_with(executable, |program, arguments, input| {
         let remaining = HEALTH_TIMEOUT.saturating_sub(started.elapsed());
         if remaining.is_zero() {
-            return Err("RTK health exceeded 10s deadline".to_owned());
+            return Err(InvocationFailure::Observation(
+                "RTK health exceeded 10s deadline".to_owned(),
+            ));
         }
         run_bounded(
             program,
@@ -98,14 +114,25 @@ pub fn probe_health_in_environment(
 
 fn probe_health_with<F>(executable: &OsStr, mut invoke: F) -> Health
 where
-    F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, String>,
+    F: FnMut(&OsStr, &[OsString], Option<&[u8]>) -> Result<SelectorResult, InvocationFailure>,
 {
     // spice-z tied hook enablement to version, protocol, and answer probes. The
     // Rust hook is structural, so only launchability is a lane-wide fact;
     // status, output shape, and fidelity are validated for each actual command.
     let version_result = match invoke(executable, &["--version".into()], None) {
         Ok(result) => result,
-        Err(reason) => return health(HealthState::Missing, None, reason),
+        Err(InvocationFailure::Launch(reason)) => {
+            return health(HealthState::Missing, None, reason);
+        }
+        Err(InvocationFailure::Observation(reason)) => {
+            return health(
+                HealthState::Active,
+                None,
+                format!(
+                    "executable launched; version observation unavailable: {reason}; rewrites are validated per command"
+                ),
+            );
+        }
     };
     let version_output = if version_result.stdout.trim().is_empty() {
         version_result.stderr.trim()
@@ -388,6 +415,7 @@ fn run_selector(executable: &OsStr, arguments: &[String]) -> Result<SelectorResu
         SELECTOR_TIMEOUT,
         "optional RTK rewrite selector",
     )
+    .map_err(InvocationFailure::detail)
 }
 
 fn run_bounded(
@@ -398,20 +426,23 @@ fn run_bounded(
     input: Option<&[u8]>,
     runtime: Duration,
     label: &str,
-) -> Result<SelectorResult, String> {
+) -> Result<SelectorResult, InvocationFailure> {
     let capture = StreamPolicy::Capture {
         limit: MAX_SELECTOR_OUTPUT,
     };
     let spec = Spec {
-        argv: Argv::new(executable.to_owned(), arguments.iter().cloned())
-            .map_err(|error| format!("invalid selector argv: {error}"))?,
+        argv: Argv::new(executable.to_owned(), arguments.iter().cloned()).map_err(|error| {
+            InvocationFailure::Launch(format!("invalid selector argv: {error}"))
+        })?,
         cwd: working.to_path_buf(),
         environment,
         group: ProcessGroup::New,
-        deadlines: Deadlines::new(runtime, OUTPUT_DRAIN, REAP_DEADLINE)
-            .map_err(|error| format!("invalid selector deadlines: {error}"))?,
-        wait: WaitPolicy::new(label, Cancellation::Never, RestartDisposition::Never)
-            .map_err(|error| format!("invalid selector wait policy: {error}"))?,
+        deadlines: Deadlines::new(runtime, OUTPUT_DRAIN, REAP_DEADLINE).map_err(|error| {
+            InvocationFailure::Launch(format!("invalid selector deadlines: {error}"))
+        })?,
+        wait: WaitPolicy::new(label, Cancellation::Never, RestartDisposition::Never).map_err(
+            |error| InvocationFailure::Launch(format!("invalid selector wait policy: {error}")),
+        )?,
         output: Output::new(
             if input.is_some() {
                 StdinPolicy::Pipe
@@ -424,31 +455,39 @@ fn run_bounded(
         redaction: Redaction::None,
         grace: TERMINATE_GRACE,
     };
-    let mut child =
-        sill::spawn(spec).map_err(|error| format!("selector launch failed: {error}"))?;
+    let mut child = sill::spawn(spec)
+        .map_err(|error| InvocationFailure::Launch(format!("selector launch failed: {error}")))?;
     if let Some(input) = input {
-        child
-            .write_stdin(input)
-            .map_err(|error| format!("selector stdin failed: {error}"))?;
+        child.write_stdin(input).map_err(|error| {
+            InvocationFailure::Observation(format!("selector stdin failed: {error}"))
+        })?;
     }
-    let outcome = child
-        .wait()
-        .map_err(|error| format!("selector process boundary failed: {error}"))?;
+    let outcome = child.wait().map_err(|error| {
+        InvocationFailure::Observation(format!("selector process boundary failed: {error}"))
+    })?;
     if !outcome.outputs_drained() {
-        return Err("selector descendants retained an output pipe".to_owned());
+        return Err(InvocationFailure::Observation(
+            "selector descendants retained an output pipe".to_owned(),
+        ));
     }
     match outcome.completion() {
         Completion::TimedOut(_) => {
-            return Err(format!(
+            return Err(InvocationFailure::Observation(format!(
                 "{label} exceeded {}ms deadline",
                 runtime.as_millis()
+            )));
+        }
+        Completion::Cancelled(_) => {
+            return Err(InvocationFailure::Observation(
+                "selector was cancelled".to_owned(),
             ));
         }
-        Completion::Cancelled(_) => return Err("selector was cancelled".to_owned()),
         Completion::Exited(_) => {}
     }
-    let stdout = captured_text(outcome.stdout(), "stdout")?;
-    let stderr = captured_text(outcome.stderr(), "stderr")?;
+    let stdout =
+        captured_text(outcome.stdout(), "stdout").map_err(InvocationFailure::Observation)?;
+    let stderr =
+        captured_text(outcome.stderr(), "stderr").map_err(InvocationFailure::Observation)?;
     Ok(SelectorResult {
         code: outcome.completion().status().code().unwrap_or(-1),
         stdout,
@@ -526,11 +565,28 @@ mod tests {
     }
 
     #[test]
-    fn health_disables_only_an_executable_that_cannot_launch() {
+    fn health_disables_only_launch_failure_and_keeps_observation_advisory() {
         let missing = probe_health_with(OsStr::new("missing-rtk"), |_, _, _| {
-            Err("selector launch failed: not found".to_owned())
+            Err(InvocationFailure::Launch(
+                "selector launch failed: not found".to_owned(),
+            ))
         });
         assert_eq!(missing.state(), HealthState::Missing);
+
+        let observed = probe_health_with(OsStr::new("rtk"), |_, arguments, _| {
+            assert_eq!(arguments, [OsString::from("--version")]);
+            Err(InvocationFailure::Observation(
+                "selector stdout was not UTF-8".to_owned(),
+            ))
+        });
+        assert_eq!(observed.state(), HealthState::Active);
+        assert_eq!(observed.version(), None);
+        assert!(
+            observed
+                .detail()
+                .contains("version observation unavailable")
+        );
+        assert!(observed.detail().contains("validated per command"));
     }
 
     #[test]
@@ -549,7 +605,9 @@ mod tests {
     #[test]
     fn health_publishes_one_bounded_actionable_detail() {
         let observed = probe_health_with(OsStr::new("missing-rtk"), |_, _, _| {
-            Err("x".repeat(MAX_HEALTH_DETAIL_CHARS * 2))
+            Err(InvocationFailure::Launch(
+                "x".repeat(MAX_HEALTH_DETAIL_CHARS * 2),
+            ))
         });
 
         assert_eq!(observed.state(), HealthState::Missing);
