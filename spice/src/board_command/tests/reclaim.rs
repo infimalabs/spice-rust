@@ -1,5 +1,7 @@
 use super::*;
 
+const ONE_SECOND_BEFORE_EXPIRY: i64 = -1;
+
 fn reclaim_at(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -70,7 +72,8 @@ pub(super) fn renew_and_assert(
     }
     assert!(matches!(
         reclaim_at(bus, epoch, lane, held_task, current, first_at),
-        Outcome::Refusal(ref refusal) if refusal.reason() == "claim::lease-nonextending"
+        Outcome::Refusal(Refusal::Bare { ref diagnostic })
+            if diagnostic.reason() == "claim::lease-nonextending"
     ));
     assert!(matches!(
         reclaim_at(
@@ -91,6 +94,121 @@ pub(super) fn renew_and_assert(
             .any(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed)
     );
     after
+}
+
+fn claim_next(bus: &Bus, epoch: CanonicalUuid, lane: &Actor, seat: &Seat, task: &TaskHandle) {
+    let available = board(bus, epoch, lane.clone());
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&available, task, seat),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+}
+
+fn active_witnesses(answer: &BoardAnswer, task: &TaskHandle, seat: &Seat) -> Vec<Witness> {
+    let heads = at(answer, task);
+    vec![
+        Witness::Claim {
+            task: heads.statement.body.born.clone(),
+            head: Some(heads.claim.as_ref().expect("active claim").position),
+        },
+        Witness::Lease {
+            task: heads.statement.body.born.clone(),
+            head: heads.lease.as_ref().expect("active lease").position,
+        },
+        residency(answer, seat),
+    ]
+}
+
+fn free_active(bus: &Bus, epoch: CanonicalUuid, lane: &Actor, seat: &Seat, task: &TaskHandle) {
+    let active = board(bus, epoch, lane.clone());
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimFree,
+        active_witnesses(&active, task, seat),
+        &TaskRef { task: task.clone() },
+    ));
+}
+
+#[test]
+fn free_and_next_mints_a_fresh_durable_maximum() {
+    let (root, bus, epoch, seats) = fixture("reclaim-maximum-reset", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECLAIM-reset1",
+        "Reset one exhausted renewal maximum",
+        Some("todo"),
+    );
+    claim_next(&bus, epoch, &lane, &seats[0], &task);
+    let first = board(&bus, epoch, lane.clone());
+    let first_heads = at(&first, &task);
+    let first_lease = first_heads
+        .lease
+        .as_ref()
+        .expect("first lease")
+        .body
+        .clone();
+    let near_expiry = fixture_instant_after(first_lease.expiry, ONE_SECOND_BEFORE_EXPIRY);
+    assert_committed(reclaim_at(
+        &bus,
+        epoch,
+        &lane,
+        &task,
+        active_witnesses(&first, &task, &seats[0]),
+        near_expiry,
+    ));
+    let maximum_bound = board(&bus, epoch, lane.clone());
+    let maximum_heads = at(&maximum_bound, &task);
+    let maximum_lease = maximum_heads.lease.as_ref().expect("maximum-bound lease");
+    assert_eq!(maximum_lease.body.expiry, maximum_lease.body.maximum);
+    let refused = reclaim_at(
+        &bus,
+        epoch,
+        &lane,
+        &task,
+        active_witnesses(&maximum_bound, &task, &seats[0]),
+        fixture_instant_after(near_expiry, 1),
+    );
+    assert!(matches!(
+        refused,
+        Outcome::Refusal(Refusal::Repairable { ref command, ref diagnostic })
+            if diagnostic.reason() == "claim::lease-nonextending"
+                && command.arguments() == ["task", "free", task.as_str()]
+                && diagnostic.detail().is_some_and(|detail| detail.contains("spice task next"))
+    ));
+    free_active(&bus, epoch, &lane, &seats[0], &task);
+    claim_next(&bus, epoch, &lane, &seats[0], &task);
+    let reacquired = board(&bus, epoch, lane);
+    let second = at(&reacquired, &task)
+        .lease
+        .as_ref()
+        .expect("reacquired lease");
+
+    assert_ne!(second.body.start, first_lease.start);
+    assert_ne!(second.body.maximum, first_lease.maximum);
+    assert_eq!(
+        second
+            .body
+            .maximum
+            .get()
+            .duration_since(second.body.start.get()),
+        first_lease
+            .maximum
+            .get()
+            .duration_since(first_lease.start.get()),
+    );
+    clean(&root, bus);
 }
 
 pub(super) fn assert_reclaim_survives_restart(
