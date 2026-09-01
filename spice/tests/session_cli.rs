@@ -78,6 +78,7 @@ fn invoke_in(
         .env_remove("CODEX_HOME")
         .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
+        .env_remove(spice::agent_launch::SPICE_RS_LANE)
         .env_remove(steer::hook::INBOX);
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
