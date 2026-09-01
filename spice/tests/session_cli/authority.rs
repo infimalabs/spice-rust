@@ -309,6 +309,18 @@ fn seed_retired_peer_steering(path: &Path) {
 }
 
 fn renew_held_claim_for_meter(path: &Path, seconds: i64) {
+    renew_held_claim_for_meter_with_extension(path, seconds, 3_600);
+}
+
+fn renew_maximum_bound_claim_for_meter(path: &Path, seconds: i64) {
+    renew_held_claim_for_meter_with_extension(path, seconds, 0);
+}
+
+fn renew_held_claim_for_meter_with_extension(
+    path: &Path,
+    seconds: i64,
+    maximum_extension_seconds: i64,
+) {
     let task = stamp("SESSION-held");
     let journal = Journal::open(path).expect("fixture journal reopens");
     let lease = journal
@@ -325,7 +337,7 @@ fn renew_held_claim_for_meter(path: &Path, seconds: i64) {
     let until = Instant::new(deadline).expect("meter deadline is canonical");
     let maximum = Instant::new(
         deadline
-            .checked_add(jiff::SignedDuration::from_secs(3_600))
+            .checked_add(jiff::SignedDuration::from_secs(maximum_extension_seconds))
             .expect("meter maximum shifts"),
     )
     .expect("meter maximum is canonical");
@@ -447,7 +459,7 @@ fn real_run_stream_reports_working_state_and_wakes_at_warning_boundary() {
     let thread = uuid(0xf0).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
-    renew_held_claim_for_meter(&authority, 604);
+    renew_maximum_bound_claim_for_meter(&authority, 604);
     let arguments = ["run", "--", "/bin/sh", "-c", "sleep 6; printf child-output"]
         .into_iter()
         .map(str::to_owned)
@@ -473,10 +485,13 @@ fn real_run_stream_reports_working_state_and_wakes_at_warning_boundary() {
     assert!(lines[1].contains("CLAIM LEASE WARNING"));
     let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
     assert!(
-        lines[1].contains(&format!("run spice task reclaim {handle}")),
-        "warning recommends reclaiming the fixture claim: {:?}",
+        lines[1].contains(&format!(
+            "run spice task free {handle}, then spice task next"
+        )),
+        "warning recommends freeing the maximum-bound fixture claim: {:?}",
         lines[1]
     );
+    assert!(!lines[1].contains("task reclaim"));
 
     scratch.remove();
 }
@@ -489,13 +504,13 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     let thread = uuid(0xf2).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
-    renew_held_claim_for_meter(&authority, 599);
+    renew_maximum_bound_claim_for_meter(&authority, 599);
     let warning_generation_facts = fact_count(&authority);
 
     let first = invoke_meter_child(scratch.path(), &thread);
     let second = invoke_meter_child(scratch.path(), &thread);
     assert_eq!(fact_count(&authority), warning_generation_facts);
-    renew_held_claim_for_meter(&authority, 299);
+    renew_maximum_bound_claim_for_meter(&authority, 299);
     let urgent_generation_facts = fact_count(&authority);
     let urgent = invoke_meter_child(scratch.path(), &thread);
 
@@ -509,9 +524,12 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     assert!(warning.contains("CLAIM LEASE WARNING"));
     assert!(warning.contains("s remaining"));
     assert!(
-        warning.contains(&format!("run spice task reclaim {handle}")),
-        "warning recommends reclaiming the fixture claim: {warning:?}"
+        warning.contains(&format!(
+            "run spice task free {handle}, then spice task next"
+        )),
+        "warning recommends freeing the maximum-bound fixture claim: {warning:?}"
     );
+    assert!(!warning.contains("task reclaim"));
     assert!(!warning.contains(" ACK"));
     assert!(!warning.contains(" NACK"));
     assert!(second.err.is_empty(), "same tier is durably suppressed");
@@ -520,9 +538,12 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     assert!(urgent.contains("CLAIM LEASE URGENT"));
     assert!(urgent.contains("s remaining"));
     assert!(
-        urgent.contains(&format!("run spice task reclaim {handle}")),
-        "urgent warning recommends reclaiming the fixture claim: {urgent:?}"
+        urgent.contains(&format!(
+            "run spice task free {handle}, then spice task next"
+        )),
+        "urgent warning recommends freeing the maximum-bound fixture claim: {urgent:?}"
     );
+    assert!(!urgent.contains("task reclaim"));
     assert!(!urgent.contains(" ACK"));
     assert!(!urgent.contains(" NACK"));
     assert_eq!(fact_count(&authority), urgent_generation_facts);
