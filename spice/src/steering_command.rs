@@ -17,6 +17,7 @@ mod codex_hook;
 mod tests;
 
 pub(crate) use codex_hook::Invocation as HookInvocation;
+pub(crate) use codex_hook::validate_rtk_hook_contract as validate_codex_rtk_hook_contract;
 
 pub(crate) fn read_hook_invocation(
     reader: &mut impl io::Read,

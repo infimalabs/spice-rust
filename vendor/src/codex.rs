@@ -7,6 +7,7 @@
 use std::ffi::OsString;
 
 use listen::Dialect;
+use serde::Deserialize;
 use sill::Running;
 
 use crate::launch::{
@@ -25,6 +26,87 @@ pub const POST_TOOL_HOOK_MATCHER: &str = "*";
 
 /// Canonical Codex hook name for shell-like tool commands.
 pub const PRE_TOOL_HOOK_MATCHER: &str = "^Bash$";
+
+/// Consumer-side interpretation of Spice's Codex RTK pre-tool response.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RtkPreToolDecision {
+    /// Codex should execute the original tool input.
+    Unchanged,
+    /// Codex accepted the replacement shell command.
+    Rewritten(String),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RtkHookOutput {
+    #[serde(rename = "hookSpecificOutput")]
+    hook_specific_output: RtkHookSpecificOutput,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RtkHookSpecificOutput {
+    #[serde(rename = "hookEventName")]
+    hook_event_name: String,
+    #[serde(rename = "permissionDecision", default)]
+    permission_decision: Option<PermissionDecision>,
+    #[serde(rename = "updatedInput", default)]
+    updated_input: Option<RtkUpdatedInput>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum PermissionDecision {
+    Allow,
+    Deny,
+    Ask,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RtkUpdatedInput {
+    command: String,
+}
+
+/// Decode the Codex `PreToolUse` subset emitted by Spice's RTK hook.
+///
+/// This is deliberately independent of the hook producer. It mirrors Codex's
+/// current requirement that `updatedInput` is accepted only together with
+/// `permissionDecision: "allow"`.
+///
+/// # Errors
+///
+/// Returns a contract error when the document is malformed, names another
+/// hook event, or combines the permission decision and replacement input in a
+/// form Codex does not accept for this route.
+pub fn decode_rtk_pre_tool_output(bytes: &[u8]) -> Result<RtkPreToolDecision, String> {
+    let output: RtkHookOutput = serde_json::from_slice(bytes)
+        .map_err(|error| format!("invalid Codex pre-tool hook output: {error}"))?;
+    let specific = output.hook_specific_output;
+    if specific.hook_event_name != PRE_TOOL_HOOK_EVENT {
+        return Err(format!(
+            "Codex RTK hook returned event {:?}; expected {PRE_TOOL_HOOK_EVENT:?}",
+            specific.hook_event_name
+        ));
+    }
+    match (specific.permission_decision, specific.updated_input) {
+        (None, None) => Ok(RtkPreToolDecision::Unchanged),
+        (Some(PermissionDecision::Allow), Some(input)) => {
+            Ok(RtkPreToolDecision::Rewritten(input.command))
+        }
+        (None, Some(_)) => Err(
+            "Codex PreToolUse hook returned updatedInput without permissionDecision:allow"
+                .to_owned(),
+        ),
+        (Some(PermissionDecision::Allow), None) => Err(
+            "Codex PreToolUse hook returned permissionDecision:allow without updatedInput"
+                .to_owned(),
+        ),
+        (Some(PermissionDecision::Deny | PermissionDecision::Ask), _) => {
+            Err("Codex RTK hook returned a non-allow permission decision".to_owned())
+        }
+    }
+}
 
 /// Build the exact current Codex invocation without performing I/O.
 ///
@@ -167,4 +249,42 @@ pub fn launch(
 ) -> Result<Running, LaunchError> {
     let record = record(binary, launch).map_err(LaunchError::Contract)?;
     sill::spawn(record.spec(process)).map_err(LaunchError::Spawn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rtk_decoder_requires_allow_for_a_replacement_input() {
+        let previous = br#"{
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "updatedInput": { "command": "rtk git status" }
+            }
+        }"#;
+
+        let error = decode_rtk_pre_tool_output(previous)
+            .expect_err("updatedInput without an allow decision is rejected");
+        assert!(
+            error.contains("updatedInput without permissionDecision:allow"),
+            "unexpected contract error: {error}"
+        );
+    }
+
+    #[test]
+    fn rtk_decoder_accepts_the_allow_and_replacement_pair() {
+        let accepted = br#"{
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": { "command": "rtk git status" }
+            }
+        }"#;
+
+        assert_eq!(
+            decode_rtk_pre_tool_output(accepted),
+            Ok(RtkPreToolDecision::Rewritten("rtk git status".to_owned()))
+        );
+    }
 }

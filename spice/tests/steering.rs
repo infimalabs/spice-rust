@@ -1,6 +1,7 @@
 //! Process coverage for the resident's transcript-backed steering path.
 
 use std::fs;
+use std::io::Write as _;
 use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
@@ -321,6 +322,83 @@ fn invoke_as_lane(fixture: &Fixture, lane: &str, arguments: &[&str], json: bool)
         .current_dir(&fixture.root)
         .output()
         .expect("lane spice launches")
+}
+
+#[test]
+fn codex_pre_tool_process_emits_a_consumable_rtk_decision() {
+    let fixture = Fixture::new();
+    let rtk = fixture.root.join("rtk");
+    fs::write(&rtk, "#!/bin/sh\nprintf '%s\\n' 'rtk git status'\n").expect("fixture RTK writes");
+    #[cfg(unix)]
+    fs::set_permissions(&rtk, fs::Permissions::from_mode(0o700))
+        .expect("fixture RTK becomes executable");
+    let path =
+        std::env::join_paths([fixture.root.as_path()]).expect("fixture RTK search path composes");
+
+    let changed = invoke_codex_pre_tool(&fixture, Some(path.as_os_str()));
+    assert!(
+        changed.status.success(),
+        "changed hook failed: {:?}",
+        changed.stderr
+    );
+    assert!(
+        changed.stderr.is_empty(),
+        "changed hook spoke on stderr: {:?}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    assert_eq!(
+        vendor::codex::decode_rtk_pre_tool_output(&changed.stdout),
+        Ok(vendor::codex::RtkPreToolDecision::Rewritten(
+            "rtk git status".to_owned()
+        ))
+    );
+
+    let unchanged = invoke_codex_pre_tool(&fixture, None);
+    assert!(
+        unchanged.status.success(),
+        "unchanged hook failed: {:?}",
+        unchanged.stderr
+    );
+    assert!(
+        unchanged.stderr.is_empty(),
+        "unchanged hook spoke on stderr: {:?}",
+        String::from_utf8_lossy(&unchanged.stderr)
+    );
+    assert_eq!(
+        vendor::codex::decode_rtk_pre_tool_output(&unchanged.stdout),
+        Ok(vendor::codex::RtkPreToolDecision::Unchanged)
+    );
+}
+
+fn invoke_codex_pre_tool(fixture: &Fixture, path: Option<&std::ffi::OsStr>) -> Output {
+    let input = serde_json::to_vec(&serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "git status" }
+    }))
+    .expect("Codex pre-tool input encodes");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
+        .args(["hook", "codex"])
+        .current_dir(&fixture.root)
+        .env_remove(steer::hook::LANE)
+        .env_remove(spice::rtk::EXECUTABLE_VARIABLE)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(path) = path {
+        command
+            .env("PATH", path)
+            .env(spice::rtk::EXECUTABLE_VARIABLE, "rtk");
+    }
+    let mut child = command.spawn().expect("Codex pre-tool hook launches");
+    child
+        .stdin
+        .take()
+        .expect("hook stdin is piped")
+        .write_all(&input)
+        .expect("Codex pre-tool input writes");
+    child.wait_with_output().expect("Codex pre-tool hook exits")
 }
 
 fn json_outcome<B: serde::de::DeserializeOwned>(output: &Output) -> Outcome<B> {

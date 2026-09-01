@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 const PRE_TOOL_USE: &str = vendor::PRE_TOOL_HOOK_EVENT;
 const POST_TOOL_USE: &str = vendor::POST_TOOL_HOOK_EVENT;
 const BASH_TOOL: &str = "Bash";
+const ALLOW: &str = "allow";
 
 #[derive(Debug, Deserialize)]
 struct HookInput {
@@ -58,6 +59,8 @@ struct HookOutput {
 struct HookSpecificOutput {
     #[serde(rename = "hookEventName")]
     hook_event_name: &'static str,
+    #[serde(rename = "permissionDecision", skip_serializing_if = "Option::is_none")]
+    permission_decision: Option<&'static str>,
     #[serde(rename = "updatedInput", skip_serializing_if = "Option::is_none")]
     updated_input: Option<Value>,
 }
@@ -140,9 +143,11 @@ impl RewriteRequest {
         );
         let updated_input =
             (selection.command != self.command).then(|| json!({ "command": selection.command }));
+        let permission_decision = updated_input.as_ref().map(|_| ALLOW);
         let mut document = wire::encode(&HookOutput {
             hook_specific_output: HookSpecificOutput {
                 hook_event_name: PRE_TOOL_USE,
+                permission_decision,
                 updated_input,
             },
         })
@@ -152,6 +157,39 @@ impl RewriteRequest {
             document,
             diagnostic: selection.diagnostic,
         })
+    }
+}
+
+/// Prove that both producer branches satisfy the independent Codex consumer contract.
+pub(crate) fn validate_rtk_hook_contract() -> Result<(), String> {
+    const ORIGINAL: &str = "git status";
+    const REWRITTEN: &str = "rtk git status";
+
+    let changed = RewriteRequest {
+        command: ORIGINAL.to_owned(),
+    }
+    .answer_with(Some(OsStr::new("rtk")), |_, _| Selection {
+        command: REWRITTEN.to_owned(),
+        diagnostic: None,
+    })?;
+    match vendor::codex::decode_rtk_pre_tool_output(changed.document())? {
+        vendor::codex::RtkPreToolDecision::Rewritten(command) if command == REWRITTEN => {}
+        decision => {
+            return Err(format!(
+                "Codex changed-command contract selected {decision:?}; expected {REWRITTEN:?}"
+            ));
+        }
+    }
+
+    let unchanged = RewriteRequest {
+        command: ORIGINAL.to_owned(),
+    }
+    .answer(None)?;
+    match vendor::codex::decode_rtk_pre_tool_output(unchanged.document())? {
+        vendor::codex::RtkPreToolDecision::Unchanged => Ok(()),
+        decision => Err(format!(
+            "Codex unchanged-command contract selected {decision:?}; expected unchanged"
+        )),
     }
 }
 
@@ -203,9 +241,16 @@ mod tests {
             json!({
                 "hookSpecificOutput": {
                     "hookEventName": PRE_TOOL_USE,
+                    "permissionDecision": "allow",
                     "updatedInput": { "command": "rtk git status" }
                 }
             })
+        );
+        assert_eq!(
+            vendor::codex::decode_rtk_pre_tool_output(reply.document()),
+            Ok(vendor::codex::RtkPreToolDecision::Rewritten(
+                "rtk git status".to_owned()
+            ))
         );
         assert_eq!(reply.diagnostic(), None);
     }
@@ -228,7 +273,16 @@ mod tests {
             document,
             json!({ "hookSpecificOutput": { "hookEventName": PRE_TOOL_USE } })
         );
+        assert_eq!(
+            vendor::codex::decode_rtk_pre_tool_output(reply.document()),
+            Ok(vendor::codex::RtkPreToolDecision::Unchanged)
+        );
         assert_eq!(reply.diagnostic(), Some("empty RTK stdout at exit 9"));
+    }
+
+    #[test]
+    fn rendered_branches_satisfy_the_codex_consumer_contract() {
+        validate_rtk_hook_contract().expect("Codex accepts both RTK response branches");
     }
 
     #[test]
