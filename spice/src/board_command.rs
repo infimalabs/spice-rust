@@ -22,6 +22,49 @@ use wire::{
 
 use crate::cli::Contract;
 
+fn claim_capture_from_board(board: &BoardAnswer) -> gate::ClaimCapture {
+    let mut active = board.tasks.iter().filter(|task| {
+        task.claim.as_ref().is_some_and(|claim| {
+            claim.body.actor == board.principal
+                && claim.body.disposition == ClaimDisposition::Active
+        })
+    });
+    let Some(task) = active.next() else {
+        return gate::ClaimCapture::Idle;
+    };
+    if active.next().is_some() {
+        return gate::ClaimCapture::Absent {
+            reason: "board claim read found more than one active claim for this principal"
+                .to_owned(),
+        };
+    }
+    gate::ClaimCapture::Active {
+        task: task.statement.body.handle.clone(),
+        phase: task.workflow.body.phase.clone(),
+    }
+}
+
+fn require_no_plan_implementation(
+    board: &BoardAnswer,
+    action: &str,
+) -> Result<(), Outcome<CommandAnswer>> {
+    match claim_capture_from_board(board) {
+        gate::ClaimCapture::Active { task, phase } if phase.as_str() == "plan" => Err(refusal(
+            "task::plan-implementation",
+            Some(format!("active task={task}; refused action={action}")),
+            concat!(
+                "organize the plan with task add, task modify, task depends, and task note; ",
+                "then complete the plan and claim an implementation phase before changing ",
+                "repository history",
+            ),
+        )),
+        gate::ClaimCapture::Absent { reason } => {
+            Err(protocol_fault("claim::active-ambiguous", &reason))
+        }
+        _ => Ok(()),
+    }
+}
+
 pub(crate) const AUTOMATIC_PROVISIONAL_SECONDS: i64 = 60;
 pub(crate) const AUTOMATIC_HEARTBEAT_SECONDS: i64 = 20;
 pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;

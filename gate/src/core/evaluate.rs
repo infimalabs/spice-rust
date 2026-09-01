@@ -268,3 +268,28 @@ fn passed(diagnostic: impl Into<String>) -> (CoreStanding, String) {
 fn failed(diagnostic: impl Into<String>) -> (CoreStanding, String) {
     (CoreStanding::Failed, diagnostic.into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_plan_claim_refuses_commit_while_implementation_phase_passes() {
+        let task: wire::TaskHandle = "PHASE-1kRKw9Qj".parse().expect("fixture task handle");
+        let plan: wire::Phase = "plan".parse().expect("fixture plan phase");
+        let todo: wire::Phase = "todo".parse().expect("fixture todo phase");
+
+        let (standing, diagnostic) = evaluate_plan(&PlanPhaseEvidence::Active {
+            task: task.clone(),
+            phase: plan,
+        });
+        assert_eq!(standing, CoreStanding::Failed);
+        assert!(diagnostic.contains("git commit refused"), "{diagnostic}");
+        assert!(diagnostic.contains(task.as_str()), "{diagnostic}");
+
+        let (standing, diagnostic) =
+            evaluate_plan(&PlanPhaseEvidence::Active { task, phase: todo });
+        assert_eq!(standing, CoreStanding::Passed);
+        assert!(diagnostic.contains("todo phase"), "{diagnostic}");
+    }
+}

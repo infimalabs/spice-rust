@@ -21,6 +21,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use sill::{Argv, Completion, Environment, spawn};
 use wire::{Digest, Phase, TaskHandle};
 
@@ -61,7 +62,8 @@ const GIT: &str = "/usr/bin/git";
 /// one and handed over whole. Absence is stated two different ways because a
 /// store that answered "nothing is claimed" and a repository with no store at
 /// all are different observations, and only the first is a measurement.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ClaimCapture {
     /// One task is claimed in this worktree, at this workflow phase.
     Active {

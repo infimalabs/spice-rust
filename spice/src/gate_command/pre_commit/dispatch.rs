@@ -2,11 +2,15 @@
 
 use super::*;
 
-pub(super) fn dispatch(progress: &mut File, started: Instant) -> Result<Report, WorkerFailure> {
+pub(super) fn dispatch(
+    progress: &mut File,
+    started: Instant,
+    claim: gate::ClaimCapture,
+) -> Result<Report, WorkerFailure> {
     write_phase(progress, &WorkerPhase::Policy).map_err(worker_io_failure)?;
     let dispatch = configured::Dispatch::capture().map_err(configured_failure)?;
     let source = dispatch.source().clone();
-    let (packaged, mut dispatch) = packaged(progress, dispatch, &source)?;
+    let (packaged, mut dispatch) = packaged(progress, dispatch, &source, claim)?;
 
     let configured = if dispatch.has_configured() {
         write_phase(
@@ -42,12 +46,14 @@ fn packaged(
     progress: &mut File,
     mut dispatch: configured::Dispatch,
     source: &Digest,
+    claim: gate::ClaimCapture,
 ) -> Result<Builtins, WorkerFailure> {
     if !dispatch.builtins_enabled() {
         return Ok((None, dispatch));
     }
     write_phase(progress, &WorkerPhase::TestSelection).map_err(worker_io_failure)?;
-    let report = spice::change_gate::run(progress).map_err(change_gate_failure)?;
+    let report =
+        spice::change_gate::run_with_claim(progress, claim).map_err(change_gate_failure)?;
     if report.selection().source() != source {
         return Err(WorkerFailure {
             reason: "gate::pre-commit-staged-source-moved".to_owned(),

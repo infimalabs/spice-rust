@@ -376,14 +376,16 @@ pub fn publish_claimed(
     repository: &Repository,
     meta: Metadata<'_>,
     active: &board::Active<'_>,
+    opening: Option<&GitBoundary>,
 ) -> Result<GitBoundary, Error> {
-    publish_inner(repository, meta, Some(active))
+    publish_inner(repository, meta, Some(active), opening)
 }
 
 fn publish_inner(
     repository: &Repository,
     meta: Metadata<'_>,
     resolution: Option<&board::Active<'_>>,
+    opening: Option<&GitBoundary>,
 ) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
@@ -400,6 +402,8 @@ fn publish_inner(
     if !resolution_state {
         require_clean(root, "task completion")?;
     }
+    let observed_head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
+    require_plan_integrity(meta.phase, resolution_state, opening, &observed_head)?;
     let resolution = match (resolution_state, resolution) {
         (true, Some(active)) => {
             let preflight = resolution::Preflight::capture(root)?;
@@ -407,7 +411,6 @@ fn publish_inner(
         }
         _ => None,
     };
-    let observed_head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let Some(target) = resolve_target(root)? else {
         return Ok(boundary(
             observed_head.clone(),
@@ -487,6 +490,56 @@ fn publish_inner(
         Some(published_upstream),
         local_commits,
     ))
+}
+
+fn require_plan_integrity(
+    phase: &str,
+    resolution_state: bool,
+    opening: Option<&GitBoundary>,
+    observed_head: &str,
+) -> Result<(), Error> {
+    if phase != "plan" {
+        return Ok(());
+    }
+    if resolution_state {
+        return Err(plan_implementation_refusal(
+            "task completion found merge-resolution state while the active claim is in plan phase",
+        ));
+    }
+    require_plan_boundary(opening, observed_head)
+}
+
+fn require_plan_boundary(opening: Option<&GitBoundary>, observed_head: &str) -> Result<(), Error> {
+    let Some(opening) = opening else {
+        return Err(plan_implementation_refusal(
+            "the active plan claim has no recorded opening Git boundary",
+        ));
+    };
+    if opening.local_commits != 0 {
+        return Err(plan_implementation_refusal(format!(
+            "the plan claim opened with {} local commit(s)",
+            opening.local_commits,
+        )));
+    }
+    if observed_head != opening.integrated {
+        return Err(plan_implementation_refusal(format!(
+            "lane HEAD moved from plan opening {} to {observed_head}",
+            opening.integrated,
+        )));
+    }
+    Ok(())
+}
+
+fn plan_implementation_refusal(detail: impl Into<String>) -> Error {
+    Error::refusal(
+        "git::plan-implementation",
+        detail,
+        concat!(
+            "organize the plan with task add, task modify, task depends, and task note; ",
+            "restore the lane to its clean claim-opening commit, complete the plan, and claim ",
+            "an implementation phase before changing repository history",
+        ),
+    )
 }
 
 fn boundary(
@@ -862,3 +915,6 @@ mod transaction;
 use transaction::*;
 mod command;
 use command::*;
+
+#[cfg(test)]
+mod tests;

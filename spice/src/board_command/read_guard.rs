@@ -102,6 +102,7 @@ pub(super) fn validated_snapshot_from(
     let actor_route = actor_route(&principal, &residency.body)?;
     Ok(ValidatedSnapshot {
         cursor,
+        facts: observed.facts().clone(),
         answer: BoardAnswer {
             schema: journal::SCHEMA_VERSION,
             cursor,
@@ -368,7 +369,15 @@ fn publish_task_boundary_inner(
         phase: entry.workflow().phase.as_str(),
         actor: &actor,
     };
-    match spice::task_git::publish_claimed(&lane, metadata, &active) {
+    let opening = entry.claim().and_then(|claim| {
+        snapshot
+            .facts
+            .iter()
+            .find(|envelope| envelope.seq == claim.claimed)
+            .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
+            .and_then(|won| won.git)
+    });
+    match spice::task_git::publish_claimed(&lane, metadata, &active, opening.as_ref()) {
         Ok(boundary) => Ok(Some(boundary)),
         Err(error) => Err(task_git_outcome(error)),
     }

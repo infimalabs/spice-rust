@@ -10,10 +10,39 @@ pub(super) fn capture_inner_with_reach<'trace>(
     state_run: Option<::gate::BatteryStateRun>,
     selection: Option<&ChangeSelectionReport>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
+    capture_inner_with_reach_and_claim(
+        selector,
+        input_mode,
+        selected,
+        trace,
+        state_run,
+        selection,
+        ClaimCapture::Idle,
+    )
+}
+
+pub(super) fn capture_inner_with_reach_and_claim<'trace>(
+    selector: Selector,
+    input_mode: InputMode,
+    selected: Option<GateId>,
+    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+    state_run: Option<::gate::BatteryStateRun>,
+    selection: Option<&ChangeSelectionReport>,
+    claim: ClaimCapture,
+) -> Result<BatteryCapture<'trace>, RunError> {
     let directory = env::current_dir()
         .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
-    capture_at_inner(
-        &directory, selector, input_mode, selected, trace, state_run, selection,
+    capture_at_inner_with_options(
+        &directory,
+        CaptureOptions {
+            selector,
+            input_mode,
+            selected,
+            trace,
+            state_run,
+            selection,
+            claim,
+        },
     )
 }
 
@@ -26,6 +55,43 @@ pub(super) fn capture_at_inner<'trace>(
     state_run: Option<::gate::BatteryStateRun>,
     selection: Option<&ChangeSelectionReport>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
+    capture_at_inner_with_options(
+        directory,
+        CaptureOptions {
+            selector,
+            input_mode,
+            selected,
+            trace,
+            state_run,
+            selection,
+            claim: ClaimCapture::Idle,
+        },
+    )
+}
+
+struct CaptureOptions<'trace, 'selection> {
+    selector: Selector,
+    input_mode: InputMode,
+    selected: Option<GateId>,
+    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+    state_run: Option<::gate::BatteryStateRun>,
+    selection: Option<&'selection ChangeSelectionReport>,
+    claim: ClaimCapture,
+}
+
+fn capture_at_inner_with_options<'trace>(
+    directory: &Path,
+    options: CaptureOptions<'trace, '_>,
+) -> Result<BatteryCapture<'trace>, RunError> {
+    let CaptureOptions {
+        selector,
+        input_mode,
+        selected,
+        trace,
+        state_run,
+        selection,
+        claim,
+    } = options;
     let repository = Repository::discover(directory)
         .map_err(|error| RunError::fault("gate::repository-unresolved", error))?;
     repository.admit_state().map_err(|error| match error {
@@ -43,7 +109,7 @@ pub(super) fn capture_at_inner<'trace>(
         selected,
         trace,
         state_run,
-        claim: ClaimCapture::Idle,
+        claim,
         actor: ActorCapture::Acting {
             actor,
             // The shared state run owns the exact clock and active claims.
