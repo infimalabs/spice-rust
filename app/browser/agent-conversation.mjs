@@ -910,27 +910,36 @@ function agentProse(worktree) {
 }
 
 export async function assertFourAgentDensity(console) {
-  const geometry = await console.evaluate((surface) => ({
-    surfaceWidth: surface.getBoundingClientRect().width,
-    contentWidth: surface.parentElement?.getBoundingClientRect().width ?? 0,
-    surfaceOverflow: surface.scrollWidth - surface.clientWidth,
-    headers: [...surface.querySelectorAll(".composer-shard-heading")].map((node) => {
-      const box = node.getBoundingClientRect();
-      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
-    }),
-    columns: [...surface.querySelectorAll(".team-agent")].map((node) => {
-      const box = node.getBoundingClientRect();
-      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
-    }),
-  }));
+  const geometry = await console.evaluate((fleet) => {
+    const content = fleet.parentElement;
+    const contentStyle = content ? getComputedStyle(content) : null;
+    return {
+      fleetWidth: fleet.getBoundingClientRect().width,
+      contentWidth: content?.getBoundingClientRect().width ?? 0,
+      contentPaddingInline: contentStyle ? [
+        Number.parseFloat(contentStyle.paddingLeft),
+        Number.parseFloat(contentStyle.paddingRight),
+      ] : [],
+      fleetOverflow: fleet.scrollWidth - fleet.clientWidth,
+      headers: [...fleet.querySelectorAll(".composer-shard-heading")].map((node) => {
+        const box = node.getBoundingClientRect();
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+      }),
+      columns: [...fleet.querySelectorAll(".team-agent")].map((node) => {
+        const box = node.getBoundingClientRect();
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+      }),
+    };
+  });
   assert.equal(geometry.headers.length, 4, "four intelligent draft headers are simultaneous");
   assert.equal(geometry.columns.length, 4, "four live composer columns are simultaneous");
   assert.ok(
-    geometry.surfaceWidth >= geometry.contentWidth - 16 &&
-      geometry.surfaceWidth <= geometry.contentWidth + 1,
-    "one live lineage consumes the available reference viewport",
+    Math.abs(geometry.fleetWidth + geometry.contentPaddingInline.reduce(
+      (total, padding) => total + padding, 0,
+    ) - geometry.contentWidth) <= 1,
+    `one live lineage consumes the content box exactly once: ${JSON.stringify(geometry)}`,
   );
-  assert.ok(geometry.surfaceOverflow <= 1, "the team surface does not hide horizontal content");
+  assert.ok(geometry.fleetOverflow <= 1, "the team fleet does not hide horizontal content");
   for (const row of [geometry.headers, geometry.columns]) {
     for (let index = 1; index < row.length; index += 1) {
       assert.ok(row[index - 1].right <= row[index].left + 1, "agent columns never overlap");
