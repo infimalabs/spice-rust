@@ -694,6 +694,8 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
         .env(steer::hook::NATIVE_SHELL, &native)
         .env(steer::hook::INBOX, &inbox)
         .env("BOUNDARY_ARGUMENTS", &arguments)
+        .env_remove(vendor::CODEX.thread_id_environment())
+        .env_remove(vendor::CLAUDE.thread_id_environment())
         .output()
         .expect("outer structural shell runs");
 
