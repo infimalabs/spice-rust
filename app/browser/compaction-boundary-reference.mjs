@@ -227,8 +227,14 @@ export async function assertCompactionDivider(divider, label, expectedAttributio
   );
   assert.ok(before.length > 0, `${label} has realistic pre-compaction cards`);
   assert.ok(after.length > 0, `${label} has realistic post-compaction cards`);
-  assert.ok(before.every((card) => card.bottom <= geometry.card.top + 0.5), `${label} floors the completed epoch`);
-  assert.ok(after.every((card) => card.top >= geometry.card.bottom - 0.5), `${label} starts the next epoch below the divider`);
+  assert.ok(
+    before.every((card) => card.top >= geometry.card.bottom - 0.5),
+    `${label} leaves the completed epoch below the divider`,
+  );
+  assert.ok(
+    after.every((card) => card.bottom <= geometry.card.top + 0.5),
+    `${label} starts the next epoch above the divider`,
+  );
   for (let left = 0; left < geometry.cards.length; left += 1) {
     for (let right = left + 1; right < geometry.cards.length; right += 1) {
       assert.ok(

@@ -63,8 +63,6 @@ pub struct PlaneCard<K> {
     pub boundary: bool,
     /// Committed lattice placement.
     pub card: Card,
-    /// Vertical base used by the browser after chronological epoch projection.
-    pub display_base: i32,
 }
 
 /// Stateful live plane layered over the pure Mosaic transition functions.
@@ -190,14 +188,12 @@ impl<K: Clone + Eq> PersistentLanePlane<K> {
                 latched: item.latched,
                 content_revision: item.content_revision,
                 boundary: item.boundary,
-                display_base: card.base,
                 card,
             })
             .collect::<Vec<_>>();
         freeze_completed_epochs(&mut cards);
         assert_boundary_floors(&cards);
-        apply_display_bases(&mut cards);
-        let (max_row, min_base) = display_extent(&cards);
+        let (max_row, min_base) = mosaic::extent(&placed_cards(&cards));
         Self {
             geometry,
             cards,
@@ -321,15 +317,13 @@ fn plane_card<K: Clone>(item: &MeasuredCard<K>, card: &Card) -> PlaneCard<K> {
         content_revision: item.content_revision,
         boundary: item.boundary,
         card: card.clone(),
-        display_base: card.base,
     }
 }
 
 fn commit<K>(mut plane: PersistentLanePlane<K>, transition: Transition) -> PersistentLanePlane<K> {
     freeze_completed_epochs(&mut plane.cards);
     assert_boundary_floors(&plane.cards);
-    apply_display_bases(&mut plane.cards);
-    let (max_row, min_base) = display_extent(&plane.cards);
+    let (max_row, min_base) = mosaic::extent(&placed_cards(&plane.cards));
     plane.max_row = max_row;
     plane.min_base = min_base;
     plane.commits += 1;
@@ -344,34 +338,6 @@ fn freeze_completed_epochs<K>(entries: &mut [PlaneCard<K>]) {
     for entry in &mut entries[..=boundary] {
         entry.card.lifecycle = mosaic::Lifecycle::Frozen;
     }
-}
-
-fn apply_display_bases<K>(entries: &mut [PlaneCard<K>]) {
-    let mut min_base = 0;
-    let mut epoch = None::<(i32, i32)>;
-    for entry in entries {
-        if entry.boundary {
-            entry.display_base = min_base - entry.card.rows;
-            min_base = entry.display_base;
-            epoch = Some((entry.card.base + entry.card.rows, entry.display_base));
-        } else if let Some((engine_floor, display_floor)) = epoch {
-            let local_base = entry.card.base - engine_floor;
-            entry.display_base = display_floor - local_base - entry.card.rows;
-            min_base = min_base.min(entry.display_base);
-        } else {
-            entry.display_base = entry.card.base;
-            min_base = min_base.min(entry.display_base);
-        }
-    }
-}
-
-fn display_extent<K>(entries: &[PlaneCard<K>]) -> (i32, i32) {
-    entries.iter().fold((0, 0), |(max_row, min_base), entry| {
-        (
-            max_row.max(entry.display_base + entry.card.rows),
-            min_base.min(entry.display_base),
-        )
-    })
 }
 
 fn assert_boundary_floors<K>(entries: &[PlaneCard<K>]) {

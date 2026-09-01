@@ -201,6 +201,7 @@ export async function assertCompactionBoundary(
   }
   const before = await committedPlacementSnapshot(team);
   const scrolled = await scrollMosaicAwayFromTop(page, plane);
+  const boundaryProbe = await armPlacementProbe(plane);
   await writeFile(join(seeded.teamWorktrees[0], ".spice-compaction-trigger"), "");
   const divider = team.locator(
     `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
@@ -224,6 +225,14 @@ export async function assertCompactionBoundary(
     },
     seeded.lane,
   );
+  const boundaryCommit = await finishPlacementProbe(plane, boundaryProbe);
+  assertUnmoved(boundaryProbe, boundaryCommit, "a compaction boundary append");
+  assert.equal(
+    boundaryCommit.commits,
+    boundaryProbe.commits + 1,
+    "a compaction boundary advances the plane exactly once",
+  );
+  assert.equal(boundaryCommit.transition, "append");
 
   const laneAccent = await team
     .locator(`.team-agent[data-agent-lane="${seeded.lane}"]`)
@@ -258,6 +267,7 @@ export async function assertCompactionBoundary(
   const beforeKeys = await team.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => card.dataset.mosaicCardKey),
   );
+  const postCompactionProbe = await armPlacementProbe(plane);
   const nextProse = activityReplay.nextAgentProse(seeded.lane);
   await writeFile(join(seeded.teamWorktrees[0], ".spice-prose-trigger"), "emit\n");
   const afterMessage = await nextProse;
@@ -274,27 +284,44 @@ export async function assertCompactionBoundary(
   assert.ok(!beforeKeys.includes(afterKey), "post-compaction activity is a new assistant record");
   await waitForPage(
     page,
-    "post-compaction activity commits beyond the boundary floor",
+    "post-compaction activity advances beyond the boundary frontier",
     TRANSITION_MS,
     ({ boundaryKey, cardKey }) => {
       const boundary = document.querySelector(`[data-mosaic-card-key="${boundaryKey}"]`);
       const card = document.querySelector(`[data-mosaic-card-key="${cardKey}"]`);
       if (boundary?.dataset.layoutPhase !== "committed"
         || card?.dataset.layoutPhase !== "committed") return false;
-      return Number(card.dataset.base) + Number(card.dataset.rows)
-        <= Number(boundary.dataset.base);
+      return Number(card.dataset.base)
+        >= Number(boundary.dataset.base) + Number(boundary.dataset.rows);
     },
     {
       boundaryKey,
       cardKey: afterKey,
     },
   );
+  const postCompactionCommit = await finishPlacementProbe(plane, postCompactionProbe);
+  assertUnmoved(
+    postCompactionProbe,
+    postCompactionCommit,
+    "a post-compaction message append",
+  );
+  assert.equal(
+    postCompactionCommit.commits,
+    postCompactionProbe.commits + 1,
+    "a post-compaction message advances the plane exactly once",
+  );
+  assert.equal(postCompactionCommit.transition, "append");
+  assert.equal(
+    await plane.locator(".mosaic-message-card").last().getAttribute("data-mosaic-card-key"),
+    afterKey,
+    "post-compaction activity appends its DOM node",
+  );
   const boundaryBox = await divider.boundingBox();
   const afterBox = await afterCard.boundingBox();
   assert.ok(boundaryBox && afterBox, "the boundary and post-compaction card have visible geometry");
   assert.ok(
-    afterBox.y >= boundaryBox.y + boundaryBox.height - 1,
-    `post-compaction activity stays below its boundary: ${JSON.stringify({ boundaryBox, afterBox })}`,
+    afterBox.y + afterBox.height <= boundaryBox.y + 1,
+    `post-compaction activity lands above its boundary: ${JSON.stringify({ boundaryBox, afterBox })}`,
   );
   await assertCompactionDivider(
     divider,
