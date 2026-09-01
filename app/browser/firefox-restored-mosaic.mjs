@@ -15,6 +15,10 @@ import { assertComposerPointerSelection } from "./composer-shards.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 import { assertNaturalMessageFooterInsets } from "./message-card-reference.mjs";
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
+import {
+  assertQuoteBlockDensity,
+  captureQuoteBlockDensity,
+} from "./quote-block-density.mjs";
 
 /// A ready lattice settles layout, not delivery: under verifier load the
 /// initial card stream can still be arriving when measurements first report
@@ -87,6 +91,48 @@ async function installFirefoxImageFixture(page) {
   return page.locator('[data-firefox-image-fixture="true"]');
 }
 
+// Chromium's rich quote is deliberately client-injected and not replayable.
+// Give Firefox equivalent production markup without perturbing Mosaic placement.
+async function installFirefoxQuoteFixture(page) {
+  await page.evaluate(() => {
+    const element = (tag, text) => {
+      const node = document.createElement(tag);
+      if (text) node.textContent = text;
+      return node;
+    };
+    const fixture = element("section");
+    fixture.className = "team-surface";
+    fixture.dataset.firefoxQuoteFixture = "true";
+    const article = element("article");
+    article.className = "mosaic-message-card";
+    const body = element("div");
+    body.className = "message-body markdown-body";
+    const outer = element("blockquote");
+    const nested = element("blockquote");
+    const deep = element("blockquote");
+    deep.append(element("p", "Deep context advances by one compact rail."));
+    nested.append(deep, element("p", "The first nested paragraph stays close to its successor."));
+    const rich = element("p");
+    rich.append("The second keeps ", element("strong", "inline emphasis"), " and ");
+    rich.append(element("code", "code"), " inside the quote.");
+    nested.append(rich);
+    const list = element("ul");
+    list.append(
+      element("li", "Nested lists retain compact spacing."),
+      element(
+        "li",
+        "A deliberately long list item demonstrates that useful line width remains available instead of disappearing into progressively wider indentation.",
+      ),
+    );
+    outer.append(nested, list);
+    body.append(outer, element("p", "The authored conclusion remains outside the quote stack."));
+    article.append(body);
+    fixture.append(article);
+    document.body.append(fixture);
+  });
+  return page.locator('[data-firefox-quote-fixture="true"] .mosaic-message-card');
+}
+
 async function assertFirefoxImageFixture(fixture, label) {
   const observed = await fixture.evaluate((host) => [...host.querySelectorAll("article")].map((card) => ({
     cardWidth: card.getBoundingClientRect().width,
@@ -152,7 +198,12 @@ export async function captureFirefoxAgentPageSpacing(
   }
 }
 
-export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedAttribution) {
+export async function assertFirefoxRestoredMosaic(
+  endpoint,
+  artifacts,
+  expectedAttribution,
+  acknowledgementReply,
+) {
   const firefox = await launchBrowser("firefox");
   const context = await firefox.newContext({
     colorScheme: "dark",
@@ -169,6 +220,14 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     await console.getByRole("tab", { name: /^Compose/ }).click();
     const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
+    const userQuoteFixture = await installFirefoxQuoteFixture(page);
+    const quoteCards = {
+      ack: console.locator('[data-card-kind="agent-message"]')
+        .filter({ hasText: acknowledgementReply }),
+      user: userQuoteFixture,
+    };
+    await assertQuoteBlockDensity(quoteCards, "Firefox wide Mosaic");
+    await captureQuoteBlockDensity(page, quoteCards, artifacts, "firefox-quotes-wide");
     await assertCandidateMeasurementPaintAtomic(page, "firefox");
     await assertNaturalMessageFooterInsets(console, "Firefox wide restored Mosaic");
     const imageFixture = await installFirefoxImageFixture(page);
@@ -186,6 +245,8 @@ export async function assertFirefoxRestoredMosaic(endpoint, artifacts, expectedA
     );
     await assertCompactionDivider(boundary, "Firefox narrow compaction divider", expectedAttribution);
     await assertNaturalMessageFooterInsets(console, "Firefox narrow restored Mosaic");
+    await assertQuoteBlockDensity(quoteCards, "Firefox narrow Mosaic");
+    await captureQuoteBlockDensity(page, quoteCards, artifacts, "firefox-quotes-narrow");
     await assertFirefoxImageFixture(imageFixture, "Firefox narrow image fixture");
     await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-narrow.png") });
     await resizeCompactionViewport(
