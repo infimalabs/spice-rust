@@ -147,7 +147,8 @@ fn mixed_claude_calls_report_only_terminals_unavailable_at_each_boundary() {
     .expect("mixed Claude transcript is written");
     let mut cursor = cursor(&transcript, listen::Dialect::Claude);
 
-    let records = scan(&mut cursor).expect("mixed Claude transcript scans");
+    let mut records = scan(&mut cursor).expect("first Claude boundary scans");
+    records.extend(scan(&mut cursor).expect("second Claude boundary scans"));
     assert_eq!(records.len(), 2);
     assert_eq!(
         records[0].unavailable_tool_terminals,
@@ -182,29 +183,135 @@ fn codex_terminal_result_prevents_an_unavailable_marker() {
 }
 
 #[test]
-fn replacement_before_a_boundary_rebuilds_pending_calls_from_canonical_bytes() {
-    let scratch = Scratch::new("replacement");
+fn claude_earlier_same_length_call_replacement_rebuilds_pending_calls() {
+    const OLD_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"old\",\"name\":\"Read\",\"input\":{\"path\":\"old.rs\"}}]}}\n";
+    const NEW_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"new\",\"name\":\"Read\",\"input\":{\"path\":\"new.rs\"}}]}}\n";
+    const STABLE: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"stable final record\"}]}}\n";
+    const BOUNDARY: &str = "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    assert_eq!(OLD_CALL.len(), NEW_CALL.len());
+    let scratch = Scratch::new("claude-prefix-replacement");
     let transcript = scratch.transcript();
-    fs::write(
-        &transcript,
-        b"{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"old\",\"name\":\"Read\",\"input\":{\"path\":\"old.rs\"}}]}}\n",
-    )
-    .expect("initial transcript is written");
+    let original = format!("{OLD_CALL}{STABLE}");
+    let replacement = format!("{NEW_CALL}{STABLE}");
+    assert_eq!(original.len(), replacement.len());
+    fs::write(&transcript, &original).expect("initial transcript is written");
     let mut cursor = cursor(&transcript, listen::Dialect::Claude);
     assert!(scan(&mut cursor).expect("initial call scans").is_empty());
 
-    fs::write(
-        &transcript,
-        concat!(
-            "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"new\",\"name\":\"Read\",\"input\":{\"path\":\"new.rs\"}}]}}\n",
-            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
-        ),
-    )
-    .expect("replacement transcript is written");
+    fs::write(&transcript, &replacement).expect("same-length replacement is written");
+    assert_eq!(
+        fs::metadata(&transcript).expect("metadata").len(),
+        cursor.next
+    );
+    append(&transcript, BOUNDARY.as_bytes());
 
-    let records = scan(&mut cursor).expect("replacement transcript rescans");
+    let records = scan_until_boundary(&mut cursor, "replacement transcript rescans");
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].unavailable_tool_terminals, ["Read: new.rs"]);
+    assert_boundary_publishes_once(&transcript, listen::Dialect::Claude, records);
+}
+
+#[test]
+fn codex_earlier_same_length_result_replacement_rebuilds_pending_calls() {
+    const CALL: &str = "{\"timestamp\":\"2030-04-12T18:44:08.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\"}\",\"call_id\":\"call-a\"}}\n";
+    const RESULT_A: &str = "{\"timestamp\":\"2030-04-12T18:44:08.500Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-a\",\"output\":\"ok\"}}\n";
+    const RESULT_B: &str = "{\"timestamp\":\"2030-04-12T18:44:08.500Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-b\",\"output\":\"ok\"}}\n";
+    const STABLE: &str = "{\"timestamp\":\"2030-04-12T18:44:08.750Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"stable\"}]}}\n";
+    const BOUNDARY: &str =
+        "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n";
+    assert_eq!(RESULT_A.len(), RESULT_B.len());
+    let scratch = Scratch::new("codex-prefix-replacement");
+    let transcript = scratch.transcript();
+    let original = format!("{CALL}{RESULT_A}{STABLE}");
+    let replacement = format!("{CALL}{RESULT_B}{STABLE}");
+    assert_eq!(original.len(), replacement.len());
+    fs::write(&transcript, &original).expect("resolved transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+    assert!(scan(&mut cursor).expect("resolved prefix scans").is_empty());
+
+    fs::write(&transcript, &replacement).expect("same-length result replacement is written");
+    assert_eq!(
+        fs::metadata(&transcript).expect("metadata").len(),
+        cursor.next
+    );
+    append(&transcript, BOUNDARY.as_bytes());
+
+    let records = scan_until_boundary(&mut cursor, "replacement transcript rescans");
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].unavailable_tool_terminals,
+        ["exec command: cargo test"],
+    );
+    assert_boundary_publishes_once(&transcript, listen::Dialect::Codex, records);
+}
+
+#[test]
+fn unchanged_append_only_prefix_never_replays_an_earlier_boundary() {
+    let scratch = Scratch::new("append-only");
+    let transcript = scratch.transcript();
+    fs::write(
+        &transcript,
+        "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+    )
+    .expect("initial boundary is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    assert_eq!(scan(&mut cursor).expect("initial scan").len(), 1);
+
+    append(
+        &transcript,
+        b"{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"later\",\"name\":\"Read\",\"input\":{\"path\":\"later.rs\"}}]}}\n",
+    );
+    assert!(scan(&mut cursor).expect("call append scans").is_empty());
+    append(
+        &transcript,
+        b"{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+    );
+    let records = scan(&mut cursor).expect("later boundary scans");
+    assert_eq!(records.len(), 1, "the earlier boundary is not replayed");
+    assert_eq!(records[0].unavailable_tool_terminals, ["Read: later.rs"]);
+}
+
+#[test]
+fn large_prefix_validation_is_bounded_and_restarts_after_generation_movement() {
+    let scratch = Scratch::new("progressive-validation");
+    let transcript = scratch.transcript();
+    let original = large_claude_transcript('x');
+    let replacement = large_claude_transcript('y');
+    assert_eq!(original.len(), replacement.len());
+    fs::write(&transcript, original).expect("large original transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+
+    assert!(scan(&mut cursor).expect("first bounded scan").is_empty());
+    assert!(
+        cursor.validation.is_none(),
+        "the byte budget precedes the boundary"
+    );
+    assert!(
+        cursor.next <= (SCAN_BYTE_BUDGET + 8 * 1024) as u64,
+        "one complete record is the only permitted soft-budget overrun",
+    );
+    assert!(scan(&mut cursor).expect("second bounded scan").is_empty());
+    let validation = cursor
+        .validation
+        .as_ref()
+        .expect("boundary validation is pending");
+    assert_eq!(validation.offset, VALIDATION_BYTE_BUDGET as u64);
+    assert!(validation.length > validation.offset);
+
+    let staged = scratch.0.join("replacement.jsonl");
+    fs::write(&staged, replacement).expect("replacement generation is staged");
+    fs::rename(staged, &transcript).expect("replacement generation is published");
+    assert!(
+        scan(&mut cursor)
+            .expect("moved generation refuses")
+            .is_empty()
+    );
+    assert_eq!(cursor.next, 0, "mixed-generation state is discarded");
+    assert!(cursor.validation.is_none());
+
+    let records = scan_until_boundary(&mut cursor, "replacement generation replays");
+    assert_eq!(records.len(), 1);
+    assert!(records[0].unavailable_tool_terminals.is_empty());
 }
 
 #[test]
@@ -407,7 +514,9 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         next: 0,
         next_call: 0,
         pending: BTreeMap::new(),
+        prefix: blake3::Hasher::new(),
         guard: None,
+        validation: None,
     }
 }
 
@@ -418,6 +527,59 @@ fn append(path: &Path, bytes: &[u8]) {
         .expect("transcript opens")
         .write_all(bytes)
         .expect("transcript append succeeds");
+}
+
+fn assert_boundary_publishes_once(
+    transcript: &Path,
+    dialect: listen::Dialect,
+    records: Vec<CompactionRecord>,
+) {
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
+    let author = uuid("018f82d4-6f59-7d06-92e3-bce9131163ef");
+    let publisher = Messages::default();
+    let mut state = MessageState::default();
+    for record in records {
+        publish(record, lane, author, &publisher, &mut state).expect("boundary publishes");
+    }
+
+    let mut reloaded = cursor(transcript, dialect);
+    let replay = scan(&mut reloaded).expect("resident reload rescans canonical bytes");
+    assert_eq!(replay.len(), 1, "reload finds the one durable boundary");
+    assert!(
+        scan(&mut reloaded)
+            .expect("unchanged poll scans")
+            .is_empty()
+    );
+    for record in replay {
+        publish(record, lane, author, &publisher, &mut state)
+            .expect("boundary replay deduplicates");
+    }
+    assert_eq!(
+        publisher.0.lock().expect("message lock").len(),
+        1,
+        "poll and reload retain one published boundary",
+    );
+}
+
+fn scan_until_boundary(cursor: &mut Cursor, label: &str) -> Vec<CompactionRecord> {
+    for _ in 0..16 {
+        let records = scan(cursor).unwrap_or_else(|error| panic!("{label}: {error}"));
+        if !records.is_empty() {
+            return records;
+        }
+    }
+    panic!("{label}: bounded replay did not reach the boundary");
+}
+
+fn large_claude_transcript(fill: char) -> String {
+    let text = fill.to_string().repeat(4 * 1024);
+    let record = format!(
+        "{{\"type\":\"assistant\",\"message\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}\n",
+    );
+    format!(
+        "{}{{\"type\":\"system\",\"subtype\":\"compact_boundary\"}}\n",
+        record.repeat(96),
+    )
 }
 
 fn uuid(value: &str) -> CanonicalUuid {
