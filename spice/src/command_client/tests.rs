@@ -206,8 +206,14 @@ fn trust_pend_maps_the_current_digest_to_the_existing_pended_witness() {
     let digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         .parse::<wire::Digest>()
         .expect("fixture digest is canonical");
-    let mapped = MappedCommand::selected(contract, SelectedCommand::TrustPend { digest: &digest })
-        .expect("trust pend maps before resident discovery");
+    let mapped = MappedCommand::selected(
+        contract,
+        SelectedCommand::TrustPend {
+            digest: &digest,
+            worktree: "/worktrees/producer",
+        },
+    )
+    .expect("trust pend maps before resident discovery");
 
     assert_eq!(mapped.kind, CommandKind::TrustPend);
     assert_eq!(
@@ -222,7 +228,10 @@ fn trust_pend_maps_the_current_digest_to_the_existing_pended_witness() {
             &wire::encode(&mapped.body).expect("mapped body encodes")
         )
         .expect("mapped body retains TrustRef"),
-        wire::intent::TrustRef { digest },
+        wire::intent::TrustRef {
+            digest,
+            worktree: Some("/worktrees/producer".to_owned()),
+        },
     );
 }
 

@@ -103,6 +103,42 @@ fn schema_ten_steps_to_fanout_aware_steering_without_rewriting_authority() {
         .expect("fanout-aware authority remains coherent");
 }
 
+#[test]
+fn schema_eleven_steps_to_worktree_aware_trust_without_guessing_legacy_identity() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("schema-eleven.sqlite3");
+    let journal = authority_file_fixture(&path);
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 11 WHERE singleton = 1;
+             PRAGMA user_version = 11;",
+        )
+        .expect("downgrade worktree-unaware fixture identity");
+    let mut before = table_census(&journal.connection);
+    before.remove("journal_schema");
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("schema-eleven authority migrates");
+    let migration = journal.migration().expect("trust wire step runs");
+    assert_eq!((migration.from(), migration.to()), (11, SCHEMA_VERSION));
+    let bytes: Vec<u8> = journal
+        .connection
+        .query_row("SELECT body FROM trust_heads LIMIT 1", [], |row| row.get(0))
+        .expect("legacy trust head reads");
+    let head: TrustHead = wire::decode(&bytes).expect("legacy trust head has current shape");
+    assert_eq!(head.worktree, None, "migration never guesses a producer");
+    let mut after = table_census(&journal.connection);
+    after.remove("journal_schema");
+    assert_eq!(
+        after, before,
+        "the trust wire step rewrites no authority row"
+    );
+    journal
+        .verify()
+        .expect("worktree-aware authority remains coherent");
+}
+
 /// Every row of every table, so a migration cannot quietly recreate one.
 ///
 /// Reading the columns back as SQLite values rather than counting rows is the

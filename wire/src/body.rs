@@ -325,6 +325,13 @@ pub struct TrustPended {
     pub surface: String,
     /// Digest that entered quarantine.
     pub digest: Digest,
+    /// Canonical worktree whose executable surface produced this digest.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub worktree: Option<String>,
     /// Digest it replaced; absent the first time the surface is seen.
     #[serde(
         default,

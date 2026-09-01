@@ -207,6 +207,13 @@ pub struct TrustHead {
     pub digest: Digest,
     /// Current operator approval state.
     pub state: TrustState,
+    /// Canonical worktree whose executable surface produced this digest.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub worktree: Option<String>,
 }
 
 /// Current posture of a gate finding.

@@ -127,6 +127,13 @@ pub struct ConsentPolicy {}
 pub struct TrustRef {
     /// The exact executable digest.
     pub digest: Digest,
+    /// Canonical worktree that produced a digest entering quarantine.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub worktree: Option<String>,
 }
 
 /// Read the current lane table without mutation.

@@ -35,18 +35,24 @@ impl MappedCommand {
                 "command::mapping-unsupported",
                 "steering preflight must select its authenticated mapping path",
             )),
-            SelectedCommand::TrustPend { digest } => {
-                Self::trust_rule(contract, digest, TrustState::Pended, CommandKind::TrustPend)
-            }
+            SelectedCommand::TrustPend { digest, worktree } => Self::trust_rule(
+                contract,
+                digest,
+                Some(worktree),
+                TrustState::Pended,
+                CommandKind::TrustPend,
+            ),
             SelectedCommand::TrustGrant { digest } => Self::trust_rule(
                 contract,
                 digest,
+                None,
                 TrustState::Pended,
                 CommandKind::TrustGrant,
             ),
             SelectedCommand::TrustRevoke { digest } => Self::trust_rule(
                 contract,
                 digest,
+                None,
                 TrustState::Granted,
                 CommandKind::TrustRevoke,
             ),
@@ -218,6 +224,7 @@ impl MappedCommand {
     fn trust_rule(
         contract: &Contract,
         digest: &wire::Digest,
+        worktree: Option<&str>,
         standing: TrustState,
         kind: CommandKind,
     ) -> ClientResult<Self> {
@@ -237,6 +244,7 @@ impl MappedCommand {
             }],
             &wire::intent::TrustRef {
                 digest: digest.clone(),
+                worktree: worktree.map(str::to_owned),
             },
         )
     }

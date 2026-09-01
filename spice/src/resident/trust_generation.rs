@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bus::Bus;
 use spice::repository::Repository;
 use wire::intent::TrustRef;
-use wire::{Actor, CanonicalUuid, CommandKind, Outcome, TrustState, Witness};
+use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Producer, TrustHead, TrustState, Witness};
 
 use super::policy_surface::{trust_pend, trust_pend_with, trust_rule, trust_rule_with};
 use super::{RuntimePaths, commit_startup, commit_startup_with};
@@ -200,8 +200,13 @@ fn running_resident_pends_current_surface_then_existing_grant_succeeds() {
     replace_policy(&tracked, current_bytes);
     let current = crate::trust_command::Surface::load(&repository).expect("changed surface loads");
     let digest = current.digest().clone();
+    let worktree = repository
+        .worktree_root()
+        .to_str()
+        .expect("fixture worktree is UTF-8");
     let reference = TrustRef {
         digest: digest.clone(),
+        worktree: Some(worktree.to_owned()),
     };
     let lane_pend = admitted_trust_command_as(
         CommandKind::TrustPend,
@@ -209,6 +214,7 @@ fn running_resident_pends_current_surface_then_existing_grant_succeeds() {
         TrustState::Pended,
         epoch,
         test_uuid(31),
+        Some(worktree),
         Actor::Lane(test_uuid(32)),
     );
     let before_lane = bus.fact_snapshot().expect("facts before lane pend");
@@ -222,12 +228,13 @@ fn running_resident_pends_current_surface_then_existing_grant_succeeds() {
         before_lane
     );
 
-    let pend = admitted_trust_command(
+    let pend = admitted_trust_pend_command(
         CommandKind::TrustPend,
         digest.clone(),
         TrustState::Pended,
         epoch,
         test_uuid(33),
+        worktree,
     );
     let before_movement = bus.fact_snapshot().expect("facts before moved pend");
     let head_before_movement = bus
@@ -259,6 +266,7 @@ fn running_resident_pends_current_surface_then_existing_grant_succeeds() {
         .expect("pended head reads")
         .expect("pended head exists");
     assert_eq!(pended_head.body().state, TrustState::Pended);
+    assert_eq!(pended_head.body().worktree.as_deref(), Some(worktree));
     let grant = admitted_trust_command(
         CommandKind::TrustGrant,
         digest.clone(),
@@ -266,8 +274,12 @@ fn running_resident_pends_current_surface_then_existing_grant_succeeds() {
         epoch,
         test_uuid(34),
     );
-    let granted = trust_rule(&bus, &repository, epoch, &grant, &reference);
-    assert!(matches!(granted, Outcome::Reply(_)));
+    let ruling = TrustRef {
+        digest: digest.clone(),
+        worktree: None,
+    };
+    let granted = trust_rule(&bus, &repository, epoch, &grant, &ruling);
+    assert!(matches!(granted, Outcome::Reply(_)), "{granted:?}");
     assert_eq!(
         bus.trust_head(&digest)
             .expect("granted head reads")
@@ -278,6 +290,147 @@ fn running_resident_pends_current_surface_then_existing_grant_succeeds() {
     );
     bus.verify()
         .expect("live pend and grant authority verifies");
+    bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn pend_refuses_unresolved_nonroot_and_foreign_worktrees_without_writes() {
+    let (root, paths) = resident_fixture("trust-worktree-admission");
+    let tracked = root.join("spice-rust.toml");
+    fs::write(&tracked, "# resident policy\n").expect("write resident policy");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface = crate::trust_command::Surface::load(&repository).expect("trust surface loads");
+    let digest = surface.digest().clone();
+    let epoch = test_uuid(40);
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+
+    let nested = root.join("nested");
+    fs::create_dir(&nested).expect("nested worktree path exists");
+    let missing = root.join("removed");
+    let (foreign, _) = resident_fixture("trust-foreign-worktree");
+    fs::write(foreign.join("spice-rust.toml"), "# foreign policy\n").expect("write foreign policy");
+    let foreign = fs::canonicalize(foreign).expect("canonicalize foreign worktree");
+    let cases = [
+        (
+            missing.to_str().expect("missing path is UTF-8"),
+            "trust::worktree-unresolved",
+            test_uuid(41),
+        ),
+        (
+            nested.to_str().expect("nested path is UTF-8"),
+            "trust::worktree-not-root",
+            test_uuid(42),
+        ),
+        (
+            foreign.to_str().expect("foreign path is UTF-8"),
+            "trust::foreign-worktree",
+            test_uuid(43),
+        ),
+    ];
+    for (worktree, reason, id) in cases {
+        let reference = TrustRef {
+            digest: digest.clone(),
+            worktree: Some(worktree.to_owned()),
+        };
+        let command = admitted_trust_pend_command(
+            CommandKind::TrustPend,
+            digest.clone(),
+            TrustState::Pended,
+            epoch,
+            id,
+            worktree,
+        );
+        let before = bus.fact_snapshot().expect("facts before refused pend");
+        let head = bus.trust_head(&digest).expect("head before refused pend");
+        let receipts = receipt_count(&paths.journal);
+        let refused = trust_pend(&bus, &repository, epoch, &command, &reference);
+        assert!(
+            matches!(refused, Outcome::Refusal(ref refusal) if refusal.reason() == reason),
+            "unexpected {reason} outcome: {refused:?}",
+        );
+        assert_eq!(
+            bus.fact_snapshot().expect("facts after refused pend"),
+            before
+        );
+        assert_eq!(
+            bus.trust_head(&digest).expect("head after refused pend"),
+            head
+        );
+        assert_eq!(receipt_count(&paths.journal), receipts);
+    }
+
+    bus.verify().expect("refused pend authority verifies");
+    bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(foreign).expect("foreign fixture cleanup");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn legacy_unbound_head_refuses_ruling_without_writes() {
+    let (root, paths) = resident_fixture("trust-legacy-unbound");
+    let tracked = root.join("spice-rust.toml");
+    fs::write(&tracked, "# current policy\n").expect("write current policy");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let current = crate::trust_command::Surface::load(&repository).expect("current surface loads");
+    let epoch = test_uuid(50);
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    commit_startup(&bus, &repository, &current, epoch, None).expect("resident seats");
+
+    replace_policy(&tracked, "# legacy policy still current\n");
+    let legacy = crate::trust_command::Surface::load(&repository).expect("legacy surface loads");
+    let digest = legacy.digest().clone();
+    let mut seed = super::write(Actor::Spice, epoch, Producer::CommandDoor)
+        .expect("legacy authority write builds");
+    let pended = seed
+        .fact(
+            wire::body::TrustPended {
+                surface: crate::trust_command::SURFACE_NAME.to_owned(),
+                digest: digest.clone(),
+                worktree: None,
+                previous: Some(current.digest().clone()),
+            },
+            journal::FactCause::Root,
+        )
+        .expect("legacy trust fact builds");
+    let head_digest = digest.clone();
+    seed.trust_head(pended, move |_| TrustHead {
+        digest: head_digest,
+        state: TrustState::Pended,
+        worktree: None,
+    });
+    super::commit(&bus, seed).expect("legacy authority seeds");
+
+    let command = admitted_trust_command(
+        CommandKind::TrustGrant,
+        digest.clone(),
+        TrustState::Pended,
+        epoch,
+        test_uuid(51),
+    );
+    let reference = TrustRef {
+        digest: digest.clone(),
+        worktree: None,
+    };
+    let before = bus.fact_snapshot().expect("facts before legacy refusal");
+    let head = bus.trust_head(&digest).expect("legacy head reads");
+    let receipts = receipt_count(&paths.journal);
+    let refused = trust_rule(&bus, &repository, epoch, &command, &reference);
+    assert!(
+        matches!(refused, Outcome::Refusal(ref refusal) if refusal.reason() == "trust::worktree-unbound"),
+        "unexpected legacy ruling outcome: {refused:?}",
+    );
+    assert_eq!(
+        bus.fact_snapshot().expect("facts after legacy refusal"),
+        before
+    );
+    assert_eq!(bus.trust_head(&digest).expect("legacy head rereads"), head);
+    assert_eq!(receipt_count(&paths.journal), receipts);
+
+    bus.verify().expect("legacy refusal authority verifies");
     bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
@@ -308,6 +461,7 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
     );
     let reference = TrustRef {
         digest: digest.clone(),
+        worktree: None,
     };
     let before_grant = bus.fact_snapshot().expect("facts before refused grant");
     let head_before_grant = bus
@@ -444,7 +598,26 @@ fn admitted_trust_command(
     epoch: CanonicalUuid,
     id: CanonicalUuid,
 ) -> wire::AdmittedCommand {
-    admitted_trust_command_as(kind, digest, standing, epoch, id, Actor::Operator)
+    admitted_trust_command_as(kind, digest, standing, epoch, id, None, Actor::Operator)
+}
+
+fn admitted_trust_pend_command(
+    kind: CommandKind,
+    digest: wire::Digest,
+    standing: TrustState,
+    epoch: CanonicalUuid,
+    id: CanonicalUuid,
+    worktree: &str,
+) -> wire::AdmittedCommand {
+    admitted_trust_command_as(
+        kind,
+        digest,
+        standing,
+        epoch,
+        id,
+        Some(worktree),
+        Actor::Operator,
+    )
 }
 
 fn admitted_trust_command_as(
@@ -453,10 +626,12 @@ fn admitted_trust_command_as(
     standing: TrustState,
     epoch: CanonicalUuid,
     id: CanonicalUuid,
+    worktree: Option<&str>,
     actor: Actor,
 ) -> wire::AdmittedCommand {
     let reference = TrustRef {
         digest: digest.clone(),
+        worktree: worktree.map(str::to_owned),
     };
     wire::Command {
         v: wire::WireVersion::CURRENT,

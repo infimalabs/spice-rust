@@ -416,7 +416,7 @@ impl DispatchPolicy {
                 "gate::pre-commit-configuration-untrusted",
                 format!(
                     "{} trust_authority={}",
-                    self.trust_refusal_detail(None),
+                    self.trust_refusal_detail(None, None),
                     json(&error.to_string()),
                 ),
             )
@@ -427,28 +427,55 @@ impl DispatchPolicy {
                 ConfiguredFailure::fault("gate::pre-commit-trust-unavailable", error.to_string())
             })?;
         let standing = head.as_ref().map(|head| head.body().state);
-        if standing == Some(TrustState::Granted) {
+        let producing_worktree = head
+            .as_ref()
+            .and_then(|head| head.body().worktree.as_deref());
+        if standing == Some(TrustState::Granted)
+            && self
+                .worktree
+                .to_str()
+                .is_some_and(|worktree| producing_worktree == Some(worktree))
+        {
             return Ok(());
         }
         Err(ConfiguredFailure::refusal(
             "gate::pre-commit-configuration-untrusted",
-            self.trust_refusal_detail(standing),
+            self.trust_refusal_detail(standing, producing_worktree),
         ))
     }
 
-    fn trust_refusal_detail(&self, standing: Option<TrustState>) -> String {
+    fn trust_refusal_detail(
+        &self,
+        standing: Option<TrustState>,
+        producing_worktree: Option<&str>,
+    ) -> String {
+        let legacy_unbound = standing.is_some() && producing_worktree.is_none();
+        let producing_worktree = match (standing, producing_worktree) {
+            (None, _) => "absent".to_owned(),
+            (Some(_), None) => "unbound".to_owned(),
+            (Some(_), Some(worktree)) => json(worktree),
+        };
+        let recovery = if legacy_unbound {
+            "use the release that owns journal schema 11 to retire this legacy ruling, then pend the current digest with this release".to_owned()
+        } else {
+            format!(
+                "from that worktree run `spice trust pend` when standing is absent, then run `spice trust grant {}` only after reviewing these exact bytes and command words",
+                self.surface.digest(),
+            )
+        };
         format!(
             concat!(
-                "surface=configuration digest={} standing={} provenance={} ",
-                "worktree={} configuration={} commands={}; from that worktree run `spice trust pend` when standing is absent, then run `spice trust grant {}` only after reviewing these exact bytes and command words"
+                "surface=configuration digest={} standing={} producer_worktree={} provenance={} ",
+                "worktree={} configuration={} commands={}; {}"
             ),
             self.surface.digest(),
             standing.map_or("absent", trust_state_name),
+            producing_worktree,
             self.source.as_str(),
             json(&self.worktree.display().to_string()),
             json(&self.configuration.display().to_string()),
             json(&self.commands),
-            self.surface.digest(),
+            recovery,
         )
     }
 }

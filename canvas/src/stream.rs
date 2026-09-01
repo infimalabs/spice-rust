@@ -785,6 +785,7 @@ mod tests {
                     body::TrustPended {
                         surface: "config".to_owned(),
                         digest: digest.clone(),
+                        worktree: None,
                         previous: None,
                     },
                     FactCause::Root,
@@ -793,6 +794,7 @@ mod tests {
             write.trust_head(fact, move |_| TrustHead {
                 digest,
                 state: TrustState::Pended,
+                worktree: None,
             });
         }
         match bus.commit(write).expect("commit answers") {
@@ -890,6 +892,7 @@ mod tests {
                     body::TrustPended {
                         surface: format!("surface-{index}"),
                         digest: digest.clone(),
+                        worktree: None,
                         previous: None,
                     },
                     FactCause::Root,
@@ -898,6 +901,7 @@ mod tests {
             write.trust_head(fact, move |_| TrustHead {
                 digest,
                 state: TrustState::Pended,
+                worktree: None,
             });
         }
         match bus.commit(write).expect("commit answers") {
