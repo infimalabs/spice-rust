@@ -106,7 +106,7 @@ fn admit(name: &str, data_url: &str) -> Result<Media, ResidueKind> {
     Media::admit(name, content_type, data_url).map_err(|_| malformed())
 }
 
-fn unique(media: Vec<Media>) -> Result<Vec<Media>, ResidueKind> {
+pub(crate) fn unique(media: Vec<Media>) -> Result<Vec<Media>, ResidueKind> {
     wire::media::admit_media(&media).map_err(|_| malformed())?;
     let mut unique = Vec::<Media>::new();
     for candidate in media {

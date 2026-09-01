@@ -18,7 +18,9 @@ mod recovery;
 #[path = "session_cli/window_planner.rs"]
 mod window_planner;
 
-use fixtures::{codex_event, codex_message, token_payload, transcript_event};
+use fixtures::{
+    codex_event, codex_message, codex_message_content, token_payload, transcript_event,
+};
 
 const REFUSAL_EXIT: i32 = 2;
 
