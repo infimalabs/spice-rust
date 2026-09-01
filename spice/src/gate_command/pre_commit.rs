@@ -23,9 +23,11 @@ use wire::{
 
 mod configured;
 mod dispatch;
+mod parent;
 mod terminal;
 
 use dispatch::dispatch;
+use parent::ParentCancellation;
 use terminal::classify;
 #[cfg(test)]
 use terminal::report_outcome;
@@ -506,6 +508,10 @@ fn supervise(
     generation: &ApplianceGenerationFence,
     claim: &ClaimCapture,
 ) -> Outcome<Report> {
+    let parent = match ParentCancellation::capture() {
+        Ok(parent) => parent,
+        Err(error) => return fault("gate::pre-commit-parent-observer-unavailable", error),
+    };
     let executable = match env::current_exe() {
         Ok(executable) => executable,
         Err(error) => return fault("gate::pre-commit-executable-unavailable", error),
@@ -518,7 +524,7 @@ fn supervise(
         Ok(claim) => claim,
         Err(error) => return fault("gate::pre-commit-worker-invalid", error),
     };
-    let spec = match worker_spec(
+    let spec = match worker_spec_with_cancellation(
         executable,
         [
             OsString::from(WORKER_ARGUMENT),
@@ -528,6 +534,7 @@ fn supervise(
             claim,
         ],
         ProcessBounds::production(),
+        parent.cancellation(),
     ) {
         Ok(spec) => spec,
         Err(error) => return fault("gate::pre-commit-worker-invalid", error),
@@ -855,6 +862,7 @@ impl ProcessBounds {
     }
 }
 
+#[cfg(test)]
 fn worker_spec(
     executable: impl Into<OsString>,
     arguments: impl IntoIterator<Item = OsString>,
@@ -864,11 +872,32 @@ fn worker_spec(
     worker_spec_at(executable, arguments, &current, bounds)
 }
 
+#[cfg(test)]
 fn worker_spec_at(
     executable: impl Into<OsString>,
     arguments: impl IntoIterator<Item = OsString>,
     root: &Path,
     bounds: ProcessBounds,
+) -> Result<Spec, String> {
+    worker_spec_at_with_cancellation(executable, arguments, root, bounds, Cancellation::Never)
+}
+
+fn worker_spec_with_cancellation(
+    executable: impl Into<OsString>,
+    arguments: impl IntoIterator<Item = OsString>,
+    bounds: ProcessBounds,
+    cancellation: Cancellation,
+) -> Result<Spec, String> {
+    let current = env::current_dir().map_err(|error| error.to_string())?;
+    worker_spec_at_with_cancellation(executable, arguments, &current, bounds, cancellation)
+}
+
+fn worker_spec_at_with_cancellation(
+    executable: impl Into<OsString>,
+    arguments: impl IntoIterator<Item = OsString>,
+    root: &Path,
+    bounds: ProcessBounds,
+    cancellation: Cancellation,
 ) -> Result<Spec, String> {
     let capture = StreamPolicy::Capture {
         limit: OUTPUT_LIMIT,
@@ -882,7 +911,7 @@ fn worker_spec_at(
             .map_err(|error| error.to_string())?,
         wait: WaitPolicy::new(
             "canonical commit gate worker",
-            Cancellation::Never,
+            cancellation,
             RestartDisposition::Never,
         )
         .map_err(|error| error.to_string())?,
@@ -903,3 +932,6 @@ fn ambient_environment() -> Result<Environment, sill::SpecError> {
 #[cfg(test)]
 #[path = "pre_commit/tests.rs"]
 mod extended_tests;
+#[cfg(all(test, unix))]
+#[path = "pre_commit/parent_tests.rs"]
+mod parent_tests;
