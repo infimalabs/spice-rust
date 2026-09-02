@@ -23,6 +23,7 @@ pub(in crate::browser) enum ComposerAction {
         lane: String,
         identity: String,
         order: u64,
+        display_millis: i64,
         quote: String,
         preview: Option<String>,
     },
@@ -37,14 +38,17 @@ pub(in crate::browser) enum ComposerAction {
     },
     AddAttachment {
         lane: String,
+        quote: Option<String>,
         attachment: DirectiveAttachment,
     },
     RemoveAttachment {
         lane: String,
+        quote: Option<String>,
         index: usize,
     },
     SetIssue {
         lane: String,
+        quote: Option<String>,
         issue: String,
     },
     Clear {
@@ -67,10 +71,12 @@ impl Reducible for ComposerDrafts {
                 lane,
                 identity,
                 order,
+                display_millis,
                 quote,
                 preview,
             } => {
-                next.0.add_quote(lane, identity, order, quote, preview);
+                next.0
+                    .add_quote(lane, identity, order, display_millis, quote, preview);
             }
             ComposerAction::RemoveQuote { lane, identity } => {
                 next.0.remove_quote(lane, &identity);
@@ -82,23 +88,41 @@ impl Reducible for ComposerDrafts {
             } => {
                 next.0.set_quote_body(lane, &identity, body);
             }
-            ComposerAction::AddAttachment { lane, attachment } => {
+            ComposerAction::AddAttachment {
+                lane,
+                quote,
+                attachment,
+            } => {
                 let draft = next.0.draft_mut(lane);
-                if draft.attachments.len() >= MAX_ATTACHMENTS {
-                    draft.issue = Some("Maximum images attached.".to_owned());
-                } else {
-                    draft.attachments.push(attachment);
-                    draft.issue = None;
+                let attachment_count = draft.attachments.len()
+                    + draft
+                        .quotes
+                        .iter()
+                        .map(|quote| quote.attachments.len())
+                        .sum::<usize>();
+                if let Some((attachments, issue)) = attachment_state_mut(draft, quote.as_deref()) {
+                    if attachment_count >= MAX_ATTACHMENTS {
+                        *issue = Some("Maximum images attached.".to_owned());
+                    } else {
+                        attachments.push(attachment);
+                        *issue = None;
+                    }
                 }
             }
-            ComposerAction::RemoveAttachment { lane, index } => {
+            ComposerAction::RemoveAttachment { lane, quote, index } => {
                 let draft = next.0.draft_mut(lane);
-                if index < draft.attachments.len() {
-                    draft.attachments.remove(index);
+                if let Some((attachments, _)) = attachment_state_mut(draft, quote.as_deref())
+                    && index < attachments.len()
+                {
+                    attachments.remove(index);
                 }
             }
-            ComposerAction::SetIssue { lane, issue } => {
-                next.0.draft_mut(lane).issue = Some(issue);
+            ComposerAction::SetIssue { lane, quote, issue } => {
+                if let Some((_, current_issue)) =
+                    attachment_state_mut(next.0.draft_mut(lane), quote.as_deref())
+                {
+                    *current_issue = Some(issue);
+                }
             }
             ComposerAction::Clear { lane } => {
                 next.0.clear(&lane);
@@ -108,6 +132,20 @@ impl Reducible for ComposerDrafts {
             }
         }
         Rc::new(next)
+    }
+}
+
+fn attachment_state_mut<'a>(
+    draft: &'a mut ComposerDraft,
+    quote_identity: Option<&str>,
+) -> Option<(&'a mut Vec<DirectiveAttachment>, &'a mut Option<String>)> {
+    match quote_identity {
+        None => Some((&mut draft.attachments, &mut draft.issue)),
+        Some(identity) => draft
+            .quotes
+            .iter_mut()
+            .find(|quote| quote.identity == identity)
+            .map(|quote| (&mut quote.attachments, &mut quote.issue)),
     }
 }
 

@@ -28,7 +28,10 @@ pub(crate) struct QuoteDraft {
     pub(crate) identity: String,
     pub(crate) quote: String,
     pub(crate) preview: Option<String>,
+    pub(crate) display_millis: i64,
     pub(crate) body: String,
+    pub(crate) attachments: Vec<DirectiveAttachment>,
+    pub(crate) issue: Option<String>,
     order: u64,
 }
 
@@ -69,6 +72,7 @@ impl DraftStore {
         target: String,
         identity: String,
         order: u64,
+        display_millis: i64,
         quote: String,
         preview: Option<String>,
     ) -> QuotePlacement {
@@ -84,7 +88,10 @@ impl DraftStore {
             identity,
             quote,
             preview,
+            display_millis,
             body: String::new(),
+            attachments: Vec::new(),
+            issue: None,
             order,
         });
         sort_quotes(&mut draft.quotes);
@@ -127,7 +134,13 @@ impl DraftStore {
         }
         Some(PreparedSubmission {
             message,
-            attachments: snapshot.attachments.clone(),
+            attachments: snapshot
+                .quotes
+                .iter()
+                .flat_map(|quote| quote.attachments.iter())
+                .chain(snapshot.attachments.iter())
+                .cloned()
+                .collect(),
             snapshot,
         })
     }
@@ -156,6 +169,9 @@ impl DraftStore {
                 restored.order = restored.order.max(current_quote.order);
                 restored.quote = current_quote.quote;
                 restored.preview = current_quote.preview;
+                restored.display_millis = current_quote.display_millis;
+                restored.attachments.extend(current_quote.attachments);
+                restored.issue = current_quote.issue.or(restored.issue.take());
             } else {
                 quotes.push(current_quote);
             }
@@ -223,6 +239,7 @@ pub(crate) fn compose(draft: &ComposerDraft) -> String {
         .map(|quote| QuotedReply {
             quote: &quote.quote,
             body: &quote.body,
+            attachments: &quote.attachments,
         })
         .collect::<Vec<_>>();
     crate::composer_markdown::compose(&draft.body, &quotes, &draft.attachments)
@@ -364,6 +381,7 @@ mod tests {
                 "agent-a".to_owned(),
                 "message-old".to_owned(),
                 10,
+                1_000,
                 "same text".to_owned(),
                 None,
             ),
@@ -374,6 +392,7 @@ mod tests {
                 "agent-a".to_owned(),
                 "message-new".to_owned(),
                 30,
+                3_000,
                 "same text".to_owned(),
                 None,
             ),
@@ -384,6 +403,7 @@ mod tests {
                 "agent-a".to_owned(),
                 "message-old".to_owned(),
                 10,
+                1_000,
                 "changed copy is ignored for an existing identity".to_owned(),
                 None,
             ),
@@ -404,22 +424,31 @@ mod tests {
     }
 
     #[test]
-    fn preparation_builds_one_markdown_file_and_carries_only_target_images() {
+    fn preparation_keeps_images_with_their_text_blocks_and_target() {
         let mut store = DraftStore::default();
-        let target_attachment = attachment(r"a](one)\雪.png");
+        let quote_attachment = attachment("quote.png");
+        let primary_attachment = attachment(r"a](one)\雪.png");
         store.set_body("agent-a".to_owned(), "body".to_owned());
         store.add_quote(
             "agent-a".to_owned(),
             "message".to_owned(),
             1,
+            1_000,
             "quoted\nline".to_owned(),
             None,
         );
         store.set_quote_body("agent-a".to_owned(), "message", "reply".to_owned());
         store
             .draft_mut("agent-a".to_owned())
+            .quotes
+            .first_mut()
+            .expect("the quote exists")
             .attachments
-            .push(target_attachment.clone());
+            .push(quote_attachment.clone());
+        store
+            .draft_mut("agent-a".to_owned())
+            .attachments
+            .push(primary_attachment.clone());
         store
             .draft_mut("agent-b".to_owned())
             .attachments
@@ -429,20 +458,16 @@ mod tests {
         assert_eq!(
             prepared.message,
             format!(
-                "> quoted\n> line\n\nreply\n\nbody\n\n{}",
-                target_attachment
+                "> quoted\n> line\n\nreply\n\n{}\n\nbody\n\n{}",
+                quote_attachment
+                    .markdown()
+                    .expect("fixture Markdown renders"),
+                primary_attachment
                     .markdown()
                     .expect("fixture Markdown renders"),
             ),
         );
-        assert_eq!(
-            prepared
-                .message
-                .matches(&target_attachment.data_url)
-                .count(),
-            1,
-        );
-        assert_eq!(prepared.attachments, [target_attachment]);
+        assert_eq!(prepared.attachments, [quote_attachment, primary_attachment]);
     }
 
     #[test]
@@ -458,9 +483,18 @@ mod tests {
             "agent-a".to_owned(),
             "sent-quote".to_owned(),
             1,
+            1_000,
             "sent quote".to_owned(),
             None,
         );
+        store.set_quote_body("agent-a".to_owned(), "sent-quote", "sent reply".to_owned());
+        store
+            .draft_mut("agent-a".to_owned())
+            .quotes
+            .first_mut()
+            .expect("the sent quote exists")
+            .attachments
+            .push(attachment("quote-sent"));
         let snapshot = store.prepare("agent-a").unwrap().snapshot;
 
         store.clear("agent-a");
@@ -474,8 +508,29 @@ mod tests {
             .push(attachment("newer"));
         store.add_quote(
             "agent-a".to_owned(),
-            "newer-quote".to_owned(),
+            "sent-quote".to_owned(),
             2,
+            2_000,
+            "sent quote".to_owned(),
+            None,
+        );
+        store.set_quote_body(
+            "agent-a".to_owned(),
+            "sent-quote",
+            "typed after send".to_owned(),
+        );
+        store
+            .draft_mut("agent-a".to_owned())
+            .quotes
+            .first_mut()
+            .expect("the current quote exists")
+            .attachments
+            .push(attachment("quote-newer"));
+        store.add_quote(
+            "agent-a".to_owned(),
+            "newer-quote".to_owned(),
+            3,
+            3_000,
             "newer quote".to_owned(),
             None,
         );
@@ -498,6 +553,16 @@ mod tests {
                 .map(|quote| quote.identity.as_str())
                 .collect::<Vec<_>>(),
             ["sent-quote", "newer-quote"]
+        );
+        let restored_quote = &restored.quotes[0];
+        assert_eq!(restored_quote.body, "sent reply\n\ntyped after send");
+        assert_eq!(
+            restored_quote
+                .attachments
+                .iter()
+                .map(|attachment| attachment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["quote-sent", "quote-newer"]
         );
         assert_eq!(store.get("agent-b").unwrap().body, "untouched");
     }
@@ -544,6 +609,7 @@ mod tests {
             "agent-a".to_owned(),
             "source".to_owned(),
             1,
+            1_000,
             "quoted".to_owned(),
             None,
         );

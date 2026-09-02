@@ -18,7 +18,7 @@ function assertDocumentOrder(directive, parts, label) {
 
 /// Exercise both submission doors against complete target documents. Keyboard
 /// submission sends only the focused agent; the lineage button sends every
-/// nonempty agent draft. Both must preserve quote, reply, primary, then upload
+/// nonempty agent draft. Both must preserve each composer's text-then-upload
 /// order and keep uploads bound to the target whose heading showed them.
 export async function assertCompleteComposerSubmission({
   page,
@@ -39,6 +39,18 @@ export async function assertCompleteComposerSubmission({
   assert.equal(await composer.getByRole("textbox").inputValue(), "");
   await composer.getByRole("textbox").fill("canvas primary body");
   await assertComposerImageIndicators(page, composer, ["pixel.png", "pixel-copy.png"]);
+  await pasteImages(quotedComposer, ["quoted-pixel.png"]);
+  await quotedComposer.getByRole("img", { name: "quoted-pixel.png" }).waitFor();
+  assert.equal(
+    await composer.getByRole("img", { name: "quoted-pixel.png", exact: true }).count(),
+    0,
+    "an image pasted into a quoted composer stays out of the primary heading",
+  );
+  assert.equal(
+    await quotedComposer.getByRole("img", { name: "pixel.png", exact: true }).count(),
+    0,
+    "primary images stay out of the quoted composer heading",
+  );
   await assertNoDraftPreview(lane, 2);
   await page.screenshot({ path: artifactPath, fullPage: true });
 
@@ -71,15 +83,16 @@ export async function assertCompleteComposerSubmission({
     [
       `> ${quoteSourceTitle}`,
       "canvas quote reply",
+      "![quoted-pixel.png](data:image/png;base64,",
       "canvas primary body",
       "![pixel.png](data:image/png;base64,",
     ],
     "keyboard submission",
   );
-  assert.equal(quotedDirective.attachments.length, 2);
+  assert.equal(quotedDirective.attachments.length, 3);
   assert.deepEqual(
     quotedDirective.attachments.map((attachment) => attachment.name).sort(),
-    ["pixel-copy.png", "pixel.png"],
+    ["pixel-copy.png", "pixel.png", "quoted-pixel.png"],
   );
   for (const attachment of quotedDirective.attachments) {
     assert.equal(attachment.content_type, "image/png");

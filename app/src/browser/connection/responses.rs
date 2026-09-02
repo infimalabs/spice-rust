@@ -324,6 +324,7 @@ fn restore_lane_submissions(
         });
     handles.composer_drafts.dispatch(ComposerAction::SetIssue {
         lane: lane.to_string(),
+        quote: None,
         issue: issue.to_owned(),
     });
 }

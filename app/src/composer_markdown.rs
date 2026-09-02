@@ -445,18 +445,20 @@ pub(crate) struct QuotedReply<'a> {
     pub(crate) quote: &'a str,
     /// Reply body shown under the quote, blank when the operator wrote none.
     pub(crate) body: &'a str,
+    /// Attachments pasted into this quoted reply composer.
+    pub(crate) attachments: &'a [Media],
 }
 
-/// Join every visible quote shard, the primary body, and every attachment.
+/// Join every visible quote shard, the primary body, and their attachments.
 ///
 /// The quote shards precede the primary composer in the visible vertical stack,
-/// so their document parts precede the primary body here as well. Attachments
-/// belong to the assembled document and follow its text. Parts are separated by
-/// the blank line Markdown reads as a block boundary, and a part that would
-/// contribute nothing is dropped rather than emitted as an empty block.
+/// so their document parts precede the primary body here as well. Each
+/// attachment follows the text block whose composer received it. Parts are
+/// separated by the blank line Markdown reads as a block boundary, and a part
+/// that would contribute nothing is dropped rather than emitted empty.
 pub(crate) fn compose(body: &str, quotes: &[QuotedReply<'_>], attachments: &[Media]) -> String {
     let mut parts = Vec::new();
-    parts.extend(quotes.iter().filter_map(|quoted| {
+    for quoted in quotes {
         let quote = block_quote(quoted.quote);
         let body = quoted.body.trim();
         let part = [quote.as_str(), body]
@@ -464,18 +466,23 @@ pub(crate) fn compose(body: &str, quotes: &[QuotedReply<'_>], attachments: &[Med
             .filter(|part| !part.trim().is_empty())
             .collect::<Vec<_>>()
             .join("\n\n");
-        (!part.is_empty()).then_some(part)
-    }));
+        if !part.is_empty() {
+            parts.push(part);
+        }
+        parts.extend(quoted.attachments.iter().map(attachment_markdown));
+    }
     let body = body.trim();
     if !body.is_empty() {
         parts.push(body.to_owned());
     }
-    parts.extend(attachments.iter().map(|attachment| {
-        attachment
-            .markdown()
-            .expect("composer attachments passed admission before storage")
-    }));
+    parts.extend(attachments.iter().map(attachment_markdown));
     parts.join("\n\n")
+}
+
+fn attachment_markdown(attachment: &Media) -> String {
+    attachment
+        .markdown()
+        .expect("composer attachments passed admission before storage")
 }
 
 /// Normalize line endings, then prefix every line as one Markdown block quote.
@@ -515,7 +522,11 @@ mod tests {
     fn quoted<'a>(values: &'a [(&'a str, &'a str)]) -> Vec<QuotedReply<'a>> {
         values
             .iter()
-            .map(|(quote, body)| QuotedReply { quote, body })
+            .map(|(quote, body)| QuotedReply {
+                quote,
+                body,
+                attachments: &[],
+            })
             .collect()
     }
 

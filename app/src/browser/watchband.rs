@@ -756,6 +756,7 @@ fn render_agent_composer(
         drafts.clone(),
     );
     let dragging = primary_composer_dragging(lane_id, can_arrange, topology_revision, sender);
+    let status = member.status(standing.pending);
     html! {
         <section
             key={lane_key.clone()}
@@ -780,7 +781,7 @@ fn render_agent_composer(
                     &lane_key,
                     &draft,
                     standing,
-                    member.status(standing.pending),
+                    status,
                     pending,
                     drafts,
                     onkeydown.clone(),
@@ -790,7 +791,7 @@ fn render_agent_composer(
                     prose,
                     dragging,
                 )}
-                {render_quote_shards(&lane_key, &draft, drafts, onkeydown)}
+                {render_quote_shards(&lane_key, &draft, status, drafts, onkeydown)}
             </div>
         </section>
     }
@@ -816,10 +817,9 @@ fn render_composer_body(
     dragging: PrimaryComposerDragging,
 ) -> Html {
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
-    let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
-    // Firefox gives a draggable ancestor ownership of textarea pointer
-    // gestures. Keep only the noninteractive prose draggable; the composer
-    // remains the drop target for lane arrangement and draft content.
+    let onpaste = paste_images(lane_key.to_owned(), None, drafts.clone());
+    // Firefox gives draggable ancestors ownership of textarea pointer gestures.
+    // Keep only prose draggable; the composer remains the lane and draft target.
     let PrimaryComposerDragging {
         enabled: drag_enabled,
         start: drag_start,
@@ -849,7 +849,7 @@ fn render_composer_body(
                 renew,
                 stream,
                 prose,
-                render_image_indicators(lane_key, draft, drafts),
+                render_image_indicators(lane_key, &draft.attachments, None, drafts),
                 drag_enabled,
                 drag_start,
             )}
