@@ -338,6 +338,9 @@ pub(super) fn commit_adopted(
     let Some(carried) = observe_restored_claim(bus, durable)? else {
         return Ok(());
     };
+    if carried.is_bound_to(occupant, epoch) {
+        return Ok(());
+    }
     let observed = current_residency(bus, epoch)?;
     let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
     guard_residency(&mut write, &observed);

@@ -45,6 +45,7 @@ use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
     missing_lane, next_topology_revision, recall_provenance, relevant, typed_environment_fault,
 };
+pub(super) use restart_claim::append_startup_claims;
 pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, SessionProofError,
     await_session, launch_resume, record_stream, resume_session, session_fact,
