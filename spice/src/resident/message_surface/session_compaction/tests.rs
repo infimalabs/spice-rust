@@ -180,6 +180,30 @@ fn codex_terminal_result_prevents_an_unavailable_marker() {
 }
 
 #[test]
+fn completed_codex_web_search_resolves_only_its_source_call_before_compaction() {
+    let scratch = Scratch::new("codex-web-search-resolved");
+    let transcript = scratch.transcript();
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\"}\",\"call_id\":\"call-command\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"web_search_call\",\"id\":\"ws-source-1\",\"status\":\"completed\"}}\n",
+            "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"compacted\"}\n",
+        ),
+    )
+    .expect("resolved web-search transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+
+    let records = scan(&mut cursor).expect("resolved web-search transcript scans");
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].unavailable_tool_terminals,
+        ["exec command: cargo test"],
+        "the completed search neither remains pending nor resolves its neighbor",
+    );
+}
+
+#[test]
 fn typed_image_result_resolves_only_its_own_call_before_compaction() {
     let scratch = Scratch::new("codex-image-resolved");
     let transcript = scratch.transcript();

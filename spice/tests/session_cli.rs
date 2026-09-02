@@ -312,8 +312,12 @@ fn codex_second_turn_rows() -> Vec<Value> {
         ),
         codex_event(
             "2026-01-01T00:00:15Z",
-            "event_msg",
-            json!({"type": "web_search", "query": "session parity"}),
+            "response_item",
+            json!({
+                "type": "web_search_call",
+                "id": "ws-session-parity",
+                "status": "completed",
+            }),
         ),
         codex_event(
             "2026-01-01T00:00:16Z",

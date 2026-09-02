@@ -529,6 +529,32 @@ fn persisted_records_publish_vendor_neutral_context_and_facts() {
 }
 
 #[test]
+fn persisted_codex_web_search_completion_keeps_its_exact_source_identity() {
+    let search = br#"{"timestamp":"2026-08-28T22:03:56.940Z","type":"response_item","payload":{"type":"web_search_call","id":"ws-source-1","status":"completed"}}"#;
+    let decoded = decode(Dialect::Codex, search, locus(search))
+        .expect("the completed Codex web search stays typed");
+
+    assert!(matches!(
+        decoded.events(),
+        [Event::Tool(call), Event::Tool(result)]
+            if call.call_id == "ws-source-1"
+                && call.moment == ToolMoment::Call {
+                    name: "web_search".to_owned(),
+                    arguments: r#"{"query":null}"#.to_owned(),
+                }
+                && result.call_id == "ws-source-1"
+                && matches!(
+                    &result.moment,
+                    ToolMoment::Result(outcome)
+                        if outcome.result == ToolResult::Succeeded
+                            && outcome.output.is_none()
+                            && outcome.exit_code.is_none()
+                            && outcome.media.is_empty()
+                )
+    ));
+}
+
+#[test]
 fn codex_and_claude_tool_results_preserve_one_admitted_image_per_call() {
     const PNG: &str = "iVBORw0KGgo=";
     let codex_call = serde_json::to_vec(&serde_json::json!({
