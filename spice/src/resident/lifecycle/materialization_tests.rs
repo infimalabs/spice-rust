@@ -11,7 +11,7 @@ use wire::{
 };
 
 use super::materialization::Projection;
-use super::{Backoff, Resolution, project_targets, resolve};
+use super::{Backoff, Resolution, Trigger, project_targets, resolve};
 
 const PROJECT: &str = "lifecycle.work";
 const TASK_MOMENT: &str = "1kKRRsDP";
@@ -65,6 +65,71 @@ fn one_fact_advancement_is_suffix_bounded_and_restart_equivalent_at_different_sc
     let large = one_fact_scenario(2_048);
 
     assert_eq!(small, large);
+}
+
+#[test]
+fn team_policy_drives_every_member_while_terminal_seat_life_remains_an_override() {
+    for (policy, expected) in [
+        (wire::intent::LineageLife::Steer, Resolution::Idle),
+        (
+            wire::intent::LineageLife::Drive,
+            Resolution::Wait {
+                trigger: Trigger::AvailableWork,
+                lane: lane(),
+                deadline: "2030-04-12T18:47:01.271Z"
+                    .parse()
+                    .expect("starvation deadline"),
+            },
+        ),
+        (
+            wire::intent::LineageLife::Drain,
+            Resolution::Attempt {
+                trigger: Trigger::DrainQueue,
+                lane: lane(),
+            },
+        ),
+    ] {
+        let (bus, _, projection) = policy_fixture(policy, false);
+        let snapshot = bus.task_snapshot().expect("policy snapshot reads");
+        let targets = project_targets(&snapshot, &projection, instant(50), &Holds::new(3))
+            .expect("team policy projects lifecycle targets");
+        assert_eq!(
+            resolve(&targets, &Backoff::default(), instant(50)),
+            expected
+        );
+        bus.shutdown().expect("policy fixture bus stops");
+    }
+
+    let (bus, _, projection) = policy_fixture(wire::intent::LineageLife::Drain, true);
+    let snapshot = bus
+        .task_snapshot()
+        .expect("terminal override snapshot reads");
+    let targets = project_targets(&snapshot, &projection, instant(50), &Holds::new(3))
+        .expect("terminal override projects");
+    assert!(
+        targets.is_empty(),
+        "terminal seat life suppresses team startup"
+    );
+    bus.shutdown().expect("terminal override bus stops");
+}
+
+#[test]
+fn drain_team_startup_projects_every_current_member() {
+    let (bus, projects, mut projection) = policy_fixture(wire::intent::LineageLife::Drain, false);
+    add_vacant_team_members(&bus, &[lane_at(2), lane_at(3)]);
+    let snapshot = bus.task_snapshot().expect("expanded team snapshot reads");
+    projection
+        .advance(&snapshot, &projects)
+        .expect("expanded team projection advances");
+
+    let targets = project_targets(&snapshot, &projection, instant(50), &Holds::new(3))
+        .expect("expanded team targets project");
+    assert_eq!(
+        targets.iter().map(|target| target.lane).collect::<Vec<_>>(),
+        vec![lane(), lane_at(2), lane_at(3)],
+    );
+    assert!(targets.iter().all(|target| target.drain_queue));
+    bus.shutdown().expect("expanded team bus stops");
 }
 
 fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
@@ -149,7 +214,31 @@ fn caught_up_fixture(unrelated_history: usize) -> (Bus, ProjectPolicy, Projectio
     (bus, projects, projection)
 }
 
+fn policy_fixture(
+    policy: wire::intent::LineageLife,
+    terminal: bool,
+) -> (Bus, ProjectPolicy, Projection) {
+    let mut journal = Journal::in_memory().expect("policy fixture journal opens");
+    journal
+        .apply(seed_write_with_policy(policy, terminal))
+        .expect("policy fixture seeds");
+    let bus = Bus::start(journal).expect("policy fixture bus starts");
+    let projects = projects();
+    let mut projection = Projection::new();
+    projection
+        .advance(
+            &bus.task_snapshot().expect("policy fixture snapshot reads"),
+            &projects,
+        )
+        .expect("policy fixture projection builds");
+    (bus, projects, projection)
+}
+
 fn seed_write() -> JournalWrite {
+    seed_write_with_policy(wire::intent::LineageLife::Drain, false)
+}
+
+fn seed_write_with_policy(policy: wire::intent::LineageLife, terminal: bool) -> JournalWrite {
     let task = task(TASK_MOMENT);
     let phase = phase();
     let origin = format!("task:{}", handle(TASK_MOMENT))
@@ -195,7 +284,7 @@ fn seed_write() -> JournalWrite {
             lineage_id: lane(),
             name: None,
             worktree: "/fixture".to_owned(),
-            life: "drive".to_owned(),
+            life: if terminal { "drain" } else { "drive" }.to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
             occupant: None,
             lineage: Vec::new(),
@@ -205,12 +294,69 @@ fn seed_write() -> JournalWrite {
         }],
         subscriptions: vec![wire::LineageSubscription {
             lineage_id: lane(),
-            policy: wire::intent::LineageLife::Drain,
+            policy,
             manual_projects: Vec::new(),
             auto_projects: Vec::new(),
         }],
     });
     write
+}
+
+fn add_vacant_team_members(bus: &Bus, lanes: &[CanonicalUuid]) {
+    let observed = bus
+        .residency_head()
+        .expect("expanded team residency reads")
+        .expect("expanded team has residency");
+    let mut next = observed.body().clone();
+    for member in lanes {
+        next.lanes.push(LaneResidency {
+            lane: *member,
+            lineage_id: lane(),
+            name: None,
+            worktree: format!("/fixture/{member}"),
+            life: "drive".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            occupant: None,
+            lineage: Vec::new(),
+            capabilities: Vec::new(),
+            session: None,
+            disposition: "vacant".to_owned(),
+        });
+    }
+    next.lanes.sort_by_key(|row| row.lane);
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        "recovery:expanded-team"
+            .parse()
+            .expect("expanded team origin"),
+        instant(2),
+        Producer::ResidentRecognition,
+    );
+    let mut cause = FactCause::Root;
+    let mut expanded = None;
+    for member in lanes {
+        let seated = write
+            .fact(
+                body::LaneSeated {
+                    lane: *member,
+                    lineage_id: lane(),
+                    capability: *member,
+                    name: None,
+                    worktree: format!("/fixture/{member}"),
+                    life: "drive".to_owned(),
+                    vendor: "claude".parse().expect("fixture vendor"),
+                },
+                cause,
+            )
+            .expect("expanded team seat fact builds");
+        cause = FactCause::Pending(seated);
+        expanded = Some(seated);
+    }
+    write.residency_head(
+        expanded.expect("expanded team has at least one added member"),
+        move |_| next,
+    );
+    committed(bus.commit(write).expect("expanded team commits"));
 }
 
 fn invalid_late_suffix() -> JournalWrite {
@@ -407,6 +553,10 @@ fn phase() -> Phase {
 
 fn lane() -> CanonicalUuid {
     uuid(1)
+}
+
+fn lane_at(last: u8) -> CanonicalUuid {
+    uuid(last)
 }
 
 fn epoch() -> CanonicalUuid {

@@ -34,6 +34,8 @@ mod session;
 use automatic::wake;
 pub(super) use automatic::{AutomaticWake, wake_automatic};
 use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
+#[cfg(test)]
+pub(in crate::resident) use launch::test_support::AdvisoryRtkFixture;
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
 pub(super) use lineage::{arrange as arrange_lineages, configure};
 use propose::{

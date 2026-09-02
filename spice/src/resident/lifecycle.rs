@@ -22,6 +22,8 @@ use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_
 
 mod materialization;
 use materialization::Projection;
+#[cfg(test)]
+mod startup_tests;
 
 const NORMAL_READY: usize = 2;
 const STARVATION_SECONDS: i64 = 180;
@@ -33,6 +35,7 @@ const RETRY_SECONDS: i64 = 5;
 pub(super) enum Trigger {
     PendingInbox,
     HeldClaim,
+    DrainQueue,
     AvailableWork,
 }
 
@@ -41,6 +44,7 @@ impl Trigger {
         match self {
             Self::PendingInbox => "pending-inbox",
             Self::HeldClaim => "held-claim",
+            Self::DrainQueue => "drain-queue",
             Self::AvailableWork => "available-work",
         }
     }
@@ -58,6 +62,7 @@ struct Target {
     lane: CanonicalUuid,
     pending_inbox: bool,
     held_claim: bool,
+    drain_queue: bool,
     available: Available,
 }
 
@@ -98,6 +103,11 @@ impl Backoff {
     fn release(&mut self, lane: CanonicalUuid) {
         self.timed.remove(&lane);
         self.parked.remove(&lane);
+    }
+
+    fn release_all(&mut self) {
+        self.timed.clear();
+        self.parked.clear();
     }
 
     fn due(&self, lane: CanonicalUuid, trigger: Trigger, eligible_at: Instant) -> Option<Instant> {
@@ -281,11 +291,32 @@ impl Runtime {
     /// A same-lane command is the event that can make a parked local
     /// precondition current again. It also supersedes an elapsed-time retry.
     pub(super) fn observe_command(&mut self, actor: &Actor) -> bool {
-        let Actor::Lane(lane) = actor else {
-            return false;
-        };
-        self.backoff.release(*lane);
-        true
+        if let Actor::Lane(lane) = actor {
+            self.backoff.release(*lane);
+            return true;
+        }
+        false
+    }
+
+    /// A topology command can change which team policy governs any parked
+    /// member, so it makes every local startup refusal eligible for retry.
+    pub(super) fn observe_topology(&mut self, command: &wire::AdmittedCommand) -> bool {
+        if self.observe_command(command.actor()) {
+            return true;
+        }
+        if matches!(
+            command.body(),
+            wire::intent::Intent::LineageConfigure(_)
+                | wire::intent::Intent::LineageArrange(_)
+                | wire::intent::Intent::LaneArrange(_)
+        ) {
+            // A deliberate topology or team-policy change is new startup
+            // authority. Retry every member against the committed shape rather
+            // than retaining a refusal parked under the preceding policy.
+            self.backoff.release_all();
+            return true;
+        }
+        false
     }
 
     /// Classify one observed occupant death through the shared hold reducer.
@@ -483,6 +514,20 @@ impl Runtime {
                 lane_surface::AutomaticWake::Started => Ok(Attempted::Started),
                 lane_surface::AutomaticWake::Unstarted(failure) => Err(failure),
             },
+            Trigger::DrainQueue => match lane_surface::wake_automatic(
+                bus,
+                paths,
+                epoch,
+                seats,
+                lane_runtime,
+                lane,
+                occupant,
+                Some(snapshot),
+                None,
+            )? {
+                lane_surface::AutomaticWake::Started => Ok(Attempted::Started),
+                lane_surface::AutomaticWake::Unstarted(failure) => Err(failure),
+            },
             Trigger::AvailableWork => {
                 let claim = crate::board_command::claim_automatic(
                     bus,
@@ -621,7 +666,11 @@ fn project_targets(
         }
         let available = match subscription {
             Some(subscription) => {
-                available_deadline(entries, ready_at, &Actor::Lane(row.lane), subscription)?
+                if subscription.policy == wire::intent::LineageLife::Drive {
+                    available_deadline(entries, ready_at, &Actor::Lane(row.lane), subscription)?
+                } else {
+                    Available::None
+                }
             }
             None => Available::None,
         };
@@ -629,6 +678,8 @@ fn project_targets(
             lane: row.lane,
             pending_inbox,
             held_claim,
+            drain_queue: subscription
+                .is_some_and(|row| row.policy == wire::intent::LineageLife::Drain),
             available,
         });
     }
@@ -665,9 +716,6 @@ fn available_deadline(
     actor: &Actor,
     subscription: &wire::LineageSubscription,
 ) -> CommandResult<Available> {
-    if subscription.policy != wire::intent::LineageLife::Drain {
-        return Ok(Available::None);
-    }
     let mut eligible = entries
         .iter()
         .filter(|entry| board::selectable_entry(entries, entry, actor, subscription))
@@ -698,6 +746,8 @@ fn resolve(targets: &[Target], backoff: &Backoff, now: Instant) -> Resolution {
             (Trigger::PendingInbox, Available::Ready)
         } else if target.held_claim {
             (Trigger::HeldClaim, Available::Ready)
+        } else if target.drain_queue {
+            (Trigger::DrainQueue, Available::Ready)
         } else {
             (Trigger::AvailableWork, target.available)
         };
@@ -714,6 +764,7 @@ fn resolve(targets: &[Target], backoff: &Backoff, now: Instant) -> Resolution {
     for trigger in [
         Trigger::PendingInbox,
         Trigger::HeldClaim,
+        Trigger::DrainQueue,
         Trigger::AvailableWork,
     ] {
         if let Some((_, lane, _)) = candidates
@@ -771,6 +822,7 @@ mod tests {
             lane: super::tests::lane(lane),
             pending_inbox: false,
             held_claim: false,
+            drain_queue: false,
             available: Available::None,
         }
     }
@@ -879,6 +931,7 @@ mod tests {
     fn every_refusal_trigger_has_one_closed_label() {
         assert_eq!(Trigger::PendingInbox.as_str(), "pending-inbox");
         assert_eq!(Trigger::HeldClaim.as_str(), "held-claim");
+        assert_eq!(Trigger::DrainQueue.as_str(), "drain-queue");
         assert_eq!(Trigger::AvailableWork.as_str(), "available-work");
     }
 
@@ -971,11 +1024,13 @@ mod tests {
         for trigger in [
             Trigger::PendingInbox,
             Trigger::HeldClaim,
+            Trigger::DrainQueue,
             Trigger::AvailableWork,
         ] {
             let mut row = target(1);
             row.pending_inbox = trigger == Trigger::PendingInbox;
             row.held_claim = trigger == Trigger::HeldClaim;
+            row.drain_queue = trigger == Trigger::DrainQueue;
             row.available = if trigger == Trigger::AvailableWork {
                 Available::Ready
             } else {

@@ -281,7 +281,7 @@ impl<'a> Surface<'a> {
         lifecycle: &mut lifecycle::Runtime,
         command: &wire::AdmittedCommand,
     ) -> super::CommandResult<bool> {
-        let mut released = lifecycle.observe_command(command.actor());
+        let mut released = lifecycle.observe_topology(command);
         if let Intent::LaneState(state) = command.body()
             && command.actor() == &Actor::Operator
             && state.action == wire::intent::LaneAction::Wake
