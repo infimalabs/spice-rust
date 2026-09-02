@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  reply,
-  TRANSITION_MS,
-  waitForPageFunction,
-} from "./canvas-fixture.mjs";
+import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import { assertQuotedComposerParity } from "./composer-parity.mjs";
 
 /// Production resolves one destination per primary shard, in one order
 /// (`primary_stream_link` in app/src/browser/watchband.rs): the last rendered
@@ -818,6 +815,7 @@ export async function assertComposerShards({
     nestedQuoteMessage,
     "the complete nested message remains reachable from the shard",
   );
+  await assertQuotedComposerParity(previewShard, headingChildren);
   const overflowingReply = Array.from(
     { length: 16 },
     (_, index) => `independently scrolling quote reply line ${index + 1}`,

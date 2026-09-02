@@ -16,7 +16,6 @@
 
 .composer-quote-stack { display: contents; }
 
-.composer-shard--quote .composer-shard-heading > button,
 .mosaic-message-card footer button {
   display: grid;
   place-items: center;
@@ -765,14 +764,14 @@ body:has(.shell--mosaic),
 }
 .composer-shard--quote {
   order: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
   background: color-mix(in srgb, var(--accent) 5%, var(--panel));
 }
 
 .composer-shard-heading {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 22px;
+  grid-template-columns: auto minmax(0, 1fr) auto 22px;
   align-items: center;
   gap: 4px;
   padding-bottom: 4px;
@@ -780,9 +779,6 @@ body:has(.shell--mosaic),
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .56rem;
-}
-.composer-shard--primary .composer-shard-heading {
-  grid-template-columns: auto minmax(0, 1fr) auto 22px;
 }
 .composer-shard-heading strong {
   overflow: hidden;
@@ -797,22 +793,19 @@ body:has(.shell--mosaic),
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.composer-shard-age {
-  color: var(--accent);
-}
+.composer-shard-age { color: var(--accent); }
 .composer-shard-age.queued { color: var(--warning); }
 .composer-shard-age.bound,
 .composer-shard-age.unbound {
   color: var(--muted);
   opacity: .7;
 }
-
 /* A third of the message-card thumbnail, keeping its border, radius, and crop
    so a draft image reads as the same object at heading scale. The strip is
    bounded and scrolls, so attachments never push the prose out of the row. An
    empty strip stays laid out at zero width rather than `display: none`: it owns
-   the third column of the primary heading, and dropping out of the grid would
-   slide the hamburger a whole column left until the first image arrives. */
+   the third heading column, and dropping out of the grid would slide the final
+   control a whole column left until the first image arrives. */
 .composer-shard-image-indicators {
   display: flex;
   gap: 3px;

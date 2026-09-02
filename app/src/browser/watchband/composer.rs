@@ -278,6 +278,7 @@ fn agent_message_correspondent(
     let quote_text = message.text.clone();
     let quote_preview = watchband::first_nonquoted_prose(&message.text);
     let quote_identity = agent_message_quote_identity(message);
+    let display_millis = crate::runtime::agent_message_display_millis(message);
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.clone();
     let quote_dispatcher = quote_dispatcher.clone();
@@ -289,6 +290,7 @@ fn agent_message_correspondent(
                 lane: lane_key.clone(),
                 identity: quote_identity.clone(),
                 order,
+                display_millis,
                 quote: quote_text.clone(),
                 preview: quote_preview.clone(),
             });
@@ -400,6 +402,7 @@ fn render_agent_message_footer(
 pub(super) fn render_quote_shards(
     lane_key: &str,
     draft: &ComposerDraft,
+    status: crate::runtime::LaneStatus,
     drafts: &UseReducerHandle<ComposerDrafts>,
     target_submit: Callback<KeyboardEvent>,
 ) -> Html {
@@ -429,6 +432,11 @@ pub(super) fn render_quote_shards(
                 let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
                 let source_id = format!("message-{}", quote.identity);
+                let onpaste = paste_images(
+                    lane_key.to_owned(),
+                    Some(quote.identity.clone()),
+                    drafts.clone(),
+                );
                 html! {
                     <article
                         key={quote.identity.clone()}
@@ -441,12 +449,26 @@ pub(super) fn render_quote_shards(
                     >
                         <header class="composer-shard-heading">
                             <a
-                                class="composer-shard-link"
+                                class={classes!(
+                                    "composer-shard-link",
+                                    "composer-shard-age",
+                                    status.key(),
+                                )}
                                 href={format!("#{source_id}")}
-                                aria-label={format!("Return to quoted message: {shown}")}
-                                title="Return to this message in the stream"
-                            >{"↩"}</a>
-                            <strong title={shown.to_owned()}>{shown}</strong>
+                                aria-label={format!("Jump to quoted message: {shown}")}
+                                data-lane-status={status.key()}
+                            >{lease_age(
+                                Some(quote.display_millis),
+                                "composer-shard-age-label",
+                                "—",
+                            )}</a>
+                            <strong class="composer-shard-prose" title={shown.to_owned()}>{shown}</strong>
+                            {render_image_indicators(
+                                lane_key,
+                                &quote.attachments,
+                                Some(&quote.identity),
+                                drafts,
+                            )}
                             <button
                                 type="button"
                                 aria-label="Remove quoted composer shard"
@@ -462,7 +484,11 @@ pub(super) fn render_quote_shards(
                             placeholder="Reply to this quoted message"
                             oninput={update}
                             onkeydown={target_submit.clone()}
+                            {onpaste}
                         ></textarea>
+                        if let Some(issue) = &quote.issue {
+                            <p class="composer-issue" role="status">{issue.clone()}</p>
+                        }
                     </article>
                 }
             })}
@@ -473,22 +499,25 @@ pub(super) fn render_quote_shards(
 /// Draft images ride in the shard heading as message-card thumbnails shrunk to
 /// heading scale. The thumbnail is itself the remove control: a separate × would
 /// be wider than the image it decorates and would crowd the prose, deep link,
-/// and hamburger sharing that row. The strip is rendered even with no images so
-/// the heading keeps its fixed child order and its grid columns, which is what
-/// holds the hamburger still as the first image arrives.
+/// and final control sharing that row. The strip is rendered even with no images
+/// so the heading keeps its fixed child order and its grid columns, which holds
+/// that final control still as the first image arrives.
 pub(super) fn render_image_indicators(
     lane_key: &str,
-    draft: &ComposerDraft,
+    attachments: &[DirectiveAttachment],
+    quote_identity: Option<&str>,
     drafts: &UseReducerHandle<ComposerDrafts>,
 ) -> Html {
     html! {
         <span class="composer-shard-image-indicators">
-            {for draft.attachments.iter().enumerate().map(|(index, attachment)| {
+            {for attachments.iter().enumerate().map(|(index, attachment)| {
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
+                let remove_quote = quote_identity.map(str::to_owned);
                 let remove = Callback::from(move |_| {
                     remove_drafts.dispatch(ComposerAction::RemoveAttachment {
                         lane: remove_key.clone(),
+                        quote: remove_quote.clone(),
                         index,
                     });
                 });
@@ -510,6 +539,7 @@ pub(super) fn render_image_indicators(
 
 pub(super) fn paste_images(
     lane_key: String,
+    quote_identity: Option<String>,
     drafts: UseReducerHandle<ComposerDrafts>,
 ) -> Callback<Event> {
     Callback::from(move |event: Event| {
@@ -522,7 +552,7 @@ pub(super) fn paste_images(
         };
         if has_image(&files) {
             clipboard.prevent_default();
-            add_image_files(&drafts, &lane_key, &files);
+            add_image_files(&drafts, &lane_key, quote_identity.as_deref(), &files);
         }
     })
 }
@@ -543,7 +573,7 @@ pub(super) fn drop_on_lane(
         if let Some(files) = transfer.files()
             && has_image(&files)
         {
-            add_image_files(&drafts, &lane_key, &files);
+            add_image_files(&drafts, &lane_key, None, &files);
             return;
         }
         let Ok(text) = transfer.get_data("text/plain") else {
@@ -577,7 +607,12 @@ fn has_image(files: &FileList) -> bool {
     })
 }
 
-fn add_image_files(drafts: &UseReducerHandle<ComposerDrafts>, lane_key: &str, files: &FileList) {
+fn add_image_files(
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    lane_key: &str,
+    quote_identity: Option<&str>,
+    files: &FileList,
+) {
     for index in 0..files.length() {
         let Some(file) = files.get(index) else {
             continue;
@@ -588,18 +623,30 @@ fn add_image_files(drafts: &UseReducerHandle<ComposerDrafts>, lane_key: &str, fi
         if file.size() > MAX_ATTACHMENT_BYTES {
             drafts.dispatch(ComposerAction::SetIssue {
                 lane: lane_key.to_owned(),
+                quote: quote_identity.map(str::to_owned),
                 issue: "Image is over 8 MB.".to_owned(),
             });
             continue;
         }
-        read_image(drafts.clone(), lane_key.to_owned(), file);
+        read_image(
+            drafts.clone(),
+            lane_key.to_owned(),
+            quote_identity.map(str::to_owned),
+            file,
+        );
     }
 }
 
-fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: File) {
+fn read_image(
+    drafts: UseReducerHandle<ComposerDrafts>,
+    lane_key: String,
+    quote_identity: Option<String>,
+    file: File,
+) {
     let Ok(reader) = FileReader::new() else {
         drafts.dispatch(ComposerAction::SetIssue {
             lane: lane_key,
+            quote: quote_identity,
             issue: "Image reader is unavailable.".to_owned(),
         });
         return;
@@ -625,10 +672,12 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
         match DirectiveAttachment::admit(name.clone(), content_type.clone(), data_url) {
             Ok(attachment) => drafts.dispatch(ComposerAction::AddAttachment {
                 lane: lane_key.clone(),
+                quote: quote_identity.clone(),
                 attachment,
             }),
             Err(error) => drafts.dispatch(ComposerAction::SetIssue {
                 lane: lane_key.clone(),
+                quote: quote_identity.clone(),
                 issue: format!("Image was refused: {error}."),
             }),
         }
