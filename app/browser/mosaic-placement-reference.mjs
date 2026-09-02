@@ -10,6 +10,10 @@ import {
   assertNoUnavailableToolTerminal,
   assertUnavailableToolTerminal,
 } from "./compaction-boundary-reference.mjs";
+import {
+  assertCanonicalPlacementsStable,
+  captureCanonicalPlacements,
+} from "./mosaic-placement-stability.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 // Span the fixture's one-second delivery cadence before arming exact lattice probes.
@@ -307,8 +311,14 @@ export async function assertStagedMosaicHydration(page, team, activityReplay, in
     "epoch hydration preserves the compaction divider position and extent",
   );
   const commits = staged.commits;
+  const replayPlacement = await captureCanonicalPlacements(plane);
   await hydration.send(page, hydration.stages[2]);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  assertCanonicalPlacementsStable(
+    replayPlacement,
+    await captureCanonicalPlacements(plane),
+    "an unchanged complete hydration replay",
+  );
   assert.equal(Number(await plane.getAttribute("data-plane-commits")), commits,
     "an unchanged complete hydration snapshot commits no plane");
 
@@ -413,6 +423,7 @@ export async function assertModeSwitchPreservesDeferredMosaic(
 ) {
   const plane = console.locator(".lane-mosaic-plane");
   await settleMosaicActivity(page, plane);
+  const initialPlacement = await captureCanonicalPlacements(plane);
   const before = await plane.evaluate((element) => {
     element.dataset.modeSwitchIdentity = crypto.randomUUID();
     return {
@@ -512,12 +523,19 @@ export async function assertModeSwitchPreservesDeferredMosaic(
     }, received);
   const revealed = await finishPlacementProbe(plane, placement);
   assertPlacementRetained(placement, revealed, "a hidden background batch reveal");
+  assertCanonicalPlacementsStable(
+    initialPlacement,
+    await captureCanonicalPlacements(plane),
+    "a hidden background batch reveal",
+    received,
+  );
   assert.equal(revealed.commits, before.commits + 1,
     "the complete hidden batch produces one snap correction");
   assert.equal(await plane.getAttribute("data-mode-switch-identity"), before.identity,
     "reveal retains the original Mosaic host node");
 
   const stable = await armPlacementProbe(plane);
+  const repeatedPlacement = await captureCanonicalPlacements(plane);
   await chooseCanvasView(page, "Flow");
   await waitForPage(page, "repeated hide returns to zero width", TRANSITION_MS, () => (
     Number(document.querySelector(".mosaic-workspace .lane-mosaic-plane")?.dataset.observedWidth) < 24
@@ -531,6 +549,11 @@ export async function assertModeSwitchPreservesDeferredMosaic(
     before.committedWidth);
   const repeated = await finishPlacementProbe(plane, stable);
   assertUnmoved(stable, repeated, "a no-op global hide and reveal");
+  assertCanonicalPlacementsStable(
+    repeatedPlacement,
+    await captureCanonicalPlacements(plane),
+    "a no-op global hide and reveal",
+  );
   assert.equal(repeated.commits, revealed.commits, "a no-op reveal commits no plane");
   assert.equal(await plane.locator(`[data-mosaic-card-key="${boundary.key}"]`).count(), 1,
     "the hidden compaction divider retains one stable identity");

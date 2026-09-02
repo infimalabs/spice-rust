@@ -25,6 +25,10 @@ import {
   settleMosaicActivity,
   waitForMosaicReady,
 } from "./mosaic-placement-reference.mjs";
+import {
+  assertCanonicalPlacementsStable,
+  captureCanonicalPlacements,
+} from "./mosaic-placement-stability.mjs";
 
 export {
   armPlacementProbe,
@@ -92,6 +96,7 @@ export async function assertPersistentMosaic(
   // can never be held and cannot disturb `assertHeldTaskCount`. Give it
   // acceptance criteria and a distant assertion about badges goes red.
   const refreshProbe = await armPlacementProbe(plane);
+  const refreshPlacement = await captureCanonicalPlacements(plane);
   const refresh = await reply(fixture, [
     "task",
     "add",
@@ -110,6 +115,11 @@ export async function assertPersistentMosaic(
   ), `cursor ${refresh.seq.last}`);
   const refreshed = await finishPlacementProbe(plane, refreshProbe);
   assertUnmoved(refreshProbe, refreshed, "a no-op refresh");
+  assertCanonicalPlacementsStable(
+    refreshPlacement,
+    await captureCanonicalPlacements(plane),
+    "a no-op refresh",
+  );
   assert.equal(refreshed.commits, refreshProbe.commits, "a no-op refresh commits no plane");
   await settleMosaicActivity(page, plane);
 
@@ -141,6 +151,7 @@ export async function assertPersistentMosaic(
     "the composer header shares the selected message footer's authored instant",
   );
   const ageProbe = await armPlacementProbe(plane);
+  const agePlacement = await captureCanonicalPlacements(plane);
   const ageCardBefore = ageProbe.cards.find((card) => card.key === ageTarget.cardKey);
   assert.ok(ageCardBefore, `the placement probe includes message card ${ageTarget.cardKey}`);
   const ageBefore = await tickingAge.innerText();
@@ -179,6 +190,11 @@ export async function assertPersistentMosaic(
     "the selected message card preserves its Mosaic placement and bounding geometry",
   );
   assertUnmoved(ageProbe, aged, "a deadline-driven age tick");
+  assertCanonicalPlacementsStable(
+    agePlacement,
+    await captureCanonicalPlacements(plane),
+    "a content-only deadline age update",
+  );
   assert.equal(
     aged.commits,
     ageProbe.commits,
@@ -265,6 +281,7 @@ export async function assertPersistentMosaic(
     });
     const text = `late Mosaic image ${outcome}\n\n![${outcome}](${url})`;
     const pendingProbe = await armPlacementProbe(plane);
+    const pendingPlacement = await captureCanonicalPlacements(plane);
     const card = await submitAssistantActivity(page, console, member.lane, text, activityReplay);
     await card.waitFor({ state: "attached", timeout: 10_000 });
     await requested;
@@ -280,6 +297,12 @@ export async function assertPersistentMosaic(
     assert.deepEqual(pending.writes, [], `pending image ${outcome} writes no untouched placement`);
     assert.equal(pending.commits, pendingProbe.commits + 1, `pending image ${outcome} appends once`);
     const cardKey = await card.getAttribute("data-mosaic-card-key");
+    assertCanonicalPlacementsStable(
+      pendingPlacement,
+      await captureCanonicalPlacements(plane),
+      `a pending image ${outcome} append`,
+      [cardKey],
+    );
     const invariant = await imageCardInvariant(card);
     const resolutionProbe = await armPlacementProbe(plane, [cardKey]);
     assert.equal(await plane.getAttribute("data-measurement-phase"), "ready");
