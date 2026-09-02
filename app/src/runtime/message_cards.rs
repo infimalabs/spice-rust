@@ -111,7 +111,8 @@ impl MessageCards {
         &mut self,
         incoming: impl IntoIterator<Item = &'a AgentMessage>,
     ) -> bool {
-        let mut changed = false;
+        let previous = self.entries.clone();
+        let mut mutated = false;
         let mut touched = BTreeSet::new();
         for message in incoming {
             touched.insert(message.lane);
@@ -124,20 +125,20 @@ impl MessageCards {
                 (Some(index), Some(next)) if fingerprint(&self.entries[index]) == Some(next) => {}
                 (Some(index), Some(_)) => {
                     self.entries[index] = Rc::new(message.clone());
-                    changed = true;
+                    mutated = true;
                 }
                 (Some(index), None) => {
                     self.entries.remove(index);
-                    changed = true;
+                    mutated = true;
                 }
                 (None, Some(_)) => {
                     self.entries.push(Rc::new(message.clone()));
-                    changed = true;
+                    mutated = true;
                 }
                 (None, None) => {}
             }
         }
-        if changed {
+        if mutated {
             self.entries
                 .sort_by_key(|message| message_chronology_key(message));
             if let Some(limit) = self.limit {
@@ -146,7 +147,14 @@ impl MessageCards {
                 }
             }
         }
-        changed
+        // A batch can mutate transiently and reduce to the same projection.
+        // Restore its original `Rc`s so a no-op also preserves allocations.
+        if self.entries == previous {
+            self.entries = previous;
+            false
+        } else {
+            true
+        }
     }
 }
 
@@ -229,5 +237,16 @@ mod tests {
             card_kind(&message(2, AgentActivityKind::Compaction)),
             Some(MessageCardKind::Compaction)
         );
+    }
+
+    #[test]
+    fn zero_capacity_live_replay_is_a_stable_noop() {
+        let mut cards = MessageCards::default();
+        cards.snapshot(0, &[]);
+        let prose = message(1, AgentActivityKind::Prose);
+
+        assert!(!cards.merge(std::iter::once(&prose)));
+        assert!(!cards.merge(std::iter::once(&prose)));
+        assert!(cards.entries().is_empty());
     }
 }
