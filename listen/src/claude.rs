@@ -157,7 +157,7 @@ fn user(record: &Object, locus: Locus) -> Events {
                 }));
             }
             "image" => {
-                let media = crate::media::value(value, "message-image")?;
+                let media = crate::media::content(value, "message-image")?.media;
                 if let Some(Event::Prose(prose)) = events.last_mut() {
                     prose.media.extend(media);
                     wire::media::admit_media(&prose.media).map_err(|_| ResidueKind::Malformed {
@@ -175,6 +175,10 @@ fn user(record: &Object, locus: Locus) -> Events {
                 }
             }
             "tool_result" => {
+                let content = block
+                    .get("content")
+                    .map(|content| crate::media::content(content, "tool-image"))
+                    .transpose()?;
                 let result = match optional_boolean(block, "is_error")? {
                     Some(true) => ToolResult::Failed,
                     Some(false) => ToolResult::Succeeded,
@@ -184,16 +188,11 @@ fn user(record: &Object, locus: Locus) -> Events {
                     call_id: string(block, "tool_use_id")?.to_owned(),
                     moment: ToolMoment::Result(ToolOutcome {
                         result,
-                        output: block.get("content").map(render_output),
-                        exit_code: block
-                            .get("content")
-                            .map(render_output)
-                            .as_deref()
-                            .and_then(output_exit_code),
-                        media: block.get("content").map_or_else(
-                            || Ok(Vec::new()),
-                            |content| crate::media::value(content, "tool-image"),
-                        )?,
+                        output: content.as_ref().map(|content| content.text.clone()),
+                        exit_code: content
+                            .as_ref()
+                            .and_then(|content| output_exit_code(&content.text)),
+                        media: content.map_or_else(Vec::new, |content| content.media),
                     }),
                     locus,
                 }));
@@ -249,23 +248,6 @@ fn usage_event(usage: &Object, locus: Locus) -> Result<Usage, ResidueKind> {
         reasoning_output_tokens: optional_unsigned(usage, "reasoning_output_tokens")?,
         locus,
     })
-}
-
-fn render_output(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(text) => text.clone(),
-        serde_json::Value::Array(values) => values
-            .iter()
-            .filter_map(|value| {
-                value
-                    .get("text")
-                    .or_else(|| value.get("content"))
-                    .and_then(serde_json::Value::as_str)
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        other => other.to_string(),
-    }
 }
 
 fn output_exit_code(output: &str) -> Option<i32> {

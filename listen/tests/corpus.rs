@@ -647,16 +647,24 @@ fn codex_function_calls_do_not_extract_media_from_argument_text() {
 }
 
 #[test]
-fn codex_tool_output_ignores_incomplete_markdown_image_literals_in_source_text() {
+fn codex_tool_output_keeps_markdown_and_json_image_literals_opaque() {
+    let png_url = "data:image/png;base64,iVBORw0KGgo=";
+    let output = format!(
+        concat!(
+            "cargo test --locked\n",
+            "![pixel.png]({png_url})\n",
+            "{{\"type\":\"image\",\"image_url\":\"{png_url}\"}}\n",
+            "const expected = \"![pixel.png](data:image/png;base64,\";\n",
+            "assert.match(attachment.data_url, /^data:image\\/png;base64,/);\n",
+        ),
+        png_url = png_url
+    );
     let codex_result = serde_json::to_vec(&serde_json::json!({
         "type": "response_item",
         "payload": {
             "type": "function_call_output",
             "call_id": "call-source-text",
-            "output": concat!(
-                "const expected = \"![pixel.png](data:image/png;base64,\";\n",
-                "assert.match(attachment.data_url, /^data:image\\/png;base64,/);\n",
-            ),
+            "output": output,
         },
     }))
     .expect("Codex function_call_output fixture encodes");
@@ -667,8 +675,98 @@ fn codex_tool_output_ignores_incomplete_markdown_image_literals_in_source_text()
         SurfaceEvent::from(&codex_result.events()[0]),
         SurfaceEvent::Tool {
             call_id,
-            moment: SurfaceToolMoment::Result { media, .. },
-        } if call_id == "call-source-text" && media.is_empty()
+            moment: SurfaceToolMoment::Result { output: observed, media, .. },
+        } if call_id == "call-source-text"
+            && observed.as_deref() == Some(output.as_str())
+            && media.is_empty()
+    ));
+}
+
+#[test]
+fn provider_tool_blocks_separate_neighbor_text_from_owning_media() {
+    const PNG: &str = "iVBORw0KGgo=";
+    let unrelated = "cargo test --locked";
+    let codex = serde_json::to_vec(&serde_json::json!({
+        "type": "event_msg",
+        "payload": {
+            "type": "mcp_tool_call_end",
+            "call_id": "call-image",
+            "result": {
+                "Ok": {
+                    "content": [
+                        {"type": "text", "text": unrelated},
+                        {"type": "image", "data": PNG, "mimeType": "image/png"},
+                    ],
+                    "isError": false,
+                },
+            },
+        },
+    }))
+    .expect("Codex mixed content fixture encodes");
+    let codex = decode(Dialect::Codex, &codex, locus(&codex)).expect("Codex mixed content decodes");
+    let [Event::Tool(codex)] = codex.events() else {
+        panic!("Codex mixed content remains one tool result");
+    };
+    let ToolMoment::Result(codex) = &codex.moment else {
+        panic!("Codex mixed content remains a result");
+    };
+    assert_eq!(codex.output.as_deref(), Some(unrelated));
+    assert_eq!(codex.media.len(), 1);
+
+    let claude = serde_json::to_vec(&serde_json::json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "call-image",
+                "is_error": false,
+                "content": [
+                    {"type": "text", "text": unrelated},
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": PNG,
+                    }},
+                ],
+            }],
+        },
+    }))
+    .expect("Claude mixed content fixture encodes");
+    let claude =
+        decode(Dialect::Claude, &claude, locus(&claude)).expect("Claude mixed content decodes");
+    let [Event::Tool(claude)] = claude.events() else {
+        panic!("Claude mixed content remains one tool result");
+    };
+    let ToolMoment::Result(claude) = &claude.moment else {
+        panic!("Claude mixed content remains a result");
+    };
+    assert_eq!(claude.output.as_deref(), Some(unrelated));
+    assert_eq!(claude.media.len(), 1);
+    assert_eq!(
+        codex.media[0].identity().unwrap(),
+        claude.media[0].identity().unwrap(),
+        "provider content shapes retain one decoded-byte identity",
+    );
+}
+
+#[test]
+fn malformed_provider_image_fails_as_media_instead_of_becoming_text() {
+    let malformed = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "function_call_output",
+            "call_id": "call-image",
+            "output": [{"type": "image", "data": "iVBORw0KGgo="}],
+        },
+    }))
+    .expect("malformed media fixture encodes");
+    let decoded = decode(Dialect::Codex, &malformed, locus(&malformed))
+        .expect("matching malformed-media locus");
+    assert!(matches!(
+        decoded,
+        Decoded::Residue(ref residue)
+            if matches!(residue.kind, ResidueKind::Malformed { field: "media", .. })
     ));
 }
 

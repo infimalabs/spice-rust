@@ -317,15 +317,23 @@ fn publish_agent_event(
             )?,
             prose.media.clone(),
         ),
-        listen::Event::Tool(tool) => (
-            AgentActivityKind::Tool,
-            tool.locus,
-            tool_preview::activity(lane, tool, previews),
-            match &tool.moment {
+        listen::Event::Tool(tool) => {
+            let activity = tool_preview::activity(lane, tool, previews);
+            let media = match &tool.moment {
                 listen::ToolMoment::Result(outcome) => outcome.media.clone(),
                 listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => Vec::new(),
-            },
-        ),
+            };
+            (
+                AgentActivityKind::Tool,
+                tool.locus,
+                if media.is_empty() {
+                    activity
+                } else {
+                    String::new()
+                },
+                media,
+            )
+        }
         listen::Event::Compaction(compaction) => (
             AgentActivityKind::Compaction,
             compaction.locus,
