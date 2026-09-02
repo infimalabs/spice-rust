@@ -40,6 +40,7 @@ const CODEX_REASONING: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-2","type":"reasoning","text":"inspect"}}"#;
 const CODEX_TOOL: &[u8] = br#"{"type":"item.started","item":{"id":"item-3","type":"command_execution","command":"cargo test","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#;
 const CODEX_WEB_SEARCH: &[u8] = br#"{"type":"item.started","item":{"id":"item-4","type":"web_search","query":"","action":{"type":"other"}}}"#;
+const CODEX_WEB_SEARCH_COMPLETED: &[u8] = br#"{"type":"item.completed","item":{"id":"item-4","type":"web_search","query":"","action":{"type":"other"}}}"#;
 const CODEX_USAGE: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":7,"cache_write_input_tokens":3,"output_tokens":5,"reasoning_output_tokens":2}}"#;
 const CODEX_USAGE_NO_REASONING: &[u8] = concat!(
     "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":11,",
@@ -203,6 +204,23 @@ fn current_opaque_failure_and_statusless_tool_payloads_are_preserved() {
         } if call_id == "item-4"
             && name == "web_search"
             && arguments == r#"{"query":""}"#
+    ));
+
+    let completed = decode(
+        Dialect::Codex,
+        CODEX_WEB_SEARCH_COMPLETED,
+        locus(CODEX_WEB_SEARCH_COMPLETED),
+    )
+    .expect("matching completed web-search locus");
+    assert!(matches!(
+        completed.events(),
+        [Event::Tool(tool)]
+            if tool.call_id == "item-4"
+                && matches!(
+                    tool.moment,
+                    ToolMoment::Result(ref outcome)
+                        if outcome.result == ToolResult::Unreported
+                )
     ));
 }
 
@@ -529,20 +547,21 @@ fn persisted_records_publish_vendor_neutral_context_and_facts() {
 }
 
 #[test]
-fn persisted_codex_web_search_completion_keeps_its_exact_source_identity() {
-    let search = br#"{"timestamp":"2026-08-28T22:03:56.940Z","type":"response_item","payload":{"type":"web_search_call","id":"ws-source-1","status":"completed"}}"#;
-    let decoded = decode(Dialect::Codex, search, locus(search))
-        .expect("the completed Codex web search stays typed");
+fn persisted_codex_web_search_pair_uses_the_end_events_source_identity() {
+    let search_end = br#"{"timestamp":"2026-06-12T18:59:47.314Z","type":"event_msg","payload":{"type":"web_search_end","call_id":"ws_09bd33a115eacab3016a2c571aa61c8195b63bcd7cc43b6883","query":"site:pypi.org/project/spice spice PyPI","action":{"type":"search","query":"site:pypi.org/project/spice spice PyPI","queries":["site:pypi.org/project/spice spice PyPI","PEP 541 Package Index Name Retention abandoned project no releases","PyPI support PEP 541 name request issue template","site:github.com/pypi/support spice PEP 541"]}}}"#;
+    let companion = br#"{"timestamp":"2026-06-12T18:59:47.323Z","type":"response_item","payload":{"type":"web_search_call","status":"completed","action":{"type":"search","query":"site:pypi.org/project/spice spice PyPI","queries":["site:pypi.org/project/spice spice PyPI","PEP 541 Package Index Name Retention abandoned project no releases","PyPI support PEP 541 name request issue template","site:github.com/pypi/support spice PEP 541"]}}}"#;
+    let decoded = decode(Dialect::Codex, search_end, locus(search_end))
+        .expect("the Codex web-search end stays typed");
 
     assert!(matches!(
         decoded.events(),
         [Event::Tool(call), Event::Tool(result)]
-            if call.call_id == "ws-source-1"
+            if call.call_id == "ws_09bd33a115eacab3016a2c571aa61c8195b63bcd7cc43b6883"
                 && call.moment == ToolMoment::Call {
                     name: "web_search".to_owned(),
-                    arguments: r#"{"query":null}"#.to_owned(),
+                    arguments: r#"{"query":"site:pypi.org/project/spice spice PyPI"}"#.to_owned(),
                 }
-                && result.call_id == "ws-source-1"
+                && result.call_id == "ws_09bd33a115eacab3016a2c571aa61c8195b63bcd7cc43b6883"
                 && matches!(
                     &result.moment,
                     ToolMoment::Result(outcome)
@@ -551,6 +570,27 @@ fn persisted_codex_web_search_completion_keeps_its_exact_source_identity() {
                             && outcome.exit_code.is_none()
                             && outcome.media.is_empty()
                 )
+    ));
+
+    let duplicate = decode(Dialect::Codex, companion, locus(companion))
+        .expect("the identity-free companion is explicitly accounted");
+    assert!(
+        duplicate.events().is_empty(),
+        "the companion cannot emit or resolve a synthetic call identity",
+    );
+    assert!(
+        duplicate.residue().is_none(),
+        "the validated completion/action shape is recognized duplicate accounting",
+    );
+
+    let status_only =
+        br#"{"type":"response_item","payload":{"type":"web_search_call","status":"completed"}}"#;
+    let residue = decode(Dialect::Codex, status_only, locus(status_only))
+        .expect("the unsupported status-only shape remains accounted");
+    assert!(matches!(
+        residue,
+        Decoded::Residue(ref residue)
+            if residue.kind == ResidueKind::Absent { field: "action" }
     ));
 }
 

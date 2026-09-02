@@ -180,14 +180,18 @@ fn codex_terminal_result_prevents_an_unavailable_marker() {
 }
 
 #[test]
-fn completed_codex_web_search_resolves_only_its_source_call_before_compaction() {
+fn codex_web_search_ends_resolve_only_their_own_calls_before_compaction() {
     let scratch = Scratch::new("codex-web-search-resolved");
     let transcript = scratch.transcript();
     fs::write(
         &transcript,
         concat!(
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\"}\",\"call_id\":\"call-command\"}}\n",
-            "{\"type\":\"response_item\",\"payload\":{\"type\":\"web_search_call\",\"id\":\"ws-source-1\",\"status\":\"completed\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"view_image\",\"arguments\":\"{\\\"path\\\":\\\"capture.png\\\"}\",\"call_id\":\"call-image\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"web_search_end\",\"call_id\":\"ws-without-companion\",\"query\":\"first\",\"action\":{\"type\":\"search\",\"query\":\"first\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"second\"}}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"web_search_end\",\"call_id\":\"ws-after-companion\",\"query\":\"second\",\"action\":{\"type\":\"search\",\"query\":\"second\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-image\",\"output\":[{\"type\":\"image\",\"data\":\"iVBORw0KGgo=\",\"mimeType\":\"image/png\"}]}}\n",
             "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"compacted\"}\n",
         ),
     )
@@ -199,7 +203,7 @@ fn completed_codex_web_search_resolves_only_its_source_call_before_compaction() 
     assert_eq!(
         records[0].unavailable_tool_terminals,
         ["exec command: cargo test"],
-        "the completed search neither remains pending nor resolves its neighbor",
+        "missing and reordered search companions neither remain pending nor resolve neighboring calls",
     );
 }
 

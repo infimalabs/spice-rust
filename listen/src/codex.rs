@@ -260,12 +260,12 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
             ),
         "exec_command_end" => completed_command(payload, locus),
         "mcp_tool_call_end" => rollout_mcp_result(payload, locus),
+        "web_search_end" => rollout_web_search_end(payload, locus),
         "token_count" => rollout_usage(payload, locus),
         "agent_message"
         | "user_message"
         | "thread_settings_applied"
         | "patch_apply_end"
-        | "web_search_end"
         | "context_compacted"
         | "turn_aborted" => Ok(Vec::new()),
         other => Err(drift(&format!("event_msg:{other}"))),
@@ -280,38 +280,35 @@ fn rollout_item(record: &Object, locus: Locus) -> Events {
         "function_call" | "custom_tool_call" => rollout_tool_call(payload, locus),
         "function_call_output" | "custom_tool_call_output" => rollout_tool_result(payload, locus),
         "token_count" => rollout_usage(payload, locus),
-        "web_search_call" => rollout_web_search(payload, locus),
+        "web_search_call" => rollout_web_search_companion(payload),
         other => Err(drift(&format!("response_item:{other}"))),
     }
 }
 
-fn rollout_web_search(payload: &Object, locus: Locus) -> Events {
-    let call_id = payload
-        .get("call_id")
-        .or_else(|| payload.get("id"))
-        .ok_or(ResidueKind::Malformed {
-            field: "payload.id",
-            expected: "string",
-        })?
-        .as_str()
-        .ok_or(ResidueKind::Malformed {
-            field: "payload.id",
-            expected: "string",
-        })?
-        .to_owned();
+fn rollout_web_search_companion(payload: &Object) -> Events {
     match string(payload, "status")? {
         "completed" => {}
         other => return Err(drift(&format!("item:status:{other}"))),
     }
+    object(payload, "action")?;
+
+    // Codex persists this identity-free status/action projection alongside the
+    // authoritative web_search_end. It is duplicate accounting, not a lifecycle
+    // record, regardless of its position relative to that end event.
+    Ok(Vec::new())
+}
+
+fn rollout_web_search_end(payload: &Object, locus: Locus) -> Events {
+    let call_id = string(payload, "call_id")?.to_owned();
+    let query = string(payload, "query")?.to_owned();
+    object(payload, "action")?;
+
     Ok(vec![
         Event::Tool(Tool {
             call_id: call_id.clone(),
             moment: ToolMoment::Call {
                 name: "web_search".to_owned(),
-                arguments: argument(
-                    "query",
-                    payload.get("query").cloned().unwrap_or(Value::Null),
-                ),
+                arguments: argument("query", Value::String(query)),
             },
             locus,
         }),
