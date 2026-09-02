@@ -36,6 +36,26 @@ pub(super) fn validated_snapshot_from(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
+    validated_snapshot_from_with_occupant(observed, principal, projects, allocation, None)
+}
+
+pub(super) fn validated_snapshot_for_automatic(
+    observed: &bus::TaskSnapshot,
+    principal: wire::Actor,
+    occupant: wire::CanonicalUuid,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
+    validated_snapshot_from_with_occupant(observed, principal, projects, allocation, Some(occupant))
+}
+
+fn validated_snapshot_from_with_occupant(
+    observed: &bus::TaskSnapshot,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    prospective_occupant: Option<wire::CanonicalUuid>,
+) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let cursor = observed.cursor().ok_or_else(|| {
         store_fault(
             "board::cursor-missing",
@@ -99,7 +119,10 @@ pub(super) fn validated_snapshot_from(
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
-    let actor_route = actor_route(&principal, &residency.body)?;
+    let actor_route = match prospective_occupant {
+        Some(occupant) => actor_route_with_occupant(&principal, &residency.body, Some(occupant))?,
+        None => actor_route(&principal, &residency.body)?,
+    };
     Ok(ValidatedSnapshot {
         cursor,
         facts: observed.facts().clone(),
@@ -319,6 +342,14 @@ pub(super) fn actor_route(
     principal: &wire::Actor,
     residency: &wire::ResidencyHead,
 ) -> Result<wire::intent::BoardActorRoute, Outcome<CommandAnswer>> {
+    actor_route_with_occupant(principal, residency, None)
+}
+
+fn actor_route_with_occupant(
+    principal: &wire::Actor,
+    residency: &wire::ResidencyHead,
+    prospective_occupant: Option<wire::CanonicalUuid>,
+) -> Result<wire::intent::BoardActorRoute, Outcome<CommandAnswer>> {
     let actor = match principal {
         wire::Actor::Operator => "operator".to_owned(),
         wire::Actor::Spice => "spice".to_owned(),
@@ -342,6 +373,7 @@ pub(super) fn actor_route(
                 })?,
                 None => row
                     .occupant
+                    .or(prospective_occupant)
                     .ok_or_else(|| {
                         protocol_fault(
                             "board::actor-route-occupant-missing",
