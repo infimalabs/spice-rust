@@ -712,6 +712,8 @@ export async function assertAgentConversation(
     actionCard,
     artifacts,
     seated.map(messageFooterLabel),
+    activityReplay,
+    seated[0].lane,
   );
 
   const scroller = plane;

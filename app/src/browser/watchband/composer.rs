@@ -362,23 +362,25 @@ fn render_agent_message_footer(
         "tape {}:{}+{}#{}",
         message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
     );
-    let card_actions = view::chrome::render_card_actions(&message.text, correspondent);
+    let has_actions = !message.text.trim().is_empty();
     let producer_label = producer_label.to_owned();
     let attribution = attribution.to_owned();
     let author = message.author.to_string();
     let author_title = format!("Copy agent id\n{author}");
     let copy_author = Callback::from(move |_| view::chrome::copy_text(&author));
     let producer_identity = html! {
-        <>
+        <span class="message-footer-identity">
             <button
                 class="message-agent-name"
                 type="button"
                 title={author_title}
                 aria-label={format!("Copy agent id for {attribution}")}
                 onclick={copy_author}
-            >{producer_label}</button>
-            <span class="message-footer-separator" aria-hidden="true">{"\u{b7}"}</span>
-        </>
+            ><span class="message-agent-label">{producer_label}</span></button>
+            if has_actions {
+                <span class="message-footer-separator" aria-hidden="true">{"\u{b7}"}</span>
+            }
+        </span>
     };
     html! {
         <footer class="message-footer">
@@ -387,7 +389,9 @@ fn render_agent_message_footer(
             </div>
             <div class="message-footer-right">
                 {producer_identity}
-                {card_actions}
+                if has_actions {
+                    {view::chrome::render_card_actions(&message.text, correspondent)}
+                }
             </div>
         </footer>
     }
