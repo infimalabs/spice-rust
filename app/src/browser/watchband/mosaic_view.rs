@@ -727,7 +727,8 @@ async fn measure_unknown(
         return None;
     }
     let host = host.cast::<web_sys::Element>()?;
-    let mut measured = Vec::with_capacity(unknown.len());
+    let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
+    let mut pending = Vec::with_capacity(unknown.len());
     for (_index, activity, image_revision, latched_span) in unknown {
         let selector = format!("[data-mosaic-card-key=\"{}\"]", activity.key());
         let Some(element) = host.query_selector(&selector).ok().flatten() else {
@@ -736,13 +737,119 @@ async fn measure_unknown(
         let Some(element) = element.dyn_into::<web_sys::HtmlElement>().ok() else {
             continue;
         };
-        if let Some(measurement) =
-            measure_element(&element, width, &activity, image_revision, latched_span)
-        {
-            measured.push(measurement);
+        if !prepare_images(&element) {
+            continue;
+        }
+        element
+            .set_attribute("data-mosaic-measurement-active", "true")
+            .expect("the fixed Mosaic measurement attribute is valid");
+        pending.push(PendingActivityMeasurement {
+            activity,
+            element,
+            image_revision,
+            latched_span,
+            spans: Vec::with_capacity(3),
+            widths: Vec::with_capacity(3),
+            heights: Vec::with_capacity(3),
+        });
+    }
+    measure_pending_tier(&mut pending, |item| {
+        Some(item.activity.base_span(&geometry))
+    });
+    measure_pending_tier(&mut pending, |item| {
+        (!item.activity.is_boundary()
+            && f64::from(item.heights[0]) >= crate::mosaic::TALL_THRESHOLD_PX)
+            .then(|| geometry.wide_span())
+            .flatten()
+    });
+    measure_pending_tier(&mut pending, |item| {
+        item.latched_span.filter(|span| !item.spans.contains(span))
+    });
+    for item in &pending {
+        set_measure_span(&item.element, item.activity.base_span(&geometry));
+        item.element
+            .remove_attribute("data-mosaic-measurement-active")
+            .expect("the fixed Mosaic measurement attribute is valid");
+    }
+    Some(
+        pending
+            .into_iter()
+            .map(|item| item.finish(width, &geometry))
+            .collect(),
+    )
+}
+
+struct PendingActivityMeasurement {
+    activity: ActivityCard,
+    element: web_sys::HtmlElement,
+    image_revision: u64,
+    latched_span: Option<usize>,
+    spans: Vec<usize>,
+    widths: Vec<i32>,
+    heights: Vec<i32>,
+}
+
+impl PendingActivityMeasurement {
+    fn finish(self, width: i32, geometry: &crate::mosaic::Geometry) -> ActivityMeasurement {
+        let measured_height = |span| {
+            self.spans
+                .iter()
+                .position(|measured| *measured == span)
+                .map(|index| f64::from(self.heights[index]))
+                .unwrap_or_else(|| panic!("Mosaic measured span {span} before admission"))
+        };
+        let candidates = if self.activity.base_span(geometry) == crate::mosaic::TRACK_COUNT {
+            let height = measured_height(crate::mosaic::TRACK_COUNT);
+            vec![crate::mosaic::Candidate {
+                span: crate::mosaic::TRACK_COUNT,
+                rows: if self.activity.is_boundary() {
+                    crate::mosaic::boundary_rows_for(height, geometry.gap, geometry.module)
+                } else {
+                    crate::mosaic::rows_for(height, geometry.gap, geometry.module)
+                },
+            }]
+        } else {
+            crate::mosaic::span_candidates(geometry, measured_height)
+        };
+        let latched = self
+            .latched_span
+            .filter(|span| candidates.iter().all(|candidate| candidate.span != *span))
+            .map(|span| crate::mosaic::Candidate {
+                span,
+                rows: crate::mosaic::rows_for(measured_height(span), geometry.gap, geometry.module),
+            });
+        ActivityMeasurement {
+            width,
+            key: self.activity.key(),
+            fingerprint: self.activity.measurement_fingerprint(),
+            image_revision: self.image_revision,
+            candidates,
+            latched,
+            spans: self.spans,
+            widths: self.widths,
+            heights: self.heights,
         }
     }
-    Some(measured)
+}
+
+fn measure_pending_tier(
+    pending: &mut [PendingActivityMeasurement],
+    span_for: impl Fn(&PendingActivityMeasurement) -> Option<usize>,
+) {
+    let spans = pending.iter().map(&span_for).collect::<Vec<_>>();
+    for (item, span) in pending.iter().zip(&spans) {
+        if let Some(span) = span {
+            set_measure_span(&item.element, *span);
+        }
+    }
+    for (item, span) in pending.iter_mut().zip(spans) {
+        let Some(span) = span else {
+            continue;
+        };
+        item.spans.push(span);
+        item.widths.push(item.element.offset_width());
+        item.heights.push(item.element.offset_height());
+    }
 }
 
 fn measure_element(

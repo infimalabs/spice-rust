@@ -85,6 +85,13 @@ impl Geometry {
         }
     }
 
+    /// Wider policy span available when base content crosses the tall threshold.
+    #[must_use]
+    pub(crate) fn wide_span(&self) -> Option<usize> {
+        let span = (self.base_span * WIDE_FACTOR).min(TRACK_COUNT);
+        (span > self.base_span).then_some(span)
+    }
+
     /// Rendered width for one anchored card, using the shared edge table.
     #[must_use]
     pub fn card_width(&self, track: usize, span: usize) -> i32 {
@@ -216,8 +223,7 @@ fn span_candidates_with_threshold(
         span: geometry.base_span,
         rows: rows_for(base_px, geometry.gap, geometry.module),
     }];
-    let wide_span = (geometry.base_span * WIDE_FACTOR).min(TRACK_COUNT);
-    if wide_span > geometry.base_span && base_px >= threshold {
+    if let Some(wide_span) = geometry.wide_span().filter(|_| base_px >= threshold) {
         candidates.push(Candidate {
             span: wide_span,
             rows: rows_for(measure(wide_span), geometry.gap, geometry.module),
