@@ -134,8 +134,8 @@ export async function assertQuoteBlockDensity(cards, label) {
           quote.borderTopRightRadius,
           quote.borderBottomRightRadius,
           quote.borderBottomLeftRadius,
-        ].every((radius) => near(radius, 0)),
-        `${label} ${kind} quote ${index} keeps its left rail square`,
+        ].every((radius) => near(radius, 12)),
+        `${label} ${kind} quote ${index} is rounded around its single rail`,
       );
       assert.ok(
         near(quote.fontSize, 13) && quote.fontSize < observed.typography.bodyFontSize,
