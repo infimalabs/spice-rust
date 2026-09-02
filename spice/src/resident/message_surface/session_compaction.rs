@@ -37,6 +37,7 @@ struct Cursor {
     dialect: listen::Dialect,
     author: CanonicalUuid,
     member: u64,
+    observed: Option<wire::Instant>,
     next: u64,
     next_call: u64,
     pending: BTreeMap<String, PendingTool>,
@@ -163,7 +164,7 @@ impl SessionCompactions {
         self.reported.retain(|lane, _| lanes.contains(lane));
 
         for (lane, session) in current {
-            self.ensure_cursor(lane, session, diagnostic);
+            self.ensure_cursor(lane, session, &state.observations, diagnostic);
             let Some((scanned, path, author)) = self.cursors.get_mut(&lane).map(|cursor| {
                 let path = cursor.path.clone();
                 let author = cursor.author;
@@ -190,6 +191,7 @@ impl SessionCompactions {
         &mut self,
         lane: CanonicalUuid,
         session: &wire::LaneSession,
+        observations: &MessageObservations,
         diagnostic: &mut dyn io::Write,
     ) {
         if let Some(cursor) = self.cursors.get_mut(&lane)
@@ -213,6 +215,14 @@ impl SessionCompactions {
                         dialect,
                         author: session.occupant,
                         member: session_member(&session.identity),
+                        observed: observations.at(
+                            lane,
+                            listen::Locus {
+                                member: session.locus.member,
+                                offset: session.locus.offset,
+                                length: session.locus.length,
+                            },
+                        ),
                         next: 0,
                         next_call: 0,
                         pending: BTreeMap::new(),
@@ -241,6 +251,7 @@ impl SessionCompactions {
 struct CompactionRecord {
     decoded: listen::Event,
     authored: Option<String>,
+    observed: Option<wire::Instant>,
     ordinal: u32,
     unavailable_tool_terminals: Vec<String>,
 }
@@ -295,6 +306,7 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
                     records.push(CompactionRecord {
                         decoded: event.clone(),
                         authored: authored.clone(),
+                        observed: cursor.observed,
                         ordinal,
                         unavailable_tool_terminals: unavailable
                             .into_iter()
@@ -624,7 +636,7 @@ fn publish(
             ordinal: record.ordinal,
             decoded: &record.decoded,
             authored: record.authored.as_deref(),
-            observed: state.observations.latest(lane),
+            observed: record.observed,
             observations: &state.observations,
             unavailable_tool_terminals: &record.unavailable_tool_terminals,
         },

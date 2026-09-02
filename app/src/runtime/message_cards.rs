@@ -98,7 +98,7 @@ impl MessageCards {
                 .unwrap_or_else(|| Rc::new(message.clone()));
             next.push(retained);
         }
-        next.sort_by_key(|message| message_chronology_key(message));
+        next.sort_by_key(|message| message.chronology_key());
         trim_all_lanes(&mut next, limit);
         let changed = self.entries != next;
         self.entries = next;
@@ -139,8 +139,7 @@ impl MessageCards {
             }
         }
         if mutated {
-            self.entries
-                .sort_by_key(|message| message_chronology_key(message));
+            self.entries.sort_by_key(|message| message.chronology_key());
             if let Some(limit) = self.limit {
                 for lane in touched {
                     trim_agent_message_lane(&mut self.entries, lane, limit);
@@ -156,19 +155,6 @@ impl MessageCards {
             true
         }
     }
-}
-
-pub(super) fn message_chronology_key(
-    message: &AgentMessage,
-) -> (i64, CanonicalUuid, u64, u64, u64, u32) {
-    (
-        agent_message_display_millis(message),
-        message.lane,
-        message.locus.member,
-        message.locus.offset,
-        message.locus.length,
-        message.locus.event,
-    )
 }
 
 fn trim_all_lanes(messages: &mut Vec<Rc<AgentMessage>>, limit: usize) {

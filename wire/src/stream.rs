@@ -130,6 +130,40 @@ pub struct AgentMessage {
     pub media: Vec<crate::Media>,
 }
 
+impl AgentMessage {
+    /// Millisecond used to display and order this message on Canvas surfaces.
+    ///
+    /// A durable Spice observation is preferred for timestamp-less vendor
+    /// records. The synthetic authored instant remains the stable fallback and
+    /// its provenance stays explicit in [`Self::authored_synthetic`].
+    #[must_use]
+    pub fn display_millis(&self) -> i64 {
+        self.observed
+            .as_ref()
+            .unwrap_or(&self.authored)
+            .get()
+            .as_millisecond()
+    }
+
+    /// Total display chronology shared by every message producer and consumer.
+    ///
+    /// The complete source locus breaks equal-time ties. In particular,
+    /// `length` cannot be omitted: source replacement can retain an offset while
+    /// changing the record extent, and every projection must still make the
+    /// same deterministic ordering decision.
+    #[must_use]
+    pub fn chronology_key(&self) -> (i64, CanonicalUuid, u64, u64, u64, u32) {
+        (
+            self.display_millis(),
+            self.lane,
+            self.locus.member,
+            self.locus.offset,
+            self.locus.length,
+            self.locus.event,
+        )
+    }
+}
+
 const fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -137,6 +171,32 @@ const fn is_false(value: &bool) -> bool {
 #[cfg(test)]
 mod message_retention_tests {
     use super::*;
+
+    fn message(length: u64) -> AgentMessage {
+        AgentMessage {
+            lane: "018f82d4-6f59-7d06-92e3-bce9131163e5"
+                .parse()
+                .expect("fixture lane"),
+            author: "018f82d4-6f59-7d06-92e3-bce9131163ef"
+                .parse()
+                .expect("fixture author"),
+            locus: MessageLocus {
+                member: 1,
+                offset: 20,
+                length,
+                event: 0,
+            },
+            authored: "2030-04-12T18:44:09.271Z"
+                .parse()
+                .expect("fixture authored instant"),
+            authored_synthetic: false,
+            observed: None,
+            activity: AgentActivityKind::Prose,
+            text: "fixture".to_owned(),
+            unavailable_tool_terminals: Vec::new(),
+            media: Vec::new(),
+        }
+    }
 
     #[test]
     fn bounded_history_starts_at_the_oldest_compaction_inside_its_capacity() {
@@ -156,6 +216,21 @@ mod message_retention_tests {
             20,
         );
         assert_eq!(AgentActivityKind::retention_start(&activities, 0), 300);
+    }
+
+    #[test]
+    fn message_chronology_uses_observation_time_and_the_complete_source_locus() {
+        let shorter = message(10);
+        let mut longer = message(11);
+        assert!(shorter.chronology_key() < longer.chronology_key());
+
+        longer.observed = Some(
+            "2030-04-12T18:45:00.000Z"
+                .parse()
+                .expect("fixture observation instant"),
+        );
+        assert_eq!(longer.chronology_key().0, longer.display_millis());
+        assert!(shorter.chronology_key() < longer.chronology_key());
     }
 }
 

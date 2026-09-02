@@ -3,7 +3,7 @@
 use super::*;
 
 #[cfg(test)]
-use super::message_cards::{message_chronology_key, trim_agent_message_lane};
+use super::message_cards::trim_agent_message_lane;
 
 const OPERATOR_MESSAGE_LIMIT: usize = 256;
 
@@ -754,7 +754,7 @@ mod message_retention_tests {
             message(lane_a, 2),
         ];
 
-        messages.sort_by_key(message_chronology_key);
+        messages.sort_by_key(AgentMessage::chronology_key);
 
         assert_eq!(
             messages

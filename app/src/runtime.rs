@@ -456,12 +456,7 @@ impl LaneActivity {
 /// on the retained wire message.
 #[must_use]
 pub(crate) fn agent_message_display_millis(message: &wire::AgentMessage) -> i64 {
-    message
-        .observed
-        .as_ref()
-        .unwrap_or(&message.authored)
-        .get()
-        .as_millisecond()
+    message.display_millis()
 }
 
 /// Durable identity used to ignore a repeated live activity without moving it
