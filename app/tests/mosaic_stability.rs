@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use app::mosaic::Candidate;
+use app::mosaic::{Candidate, Lifecycle};
 use app::mosaic_plane::{MeasuredCard, PersistentLanePlane, Transition};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -9,9 +9,15 @@ struct PlacementTuple {
     base_row: i32,
     span: usize,
     extent: i32,
+    lifecycle: Lifecycle,
 }
 
-type PlacementSnapshot = BTreeMap<&'static str, PlacementTuple>;
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PlacementSnapshot {
+    cards: BTreeMap<&'static str, PlacementTuple>,
+    max_row: i32,
+    rows: i32,
+}
 
 struct MovementDeclaration {
     targets: &'static [&'static str],
@@ -40,7 +46,7 @@ fn placements(
     selected: &[&'static str],
 ) -> PlacementSnapshot {
     let selected = selected.iter().copied().collect::<BTreeSet<_>>();
-    let snapshot = plane
+    let cards = plane
         .cards()
         .iter()
         .filter(|entry| selected.is_empty() || selected.contains(entry.key))
@@ -52,22 +58,27 @@ fn placements(
                     base_row: entry.card.base,
                     span: entry.card.span,
                     extent: entry.card.rows,
+                    lifecycle: entry.card.lifecycle,
                 },
             )
         })
-        .collect::<PlacementSnapshot>();
+        .collect::<BTreeMap<_, _>>();
     assert!(
-        !snapshot.is_empty(),
+        !cards.is_empty(),
         "a canonical placement snapshot cannot be empty"
     );
     if !selected.is_empty() {
         assert_eq!(
-            snapshot.keys().copied().collect::<BTreeSet<_>>(),
+            cards.keys().copied().collect::<BTreeSet<_>>(),
             selected,
             "a canonical placement snapshot contains every selected identity",
         );
     }
-    snapshot
+    PlacementSnapshot {
+        cards,
+        max_row: plane.max_row(),
+        rows: plane.rows(),
+    }
 }
 
 fn assert_stable(
@@ -82,8 +93,8 @@ fn assert_stable(
         added.len(),
         "{label} declares each addition once"
     );
-    for (key, prior) in before {
-        let Some(current) = after.get(key) else {
+    for (key, prior) in &before.cards {
+        let Some(current) = after.cards.get(key) else {
             panic!("{label}: card {key:?} disappeared; before={prior:?}");
         };
         assert_eq!(
@@ -91,20 +102,27 @@ fn assert_stable(
             "{label}: card {key:?} moved unexpectedly; before={prior:?} after={current:?}",
         );
     }
-    for (key, current) in after {
+    for (key, current) in &after.cards {
         assert!(
-            before.contains_key(key) || additions.contains(key),
+            before.cards.contains_key(key) || additions.contains(key),
             "{label}: undeclared card {key:?} appeared; after={current:?}",
         );
     }
     for key in additions {
         assert!(
-            !before.contains_key(key),
+            !before.cards.contains_key(key),
             "{label}: addition {key:?} existed before"
         );
         assert!(
-            after.contains_key(key),
+            after.cards.contains_key(key),
             "{label}: addition {key:?} did not appear"
+        );
+    }
+    if added.is_empty() {
+        assert_eq!(
+            (after.max_row, after.rows),
+            (before.max_row, before.rows),
+            "{label}: plane extent changed without a declared addition"
         );
     }
 }
@@ -126,11 +144,11 @@ fn assert_declared_movement(
         "movement declares each target once"
     );
     assert_eq!(
-        before.keys().collect::<Vec<_>>(),
-        after.keys().collect::<Vec<_>>()
+        before.cards.keys().collect::<Vec<_>>(),
+        after.cards.keys().collect::<Vec<_>>()
     );
-    for (key, prior) in before {
-        let current = &after[key];
+    for (key, prior) in &before.cards {
+        let current = &after.cards[key];
         if targets.contains(key) {
             assert_ne!(
                 current, prior,
@@ -145,7 +163,13 @@ fn assert_declared_movement(
             );
         }
     }
-    assert!(targets.iter().all(|key| before.contains_key(key)));
+    assert!(targets.iter().all(|key| before.cards.contains_key(key)));
+    assert_ne!(
+        (after.max_row, after.rows),
+        (before.max_row, before.rows),
+        "declared card movement also changes plane extent for {}",
+        declaration.cause,
+    );
 }
 
 #[test]
@@ -196,9 +220,15 @@ fn noops_content_only_updates_and_sibling_activity_preserve_committed_tuples() {
             sibling,
         ],
     );
+    let before_append = placements(&revised, &[]);
+    let after_append = placements(&appended, &[]);
+    assert!(
+        after_append.rows > before_append.rows,
+        "the declared sibling addition grows the plane extent"
+    );
     assert_stable(
-        &placements(&revised, &[]),
-        &placements(&appended, &[]),
+        &before_append,
+        &after_append,
         &["sibling-agent-message"],
         "activity from a sibling agent",
     );
@@ -282,9 +312,18 @@ fn pagination_outside_an_epoch_preserves_the_selected_committed_tuples() {
             initial[4].clone(),
         ],
     );
+    let paged = placements(&second_page, &[]);
+    assert_eq!(
+        paged.max_row, committed.max_row,
+        "backfill grows below the committed maximum row"
+    );
+    assert!(
+        paged.rows > committed.rows,
+        "the declared backfill addition grows the plane extent"
+    );
     assert_stable(
         &committed,
-        &placements(&second_page, &[]),
+        &paged,
         &["oldest"],
         "pagination before the affected epoch",
     );
