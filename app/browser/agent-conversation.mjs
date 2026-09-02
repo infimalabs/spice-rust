@@ -1004,16 +1004,26 @@ async function assertRosterPips(page, console, seated) {
   const chromePipGrid = await brandPips.evaluateAll((pips) => pips.map((pip) => {
     const box = pip.getBoundingClientRect();
     return {
+      column: pip.dataset.pipColumn,
+      lane: pip.dataset.agentLane,
       left: box.left,
+      row: pip.dataset.pipRow,
       top: box.top,
     };
   }));
-  assert.equal(chromePipGrid[0].left, chromePipGrid[1].left);
-  assert.ok(chromePipGrid[0].top > chromePipGrid[1].top);
-  assert.ok(chromePipGrid[2].left < chromePipGrid[0].left);
-  assert.equal(chromePipGrid[2].top, chromePipGrid[0].top);
-  assert.equal(chromePipGrid[2].left, chromePipGrid[3].left);
-  assert.equal(chromePipGrid[3].top, chromePipGrid[1].top);
+  const chromePipsByLane = new Map(chromePipGrid.map((pip) => [pip.lane, pip]));
+  const orderedPips = seated.map((member) => chromePipsByLane.get(member.lane));
+  assert.deepEqual(
+    orderedPips.map(({ column, row }) => [column, row]),
+    [["2", "2"], ["2", "1"], ["1", "2"], ["1", "1"]],
+    "pip coordinates explicitly encode bottom-right, upper-right, bottom-left, upper-left",
+  );
+  assert.equal(orderedPips[0].left, orderedPips[1].left);
+  assert.ok(orderedPips[0].top > orderedPips[1].top);
+  assert.ok(orderedPips[2].left < orderedPips[0].left);
+  assert.equal(orderedPips[2].top, orderedPips[0].top);
+  assert.equal(orderedPips[2].left, orderedPips[3].left);
+  assert.equal(orderedPips[3].top, orderedPips[1].top);
   await assertPartialPipStack(page);
   assert.equal(
     await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
@@ -1028,12 +1038,14 @@ async function assertRosterPips(page, console, seated) {
 async function assertPartialPipStack(page) {
   const pips = await page.evaluate(() => {
     const clone = document.querySelector(".brand-dots").cloneNode(true);
-    clone.querySelectorAll(".brand-dot")[3].remove();
+    clone.querySelector('[data-pip-column="1"][data-pip-row="1"]').remove();
     document.body.append(clone);
     const geometry = [...clone.querySelectorAll(".brand-dot")].map((pip) => {
       const box = pip.getBoundingClientRect();
       return {
+        column: pip.dataset.pipColumn,
         left: box.left,
+        row: pip.dataset.pipRow,
         top: box.top,
       };
     });
@@ -1041,6 +1053,14 @@ async function assertPartialPipStack(page) {
     return geometry;
   });
   assert.equal(pips.length, 3, "partial compact roster contains three physical pips");
+  pips.sort((left, right) => (
+    Number(right.column) - Number(left.column) || Number(right.row) - Number(left.row)
+  ));
+  assert.deepEqual(
+    pips.map(({ column, row }) => [column, row]),
+    [["2", "2"], ["2", "1"], ["1", "2"]],
+    "a partial grid leaves the unpaired pip on the lower left",
+  );
   assert.equal(pips[0].left, pips[1].left);
   assert.ok(pips[0].top > pips[1].top);
   assert.ok(pips[2].left < pips[0].left);

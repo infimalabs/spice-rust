@@ -116,9 +116,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 .brand-dots {
+  align-items: flex-end;
   display: flex;
   flex: 0 0 auto;
-  flex-direction: row-reverse;
   gap: 5px;
   justify-content: center;
   min-width: 18px;
@@ -126,12 +126,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .brand-dot-column {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: 4px;
-  height: 22px;
 }
-
-.brand-dots.single .brand-dot-column { height: 9px; }
 
 .brand-dot {
   width: 9px;
