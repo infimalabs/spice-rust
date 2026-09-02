@@ -240,16 +240,18 @@ fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &Submission
             )
         })
         .unwrap_or_default();
+    let grid = crate::pip_layout::PipGrid::new(members.len());
     html! {
         <span
-            class={classes!("brand-dots", (members.len() == 1).then_some("single"))}
+            class="brand-dots"
             role="group"
             aria-label={format!("{} admitted agents", members.len())}
         >
-            {for members.chunks(2).map(|column| html! {
-                <span class="brand-dot-column">
-                    {for column.iter().map(|(member, pending)| {
-                        let status = member.status(*pending);
+            {for grid.columns_from_left().map(|column| html! {
+                <span key={column.lower.to_string()} class="brand-dot-column">
+                    {for [column.upper, Some(column.lower)].into_iter().flatten().map(|index| {
+                        let (member, pending) = members[index];
+                        let status = member.status(pending);
                         let label = member.name.as_deref().unwrap_or_else(|| {
                             member
                                 .worktree
@@ -257,6 +259,9 @@ fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &Submission
                                 .find(|segment| !segment.is_empty())
                                 .unwrap_or(&member.worktree)
                         });
+                        let position = grid
+                            .position(index)
+                            .expect("member index belongs to the pip grid");
                         html! {
                             <span
                                 key={member.lane.to_string()}
@@ -266,6 +271,8 @@ fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &Submission
                                 title={format!("{label}: {}", status.label())}
                                 data-agent-lane={member.lane.to_string()}
                                 data-agent-status={status.key()}
+                                data-pip-column={position.column.to_string()}
+                                data-pip-row={position.row.to_string()}
                             ></span>
                         }
                     })}
