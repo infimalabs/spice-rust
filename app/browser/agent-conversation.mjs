@@ -549,7 +549,7 @@ export async function assertAgentConversation(
     )),
   ]);
   await Promise.all(currentProse);
-  await assertRosterPips(page, console, seated);
+  await assertRosterPips(page, console, seated, artifacts);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
   for (const name of producerNames) {
     assert.match(accessibility, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -972,7 +972,7 @@ export async function assertFourAgentDensity(console) {
   }
 }
 
-async function assertRosterPips(page, console, seated) {
+async function assertRosterPips(page, console, seated, artifacts) {
   const teamPips = console.locator(".team-light");
   await teamPips.nth(seated.length - 1).waitFor();
   const teamRoster = await teamPips.evaluateAll((pips) => pips.map((pip) => ({
@@ -1015,16 +1015,16 @@ async function assertRosterPips(page, console, seated) {
   const orderedPips = seated.map((member) => chromePipsByLane.get(member.lane));
   assert.deepEqual(
     orderedPips.map(({ column, row }) => [column, row]),
-    [["2", "2"], ["2", "1"], ["1", "2"], ["1", "1"]],
-    "pip coordinates explicitly encode bottom-right, upper-right, bottom-left, upper-left",
+    [["2", "2"], ["1", "2"], ["2", "1"], ["1", "1"]],
+    "pip coordinates proceed across the lower row before the upper row, right to left",
   );
-  assert.equal(orderedPips[0].left, orderedPips[1].left);
-  assert.ok(orderedPips[0].top > orderedPips[1].top);
-  assert.ok(orderedPips[2].left < orderedPips[0].left);
-  assert.equal(orderedPips[2].top, orderedPips[0].top);
-  assert.equal(orderedPips[2].left, orderedPips[3].left);
-  assert.equal(orderedPips[3].top, orderedPips[1].top);
-  await assertPartialPipStack(page);
+  assert.equal(orderedPips[0].left, orderedPips[2].left);
+  assert.ok(orderedPips[0].top > orderedPips[2].top);
+  assert.ok(orderedPips[1].left < orderedPips[0].left);
+  assert.equal(orderedPips[1].top, orderedPips[0].top);
+  assert.equal(orderedPips[1].left, orderedPips[3].left);
+  assert.equal(orderedPips[3].top, orderedPips[2].top);
+  await assertPartialPipStack(page, artifacts);
   assert.equal(
     await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
     0,
@@ -1035,12 +1035,23 @@ async function assertRosterPips(page, console, seated) {
   await waitForMosaicReady(page);
 }
 
-async function assertPartialPipStack(page) {
-  const pips = await page.evaluate(() => {
-    const clone = document.querySelector(".brand-dots").cloneNode(true);
-    clone.querySelector('[data-pip-column="1"][data-pip-row="1"]').remove();
-    document.body.append(clone);
-    const geometry = [...clone.querySelectorAll(".brand-dot")].map((pip) => {
+async function assertPartialPipStack(page, artifacts) {
+  const originalViewport = page.viewportSize();
+  assert.ok(originalViewport, "pip screenshot coverage requires a fixed viewport");
+  await page.evaluate(() => {
+    const original = document.querySelector(".brand-dots");
+    const clone = original.cloneNode(true);
+    const upperRight = clone.querySelector('[data-pip-column="2"][data-pip-row="1"]');
+    if (!upperRight) throw new Error("four-pip roster is missing its upper-right pip");
+    upperRight.remove();
+    clone.setAttribute("aria-label", "3 admitted agents");
+    clone.dataset.pipLayoutWitness = "three";
+    window.__pipLayoutOriginal = original;
+    original.replaceWith(clone);
+  });
+  const witness = page.locator('[data-pip-layout-witness="three"]');
+  const geometry = async () => witness.locator(".brand-dot").evaluateAll((pips) => (
+    pips.map((pip) => {
       const box = pip.getBoundingClientRect();
       return {
         column: pip.dataset.pipColumn,
@@ -1048,23 +1059,44 @@ async function assertPartialPipStack(page) {
         row: pip.dataset.pipRow,
         top: box.top,
       };
-    });
-    clone.remove();
-    return geometry;
-  });
-  assert.equal(pips.length, 3, "partial compact roster contains three physical pips");
-  pips.sort((left, right) => (
-    Number(right.column) - Number(left.column) || Number(right.row) - Number(left.row)
+    })
   ));
-  assert.deepEqual(
-    pips.map(({ column, row }) => [column, row]),
-    [["2", "2"], ["2", "1"], ["1", "2"]],
-    "a partial grid leaves the unpaired pip on the lower left",
-  );
-  assert.equal(pips[0].left, pips[1].left);
-  assert.ok(pips[0].top > pips[1].top);
-  assert.ok(pips[2].left < pips[0].left);
-  assert.equal(pips[2].top, pips[0].top);
+  const assertGeometry = (pips, viewport) => {
+    assert.equal(pips.length, 3, `${viewport} compact roster contains three physical pips`);
+    pips.sort((left, right) => (
+      Number(right.column) - Number(left.column) || Number(right.row) - Number(left.row)
+    ));
+    assert.deepEqual(
+      pips.map(({ column, row }) => [column, row]),
+      [["2", "2"], ["1", "2"], ["1", "1"]],
+      `${viewport} partial grid completes the left column and leaves the lower-right pip`,
+    );
+    assert.ok(pips[1].left < pips[0].left);
+    assert.equal(pips[1].top, pips[0].top);
+    assert.equal(pips[1].left, pips[2].left);
+    assert.ok(pips[1].top > pips[2].top);
+  };
+  const browser = page.context().browser().browserType().name();
+  try {
+    assertGeometry(await geometry(), "desktop");
+    await page.screenshot({
+      path: join(artifacts, `${browser}-pip-grid-three-desktop.png`),
+      clip: { x: 0, y: 0, width: Math.min(originalViewport.width, 640), height: 180 },
+    });
+    await page.setViewportSize({ width: 480, height: 720 });
+    assertGeometry(await geometry(), "narrow");
+    await page.screenshot({
+      path: join(artifacts, `${browser}-pip-grid-three-narrow.png`),
+      clip: { x: 0, y: 0, width: 480, height: 180 },
+    });
+  } finally {
+    await page.setViewportSize(originalViewport);
+    await page.evaluate(() => {
+      const witness = document.querySelector('[data-pip-layout-witness="three"]');
+      if (witness && window.__pipLayoutOriginal) witness.replaceWith(window.__pipLayoutOriginal);
+      delete window.__pipLayoutOriginal;
+    });
+  }
 }
 
 async function assertQueuedRosterPip(page, console, member) {
