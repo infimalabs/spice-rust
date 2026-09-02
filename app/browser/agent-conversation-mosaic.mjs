@@ -21,7 +21,7 @@ import {
   assertPlacementStable,
   assertUnmoved,
   finishPlacementProbe,
-} from "./mosaic-placement-probe.mjs";
+} from "./mosaic-placement-reference.mjs";
 
 export {
   armPlacementProbe,
@@ -29,7 +29,7 @@ export {
   assertPlacementStable,
   assertUnmoved,
   finishPlacementProbe,
-} from "./mosaic-placement-probe.mjs";
+} from "./mosaic-placement-reference.mjs";
 export { assertStagedMosaicHydration } from "./mosaic-history-pagination.mjs";
 export { assertMosaicLattice, waitForMosaicReady } from "./mosaic-lattice.mjs";
 

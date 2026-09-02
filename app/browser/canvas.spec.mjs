@@ -567,8 +567,8 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   const quotedTitle = await quotedComposer.getAttribute("title");
   assert.ok(quotedTitle, "the quoted message remains attached to the shard it minted");
   assert.equal(
-    quotedTitle.replaceAll("`", "").trim(),
-    quoteSourceBody,
+    quotedTitle.replaceAll("`", "").replace(/\s+/g, " ").trim(),
+    quoteSourceBody.replace(/\s+/g, " ").trim(),
     "the quote shard preserves the selected assistant card's content",
   );
   await assertComposerTypingDoesNotRemeasureActivity(

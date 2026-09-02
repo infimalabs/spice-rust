@@ -12,7 +12,7 @@ import {
   assertPlacementStable,
   assertUnmoved,
   finishPlacementProbe,
-} from "./mosaic-placement-probe.mjs";
+} from "./mosaic-placement-reference.mjs";
 
 async function waitForReady(page, label = "progressive Mosaic settles") {
   await waitForPage(page, label, TRANSITION_MS, () => {
