@@ -335,7 +335,15 @@ fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
                             src={media.data_url.clone()}
                             alt={media.name.clone()}
                             data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
+                            data-mosaic-image-state="pending"
                         />
+                        <span
+                            class="message-image-status"
+                            role="status"
+                            data-mosaic-image-status="pending"
+                        >
+                            {"Loading image"}
+                        </span>
                     </a>
                 }
             })}

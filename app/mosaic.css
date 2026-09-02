@@ -91,9 +91,6 @@
 .markdown-body th,
 .markdown-body td { padding: .35em .45em; border: 1px solid var(--line); text-align: left; }
 .markdown-body a { color: var(--accent); }
-.markdown-body img[data-mosaic-image-state="pending"] {
-  width: 100%;
-}
 .composer-send {
   margin-left: auto;
   background: var(--accent);
@@ -191,58 +188,53 @@
 }
 
 .message-image {
-  display: inline-grid;
-  flex: 0 1 min(9.75rem, 100%);
-  max-width: min(9.75rem, 100%);
-  min-width: 0;
-  place-items: center;
-  text-decoration: none;
+  display: inline-grid; flex: 0 1 min(9.75rem, 100%); max-width: min(9.75rem, 100%);
+  min-width: 0; place-items: center; text-decoration: none;
 }
 .message-image img {
-  display: block;
-  width: auto;
-  max-width: 100%;
-  height: var(--mosaic-image-height);
-  max-height: var(--mosaic-image-height);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--control-surface-soft);
-  object-fit: contain;
+  grid-area: 1 / 1; display: block; width: 100%; max-width: 100%;
+  height: var(--mosaic-image-height); max-height: var(--mosaic-image-height);
+  border: 1px solid var(--line); border-radius: 5px;
+  background: var(--control-surface-soft); object-fit: contain;
+}
+.message-image img[data-mosaic-image-state="pending"],
+.message-image img[data-mosaic-image-state="error"] { visibility: hidden; }
+.message-image-status {
+  grid-area: 1 / 1; display: grid; width: 100%; height: var(--mosaic-image-height);
+  padding: 10px; place-items: center; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--control-surface-soft); color: var(--muted);
+  font: 600 .68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+.message-image-status[data-mosaic-image-status="loaded"] { display: none; }
+.message-image-status[data-mosaic-image-status="error"] {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--line)); color: var(--danger);
 }
 .message-image--openable { cursor: zoom-in; }
 .message-image--openable:hover img {
   border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 42%, var(--line));
 }
 .message-image--openable:focus-visible { outline: none; }
-.message-image--openable:focus-visible img {
-  outline: 2px solid var(--accent-slot, var(--accent));
-  outline-offset: 2px;
+.message-image--openable:focus-visible img,
+.message-image--openable:focus-visible .message-image-status {
+  outline: 2px solid var(--accent-slot, var(--accent)); outline-offset: 2px;
 }
 .markdown-body p.message-image-stack,
 .message-attachments {
-  display: flex;
-  max-width: 100%;
-  min-width: 0;
-  gap: 7px;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  display: flex; max-width: 100%; min-width: 0; gap: 7px;
+  overflow-x: auto; scrollbar-width: thin;
 }
 .markdown-body p.message-image-stack {
-  flex-flow: row nowrap;
-  margin: .5em 0;
-  white-space: normal;
+  flex-flow: row nowrap; margin: .5em 0; white-space: normal;
 }
-.message-attachments {
-  flex-flow: row nowrap;
-}
+.message-attachments { flex-flow: row nowrap; }
 .mosaic-message-card--image-only .message-image {
-  flex: 1 1 0;
-  max-width: 100%;
+  flex: 1 1 0; max-width: 100%;
 }
 .mosaic-message-card--image-only .message-image img {
-  height: var(--mosaic-image-large-height);
-  max-height: var(--mosaic-image-large-height);
+  height: var(--mosaic-image-large-height); max-height: var(--mosaic-image-large-height);
 }
+.mosaic-message-card--image-only .message-image-status { height: var(--mosaic-image-large-height); }
 
 .mosaic-message-empty {
   padding: 28px 12px;

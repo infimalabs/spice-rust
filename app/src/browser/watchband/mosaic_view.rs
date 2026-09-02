@@ -762,6 +762,199 @@ struct ImageResolutionSnapshot {
     committed: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
 }
 
+#[derive(Clone)]
+struct ImageResolutionBatch {
+    pending_keys: Rc<RefCell<HashSet<String>>>,
+    scheduled: Rc<RefCell<Option<Timeout>>>,
+    revisions: UseReducerHandle<ImageRevisions>,
+    measurements: UseStateHandle<Vec<ActivityMeasurement>>,
+    host: web_sys::Element,
+    live: Rc<RefCell<ImageResolutionSnapshot>>,
+}
+
+impl ImageResolutionBatch {
+    fn new(
+        revisions: UseReducerHandle<ImageRevisions>,
+        measurements: UseStateHandle<Vec<ActivityMeasurement>>,
+        host: web_sys::Element,
+        live: Rc<RefCell<ImageResolutionSnapshot>>,
+    ) -> Self {
+        Self {
+            pending_keys: Rc::new(RefCell::new(HashSet::new())),
+            scheduled: Rc::new(RefCell::new(None)),
+            revisions,
+            measurements,
+            host,
+            live,
+        }
+    }
+
+    fn queue(&self, key: String) {
+        self.pending_keys.borrow_mut().insert(key);
+        if self.scheduled.borrow().is_some() {
+            return;
+        }
+        let batch = self.clone();
+        let timeout = Timeout::new(0, move || {
+            batch.scheduled.borrow_mut().take();
+            batch.flush();
+        });
+        *self.scheduled.borrow_mut() = Some(timeout);
+    }
+
+    fn flush(&self) {
+        let mut keys = self.pending_keys.borrow_mut().drain().collect::<Vec<_>>();
+        keys.sort();
+        let mut snapshot = self.live.borrow_mut();
+        let width = element_content_width(&self.host)
+            .map(|measured| measured.round() as i32)
+            .unwrap_or(snapshot.width);
+        let mut revised_keys = Vec::with_capacity(keys.len());
+        let mut measurements_changed = false;
+        for key in keys {
+            if let Some(measured) = self.resolve_key(&mut snapshot, &key, width) {
+                revised_keys.push(key);
+                measurements_changed |= measured;
+            }
+        }
+        let next_measurements = measurements_changed.then(|| snapshot.measurements.clone());
+        drop(snapshot);
+        if let Some(next_measurements) = next_measurements {
+            self.measurements.set(next_measurements);
+        }
+        for key in revised_keys {
+            self.revisions.dispatch(key);
+        }
+    }
+
+    fn resolve_key(
+        &self,
+        snapshot: &mut ImageResolutionSnapshot,
+        key: &str,
+        width: i32,
+    ) -> Option<bool> {
+        let activity = snapshot
+            .cards
+            .iter()
+            .find(|activity| activity.key() == key)
+            .cloned()?;
+        let selector = format!("[data-mosaic-card-key=\"{key}\"]");
+        let card = self
+            .host
+            .query_selector(&selector)
+            .ok()
+            .flatten()?
+            .dyn_into::<web_sys::HtmlElement>()
+            .ok()?;
+        let revision = snapshot.revisions.get(key).saturating_add(1);
+        snapshot.revisions.0.insert(key.to_owned(), revision);
+        mark_card_image_revision(&card, width, revision);
+        if width < MIN_MEASURABLE_WIDTH_PX {
+            return Some(false);
+        }
+        let latched_span = snapshot.committed.as_ref().and_then(|plane| {
+            plane
+                .cards()
+                .iter()
+                .find_map(|entry| (entry.key == key).then_some(entry.card.span))
+        });
+        let Some(measurement) = measure_element(&card, width, &activity, revision, latched_span)
+        else {
+            return Some(false);
+        };
+        snapshot.measurements.retain(|previous| {
+            previous.width != measurement.width || previous.key != measurement.key
+        });
+        snapshot.measurements.push(measurement);
+        Some(true)
+    }
+
+    fn resolve_image(&self, image: web_sys::HtmlImageElement) {
+        let outcome = if image.natural_width() > 0 {
+            "loaded"
+        } else {
+            "error"
+        };
+        let changed = set_image_resolution_state(&image, outcome);
+        if !changed && image.has_attribute("data-mosaic-image-revision") {
+            return;
+        }
+        let Some(key) = image
+            .closest(".mosaic-message-card")
+            .ok()
+            .flatten()
+            .and_then(|card| card.get_attribute("data-mosaic-card-key"))
+        else {
+            return;
+        };
+        self.queue(key);
+    }
+
+    fn scan_complete(&self) {
+        let Ok(images) = self.host.query_selector_all("img") else {
+            return;
+        };
+        for index in 0..images.length() {
+            let Some(image) = images
+                .item(index)
+                .and_then(|node| node.dyn_into::<web_sys::HtmlImageElement>().ok())
+            else {
+                continue;
+            };
+            if image.complete() {
+                self.resolve_image(image);
+            }
+        }
+    }
+
+    fn cancel(&self) {
+        self.scheduled.borrow_mut().take();
+        self.pending_keys.borrow_mut().clear();
+    }
+}
+
+fn mark_card_image_revision(card: &web_sys::HtmlElement, width: i32, revision: u64) {
+    let _ = card.set_attribute("data-mosaic-image-revision", &revision.to_string());
+    let Ok(images) = card.query_selector_all("img") else {
+        return;
+    };
+    for index in 0..images.length() {
+        let Some(image) = images
+            .item(index)
+            .and_then(|node| node.dyn_into::<web_sys::HtmlImageElement>().ok())
+        else {
+            continue;
+        };
+        let _ = image.set_attribute("data-mosaic-image-revision", &revision.to_string());
+        let _ = image.set_attribute("data-mosaic-image-measured-width", &width.to_string());
+    }
+}
+
+fn set_image_resolution_state(image: &web_sys::HtmlImageElement, outcome: &str) -> bool {
+    let changed = image.get_attribute("data-mosaic-image-state").as_deref() != Some(outcome);
+    let _ = image.set_attribute("data-mosaic-image-state", outcome);
+    if let Some(status) = image
+        .closest(".message-image")
+        .ok()
+        .flatten()
+        .and_then(|preview| {
+            preview
+                .query_selector("[data-mosaic-image-status]")
+                .ok()
+                .flatten()
+        })
+    {
+        let text = match outcome {
+            "loaded" => "Image loaded",
+            "error" => "Image unavailable",
+            _ => "Loading image",
+        };
+        let _ = status.set_attribute("data-mosaic-image-status", outcome);
+        status.set_text_content(Some(text));
+    }
+    changed
+}
+
 #[hook]
 fn use_image_resolution_events(
     host: NodeRef,
@@ -772,6 +965,10 @@ fn use_image_resolution_events(
     committed: UseStateHandle<Option<crate::mosaic_plane::PersistentLanePlane<String>>>,
 ) {
     let live = use_mut_ref(ImageResolutionSnapshot::default);
+    let image_scan = cards
+        .iter()
+        .map(|activity| (activity.key(), activity.measurement_fingerprint()))
+        .collect::<Vec<_>>();
     *live.borrow_mut() = ImageResolutionSnapshot {
         width,
         cards,
@@ -779,12 +976,15 @@ fn use_image_resolution_events(
         measurements: (*measurements).clone(),
         committed: (*committed).clone(),
     };
-    use_effect_with(host, move |host| {
+    use_effect_with((host, image_scan), move |(host, _)| {
         let registration = host.cast::<web_sys::Element>().and_then(|host| {
-            let resolved_revisions = revisions.clone();
-            let resolved_measurements = measurements.clone();
-            let resolved_host = host.clone();
-            let live = live.clone();
+            let batch = ImageResolutionBatch::new(
+                revisions.clone(),
+                measurements.clone(),
+                host.clone(),
+                live.clone(),
+            );
+            let event_batch = batch.clone();
             let resolved =
                 Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
                     let Some(image) = event
@@ -793,67 +993,7 @@ fn use_image_resolution_events(
                     else {
                         return;
                     };
-                    let outcome = if image.natural_width() > 0 {
-                        "loaded"
-                    } else {
-                        "error"
-                    };
-                    if image.get_attribute("data-mosaic-image-state").as_deref() == Some(outcome) {
-                        return;
-                    }
-                    let _ = image.set_attribute("data-mosaic-image-state", outcome);
-                    let Some(card) = image.closest(".mosaic-message-card").ok().flatten() else {
-                        return;
-                    };
-                    let Some(key) = card.get_attribute("data-mosaic-card-key") else {
-                        return;
-                    };
-                    let mut snapshot = live.borrow_mut();
-                    let Some(activity) = snapshot
-                        .cards
-                        .iter()
-                        .find(|activity| activity.key() == key)
-                        .cloned()
-                    else {
-                        return;
-                    };
-                    let measurement_width = element_content_width(&resolved_host)
-                        .map(|measured| measured.round() as i32)
-                        .unwrap_or(snapshot.width);
-                    let image_revision = snapshot.revisions.get(&key).saturating_add(1);
-                    snapshot.revisions.0.insert(key.clone(), image_revision);
-                    let _ = image
-                        .set_attribute("data-mosaic-image-revision", &image_revision.to_string());
-                    let _ = image.set_attribute(
-                        "data-mosaic-image-measured-width",
-                        &measurement_width.to_string(),
-                    );
-                    if measurement_width < MIN_MEASURABLE_WIDTH_PX {
-                        resolved_revisions.dispatch(key);
-                        return;
-                    }
-                    let latched_span = snapshot.committed.as_ref().and_then(|plane| {
-                        plane
-                            .cards()
-                            .iter()
-                            .find_map(|entry| (entry.key == key).then_some(entry.card.span))
-                    });
-                    let Some(measurement) = measure_element(
-                        &card.unchecked_into::<web_sys::HtmlElement>(),
-                        measurement_width,
-                        &activity,
-                        image_revision,
-                        latched_span,
-                    ) else {
-                        resolved_revisions.dispatch(key);
-                        return;
-                    };
-                    snapshot.measurements.retain(|previous| {
-                        previous.width != measurement.width || previous.key != measurement.key
-                    });
-                    snapshot.measurements.push(measurement);
-                    resolved_measurements.set(snapshot.measurements.clone());
-                    resolved_revisions.dispatch(key);
+                    event_batch.resolve_image(image);
                 });
             let callback = resolved.as_ref().unchecked_ref();
             host.add_event_listener_with_callback_and_bool("load", callback, true)
@@ -865,13 +1005,15 @@ fn use_image_resolution_events(
                 let _ = host.remove_event_listener_with_callback_and_bool("load", callback, true);
                 return None;
             }
-            Some((host, resolved))
+            batch.scan_complete();
+            Some((host, resolved, batch))
         });
         move || {
-            if let Some((host, resolved)) = registration {
+            if let Some((host, resolved, batch)) = registration {
                 let callback = resolved.as_ref().unchecked_ref();
                 let _ = host.remove_event_listener_with_callback_and_bool("load", callback, true);
                 let _ = host.remove_event_listener_with_callback_and_bool("error", callback, true);
+                batch.cancel();
             }
         }
     });
@@ -1149,14 +1291,7 @@ fn prepare_images(element: &web_sys::HtmlElement) -> bool {
             ready = false;
             continue;
         };
-        if image.complete() {
-            let outcome = if image.natural_width() > 0 {
-                "loaded"
-            } else {
-                "error"
-            };
-            let _ = image.set_attribute("data-mosaic-image-state", outcome);
-        } else {
+        if image.get_attribute("data-mosaic-image-state").is_none() {
             let _ = image.set_attribute("data-mosaic-image-state", "pending");
         }
     }
