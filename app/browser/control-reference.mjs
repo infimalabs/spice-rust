@@ -13,6 +13,10 @@ const darkPalette = {
   pageInk: "rgb(16, 20, 17)",
 };
 
+const TASK_CHIP_FIXTURE = '[data-task-chip-fixture="matrix"]';
+const GENERATED_MAX_TASK_HANDLE = "CONTROL-1kKbC3j4";
+const LONG_ADMITTED_TASK_HANDLE = "EXTRAORDINARILYLONGTASKSTEM-1kKbC3j4";
+
 async function selectLifetime(page, lineage, input, value, label) {
   await input.fill(value);
   await waitForPageFunction(
@@ -344,6 +348,9 @@ export async function assertCanonicalInlineTaskCode(surface) {
     `Reported task ${handle}`,
     "the task chip names the same handle to assistive technology",
   );
+  const label = chip.locator(":scope > .message-task-chip-label");
+  assert.equal(await label.count(), 1, "the rendered task chip owns one constrained label");
+  assert.equal(await label.innerText(), handle, "the rendered label preserves the complete handle");
   const card = chip.locator("xpath=ancestor::article[1]");
   assert.match(
     await card.locator(".message-body").innerText(),
@@ -384,75 +391,286 @@ export async function assertCanonicalInlineTaskCode(surface) {
   assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, "the reported handle is not clipped");
 }
 
-async function assertInlineTaskChip(surface) {
-  await assertCanonicalInlineTaskCode(surface);
-  assert.ok(
-    await surface.locator(".message-body .message-task-chip").count() >= 2,
-    "the reference lineage exercises multiple injected task chips",
-  );
-  const typography = await surface.evaluate((element) => {
-    const chip = element.querySelector(".message-body .message-task-chip");
-    const quote = element.querySelector(".message-body blockquote");
-    if (!chip || !quote) throw new Error("task-chip typography requires a chip and quoted prose");
-    const nested = chip.cloneNode(true);
-    quote.append(nested);
-    const root = document.documentElement;
-    const originalRootSize = root.style.fontSize;
-    const measured = () => {
-      const inspect = (node) => {
-        const style = getComputedStyle(node);
-        return {
-          clientWidth: node.clientWidth,
-          fontSize: Number.parseFloat(style.fontSize),
-          lineHeight: Number.parseFloat(style.lineHeight),
-          scrollWidth: node.scrollWidth,
-        };
-      };
-      return { chip: inspect(chip), nested: inspect(nested), quote: inspect(quote) };
+function taskChipArtifact(artifactPath, variant) {
+  return artifactPath.replace(/\.png$/u, `-${variant}.png`);
+}
+
+async function installTaskChipFixture(page, surface) {
+  await surface.evaluate((element, handles) => {
+    document.querySelector('[data-task-chip-fixture="matrix"]')?.remove();
+    const renderedChip = element.querySelector(".message-body .message-task-chip");
+    const sourceCard = renderedChip?.closest("article");
+    if (!sourceCard) throw new Error("task-chip fixture requires one rendered message card");
+    const chip = (handle) => `<span class="message-task-chip" data-task-handle="${handle}"`
+      + ` aria-label="Reported task ${handle}" title="${handle}">`
+      + `<span class="message-task-chip-label">${handle}</span></span>`;
+    const host = document.createElement("div");
+    host.className = "team-surface";
+    host.dataset.taskChipFixture = "matrix";
+    Object.assign(host.style, {
+      position: "fixed",
+      zIndex: "2147483647",
+      top: "16px",
+      right: "auto",
+      bottom: "auto",
+      left: "16px",
+      width: "420px",
+      minWidth: "0",
+      height: "auto",
+      margin: "0",
+      display: "block",
+      overflow: "visible",
+      border: "0",
+      borderRadius: "0",
+      background: "transparent",
+      boxShadow: "none",
+      transition: "none",
+    });
+    const fixture = sourceCard.cloneNode(true);
+    fixture.removeAttribute("id");
+    fixture.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+    Object.assign(fixture.style, {
+      position: "relative",
+      top: "auto",
+      right: "auto",
+      bottom: "auto",
+      left: "auto",
+      width: "100%",
+      minWidth: "0",
+      height: "auto",
+      margin: "0",
+      gridColumn: "auto",
+      transition: "none",
+    });
+    const body = fixture.querySelector(".message-body");
+    if (!body) throw new Error("task-chip fixture requires a message body");
+    body.innerHTML = `
+      <p data-task-chip-case="ordinary"><span data-prose>Settled </span>${chip(handles.generated)}<span data-prose> in one pass.</span></p>
+      <p data-task-chip-case="long"><span data-prose>Transferred </span>${chip(handles.long)}<span data-prose> with its identity intact.</span></p>
+      <p data-task-chip-case="multi"><span data-prose>Related </span>${chip("CARDS-1kRZRDy7")}<span data-prose> and </span>${chip("MOSAIC-1kRYqQxy")}<span data-prose> remain distinct.</span></p>
+      <blockquote data-task-chip-case="quoted"><p><span data-prose>In </span>${chip(handles.generated)}<span data-prose> the reply remains aligned.</span></p></blockquote>
+    `;
+    const footer = fixture.querySelector(".message-footer");
+    if (!footer) throw new Error("task-chip fixture requires a message footer");
+    footer.innerHTML = `
+      <div class="message-footer-left"><span class="message-age">1m</span></div>
+      <div class="message-footer-right">
+        <button class="card-action card-action--copy" type="button" title="Copy this message" aria-label="Copy this message"><span class="card-action-icon" aria-hidden="true">&#x29C9;</span></button>
+      </div>
+    `;
+    host.append(fixture);
+    document.body.append(host);
+  }, { generated: GENERATED_MAX_TASK_HANDLE, long: LONG_ADMITTED_TASK_HANDLE });
+  const fixture = page.locator(TASK_CHIP_FIXTURE);
+  await fixture.waitFor();
+  return fixture;
+}
+
+async function measureTaskChipFixture(fixture) {
+  return fixture.evaluate((host) => {
+    const rect = (box) => ({
+      top: box.top,
+      right: box.right,
+      bottom: box.bottom,
+      left: box.left,
+      width: box.width,
+      height: box.height,
+    });
+    const textRect = (node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return rect(range.getBoundingClientRect());
     };
-    try {
-      const ordinary = measured();
-      root.style.fontSize = "20px";
-      const zoomed = measured();
-      return { ordinary, zoomed };
-    } finally {
-      root.style.fontSize = originalRootSize;
-      nested.remove();
+    const textRects = (node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return [...range.getClientRects()].map(rect);
+    };
+    const card = host.querySelector(".mosaic-message-card");
+    const body = card?.querySelector(".message-body");
+    const quote = card?.querySelector("blockquote");
+    const action = card?.querySelector(".card-action");
+    if (!card || !body || !quote || !action) {
+      throw new Error("task-chip fixture is incomplete");
     }
+    const inspectChip = (node) => {
+      const style = getComputedStyle(node);
+      const label = node.querySelector(".message-task-chip-label");
+      if (!label) throw new Error("task-chip fixture requires a label");
+      const labelStyle = getComputedStyle(label);
+      return {
+        handle: node.dataset.taskHandle,
+        ariaLabel: node.getAttribute("aria-label"),
+        title: node.title,
+        tag: node.tagName,
+        tabIndex: node.tabIndex,
+        clientWidth: label.clientWidth,
+        scrollWidth: label.scrollWidth,
+        box: rect(node.getBoundingClientRect()),
+        text: textRect(label),
+        fontSize: Number.parseFloat(style.fontSize),
+        lineHeight: Number.parseFloat(style.lineHeight),
+        overflowX: style.overflowX,
+        textOverflow: style.textOverflow,
+        verticalAlign: style.verticalAlign,
+        whiteSpace: style.whiteSpace,
+        labelOverflowX: labelStyle.overflowX,
+        labelTextOverflow: labelStyle.textOverflow,
+        labelWhiteSpace: labelStyle.whiteSpace,
+      };
+    };
+    return {
+      card: {
+        box: rect(card.getBoundingClientRect()),
+        clientWidth: card.clientWidth,
+        scrollWidth: card.scrollWidth,
+      },
+      body: {
+        box: rect(body.getBoundingClientRect()),
+        clientWidth: body.clientWidth,
+        scrollWidth: body.scrollWidth,
+      },
+      quote: {
+        fontSize: Number.parseFloat(getComputedStyle(quote).fontSize),
+        lineHeight: Number.parseFloat(getComputedStyle(quote).lineHeight),
+      },
+      cases: [...card.querySelectorAll("[data-task-chip-case]")].map((row) => ({
+        name: row.dataset.taskChipCase,
+        box: rect(row.getBoundingClientRect()),
+        clientWidth: row.clientWidth,
+        scrollWidth: row.scrollWidth,
+        prose: [...row.querySelectorAll("[data-prose]")].flatMap(textRects),
+        chips: [...row.querySelectorAll(".message-task-chip")].map(inspectChip),
+      })),
+      action: {
+        box: rect(action.getBoundingClientRect()),
+        tabIndex: action.tabIndex,
+        width: action.getBoundingClientRect().width,
+        height: action.getBoundingClientRect().height,
+      },
+    };
   });
-  for (const [label, measured] of Object.entries(typography)) {
+}
+
+function assertTaskChipMeasurement(label, measured) {
+  const tolerance = 1;
+  const baselineRows = new Set();
+  assert.ok(
+    measured.card.scrollWidth <= measured.card.clientWidth + tolerance
+      && measured.body.scrollWidth <= measured.body.clientWidth + tolerance,
+    `${label} card and message body contain the matrix: ${JSON.stringify(measured)}`,
+  );
+  for (const row of measured.cases) {
     assert.ok(
-      Math.abs(measured.chip.fontSize - measured.quote.fontSize) <= 0.01,
-      `${label} task-chip type matches quoted prose: ${JSON.stringify(measured)}`,
+      row.scrollWidth <= row.clientWidth + tolerance,
+      `${label} ${row.name} prose has no horizontal overflow: ${JSON.stringify(row)}`,
     );
-    assert.ok(
-      Math.abs(measured.nested.fontSize - measured.quote.fontSize) <= 0.01,
-      `${label} quoted task-chip type does not compound: ${JSON.stringify(measured)}`,
-    );
-    assert.ok(
-      measured.chip.lineHeight >= measured.chip.fontSize * 1.3
-        && measured.nested.lineHeight >= measured.nested.fontSize * 1.3,
-      `${label} task chips retain the quote line rhythm: ${JSON.stringify(measured)}`,
-    );
-    assert.ok(
-      measured.chip.scrollWidth <= measured.chip.clientWidth + 1
-        && measured.nested.scrollWidth <= measured.nested.clientWidth + 1,
-      `${label} task chips contain their complete handles: ${JSON.stringify(measured)}`,
-    );
+    for (const chip of row.chips) {
+      assert.equal(chip.tag, "SPAN", `${label} ${chip.handle} remains an inline affordance`);
+      assert.equal(chip.tabIndex, -1, `${label} ${chip.handle} does not enter the tab order`);
+      assert.equal(chip.ariaLabel, `Reported task ${chip.handle}`);
+      assert.equal(chip.title, chip.handle, `${label} ${chip.handle} retains its full hover label`);
+      assert.equal(chip.whiteSpace, "nowrap", `${label} ${chip.handle} stays on one line`);
+      assert.equal(chip.textOverflow, "ellipsis", `${label} ${chip.handle} declares ellipsis`);
+      assert.equal(chip.overflowX, "hidden", `${label} ${chip.handle} clips only inside itself`);
+      assert.equal(chip.labelWhiteSpace, "nowrap", `${label} ${chip.handle} label stays on one line`);
+      assert.equal(chip.labelTextOverflow, "ellipsis", `${label} ${chip.handle} label paints ellipsis`);
+      assert.equal(chip.labelOverflowX, "hidden", `${label} ${chip.handle} label clips its text`);
+      assert.equal(chip.verticalAlign, "baseline", `${label} ${chip.handle} follows prose baseline`);
+      assert.ok(
+        Math.abs(chip.fontSize - measured.quote.fontSize) <= 0.01
+          && Math.abs(chip.lineHeight - measured.quote.lineHeight) <= 0.01,
+        `${label} ${chip.handle} matches quoted prose type: ${JSON.stringify({ chip, quote: measured.quote })}`,
+      );
+      assert.ok(
+        chip.box.left >= measured.body.box.left - tolerance
+          && chip.box.right <= measured.body.box.right + tolerance,
+        `${label} ${chip.handle} remains inside the message body: ${JSON.stringify(chip.box)}`,
+      );
+      const adjacentProse = row.prose.find((prose) => (
+        prose.top <= chip.text.bottom && prose.bottom >= chip.text.top
+      ));
+      if (adjacentProse) {
+        assert.ok(
+          Math.abs(adjacentProse.bottom - chip.text.bottom) <= 2,
+          `${label} ${chip.handle} shares the prose baseline: ${JSON.stringify({ chip, adjacentProse })}`,
+        );
+        baselineRows.add(row.name);
+      }
+    }
+    for (let index = 1; index < row.chips.length; index += 1) {
+      const previous = row.chips[index - 1].box;
+      const current = row.chips[index].box;
+      const separated = previous.right <= current.left + tolerance
+        || previous.bottom <= current.top + tolerance;
+      assert.ok(separated, `${label} ${row.name} chips do not overlap`);
+    }
   }
   assert.ok(
-    typography.zoomed.chip.fontSize > typography.ordinary.chip.fontSize,
-    `task-chip type follows root text zoom: ${JSON.stringify(typography)}`,
+    baselineRows.has("ordinary") && baselineRows.has("quoted"),
+    `${label} ordinary and quote-nested chips share neighboring prose baselines`,
   );
-  const chiplessCard = surface
-    .locator('.mosaic-message-card[data-card-kind="agent-message"]:not(:has(.message-task-chip))')
-    .first();
-  await chiplessCard.waitFor();
-  assert.equal(
-    await chiplessCard.locator(".message-task-chip").count(),
-    0,
-    "a card with no useful inline identifier omits the chip entirely",
+  const ordinary = measured.cases.find(({ name }) => name === "ordinary").chips[0];
+  const long = measured.cases.find(({ name }) => name === "long").chips[0];
+  assert.equal(ordinary.handle, GENERATED_MAX_TASK_HANDLE);
+  assert.ok(
+    ordinary.scrollWidth <= ordinary.clientWidth + tolerance,
+    `${label} maximum generated handle remains complete`,
   );
+  assert.equal(long.handle, LONG_ADMITTED_TASK_HANDLE);
+  assert.ok(
+    long.scrollWidth > long.clientWidth + tolerance,
+    `${label} long admitted handle exercises the declared ellipsis`,
+  );
+  assert.equal(measured.action.tabIndex, 0, `${label} surrounding card action remains focusable`);
+  assert.deepEqual(
+    [measured.action.width, measured.action.height],
+    [32, 32],
+    `${label} surrounding card action retains its stable dimensions`,
+  );
+  assert.ok(
+    measured.action.box.left >= measured.card.box.left
+      && measured.action.box.right <= measured.card.box.right + tolerance,
+    `${label} surrounding card action remains inside the card`,
+  );
+}
+
+export async function assertTaskChipTypographyMatrix(page, surface, artifactPath) {
+  await assertCanonicalInlineTaskCode(surface);
+  const fixture = await installTaskChipFixture(page, surface);
+  const rootFontSize = await page.evaluate(() => document.documentElement.style.fontSize);
+  try {
+    const ordinary = await measureTaskChipFixture(fixture);
+    assertTaskChipMeasurement("ordinary", ordinary);
+    await fixture.screenshot({ path: taskChipArtifact(artifactPath, "ordinary") });
+    await fixture.locator('[data-task-chip-case="long"]').screenshot({
+      path: taskChipArtifact(artifactPath, "long"),
+    });
+    await fixture.locator('[data-task-chip-case="multi"]').screenshot({
+      path: taskChipArtifact(artifactPath, "multi"),
+    });
+
+    await fixture.evaluate((card) => { card.style.width = "236px"; });
+    const narrow = await measureTaskChipFixture(fixture);
+    assertTaskChipMeasurement("narrow", narrow);
+    const action = fixture.locator(".card-action");
+    await action.focus();
+    assert.equal(await action.evaluate((node) => document.activeElement === node), true);
+    await fixture.screenshot({ path: taskChipArtifact(artifactPath, "narrow") });
+
+    await fixture.evaluate((card) => { card.style.width = "420px"; });
+    await page.evaluate(() => { document.documentElement.style.fontSize = "20px"; });
+    const zoomed = await measureTaskChipFixture(fixture);
+    assertTaskChipMeasurement("zoomed", zoomed);
+    assert.ok(
+      zoomed.quote.fontSize > ordinary.quote.fontSize,
+      `task-chip matrix follows root text zoom: ${JSON.stringify({ ordinary, zoomed })}`,
+    );
+    await fixture.screenshot({ path: taskChipArtifact(artifactPath, "zoom") });
+  } finally {
+    await page.evaluate((fontSize) => { document.documentElement.style.fontSize = fontSize; }, rootFontSize);
+    await fixture.evaluate((node) => node.remove());
+  }
 }
 
 /// The operator agent card carries its own control: renewing this agent has to
@@ -607,16 +825,6 @@ export async function captureReferenceControls(page, team, artifactPath) {
     assert.equal(await drain.isEnabled(), true, "a real draft enables the Drain action");
     assert.equal(await speech.inputValue(), "0", "the native speech range selects Quiet");
     assert.equal(await lifetime.inputValue(), "2", "the native lifetime range selects Drain");
-    await assertInlineTaskChip(surface);
-    const rootFontSize = await page.evaluate(() => document.documentElement.style.fontSize);
-    try {
-      await page.evaluate(() => { document.documentElement.style.fontSize = "20px"; });
-      await surface.locator(".message-body .message-task-chip").first().screenshot({
-        path: artifactPath.replace(/\.png$/u, "-task-chip-zoom.png"),
-      });
-    } finally {
-      await page.evaluate((fontSize) => { document.documentElement.style.fontSize = fontSize; }, rootFontSize);
-    }
     const geometry = await surface.evaluate(measureReference);
     assertReferenceGuardRejectsPerturbation(geometry);
     assertReferenceGeometry(geometry);
