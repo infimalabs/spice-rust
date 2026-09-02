@@ -150,6 +150,13 @@ export async function assertNaturalMessageFooterInsets(console, label) {
     const footer = article.querySelector(".message-footer");
     const footerBox = footer.getBoundingClientRect();
     const footerStyle = getComputedStyle(footer);
+    const agent = footer.querySelector(".message-agent-name");
+    const agentLabel = footer.querySelector(".message-agent-label");
+    const agentStyle = getComputedStyle(agent);
+    const labelStyle = getComputedStyle(agentLabel);
+    const agentBox = agent.getBoundingClientRect();
+    const labelBox = agentLabel.getBoundingClientRect();
+    const separator = footer.querySelector(".message-footer-separator");
     const actions = [...footer.querySelectorAll(".card-action")]
       .map((action) => action.getBoundingClientRect());
     return {
@@ -167,7 +174,29 @@ export async function assertNaturalMessageFooterInsets(console, label) {
       footerAlignSelf: footerStyle.alignSelf,
       footerMarginTop: footerStyle.marginTop,
       actionHeights: actions.map((action) => action.height),
+      actionTops: actions.map((action) => action.top - footerBox.top),
       actionBottoms: actions.map((action) => footerBox.bottom - action.bottom),
+      identity: {
+        agentClientHeight: agent.clientHeight,
+        agentClientWidth: agent.clientWidth,
+        agentOverflow: agentStyle.overflow,
+        agentOverflowWrap: agentStyle.overflowWrap,
+        agentRight: agentBox.right,
+        agentScrollHeight: agent.scrollHeight,
+        agentScrollWidth: agent.scrollWidth,
+        agentTextOverflow: agentStyle.textOverflow,
+        agentWhiteSpace: agentStyle.whiteSpace,
+        labelClientHeight: agentLabel.clientHeight,
+        labelClientWidth: agentLabel.clientWidth,
+        labelOverflow: labelStyle.overflow,
+        labelOverflowWrap: labelStyle.overflowWrap,
+        labelRight: labelBox.right,
+        labelScrollHeight: agentLabel.scrollHeight,
+        labelScrollWidth: agentLabel.scrollWidth,
+        labelTextOverflow: labelStyle.textOverflow,
+        labelWhiteSpace: labelStyle.whiteSpace,
+        separatorLeft: separator?.getBoundingClientRect().left ?? null,
+      },
       insets: {
         bottom: card.bottom - Number.parseFloat(cardStyle.borderBottomWidth) - footerBox.bottom,
         left: footerBox.left - card.left - Number.parseFloat(cardStyle.borderLeftWidth),
@@ -201,9 +230,33 @@ export async function assertNaturalMessageFooterInsets(console, label) {
         || (
           card.actionHeights.length === 3
           && card.actionHeights.every((height) => height <= card.footerHeight + 0.5)
-          && card.actionBottoms.every((inset) => Math.abs(inset) <= 0.5)
+          && card.actionTops.every((inset) => inset >= -0.5)
+          && card.actionBottoms.every((inset) => inset >= -0.5)
         ),
-      `${label} card ${card.key} controls reach the natural footer bottom edge: ${JSON.stringify(card)}`,
+      `${label} card ${card.key} controls stay within the natural footer: ${JSON.stringify(card)}`,
+    );
+    assert.ok(
+      card.identity.agentOverflow === "visible"
+        && card.identity.agentOverflowWrap === "anywhere"
+        && card.identity.agentTextOverflow === "clip"
+        && card.identity.agentWhiteSpace === "normal"
+        && card.identity.labelOverflow === "visible"
+        && card.identity.labelOverflowWrap === "anywhere"
+        && card.identity.labelTextOverflow === "clip"
+        && card.identity.labelWhiteSpace === "normal"
+        && card.identity.agentScrollWidth <= card.identity.agentClientWidth + 1
+        && card.identity.agentScrollHeight <= card.identity.agentClientHeight + 1
+        && card.identity.labelScrollWidth <= card.identity.labelClientWidth + 1
+        && card.identity.labelScrollHeight <= card.identity.labelClientHeight + 1,
+      `${label} card ${card.key} renders its complete identity: ${JSON.stringify(card)}`,
+    );
+    assert.ok(
+      card.actionHeights.length === 0
+        ? card.identity.separatorLeft === null
+        : card.identity.separatorLeft !== null
+          && Math.abs(card.identity.separatorLeft - card.identity.agentRight - 6) <= 1
+          && Math.abs(card.identity.separatorLeft - card.identity.labelRight - 6) <= 1,
+      `${label} card ${card.key} aligns identity immediately before its separator: ${JSON.stringify(card)}`,
     );
   }
 }
@@ -261,11 +314,13 @@ function assertReferenceGeometry(geometry, agentLabels) {
     "the accessible copy control retains the complete unellipsized attribution",
   );
   assert.match(geometry.agent.title, /^Copy agent id\n[0-9a-f-]{36}$/);
-  assert.equal(geometry.agent.overflow, "hidden");
-  assert.equal(geometry.agent.overflowWrap, "normal");
-  assert.equal(geometry.agent.textOverflow, "ellipsis");
-  assert.equal(geometry.agent.whiteSpace, "nowrap");
-  assert.ok(geometry.agent.height <= geometry.footer.height, "identity stays inside one row");
+  assert.equal(geometry.agent.overflow, "visible");
+  assert.equal(geometry.agent.overflowWrap, "anywhere");
+  assert.equal(geometry.agent.textOverflow, "clip");
+  assert.equal(geometry.agent.whiteSpace, "normal");
+  assert.ok(geometry.agent.scrollWidth <= geometry.agent.clientWidth + 1);
+  assert.ok(geometry.agent.scrollHeight <= geometry.agent.clientHeight + 1);
+  assert.ok(geometry.agent.height <= geometry.footer.height, "identity stays inside the footer");
   assert.equal(geometry.actions.gap, "6px");
   assert.equal(geometry.actions.buttons.length, 3);
   assert.ok(
@@ -422,7 +477,11 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
         clientWidth: agent.clientWidth,
         overflow: getComputedStyle(agent).overflow,
         labelClientWidth: agentLabel.clientWidth,
+        labelClientHeight: agentLabel.clientHeight,
         labelOverflow: getComputedStyle(agentLabel).overflow,
+        labelOverflowWrap: getComputedStyle(agentLabel).overflowWrap,
+        labelRight: agentLabel.getBoundingClientRect().right,
+        labelScrollHeight: agentLabel.scrollHeight,
         labelScrollWidth: agentLabel.scrollWidth,
         labelTextOverflow: getComputedStyle(agentLabel).textOverflow,
         labelWhiteSpace: getComputedStyle(agentLabel).whiteSpace,
@@ -435,7 +494,10 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
       },
       age: { ...bounds(age), baseline: baseline(age) },
       separator: article.querySelector(".message-footer-separator")
-        ? baseline(article.querySelector(".message-footer-separator"))
+        ? {
+          ...bounds(article.querySelector(".message-footer-separator")),
+          baseline: baseline(article.querySelector(".message-footer-separator")),
+        }
         : null,
       actionGroup: actions ? bounds(actions) : null,
       actions: [...article.querySelectorAll(".message-actions button")].map((button) => {
@@ -458,14 +520,19 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
     fits.every((fit) => (
       agentLabels.includes(fit.agent.text)
         && fit.agent.ariaLabel.endsWith(` · ${fit.agent.text}`)
-        && fit.agent.overflow === "hidden"
-        && fit.agent.labelOverflow === "hidden"
-        && fit.agent.labelTextOverflow === "ellipsis"
-        && fit.agent.labelWhiteSpace === "nowrap"
-        && fit.agent.textOverflow === "ellipsis"
-        && fit.agent.whiteSpace === "nowrap"
+        && fit.agent.overflow === "visible"
+        && fit.agent.labelOverflow === "visible"
+        && fit.agent.labelOverflowWrap === "anywhere"
+        && fit.agent.labelTextOverflow === "clip"
+        && fit.agent.labelWhiteSpace === "normal"
+        && fit.agent.textOverflow === "clip"
+        && fit.agent.whiteSpace === "normal"
+        && fit.agent.scrollWidth <= fit.agent.clientWidth + 1
+        && fit.agent.scrollHeight <= fit.agent.clientHeight + 1
+        && fit.agent.labelScrollWidth <= fit.agent.labelClientWidth + 1
+        && fit.agent.labelScrollHeight <= fit.agent.labelClientHeight + 1
     )),
-    `${viewport.label} preserves exact agent identity behind one-line truncation: ${JSON.stringify(fits)}`,
+    `${viewport.label} renders every exact agent identity without clipping: ${JSON.stringify(fits)}`,
   );
   assert.ok(
     agentLabels.every((label) => fits.some((fit) => fit.agent.text === label)),
@@ -482,17 +549,17 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
   );
   assert.ok(
     fits.every((fit) => (
-      fit.footer.height === 32
+      fit.footer.height >= 32
         && fit.footerLeft.top >= fit.footer.top
         && fit.footerLeft.bottom <= fit.footer.bottom
         && fit.footerRight.bottom === fit.footer.bottom
-        && fit.footerRight.height === 32
+        && fit.footerRight.height >= 32
         && fit.footerRight.flexWrap === "nowrap"
         && fit.agent.top >= fit.footer.top
         && fit.agent.bottom <= fit.footer.bottom
         && fit.age.right <= fit.footerRight.left
     )),
-    `${viewport.label} footer clusters stay within one fixed row: ${JSON.stringify(fits)}`,
+    `${viewport.label} footer clusters remain bounded as identities wrap: ${JSON.stringify(fits)}`,
   );
   assert.ok(
     fits.every((fit) => (
@@ -500,20 +567,24 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
         fit.actionGroup.top >= fit.footer.top
         && fit.actionGroup.bottom <= fit.footer.bottom
         && fit.agent.right <= fit.actionGroup.left
+        && fit.separator !== null
+        && Math.abs(fit.separator.left - fit.agent.right - 6) <= 1
+        && Math.abs(fit.separator.left - fit.agent.labelRight - 6) <= 1
       )
     )),
     `${viewport.label} footer actions stay coherent and separated: ${JSON.stringify(fits)}`,
   );
   const baselineFailures = fits.filter((fit) => (
-    Math.abs(fit.age.baseline - fit.agent.baseline) > BASELINE_TOLERANCE
+    (fit.agent.height <= 16
+      && Math.abs(fit.age.baseline - fit.agent.baseline) > BASELINE_TOLERANCE)
       || (fit.separator !== null
-        && Math.abs(fit.separator - fit.agent.baseline) > BASELINE_TOLERANCE)
+        && Math.abs(fit.separator.baseline - fit.agent.baseline) > BASELINE_TOLERANCE)
   )).map((fit) => ({
     actions: fit.actions.length,
     age: fit.age.baseline,
     agent: fit.agent.baseline,
     key: fit.key,
-    separator: fit.separator,
+    separator: fit.separator?.baseline ?? null,
   }));
   assert.deepEqual(
     baselineFailures,
@@ -543,8 +614,8 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
   );
   if (viewport.label === "mobile") {
     assert.ok(
-      fits.some((fit) => fit.agent.labelScrollWidth > fit.agent.labelClientWidth + 1),
-      `mobile proves long identity truncates only after filling its row: ${JSON.stringify(fits)}`,
+      fits.some((fit) => fit.agent.labelClientHeight > 16),
+      `mobile proves long identities use the bounded multi-row footer: ${JSON.stringify(fits)}`,
     );
   }
   const screenshotTarget = fits.reduce((selected, candidate) => (

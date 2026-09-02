@@ -31,6 +31,8 @@ export async function assertIntegratedMosaicProof(
       const footer = card.querySelector(".message-footer");
       const footerRight = card.querySelector(".message-footer-right");
       const agent = card.querySelector(".message-agent-name");
+      const agentLabel = card.querySelector(".message-agent-label");
+      const separator = card.querySelector(".message-footer-separator");
       const age = card.querySelector(".message-age");
       const ageBox = age?.getBoundingClientRect();
       const footerBox = footer?.getBoundingClientRect();
@@ -61,13 +63,16 @@ export async function assertIntegratedMosaicProof(
           clientHeight: agent.clientHeight,
           clientWidth: agent.clientWidth,
           overflow: getComputedStyle(agent).overflow,
+          overflowWrap: getComputedStyle(agent).overflowWrap,
           scrollHeight: agent.scrollHeight,
           scrollWidth: agent.scrollWidth,
           text: agent.textContent.trim(),
           textOverflow: getComputedStyle(agent).textOverflow,
           top: agentBox.top,
           whiteSpace: getComputedStyle(agent).whiteSpace,
+          labelRight: agentLabel.getBoundingClientRect().right,
         } : null,
+        separatorLeft: separator?.getBoundingClientRect().left ?? null,
         age: ageBox ? { height: ageBox.height, width: ageBox.width } : null,
         actions: [...card.querySelectorAll(".message-actions button")].map((button) => {
           const bounds = button.getBoundingClientRect();
@@ -90,17 +95,21 @@ export async function assertIntegratedMosaicProof(
   const agentCards = cards.filter((card) => card.kind === "agent-message");
   assert.ok(agentCards.every((card) => (
     card.footer.scrollWidth <= card.footer.clientWidth + 1
-      && card.footer.height === 32
-      && card.footer.right.height === 32
+      && card.footer.height >= 32
+      && card.footer.right.height >= 32
       && card.footer.right.flexWrap === "nowrap"
       && card.footer.right.top >= card.footer.top
       && card.footer.right.bottom <= card.footer.bottom
       && card.agent.top >= card.footer.top
       && card.agent.bottom <= card.footer.bottom
-      && card.agent.overflow === "hidden"
-      && card.agent.textOverflow === "ellipsis"
-      && card.agent.whiteSpace === "nowrap"
-  )), "integrated footers retain one truncating row without overlap or overflow");
+      && card.agent.overflow === "visible"
+      && card.agent.overflowWrap === "anywhere"
+      && card.agent.textOverflow === "clip"
+      && card.agent.whiteSpace === "normal"
+      && card.agent.scrollWidth <= card.agent.clientWidth + 1
+      && card.agent.scrollHeight <= card.agent.clientHeight + 1
+      && Math.abs(card.separatorLeft - card.agent.labelRight - 6) <= 1
+  )), "integrated footers show complete right-aligned identities without overlap or overflow");
   for (const label of expectedLabels) {
     assert.ok(agentCards.some((card) => card.agent.text === label),
       `the integrated artifact includes the complete ${label} identity`);
