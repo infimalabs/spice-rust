@@ -157,6 +157,80 @@ fn adoption_rebinds_claim_epoch_without_restarting_the_occupant() {
     bus.shutdown().expect("fixture bus stops");
 }
 
+#[test]
+fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
+    let lane = uuid(30);
+    let occupant = uuid(31);
+    let old_epoch = uuid(32);
+    let new_epoch = uuid(33);
+    let task: wire::TaskStamp = "1kQpV9Gt".parse().expect("fixture task");
+    let now = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let start = shifted(now, -60);
+    let expiry = shifted(now, 60 * 60);
+    let maximum = shifted(now, 2 * 60 * 60);
+    let durable = wire::LaneResidency {
+        lane,
+        lineage_id: lane,
+        name: Some("Atomic restart lane".to_owned()),
+        worktree: "/worktrees/atomic-restart".to_owned(),
+        life: "drive".to_owned(),
+        vendor: "codex".parse().expect("fixture vendor"),
+        occupant: Some(occupant),
+        lineage: vec![occupant],
+        capabilities: vec![uuid(34)],
+        session: None,
+        disposition: OCCUPIED.to_owned(),
+    };
+    let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+        .expect("fixture bus starts");
+    seed_task_claim(&bus, &task, &durable, old_epoch, start, expiry, maximum);
+    let mut startup = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{new_epoch}")
+            .parse()
+            .expect("resident origin"),
+        start,
+        Producer::CommandDoor,
+    );
+    let seated = startup
+        .fact(wire::body::UpSeated { epoch: new_epoch }, FactCause::Root)
+        .expect("startup fact builds");
+    let carried = super::super::restart_claim::append_startup_claims(
+        &bus,
+        std::slice::from_ref(&durable),
+        new_epoch,
+        &mut startup,
+        seated,
+    )
+    .expect("startup claim appends");
+    let row = durable.clone();
+    startup.residency_head(carried, move |_| wire::ResidencyHead {
+        epoch: new_epoch,
+        state: wire::ResidentState::Seated,
+        topology_revision: 1,
+        lanes: vec![row],
+        subscriptions: Vec::new(),
+    });
+    assert!(matches!(
+        bus.commit(startup).expect("atomic startup commits"),
+        bus::CommitOutcome::Committed(_)
+    ));
+
+    let snapshot = bus.task_snapshot().expect("atomic heads read");
+    let heads = snapshot.tasks().first().expect("fixture task remains");
+    let claim = heads.claim().expect("claim remains active");
+    let lease = heads.lease().expect("lease remains present");
+    let residency = snapshot.residency().expect("residency remains present");
+    assert_eq!(claim.position(), lease.position());
+    assert_eq!(claim.position(), residency.position());
+    assert_eq!(claim.body().occupant, occupant);
+    assert_eq!(claim.body().epoch, new_epoch);
+    assert_eq!(lease.body().epoch, new_epoch);
+    assert_eq!(residency.body().epoch, new_epoch);
+    bus.verify().expect("atomic restart authority verifies");
+    bus.shutdown().expect("fixture bus stops");
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the fixture seeds one exact claim and residency boundary"

@@ -10,6 +10,81 @@ pub(super) struct RestoredClaim {
     source: wire::body::SourceBoundary,
 }
 
+impl RestoredClaim {
+    pub(super) fn is_bound_to(&self, occupant: CanonicalUuid, epoch: CanonicalUuid) -> bool {
+        self.claim.body().occupant == occupant
+            && self.claim.body().epoch == epoch
+            && self.lease.body().epoch == epoch
+    }
+}
+
+/// Carry live lane claims in the same transaction that advances residency.
+pub(in crate::resident) fn append_startup_claims(
+    bus: &Bus,
+    lanes: &[wire::LaneResidency],
+    epoch: CanonicalUuid,
+    write: &mut JournalWrite,
+    mut cause: PendingFact,
+) -> CommandResult<PendingFact> {
+    for durable in lanes {
+        let Some(occupant) = durable.occupant else {
+            continue;
+        };
+        let Some(restored) = observe_restored_claim(bus, durable)? else {
+            continue;
+        };
+        guard_restored_claim(write, &restored);
+        cause = append_startup_claim(
+            write,
+            &restored,
+            durable,
+            occupant,
+            epoch,
+            FactCause::Pending(cause),
+        )?;
+    }
+    Ok(cause)
+}
+
+fn append_startup_claim(
+    write: &mut JournalWrite,
+    restored: &RestoredClaim,
+    durable: &wire::LaneResidency,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    cause: FactCause,
+) -> CommandResult<PendingFact> {
+    let ancestor = durable
+        .occupant
+        .expect("restored claims require a predecessor occupant");
+    let rebound = write
+        .fact(
+            wire::body::ClaimRebound {
+                task: restored.task.clone(),
+                lane: durable.lane,
+                occupant,
+                ancestor,
+                epoch,
+                until: restored.lease.body().expiry,
+                maximum: restored.lease.body().maximum,
+                source: restored.source.clone(),
+            },
+            cause,
+        )
+        .map_err(|error| store_fault("lane::restart-claim-rebound-invalid", &error.to_string()))?;
+    let mut claim = restored.claim.body().clone();
+    claim.occupant = occupant;
+    claim.epoch = epoch;
+    write.claim_head(restored.task.clone(), rebound, move |position| {
+        claim.fact = position;
+        claim
+    });
+    let mut lease = restored.lease.body().clone();
+    lease.epoch = epoch;
+    write.lease_head(restored.task.clone(), rebound, move |_| lease);
+    Ok(rebound)
+}
+
 pub(super) fn observe_restored_claim(
     bus: &Bus,
     durable: &wire::LaneResidency,

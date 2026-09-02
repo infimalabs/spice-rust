@@ -158,6 +158,155 @@ fn state_body() -> serde_json::Value {
     .expect("fixture answer encodes")
 }
 
+fn answer_replacement_opening(
+    listener: TcpListener,
+    epoch: CanonicalUuid,
+    answer_command: bool,
+) -> usize {
+    let (stream, _) = listener.accept().expect("replacement peer accepts");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("replacement peer read timeout");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .expect("replacement peer write timeout");
+    let mut socket = tungstenite::accept(stream).expect("replacement peer opens socket");
+    let hello: wire::Hello = wire::decode(
+        &socket
+            .read()
+            .expect("replacement peer reads Hello")
+            .into_data(),
+    )
+    .expect("replacement Hello decodes");
+    assert_eq!(hello.epoch, epoch);
+    socket
+        .send(Message::Binary(
+            wire::encode(&wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Operator,
+                epoch,
+            })
+            .expect("replacement acceptance encodes")
+            .into(),
+        ))
+        .expect("replacement peer accepts client");
+    if !answer_command {
+        return 0;
+    }
+    let command: Command<serde_json::Value> = wire::decode(
+        &socket
+            .read()
+            .expect("replacement peer reads command")
+            .into_data(),
+    )
+    .expect("replacement command decodes");
+    assert_eq!(command.kind, CommandKind::BoardRead);
+    let response = Response::<serde_json::Value> {
+        v: wire::WireVersion::CURRENT,
+        id: command.id,
+        epoch,
+        outcome: Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "fixture::task-status-reached-replacement".to_owned(),
+            None,
+            None,
+            None,
+        ))),
+    };
+    socket
+        .send(Message::Binary(
+            wire::encode(&response)
+                .expect("replacement response encodes")
+                .into(),
+        ))
+        .expect("replacement command response sends");
+    1
+}
+
+#[test]
+fn authenticated_read_reacquires_discovery_from_a_live_replacement() {
+    let fixture = Fixture::new("replacement-authentication");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("replacement peer binds");
+    let epoch = uuid(30);
+    let discovery = canvas::Discovery {
+        endpoint: format!(
+            "http://{}",
+            listener.local_addr().expect("replacement peer address")
+        ),
+        capability: uuid(31),
+        epoch,
+    };
+    fixture.hold(epoch);
+    let peer = std::thread::spawn(move || answer_replacement_opening(listener, epoch, false));
+    let mut transients = Vec::new();
+
+    let session = acquire_session_with(
+        &COMMAND_CONTRACT,
+        &fixture.canvas,
+        &resident_lock_path(&fixture.canvas),
+        Duration::from_secs(10),
+        |fault| {
+            transients.push(fault.reason.clone());
+            discovery
+                .publish(&fixture.canvas)
+                .expect("replacement discovery publishes");
+        },
+    )
+    .expect("authenticated read reaches replacement");
+
+    assert_eq!(session.accepted.epoch, epoch);
+    assert_eq!(transients, ["canvas::discovery-unavailable"]);
+    drop(session);
+    assert_eq!(peer.join().expect("replacement peer joins"), 0);
+}
+
+#[test]
+fn task_status_reacquires_discovery_before_sending_once_to_a_live_replacement() {
+    let fixture = Fixture::new("replacement-command");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("replacement peer binds");
+    let epoch = uuid(32);
+    let discovery = canvas::Discovery {
+        endpoint: format!(
+            "http://{}",
+            listener.local_addr().expect("replacement peer address")
+        ),
+        capability: uuid(33),
+        epoch,
+    };
+    fixture.hold(epoch);
+    let peer = std::thread::spawn(move || answer_replacement_opening(listener, epoch, true));
+    let mut transients = Vec::new();
+    let contract = crate::cli::contract(&["task", "status"])
+        .expect("the generated CLI registry carries task status");
+    let mapped = MappedCommand::new(
+        contract,
+        contract.path,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &wire::intent::BoardRead { family: None },
+    )
+    .expect("task status maps before discovery");
+
+    let outcome = execute_mapped_with(
+        &fixture.canvas,
+        contract,
+        Connection::Operator,
+        Ok(mapped),
+        |fault| {
+            transients.push(fault.reason.clone());
+            discovery
+                .publish(&fixture.canvas)
+                .expect("replacement discovery publishes");
+        },
+    );
+
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("task status must reach the replacement response: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "fixture::task-status-reached-replacement");
+    assert_eq!(transients, ["canvas::discovery-unavailable"]);
+    assert_eq!(peer.join().expect("replacement peer joins"), 1);
+}
+
 #[test]
 fn mapping_rejects_the_wrong_contract_and_incomplete_body_before_discovery() {
     let wrong_path = MappedCommand::selected(&COMMAND_CONTRACT, SelectedCommand::Down);

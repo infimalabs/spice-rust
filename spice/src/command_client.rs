@@ -7,8 +7,10 @@ use std::net::{SocketAddr, TcpStream};
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
+use notify::{RecursiveMode, Watcher as _};
 use serde::Serialize;
 use sill::{Availability, LockFile, LockName};
 use tungstenite::client::IntoClientRequest;
@@ -144,17 +146,33 @@ fn execute_mapped(
     connection: Connection,
     mapped: ClientResult<MappedCommand>,
 ) -> Outcome<CommandAnswer> {
+    execute_mapped_with(operator_discovery, contract, connection, mapped, |_| {})
+}
+
+fn execute_mapped_with(
+    operator_discovery: &Path,
+    contract: &Contract,
+    connection: Connection,
+    mapped: ClientResult<MappedCommand>,
+    after_transient: impl FnMut(&Fault),
+) -> Outcome<CommandAnswer> {
     let mapped = match mapped {
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
     let discovery_path = selected_discovery_path(operator_discovery, connection);
-    let discovery =
-        match DiscoveryRead::open(&discovery_path, &resident_lock_path(operator_discovery)) {
-            Ok(discovery) => discovery,
-            Err(outcome) => return outcome,
-        };
-    request(contract, mapped, discovery)
+    let bound = answer_bound(mapped.kind, &discovery_path);
+    let session = match acquire_session_with(
+        contract,
+        &discovery_path,
+        &resident_lock_path(operator_discovery),
+        bound,
+        after_transient,
+    ) {
+        Ok(session) => session,
+        Err(outcome) => return outcome,
+    };
+    submit(contract, mapped, session)
 }
 
 /// Prove the selected read contract through the resident's sole authenticated
@@ -162,6 +180,14 @@ fn execute_mapped(
 pub(crate) fn authenticate(
     discovery_path: &Path,
     contract: &Contract,
+) -> ClientResult<CanonicalUuid> {
+    authenticate_with(discovery_path, contract, |_| {})
+}
+
+fn authenticate_with(
+    discovery_path: &Path,
+    contract: &Contract,
+    after_transient: impl FnMut(&Fault),
 ) -> ClientResult<CanonicalUuid> {
     if !contract.guards.contains(&Guard::Resident) || matches!(contract.principal, Principal::Local)
     {
@@ -171,11 +197,13 @@ pub(crate) fn authenticate(
         ));
     }
     let connection = ambient_lane_identity()?.map_or(Connection::Operator, Connection::Lane);
-    let discovery = DiscoveryRead::open(
+    let session = acquire_session_with(
+        contract,
         &selected_discovery_path(discovery_path, connection),
         &resident_lock_path(discovery_path),
+        OPENING_BOUND,
+        after_transient,
     )?;
-    let session = open_session(contract, discovery, OPENING_BOUND)?;
     Ok(session.accepted.epoch)
 }
 
@@ -536,16 +564,151 @@ fn open_discovery(path: &Path) -> Result<File, Fault> {
     options.open(path).map_err(discovery_unavailable)
 }
 
+enum DiscoverySignal {
+    Changed,
+    Failed,
+}
+
+struct DiscoveryObserver {
+    _watcher: notify::RecommendedWatcher,
+    changes: Receiver<DiscoverySignal>,
+}
+
+impl DiscoveryObserver {
+    fn arm(resident_lock: &Path) -> Option<Self> {
+        let runtime = resident_lock.parent()?;
+        let (changed, changes) = mpsc::sync_channel(1);
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                let signal = if event.is_ok() {
+                    DiscoverySignal::Changed
+                } else {
+                    DiscoverySignal::Failed
+                };
+                let _ = changed.try_send(signal);
+            })
+            .ok()?;
+        watcher.watch(runtime, RecursiveMode::Recursive).ok()?;
+        Some(Self {
+            _watcher: watcher,
+            changes,
+        })
+    }
+
+    fn wait(&self, deadline: Instant) -> DiscoveryWait {
+        let Ok(remaining) = remaining(deadline) else {
+            return DiscoveryWait::Deadline;
+        };
+        match self.changes.recv_timeout(remaining) {
+            Ok(DiscoverySignal::Changed) => DiscoveryWait::Changed,
+            Ok(DiscoverySignal::Failed) | Err(RecvTimeoutError::Disconnected) => {
+                DiscoveryWait::Failed
+            }
+            Err(RecvTimeoutError::Timeout) => DiscoveryWait::Deadline,
+        }
+    }
+}
+
+enum DiscoveryWait {
+    Changed,
+    Deadline,
+    Failed,
+}
+
+/// Acquire one authenticated session across a resident publication handoff.
+///
+/// The observer is armed before the first read so an atomic discovery rename
+/// cannot land between the failed read and the wait. Only opening is retried;
+/// the command envelope remains untouched until this function succeeds.
+fn acquire_session_with(
+    contract: &Contract,
+    discovery_path: &Path,
+    resident_lock: &Path,
+    bound: Duration,
+    mut after_transient: impl FnMut(&Fault),
+) -> ClientResult<AuthenticatedSession> {
+    let deadline = Instant::now() + bound;
+    let observer = DiscoveryObserver::arm(resident_lock);
+    loop {
+        let attempt = DiscoveryRead::open(discovery_path, resident_lock).and_then(|discovery| {
+            let attempt_bound = remaining(deadline)
+                .map_err(|_| acquisition_deadline(bound, "opening the current discovery"))?;
+            open_session(contract, discovery, attempt_bound)
+        });
+        let Err(outcome) = attempt else {
+            return attempt;
+        };
+        let Some(fault) = replacement_fault(&outcome, resident_lock) else {
+            return Err(outcome);
+        };
+        let Some(observer) = &observer else {
+            return Err(outcome);
+        };
+        after_transient(fault);
+        match observer.wait(deadline) {
+            DiscoveryWait::Changed => {}
+            DiscoveryWait::Deadline => {
+                return Err(acquisition_deadline(bound, &fault.reason));
+            }
+            DiscoveryWait::Failed => return Err(outcome),
+        }
+    }
+}
+
+fn replacement_fault<'a>(
+    outcome: &'a Outcome<CommandAnswer>,
+    resident_lock: &Path,
+) -> Option<&'a Fault> {
+    let Outcome::Fault(fault) = outcome else {
+        return None;
+    };
+    match fault.reason.as_str() {
+        "canvas::publisher-replaced" => Some(fault),
+        "canvas::discovery-unavailable" | "canvas::discovery-replaced"
+            if publisher_is_held(resident_lock) =>
+        {
+            Some(fault)
+        }
+        _ => None,
+    }
+}
+
+fn publisher_is_held(resident_lock: &Path) -> bool {
+    let name = LockName::new("resident").expect("resident is a non-empty lock name");
+    matches!(
+        LockFile::new(name, resident_lock).availability(),
+        Ok(Availability::Held)
+    )
+}
+
+fn acquisition_deadline(bound: Duration, prior: &str) -> Outcome<CommandAnswer> {
+    environment_fault(
+        "canvas::deadline-elapsed",
+        &format!(
+            "resident did not publish an authenticated surface within the {bound:?} client bound after {prior}"
+        ),
+    )
+}
+
+#[cfg(test)]
 fn request(
     contract: &Contract,
     mapped: MappedCommand,
     discovery: DiscoveryRead,
 ) -> Outcome<CommandAnswer> {
     let timeout = answer_bound(mapped.kind, &discovery.path);
-    let mut session = match open_session(contract, discovery, timeout) {
+    let session = match open_session(contract, discovery, timeout) {
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
+    submit(contract, mapped, session)
+}
+
+fn submit(
+    contract: &Contract,
+    mapped: MappedCommand,
+    mut session: AuthenticatedSession,
+) -> Outcome<CommandAnswer> {
     let command = mapped.envelope(session.discovery.value.epoch);
     if let Err(outcome) = send(&mut session.socket, &command) {
         return outcome;

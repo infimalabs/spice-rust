@@ -874,7 +874,8 @@ where
     let seated = write
         .fact(wire::body::UpSeated { epoch }, cause)
         .map_err(|error| store_fault("journal::write-invalid", &error.to_string()))?;
-    write.residency_head(seated, move |_| ResidencyHead {
+    let startup = lane_surface::append_startup_claims(bus, &lanes, epoch, &mut write, seated)?;
+    write.residency_head(startup, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
         topology_revision,

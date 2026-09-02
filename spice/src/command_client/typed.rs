@@ -40,13 +40,7 @@ pub(crate) fn execute_typed<B: Serialize>(
         Ok(None) => Connection::Operator,
         Err(outcome) => return outcome,
     };
-    let discovery_path = selected_discovery_path(state.canvas(), connection);
-    let discovery = match DiscoveryRead::open(&discovery_path, &resident_lock_path(state.canvas()))
-    {
-        Ok(discovery) => discovery,
-        Err(outcome) => return outcome,
-    };
-    request(contract, mapped, discovery)
+    execute_mapped(state.canvas(), contract, connection, Ok(mapped))
 }
 
 pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
