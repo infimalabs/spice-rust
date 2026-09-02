@@ -556,9 +556,7 @@ impl CanvasRuntime {
         let insertion = self
             .messages
             .iter()
-            .position(|existing| {
-                message_chronology_key(existing) > message_chronology_key(&retained)
-            })
+            .position(|existing| existing.chronology_key() > retained.chronology_key())
             .unwrap_or(self.messages.len());
         self.messages.insert(insertion, retained);
         if let Some(limit) = self.message_limit {
@@ -581,7 +579,7 @@ impl CanvasRuntime {
         let insertion = self
             .messages
             .iter()
-            .position(|existing| message_chronology_key(existing) > message_chronology_key(message))
+            .position(|existing| existing.chronology_key() > message.chronology_key())
             .unwrap_or(self.messages.len());
         self.messages.insert(insertion, Rc::new(message.clone()));
         if let Some(limit) = self.message_limit {
@@ -652,7 +650,7 @@ impl CanvasRuntime {
                 }
             }
         }
-        messages.sort_by_key(|message| message_chronology_key(message));
+        messages.sort_by_key(|message| message.chronology_key());
         let activity_count = activities.len();
         self.messages.iter().map(Rc::as_ref).eq(messages)
             && self
@@ -710,17 +708,6 @@ impl CanvasRuntime {
         }
         true
     }
-}
-
-fn message_chronology_key(message: &AgentMessage) -> (i64, CanonicalUuid, u64, u64, u64, u32) {
-    (
-        agent_message_display_millis(message),
-        message.lane,
-        message.locus.member,
-        message.locus.offset,
-        message.locus.length,
-        message.locus.event,
-    )
 }
 
 fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {
@@ -913,7 +900,7 @@ mod message_retention_tests {
             message(lane_a, 2),
         ];
 
-        messages.sort_by_key(message_chronology_key);
+        messages.sort_by_key(AgentMessage::chronology_key);
 
         assert_eq!(
             messages

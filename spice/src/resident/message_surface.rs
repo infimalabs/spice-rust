@@ -112,14 +112,6 @@ impl MessageObservations {
         self.find(lane, locus).map(|observation| observation.source)
     }
 
-    fn latest(&self, lane: CanonicalUuid) -> Option<wire::Instant> {
-        self.0
-            .iter()
-            .rev()
-            .find(|observation| observation.lane == lane)
-            .map(|observation| observation.at)
-    }
-
     fn find(&self, lane: CanonicalUuid, locus: listen::Locus) -> Option<&MessageObservation> {
         let position = (locus.member, locus.offset);
         self.0.iter().rev().find(|observation| {

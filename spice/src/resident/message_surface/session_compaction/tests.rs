@@ -757,13 +757,24 @@ fn timestamp_less_claude_boundary_survives_live_poll_and_resident_reload_once() 
         .expect("an unchanged live poll remains quiet");
 
     let mut reloaded = SessionCompactions::new(claude_environment(&scratch.0));
+    let mut reloaded_state = observed_state(lane);
+    reloaded_state.observations.0.push(MessageObservation {
+        lane,
+        source: uuid("018f82d4-6f59-7d06-92e3-bce9131163bc"),
+        from: wire::body::TranscriptPosition {
+            member: 2,
+            offset: 0,
+        },
+        to: wire::body::TranscriptPosition {
+            member: 2,
+            offset: 1,
+        },
+        at: "2031-04-12T18:44:09.000Z"
+            .parse()
+            .expect("later observation instant"),
+    });
     reloaded
-        .synchronize(
-            &residency,
-            &publisher,
-            &mut observed_state(lane),
-            &mut diagnostic,
-        )
+        .synchronize(&residency, &publisher, &mut reloaded_state, &mut diagnostic)
         .expect("resident reload replays the same durable identity without fault");
 
     let messages = publisher.0.lock().expect("message lock");
@@ -872,6 +883,7 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         dialect,
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         member: session_member("018f7777-7777-7444-8888-999999999999"),
+        observed: None,
         next: 0,
         next_call: 0,
         pending: BTreeMap::new(),
