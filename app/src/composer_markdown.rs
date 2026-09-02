@@ -234,25 +234,37 @@ fn image_preview_html(source: &str, authored_title: &str, alt: &str) -> String {
     };
     let openable_data_image = data_image_is_openable(&source);
     let malformed_data_image = data_image_has_malformed_base64(&source);
-    let image = if source.is_empty() || malformed_data_image {
-        format!("<img alt=\"{alt}\"{image_title}>")
+    let (state, status) = if source.is_empty() || malformed_data_image {
+        ("error", "Image unavailable")
     } else {
-        format!("<img src=\"{source}\" alt=\"{alt}\"{image_title}>")
+        ("pending", "Loading image")
     };
+    let image = if source.is_empty() || malformed_data_image {
+        format!("<img alt=\"{alt}\"{image_title} data-mosaic-image-state=\"{state}\">")
+    } else {
+        format!(
+            "<img src=\"{source}\" alt=\"{alt}\"{image_title} \
+             data-mosaic-image-state=\"{state}\">"
+        )
+    };
+    let preview = format!(
+        "{image}<span class=\"message-image-status\" role=\"status\" \
+         data-mosaic-image-status=\"{state}\">{status}</span>"
+    );
     if openable_data_image {
         format!(
             "<a class=\"message-image message-image--openable\" href=\"about:blank\" \
              target=\"_blank\" rel=\"noopener\" title=\"{action}\" aria-label=\"{action}\" \
-             data-full-size-data-image=\"true\">{image}</a>"
+             data-full-size-data-image=\"true\">{preview}</a>"
         )
     } else if !source.is_empty() && !is_data_image_source(&source) {
         format!(
             "<a class=\"message-image message-image--openable\" href=\"{source}\" \
              target=\"_blank\" rel=\"noopener\" title=\"{action}\" \
-             aria-label=\"{action}\">{image}</a>"
+             aria-label=\"{action}\">{preview}</a>"
         )
     } else {
-        format!("<span class=\"message-image\" title=\"Image preview\">{image}</span>")
+        format!("<span class=\"message-image\" title=\"Image preview\">{preview}</span>")
     }
 }
 
@@ -704,5 +716,28 @@ mod tests {
         );
         assert_eq!(rendered.html.matches("target=\"_blank\"").count(), 1);
         assert_eq!(rendered.html.matches("rel=\"noopener\"").count(), 1);
+    }
+
+    #[test]
+    fn every_image_preview_owns_an_explicit_initial_lifecycle() {
+        let remote = render_received("![remote](https://example.test/image.png)");
+        assert!(remote.html.contains("data-mosaic-image-state=\"pending\""));
+        assert!(
+            remote
+                .html
+                .contains("data-mosaic-image-status=\"pending\">Loading image</span>")
+        );
+
+        let cached = render_received(&format!("![cached]({OPENABLE_PNG})"));
+        assert!(cached.html.contains("data-mosaic-image-state=\"pending\""));
+        assert_eq!(cached.html.matches("data-mosaic-image-status=").count(), 1);
+
+        let malformed = render_received("![broken](data:image/png;base64,%%%)");
+        assert!(malformed.html.contains("data-mosaic-image-state=\"error\""));
+        assert!(
+            malformed
+                .html
+                .contains("data-mosaic-image-status=\"error\">Image unavailable</span>")
+        );
     }
 }
