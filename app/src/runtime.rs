@@ -22,6 +22,7 @@ use crate::pane::{GrantPane, Principal, ReadPane, SteerPane};
 use crate::socket::{Admitted, SessionScope};
 use crate::state::{BrowserState, ChainWalk};
 
+mod message_cards;
 #[cfg(any(target_arch = "wasm32", test))]
 mod publication;
 mod stream;
@@ -394,6 +395,25 @@ pub struct LaneActivity {
 }
 
 impl LaneActivity {
+    fn from_message(message: &AgentMessage) -> Self {
+        let (class, title) = match message.activity {
+            AgentActivityKind::Prose => ("prose", "assistant"),
+            AgentActivityKind::Tool => ("tool", "tool"),
+            AgentActivityKind::Compaction => ("compaction", "compaction"),
+        };
+        Self {
+            lane: message.lane,
+            display_millis: agent_message_display_millis(message),
+            class,
+            title: title.to_owned(),
+            detail: message.text.clone(),
+            source: ActivitySource {
+                lane: message.lane,
+                locus: message.locus,
+            },
+        }
+    }
+
     /// Independently steerable member that produced this activity.
     #[must_use]
     pub const fn lane(&self) -> CanonicalUuid {
@@ -469,10 +489,8 @@ pub struct CanvasRuntime {
     fact_pages: Vec<BrowserState<FactRow>>,
     trust_pages: Vec<BrowserState<TrustView>>,
     trust_resume: Option<StreamCursor>,
-    messages: Vec<Rc<AgentMessage>>,
+    message_cards: message_cards::MessageCards,
     operator_messages: Vec<OperatorMessage>,
-    /// Absent until the retained message page announces its exact capacity.
-    message_limit: Option<usize>,
     /// Member lanes whose retained history extends behind the visible oldest card.
     message_history_more: BTreeSet<CanonicalUuid>,
     thread_pages: Vec<BrowserState<FactRow>>,
@@ -502,9 +520,8 @@ impl CanvasRuntime {
             fact_pages: Vec::new(),
             trust_pages: Vec::new(),
             trust_resume: None,
-            messages: Vec::new(),
+            message_cards: message_cards::MessageCards::default(),
             operator_messages: Vec::new(),
-            message_limit: None,
             message_history_more: BTreeSet::new(),
             thread_pages: Vec::new(),
             facts: BrowserState::new(accepted),
@@ -695,7 +712,7 @@ impl CanvasRuntime {
     /// Newest retained agent-authored transcript messages in creation order.
     #[must_use]
     pub fn messages(&self) -> &[Rc<AgentMessage>] {
-        &self.messages
+        self.message_cards.entries()
     }
 
     #[must_use]
