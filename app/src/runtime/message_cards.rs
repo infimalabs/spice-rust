@@ -223,6 +223,7 @@ mod tests {
             authored_synthetic: false,
             observed: None,
             activity,
+            final_answer: false,
             text: offset.to_string(),
             unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),

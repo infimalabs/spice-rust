@@ -116,6 +116,9 @@ pub struct AgentMessage {
     /// Visible activity kind. Its absent wire spelling means prose.
     #[serde(default, skip_serializing_if = "AgentActivityKind::is_prose")]
     pub activity: AgentActivityKind,
+    /// Whether the vendor explicitly marked this prose as the final answer.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub final_answer: bool,
     /// Visible assistant prose or concise tool preview.
     pub text: String,
     /// Tool calls whose terminal result was unavailable at this compaction boundary.
@@ -192,6 +195,7 @@ mod message_retention_tests {
             authored_synthetic: false,
             observed: None,
             activity: AgentActivityKind::Prose,
+            final_answer: false,
             text: "fixture".to_owned(),
             unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),

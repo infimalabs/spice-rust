@@ -308,6 +308,7 @@ mod tests {
             authored_synthetic: false,
             observed: None,
             activity: wire::AgentActivityKind::Prose,
+            final_answer: false,
             text: "quoted prose".to_owned(),
             unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
