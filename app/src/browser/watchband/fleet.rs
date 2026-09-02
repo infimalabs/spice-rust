@@ -343,7 +343,9 @@ fn render_empty_toolbar(
                                 });
                             })}
                         >
-                            <span>{candidate.label()}</span>
+                            <span class="team-mode-label" title={candidate.label()}>
+                                {candidate.label()}
+                            </span>
                             if let Some(badge) = badge {
                                 <span class="team-mode-badge">{badge}</span>
                             }
@@ -429,7 +431,9 @@ fn render_lineage_toolbar(
                                 });
                             })}
                         >
-                            <span>{candidate.label()}</span>
+                            <span class="team-mode-label" title={candidate.label()}>
+                                {candidate.label()}
+                            </span>
                             if let Some(badge) = badge {
                                 <span class="team-mode-badge">{badge}</span>
                             }
