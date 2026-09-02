@@ -154,11 +154,14 @@ fn render_compose(
                     .is_some_and(|draft| !compose(draft).trim().is_empty())
         });
     let cards = activity_cards(runtime, lineage);
-    let history_more = lineage
+    let history_targets = lineage
         .members
         .iter()
-        .filter(|member| runtime.message_history_more(member.lane))
-        .map(|member| member.lane)
+        .filter_map(|member| {
+            runtime
+                .message_history_target(member.lane)
+                .map(|before| (member.lane, before))
+        })
         .collect();
     html! {
         <div class="team-compose">
@@ -209,7 +212,8 @@ fn render_compose(
                 control.life,
                 HistoryPaging {
                     sender,
-                    more: history_more,
+                    targets: history_targets,
+                    revision: runtime.message_history_revision(),
                 },
             )}
         </div>
@@ -270,7 +274,8 @@ fn render_activity(
                 speak={controls.speak.clone()}
                 {narrate}
                 {speech}
-                history_more={history.more}
+                history_targets={history.targets}
+                history_revision={history.revision}
                 history={history_sender}
             />
         </div>
@@ -279,7 +284,8 @@ fn render_activity(
 
 struct HistoryPaging<'a> {
     sender: &'a SenderHandle,
-    more: BTreeSet<CanonicalUuid>,
+    targets: BTreeMap<CanonicalUuid, wire::MessageLocus>,
+    revision: u64,
 }
 
 fn render_details(
