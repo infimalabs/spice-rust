@@ -13,8 +13,14 @@ struct PlacementTuple {
 
 type PlacementSnapshot = BTreeMap<&'static str, PlacementTuple>;
 
+#[derive(Clone, Copy)]
+struct ExpectedMovement {
+    key: &'static str,
+    placement: PlacementTuple,
+}
+
 struct MovementDeclaration {
-    targets: &'static [&'static str],
+    targets: &'static [ExpectedMovement],
     cause: &'static str,
 }
 
@@ -118,7 +124,11 @@ fn assert_declared_movement(
         !declaration.cause.is_empty(),
         "movement declares its governing cause"
     );
-    let targets = declaration.targets.iter().copied().collect::<BTreeSet<_>>();
+    let targets = declaration
+        .targets
+        .iter()
+        .map(|target| (target.key, target.placement))
+        .collect::<BTreeMap<_, _>>();
     assert!(!targets.is_empty(), "movement declares at least one target");
     assert_eq!(
         targets.len(),
@@ -131,10 +141,15 @@ fn assert_declared_movement(
     );
     for (key, prior) in before {
         let current = &after[key];
-        if targets.contains(key) {
+        if let Some(expected) = targets.get(key) {
             assert_ne!(
-                current, prior,
-                "target {key:?} did not move for {}; tuple={prior:?}",
+                expected, prior,
+                "target {key:?} declares no movement for {}; tuple={prior:?}",
+                declaration.cause,
+            );
+            assert_eq!(
+                current, expected,
+                "target {key:?} moved to an unexpected placement for {}; expected={expected:?} actual={current:?}",
                 declaration.cause,
             );
         } else {
@@ -145,7 +160,7 @@ fn assert_declared_movement(
             );
         }
     }
-    assert!(targets.iter().all(|key| before.contains_key(key)));
+    assert!(targets.keys().all(|key| before.contains_key(key)));
 }
 
 #[test]
@@ -301,7 +316,26 @@ fn required_growth_declares_every_moving_card_and_preserves_the_rest() {
     let plane = PersistentLanePlane::new(900, &initial);
     let before = placements(&plane, &[]);
     let movement = MovementDeclaration {
-        targets: &["a", "b"],
+        targets: &[
+            ExpectedMovement {
+                key: "a",
+                placement: PlacementTuple {
+                    track: 0,
+                    base_row: -2,
+                    span: 12,
+                    extent: 2,
+                },
+            },
+            ExpectedMovement {
+                key: "b",
+                placement: PlacementTuple {
+                    track: 0,
+                    base_row: 0,
+                    span: 12,
+                    extent: 4,
+                },
+            },
+        ],
         cause: "frozen card b grows downward through overlapping card a",
     };
     let grown = plane.reconcile(
@@ -313,5 +347,22 @@ fn required_growth_declares_every_moving_card_and_preserves_the_rest() {
             initial[3].clone(),
         ],
     );
-    assert_declared_movement(&before, &placements(&grown, &[]), &movement);
+    let after = placements(&grown, &[]);
+    assert_declared_movement(&before, &after, &movement);
+
+    let mut arbitrary = after;
+    arbitrary.insert(
+        "a",
+        PlacementTuple {
+            track: 99,
+            base_row: -99,
+            span: 12,
+            extent: 999,
+        },
+    );
+    assert!(
+        std::panic::catch_unwind(|| assert_declared_movement(&before, &arbitrary, &movement))
+            .is_err(),
+        "an arbitrary but different target tuple must not satisfy the movement declaration",
+    );
 }

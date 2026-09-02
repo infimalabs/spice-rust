@@ -7,6 +7,10 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 import {
+  assertCanonicalPlacementsStable,
+  captureCanonicalPlacements,
+} from "./mosaic-placement-stability.mjs";
+import {
   assertNoUnavailableToolTerminal,
   assertUnavailableToolTerminal,
 } from "./compaction-boundary-reference.mjs";
@@ -388,7 +392,7 @@ export async function assertModeSwitchPreservesDeferredMosaic(
 }
 
 export async function armPlacementProbe(plane, excluded = []) {
-  return plane.evaluate((element, excludedKeys) => {
+  const armed = await plane.evaluate((element, excludedKeys) => {
     const token = crypto.randomUUID();
     const attributes = [
       "data-creation-index",
@@ -452,10 +456,21 @@ export async function armPlacementProbe(plane, excluded = []) {
       }),
     };
   }, excluded);
+  return {
+    ...armed,
+    canonical: await captureCanonicalPlacements(
+      plane,
+      armed.cards.map((card) => card.key),
+    ),
+  };
 }
 
 export async function finishPlacementProbe(plane, armed) {
-  return plane.evaluate((element, expected) => {
+  const canonical = await captureCanonicalPlacements(
+    plane,
+    armed.canonical.map((card) => card.key),
+  );
+  const finished = await plane.evaluate((element, expected) => {
     const probe = element.__mosaicPlacementObserver;
     if (!probe || probe.token !== expected.token) throw new Error("Mosaic placement probe changed");
     probe.observer.takeRecords().forEach(probe.record);
@@ -493,6 +508,7 @@ export async function finishPlacementProbe(plane, armed) {
         }),
     };
   }, armed);
+  return { ...finished, canonical };
 }
 
 function assertCreationIndexesStable(armed, finished, label) {
@@ -507,6 +523,7 @@ function assertCreationIndexesStable(armed, finished, label) {
 }
 
 export function assertUnmoved(armed, finished, label) {
+  assertCanonicalProbeStable(armed, finished, label);
   assert.ok(finished.retained, `${label} retains every committed card node`);
   assertCreationIndexesStable(armed, finished, label);
   assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
@@ -521,6 +538,7 @@ export function assertPlacementStable(armed, finished, label) {
   const withoutOrder = (cards) => cards
     .map(({ order: _order, ...card }) => card)
     .sort((left, right) => left.key.localeCompare(right.key));
+  assertCanonicalProbeStable(armed, finished, label);
   assert.ok(finished.retained, `${label} retains every committed card node`);
   assertCreationIndexesStable(armed, finished, label);
   assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
@@ -533,6 +551,7 @@ export function assertPlacementStable(armed, finished, label) {
 
 export function assertPlacementRetained(armed, finished, label) {
   const withoutBox = (cards) => cards.map(({ box: _box, ...card }) => card);
+  assertCanonicalProbeStable(armed, finished, label);
   assert.ok(finished.retained, `${label} retains every committed card node`);
   assertCreationIndexesStable(armed, finished, label);
   assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
@@ -541,6 +560,10 @@ export function assertPlacementRetained(armed, finished, label) {
     withoutBox(armed.cards),
     `${label} preserves DOM order and committed placement`,
   );
+}
+
+export function assertCanonicalProbeStable(armed, finished, label) {
+  assertCanonicalPlacementsStable(armed.canonical, finished.canonical, label);
 }
 
 export async function settleMosaicActivity(page, plane) {
