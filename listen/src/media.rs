@@ -117,45 +117,38 @@ fn image(
     let url = one_field(object, &["data_url", "image_url", "url"])?;
     let source = object.get("source");
     let data = object.get("data");
-    if [url.is_some(), source.is_some(), data.is_some()]
-        .into_iter()
-        .filter(|present| *present)
-        .count()
-        > 1
-    {
-        return Err(malformed());
-    }
-    if let Some(url) = url {
-        let url = url.as_str().ok_or_else(malformed)?;
-        return admit(name, url).map(Some);
-    }
-    if let Some(source) = source {
-        let source = source.as_object().ok_or_else(malformed)?;
-        if source.get("type").and_then(Value::as_str) != Some("base64") {
-            return Err(malformed());
+    let content_type = one_field(object, &["mimeType", "mime_type", "media_type"])?;
+    match (url, source, data, content_type) {
+        (Some(url), None, None, None) => {
+            let url = url.as_str().ok_or_else(malformed)?;
+            admit(name, url).map(Some)
         }
-        let content_type = source
-            .get("media_type")
-            .and_then(Value::as_str)
-            .ok_or_else(malformed)?;
-        let data = source
-            .get("data")
-            .and_then(Value::as_str)
-            .ok_or_else(malformed)?;
-        return Media::from_base64(name, content_type, data)
-            .map(Some)
-            .map_err(|_| malformed());
+        (None, Some(source), None, None) => {
+            let source = source.as_object().ok_or_else(malformed)?;
+            if source.get("type").and_then(Value::as_str) != Some("base64") {
+                return Err(malformed());
+            }
+            let content_type = source
+                .get("media_type")
+                .and_then(Value::as_str)
+                .ok_or_else(malformed)?;
+            let data = source
+                .get("data")
+                .and_then(Value::as_str)
+                .ok_or_else(malformed)?;
+            Media::from_base64(name, content_type, data)
+                .map(Some)
+                .map_err(|_| malformed())
+        }
+        (None, None, Some(data), Some(content_type)) => {
+            let data = data.as_str().ok_or_else(malformed)?;
+            let content_type = content_type.as_str().ok_or_else(malformed)?;
+            Media::from_base64(name, content_type, data)
+                .map(Some)
+                .map_err(|_| malformed())
+        }
+        _ => Err(malformed()),
     }
-    if let Some(data) = data {
-        let data = data.as_str().ok_or_else(malformed)?;
-        let content_type = one_field(object, &["mimeType", "mime_type", "media_type"])?
-            .and_then(Value::as_str)
-            .ok_or_else(malformed)?;
-        return Media::from_base64(name, content_type, data)
-            .map(Some)
-            .map_err(|_| malformed());
-    }
-    Err(malformed())
 }
 
 fn one_field<'a>(
@@ -289,6 +282,72 @@ mod tests {
                 "data": PNG,
                 "mimeType": "image/png",
                 "media_type": "image/png",
+            }),
+        ];
+        for block in blocks {
+            assert!(matches!(
+                decompose(OwnedContent::ProviderValue {
+                    value: &block,
+                    default_name: "tool-image.png",
+                }),
+                Err(ResidueKind::Malformed { field: "media", .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn canonical_provider_media_shapes_share_one_identity() {
+        let url = format!("data:image/png;base64,{PNG}");
+        let blocks = [
+            serde_json::json!({"type": "image", "data_url": url}),
+            serde_json::json!({
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": PNG},
+            }),
+            serde_json::json!({
+                "type": "image",
+                "data": PNG,
+                "mimeType": "image/png",
+            }),
+        ];
+        let media = blocks
+            .iter()
+            .map(|block| {
+                let content = decompose(OwnedContent::ProviderValue {
+                    value: block,
+                    default_name: "tool-image.png",
+                })
+                .unwrap();
+                assert_eq!(content.media.len(), 1);
+                content.media.into_iter().next().unwrap()
+            })
+            .collect::<Vec<_>>();
+        for candidate in &media[1..] {
+            assert_eq!(media[0].identity().unwrap(), candidate.identity().unwrap());
+        }
+    }
+
+    #[test]
+    fn cross_shape_media_fields_refuse_without_resolver_order() {
+        let url = format!("data:image/png;base64,{PNG}");
+        let source = serde_json::json!({
+            "type": "base64",
+            "media_type": "image/png",
+            "data": PNG,
+        });
+        let blocks = [
+            serde_json::json!({"type": "image", "data_url": url, "data": PNG}),
+            serde_json::json!({
+                "type": "image",
+                "data_url": url,
+                "mimeType": "image/jpeg",
+            }),
+            serde_json::json!({"type": "image", "source": source, "data": PNG}),
+            serde_json::json!({"type": "image", "source": source, "image_url": url}),
+            serde_json::json!({
+                "type": "image",
+                "source": source,
+                "mimeType": "image/png",
             }),
         ];
         for block in blocks {

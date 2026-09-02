@@ -818,6 +818,7 @@ fn provider_tool_blocks_separate_neighbor_text_from_owning_media() {
 
 #[test]
 fn malformed_and_unowned_media_fail_as_media_instead_of_becoming_text() {
+    const PNG: &str = "iVBORw0KGgo=";
     let records = [
         serde_json::json!({
             "type": "response_item",
@@ -836,6 +837,34 @@ fn malformed_and_unowned_media_fail_as_media_instead_of_becoming_text() {
                     "type": "text",
                     "text": "must not become tool output",
                     "image_url": "data:image/png;base64,iVBORw0KGgo=",
+                }],
+            },
+        }),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call-url-mime-contradiction",
+                "output": [{
+                    "type": "image",
+                    "data_url": format!("data:image/png;base64,{PNG}"),
+                    "mimeType": "image/jpeg",
+                }],
+            },
+        }),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call-source-mime-contradiction",
+                "output": [{
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": PNG,
+                    },
+                    "mimeType": "image/jpeg",
                 }],
             },
         }),
