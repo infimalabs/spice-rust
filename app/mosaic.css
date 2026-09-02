@@ -36,10 +36,10 @@
   --mosaic-quote-indent: calc(
     var(--mosaic-quote-step) - var(--mosaic-quote-rail) - var(--mosaic-quote-inline)
   );
-  --mosaic-quote-inline: 8px;
-  --mosaic-quote-nested-inline: 6px;
-  --mosaic-quote-pad-block: 6px;
-  --mosaic-quote-rail: 3px;
+  --mosaic-quote-inline: 7px;
+  --mosaic-quote-nested-inline: 5px;
+  --mosaic-quote-pad-block: 5px; --mosaic-quote-radius: 12px;
+  --mosaic-quote-rail: 2px;
   --mosaic-quote-step: 8px;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -59,7 +59,7 @@
 .markdown-body li + li { margin-top: .25em; }
 .markdown-body blockquote {
   margin: 6px 0; padding: var(--mosaic-quote-pad-block) var(--mosaic-quote-inline);
-  border-left: var(--mosaic-quote-rail) solid color-mix(in srgb, var(--accent) 72%, var(--line));
+  border: var(--mosaic-quote-rail) solid color-mix(in srgb, var(--accent) 72%, var(--line)); border-radius: var(--mosaic-quote-radius);
   background: color-mix(in srgb, var(--accent) 8%, var(--panel)); color: var(--muted);
   /* Drop the quote tier once; nested rails inherit this size without compounding it. */
   font-size: .8125rem; line-height: 1.34;
@@ -68,7 +68,7 @@
   margin: 6px 0 6px var(--mosaic-quote-indent);
   padding-inline: var(--mosaic-quote-nested-inline);
   font-size: inherit;
-  border-left-color: color-mix(in srgb, var(--accent) 88%, white); background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent) 88%, white); background: color-mix(in srgb, var(--accent) 12%, var(--panel));
 }
 .markdown-body blockquote blockquote blockquote {
   margin-left: var(--mosaic-quote-deep-indent);
