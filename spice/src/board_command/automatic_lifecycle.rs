@@ -77,7 +77,8 @@ fn prepare_claim(
     allocation: &board::NextConfig,
 ) -> Result<PreparedClaim, Outcome<CommandAnswer>> {
     let actor = Actor::Lane(lane);
-    let snapshot = validated_snapshot_from(observed, actor.clone(), projects, allocation)?;
+    let snapshot =
+        validated_snapshot_for_automatic(observed, actor.clone(), occupant, projects, allocation)?;
     let row = available_lane(&snapshot, lane)?;
     let subscription = available_subscription(&snapshot, row)?;
     let selected = select_task(&snapshot, &actor, subscription)?;

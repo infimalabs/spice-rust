@@ -11,7 +11,7 @@ use wire::{
 };
 
 use super::materialization::Projection;
-use super::{Backoff, Resolution, Trigger, project_targets, resolve};
+use super::{Available, Backoff, Resolution, Trigger, project_targets, resolve};
 
 const PROJECT: &str = "lifecycle.work";
 const TASK_MOMENT: &str = "1kKRRsDP";
@@ -91,8 +91,14 @@ fn team_policy_drives_every_member_while_terminal_seat_life_remains_an_override(
     ] {
         let (bus, _, projection) = policy_fixture(policy, false);
         let snapshot = bus.task_snapshot().expect("policy snapshot reads");
-        let targets = project_targets(&snapshot, &projection, instant(50), &Holds::new(3))
-            .expect("team policy projects lifecycle targets");
+        let targets = project_targets(
+            &snapshot,
+            &projection,
+            instant(50),
+            &Holds::new(3),
+            &board::NextConfig::default(),
+        )
+        .expect("team policy projects lifecycle targets");
         assert_eq!(
             resolve(&targets, &Backoff::default(), instant(50)),
             expected
@@ -104,8 +110,14 @@ fn team_policy_drives_every_member_while_terminal_seat_life_remains_an_override(
     let snapshot = bus
         .task_snapshot()
         .expect("terminal override snapshot reads");
-    let targets = project_targets(&snapshot, &projection, instant(50), &Holds::new(3))
-        .expect("terminal override projects");
+    let targets = project_targets(
+        &snapshot,
+        &projection,
+        instant(50),
+        &Holds::new(3),
+        &board::NextConfig::default(),
+    )
+    .expect("terminal override projects");
     assert!(
         targets.is_empty(),
         "terminal seat life suppresses team startup"
@@ -122,13 +134,23 @@ fn drain_team_startup_projects_every_current_member() {
         .advance(&snapshot, &projects)
         .expect("expanded team projection advances");
 
-    let targets = project_targets(&snapshot, &projection, instant(50), &Holds::new(3))
-        .expect("expanded team targets project");
+    let targets = project_targets(
+        &snapshot,
+        &projection,
+        instant(50),
+        &Holds::new(3),
+        &board::NextConfig::default(),
+    )
+    .expect("expanded team targets project");
     assert_eq!(
         targets.iter().map(|target| target.lane).collect::<Vec<_>>(),
         vec![lane(), lane_at(2), lane_at(3)],
     );
-    assert!(targets.iter().all(|target| target.drain_queue));
+    assert!(
+        targets
+            .iter()
+            .all(|target| target.drain_queue == Available::Ready)
+    );
     bus.shutdown().expect("expanded team bus stops");
 }
 
@@ -162,8 +184,14 @@ fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
     );
 
     let now = instant(50);
-    let targets = project_targets(&snapshot, &incremental, now, &holds)
-        .expect("wake targets project from incremental state");
+    let targets = project_targets(
+        &snapshot,
+        &incremental,
+        now,
+        &holds,
+        &board::NextConfig::default(),
+    )
+    .expect("wake targets project from incremental state");
     let resolution = resolve(&targets, &Backoff::default(), now);
     let residency = incremental
         .project_residency(

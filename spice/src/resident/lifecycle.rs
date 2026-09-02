@@ -62,7 +62,7 @@ struct Target {
     lane: CanonicalUuid,
     pending_inbox: bool,
     held_claim: bool,
-    drain_queue: bool,
+    drain_queue: Available,
     available: Available,
 }
 
@@ -215,7 +215,13 @@ impl Runtime {
             .map_err(|error| store_fault("lifecycle::snapshot-unreadable", &error.to_string()))?;
         self.synchronize_holds(&snapshot, self.projection.cursor())?;
         self.projection.advance(&snapshot, &config.projects)?;
-        let targets = project_targets(&snapshot, &self.projection, now, &self.holds)?;
+        let targets = project_targets(
+            &snapshot,
+            &self.projection,
+            now,
+            &self.holds,
+            &config.allocation,
+        )?;
         self.backoff.retain_targets(&targets);
         let task = match resolve(&targets, &self.backoff, now) {
             Resolution::Idle => None,
@@ -514,21 +520,7 @@ impl Runtime {
                 lane_surface::AutomaticWake::Started => Ok(Attempted::Started),
                 lane_surface::AutomaticWake::Unstarted(failure) => Err(failure),
             },
-            Trigger::DrainQueue => match lane_surface::wake_automatic(
-                bus,
-                paths,
-                epoch,
-                seats,
-                lane_runtime,
-                lane,
-                occupant,
-                Some(snapshot),
-                None,
-            )? {
-                lane_surface::AutomaticWake::Started => Ok(Attempted::Started),
-                lane_surface::AutomaticWake::Unstarted(failure) => Err(failure),
-            },
-            Trigger::AvailableWork => {
+            Trigger::DrainQueue | Trigger::AvailableWork => {
                 let claim = crate::board_command::claim_automatic(
                     bus,
                     snapshot,
@@ -597,6 +589,7 @@ fn project_targets(
     projection: &Projection,
     now: Instant,
     holds: &Holds,
+    allocation: &board::NextConfig,
 ) -> CommandResult<Vec<Target>> {
     let Some(residency) = snapshot.residency() else {
         return Ok(Vec::new());
@@ -664,22 +657,36 @@ fn project_targets(
                 "one lifecycle target has more than one durable task subscription",
             ));
         }
-        let available = match subscription {
-            Some(subscription) => {
-                if subscription.policy == wire::intent::LineageLife::Drive {
-                    available_deadline(entries, ready_at, &Actor::Lane(row.lane), subscription)?
-                } else {
-                    Available::None
-                }
-            }
-            None => Available::None,
+        let actor = Actor::Lane(row.lane);
+        let first_drain_member = !projected_residency.lanes.iter().any(|member| {
+            member.lineage_id == row.lineage_id
+                && member.occupant.is_some()
+                && member.disposition == "occupied"
+        });
+        let (drain_queue, available) = match subscription {
+            Some(subscription) if subscription.policy == wire::intent::LineageLife::Drain => (
+                drain_available(
+                    snapshot,
+                    entries,
+                    ready_at,
+                    &actor,
+                    subscription,
+                    allocation,
+                    first_drain_member,
+                )?,
+                Available::None,
+            ),
+            Some(subscription) if subscription.policy == wire::intent::LineageLife::Drive => (
+                Available::None,
+                available_deadline(entries, ready_at, &actor, subscription)?,
+            ),
+            Some(_) | None => (Available::None, Available::None),
         };
         targets.push(Target {
             lane: row.lane,
             pending_inbox,
             held_claim,
-            drain_queue: subscription
-                .is_some_and(|row| row.policy == wire::intent::LineageLife::Drain),
+            drain_queue,
             available,
         });
     }
@@ -724,6 +731,50 @@ fn available_deadline(
     available_from_ready_instants(&mut eligible)
 }
 
+fn drain_available(
+    snapshot: &bus::TaskSnapshot,
+    entries: &[Entry],
+    ready_at: &BTreeMap<TaskStamp, Instant>,
+    actor: &Actor,
+    subscription: &wire::LineageSubscription,
+    allocation: &board::NextConfig,
+    first_member: bool,
+) -> CommandResult<Available> {
+    let recent_cell = board::recent_claim_cell(entries, snapshot.facts().iter(), actor);
+    if board::select(
+        entries,
+        actor,
+        subscription,
+        allocation.band(),
+        recent_cell.as_ref(),
+    )
+    .is_none()
+    {
+        return Ok(Available::None);
+    }
+
+    let mut eligible = entries
+        .iter()
+        .filter(|entry| board::selectable_entry(entries, entry, actor, subscription))
+        .filter_map(|entry| ready_at.get(entry.born()).copied())
+        .collect::<Vec<_>>();
+    drain_from_ready_instants(&mut eligible, first_member)
+}
+
+fn drain_from_ready_instants(
+    eligible: &mut [Instant],
+    first_member: bool,
+) -> CommandResult<Available> {
+    eligible.sort();
+    if eligible.is_empty() {
+        Ok(Available::None)
+    } else if first_member || eligible.len() >= NORMAL_READY {
+        Ok(Available::Ready)
+    } else {
+        after(eligible[0], STARVATION_SECONDS).map(Available::At)
+    }
+}
+
 fn available_from_ready_instants(eligible: &mut [Instant]) -> CommandResult<Available> {
     eligible.sort();
     if eligible.is_empty() {
@@ -746,8 +797,8 @@ fn resolve(targets: &[Target], backoff: &Backoff, now: Instant) -> Resolution {
             (Trigger::PendingInbox, Available::Ready)
         } else if target.held_claim {
             (Trigger::HeldClaim, Available::Ready)
-        } else if target.drain_queue {
-            (Trigger::DrainQueue, Available::Ready)
+        } else if target.drain_queue != Available::None {
+            (Trigger::DrainQueue, target.drain_queue)
         } else {
             (Trigger::AvailableWork, target.available)
         };
@@ -822,7 +873,7 @@ mod tests {
             lane: super::tests::lane(lane),
             pending_inbox: false,
             held_claim: false,
-            drain_queue: false,
+            drain_queue: Available::None,
             available: Available::None,
         }
     }
@@ -924,6 +975,30 @@ mod tests {
         assert_eq!(
             available_from_ready_instants(&mut burst).expect("burst fold resolves"),
             Available::At(instant(10))
+        );
+    }
+
+    #[test]
+    fn drain_capacity_starts_first_member_then_scales_for_age_or_two_tasks() {
+        let mut none = Vec::new();
+        assert_eq!(
+            drain_from_ready_instants(&mut none, true).expect("empty drain fold resolves"),
+            Available::None
+        );
+        let mut first = vec![instant(0)];
+        assert_eq!(
+            drain_from_ready_instants(&mut first, true).expect("first drain member resolves"),
+            Available::Ready
+        );
+        let mut next = vec![instant(0)];
+        assert_eq!(
+            drain_from_ready_instants(&mut next, false).expect("next drain member resolves"),
+            Available::At(instant_after_minutes(3))
+        );
+        let mut backlog = vec![instant(0), instant(7)];
+        assert_eq!(
+            drain_from_ready_instants(&mut backlog, false).expect("drain backlog resolves"),
+            Available::Ready
         );
     }
 
@@ -1030,7 +1105,11 @@ mod tests {
             let mut row = target(1);
             row.pending_inbox = trigger == Trigger::PendingInbox;
             row.held_claim = trigger == Trigger::HeldClaim;
-            row.drain_queue = trigger == Trigger::DrainQueue;
+            row.drain_queue = if trigger == Trigger::DrainQueue {
+                Available::Ready
+            } else {
+                Available::None
+            };
             row.available = if trigger == Trigger::AvailableWork {
                 Available::Ready
             } else {
