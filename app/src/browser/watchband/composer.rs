@@ -94,6 +94,7 @@ pub(super) struct AgentMessageCardProps {
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
     pub(super) speech_queue: Callback<SpeechRequest>,
     pub(super) speech: LineageSpeech,
+    pub(super) speaking: bool,
     pub(super) lane: CanonicalUuid,
     pub(super) order: u64,
     pub(super) layout: CardLayout,
@@ -109,6 +110,7 @@ impl PartialEq for AgentMessageCardProps {
             && self.quote_dispatcher == other.quote_dispatcher
             && self.speech_queue == other.speech_queue
             && self.speech == other.speech
+            && self.speaking == other.speaking
             && self.lane == other.lane
             && self.order == other.order
             && self.layout == other.layout
@@ -122,18 +124,30 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
         Callback::from(|_: String| {})
     } else {
         let lane = props.lane.to_string();
+        let message_key = agent_message_source_id(&props.message);
         let speech_queue = props.speech_queue.clone();
         Callback::from(move |text: String| {
-            speech_queue.emit(SpeechRequest::manual(Some(lane.clone()), text));
+            speech_queue.emit(SpeechRequest::message(
+                lane.clone(),
+                message_key.clone(),
+                text,
+            ));
         })
     };
-    render_agent_message_card(
+    let correspondent = agent_message_correspondent(
         &props.member,
         props.quote_lane,
         &props.message,
         &props.quote_dispatcher,
         &speak,
+        props.speaking,
         props.order,
+    );
+    render_agent_message_card(
+        &props.member,
+        props.quote_lane,
+        &props.message,
+        &correspondent,
         &props.layout,
     )
 }
@@ -142,9 +156,7 @@ fn render_agent_message_card(
     member: &crate::runtime::LaneMember,
     quote_lane: CanonicalUuid,
     message: &wire::AgentMessage,
-    quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
-    speak: &Callback<String>,
-    order: u64,
+    correspondent: &view::chrome::Correspondent,
     layout: &CardLayout,
 ) -> Html {
     let source_id = agent_message_source_id(message);
@@ -156,8 +168,6 @@ fn render_agent_message_card(
     );
     let footer_label = watchband::agent_message_label(&member.worktree, member.name.as_deref())
         .expect("admitted agent message has a configured name or worktree basename");
-    let correspondent =
-        agent_message_correspondent(member, quote_lane, message, quote_dispatcher, speak, order);
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
     let rendered_markdown = crate::composer_markdown::render_received(&message.text);
     let card_label = if is_compaction {
@@ -185,6 +195,8 @@ fn render_agent_message_card(
                 "mosaic-message-card",
                 is_compaction.then_some("mosaic-compaction-card"),
                 (!is_compaction && image_only).then_some("mosaic-message-card--image-only"),
+                message.final_answer.then_some("final"),
+                correspondent.speaking.then_some("now-playing"),
                 layout.lifecycle.as_str(),
             )}
             aria-label={card_label}
@@ -194,6 +206,8 @@ fn render_agent_message_card(
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
             data-agent-activity={agent_activity_name(message.activity)}
+            data-message-final={message.final_answer.to_string()}
+            data-speech-active={correspondent.speaking.to_string()}
             data-producer-target-id={quote_lane.to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
@@ -219,7 +233,7 @@ fn render_agent_message_card(
                 {render_agent_message_media(unlinked_media)}
                 {render_agent_message_footer(
                     message,
-                    &correspondent,
+                    correspondent,
                     crate::runtime::agent_message_display_millis(message),
                     footer_label,
                     &attribution,
@@ -272,6 +286,7 @@ fn agent_message_correspondent(
     message: &wire::AgentMessage,
     quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
     speak: &Callback<String>,
+    speaking: bool,
     order: u64,
 ) -> view::chrome::Correspondent {
     let lane_key = quote_lane.to_string();
@@ -285,6 +300,7 @@ fn agent_message_correspondent(
     view::chrome::Correspondent {
         accent: watchband::accent(member.lane),
         speak: speak.clone(),
+        speaking,
         quote: Callback::from(move |()| {
             quote_dispatcher.dispatch(ComposerAction::AddQuote {
                 lane: lane_key.clone(),

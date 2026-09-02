@@ -651,6 +651,89 @@ async function retainNoActionCard(page, console, activityReplay, lane) {
   }, message.key);
 }
 
+async function retainFinalCard(page, console, activityReplay, lane) {
+  const message = await activityReplay.injectAgentFinal(
+    page,
+    lane,
+    "Final message color reference",
+  );
+  const card = console.locator(`[data-mosaic-card-key="${message.key}"]`);
+  await card.waitFor({ state: "attached", timeout: 10_000 });
+  await waitForPage(page, "final message commits", TRANSITION_MS, (key) => {
+    const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
+    return candidate?.dataset.layoutPhase === "committed" && candidate.classList.contains("final");
+  }, message.key);
+  return card;
+}
+
+async function messageStateColors(card) {
+  return card.evaluate((article) => {
+    const probe = document.createElement("span");
+    article.append(probe);
+    const color = (expression) => {
+      probe.style.color = expression;
+      const resolved = getComputedStyle(probe).color;
+      probe.style.color = "";
+      return resolved;
+    };
+    const background = (expression) => {
+      probe.style.background = expression;
+      const resolved = getComputedStyle(probe).backgroundColor;
+      probe.style.background = "";
+      return resolved;
+    };
+    const style = getComputedStyle(article);
+    const result = {
+      classes: [...article.classList],
+      background: style.backgroundColor,
+      borderLeft: style.borderLeftColor,
+      borderRight: style.borderRightColor,
+      borderTop: style.borderTopColor,
+      boxShadow: style.boxShadow,
+      finalAccent: color("var(--accent-2)"),
+      finalTint: background("color-mix(in srgb, var(--accent-2) 8%, var(--panel))"),
+      producerAccent: color("var(--accent-slot, var(--accent))"),
+      speechBorder: color("color-mix(in srgb, var(--warning) 70%, var(--line))"),
+      speechAccent: color("var(--warning)"),
+    };
+    probe.remove();
+    return result;
+  });
+}
+
+async function captureFinalMessageStates(page, console, card, artifacts, mode, viewport) {
+  await waitForCommittedResize(page, console, viewport);
+  const final = await messageStateColors(card);
+  assert.ok(final.classes.includes("final"), `${mode} ${viewport.label} retains final state`);
+  assert.ok(!final.classes.includes("now-playing"), `${mode} ${viewport.label} starts silent`);
+  assert.equal(final.background, final.finalTint, `${mode} final uses the reference tint role`);
+  assert.equal(final.borderTop, final.finalAccent, `${mode} final uses the cool top rule`);
+  assert.equal(final.borderRight, final.producerAccent, `${mode} final preserves producer identity`);
+  assert.ok(final.boxShadow.includes(final.finalAccent), `${mode} final paints its top inset rule`);
+  await card.screenshot({
+    path: join(artifacts, `canvas-message-final-${viewport.label}-${mode}.png`),
+  });
+
+  await card.getByLabel("Speak this message").click();
+  await waitForPage(page, "message speech becomes current", TRANSITION_MS, (key) => (
+    document.querySelector(`[data-mosaic-card-key="${key}"]`)?.classList.contains("now-playing")
+  ), await card.getAttribute("data-mosaic-card-key"));
+  const speaking = await messageStateColors(card);
+  assert.ok(speaking.classes.includes("now-playing"), `${mode} message exposes active speech`);
+  assert.equal(speaking.background, speaking.finalTint, `${mode} speech preserves final tint`);
+  assert.equal(speaking.borderLeft, speaking.speechBorder, `${mode} speech uses the warm border`);
+  assert.equal(speaking.borderRight, speaking.producerAccent, `${mode} speech preserves producer identity`);
+  assert.ok(speaking.boxShadow.includes(speaking.speechAccent), `${mode} speech paints its left inset rule`);
+  assert.ok(speaking.boxShadow.includes(speaking.finalAccent), `${mode} speech preserves the final top rule`);
+  await card.screenshot({
+    path: join(artifacts, `canvas-message-speaking-${viewport.label}-${mode}.png`),
+  });
+  await page.evaluate(() => window.__speechUtterances.at(-1)?.onend?.());
+  await waitForPage(page, "message speech state clears", TRANSITION_MS, (key) => (
+    !document.querySelector(`[data-mosaic-card-key="${key}"]`)?.classList.contains("now-playing")
+  ), await card.getAttribute("data-mosaic-card-key"));
+}
+
 export async function assertReferenceMessageCard(
   page,
   console,
@@ -661,6 +744,7 @@ export async function assertReferenceMessageCard(
   lane,
 ) {
   await retainNoActionCard(page, console, activityReplay, lane);
+  const finalCard = await retainFinalCard(page, console, activityReplay, lane);
   const geometry = await card.evaluate((article) => {
     const measured = (node) => {
       const box = node.getBoundingClientRect();
@@ -741,6 +825,12 @@ export async function assertReferenceMessageCard(
     await captureReferenceView(page, console, artifacts, {
       label: "mobile", width: 390, height: 720,
     }, mode, agentLabels);
+    await captureFinalMessageStates(page, console, finalCard, artifacts, mode, {
+      label: "reference", width: 648, height: 726,
+    });
+    await captureFinalMessageStates(page, console, finalCard, artifacts, mode, {
+      label: "mobile", width: 390, height: 720,
+    });
   }
   await waitForCommittedResize(page, console, { label: "restored reference", ...original });
   await assertMessageCardLayout(console, "restored reference");

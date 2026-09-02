@@ -18,6 +18,8 @@ pub(super) struct AgentControls {
     pub(super) speak: Callback<SpeechRequest>,
     /// Advance durable narration cursors and admit their live suffix.
     pub(super) narrate: Callback<NarrationBatch>,
+    /// Exact rendered message currently owned by the speech queue.
+    pub(super) speech_message: UseStateHandle<Option<String>>,
 }
 
 /// Render the reason the last submission was refused, or nothing.
@@ -51,9 +53,6 @@ pub(super) struct CanvasRender<'a> {
     pub note_notice: &'a UseStateHandle<Notice>,
     pub submit_note: Callback<SubmitEvent>,
     pub refresh: Callback<MouseEvent>,
-    pub speech: &'a UseStateHandle<wire::SpeechPlayback>,
-    pub speech_status: &'a UseStateHandle<SpeechStatus>,
-    pub toggle_speech: Callback<MouseEvent>,
 }
 
 pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
@@ -122,11 +121,6 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                         <span class="status-copy">{render.connection.label()}</span>
                     </div>
                     <div class="topbar-actions">
-                        {speech_control(
-                            render.speech,
-                            render.speech_status,
-                            render.toggle_speech.clone(),
-                        )}
                         <button
                             class="refresh"
                             type="button"
@@ -226,49 +220,6 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                 {render_notice(&controls.seat_notice)}
             </form>
         </aside>
-    }
-}
-
-pub(super) fn speech_control(
-    speech: &wire::SpeechPlayback,
-    status: &SpeechStatus,
-    toggle: Callback<MouseEvent>,
-) -> Html {
-    if matches!(speech, wire::SpeechPlayback::Disabled {}) {
-        return Html::default();
-    }
-    let unavailable = matches!(
-        speech,
-        wire::SpeechPlayback::External {
-            available: false,
-            ..
-        }
-    );
-    let label = if unavailable {
-        "Speech unavailable"
-    } else {
-        status.label()
-    };
-    let title = if unavailable {
-        "External speech backend is not configured".to_owned()
-    } else {
-        status.title()
-    };
-    html! {
-        <>
-            <button
-                class={classes!("speech-button", status.active().then_some("stop"))}
-                type="button"
-                aria-label={label}
-                title={title}
-                data-state={status.state()}
-                disabled={unavailable}
-                onclick={toggle}
-            >
-                <span class="speech-icon" aria-hidden="true"></span>
-            </button>
-            <span class="visually-hidden" aria-live="polite">{status.title()}</span>
-        </>
     }
 }
 
