@@ -380,7 +380,8 @@ fn task_chip_html(task: &wire::TaskHandle) -> String {
     let handle = task.to_string();
     format!(
         "<span class=\"message-task-chip\" data-task-handle=\"{handle}\" \
-         aria-label=\"Reported task {handle}\" title=\"{handle}\">{handle}</span>"
+         aria-label=\"Reported task {handle}\" title=\"{handle}\">\
+         <span class=\"message-task-chip-label\">{handle}</span></span>"
     )
 }
 

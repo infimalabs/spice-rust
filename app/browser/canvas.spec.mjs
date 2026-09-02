@@ -58,7 +58,7 @@ import {
   assertSevenMemberComposerStrip,
 } from "./canvas-lineage-life.mjs";
 import { assertLineageDrainFailureTeardown } from "./canvas-lineage-teardown.mjs";
-import { assertCanonicalInlineTaskCode } from "./control-reference.mjs";
+import { assertTaskChipTypographyMatrix } from "./control-reference.mjs";
 import { assertLiveThreadCoalescing } from "./live-thread-coalescing.mjs";
 import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
 import { assertBoundaryLoadReading, withLoadReading } from "./canvas-load.mjs";
@@ -921,7 +921,11 @@ try {
         const surface = team.console.locator(
           `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
         );
-        await assertCanonicalInlineTaskCode(surface);
+        await assertTaskChipTypographyMatrix(
+          lightPage,
+          surface,
+          join(artifacts, "canvas-task-chip.png"),
+        );
         await captureFirefoxAgentPageSpacing(resident.discovery.endpoint, artifacts, {
           file: "firefox-agents-short-480x468.png",
           populated: true,
