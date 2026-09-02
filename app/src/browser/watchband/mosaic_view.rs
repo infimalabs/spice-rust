@@ -11,24 +11,9 @@ use gloo_timers::callback::Timeout;
 const MIN_MEASURABLE_WIDTH_PX: i32 = 24;
 const RESIZE_DEBOUNCE_MILLIS: u32 = 200;
 
-#[derive(Clone)]
-pub(super) struct HistorySender(SenderHandle);
-
-impl HistorySender {
-    pub(super) fn new(sender: SenderHandle) -> Self {
-        Self(sender)
-    }
-
-    fn request(&self, lane: CanonicalUuid, before: wire::MessageLocus) {
-        send_action(&self.0, ClientAction::MessageHistory { lane, before });
-    }
-}
-
-impl PartialEq for HistorySender {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
-    }
-}
+mod history;
+pub(super) use history::HistorySender;
+use history::use_history_paging;
 
 #[derive(Clone)]
 pub(super) enum ActivityCard {
@@ -344,7 +329,8 @@ pub(super) struct MosaicPlaneProps {
     pub(super) speak: Callback<SpeechRequest>,
     pub(super) narrate: Callback<NarrationBatch>,
     pub(super) speech: LineageSpeech,
-    pub(super) history_more: BTreeSet<CanonicalUuid>,
+    pub(super) history_targets: BTreeMap<CanonicalUuid, wire::MessageLocus>,
+    pub(super) history_revision: u64,
     pub(super) history: HistorySender,
 }
 
@@ -448,8 +434,13 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let width = use_element_width(host.clone());
     let measurement_width = width.round() as i32;
     let image_revisions = use_reducer(ImageRevisions::default);
-    let history_targets = history_targets(&properties.cards, &properties.history_more);
-    use_history_paging(host.clone(), history_targets, properties.history.clone());
+    use_history_paging(
+        host.clone(),
+        &properties.cards,
+        &properties.history_targets,
+        properties.history_revision,
+        properties.history.clone(),
+    );
     let committed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
     let card_keys = properties
         .cards
@@ -512,84 +503,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         max_row,
     }
     .render(host)
-}
-
-#[derive(Clone, PartialEq)]
-struct HistoryTarget {
-    lane: CanonicalUuid,
-    before: wire::MessageLocus,
-    key: String,
-}
-
-fn history_targets(cards: &[ActivityCard], more: &BTreeSet<CanonicalUuid>) -> Vec<HistoryTarget> {
-    let mut seen = BTreeSet::new();
-    cards
-        .iter()
-        .filter_map(|card| match card {
-            ActivityCard::Agent { message, .. }
-                if more.contains(&message.lane) && seen.insert(message.lane) =>
-            {
-                Some(HistoryTarget {
-                    lane: message.lane,
-                    before: message.locus,
-                    key: card.key(),
-                })
-            }
-            ActivityCard::Agent { .. } => None,
-        })
-        .collect()
-}
-
-#[hook]
-fn use_history_paging(host: NodeRef, targets: Vec<HistoryTarget>, request: HistorySender) {
-    let requested = use_mut_ref(HashSet::<String>::new);
-    use_effect_with((host, targets, request), move |(host, targets, request)| {
-        let registration = host.cast::<web_sys::Element>().and_then(|element| {
-            let current = targets
-                .iter()
-                .map(|target| target.key.clone())
-                .collect::<HashSet<_>>();
-            requested.borrow_mut().retain(|key| current.contains(key));
-            let observed = element.clone();
-            let observed_targets = targets.clone();
-            let observed_requested = requested.clone();
-            let observed_request = request.clone();
-            let inspect = Rc::new(move || {
-                let viewport = observed.get_bounding_client_rect();
-                for target in &observed_targets {
-                    let selector = format!("[data-mosaic-card-key=\"{}\"]", target.key);
-                    let Ok(Some(card)) = observed.query_selector(&selector) else {
-                        continue;
-                    };
-                    let bounds = card.get_bounding_client_rect();
-                    if bounds.top() > viewport.bottom() + 400.0
-                        || bounds.bottom() < viewport.top() - 400.0
-                        || !observed_requested.borrow_mut().insert(target.key.clone())
-                    {
-                        continue;
-                    }
-                    observed_request.request(target.lane, target.before);
-                }
-            });
-            inspect();
-            let on_scroll = {
-                let inspect = Rc::clone(&inspect);
-                Closure::<dyn FnMut(web_sys::Event)>::new(move |_| inspect())
-            };
-            element
-                .add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref())
-                .ok()?;
-            Some((element, on_scroll))
-        });
-        move || {
-            if let Some((element, on_scroll)) = registration {
-                let _ = element.remove_event_listener_with_callback(
-                    "scroll",
-                    on_scroll.as_ref().unchecked_ref(),
-                );
-            }
-        }
-    });
 }
 
 #[hook]

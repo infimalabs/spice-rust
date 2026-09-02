@@ -486,8 +486,12 @@ pub struct CanvasRuntime {
     trust_resume: Option<StreamCursor>,
     message_cards: message_cards::MessageCards,
     operator_messages: Vec<OperatorMessage>,
-    /// Member lanes whose retained history extends behind the visible oldest card.
-    message_history_more: BTreeSet<CanonicalUuid>,
+    /// Exact oldest admitted card each independently paged member can extend.
+    message_history: BTreeMap<CanonicalUuid, MessageLocus>,
+    /// A same-scope subscription snapshot merges into retained hydrated cards.
+    message_reconnect_pending: bool,
+    /// Re-arms member-local paging after a same-scope subscription refresh.
+    message_history_revision: u64,
     thread_pages: Vec<BrowserState<FactRow>>,
     facts: BrowserState<FactRow>,
     thread: BrowserState<FactRow>,
@@ -517,7 +521,9 @@ impl CanvasRuntime {
             trust_resume: None,
             message_cards: message_cards::MessageCards::default(),
             operator_messages: Vec::new(),
-            message_history_more: BTreeSet::new(),
+            message_history: BTreeMap::new(),
+            message_reconnect_pending: false,
+            message_history_revision: 0,
             thread_pages: Vec::new(),
             facts: BrowserState::new(accepted),
             thread: BrowserState::new(accepted),
@@ -547,6 +553,7 @@ impl CanvasRuntime {
             for page in &mut self.thread_pages {
                 page.reconnect(accepted);
             }
+            self.message_reconnect_pending = true;
             self.terminal = None;
             false
         } else {
@@ -603,10 +610,16 @@ impl CanvasRuntime {
         })
     }
 
-    /// Whether one member can request another retained history page.
+    /// Exact member-local cursor for the next retained history page.
     #[must_use]
-    pub fn message_history_more(&self, lane: CanonicalUuid) -> bool {
-        self.message_history_more.contains(&lane)
+    pub fn message_history_target(&self, lane: CanonicalUuid) -> Option<MessageLocus> {
+        self.message_history.get(&lane).copied()
+    }
+
+    /// Subscription generation owning the current member-local frontiers.
+    #[must_use]
+    pub const fn message_history_revision(&self) -> u64 {
+        self.message_history_revision
     }
 
     #[must_use]

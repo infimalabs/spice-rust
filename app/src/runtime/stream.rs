@@ -209,10 +209,11 @@ impl CanvasRuntime {
             } => self.apply_message_snapshot(*limit as usize, messages, more),
             StreamFrame::MessageHistory {
                 lane,
+                before,
                 more,
                 messages,
                 ..
-            } => self.apply_message_history(*lane, messages, *more),
+            } => self.apply_message_history(*lane, *before, messages, *more),
             StreamFrame::Thread { packed, .. } => self.apply_thread_page(admitted, packed, epoch),
             StreamFrame::Fact { fact, .. } => {
                 let operator_changed = self.observe_operator_rows(std::slice::from_ref(fact));
@@ -480,32 +481,54 @@ impl CanvasRuntime {
         messages: &[AgentMessage],
         more: &[CanonicalUuid],
     ) -> StreamApplication {
-        let next_more = more.iter().copied().collect::<BTreeSet<_>>();
-        let history_changed = self.message_history_more != next_more;
-        let cards_changed = self.message_cards.snapshot(limit, messages);
+        let next_history = message_history_frontiers(messages, more);
+        let history_changed = self.message_history != next_history;
+        let reconnect = std::mem::take(&mut self.message_reconnect_pending);
+        let cards_changed = if reconnect {
+            self.message_cards.reconnect_snapshot(limit, messages)
+        } else {
+            self.message_cards.snapshot(limit, messages)
+        };
         let activities_changed = self.apply_activity_snapshot(limit, messages);
-        self.message_history_more = next_more;
+        self.message_history = next_history;
+        if reconnect {
+            self.message_history_revision = self.message_history_revision.saturating_add(1);
+        }
         StreamApplication::new(
             Vec::new(),
-            cards_changed || activities_changed || history_changed,
+            cards_changed || activities_changed || history_changed || reconnect,
         )
     }
 
     fn apply_message_history(
         &mut self,
         lane: CanonicalUuid,
+        before: MessageLocus,
         messages: &[AgentMessage],
         more: bool,
     ) -> StreamApplication {
+        if self.message_history.get(&lane).copied() != Some(before) {
+            return StreamApplication::new(Vec::new(), false);
+        }
         let changed = self
             .message_cards
             .merge(messages.iter().filter(|message| message.lane == lane));
-        let history_changed = if more {
-            self.message_history_more.insert(lane)
+        let next = messages
+            .iter()
+            .filter(|message| message.lane == lane && message_cards::is_card(message))
+            .min_by_key(|message| message.chronology_key())
+            .map(|message| message.locus)
+            .filter(|next| *next != before);
+        let previous = self.message_history.get(&lane).copied();
+        if more && let Some(next) = next {
+            self.message_history.insert(lane, next);
         } else {
-            self.message_history_more.remove(&lane)
-        };
-        StreamApplication::new(Vec::new(), changed || history_changed)
+            self.message_history.remove(&lane);
+        }
+        StreamApplication::new(
+            Vec::new(),
+            changed || self.message_history.get(&lane).copied() != previous,
+        )
     }
 
     pub(crate) fn retain_operator_message(
@@ -609,6 +632,21 @@ impl CanvasRuntime {
         }
         true
     }
+}
+
+fn message_history_frontiers(
+    messages: &[AgentMessage],
+    more: &[CanonicalUuid],
+) -> BTreeMap<CanonicalUuid, MessageLocus> {
+    more.iter()
+        .filter_map(|lane| {
+            messages
+                .iter()
+                .filter(|message| message.lane == *lane && message_cards::is_card(message))
+                .min_by_key(|message| message.chronology_key())
+                .map(|message| (*lane, message.locus))
+        })
+        .collect()
 }
 
 fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {

@@ -22,6 +22,10 @@ fn admitted(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame> {
 }
 
 fn snapshot(messages: Vec<serde_json::Value>) -> Vec<u8> {
+    snapshot_with_more(messages, &[])
+}
+
+fn snapshot_with_more(messages: Vec<serde_json::Value>, more: &[&str]) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "stream": "messages",
         "v": 1,
@@ -29,6 +33,7 @@ fn snapshot(messages: Vec<serde_json::Value>) -> Vec<u8> {
         "epoch": EPOCH,
         "limit": 8,
         "messages": messages,
+        "more": more,
     }))
     .expect("message snapshot serializes")
 }
@@ -186,11 +191,10 @@ fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
     let mut staged = CanvasRuntime::new(&accepted);
     staged.apply_stream(&admitted(
         &session,
-        &snapshot(vec![
-            second_provider.clone(),
-            media.clone(),
-            command.clone(),
-        ]),
+        &snapshot_with_more(
+            vec![second_provider.clone(), media.clone(), command.clone()],
+            &[LANE],
+        ),
     ));
     let retained_media = Rc::clone(&staged.messages()[0]);
     let history = serde_json::to_vec(&serde_json::json!({

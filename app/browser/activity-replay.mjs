@@ -18,23 +18,51 @@ function agentMessageKey(message) {
   ].join("-");
 }
 
+function compareAgentMessages(left, right) {
+  return Date.parse(left.observed ?? left.authored) - Date.parse(right.observed ?? right.authored)
+    || left.lane.localeCompare(right.lane)
+    || left.locus.member - right.locus.member
+    || left.locus.offset - right.locus.offset
+    || left.locus.length - right.locus.length
+    || left.locus.event - right.locus.event;
+}
+
 /// Forward the production socket unchanged while retaining one real older tool
 /// frame that the assertion can redeliver to the same browser connection.
 export async function installActivityReplay(context) {
   let captured;
   let activeSocket;
+  let heldHistoryRequest;
   let replayed = false;
   let withheldBootstrap = false;
   let injectedEvent = 10_000;
+  const knownMessages = new Map();
   const observedProse = [];
   const proseFrames = new Map();
   const proseWaiters = [];
   let canonicalProseFrames;
+  const remember = (messages) => {
+    for (const message of messages) knownMessages.set(agentMessageKey(message), message);
+  };
   await context.routeWebSocket(/.*/, (socket) => {
     activeSocket = socket;
     const server = socket.connectToServer();
+    socket.onMessage((message) => {
+      const frame = decodeServerFrame(message);
+      if (frame.stream === "message-history" && heldHistoryRequest?.lane === frame.lane) {
+        const held = heldHistoryRequest;
+        heldHistoryRequest = undefined;
+        held.resolve(frame);
+        return;
+      }
+      server.send(message);
+    });
     server.onMessage((message) => {
       const frame = decodeServerFrame(message);
+      if (frame.stream === "message") remember([frame.message]);
+      if (frame.stream === "messages" || frame.stream === "message-history") {
+        remember(frame.messages);
+      }
       // Exercise the browser's bootstrap boundary with the initial retained
       // message page absent. A live prose frame can still follow on this same
       // socket, and it must remain visible while the capacity announcement is
@@ -91,18 +119,55 @@ export async function installActivityReplay(context) {
     frame.message.locus.event += injectedEvent;
     injectedEvent += 1;
     const expectedKey = agentMessageKey(frame.message);
-    const delivery = history
-      ? {
+    let delivery = frame;
+    if (history) {
+      const visibleKeys = await page.locator(
+        '[data-card-kind="agent-message"]',
+      ).evaluateAll((cards) => cards.map((card) => card.dataset.mosaicCardKey));
+      const visibleMessages = visibleKeys.map((key) => knownMessages.get(key)).filter(Boolean);
+      assert.equal(
+        visibleMessages.length,
+        visibleKeys.length,
+        "the history fixture can reconstruct every visible agent card",
+      );
+      const snapshotMessages = new Map(
+        visibleMessages.map((message) => [agentMessageKey(message), message]),
+      );
+      for (const message of knownMessages.values()) {
+        if (message.activity === "tool" && (message.media?.length ?? 0) === 0) {
+          snapshotMessages.set(agentMessageKey(message), message);
+        }
+      }
+      assert.equal(heldHistoryRequest, undefined, "only one history request is held at a time");
+      const requested = new Promise((resolve) => { heldHistoryRequest = { lane, resolve }; });
+      activeSocket.send(Buffer.from(JSON.stringify({
+        stream: "messages",
+        v: source.v,
+        id: source.id,
+        epoch: source.epoch,
+        limit: 256,
+        messages: [...snapshotMessages.values()].sort(compareAgentMessages),
+        more: [lane],
+      })));
+      const request = await Promise.race([
+        requested,
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error(`the browser did not request history for ${lane}`)),
+          TRANSITION_MS,
+        )),
+      ]);
+      delivery = {
         stream: "message-history",
         v: source.v,
         id: source.id,
         epoch: source.epoch,
         lane,
-        before: source.message.locus,
+        before: request.before,
         more: false,
         messages: [frame.message],
-      }
-      : frame;
+      };
+    }
+    remember([frame.message]);
     activeSocket.send(Buffer.from(JSON.stringify(delivery)));
     await waitForPageFunction(
       page,
@@ -148,7 +213,7 @@ export async function installActivityReplay(context) {
       const sources = [...proseFrames.values()].sort(
         (left, right) => left.message.lane.localeCompare(right.message.lane),
       );
-      assert.ok(sources.length >= 2, "staged hydration retained two agent transports");
+      assert.ok(sources.length >= 3, "staged hydration retained three agent transports");
       const source = sources[0];
       const base = Date.parse("2031-05-17T12:00:00.000Z");
       const make = (frame, label, millis, offset, activity = "prose") => {
@@ -207,6 +272,14 @@ export async function installActivityReplay(context) {
       const chronologyRank = new Map(
         chronological.map((message, index) => [agentMessageKey(message), index]),
       );
+      remember(chronological);
+      const laneCounts = new Map();
+      for (const message of chronological) {
+        laneCounts.set(message.lane, (laneCounts.get(message.lane) ?? 0) + 1);
+      }
+      assert.ok(laneCounts.size >= 3, "hydration interleaves at least three independent lanes");
+      assert.ok(new Set(laneCounts.values()).size > 1,
+        "hydration lanes contribute unequal progressive boundaries");
       const rank = (message) => {
         const value = chronologyRank.get(agentMessageKey(message));
         assert.ok(Number.isInteger(value), "hydration stage contains only its admitted messages");
@@ -228,6 +301,7 @@ export async function installActivityReplay(context) {
       return {
         boundaryKey: agentMessageKey(boundary),
         chronological,
+        laneCounts: Object.fromEntries(laneCounts),
         newestKey: agentMessageKey(newer),
         stages,
         keys(messages) {
@@ -281,6 +355,7 @@ export async function installActivityReplay(context) {
         false,
         "the synthetic browser fixture carries no Spice observation time",
       );
+      remember([message]);
       activeSocket.send(Buffer.from(JSON.stringify({
         stream: "messages",
         v: source.v,

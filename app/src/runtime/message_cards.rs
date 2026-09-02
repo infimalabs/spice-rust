@@ -60,6 +60,10 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
     })
 }
 
+pub(super) fn is_card(message: &AgentMessage) -> bool {
+    fingerprint(message).is_some()
+}
+
 #[derive(PartialEq, Eq, Default)]
 pub(super) struct MessageCards {
     entries: Vec<Rc<AgentMessage>>,
@@ -104,6 +108,15 @@ impl MessageCards {
         self.entries = next;
         self.limit = Some(limit);
         changed
+    }
+
+    /// Merge a same-scope subscription head without discarding hydrated history.
+    pub(super) fn reconnect_snapshot(&mut self, limit: usize, incoming: &[AgentMessage]) -> bool {
+        let previous = self.entries.clone();
+        self.limit = Some(limit);
+        let _ = self.merge(incoming);
+        trim_all_lanes(&mut self.entries, limit);
+        self.entries != previous
     }
 
     /// Merge live or paged records through the same identity and fingerprint law.
