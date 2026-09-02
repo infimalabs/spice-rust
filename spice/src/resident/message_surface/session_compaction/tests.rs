@@ -366,23 +366,47 @@ fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
         );
         assert_eq!(cursor.next, frozen_next, "suffix remains unconsumed");
         assert_eq!(cursor.next_call, frozen_next_call);
+        assert!(
+            records.is_empty(),
+            "active growth waits for stable authority"
+        );
+        let validation = cursor
+            .validation
+            .as_ref()
+            .expect("validation remains pending");
+        assert!(
+            validation.offset >= previous,
+            "append-only growth never loses primary validation progress",
+        );
+    }
+    let growing = cursor
+        .validation
+        .as_ref()
+        .expect("active growth retains the held boundary");
+    assert_eq!(
+        growing.offset, growing.length,
+        "primary validation reaches the frozen prefix during active growth",
+    );
+    assert!(
+        growing.authentication.is_some(),
+        "publication waits for one generation-stable authentication pass",
+    );
+    for _ in 0..8 {
+        reset_validation_bytes_read();
+        records = scan(&mut cursor).expect("stable transcript validates");
+        let read = validation_bytes_read();
+        validation_reads = validation_reads.saturating_add(read);
+        assert!(
+            read <= (VALIDATION_BYTE_BUDGET * 3) as u64,
+            "one stable poll stays inside the fixed authentication and validation bound",
+        );
         if !records.is_empty() {
-            assert!(serial >= 2, "validation spans repeated append polls");
             break;
         }
-        assert!(
-            cursor
-                .validation
-                .as_ref()
-                .expect("validation remains pending")
-                .offset
-                > previous,
-            "each append-only poll preserves and advances validation",
-        );
     }
     assert_eq!(records.len(), 1, "the held boundary eventually publishes");
     assert!(
-        validation_reads <= (VALIDATION_BYTE_BUDGET * 3 * 8) as u64,
+        validation_reads <= (VALIDATION_BYTE_BUDGET * 3 * 16) as u64,
         "repeated growth has a linear cumulative read bound",
     );
     assert_eq!(
@@ -551,6 +575,104 @@ fn mutation_during_extension_authentication_discards_the_moving_slice() {
     assert_eq!(cursor.next_call, 0);
     assert!(cursor.pending.is_empty());
     assert!(cursor.validation.is_none());
+}
+
+#[test]
+fn rewrite_between_authentication_slices_cannot_publish_stale_records() {
+    const SUFFIX: &str = "{\"type\":\"progress\",\"serial\":1}\n";
+    let scratch = Scratch::new("mutation-between-authentication-slices");
+    let transcript = scratch.transcript();
+    let original = large_claude_transcript_with_pending('x', 192);
+    let mutation = u64::try_from(original.find("xxxx").expect("fixture text exists"))
+        .expect("fixture offset fits u64");
+    fs::write(&transcript, original).expect("large original transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    for _ in 0..8 {
+        assert!(scan(&mut cursor).expect("prefix scans").is_empty());
+        if cursor
+            .validation
+            .as_ref()
+            .is_some_and(|validation| validation.offset > AUTHENTICATION_BYTE_BUDGET as u64)
+        {
+            break;
+        }
+    }
+    assert!(
+        cursor
+            .validation
+            .as_ref()
+            .is_some_and(|validation| { validation.offset > AUTHENTICATION_BYTE_BUDGET as u64 }),
+        "fixture reaches a multi-slice authentication prefix",
+    );
+
+    append(&transcript, SUFFIX.as_bytes());
+    assert!(
+        scan(&mut cursor)
+            .expect("first authentication slice")
+            .is_empty()
+    );
+    let authentication = cursor
+        .validation
+        .as_ref()
+        .expect("validation remains pending")
+        .authentication
+        .as_ref()
+        .expect("authentication spans polls");
+    assert!(mutation < authentication.offset);
+
+    let mut rewritten = OpenOptions::new()
+        .write(true)
+        .open(&transcript)
+        .expect("transcript opens for a between-slice rewrite");
+    rewritten
+        .seek(std::io::SeekFrom::Start(mutation))
+        .expect("between-slice mutation seeks");
+    rewritten
+        .write_all(b"y")
+        .expect("between-slice mutation writes");
+    drop(rewritten);
+    append(&transcript, SUFFIX.as_bytes());
+
+    reset_validation_bytes_read();
+    assert!(
+        scan(&mut cursor)
+            .expect("between-slice rewrite defers")
+            .is_empty(),
+        "a stale authenticated slice published held records",
+    );
+    assert!(validation_bytes_read() <= VALIDATION_BYTE_BUDGET as u64);
+    let validation = cursor
+        .validation
+        .as_ref()
+        .expect("the held boundary remains unpublished");
+    assert_eq!(
+        validation
+            .authentication
+            .as_ref()
+            .expect("new extent restarts authentication")
+            .offset,
+        0,
+    );
+
+    for _ in 0..8 {
+        assert!(
+            scan(&mut cursor)
+                .expect("rewritten prefix refuses")
+                .is_empty(),
+            "mixed held records never publish while the rewritten prefix is checked",
+        );
+        if cursor.validation.is_none() {
+            break;
+        }
+    }
+    assert_eq!(cursor.next, 0, "mixed-generation scan state is discarded");
+    assert_eq!(cursor.next_call, 0);
+    assert!(cursor.pending.is_empty());
+    assert!(cursor.validation.is_none());
+
+    let records = scan_until_boundary(&mut cursor, "rewritten generation replays");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].unavailable_tool_terminals, ["Read: held.rs"]);
 }
 
 #[test]
