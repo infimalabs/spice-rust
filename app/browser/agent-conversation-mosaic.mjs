@@ -314,7 +314,12 @@ export async function assertStagedMosaicHydration(page, team, activityReplay, in
   const edge = await assertHydrationEdge(
     page, plane, hydration, initial, edgeProbe, edgeSnapshot,
   );
-  const staged = await apply(hydration.stages[2], "full-replay");
+  const staged = await apply(hydration.stages[2], "epoch-replay");
+  assert.deepEqual(
+    staged.cards.find((card) => card.key === hydration.boundaryKey),
+    edgeSnapshot.cards.find((card) => card.key === hydration.boundaryKey),
+    "epoch hydration preserves the compaction divider position and extent",
+  );
   const commits = staged.commits;
   await hydration.send(page, hydration.stages[2]);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
@@ -1222,10 +1227,11 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
     assert.equal(plane.rowGap, plane.columnGap, "the vertical lattice shares that grid rhythm");
     assert.equal(plane.minLane, 272, "the browser exposes the predecessor minimum lane width");
     assert.equal(plane.minCardRows, 3, "ordinary cards reserve three vertical modules");
-    assert.deepEqual(
-      plane.cards.map((card) => card.creationIndex),
-      plane.cards.map((_, index) => index),
-      "DOM order is the stable creation order submitted to Rust",
+    const creationIndices = plane.cards.map((card) => card.creationIndex);
+    assert.ok(
+      creationIndices.every((index, position) => Number.isSafeInteger(index)
+        && (position === 0 || index > creationIndices[position - 1])),
+      `DOM order follows unique monotonic Rust creation labels: ${JSON.stringify(creationIndices)}`,
     );
     for (const card of plane.cards) {
       assert.ok(card.key, "every Mosaic card exposes its stable identity");

@@ -260,7 +260,10 @@ fn interleaved_hydration_replays_deterministically_across_a_compaction_epoch() {
     let initial = PersistentLanePlane::new(900, &[old.clone(), compact.clone(), recent.clone()]);
     let complete = [
         old,
-        compact,
+        MeasuredCard {
+            content_revision: 1,
+            ..compact
+        },
         measured("middle-a", candidates(3, 4)),
         measured("middle-b", candidates(3, 2)),
         recent,
@@ -269,8 +272,39 @@ fn interleaved_hydration_replays_deterministically_across_a_compaction_epoch() {
     let staged = initial.reconcile(900, &complete);
     let one_shot = PersistentLanePlane::new(900, &complete);
 
-    assert_eq!(staged.transition(), Transition::FullReplay);
-    assert_eq!(staged.cards(), one_shot.cards());
+    assert_eq!(staged.transition(), Transition::EpochReplay);
+    assert_eq!(&staged.cards()[..1], &initial.cards()[..1]);
+    assert_eq!(staged.cards()[1].card, initial.cards()[1].card);
+    assert_eq!(staged.cards()[1].content_revision, 1);
+    assert_eq!(
+        staged
+            .cards()
+            .iter()
+            .map(|entry| {
+                (
+                    entry.key,
+                    entry.card.track,
+                    entry.card.span,
+                    entry.card.base,
+                    entry.card.rows,
+                )
+            })
+            .collect::<Vec<_>>(),
+        one_shot
+            .cards()
+            .iter()
+            .map(|entry| {
+                (
+                    entry.key,
+                    entry.card.track,
+                    entry.card.span,
+                    entry.card.base,
+                    entry.card.rows,
+                )
+            })
+            .collect::<Vec<_>>(),
+        "epoch replay reaches the same deterministic positions and extents as chronological insertion",
+    );
     let divider = &staged.cards()[1].card;
     assert!(
         staged.cards()[2..]
@@ -278,6 +312,74 @@ fn interleaved_hydration_replays_deterministically_across_a_compaction_epoch() {
             .all(|entry| entry.card.base >= divider.base + divider.rows),
         "the replayed middle batch stays inside the post-compaction epoch",
     );
+    assert_eq!(staged.reconcile(900, &complete), staged);
+}
+
+#[test]
+fn replacing_one_epoch_preserves_every_outside_position_and_extent() {
+    let old = measured("old", candidates(12, 2));
+    let start = boundary("compact-a", 1);
+    let prior_epoch = measured("prior-epoch", candidates(12, 4));
+    let end = boundary("compact-b", 1);
+    let recent = measured("recent", candidates(6, 3));
+    let initial_snapshot = [
+        old.clone(),
+        start.clone(),
+        prior_epoch,
+        end.clone(),
+        recent.clone(),
+    ];
+    let initial = PersistentLanePlane::new(900, &initial_snapshot);
+    let before_start = initial.cards()[..=1].to_vec();
+    let after_end = initial.cards()[3..].to_vec();
+    let complete = [
+        old,
+        start,
+        measured("unavailable-terminal", candidates(12, 1)),
+        measured("epoch-left", candidates(6, 2)),
+        measured("epoch-right", candidates(6, 2)),
+        end,
+        recent,
+    ];
+
+    let replayed = initial.reconcile(900, &complete);
+
+    assert_eq!(replayed.transition(), Transition::EpochReplay);
+    assert_eq!(&replayed.cards()[..=1], before_start);
+    assert_eq!(&replayed.cards()[5..], after_end);
+    assert!(!replayed.cards()[2].boundary);
+    assert_eq!(
+        (replayed.max_row(), replayed.rows()),
+        (initial.max_row(), initial.rows()),
+        "an epoch replacement cannot change the outside plane extent",
+    );
+    let lower = replayed.cards()[1].card.creation_index;
+    let upper = replayed.cards()[5].card.creation_index;
+    assert!(
+        replayed.cards()[2..5].iter().all(|entry| {
+            entry.card.creation_index > lower && entry.card.creation_index < upper
+        }),
+        "replacement cards retain creation order between their stable dividers",
+    );
+    assert_eq!(
+        replayed.cards()[2..5]
+            .iter()
+            .map(|entry| (
+                entry.key,
+                entry.card.track,
+                entry.card.base,
+                entry.card.rows
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("unavailable-terminal", 0, 3, 1),
+            ("epoch-left", 0, 4, 2),
+            ("epoch-right", 6, 4, 2),
+        ],
+        "the replacement starts from the older divider skyline in creation order",
+    );
+    assert_eq!(initial.reconcile(900, &complete), replayed);
+    assert_eq!(replayed.reconcile(900, &complete), replayed);
 }
 
 #[test]
@@ -574,4 +676,20 @@ fn prefix_backfill_lands_below_without_moving_committed_geometry() {
     assert_eq!(retained, committed);
     assert!(backfilled.cards()[0].card.base < 0);
     assert_eq!(backfilled.transition(), Transition::Backfill);
+
+    let first_page = backfilled.cards().to_vec();
+    let twice_backfilled = backfilled.reconcile(
+        900,
+        &[
+            measured("z", candidates(3, 1)),
+            measured("a", candidates(12, 2)),
+            initial[0].clone(),
+            initial[1].clone(),
+        ],
+    );
+    assert_eq!(
+        &twice_backfilled.cards()[1..],
+        first_page,
+        "later history pages preserve every previously committed creation label and placement",
+    );
 }
