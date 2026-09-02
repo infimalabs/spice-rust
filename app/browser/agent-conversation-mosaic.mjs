@@ -414,71 +414,136 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
   );
 }
 
-export async function assertModeSwitchPreservesDeferredMosaic(page, console) {
+export async function assertModeSwitchPreservesDeferredMosaic(
+  page,
+  console,
+  member,
+  activityReplay,
+) {
   const plane = console.locator(".lane-mosaic-plane");
+  await settleMosaicActivity(page, plane);
   const before = await plane.evaluate((element) => {
     element.dataset.modeSwitchIdentity = crypto.randomUUID();
     return {
       identity: element.dataset.modeSwitchIdentity,
-      commits: element.dataset.planeCommits,
-      committedWidth: element.dataset.committedWidth,
+      commits: Number(element.dataset.planeCommits),
+      committedWidth: Number(element.dataset.committedWidth),
       keys: [...element.querySelectorAll(".mosaic-message-card")]
         .map((card) => card.dataset.mosaicCardKey),
     };
   });
-  await console.getByRole("tab", { name: /^Info/ }).click();
-  const rule = await page.evaluate(() => {
-    const sheet = [...document.styleSheets]
-      .find((candidate) => candidate.href?.endsWith("mosaic.css"));
-    if (!sheet) throw new Error("the Mosaic stylesheet is unavailable");
-    const index = sheet.cssRules.length;
-    sheet.insertRule(".lane-mosaic-plane { width: 12px !important; }", index);
-    return index;
+  const placement = await armPlacementProbe(plane);
+  const origin = new URL(page.url()).origin;
+  const imageCases = [];
+  for (const outcome of ["load", "error"]) {
+    const url = `${origin}/mosaic-hidden-${outcome}-${crypto.randomUUID()}.png`;
+    let release;
+    let arrived;
+    const released = new Promise((resolve) => { release = resolve; });
+    const requested = new Promise((resolve) => { arrived = resolve; });
+    await page.route(url, async (route) => {
+      arrived();
+      await released;
+      await route.fulfill({
+        contentType: "image/png",
+        body: outcome === "load" ? Buffer.from(PIXEL_PNG, "base64") : "not an image",
+      });
+    });
+    imageCases.push({ outcome, url, release, requested });
+  }
+
+  await chooseCanvasView(page, "Flow");
+  await waitForPage(page, "hidden Mosaic observes zero width", TRANSITION_MS, () => {
+    const workspace = document.querySelector(".mosaic-workspace");
+    const plane = workspace?.querySelector(".lane-mosaic-plane");
+    return workspace?.hidden === true && Number(plane?.dataset.observedWidth) < 24;
   });
-  await console.getByRole("tab", { name: /^Compose/ }).click();
-  await waitForPage(page, "mounted Mosaic observes the deferred width", TRANSITION_MS, () => {
-    const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-    return Number(plane?.dataset.observedWidth) < 24;
-  });
-  const deferred = await plane.evaluate((element) => ({
-    identity: element.dataset.modeSwitchIdentity,
-    phase: element.dataset.measurementPhase,
-    commits: element.dataset.planeCommits,
-    committedWidth: element.dataset.committedWidth,
-    keys: [...element.querySelectorAll(".mosaic-message-card")]
-      .map((card) => card.dataset.mosaicCardKey),
-    cards: [...element.querySelectorAll(".mosaic-message-card")].map((card) => {
-      const box = card.getBoundingClientRect();
-      return {
-        visibility: getComputedStyle(card).visibility,
-        height: box.height,
-      };
-    }),
-  }));
-  assert.equal(deferred.identity, before.identity, "mode switching retains the Mosaic node");
-  assert.equal(deferred.phase, "ready", "width deferral retains the committed plane");
-  assert.equal(deferred.commits, before.commits, "width deferral commits no guessed plane");
-  assert.equal(
-    deferred.committedWidth,
-    before.committedWidth,
-    "width deferral retains the last measurable geometry",
+  const history = await activityReplay.injectAgentHistory(
+    page,
+    member.lane,
+    "history response received while Agents is hidden",
   );
-  assert.deepEqual(deferred.keys, before.keys, "mode switching retains every transcript card");
-  assert.ok(deferred.cards.length, "the deferred plane retains transcript cards");
-  assert.ok(
-    deferred.cards.every((card) => card.visibility === "visible" && card.height > 0),
-    "the deferred plane keeps every transcript card readable",
-  );
-  await page.evaluate((index) => {
-    const sheet = [...document.styleSheets]
-      .find((candidate) => candidate.href?.endsWith("mosaic.css"));
-    if (!sheet) throw new Error("the Mosaic stylesheet is unavailable");
-    sheet.deleteRule(index);
-  }, rule);
-  await waitForPage(page, "mounted Mosaic returns to measurable width", TRANSITION_MS, () => {
-    const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-    return Number(plane?.dataset.observedWidth) >= 24;
-  });
+  const boundary = await activityReplay.injectCompaction(page, member.lane);
+  const images = [];
+  for (const imageCase of imageCases) {
+    const image = await activityReplay.injectAgentProse(
+      page,
+      member.lane,
+      `hidden image ${imageCase.outcome}\n\n![hidden ${imageCase.outcome}](${imageCase.url})`,
+    );
+    await imageCase.requested;
+    images.push({ ...imageCase, key: image.key });
+  }
+  for (const image of images) {
+    image.release();
+    await waitForPage(page, `hidden image ${image.outcome} is reduced immediately`, TRANSITION_MS,
+      (expected) => document.querySelector(`[data-mosaic-card-key="${expected.key}"] img`)
+        ?.getAttribute("data-mosaic-image-state") === expected.state,
+      { key: image.key, state: image.outcome === "load" ? "loaded" : "error" });
+  }
+  const received = [history.key, boundary.key, ...images.map((image) => image.key)];
+  const hidden = await plane.evaluate((element, expected) => {
+    const probe = element.__mosaicPlacementObserver;
+    probe.observer.takeRecords().forEach(probe.record);
+    const keys = [...element.querySelectorAll(".mosaic-message-card")]
+      .map((card) => card.dataset.mosaicCardKey);
+    return {
+      identity: element.dataset.modeSwitchIdentity,
+      commits: Number(element.dataset.planeCommits),
+      committedWidth: Number(element.dataset.committedWidth),
+      observedWidth: Number(element.dataset.observedWidth),
+      pending: Number(element.dataset.measurementPending),
+      retained: expected.before.every((key) => keys.includes(key)),
+      received: expected.received.every((key) => keys.includes(key)),
+      writes: [...probe.writes],
+    };
+  }, { before: before.keys, received });
+  assert.equal(hidden.identity, before.identity, "the hidden Mosaic plane is never remounted");
+  assert.equal(hidden.commits, before.commits, "hidden arrivals commit no guessed geometry");
+  assert.equal(hidden.committedWidth, before.committedWidth,
+    "the zero-width host retains its last measurable geometry");
+  assert.ok(hidden.observedWidth < 24, "the hidden host remains unmeasurable");
+  assert.ok(hidden.pending >= received.length, "hidden semantic arrivals await only measurement");
+  assert.ok(hidden.retained && hidden.received,
+    "hidden reduction retains prior cards and materializes every background arrival");
+  assert.deepEqual(hidden.writes, [], "the zero-width host performs no card geometry writes");
+
+  await chooseCanvasView(page, "Agents");
+  await waitForPage(page, "reveal measures one complete hidden batch", TRANSITION_MS,
+    (expected) => {
+      const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+      const cards = [...(plane?.querySelectorAll(".mosaic-message-card") ?? [])];
+      return Number(plane?.dataset.observedWidth) >= 24
+        && plane?.dataset.measurementPending === "0"
+        && expected.every((key) => cards.some((card) => (
+          card.dataset.mosaicCardKey === key && card.dataset.layoutPhase === "committed"
+        )));
+    }, received);
+  const revealed = await finishPlacementProbe(plane, placement);
+  assertPlacementRetained(placement, revealed, "a hidden background batch reveal");
+  assert.equal(revealed.commits, before.commits + 1,
+    "the complete hidden batch produces one snap correction");
+  assert.equal(await plane.getAttribute("data-mode-switch-identity"), before.identity,
+    "reveal retains the original Mosaic host node");
+
+  const stable = await armPlacementProbe(plane);
+  await chooseCanvasView(page, "Flow");
+  await waitForPage(page, "repeated hide returns to zero width", TRANSITION_MS, () => (
+    Number(document.querySelector(".mosaic-workspace .lane-mosaic-plane")?.dataset.observedWidth) < 24
+  ));
+  await chooseCanvasView(page, "Agents");
+  await waitForPage(page, "repeated reveal restores the committed width", TRANSITION_MS,
+    (expected) => Number(
+      document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')
+        ?.dataset.committedWidth,
+    ) === expected,
+    before.committedWidth);
+  const repeated = await finishPlacementProbe(plane, stable);
+  assertUnmoved(stable, repeated, "a no-op global hide and reveal");
+  assert.equal(repeated.commits, revealed.commits, "a no-op reveal commits no plane");
+  assert.equal(await plane.locator(`[data-mosaic-card-key="${boundary.key}"]`).count(), 1,
+    "the hidden compaction divider retains one stable identity");
+  for (const imageCase of imageCases) await page.unroute(imageCase.url);
 }
 
 export async function armPlacementProbe(plane, excluded = []) {

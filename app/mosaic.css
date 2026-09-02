@@ -498,10 +498,8 @@ body:has(.shell--mosaic),
   padding: 0 var(--canvas-frame-edge-inline) var(--canvas-frame-edge-block-end);
 }
 
-.mosaic-workspace {
-  display: flex;
-  min-height: 0;
-}
+.mosaic-workspace { display: flex; min-height: 0; }
+.mosaic-workspace[hidden] { display: none; }
 
 .lineage-fleet {
   display: flex;

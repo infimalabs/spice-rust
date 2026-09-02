@@ -91,9 +91,30 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
 }
 
 pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
+    let mosaic_active = **render.mosaic;
     html! {
-        <div class={classes!("workspace", (**render.mosaic).then_some("mosaic-workspace"))}>
-            if !**render.mosaic {
+        <>
+            <div
+                key="agents"
+                class="workspace mosaic-workspace"
+                hidden={!mosaic_active}
+                aria-hidden={(!mosaic_active).to_string()}
+                inert={(!mosaic_active).then_some("true")}
+                data-active={mosaic_active.to_string()}
+            >
+                <main class={classes!("mosaic-content", mosaic_active.then_some("content"))}>
+                    {watchband::render_lineage(
+                        render.surface,
+                        render.sender,
+                        render.composer_drafts,
+                        render.submissions,
+                        render.lineage_controls,
+                        render.agents,
+                    )}
+                </main>
+            </div>
+            if !mosaic_active {
+                <div key="analytics" class="workspace">
                 <header class="topbar">
                     <div class="mobile-brand">{"Spice Canvas"}</div>
                     <div class={render.connection.class()}>
@@ -113,22 +134,12 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                         >{"Refresh"}</button>
                     </div>
                 </header>
-            }
-            <main class="content">
-                if **render.mosaic {
-                    {watchband::render_lineage(
-                        render.surface,
-                        render.sender,
-                        render.composer_drafts,
-                        render.submissions,
-                        render.lineage_controls,
-                        render.agents,
-                    )}
-                } else {
+                <main class="content">
                     {render_analytics(render, active_axis)}
-                }
-            </main>
-        </div>
+                </main>
+                </div>
+            }
+        </>
     }
 }
 

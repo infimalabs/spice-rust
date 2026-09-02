@@ -260,7 +260,10 @@ fn use_layout_properties(
     keys: Vec<String>,
     plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
 ) {
-    use_effect_with((host, width, keys, plane), move |(host, _, _, _)| {
+    use_effect_with((host, width, keys, plane), move |(host, width, _, _)| {
+        if *width < MIN_MEASURABLE_WIDTH_PX {
+            return;
+        }
         let host = host
             .cast::<web_sys::HtmlElement>()
             .expect("a rendered Mosaic plane is an HTML element");

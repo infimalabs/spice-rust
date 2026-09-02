@@ -439,7 +439,7 @@ export async function assertCanvas(page, scheme) {
     const canvas = document.querySelector(".content");
     const rootStyle = root ? getComputedStyle(root) : null;
     const canvasBox = canvas?.getBoundingClientRect();
-    const workspaceBox = document.querySelector(".workspace")?.getBoundingClientRect();
+    const workspaceBox = document.querySelector(".workspace:not([hidden])")?.getBoundingClientRect();
     const barBox = document.querySelector(".commandbar")?.getBoundingClientRect();
     return {
       appChildren: root?.childElementCount ?? 0,
@@ -479,9 +479,10 @@ export async function assertCanvas(page, scheme) {
   assert.ok(await page.locator(":focus-visible").count(), "keyboard focus remains visible");
   if ((page.viewportSize()?.width ?? 1000) <= 560) {
     await chooseCanvasView(page, "Flow");
-    await page.locator(".workspace").evaluate((element) => element.scrollTo(0, element.scrollHeight));
+    const workspace = page.locator(".workspace:not([hidden])");
+    await workspace.evaluate((element) => element.scrollTo(0, element.scrollHeight));
     assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
-    await page.locator(".workspace").evaluate((element) => element.scrollTo(0, 0));
+    await workspace.evaluate((element) => element.scrollTo(0, 0));
   }
   await chooseCanvasView(page, "Agents");
   await page.locator('[data-pane="agent-console"]').waitFor();

@@ -70,45 +70,79 @@ export async function installActivityReplay(context) {
     });
   });
 
+  const injectAgentMessage = async (
+    page,
+    lane,
+    text,
+    { activity = undefined, media = undefined, history = false } = {},
+  ) => {
+    const source = proseFrames.get(lane);
+    assert.ok(source, `the route captured an agent prose frame for ${lane}`);
+    assert.ok(activeSocket, "the route retains the current browser WebSocket");
+    const frame = JSON.parse(JSON.stringify(source));
+    frame.message.text = text;
+    if (activity === undefined) delete frame.message.activity;
+    else frame.message.activity = activity;
+    if (media === undefined) delete frame.message.media;
+    else frame.message.media = media;
+    frame.message.authored = new Date().toISOString();
+    frame.message.authored_synthetic = false;
+    delete frame.message.observed;
+    frame.message.locus.event += injectedEvent;
+    injectedEvent += 1;
+    const expectedKey = agentMessageKey(frame.message);
+    const delivery = history
+      ? {
+        stream: "message-history",
+        v: source.v,
+        id: source.id,
+        epoch: source.epoch,
+        lane,
+        before: source.message.locus,
+        more: false,
+        messages: [frame.message],
+      }
+      : frame;
+    activeSocket.send(Buffer.from(JSON.stringify(delivery)));
+    await waitForPageFunction(
+      page,
+      `deterministic ${history ? "history" : activity ?? "prose"} reaches the browser`,
+      TRANSITION_MS,
+      (key) => [...document.querySelectorAll(".mosaic-message-card")]
+        .some((card) => card.dataset.mosaicCardKey === key),
+      expectedKey,
+      {
+        observed: async () => ({
+          delivery,
+          currentSource: source === proseFrames.get(lane),
+          cards: await page.locator(".mosaic-message-card").evaluateAll((cards) => (
+            cards.map((card) => ({
+              key: card.dataset.mosaicCardKey,
+              kind: card.dataset.cardKind,
+              text: card.textContent,
+            }))
+          )),
+        }),
+      },
+    );
+    return { key: expectedKey };
+  };
+
   return {
     nextAgentProse(lane) {
       return new Promise((resolve) => proseWaiters.push({ lane, resolve }));
     },
-    async injectAgentProse(page, lane, text, media = undefined) {
-      const source = proseFrames.get(lane);
-      assert.ok(source, `the route captured an agent prose frame for ${lane}`);
-      assert.ok(activeSocket, "the route retains the current browser WebSocket");
-      const frame = JSON.parse(JSON.stringify(source));
-      frame.message.text = text;
-      if (media !== undefined) frame.message.media = media;
-      frame.message.authored = new Date().toISOString();
-      frame.message.authored_synthetic = false;
-      delete frame.message.observed;
-      frame.message.locus.event += injectedEvent;
-      injectedEvent += 1;
-      const expectedKey = agentMessageKey(frame.message);
-      activeSocket.send(Buffer.from(JSON.stringify(frame)));
-      await waitForPageFunction(
-        page,
-        "deterministic agent prose reaches the browser",
-        TRANSITION_MS,
-        (key) => [...document.querySelectorAll('[data-card-kind="agent-message"]')]
-          .some((card) => card.dataset.mosaicCardKey === key),
-        expectedKey,
-        {
-          observed: async () => ({
-            frame,
-            currentSource: source === proseFrames.get(lane),
-            cards: await page.locator(
-              `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
-            ).evaluateAll((cards) => cards.map((card) => ({
-              key: card.dataset.mosaicCardKey,
-              text: card.textContent,
-            }))),
-          }),
-        },
-      );
-      return { key: expectedKey };
+    injectAgentProse(page, lane, text, media = undefined) {
+      return injectAgentMessage(page, lane, text, { media });
+    },
+    injectAgentHistory(page, lane, text) {
+      return injectAgentMessage(page, lane, text, { history: true });
+    },
+    injectCompaction(page, lane, text = "") {
+      return injectAgentMessage(page, lane, text, {
+        activity: "compaction",
+        media: [],
+      });
     },
     stagedHydration() {
       const sources = [...proseFrames.values()].sort(
