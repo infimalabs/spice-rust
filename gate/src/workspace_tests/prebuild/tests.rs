@@ -214,6 +214,37 @@ fn single_lane_partition_reports_its_terminal_timing() {
 
 #[cfg(unix)]
 #[test]
+fn unpartitioned_artifact_is_preserved_without_discovery() {
+    let fixture = DiscoveryFixture::new();
+    let invoked = fixture.root.join("invoked");
+    let executable = fixture.script(
+        "must-not-run",
+        &format!("printf 'invoked\\n' > '{}'\nexit 19\n", invoked.display()),
+    );
+    let test = fixture.test("must-not-run", executable);
+    let mut output = Vec::new();
+
+    let partitioned = partition_largest_prebuilt_tests(
+        vec![test.clone()],
+        &empty_environment(),
+        ROUTINE_PARTITIONS_PER_TARGET,
+        1,
+        &mut output,
+    )
+    .expect("unpartitioned target needs no discovery process");
+
+    assert_eq!(partitioned.len(), 1);
+    assert_eq!(partitioned[0].package, test.package);
+    assert_eq!(partitioned[0].target, test.target);
+    assert_eq!(partitioned[0].executable, test.executable);
+    assert!(partitioned[0].partition.is_none());
+    assert!(!invoked.exists());
+    let report = String::from_utf8(output).expect("partition report is UTF-8");
+    assert!(report.contains("stage=partition artifacts=1 candidates=0 shards=1"));
+}
+
+#[cfg(unix)]
+#[test]
 fn one_discovery_lane_can_produce_multiple_sequential_execution_shards() {
     let fixture = DiscoveryFixture::new();
     let executable = fixture.script(

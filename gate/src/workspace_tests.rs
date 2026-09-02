@@ -97,12 +97,10 @@ const SELECTED_TARGETS_PER_SHARD: usize = 24;
 /// recreating a four-way Cargo lock wave over their shared graph and output
 /// authority.
 const SELECTED_PREBUILD_CONCURRENCY: usize = 2;
-/// Routine selected runs may split one already-built target across at most two
-/// process lanes. Combined with the target budget, this caps routine execution
-/// at 64 shards, below both the observed 75-shard change and the 169-shard sweep.
-const ROUTINE_PARTITIONS_PER_TARGET: usize = 2;
-const ROUTINE_TEST_SHARD_LIMIT: usize =
-    selection::ROUTINE_TEST_TARGET_LIMIT * ROUTINE_PARTITIONS_PER_TARGET;
+/// Routine selected runs execute each fully built target once. Their target
+/// budget already bounds the process count, while test-list discovery costs
+/// more than the selected harnesses it would split.
+const ROUTINE_PARTITIONS_PER_TARGET: usize = 1;
 /// Retain finer work units inside the full verifier so a constrained two-lane
 /// schedule can rebalance long test targets without paying one Cargo launch
 /// for every target.
@@ -581,11 +579,8 @@ fn run_selected_at_mode(
     let report = selected_report(&inventory, root, source, changed_sources, output)?;
     let routine = selection::routine_selection(changed_sources);
     let (selection_class, target_limit, shard_limit) = if routine {
-        (
-            "routine",
-            selection::ROUTINE_TEST_TARGET_LIMIT.to_string(),
-            ROUTINE_TEST_SHARD_LIMIT.to_string(),
-        )
+        let limit = selection::ROUTINE_TEST_TARGET_LIMIT.to_string();
+        ("routine", limit.clone(), limit)
     } else {
         ("authority", "exempt".to_owned(), "exempt".to_owned())
     };
@@ -799,14 +794,6 @@ fn execute_selected_tests(
             policy.concurrency,
             output,
         )?;
-        if selection::routine_selection(changed_sources)
-            && prebuilt.len() > ROUTINE_TEST_SHARD_LIMIT
-        {
-            return Err(WorkspaceTestError::new(format!(
-                "routine Rust test selection produced {} shards, exceeding the repository limit of {ROUTINE_TEST_SHARD_LIMIT}",
-                prebuilt.len(),
-            )));
-        }
         Some(prebuilt)
     } else {
         None

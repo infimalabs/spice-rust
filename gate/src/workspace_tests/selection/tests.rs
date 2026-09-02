@@ -84,7 +84,7 @@ fn representative_steer_and_resident_change_has_exact_contract_edges() {
 }
 
 #[test]
-fn representative_change_stays_below_historical_target_and_shard_cost() {
+fn representative_change_runs_each_bounded_target_once() {
     let root = workspace_root();
     let inventory = representative_inventory(&root);
     let changes = REPRESENTATIVE_CHANGES.map(str::to_owned);
@@ -103,8 +103,12 @@ fn representative_change_stays_below_historical_target_and_shard_cost() {
     assert!(report.tests().len() < 54);
     assert!(report.tests().len() <= ROUTINE_TEST_TARGET_LIMIT);
     let maximum_shards = report.tests().len() * ROUTINE_PARTITIONS_PER_TARGET;
-    assert!(maximum_shards < 75);
-    assert!(maximum_shards <= ROUTINE_TEST_SHARD_LIMIT);
+    assert_eq!(maximum_shards, report.tests().len());
+    assert_eq!(selected_partitions_per_target(&changes, 3), 1);
+    assert_eq!(
+        selected_partitions_per_target(&["Cargo.toml".to_owned()], 3),
+        3
+    );
 }
 
 #[test]
