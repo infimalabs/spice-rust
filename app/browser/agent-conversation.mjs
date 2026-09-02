@@ -548,7 +548,6 @@ export async function assertAgentConversation(
     )),
   ]);
   await Promise.all(currentProse);
-  await assertModeSwitchPreservesDeferredMosaic(page, console);
   await assertRosterPips(page, console, seated);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
   for (const name of producerNames) {
@@ -879,6 +878,12 @@ export async function assertAgentConversation(
   await assertFourAgentDensity(console);
   await assertAgentWorkspaceGeometry(page, "populated desktop Agents page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  await assertModeSwitchPreservesDeferredMosaic(
+    page,
+    console,
+    seated[0],
+    activityReplay,
+  );
   await activityReplay.assertOlderToolIgnored(page, console);
   const restoredProse = await activityReplay.restoreProseSnapshot(page);
   const restoredQuoteProse = restoredProse.find(
