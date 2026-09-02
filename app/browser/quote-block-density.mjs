@@ -17,7 +17,12 @@ async function observeQuoteCard(card) {
       const parent = quote.parentElement?.closest("blockquote");
       const parentBox = parent?.getBoundingClientRect();
       return {
+        borderBottom: number(style.borderBottomWidth),
+        borderBottomLeftRadius: number(style.borderBottomLeftRadius),
         borderLeft: number(style.borderLeftWidth),
+        borderRight: number(style.borderRightWidth),
+        borderTop: number(style.borderTopWidth),
+        borderTopLeftRadius: number(style.borderTopLeftRadius),
         clientWidth: quote.clientWidth,
         fontSize: number(style.fontSize),
         lineHeight: number(style.lineHeight),
@@ -105,7 +110,15 @@ export async function assertQuoteBlockDensity(cards, label) {
       `${label} ${kind} card has no clipped vertical content: ${JSON.stringify(observed.card)}`,
     );
     for (const [index, quote] of observed.quotes.entries()) {
-      assert.ok(near(quote.borderLeft, 3), `${label} ${kind} quote ${index} keeps a 3px rail`);
+      assert.ok(
+        [quote.borderTop, quote.borderRight, quote.borderBottom, quote.borderLeft]
+          .every((width) => near(width, 2)),
+        `${label} ${kind} quote ${index} keeps a slim 2px outline`,
+      );
+      assert.ok(
+        near(quote.borderTopLeftRadius, 12) && near(quote.borderBottomLeftRadius, 12),
+        `${label} ${kind} quote ${index} curves both rail ends`,
+      );
       assert.ok(
         near(quote.fontSize, 13) && quote.fontSize < observed.typography.bodyFontSize,
         `${label} ${kind} quote ${index} is one compact 13px tier: ${quote.fontSize}`,
@@ -124,9 +137,9 @@ export async function assertQuoteBlockDensity(cards, label) {
         quote.marginBottom >= 0 && quote.marginBottom <= 6 + PIXEL_TOLERANCE,
         `${label} ${kind} quote ${index} has compact bottom rhythm: ${quote.marginBottom}`,
       );
-      assert.ok(near(quote.paddingTop, 6) && near(quote.paddingBottom, 6),
-        `${label} ${kind} quote ${index} has compact block padding`);
-      const expectedInline = index === 0 ? 8 : 6;
+      assert.ok(near(quote.paddingTop, 5) && near(quote.paddingBottom, 5),
+        `${label} ${kind} quote ${index} has compact five-pixel block padding`);
+      const expectedInline = index === 0 ? 7 : 5;
       assert.ok(near(quote.paddingLeft, expectedInline) && near(quote.paddingRight, expectedInline),
         `${label} ${kind} quote ${index} has bounded inline padding`);
       assert.ok(quote.scrollWidth <= quote.clientWidth + 1,
