@@ -38,7 +38,7 @@ const AGENT_SEAT_MS = 15_000;
 export { assertMosaicLattice };
 export const longAgentName = "Bexley Integration Reliability Operator";
 export const longWorktreeBasename = "lane-4-release-observability-and-follow-through";
-export const agentNames = ["Ava", longAgentName, "Cy"];
+export const agentNames = ["Ava", longAgentName, "Marco"];
 const teamSeatNames = [...agentNames, undefined];
 
 function canonicalAgentAttribution(member) {
