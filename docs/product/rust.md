@@ -180,6 +180,78 @@ Authorities: [`wire/src/stream.rs`](../../wire/src/stream.rs),
 [`app/browser/canvas.spec.mjs`](../../app/browser/canvas.spec.mjs) and its
 focused neighboring modules.
 
+## Mosaic implementation boundary
+
+The Mosaic behavior in the product model is carried forward through one current
+path, not a predecessor compatibility mode. Typed `AgentMessage` values enter
+the canonical runtime card reducer, which orders them by their chronology key,
+deduplicates them by lane and locus, and applies the stream's bounded per-lane
+retention. Member-local `MessageHistory` pages merge through that same reducer;
+a response that does not name the lane's current cursor changes nothing. The
+resulting lineage stream feeds one persistent plane whose pure Rust lattice owns
+placement, freezing, liquid settlement, ripple, backfill, geometry replay, and
+compaction-epoch replay. JavaScript only drives browser tests.
+
+The predecessor's implementation details differ where the Rust product has a
+stronger ownership boundary:
+
+- One lineage plane merges all team members instead of maintaining a
+  JavaScript lane store. Every card retains explicit lane and author identity,
+  and each member retains an independent typed history frontier, so a delayed
+  member cannot stall or overwrite its siblings.
+- Keyed Yew nodes replace imperative node ownership. Measurement is deferred
+  until the host has a usable width, cached by card fingerprint, image
+  revision, and width, and retained for only the current and immediately prior
+  widths. A base measurement admits at most one wider candidate, so ordinary
+  placement performs at most two layout reads per card.
+- Yew renders integer layout diagnostics as attributes, then an effect copies
+  changed values into CSS custom properties. This is the single CSP-safe
+  geometry channel and avoids Firefox's unsupported typed `attr()` arithmetic.
+  The copy compares the current property first, so unchanged card placement
+  receives no style write.
+- Scroll correction retains the nearest visible keyed card at its exact
+  viewport offset instead of inferring the reader's position from the plane's
+  maximum-row delta. This preserves the same 80px near-top policy while also
+  covering nonuniform growth, backfill, and compaction-epoch replacement.
+- Image load and error events settle through one card coordinator. A card is
+  remeasured only after all of its images are terminal, and repeated terminal
+  events do not publish another content revision. This removes the
+  predecessor's per-image render cascade without changing placeholder or final
+  geometry.
+- The predecessor's two-layer positional tween is not transplanted into Yew.
+  One effect lands plane properties before card properties, and liquid cards
+  expose only a 180ms opacity transition; frozen cards expose no transition.
+  Reduced motion removes that fade but never disables same-frame scroll
+  correction. This keeps motion tied to real arrivals without exposing stale
+  intermediate geometry or scroll overflow.
+- The current surface uses the product's merged console hierarchy, card chrome,
+  attribution, and responsive controls. The visual parity target is therefore
+  the packed chronology, stable card geometry, media containment, compaction
+  boundaries, readable loading state, and motion contract; predecessor product
+  chrome and palette are not execution contracts.
+
+All Mosaic production work is event-driven by an admitted stream frame, width
+change, history-edge scroll, or image terminal event. A no-op reconcile returns
+the existing plane, publication shares retained payloads, and keyed mode
+switches neither rebuild nor remeasure the plane. The performance profile
+exercises 75 and 768 retained cards and requires one cold commit, one read for
+each ordinary card, zero card additions or removals on a mode round trip, zero
+mode-switch commits, zero extra measurements, and zero transport frames.
+
+Authorities: [`app/src/runtime/message_cards.rs`](../../app/src/runtime/message_cards.rs),
+[`app/src/mosaic.rs`](../../app/src/mosaic.rs),
+[`app/src/mosaic_plane.rs`](../../app/src/mosaic_plane.rs),
+[`app/src/browser/watchband/mosaic_view.rs`](../../app/src/browser/watchband/mosaic_view.rs),
+[`app/src/browser/watchband/mosaic_view/history.rs`](../../app/src/browser/watchband/mosaic_view/history.rs),
+and
+[`app/src/browser/watchband/mosaic_view/image_resolution.rs`](../../app/src/browser/watchband/mosaic_view/image_resolution.rs).
+Executable parity and cost evidence lives in
+[`app/tests/mosaic_sequences.rs`](../../app/tests/mosaic_sequences.rs),
+[`app/tests/mosaic_stability.rs`](../../app/tests/mosaic_stability.rs),
+[`app/browser/mosaic-history-pagination.mjs`](../../app/browser/mosaic-history-pagination.mjs),
+[`app/browser/mosaic-integrated-proof.mjs`](../../app/browser/mosaic-integrated-proof.mjs),
+and [`app/browser/startup-profile.mjs`](../../app/browser/startup-profile.mjs).
+
 ## Steering and warnings
 
 Durable direction and semantic retirement follow the product loop. Filesystem
