@@ -995,6 +995,7 @@ async function assertRosterPips(page, console, seated) {
   assert.equal(chromePipGrid[2].top, chromePipGrid[0].top);
   assert.equal(chromePipGrid[2].left, chromePipGrid[3].left);
   assert.equal(chromePipGrid[3].top, chromePipGrid[1].top);
+  await assertPartialPipStack(page);
   assert.equal(
     await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
     0,
@@ -1003,6 +1004,28 @@ async function assertRosterPips(page, console, seated) {
   await chooseCanvasView(page, "Agents");
   await console.waitFor();
   await waitForMosaicReady(page);
+}
+
+async function assertPartialPipStack(page) {
+  const pips = await page.evaluate(() => {
+    const clone = document.querySelector(".brand-dots").cloneNode(true);
+    clone.querySelectorAll(".brand-dot")[3].remove();
+    document.body.append(clone);
+    const geometry = [...clone.querySelectorAll(".brand-dot")].map((pip) => {
+      const box = pip.getBoundingClientRect();
+      return {
+        left: box.left,
+        top: box.top,
+      };
+    });
+    clone.remove();
+    return geometry;
+  });
+  assert.equal(pips.length, 3, "partial compact roster contains three physical pips");
+  assert.equal(pips[0].left, pips[1].left);
+  assert.ok(pips[0].top > pips[1].top);
+  assert.ok(pips[2].left < pips[0].left);
+  assert.equal(pips[2].top, pips[0].top);
 }
 
 async function assertQueuedRosterPip(page, console, member) {

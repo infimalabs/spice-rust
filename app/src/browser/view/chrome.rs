@@ -242,7 +242,7 @@ fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &Submission
         .unwrap_or_default();
     html! {
         <span
-            class="brand-dots"
+            class={classes!("brand-dots", (members.len() == 1).then_some("single"))}
             role="group"
             aria-label={format!("{} admitted agents", members.len())}
         >
@@ -259,6 +259,7 @@ fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &Submission
                         });
                         html! {
                             <span
+                                key={member.lane.to_string()}
                                 class={classes!("brand-dot", status.key())}
                                 role="img"
                                 aria-label={format!("{label}: {}", status.label())}
