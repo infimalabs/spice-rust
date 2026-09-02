@@ -9,16 +9,18 @@ pub const MAX_NARRATION_CURSORS: usize = 256;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpeechRequest {
     lane: Option<String>,
+    message_key: Option<String>,
     text: String,
     automatic: bool,
 }
 
 impl SpeechRequest {
-    /// Operator-requested speech, optionally scoped to one rendered lane.
+    /// Operator-requested speech for one exact rendered message.
     #[must_use]
-    pub fn manual(lane: Option<String>, text: String) -> Self {
+    pub fn message(lane: String, message_key: String, text: String) -> Self {
         Self {
-            lane,
+            lane: Some(lane),
+            message_key: Some(message_key),
             text,
             automatic: false,
         }
@@ -26,12 +28,19 @@ impl SpeechRequest {
 
     /// Automatic narration from one rendered lineage.
     #[must_use]
-    pub fn narration(lane: String, text: String) -> Self {
+    pub fn narration(lane: String, message_key: String, text: String) -> Self {
         Self {
             lane: Some(lane),
+            message_key: Some(message_key),
             text,
             automatic: true,
         }
+    }
+
+    /// Stable rendered message identity carried by this request.
+    #[must_use]
+    pub fn message_key(&self) -> Option<&str> {
+        self.message_key.as_deref()
     }
 }
 
@@ -59,6 +68,12 @@ impl SpeechEntry {
     #[must_use]
     pub fn lane(&self) -> Option<&str> {
         self.request.lane.as_deref()
+    }
+
+    /// Rendered message that owns this entry, when speech came from a card.
+    #[must_use]
+    pub fn message_key(&self) -> Option<&str> {
+        self.request.message_key.as_deref()
     }
 }
 
@@ -185,6 +200,12 @@ impl SpeechQueue {
         self.active.is_some()
     }
 
+    /// Exact rendered message owned by the current head, when it has one.
+    #[must_use]
+    pub fn active_message_key(&self) -> Option<&str> {
+        self.active.as_ref().and_then(SpeechEntry::message_key)
+    }
+
     /// Number of entries waiting behind the committed head.
     #[must_use]
     pub fn pending(&self) -> usize {
@@ -215,6 +236,8 @@ pub struct NarrationMessage {
 pub struct NarrationLine {
     /// Stable agent lane that produced the message.
     pub lane: String,
+    /// Stable rendered message identity.
+    pub key: String,
     /// Prose to enqueue through the global arbiter.
     pub text: String,
     /// Resident-classified utterance eligible for default Speak mode.
@@ -259,6 +282,7 @@ impl NarrationCursors {
             .filter(|message| unseen.contains(&(message.lane.clone(), message.key.clone())))
             .map(|message| NarrationLine {
                 lane: message.lane.clone(),
+                key: message.key.clone(),
                 text: message.text.clone(),
                 automatic_speech: message.automatic_speech.clone(),
             })

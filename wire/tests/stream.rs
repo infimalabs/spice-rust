@@ -12,6 +12,28 @@ fn seq(value: u64) -> wire::Seq {
     wire::Seq::new(value).expect("non-zero fixture cursor")
 }
 
+fn prose_message() -> AgentMessage {
+    AgentMessage {
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
+        author: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
+        locus: MessageLocus {
+            member: 1,
+            offset: 2,
+            length: 3,
+            event: 4,
+        },
+        authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+        authored_synthetic: false,
+        observed: None,
+        activity: AgentActivityKind::Prose,
+        final_answer: false,
+        text: "settled".to_owned(),
+        automatic_speech: None,
+        unavailable_tool_terminals: Vec::new(),
+        media: Vec::new(),
+    }
+}
+
 #[test]
 fn stream_requests_are_strict_current_generation_documents() {
     let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
@@ -143,27 +165,6 @@ fn lane_seated_stream_fact_is_strict_and_credential_free() {
     assert_eq!(packed.rows[0].body()["name"], "Ava");
 }
 
-fn prose_message() -> AgentMessage {
-    AgentMessage {
-        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
-        author: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
-        locus: MessageLocus {
-            member: 1,
-            offset: 2,
-            length: 3,
-            event: 4,
-        },
-        authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
-        authored_synthetic: false,
-        observed: None,
-        activity: AgentActivityKind::Prose,
-        text: "settled".to_owned(),
-        automatic_speech: None,
-        unavailable_tool_terminals: Vec::new(),
-        media: Vec::new(),
-    }
-}
-
 #[test]
 fn transcript_activity_defaults_only_the_documented_prose_shape() {
     let prose = prose_message();
@@ -186,6 +187,10 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         "ordinary messages keep the established wire shape"
     );
     assert!(
+        !encoded_text.contains("final_answer"),
+        "non-final prose keeps the established wire shape"
+    );
+    assert!(
         !encoded_text.contains("automatic_speech"),
         "silent prose keeps the established wire shape"
     );
@@ -195,6 +200,21 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         !decoded_prose.authored_synthetic,
         "retained messages from the old wire shape default to source-authored"
     );
+    assert!(!decoded_prose.final_answer);
+    assert!(decoded_prose.automatic_speech.is_none());
+
+    let final_answer = AgentMessage {
+        final_answer: true,
+        ..prose.clone()
+    };
+    let encoded = wire::encode(&final_answer).expect("final answer marker encodes");
+    assert!(String::from_utf8_lossy(&encoded).contains(r#""final_answer":true"#));
+    assert!(
+        wire::decode::<AgentMessage>(&encoded)
+            .expect("final answer marker decodes")
+            .final_answer
+    );
+
     let synthetic = AgentMessage {
         authored_synthetic: true,
         ..prose.clone()

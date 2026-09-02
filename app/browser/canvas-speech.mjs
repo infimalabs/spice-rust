@@ -283,20 +283,21 @@ export async function assertSpeechVariants(browser, endpoint) {
   const unavailablePage = await unavailableContext.newPage();
   const unavailableMonitor = monitorPage(unavailablePage);
   await unavailablePage.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(unavailablePage, "Flow");
+  await chooseCanvasView(unavailablePage, "Chronology");
   await assertOnlineObserved(unavailablePage, "the page loads with speech unavailable", CONNECT_MS);
-  const systemUnavailableButton = unavailablePage.locator(".speech-button");
+  await chooseCanvasView(unavailablePage, "Agents");
+  const unavailableCard = unavailablePage.locator('[data-card-kind="agent-message"]').first();
+  await unavailableCard.waitFor();
+  await unavailableCard.getByLabel("Speak this message").click();
   await settleSpeechBackend(unavailablePage);
-  await systemUnavailableButton.click();
-  await settleSpeechBackend(unavailablePage);
-  const unavailable = await systemUnavailableButton.evaluate((button) => ({
-    state: button.dataset.state,
-    title: button.title,
-    voices: speechSynthesis.getVoices().map((voice) => voice.name),
-    log: window.__speechLog,
-  }));
-  assert.equal(unavailable.state, "error", `the missing system voice fails: ${JSON.stringify(unavailable)}`);
-  assert.match(unavailable.title, /Zoe.*unavailable/);
+  assert.equal(await unavailableCard.getAttribute("data-speech-active"), "false");
+  assert.equal(
+    await unavailablePage.evaluate(() => window.__speechLog.some((row) => row.action === "speak")),
+    false,
+    "a missing configured voice cannot start a message",
+  );
+  assert.equal(await unavailablePage.locator(".speech-button").count(), 0,
+    "Canvas exposes no general-purpose page reader");
   unavailableMonitor.assertClean();
   await unavailableContext.close();
 
@@ -307,9 +308,16 @@ export async function assertSpeechVariants(browser, endpoint) {
   const disabledMonitor = monitorPage(disabled);
   await routeSpeechBootstrap(disabled, { backend: "disabled" });
   await disabled.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(disabled, "Flow");
+  await chooseCanvasView(disabled, "Chronology");
   await assertOnlineObserved(disabled, "the page loads with speech disabled", CONNECT_MS);
-  assert.equal(await disabled.locator(".speech-button").count(), 0, "disabled hides playback");
+  await chooseCanvasView(disabled, "Agents");
+  const disabledCard = disabled.locator('[data-card-kind="agent-message"]').first();
+  await disabledCard.waitFor();
+  await disabledCard.getByLabel("Speak this message").click();
+  await settleSpeechBackend(disabled);
+  assert.equal(await disabledCard.getAttribute("data-speech-active"), "false");
+  assert.deepEqual(await disabled.evaluate(() => window.__speechLog), []);
+  assert.equal(await disabled.locator(".speech-button").count(), 0);
   disabledMonitor.assertClean();
   await disabled.close();
 
@@ -322,11 +330,22 @@ export async function assertSpeechVariants(browser, endpoint) {
     available: false,
   });
   await externalUnavailable.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(externalUnavailable, "Flow");
+  await chooseCanvasView(externalUnavailable, "Chronology");
   await assertOnlineObserved(externalUnavailable, "no external backend is offered", CONNECT_MS);
-  const unavailableButton = externalUnavailable.locator(".speech-button");
-  assert.equal(await unavailableButton.getAttribute("aria-label"), "Speech unavailable");
-  assert.equal(await unavailableButton.isDisabled(), true);
+  await chooseCanvasView(externalUnavailable, "Agents");
+  let unavailableRequests = 0;
+  await externalUnavailable.route("**/speech", async (route) => {
+    unavailableRequests += 1;
+    await route.abort();
+  });
+  const externalUnavailableCard = externalUnavailable
+    .locator('[data-card-kind="agent-message"]').first();
+  await externalUnavailableCard.waitFor();
+  await externalUnavailableCard.getByLabel("Speak this message").click();
+  await settleSpeechBackend(externalUnavailable);
+  assert.equal(unavailableRequests, 0, "an unavailable backend receives no message render request");
+  assert.equal(await externalUnavailableCard.getAttribute("data-speech-active"), "false");
+  assert.equal(await externalUnavailable.locator(".speech-button").count(), 0);
   externalUnavailableMonitor.assertClean();
   await externalUnavailable.close();
 
@@ -341,10 +360,13 @@ export async function assertSpeechVariants(browser, endpoint) {
   let submitted;
   let speechRequest = 0;
   let releaseRender;
+  let signalRenderStarted;
+  const renderStarted = new Promise((resolve) => { signalRenderStarted = resolve; });
   await external.route("**/speech", async (route) => {
     speechRequest += 1;
     submitted = route.request().postDataJSON();
     if (speechRequest === 1) {
+      signalRenderStarted();
       await new Promise((resolve) => { releaseRender = resolve; });
     }
     await route.fulfill({
@@ -354,14 +376,22 @@ export async function assertSpeechVariants(browser, endpoint) {
     });
   });
   await external.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(external, "Flow");
+  await chooseCanvasView(external, "Chronology");
   await assertOnlineObserved(external, "the page loads against the external backend", CONNECT_MS);
-  const externalButton = external.locator(".speech-button");
-  await settleSpeechBackend(external);
-  await externalButton.click();
-  await external.locator('.speech-button[data-state="loading"]').waitFor();
-  await externalButton.click();
-  await external.locator('.speech-button[data-state="idle"]').waitFor();
+  await chooseCanvasView(external, "Agents");
+  const card = external.locator('[data-card-kind="agent-message"]').first();
+  await card.waitFor();
+  const cardKey = await card.getAttribute("data-mosaic-card-key");
+  const waitForCardState = (active) => external.waitForFunction(({ key, active }) => (
+    document.querySelector(`[data-mosaic-card-key="${key}"]`)?.dataset.speechActive
+      === String(active)
+  ), { key: cardKey, active });
+  await card.getByLabel("Speak this message").click();
+  await waitForCardState(true);
+  await renderStarted;
+  assert.equal(await card.getByLabel("Stop playback").innerText(), "■");
+  await card.getByLabel("Stop playback").click();
+  await waitForCardState(false);
   const lateResponse = external.waitForResponse((response) =>
     response.url().endsWith("/speech") && response.request().method() === "POST");
   releaseRender();
@@ -375,46 +405,68 @@ export async function assertSpeechVariants(browser, endpoint) {
   );
 
   await external.evaluate(() => { window.__holdSpeechPlay = true; });
-  await externalButton.click();
-  await external.locator('.speech-button[data-state="playing"]').waitFor();
+  await card.getByLabel("Speak this message").click();
+  await waitForCardState(true);
+  await external.waitForFunction(() => window.__speechPlayPending.length === 1);
   assert.deepEqual(Object.keys(submitted), ["text"]);
-  assert.match(submitted.text, /Flow/);
-  await externalButton.click();
-  await external.locator('.speech-button[data-state="idle"]').waitFor();
+  const normalizeSpeechText = (text) => text.replaceAll("`", "").replace(/\s+/g, " ").trim();
+  assert.equal(
+    normalizeSpeechText(submitted.text),
+    normalizeSpeechText(await card.locator(".message-body").innerText()),
+    "the backend receives this message card rather than page text",
+  );
+  await card.getByLabel("Stop playback").click();
+  await waitForCardState(false);
   await external.evaluate(() => {
     window.__speechPlayPending.splice(0).forEach(({ resolve }) => resolve());
   });
   await external.evaluate(() => new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await externalButton.getAttribute("data-state"), "idle");
+  assert.equal(await card.getAttribute("data-speech-active"), "false");
+  assert.equal(await card.getByLabel("Speak this message").innerText(), "▶");
   const externalActions = await external.evaluate(() => window.__speechLog.map((row) => row.action));
   assert.ok(externalActions.includes("play"));
   assert.ok(externalActions.includes("pause"));
 
   await external.evaluate(() => { window.__holdSpeechPlay = false; });
-  await externalButton.click();
-  await external.locator('.speech-button[data-state="playing"]').waitFor();
-  await chooseCanvasView(external, "Agents");
-  const team = external.locator(".team-surface").first();
-  await team.locator('.team-speech input[type="range"]').fill("1");
-  const messageSpeech = team.getByLabel("Speak this message").first();
-  await messageSpeech.waitFor();
-  await messageSpeech.click();
+  await card.getByLabel("Speak this message").click();
+  await waitForCardState(true);
+  await external.waitForFunction(() => typeof window.__speechAudios.at(-1)?.onpause === "function");
+  const speaking = await card.evaluate((article) => {
+    const probe = document.createElement("span");
+    probe.style.color = "color-mix(in srgb, var(--warning) 70%, var(--line))";
+    article.append(probe);
+    const expectedBorder = getComputedStyle(probe).color;
+    probe.style.color = "var(--warning)";
+    const expectedAccent = getComputedStyle(probe).color;
+    probe.remove();
+    const style = getComputedStyle(article);
+    return {
+      active: article.dataset.speechActive,
+      borderLeft: style.borderLeftColor,
+      boxShadow: style.boxShadow,
+      expectedAccent,
+      expectedBorder,
+    };
+  });
+  assert.equal(speaking.active, "true", "the active queue head marks its exact message card");
+  assert.equal(speaking.borderLeft, speaking.expectedBorder, "message speech uses the warm border");
+  assert.ok(speaking.boxShadow.includes(speaking.expectedAccent), "message speech paints the warm inset rule");
   const requestsAtPause = speechRequest;
   await external.evaluate(() => {
     const audio = window.__speechAudios.at(-1);
-    if (!audio?.onpause) throw new Error("external audio has no pause observer");
+    if (!audio?.onpause) throw new Error("message audio has no pause observer");
     audio.pause();
   });
-  await chooseCanvasView(external, "Flow");
-  await external.locator('.speech-button[data-state="idle"]').waitFor();
-  await external.evaluate(() => new Promise((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await waitForCardState(false);
   assert.equal(
-    speechRequest,
-    requestsAtPause,
-    "an unmarked media pause clears the queued manual successor",
+    await card.getAttribute("data-speech-active"),
+    "false",
+    "an external stop clears the active message marker",
   );
+  assert.equal(speechRequest, requestsAtPause, "an external stop starts no successor");
+  assert.equal(await external.locator(".speech-button").count(), 0,
+    "the external backend remains card-only");
   externalMonitor.assertClean();
   await external.close();
 

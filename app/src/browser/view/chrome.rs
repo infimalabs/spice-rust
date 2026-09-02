@@ -461,6 +461,7 @@ fn ticker(
 pub(in crate::browser) struct Correspondent {
     pub(in crate::browser) accent: usize,
     pub(in crate::browser) speak: Callback<String>,
+    pub(in crate::browser) speaking: bool,
     pub(in crate::browser) quote: Callback<()>,
 }
 
@@ -469,13 +470,25 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
     let quote = correspondent.quote.clone();
     let spoken = text.to_owned();
     let copied = text.to_owned();
+    let speech_label = if correspondent.speaking {
+        "Stop playback"
+    } else {
+        "Speak this message"
+    };
     html! {
         <span class="message-actions">
             <button
-                class="card-action card-action--speak" type="button" title="Speak this message"
-                aria-label="Speak this message"
+                class={classes!(
+                    "card-action",
+                    "card-action--speak",
+                    correspondent.speaking.then_some("active"),
+                )}
+                type="button" title={speech_label}
+                aria-label={speech_label}
                 onclick={Callback::from(move |_| speak.emit(spoken.clone()))}
-            ><span class="card-action-icon" aria-hidden="true">{"▶"}</span></button>
+            ><span class="card-action-icon" aria-hidden="true">{
+                if correspondent.speaking { "■" } else { "▶" }
+            }</span></button>
             <button
                 class="card-action card-action--quote" type="button" title="Quote this message"
                 aria-label="Quote this message"

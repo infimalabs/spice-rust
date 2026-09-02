@@ -4,7 +4,11 @@ use app::speech_queue::{
 };
 
 fn narration(lane: &str, text: &str) -> SpeechRequest {
-    SpeechRequest::narration(lane.to_owned(), text.to_owned())
+    SpeechRequest::narration(lane.to_owned(), text.to_owned(), text.to_owned())
+}
+
+fn manual(lane: &str, key: &str, text: &str) -> SpeechRequest {
+    SpeechRequest::message(lane.to_owned(), key.to_owned(), text.to_owned())
 }
 
 fn started(result: Enqueue) -> app::speech_queue::SpeechEntry {
@@ -18,6 +22,7 @@ fn started(result: Enqueue) -> app::speech_queue::SpeechEntry {
 fn one_global_head_survives_a_burst_and_each_lineage_keeps_one_fresh_tail() {
     let mut queue = SpeechQueue::default();
     let head = started(queue.enqueue(narration("lineage-a", "a1")));
+    assert_eq!(head.message_key(), Some("a1"));
 
     assert_eq!(
         queue.enqueue(narration("lineage-b", "stale b")),
@@ -39,6 +44,7 @@ fn one_global_head_survives_a_burst_and_each_lineage_keeps_one_fresh_tail() {
         other => panic!("head did not advance to the oldest fresh tail: {other:?}"),
     };
     assert_eq!(b.lane(), Some("lineage-b"));
+    assert_eq!(b.message_key(), Some("fresh b"));
     assert_eq!(b.text(), "fresh b");
     let a = match queue.finish(b.id()) {
         Advance::Start(entry) => entry,
@@ -52,7 +58,7 @@ fn one_global_head_survives_a_burst_and_each_lineage_keeps_one_fresh_tail() {
 #[test]
 fn stop_and_lane_abandonment_cannot_revive_superseded_playback() {
     let mut queue = SpeechQueue::default();
-    let head = started(queue.enqueue(SpeechRequest::manual(None, "surface".to_owned())));
+    let head = started(queue.enqueue(manual("lineage-head", "surface", "surface")));
     assert_eq!(
         queue.enqueue(narration("removed", "drop me")),
         Enqueue::Queued
@@ -77,15 +83,18 @@ fn stop_and_lane_abandonment_cannot_revive_superseded_playback() {
 
 #[test]
 fn an_external_pause_stops_manual_speech_but_advances_automatic_narration() {
-    let mut manual = SpeechQueue::default();
-    let head = started(manual.enqueue(SpeechRequest::manual(None, "surface".to_owned())));
+    let mut manual_queue = SpeechQueue::default();
+    let head = started(manual_queue.enqueue(manual("lineage", "surface", "surface")));
     assert_eq!(
-        manual.enqueue(narration("lineage", "queued")),
+        manual_queue.enqueue(narration("lineage", "queued")),
         Enqueue::Queued
     );
-    assert_eq!(manual.external_pause(head.id()), ExternalPause::Stopped);
-    assert_eq!(manual.pending(), 0);
-    assert_eq!(manual.finish(head.id()), Advance::Ignored);
+    assert_eq!(
+        manual_queue.external_pause(head.id()),
+        ExternalPause::Stopped
+    );
+    assert_eq!(manual_queue.pending(), 0);
+    assert_eq!(manual_queue.finish(head.id()), Advance::Ignored);
 
     let mut automatic = SpeechQueue::default();
     let head = started(automatic.enqueue(narration("lineage-a", "head")));
@@ -120,11 +129,13 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
         [
             app::speech_queue::NarrationLine {
                 lane: "agent-b".to_owned(),
+                key: "b2".to_owned(),
                 text: "live b".to_owned(),
                 automatic_speech: None,
             },
             app::speech_queue::NarrationLine {
                 lane: "agent-a".to_owned(),
+                key: "a2".to_owned(),
                 text: "live a".to_owned(),
                 automatic_speech: Some("selected a".to_owned()),
             },

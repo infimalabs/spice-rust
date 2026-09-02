@@ -764,6 +764,7 @@ mod message_retention_tests {
             authored_synthetic: false,
             observed: None,
             activity: AgentActivityKind::Prose,
+            final_answer: false,
             text: offset.to_string(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),

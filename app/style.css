@@ -289,21 +289,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   box-shadow: var(--shadow);
 }
 
-.speech-button {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  min-height: 36px;
-  padding: 0;
-  background: var(--control);
-}
-
-.speech-icon::before { content: "\25B6"; font-size: .78rem; }
-.speech-button.stop .speech-icon::before { content: "\25A0"; }
-.speech-button[data-state="error"] { border-color: var(--danger); color: var(--danger); }
-
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -846,6 +831,21 @@ tbody tr:last-child td { border-bottom: 0; }
 .team-surface {
   position: relative;
   z-index: 0;
+}
+.team-surface .mosaic-message-card.final {
+  background: color-mix(in srgb, var(--accent-2) 8%, var(--panel));
+  border-color: var(--accent-2);
+  box-shadow: inset 0 3px 0 var(--accent-2);
+}
+.team-surface .mosaic-message-card.now-playing {
+  border-color: color-mix(in srgb, var(--warning) 70%, var(--line));
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+.team-surface .mosaic-message-card.final.now-playing {
+  box-shadow: inset 3px 0 0 var(--warning), inset 0 3px 0 var(--accent-2);
+}
+.team-surface .mosaic-message-card[data-accent-slot] {
+  border-right-color: var(--accent-slot, var(--accent));
 }
 .team-menu[aria-expanded="true"] {
   border-color: color-mix(in srgb, var(--accent) 54%, var(--line));

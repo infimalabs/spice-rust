@@ -686,6 +686,7 @@ mod tests {
             authored_synthetic: false,
             observed: None,
             activity: wire::AgentActivityKind::Prose,
+            final_answer: false,
             text: format!("lane {lane:02x} message {offset}"),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),

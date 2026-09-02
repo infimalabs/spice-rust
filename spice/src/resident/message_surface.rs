@@ -308,11 +308,12 @@ fn publish_agent_event(
         locus,
         ordinal,
     };
-    let (activity, locus, text, automatic_speech, media) = match decoded {
+    let (activity, final_answer, locus, text, automatic_speech, media) = match decoded {
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
             let event = presentation_event(prose.locus);
             (
                 AgentActivityKind::Prose,
+                prose.phase.as_deref() == Some("final_answer"),
                 prose.locus,
                 present_steering_acknowledgements(&prose.text, steering, event)?,
                 automatic_speech::classify(prose, steering, event),
@@ -327,6 +328,7 @@ fn publish_agent_event(
             };
             (
                 AgentActivityKind::Tool,
+                false,
                 tool.locus,
                 if media.is_empty() {
                     activity
@@ -339,6 +341,7 @@ fn publish_agent_event(
         }
         listen::Event::Compaction(compaction) => (
             AgentActivityKind::Compaction,
+            false,
             compaction.locus,
             compaction
                 .summary
@@ -370,6 +373,7 @@ fn publish_agent_event(
             authored_synthetic,
             observed,
             activity,
+            final_answer,
             text,
             automatic_speech,
             unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
@@ -775,7 +779,22 @@ fn append_acknowledgement_quote(rendered: &mut String, directive: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    #[derive(Default)]
+    struct Messages(Mutex<Vec<wire::AgentMessage>>);
+
+    impl AgentMessagePublisher for Messages {
+        fn publish(
+            &self,
+            message: wire::AgentMessage,
+        ) -> Result<bool, canvas::stream::MessagePublishError> {
+            self.0.lock().expect("message lock").push(message);
+            Ok(true)
+        }
+    }
 
     fn lane() -> CanonicalUuid {
         "00000000-0000-4000-8000-000000000001"
@@ -790,6 +809,41 @@ mod tests {
             locus: listen::Locus::new(1, 0, 1),
             ordinal: 0,
         }
+    }
+
+    #[test]
+    fn terminal_assistant_prose_preserves_final_answer_state() {
+        let publisher = Messages::default();
+        let prose = listen::Event::Prose(listen::Prose {
+            role: listen::ProseRole::Assistant,
+            text: "settled final".to_owned(),
+            phase: Some("final_answer".to_owned()),
+            media: Vec::new(),
+            locus: listen::Locus::new(1, 0, 1),
+        });
+
+        publish_agent_event(
+            &publisher,
+            AgentEvent {
+                lane: lane(),
+                author: lane(),
+                source: None,
+                ordinal: 0,
+                decoded: &prose,
+                authored: None,
+                observed: None,
+                observations: &MessageObservations::default(),
+                unavailable_tool_terminals: &[],
+            },
+            &mut CallPreviews::default(),
+            None,
+        )
+        .expect("final prose publishes");
+
+        let messages = publisher.0.lock().expect("message lock");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "settled final");
+        assert!(messages[0].final_answer);
     }
 
     fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {

@@ -273,6 +273,7 @@ fn render_activity(
                 speak={controls.speak.clone()}
                 {narrate}
                 {speech}
+                speech_message={(*controls.speech_message).clone()}
                 history_targets={history.targets}
                 history_revision={history.revision}
                 history={history_sender}

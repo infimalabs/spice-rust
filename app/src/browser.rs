@@ -136,6 +136,7 @@ struct SpeechRuntime {
     controller: Rc<RefCell<crate::speech::Controller>>,
     speech: UseStateHandle<wire::SpeechPlayback>,
     status: UseStateHandle<SpeechStatus>,
+    message: UseStateHandle<Option<String>>,
 }
 
 impl SpeechRuntime {
@@ -146,8 +147,17 @@ impl SpeechRuntime {
         }
     }
 
+    fn toggle_message(&self, request: SpeechRequest) {
+        let was_playing = self.queue.borrow().active_message_key() == request.message_key();
+        self.stop();
+        if !was_playing {
+            self.enqueue(request);
+        }
+    }
+
     fn start(&self, entry: SpeechEntry) {
         let generation = self.controller.borrow_mut().begin();
+        self.message.set(entry.message_key().map(str::to_owned));
         self.status.set(SpeechStatus::Loading);
         match &*self.speech {
             wire::SpeechPlayback::Disabled {} => self.finish(entry.id(), None),
@@ -256,6 +266,7 @@ impl SpeechRuntime {
             Advance::Ignored => {}
             Advance::Idle => {
                 self.controller.borrow_mut().stop();
+                self.message.set(None);
                 self.status
                     .set(failure.map_or(SpeechStatus::Idle, SpeechStatus::Failed));
             }
@@ -273,56 +284,22 @@ impl SpeechRuntime {
             ExternalPause::Ignored => {}
             ExternalPause::Stopped | ExternalPause::Idle => {
                 self.controller.borrow_mut().stop();
+                self.message.set(None);
                 self.status.set(SpeechStatus::Idle);
             }
             ExternalPause::Start(entry) => self.start(entry),
         }
     }
 
-    fn active(&self) -> bool {
-        self.queue.borrow().active()
-    }
-
     fn stop(&self) {
         self.queue.borrow_mut().stop();
         self.controller.borrow_mut().stop();
+        self.message.set(None);
         self.status.set(SpeechStatus::Idle);
     }
 
     fn abandon_lane(&self, lane: &str) {
         self.queue.borrow_mut().abandon_lane(lane);
-    }
-}
-
-impl SpeechStatus {
-    fn active(&self) -> bool {
-        matches!(self, Self::Loading | Self::Playing)
-    }
-
-    fn state(&self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Loading => "loading",
-            Self::Playing => "playing",
-            Self::Failed(_) => "error",
-        }
-    }
-
-    fn label(&self) -> &'static str {
-        if self.active() {
-            "Stop reading"
-        } else {
-            "Read current canvas"
-        }
-    }
-
-    fn title(&self) -> String {
-        match self {
-            Self::Idle => "Read current canvas".to_owned(),
-            Self::Loading => "Stop speech rendering".to_owned(),
-            Self::Playing => "Stop reading".to_owned(),
-            Self::Failed(reason) => format!("Speech unavailable: {reason}"),
-        }
     }
 }
 
@@ -514,6 +491,7 @@ fn canvas_app() -> Html {
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
+    let speech_message = use_state(|| None::<String>);
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
     let speech_queue = use_mut_ref(SpeechQueue::default);
     let speech_runtime = SpeechRuntime {
@@ -521,10 +499,11 @@ fn canvas_app() -> Html {
         controller: speech_controller,
         speech: speech.clone(),
         status: speech_status.clone(),
+        message: speech_message.clone(),
     };
     let current_speech_runtime = use_mut_ref(|| speech_runtime.clone());
     *current_speech_runtime.borrow_mut() = speech_runtime.clone();
-    let speak = {
+    let enqueue_speech = {
         let current_speech_runtime = current_speech_runtime.clone();
         use_memo((), move |_| {
             Callback::from(move |request: SpeechRequest| {
@@ -532,16 +511,27 @@ fn canvas_app() -> Html {
             })
         })
     };
+    let toggle_message = {
+        let current_speech_runtime = current_speech_runtime.clone();
+        use_memo((), move |_| {
+            Callback::from(move |request: SpeechRequest| {
+                current_speech_runtime.borrow().toggle_message(request);
+            })
+        })
+    };
     let narration_cursors = use_mut_ref(load_narration_cursors);
     let narrate = {
-        let speak = (*speak).clone();
-        use_memo((), move |_| narration_callback(narration_cursors, speak))
+        let enqueue_speech = (*enqueue_speech).clone();
+        use_memo((), move |_| {
+            narration_callback(narration_cursors, enqueue_speech)
+        })
     };
     let agents = use_agent_controls(
         sender.clone(),
         surface.clone(),
-        (*speak).clone(),
+        (*toggle_message).clone(),
         (*narrate).clone(),
+        speech_message,
     );
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     use_surface_connection(
@@ -566,8 +556,6 @@ fn canvas_app() -> Html {
         note_text.clone(),
         note_notice.clone(),
     );
-    let toggle_speech = speech_toggle(speech_status.clone(), speech_runtime, (*speak).clone());
-
     render_canvas(CanvasRender {
         connection: &connection,
         surface: &surface,
@@ -584,9 +572,6 @@ fn canvas_app() -> Html {
         note_notice: &note_notice,
         submit_note,
         refresh,
-        speech: &speech,
-        speech_status: &speech_status,
-        toggle_speech,
     })
 }
 
@@ -789,6 +774,7 @@ fn use_agent_controls(
     surface: UseStateHandle<SurfaceData>,
     speak: Callback<SpeechRequest>,
     narrate: Callback<NarrationBatch>,
+    speech_message: UseStateHandle<Option<String>>,
 ) -> view::AgentControls {
     let seat_name = use_state(String::new);
     let seat_worktree = use_state(String::new);
@@ -812,6 +798,7 @@ fn use_agent_controls(
         seat_notice,
         speak,
         narrate,
+        speech_message,
     }
 }
 
@@ -853,27 +840,6 @@ fn seat_submit(
     })
 }
 
-/// Stop what is playing, or read the whole rendered surface aloud.
-///
-/// The topbar control is a toggle because it speaks one thing; a card speaks
-/// its own text and both enter through the same browser-global runtime.
-fn speech_toggle(
-    speech_status: UseStateHandle<SpeechStatus>,
-    speech_runtime: SpeechRuntime,
-    speak: Callback<SpeechRequest>,
-) -> Callback<MouseEvent> {
-    Callback::from(move |_| {
-        if speech_runtime.active() {
-            speech_runtime.stop();
-            return;
-        }
-        match crate::speech::rendered_text() {
-            Ok(text) => speak.emit(SpeechRequest::manual(None, text)),
-            Err(error) => speech_status.set(SpeechStatus::Failed(error)),
-        }
-    })
-}
-
 fn load_narration_cursors() -> NarrationCursors {
     web_sys::window()
         .and_then(|window| window.local_storage().ok().flatten())
@@ -911,7 +877,11 @@ fn narration_callback(
                 LineageSpeech::Narrate => Some(line.text),
             };
             if let Some(text) = text {
-                speak.emit(SpeechRequest::narration(batch.lineage.clone(), text));
+                speak.emit(SpeechRequest::narration(
+                    batch.lineage.clone(),
+                    line.key,
+                    text,
+                ));
             }
         }
     })

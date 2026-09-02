@@ -4,8 +4,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    Blob, BlobPropertyBag, Event, HtmlAudioElement, HtmlElement, SpeechSynthesis,
-    SpeechSynthesisUtterance, Url,
+    Blob, BlobPropertyBag, Event, HtmlAudioElement, SpeechSynthesis, SpeechSynthesisUtterance, Url,
 };
 
 use crate::speech_owner::PlaybackOwnership;
@@ -13,7 +12,6 @@ use crate::speech_owner::PlaybackOwnership;
 const REFERENCE_WORDS_PER_MINUTE: f32 = 175.0;
 const MIN_SYSTEM_RATE: f32 = 0.5;
 const MAX_SYSTEM_RATE: f32 = 2.0;
-const MAX_RENDERED_TEXT_BYTES: usize = 32 * 1_024;
 
 /// One browser playback owner. Replacements always stop the prior media first.
 #[derive(Default)]
@@ -167,27 +165,6 @@ impl Drop for Controller {
     fn drop(&mut self) {
         self.stop();
     }
-}
-
-/// Plain text currently visible in the canvas content region.
-pub fn rendered_text() -> Result<String, String> {
-    let element = web_sys::window()
-        .and_then(|window| window.document())
-        .ok_or_else(|| "canvas document is unavailable".to_owned())?
-        .query_selector("main.content")
-        .map_err(|_| "canvas content could not be inspected".to_owned())?
-        .ok_or_else(|| "canvas content is unavailable".to_owned())?
-        .dyn_into::<HtmlElement>()
-        .map_err(|_| "canvas content is not readable".to_owned())?;
-    let text = element.inner_text();
-    let text = text.trim();
-    if text.is_empty() {
-        return Err("canvas content is empty".to_owned());
-    }
-    if text.len() > MAX_RENDERED_TEXT_BYTES {
-        return Err("canvas content exceeds the speech limit".to_owned());
-    }
-    Ok(text.to_owned())
 }
 
 /// Await the browser's asynchronous media-play admission.

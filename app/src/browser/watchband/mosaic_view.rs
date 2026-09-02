@@ -328,6 +328,7 @@ pub(super) struct MosaicPlaneProps {
     pub(super) speak: Callback<SpeechRequest>,
     pub(super) narrate: Callback<NarrationBatch>,
     pub(super) speech: LineageSpeech,
+    pub(super) speech_message: Option<String>,
     pub(super) history_targets: BTreeMap<CanonicalUuid, wire::MessageLocus>,
     pub(super) history_revision: u64,
     pub(super) history: HistorySender,
@@ -621,14 +622,7 @@ fn use_narration(
         .map(|card| match card {
             ActivityCard::Agent { message, .. } => NarrationMessage {
                 lane: message.lane.to_string(),
-                key: format!(
-                    "{}:{}:{}:{}:{}",
-                    message.lane,
-                    message.locus.member,
-                    message.locus.offset,
-                    message.locus.length,
-                    message.locus.event,
-                ),
+                key: agent_message_source_id(message),
                 text: message.text.clone(),
                 automatic_speech: message
                     .automatic_speech
@@ -1072,6 +1066,7 @@ fn render_activity_cards(
                         quote_dispatcher={properties.quote_dispatcher.clone()}
                         speech_queue={properties.speak.clone()}
                         speech={properties.speech}
+                        speaking={properties.speech_message.as_deref() == Some(key.as_str())}
                         lane={properties.lane}
                         order={quote_order}
                         {layout}
