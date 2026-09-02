@@ -133,7 +133,7 @@ impl<K: Clone + Ord> PersistentLanePlane<K> {
     pub fn reconcile(&self, geometry: i32, measured: &[MeasuredCard<K>]) -> Self {
         assert_unique(measured);
         if geometry != self.geometry {
-            return Self::full_replay(geometry, measured, self.commits + 1);
+            return self.geometry_replay(geometry, measured);
         }
 
         let Some((backfill_count, append_start)) = edge_additions(&self.cards, measured) else {
@@ -210,6 +210,16 @@ impl<K: Clone + Ord> PersistentLanePlane<K> {
         let mut next = self.clone();
         next.cards = cards;
         commit(next, Transition::EpochReplay)
+    }
+
+    fn geometry_replay(&self, geometry: i32, measured: &[MeasuredCard<K>]) -> Self {
+        let mut replayed = Self::full_replay(geometry, measured, self.commits + 1);
+        if segment_identity_matches(&self.cards, measured) {
+            for (current, retained) in replayed.cards.iter_mut().zip(&self.cards) {
+                current.card.creation_index = retained.card.creation_index;
+            }
+        }
+        replayed
     }
 }
 

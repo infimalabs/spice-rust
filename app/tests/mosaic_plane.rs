@@ -581,6 +581,46 @@ fn compaction_boundary_preserves_the_upward_append_coordinate() {
 }
 
 #[test]
+fn geometry_replay_preserves_retained_creation_indexes_after_staged_history() {
+    let head = measured("head", candidates(12, 2));
+    let compact = boundary("compact", 1);
+    let recent = measured("recent", candidates(6, 3));
+    let initial = PersistentLanePlane::new(900, &[head.clone(), compact.clone(), recent.clone()]);
+    let staged_snapshot = [
+        measured("older", candidates(12, 2)),
+        head,
+        compact,
+        recent,
+        measured("live", candidates(3, 2)),
+    ];
+    let staged = initial.reconcile(900, &staged_snapshot);
+    let creation_indexes = staged
+        .cards()
+        .iter()
+        .map(|entry| (entry.key, entry.card.creation_index))
+        .collect::<Vec<_>>();
+    assert_ne!(
+        creation_indexes[0].1,
+        1usize << (usize::BITS - 1),
+        "staged history receives an index below the original chronology",
+    );
+
+    let resized = staged.reconcile(720, &staged_snapshot);
+
+    assert_eq!(resized.transition(), Transition::FullReplay);
+    assert_eq!(resized.geometry(), 720);
+    assert_eq!(
+        resized
+            .cards()
+            .iter()
+            .map(|entry| (entry.key, entry.card.creation_index))
+            .collect::<Vec<_>>(),
+        creation_indexes,
+        "geometry replay preserves every retained semantic creation index",
+    );
+}
+
+#[test]
 fn content_resize_preserves_a_boundary_below_a_later_frozen_subset() {
     let initial = [
         measured("a", candidates(12, 2)),
