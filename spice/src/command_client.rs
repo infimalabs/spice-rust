@@ -617,9 +617,11 @@ enum DiscoveryWait {
 
 /// Acquire one authenticated session across a resident publication handoff.
 ///
-/// The observer is armed before the first read so an atomic discovery rename
-/// cannot land between the failed read and the wait. Only opening is retried;
-/// the command envelope remains untouched until this function succeeds.
+/// A synchronous re-read admits a replacement that has already published.
+/// Otherwise the observer is armed and followed by another read, so an atomic
+/// discovery rename cannot land between the failed read and the wait. Only
+/// opening is retried; the command envelope remains untouched until this
+/// function succeeds.
 fn acquire_session_with(
     contract: &Contract,
     discovery_path: &Path,
@@ -628,23 +630,38 @@ fn acquire_session_with(
     mut after_transient: impl FnMut(&Fault),
 ) -> ClientResult<AuthenticatedSession> {
     let deadline = Instant::now() + bound;
-    let observer = DiscoveryObserver::arm(resident_lock);
+    let attempt = acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
+    let Err(outcome) = attempt else {
+        return attempt;
+    };
+    let Some(fault) = replacement_fault(&outcome, resident_lock) else {
+        return Err(outcome);
+    };
+    after_transient(fault);
+
+    // A replacement may already have published. Re-read before constructing
+    // the observer so a present authenticated surface has no watcher latency.
+    let retry = acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
+    let Err(outcome) = retry else {
+        return retry;
+    };
+    if replacement_fault(&outcome, resident_lock).is_none() {
+        return Err(outcome);
+    }
+    let Some(observer) = DiscoveryObserver::arm(resident_lock) else {
+        return Err(outcome);
+    };
     loop {
-        let attempt = DiscoveryRead::open(discovery_path, resident_lock).and_then(|discovery| {
-            let attempt_bound = remaining(deadline)
-                .map_err(|_| acquisition_deadline(bound, "opening the current discovery"))?;
-            open_session(contract, discovery, attempt_bound)
-        });
+        // The first iteration closes the interval between the last read and
+        // arming the observer; later iterations consume signalled changes.
+        let attempt =
+            acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
         let Err(outcome) = attempt else {
             return attempt;
         };
         let Some(fault) = replacement_fault(&outcome, resident_lock) else {
             return Err(outcome);
         };
-        let Some(observer) = &observer else {
-            return Err(outcome);
-        };
-        after_transient(fault);
         match observer.wait(deadline) {
             DiscoveryWait::Changed => {}
             DiscoveryWait::Deadline => {
@@ -653,6 +670,20 @@ fn acquire_session_with(
             DiscoveryWait::Failed => return Err(outcome),
         }
     }
+}
+
+fn acquire_session_attempt(
+    contract: &Contract,
+    discovery_path: &Path,
+    resident_lock: &Path,
+    deadline: Instant,
+    bound: Duration,
+) -> ClientResult<AuthenticatedSession> {
+    DiscoveryRead::open(discovery_path, resident_lock).and_then(|discovery| {
+        let attempt_bound = remaining(deadline)
+            .map_err(|_| acquisition_deadline(bound, "opening the current discovery"))?;
+        open_session(contract, discovery, attempt_bound)
+    })
 }
 
 fn replacement_fault<'a>(
