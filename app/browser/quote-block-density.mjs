@@ -18,11 +18,17 @@ async function observeQuoteCard(card) {
       const parentBox = parent?.getBoundingClientRect();
       return {
         borderBottom: number(style.borderBottomWidth),
+        borderBottomRightRadius: number(style.borderBottomRightRadius),
         borderBottomLeftRadius: number(style.borderBottomLeftRadius),
+        borderBottomStyle: style.borderBottomStyle,
         borderLeft: number(style.borderLeftWidth),
+        borderLeftStyle: style.borderLeftStyle,
         borderRight: number(style.borderRightWidth),
+        borderRightStyle: style.borderRightStyle,
         borderTop: number(style.borderTopWidth),
+        borderTopRightRadius: number(style.borderTopRightRadius),
         borderTopLeftRadius: number(style.borderTopLeftRadius),
+        borderTopStyle: style.borderTopStyle,
         clientWidth: quote.clientWidth,
         fontSize: number(style.fontSize),
         lineHeight: number(style.lineHeight),
@@ -111,13 +117,25 @@ export async function assertQuoteBlockDensity(cards, label) {
     );
     for (const [index, quote] of observed.quotes.entries()) {
       assert.ok(
-        [quote.borderTop, quote.borderRight, quote.borderBottom, quote.borderLeft]
-          .every((width) => near(width, 2)),
-        `${label} ${kind} quote ${index} keeps a slim 2px outline`,
+        near(quote.borderLeft, 2) && quote.borderLeftStyle === "solid",
+        `${label} ${kind} quote ${index} keeps one solid 2px left rail`,
       );
       assert.ok(
-        near(quote.borderTopLeftRadius, 12) && near(quote.borderBottomLeftRadius, 12),
-        `${label} ${kind} quote ${index} curves both rail ends`,
+        [
+          [quote.borderTop, quote.borderTopStyle],
+          [quote.borderRight, quote.borderRightStyle],
+          [quote.borderBottom, quote.borderBottomStyle],
+        ].every(([width, style]) => near(width, 0) && style === "none"),
+        `${label} ${kind} quote ${index} has no top, right, or bottom border`,
+      );
+      assert.ok(
+        [
+          quote.borderTopLeftRadius,
+          quote.borderTopRightRadius,
+          quote.borderBottomRightRadius,
+          quote.borderBottomLeftRadius,
+        ].every((radius) => near(radius, 0)),
+        `${label} ${kind} quote ${index} keeps its left rail square`,
       );
       assert.ok(
         near(quote.fontSize, 13) && quote.fontSize < observed.typography.bodyFontSize,
@@ -137,11 +155,12 @@ export async function assertQuoteBlockDensity(cards, label) {
         quote.marginBottom >= 0 && quote.marginBottom <= 6 + PIXEL_TOLERANCE,
         `${label} ${kind} quote ${index} has compact bottom rhythm: ${quote.marginBottom}`,
       );
-      assert.ok(near(quote.paddingTop, 5) && near(quote.paddingBottom, 5),
-        `${label} ${kind} quote ${index} has compact five-pixel block padding`);
-      const expectedInline = index === 0 ? 7 : 5;
-      assert.ok(near(quote.paddingLeft, expectedInline) && near(quote.paddingRight, expectedInline),
-        `${label} ${kind} quote ${index} has bounded inline padding`);
+      assert.ok(near(quote.paddingTop, 7) && near(quote.paddingBottom, 7),
+        `${label} ${kind} quote ${index} replaces the removed horizontal edges with inset`);
+      const expectedLeft = index === 0 ? 7 : 5;
+      const expectedRight = expectedLeft + 2;
+      assert.ok(near(quote.paddingLeft, expectedLeft) && near(quote.paddingRight, expectedRight),
+        `${label} ${kind} quote ${index} preserves content width after removing the right edge`);
       assert.ok(quote.scrollWidth <= quote.clientWidth + 1,
         `${label} ${kind} quote ${index} wraps without horizontal overflow`);
       if (quote.railOffset !== null) {
