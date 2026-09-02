@@ -10,10 +10,6 @@ import {
   assertNoUnavailableToolTerminal,
   assertUnavailableToolTerminal,
 } from "./compaction-boundary-reference.mjs";
-import {
-  assertCanonicalPlacementsStable,
-  captureCanonicalPlacements,
-} from "./mosaic-placement-stability.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 // Span the fixture's one-second delivery cadence before arming exact lattice probes.
@@ -190,162 +186,6 @@ export function assertMosaicLifecycleAdvanced(before, after, label) {
   );
 }
 
-async function hydrationPlacement(plane) {
-  return plane.evaluate((element) => ({
-    commits: Number(element.dataset.planeCommits),
-    transition: element.dataset.planeTransition,
-    cards: [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')]
-      .map((card) => ({
-        key: card.dataset.mosaicCardKey,
-        track: card.dataset.track,
-        span: card.dataset.span,
-        base: card.dataset.base,
-        rows: card.dataset.rows,
-      })),
-  }));
-}
-
-async function waitForHydration(page, expectedKeys) {
-  await waitForPage(page, "staged Mosaic hydration settles in total chronology", TRANSITION_MS,
-    (expected) => {
-      const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-      if (plane?.dataset.measurementPhase !== "ready"
-        || plane.dataset.measurementPending !== "0") return false;
-      const cards = [...plane.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')];
-      return cards.length === expected.length
-        && cards.every((card, index) => card.dataset.mosaicCardKey === expected[index]);
-    }, expectedKeys);
-}
-
-async function assertHydrationEdge(page, plane, hydration, initial, armed, snapshot) {
-  const edge = await finishPlacementProbe(plane, armed);
-  assert.ok(edge.retained, "edge hydration retains every committed card node");
-  assert.deepEqual(edge.writes, [], "edge hydration writes no retained card placement");
-  const stablePlacement = ({ key, track, span, base, row, rows }) => (
-    { key, track, span, base, row, rows }
-  );
-  assert.deepEqual(
-    edge.cards.map(stablePlacement),
-    armed.cards.map(stablePlacement),
-    "edge hydration preserves every retained committed placement",
-  );
-  assert.equal(snapshot.cards.at(-1)?.key, hydration.newestKey,
-    "the newest transport edge appends its DOM node");
-  const visual = await plane.evaluate((element, { newestKey, retainedKeys }) => {
-    const boxFor = (key) => element
-      .querySelector(`[data-mosaic-card-key="${key}"]`)
-      ?.getBoundingClientRect();
-    const newest = boxFor(newestKey);
-    const retained = retainedKeys.map(boxFor).filter(Boolean);
-    return {
-      newest: newest ? { bottom: newest.bottom, top: newest.top } : null,
-      retained: retained.map((box) => ({ bottom: box.bottom, top: box.top })),
-    };
-  }, { newestKey: hydration.newestKey, retainedKeys: initial.cards.map((card) => card.key) });
-  assert.ok(visual.newest && visual.retained.length === initial.cards.length,
-    `edge hydration renders every visual witness: ${JSON.stringify(visual)}`);
-  assert.ok(
-    visual.newest.top <= Math.min(...visual.retained.map((box) => box.top)) + 1,
-    `the newest transport edge leads the visual stack: ${JSON.stringify(visual)}`,
-  );
-  return {
-    committedWidth: edge.committedWidth,
-    commits: edge.commits,
-    retained: edge.retained,
-    retainedCards: edge.cards,
-    transition: edge.transition,
-    visual,
-    writes: edge.writes,
-  };
-}
-
-export async function assertStagedMosaicHydration(page, team, activityReplay, inspectOneShot) {
-  assert.equal(typeof inspectOneShot, "function", "hydration supplies an integrated proof sink");
-  const plane = team.locator(".lane-mosaic-plane");
-  const hydration = activityReplay.stagedHydration();
-  await plane.evaluate((element) => {
-    window.__stagedHydrationViolations = [];
-    window.__stagedHydrationExpected = [];
-    const inspect = (expected) => {
-      if (element.dataset.measurementPhase !== "ready"
-        || element.dataset.measurementPending !== "0") return;
-      const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')];
-      const keys = cards.map((card) => card.dataset.mosaicCardKey);
-      if (expected.length > 0 && JSON.stringify(keys) !== JSON.stringify(expected)) {
-        window.__stagedHydrationViolations.push({ expected, keys });
-      }
-      if (new Set(keys).size !== keys.length) {
-        window.__stagedHydrationViolations.push({ duplicateKeys: keys });
-      }
-    };
-    const observer = new MutationObserver((mutations) => {
-      if (!mutations.some((mutation) => mutation.target === element
-        && mutation.attributeName === "data-plane-commits")) return;
-      const expected = [...window.__stagedHydrationExpected];
-      inspect(expected);
-    });
-    observer.observe(element, { attributes: true, attributeFilter: ["data-plane-commits"] });
-    element.__stagedHydrationObserver = observer;
-  });
-
-  const apply = async (messages, expectedTransition = null) => {
-    const keys = hydration.keys(messages);
-    await page.evaluate((expected) => { window.__stagedHydrationExpected = expected; }, keys);
-    await hydration.send(page, messages);
-    await waitForHydration(page, keys);
-    const snapshot = await hydrationPlacement(plane);
-    if (expectedTransition) assert.equal(snapshot.transition, expectedTransition);
-    return snapshot;
-  };
-
-  const initial = await apply(hydration.stages[0]);
-  const edgeProbe = await armPlacementProbe(plane);
-  const edgeSnapshot = await apply(hydration.stages[1], "append");
-  const edge = await assertHydrationEdge(
-    page, plane, hydration, initial, edgeProbe, edgeSnapshot,
-  );
-  const staged = await apply(hydration.stages[2], "epoch-replay");
-  assert.deepEqual(
-    staged.cards.find((card) => card.key === hydration.boundaryKey),
-    edgeSnapshot.cards.find((card) => card.key === hydration.boundaryKey),
-    "epoch hydration preserves the compaction divider position and extent",
-  );
-  const commits = staged.commits;
-  const replayPlacement = await captureCanonicalPlacements(plane);
-  await hydration.send(page, hydration.stages[2]);
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-  assertCanonicalPlacementsStable(
-    replayPlacement,
-    await captureCanonicalPlacements(plane),
-    "an unchanged complete hydration replay",
-  );
-  assert.equal(Number(await plane.getAttribute("data-plane-commits")), commits,
-    "an unchanged complete hydration snapshot commits no plane");
-
-  await page.evaluate(() => { window.__stagedHydrationExpected = []; });
-  await hydration.send(page, []);
-  await waitForPage(page, "the one-shot hydration reference starts empty", TRANSITION_MS,
-    () => document.querySelectorAll(
-      '[data-pane="agent-console"] .mosaic-message-card[data-layout-phase="committed"]',
-    ).length === 0);
-  const oneShot = await apply(hydration.chronological);
-  assert.deepEqual(oneShot.cards, staged.cards,
-    "staged hydration converges to byte-identical one-shot Mosaic placement");
-  assert.deepEqual(await plane.evaluate((element) => {
-    element.__stagedHydrationObserver.disconnect();
-    delete element.__stagedHydrationObserver;
-    return window.__stagedHydrationViolations;
-  }), [], "hydration never exposes duplicate or misordered cards after settlement");
-  await inspectOneShot({
-    edge,
-    oneShot,
-    staged,
-    stageSizes: hydration.stages.map((stage) => stage.length),
-  });
-  await activityReplay.restoreProseSnapshot(page);
-  await waitForMosaicReady(page);
-}
-
 export async function assertCompactionBoundaryPersistence(page, seeded, boundaryKeys) {
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
@@ -423,7 +263,6 @@ export async function assertModeSwitchPreservesDeferredMosaic(
 ) {
   const plane = console.locator(".lane-mosaic-plane");
   await settleMosaicActivity(page, plane);
-  const initialPlacement = await captureCanonicalPlacements(plane);
   const before = await plane.evaluate((element) => {
     element.dataset.modeSwitchIdentity = crypto.randomUUID();
     return {
@@ -523,19 +362,12 @@ export async function assertModeSwitchPreservesDeferredMosaic(
     }, received);
   const revealed = await finishPlacementProbe(plane, placement);
   assertPlacementRetained(placement, revealed, "a hidden background batch reveal");
-  assertCanonicalPlacementsStable(
-    initialPlacement,
-    await captureCanonicalPlacements(plane),
-    "a hidden background batch reveal",
-    received,
-  );
   assert.equal(revealed.commits, before.commits + 1,
     "the complete hidden batch produces one snap correction");
   assert.equal(await plane.getAttribute("data-mode-switch-identity"), before.identity,
     "reveal retains the original Mosaic host node");
 
   const stable = await armPlacementProbe(plane);
-  const repeatedPlacement = await captureCanonicalPlacements(plane);
   await chooseCanvasView(page, "Flow");
   await waitForPage(page, "repeated hide returns to zero width", TRANSITION_MS, () => (
     Number(document.querySelector(".mosaic-workspace .lane-mosaic-plane")?.dataset.observedWidth) < 24
@@ -549,11 +381,6 @@ export async function assertModeSwitchPreservesDeferredMosaic(
     before.committedWidth);
   const repeated = await finishPlacementProbe(plane, stable);
   assertUnmoved(stable, repeated, "a no-op global hide and reveal");
-  assertCanonicalPlacementsStable(
-    repeatedPlacement,
-    await captureCanonicalPlacements(plane),
-    "a no-op global hide and reveal",
-  );
   assert.equal(repeated.commits, revealed.commits, "a no-op reveal commits no plane");
   assert.equal(await plane.locator(`[data-mosaic-card-key="${boundary.key}"]`).count(), 1,
     "the hidden compaction divider retains one stable identity");

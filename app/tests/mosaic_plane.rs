@@ -316,6 +316,39 @@ fn interleaved_hydration_replays_deterministically_across_a_compaction_epoch() {
 }
 
 #[test]
+fn an_overfull_stable_epoch_falls_back_to_complete_replay() {
+    let head = measured("head", candidates(12, 2));
+    let compact = boundary("compact", 1);
+    let recent = measured("recent", candidates(6, 3));
+    let initial = PersistentLanePlane::new(900, &[head.clone(), compact.clone(), recent.clone()]);
+    let older = [
+        "older-a", "older-b", "older-c", "older-d", "older-e", "older-f", "older-g", "older-h",
+    ]
+    .into_iter()
+    .map(|key| measured(key, candidates(6, 2)))
+    .collect::<Vec<_>>();
+    let expanded_snapshot = older
+        .iter()
+        .cloned()
+        .chain([head.clone(), compact.clone(), recent.clone()])
+        .collect::<Vec<_>>();
+    let expanded = initial.reconcile(900, &expanded_snapshot);
+    assert_eq!(expanded.transition(), Transition::Backfill);
+
+    let mut complete = expanded_snapshot;
+    complete.insert(older.len(), measured("interleaved", candidates(12, 4)));
+    let replayed = expanded.reconcile(900, &complete);
+    let one_shot = PersistentLanePlane::new(900, &complete);
+
+    assert_eq!(replayed.transition(), Transition::FullReplay);
+    assert_eq!(replayed.cards(), one_shot.cards());
+    assert_eq!(
+        (replayed.max_row(), replayed.rows()),
+        (one_shot.max_row(), one_shot.rows())
+    );
+}
+
+#[test]
 fn replacing_one_epoch_preserves_every_outside_position_and_extent() {
     let old = measured("old", candidates(12, 2));
     let start = boundary("compact-a", 1);
