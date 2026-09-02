@@ -7,6 +7,7 @@
 //! is the part that genuinely needs a browser.
 
 use super::*;
+use crate::browser::clock::Age;
 use crate::watchband;
 
 /// Characters the ticker line is allowed.
@@ -393,20 +394,60 @@ fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
 pub(in crate::browser) fn render_lineage_ticker(
     runtime: &CanvasRuntime,
     lineage: &crate::runtime::LaneRow,
+    standings: &[watchband::Standing],
 ) -> Html {
     let Some(activity) = runtime.newest_lineage_activity(lineage) else {
         return html! {
             <div class="ticker" aria-live="polite" data-empty="true"></div>
         };
     };
-    ticker(activity.class(), activity.title(), activity.detail())
+    let standing = standings
+        .iter()
+        .find(|standing| standing.lane == activity.lane())
+        .expect("a lineage activity belongs to one rendered standing");
+    let member = lineage
+        .member(activity.lane())
+        .expect("a lineage activity belongs to one rendered member");
+    ticker(activity, standing, member.status(standing.pending))
 }
 
-fn ticker(class: &'static str, title: &str, detail: &str) -> Html {
-    let detail = if detail.is_empty() { title } else { detail };
+fn ticker(
+    activity: &crate::runtime::LaneActivity,
+    standing: &watchband::Standing,
+    status: crate::runtime::LaneStatus,
+) -> Html {
+    let title = activity.title();
+    let detail = if activity.detail().is_empty() {
+        title
+    } else {
+        activity.detail()
+    };
+    let line = watchband::ticker_line(title, detail, TICKER_BUDGET);
+    let prefix = format!("{title}:");
+    let detail = line
+        .strip_prefix(&prefix)
+        .map(str::trim_start)
+        .unwrap_or_default();
     html! {
-        <div class={classes!("ticker", class)} aria-live="polite">
-            {watchband::ticker_line(title, detail, TICKER_BUDGET)}
+        <div
+            class={classes!("ticker", activity.class())}
+            aria-live="polite"
+            aria-label={format!("{}: {line}", standing.label)}
+            data-agent-lane={activity.lane().to_string()}
+            data-accent={standing.accent.to_string()}
+            data-lane-status={status.key()}
+        >
+            <Age
+                authored={activity.display_millis()}
+                class={classes!("ticker-age", status.key())}
+                title={format!("{} {title}", standing.label)}
+            />
+            {" "}
+            <strong class="ticker-prefix">{prefix}</strong>
+            if !detail.is_empty() {
+                {" "}
+                <span class="ticker-detail">{detail}</span>
+            }
         </div>
     }
 }

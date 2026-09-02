@@ -202,7 +202,6 @@ fn render_compose(
                     ready,
                 )}
             </form>
-            {view::chrome::render_lineage_ticker(runtime, lineage)}
             {render_activity(
                 lineage,
                 &cards,
