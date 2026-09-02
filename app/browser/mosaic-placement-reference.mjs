@@ -388,7 +388,57 @@ export async function assertModeSwitchPreservesDeferredMosaic(
   assert.equal(repeated.commits, revealed.commits, "a no-op reveal commits no plane");
   assert.equal(await plane.locator(`[data-mosaic-card-key="${boundary.key}"]`).count(), 1,
     "the hidden compaction divider retains one stable identity");
+  const continuity = await plane.evaluate((element, expectedKeys) => {
+    const token = crypto.randomUUID();
+    const cards = expectedKeys.map((key) => {
+      const card = element.querySelector(`[data-mosaic-card-key="${key}"]`);
+      if (!card || card.dataset.layoutPhase !== "committed") {
+        throw new Error(`post-hidden continuity card is absent: ${key}`);
+      }
+      card.__mosaicPostHiddenIdentity = token;
+      return { key, creationIndex: card.dataset.creationIndex };
+    });
+    return { token, cards };
+  }, before.keys);
   for (const imageCase of imageCases) await page.unroute(imageCase.url);
+  return continuity;
+}
+
+export async function assertRetainedMosaicIdentity(plane, armed, label) {
+  const current = await plane.evaluate((element, expected) => expected.cards.map((prior) => {
+    const card = element.querySelector(`[data-mosaic-card-key="${prior.key}"]`);
+    return {
+      key: prior.key,
+      creationIndex: card?.dataset.creationIndex ?? null,
+      retained: card?.__mosaicPostHiddenIdentity === expected.token,
+    };
+  }), armed);
+  assert.deepEqual(
+    current,
+    armed.cards.map((card) => ({ ...card, retained: true })),
+    `${label} retains post-hidden card nodes and semantic creation indexes`,
+  );
+}
+
+export async function rearmRetainedMosaicIdentity(plane, prior, label) {
+  const current = await plane.evaluate((element, expected) => {
+    const token = crypto.randomUUID();
+    const cards = expected.prior.cards.map((retained) => {
+      const card = element.querySelector(`[data-mosaic-card-key="${retained.key}"]`);
+      if (!card || card.dataset.layoutPhase !== "committed") {
+        throw new Error(`${expected.label} is missing restored card ${retained.key}`);
+      }
+      card.__mosaicPostHiddenIdentity = token;
+      return { key: retained.key, creationIndex: card.dataset.creationIndex };
+    });
+    return { token, cards };
+  }, { prior, label });
+  assert.deepEqual(
+    current.cards,
+    prior.cards,
+    `${label} restores the same semantic creation indexes before rearming node identity`,
+  );
+  return current;
 }
 
 export async function armPlacementProbe(plane, excluded = []) {

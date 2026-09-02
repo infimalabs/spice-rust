@@ -13,8 +13,10 @@ import {
 } from "./agent-conversation.mjs";
 import {
   assertCompactionBoundaryPersistence,
+  assertRetainedMosaicIdentity,
   assertStagedMosaicHydration,
   installPersistedMosaicImageRoutes,
+  rearmRetainedMosaicIdentity,
   waitForMosaicReady,
 } from "./agent-conversation-mosaic.mjs";
 import { assertCompactionBoundary } from "./mosaic-transitions.mjs";
@@ -543,6 +545,11 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     await page.setViewportSize(originalViewport);
     await waitForMosaicReady(page);
   }
+  const restoredMosaic = await rearmRetainedMosaicIdentity(
+    team.locator(".lane-mosaic-plane"),
+    seeded.postHiddenMosaic,
+    "staged replay and restored geometry",
+  );
 
   const quoteSourceCandidate = team.locator(
     `.mosaic-message-card[data-card-kind="agent-message"][data-agent-lane="${seeded.lane}"]`,
@@ -553,7 +560,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   const quoteSource = team.locator(`[data-mosaic-card-key="${quoteSourceKey}"]`);
 
   const compactionBoundary = await assertCompactionBoundary(
-    page, fixture, team, seeded, artifacts,
+    page, fixture, team, seeded, artifacts, restoredMosaic,
   );
 
   const quoteSourceBody = (await quoteSource.locator(".message-body").innerText()).trim();

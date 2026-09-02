@@ -7,6 +7,7 @@ import {
   assertMosaicLattice,
   assertPlacementRetained,
   assertPlacementStable,
+  assertRetainedMosaicIdentity,
   assertUnmoved,
   finishPlacementProbe,
   installPersistedMosaicImageRoutes,
@@ -356,7 +357,15 @@ async function assertSharedPrefixBackfill(witnesses, worktree, lane) {
   }
 }
 
-export async function assertCompactionBoundary(page, fixture, team, seeded, artifacts) {
+export async function assertCompactionBoundary(
+  page,
+  fixture,
+  team,
+  seeded,
+  artifacts,
+  postHiddenMosaic,
+) {
+  assert.ok(postHiddenMosaic, "compaction receives the post-hidden continuity witness");
   const originalViewport = page.viewportSize();
   const firefox = await openFirefoxTransitionWitness(page.url());
   const chromium = {
@@ -381,6 +390,11 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
       false,
     );
     await resizeTransitionWitnesses(witnesses, TRANSITION_NARROW, "narrow viewport");
+    await assertRetainedMosaicIdentity(
+      chromium.plane,
+      postHiddenMosaic,
+      "post-hidden narrow geometry replay",
+    );
     await assertSharedProseAppend(
       witnesses,
       primaryWorktree,
@@ -424,6 +438,11 @@ export async function assertCompactionBoundary(page, fixture, team, seeded, arti
       await assertMosaicLattice(witness.page, false);
     }
     assert.equal(boundaryKeys[1], boundaryKeys[0], "both engines ingest the same compaction locus");
+    await assertRetainedMosaicIdentity(
+      chromium.plane,
+      postHiddenMosaic,
+      "the later narrow compaction boundary",
+    );
     assert.ok(
       boundaryKeys[0].endsWith(authoredLocusSuffix(authoredBoundary)),
       `both engines render the exact authored compaction locus: ${JSON.stringify({

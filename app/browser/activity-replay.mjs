@@ -292,6 +292,7 @@ export async function installActivityReplay(context) {
         canonicalProseFrames.length,
       );
       return canonicalProseFrames.map((frame) => ({
+        key: agentMessageKey(frame.message),
         lane: frame.message.lane,
         prose: frame.message.text,
       }));

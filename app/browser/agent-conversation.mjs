@@ -9,6 +9,7 @@ import {
   assertMosaicLifecycleAdvanced,
   assertMosaicScrollInputs,
   assertPersistentMosaic,
+  assertRetainedMosaicIdentity,
   mosaicScrollSnapshot,
   scrollMosaicAwayFromTop,
   waitForMosaicReady,
@@ -880,7 +881,7 @@ export async function assertAgentConversation(
   await assertFourAgentDensity(console);
   await assertAgentWorkspaceGeometry(page, "populated desktop Agents page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
-  await assertModeSwitchPreservesDeferredMosaic(
+  const hiddenContinuity = await assertModeSwitchPreservesDeferredMosaic(
     page,
     console,
     seated[0],
@@ -888,6 +889,21 @@ export async function assertAgentConversation(
   );
   await activityReplay.assertOlderToolIgnored(page, console);
   const restoredProse = await activityReplay.restoreProseSnapshot(page);
+  const restoredKeys = new Set(restoredProse.map((message) => message.key));
+  const postHiddenMosaic = {
+    ...hiddenContinuity,
+    cards: hiddenContinuity.cards.filter((card) => restoredKeys.has(card.key)),
+  };
+  assert.deepEqual(
+    new Set(postHiddenMosaic.cards.map((card) => card.key)),
+    restoredKeys,
+    "the post-hidden continuity witness covers every authoritative restored message",
+  );
+  await assertRetainedMosaicIdentity(
+    console.locator(".lane-mosaic-plane"),
+    postHiddenMosaic,
+    "the canonical snapshot replacement",
+  );
   const restoredQuoteProse = restoredProse.find(
     (message) => message.lane === team.quoteLane,
   )?.prose;
@@ -903,6 +919,7 @@ export async function assertAgentConversation(
     agentAttribution: team.agentAttribution,
     quoteProse: restoredQuoteProse,
     acknowledgementReply,
+    postHiddenMosaic,
     primaryHeadings: restoredProse,
     teamWorktrees,
   };
