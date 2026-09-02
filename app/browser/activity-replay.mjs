@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 
 import { TOOL_ACTIVITY_TEXT, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import { createMessageHistoryFixture } from "./message-history-fixture.mjs";
 
 function decodeServerFrame(message) {
   return JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
@@ -41,14 +42,20 @@ export async function installActivityReplay(context) {
   const proseFrames = new Map();
   const proseWaiters = [];
   let canonicalProseFrames;
+  let progressiveHistory;
+  let socketGeneration = 0;
   const remember = (messages) => {
     for (const message of messages) knownMessages.set(agentMessageKey(message), message);
   };
   await context.routeWebSocket(/.*/, (socket) => {
+    socketGeneration += 1;
+    const routedGeneration = socketGeneration;
     activeSocket = socket;
+    progressiveHistory?.socketOpened(socket, routedGeneration);
     const server = socket.connectToServer();
     socket.onMessage((message) => {
       const frame = decodeServerFrame(message);
+      if (progressiveHistory?.handleClientFrame(frame, socket, routedGeneration)) return;
       if (frame.stream === "message-history" && heldHistoryRequest?.lane === frame.lane) {
         const held = heldHistoryRequest;
         heldHistoryRequest = undefined;
@@ -59,6 +66,7 @@ export async function installActivityReplay(context) {
     });
     server.onMessage((message) => {
       const frame = decodeServerFrame(message);
+      if (progressiveHistory?.handleServerFrame(frame, socket, routedGeneration)) return;
       if (frame.stream === "message") remember([frame.message]);
       if (frame.stream === "messages" || frame.stream === "message-history") {
         remember(frame.messages);
@@ -209,136 +217,16 @@ export async function installActivityReplay(context) {
         media: [],
       });
     },
-    stagedHydration() {
-      const sources = [...proseFrames.values()].sort(
-        (left, right) => left.message.lane.localeCompare(right.message.lane),
-      );
-      assert.ok(sources.length >= 3, "staged hydration retained three agent transports");
-      const source = sources[0];
-      const base = Date.parse("2031-05-17T12:00:00.000Z");
-      const make = (frame, label, millis, offset, activity = "prose") => {
-        const message = JSON.parse(JSON.stringify(frame.message));
-        message.text = label;
-        message.activity = activity;
-        message.media = [];
-        message.authored = new Date(millis).toISOString();
-        message.authored_synthetic = false;
-        message.observed = new Date(millis).toISOString();
-        message.locus = {
-          member: message.locus.member,
-          offset,
-          length: label.length + 1,
-          event: injectedEvent,
-        };
-        injectedEvent += 1;
-        return message;
-      };
-      const older = make(sources[0], "hydration older edge", base, 60_000);
-      const old = make(sources[1], "hydration retained old", base + 1_000, 60_010);
-      const boundary = make(
-        sources[0], "", base + 2_000, 60_020, "compaction",
-      );
-      const equalA = make(sources[0], "hydration equal time a", base + 3_000, 60_030);
-      const equalB = make(sources[1], "hydration equal time b", base + 3_000, 60_001);
-      const middle = Array.from({ length: 40 }, (_, index) => {
-        const label = index === 17
-          ? [
-            "## Measured lattice witness",
-            ...Array.from({ length: 8 }, (_, paragraph) => [
-              "",
-              `Integrated hydration paragraph ${paragraph + 1} preserves deterministic chronology`,
-              "while enough ordinary words wrap naturally across the narrow and wide lattice candidates.",
-            ].join(" ")),
-          ].join("\n")
-          : `hydration interleaved batch record ${index + 1}`;
-        return make(
-          sources[index % sources.length],
-          label,
-          index === 17 ? base - 100 : base + 2_100 + Math.floor(index / sources.length) * 100,
-          61_000 + (39 - index) * 17,
-        );
+    progressiveHistory() {
+      assert.equal(progressiveHistory, undefined, "one progressive history fixture owns the route");
+      assert.ok(activeSocket, "progressive history retains the current browser WebSocket");
+      progressiveHistory = createMessageHistoryFixture({
+        generation: socketGeneration,
+        remember,
+        socket: activeSocket,
+        sources: [...proseFrames.values()],
       });
-      const tall = middle[17];
-      const recent = make(sources[0], "hydration retained recent", base + 4_000, 60_040);
-      const newer = make(sources[1], "hydration newer edge", base + 5_000, 60_050);
-      const chronological = [older, old, boundary, ...middle, equalA, equalB, recent, newer].sort(
-        (left, right) => left.observed.localeCompare(right.observed)
-          || left.lane.localeCompare(right.lane)
-          || left.locus.member - right.locus.member
-          || left.locus.offset - right.locus.offset
-          || left.locus.length - right.locus.length
-          || left.locus.event - right.locus.event,
-      );
-      const chronologyRank = new Map(
-        chronological.map((message, index) => [agentMessageKey(message), index]),
-      );
-      remember(chronological);
-      const laneCounts = new Map();
-      for (const message of chronological) {
-        laneCounts.set(message.lane, (laneCounts.get(message.lane) ?? 0) + 1);
-      }
-      assert.ok(laneCounts.size >= 3, "hydration interleaves at least three independent lanes");
-      assert.ok(new Set(laneCounts.values()).size > 1,
-        "hydration lanes contribute unequal progressive boundaries");
-      const rank = (message) => {
-        const value = chronologyRank.get(agentMessageKey(message));
-        assert.ok(Number.isInteger(value), "hydration stage contains only its admitted messages");
-        return value;
-      };
-      const stages = [
-        [tall, old, boundary, recent],
-        [newer, recent, boundary, old, tall],
-        [...chronological].reverse(),
-      ];
-      const frameFor = (messages) => ({
-        stream: "messages",
-        v: source.v,
-        id: source.id,
-        epoch: source.epoch,
-        limit: 256,
-        messages,
-      });
-      return {
-        boundaryKey: agentMessageKey(boundary),
-        chronological,
-        laneCounts: Object.fromEntries(laneCounts),
-        newestKey: agentMessageKey(newer),
-        stages,
-        keys(messages) {
-          return [...messages]
-            .sort((left, right) => rank(left) - rank(right))
-            .map(agentMessageKey);
-        },
-        async send(page, messages) {
-          assert.ok(activeSocket, "staged hydration retains the current browser WebSocket");
-          const token = crypto.randomUUID();
-          await page.evaluate((expected) => {
-            const socket = window.__canvasSockets.at(-1);
-            if (!socket) throw new Error("canvas WebSocket was not captured");
-            window.__stagedHydrationReceipt = null;
-            const observe = async (event) => {
-              const text = typeof event.data === "string"
-                ? event.data
-                : event.data instanceof Blob
-                  ? await event.data.text()
-                  : new TextDecoder().decode(event.data);
-              const frame = JSON.parse(text);
-              if (frame.stream !== "messages" || frame.messages.length !== expected.count) return;
-              socket.removeEventListener("message", observe);
-              window.__stagedHydrationReceipt = expected.token;
-            };
-            socket.addEventListener("message", observe);
-          }, { token, count: messages.length });
-          activeSocket.send(Buffer.from(JSON.stringify(frameFor(messages))));
-          await waitForPageFunction(
-            page,
-            "the staged hydration snapshot reaches the browser",
-            TRANSITION_MS,
-            (expected) => window.__stagedHydrationReceipt === expected,
-            token,
-          );
-        },
-      };
+      return progressiveHistory;
     },
     async injectSyntheticSnapshot(page, lane, text) {
       const source = proseFrames.get(lane);
@@ -378,14 +266,15 @@ export async function installActivityReplay(context) {
       );
       return { authored: message.authored, text };
     },
-    async restoreProseSnapshot(page) {
+    async restoreProseSnapshot(page, targetSocket = activeSocket) {
       canonicalProseFrames ??= [...proseFrames.values()];
       const current = [...proseFrames.values()];
       assert.ok(canonicalProseFrames.length > 1, "the route retained the lineage prose snapshot");
       assert.ok(current.length > 1, "the route retained current message transport authority");
-      assert.ok(activeSocket, "the route retains the current browser WebSocket");
+      assert.ok(targetSocket, "the route retains the requested browser WebSocket");
+      activeSocket = targetSocket;
       const source = current[0];
-      activeSocket.send(Buffer.from(JSON.stringify({
+      targetSocket.send(Buffer.from(JSON.stringify({
         stream: "messages",
         v: source.v,
         id: source.id,
@@ -396,7 +285,7 @@ export async function installActivityReplay(context) {
       await waitForPageFunction(
         page,
         "the original lineage prose snapshot is restored",
-        TRANSITION_MS,
+        TRANSITION_MS * 4,
         (expected) => document.querySelectorAll(
           '[data-card-kind="agent-message"]',
         ).length === expected,

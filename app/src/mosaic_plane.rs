@@ -297,7 +297,9 @@ fn replay_changed_epochs<K: Clone + Ord>(
             .all(|(entry, item)| entry.key == item.key),
         "Mosaic epoch replay preserves the measured chronology"
     );
-    assert_epoch_disjoint(&reconciled, &replayed_keys);
+    if !epochs_are_disjoint(&reconciled, &replayed_keys) {
+        return None;
+    }
     Some(reconciled)
 }
 
@@ -382,18 +384,18 @@ fn creation_indexes_between(
     }
 }
 
-fn assert_epoch_disjoint<K: Ord>(entries: &[PlaneCard<K>], replayed: &BTreeSet<K>) {
+fn epochs_are_disjoint<K: Ord>(entries: &[PlaneCard<K>], replayed: &BTreeSet<K>) -> bool {
     for (index, entry) in entries.iter().enumerate() {
         for other in &entries[index + 1..] {
             if replayed.contains(&entry.key) == replayed.contains(&other.key) {
                 continue;
             }
-            assert!(
-                !cards_overlap(&entry.card, &other.card),
-                "Mosaic epoch replay crossed a stable boundary"
-            );
+            if cards_overlap(&entry.card, &other.card) {
+                return false;
+            }
         }
     }
+    true
 }
 
 fn cards_overlap(left: &Card, right: &Card) -> bool {
