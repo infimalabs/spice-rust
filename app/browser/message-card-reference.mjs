@@ -9,6 +9,8 @@ import {
 // Mosaic reserves whole CSS rows while text contributes fractional intrinsic
 // heights, leaving at most the final 2.5px rounding remainder inside padding.
 const INSET_TOLERANCE = 3;
+const BASELINE_TOLERANCE = 1;
+const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 const referencePalettes = {
   dark: {
@@ -195,9 +197,12 @@ export async function assertNaturalMessageFooterInsets(console, label) {
       `${label} card ${card.key} footer keeps the natural side padding: ${JSON.stringify(card)}`,
     );
     assert.ok(
-      card.actionHeights.length === 3
-        && card.actionHeights.every((height) => height <= card.footerHeight + 0.5)
-        && card.actionBottoms.every((inset) => Math.abs(inset) <= 0.5),
+      card.actionHeights.length === 0
+        || (
+          card.actionHeights.length === 3
+          && card.actionHeights.every((height) => height <= card.footerHeight + 0.5)
+          && card.actionBottoms.every((inset) => Math.abs(inset) <= 0.5)
+        ),
       `${label} card ${card.key} controls reach the natural footer bottom edge: ${JSON.stringify(card)}`,
     );
   }
@@ -371,10 +376,28 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
         width: box.width,
       };
     };
+    const baseline = (node) => {
+      const sheet = [...document.styleSheets]
+        .find((candidate) => candidate.href?.endsWith("mosaic.css"));
+      const index = sheet.cssRules.length;
+      sheet.insertRule([
+        ".message-footer-baseline-probe {",
+        "display: inline-block; width: 0; height: 0; padding: 0; margin: 0; border: 0;",
+        "}",
+      ].join(" "), index);
+      const probe = document.createElement("span");
+      probe.className = "message-footer-baseline-probe";
+      node.append(probe);
+      const position = probe.getBoundingClientRect().top;
+      probe.remove();
+      sheet.deleteRule(index);
+      return position;
+    };
     const footer = article.querySelector(".message-footer");
     const footerLeft = article.querySelector(".message-footer-left");
     const footerRight = article.querySelector(".message-footer-right");
     const agent = article.querySelector(".message-agent-name");
+    const agentLabel = agent.querySelector(".message-agent-label");
     const age = article.querySelector(".message-age");
     const actions = article.querySelector(".message-actions");
     return {
@@ -398,14 +421,23 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
         clientHeight: agent.clientHeight,
         clientWidth: agent.clientWidth,
         overflow: getComputedStyle(agent).overflow,
+        labelClientWidth: agentLabel.clientWidth,
+        labelOverflow: getComputedStyle(agentLabel).overflow,
+        labelScrollWidth: agentLabel.scrollWidth,
+        labelTextOverflow: getComputedStyle(agentLabel).textOverflow,
+        labelWhiteSpace: getComputedStyle(agentLabel).whiteSpace,
         scrollHeight: agent.scrollHeight,
         scrollWidth: agent.scrollWidth,
         text: agent.textContent.trim(),
+        baseline: baseline(agent.querySelector(".message-agent-label")),
         textOverflow: getComputedStyle(agent).textOverflow,
         whiteSpace: getComputedStyle(agent).whiteSpace,
       },
-      age: bounds(age),
-      actionGroup: bounds(actions),
+      age: { ...bounds(age), baseline: baseline(age) },
+      separator: article.querySelector(".message-footer-separator")
+        ? baseline(article.querySelector(".message-footer-separator"))
+        : null,
+      actionGroup: actions ? bounds(actions) : null,
       actions: [...article.querySelectorAll(".message-actions button")].map((button) => {
         return {
           ariaLabel: button.getAttribute("aria-label"),
@@ -427,6 +459,9 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
       agentLabels.includes(fit.agent.text)
         && fit.agent.ariaLabel.endsWith(` · ${fit.agent.text}`)
         && fit.agent.overflow === "hidden"
+        && fit.agent.labelOverflow === "hidden"
+        && fit.agent.labelTextOverflow === "ellipsis"
+        && fit.agent.labelWhiteSpace === "nowrap"
         && fit.agent.textOverflow === "ellipsis"
         && fit.agent.whiteSpace === "nowrap"
     )),
@@ -448,34 +483,67 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
   assert.ok(
     fits.every((fit) => (
       fit.footer.height === 32
-        && fit.footerLeft.bottom === fit.footer.bottom
+        && fit.footerLeft.top >= fit.footer.top
+        && fit.footerLeft.bottom <= fit.footer.bottom
         && fit.footerRight.bottom === fit.footer.bottom
         && fit.footerRight.height === 32
         && fit.footerRight.flexWrap === "nowrap"
         && fit.agent.top >= fit.footer.top
         && fit.agent.bottom <= fit.footer.bottom
-        && fit.actionGroup.top >= fit.footer.top
-        && fit.actionGroup.bottom <= fit.footer.bottom
         && fit.age.right <= fit.footerRight.left
-        && fit.agent.right <= fit.actionGroup.left
     )),
-    `${viewport.label} footer content occupies one non-overlapping row: ${JSON.stringify(fits)}`,
+    `${viewport.label} footer clusters stay within one fixed row: ${JSON.stringify(fits)}`,
+  );
+  assert.ok(
+    fits.every((fit) => (
+      fit.actionGroup === null || (
+        fit.actionGroup.top >= fit.footer.top
+        && fit.actionGroup.bottom <= fit.footer.bottom
+        && fit.agent.right <= fit.actionGroup.left
+      )
+    )),
+    `${viewport.label} footer actions stay coherent and separated: ${JSON.stringify(fits)}`,
+  );
+  const baselineFailures = fits.filter((fit) => (
+    Math.abs(fit.age.baseline - fit.agent.baseline) > BASELINE_TOLERANCE
+      || (fit.separator !== null
+        && Math.abs(fit.separator - fit.agent.baseline) > BASELINE_TOLERANCE)
+  )).map((fit) => ({
+    actions: fit.actions.length,
+    age: fit.age.baseline,
+    agent: fit.agent.baseline,
+    key: fit.key,
+    separator: fit.separator,
+  }));
+  assert.deepEqual(
+    baselineFailures,
+    [],
+    `${viewport.label} footer text shares one measured baseline`,
   );
   const actionLabels = ["Speak this message", "Quote this message", "Copy this message"];
   assert.ok(
     fits.every((fit) => (
-      fit.actions.length === actionLabels.length
-        && fit.actions.every((action, index) => (
-          action.ariaLabel === actionLabels[index]
-            && action.width === 32
-            && action.height === 32
-        ))
+      fit.actions.length === 0
+        || (fit.actions.length === actionLabels.length
+          && fit.actions.every((action, index) => (
+            action.ariaLabel === actionLabels[index]
+              && action.width === 32
+              && action.height === 32
+          )))
     )),
     `${viewport.label} keeps accessible 32px actions in keyboard order: ${JSON.stringify(fits)}`,
   );
+  assert.ok(
+    fits.some((fit) => fit.actions.length === 0 && fit.separator === null),
+    `${viewport.label} includes a real no-action footer without an orphan separator: ${JSON.stringify(fits)}`,
+  );
+  assert.ok(
+    fits.some((fit) => fit.actions.length === actionLabels.length),
+    `${viewport.label} retains the ordinary three-action footer variant`,
+  );
   if (viewport.label === "mobile") {
     assert.ok(
-      fits.some((fit) => fit.agent.scrollWidth > fit.agent.clientWidth + 1),
+      fits.some((fit) => fit.agent.labelScrollWidth > fit.agent.labelClientWidth + 1),
       `mobile proves long identity truncates only after filling its row: ${JSON.stringify(fits)}`,
     );
   }
@@ -491,6 +559,25 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
   await screenshotCard.screenshot({
     path: join(artifacts, `canvas-message-card-${viewport.label}-${mode}.png`),
   });
+  const noActionTarget = fits.find((fit) => fit.actions.length === 0);
+  await console.locator(`[data-mosaic-card-key="${noActionTarget.key}"]`).screenshot({
+    path: join(artifacts, `canvas-message-card-no-actions-${viewport.label}-${mode}.png`),
+  });
+}
+
+async function retainNoActionCard(page, console, activityReplay, lane) {
+  const message = await activityReplay.injectAgentProse(page, lane, "", [{
+    name: "visual-only.png",
+    content_type: "image/png",
+    data_url: `data:image/png;base64,${PIXEL_PNG}`,
+  }]);
+  const card = console.locator(`[data-mosaic-card-key="${message.key}"]`);
+  await card.waitFor({ state: "attached", timeout: 10_000 });
+  await waitForPage(page, "attachment-only message commits", TRANSITION_MS, (key) => {
+    const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
+    return candidate?.dataset.layoutPhase === "committed"
+      && candidate.dataset.mosaicImageRevision === "1";
+  }, message.key);
 }
 
 export async function assertReferenceMessageCard(
@@ -499,7 +586,10 @@ export async function assertReferenceMessageCard(
   card,
   artifacts,
   agentLabels,
+  activityReplay,
+  lane,
 ) {
+  await retainNoActionCard(page, console, activityReplay, lane);
   const geometry = await card.evaluate((article) => {
     const measured = (node) => {
       const box = node.getBoundingClientRect();

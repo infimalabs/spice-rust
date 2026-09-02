@@ -1115,9 +1115,9 @@ body:has(.shell--mosaic),
 .team-surface .mosaic-message-card .message-footer {
   display: grid;
   align-self: end;
-  align-items: end;
+  align-items: center;
   grid-template-columns: 4ch minmax(0, 1fr);
-  gap: 8px;
+  gap: 8px; min-height: 32px;
   min-width: 0;
   width: 100%;
   margin-top: .5rem;
@@ -1137,7 +1137,11 @@ body:has(.shell--mosaic),
   display: flex;
   flex-wrap: nowrap;
   gap: 6px;
-  justify-content: flex-end;
+  justify-content: flex-end; min-height: 32px;
+}
+.team-surface .message-footer-identity {
+  display: inline-flex; flex: 1 1 auto; align-items: baseline;
+  gap: 6px; min-width: 0;
 }
 .team-surface .message-age {
   display: block;
@@ -1151,7 +1155,9 @@ body:has(.shell--mosaic),
   white-space: pre;
 }
 .team-surface .message-agent-name {
+  display: inline-flex;
   flex: 1 1 auto;
+  align-items: baseline;
   height: auto;
   min-width: 0;
   min-height: 0;
@@ -1171,6 +1177,7 @@ body:has(.shell--mosaic),
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.team-surface .message-agent-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-surface .message-agent-name:hover,
 .team-surface .message-agent-name:focus-visible { color: var(--ink); }
 .team-surface .message-footer-separator { flex: 0 0 auto; }
