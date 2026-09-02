@@ -4,14 +4,17 @@ import assert from "node:assert/strict";
 export async function captureCanonicalPlacements(plane, selectedKeys = null) {
   return plane.evaluate((element, requested) => {
     const requestedSet = requested === null ? null : new Set(requested);
+    const canonicalInteger = /^(?:0|-?[1-9]\d*)$/;
     const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')]
       .filter((card) => requestedSet === null || requestedSet.has(card.dataset.mosaicCardKey))
       .map((card) => {
         const key = card.dataset.mosaicCardKey;
         const raw = [card.dataset.track, card.dataset.base, card.dataset.span, card.dataset.rows];
+        if (!key || raw.some((value) => !canonicalInteger.test(value))) {
+          throw new Error(`card has a non-canonical committed placement: ${JSON.stringify({ key, raw })}`);
+        }
         const tuple = raw.map(Number);
-        if (!key || raw.some((value) => value === undefined)
-          || tuple.some((value) => !Number.isSafeInteger(value))) {
+        if (tuple.some((value) => !Number.isSafeInteger(value))) {
           throw new Error(`card has a non-canonical committed placement: ${JSON.stringify({ key, raw })}`);
         }
         return { key, tuple, bytes: JSON.stringify(tuple) };

@@ -4,11 +4,61 @@ import test from "node:test";
 import {
   assertCanonicalPlacementsStable,
   assertDeclaredPlacementMovement,
+  captureCanonicalPlacements,
 } from "./mosaic-placement-stability.mjs";
 
 function placed(key, tuple) {
   return { key, tuple, bytes: JSON.stringify(tuple) };
 }
+
+function planeWithTrack(track) {
+  return {
+    evaluate: (capture, selected) => capture({
+      querySelectorAll: () => [{
+        dataset: {
+          base: "0",
+          mosaicCardKey: "card",
+          rows: "4",
+          span: "3",
+          track,
+        },
+      }],
+    }, selected),
+  };
+}
+
+test("canonical placement capture admits only normalized safe integer spellings", async () => {
+  for (const [raw, expected] of [["0", 0], ["7", 7], ["-7", -7]]) {
+    assert.deepEqual(await captureCanonicalPlacements(planeWithTrack(raw)), [{
+      key: "card",
+      tuple: [expected, 0, 3, 4],
+      bytes: JSON.stringify([expected, 0, 3, 4]),
+    }]);
+  }
+
+  for (const raw of [
+    undefined,
+    "",
+    " ",
+    " 0",
+    "0 ",
+    "1.0",
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "01",
+    "-0",
+    "+1",
+    "1e0",
+    "9007199254740992",
+  ]) {
+    await assert.rejects(
+      captureCanonicalPlacements(planeWithTrack(raw)),
+      /card has a non-canonical committed placement/,
+      `rejects ${JSON.stringify(raw)}`,
+    );
+  }
+});
 
 test("stable placement names the first unexpected card movement", () => {
   const before = [placed("a", [0, 0, 3, 4]), placed("b", [3, 0, 3, 4])];
