@@ -33,19 +33,27 @@ impl PipGrid {
     }
 
     pub(crate) fn position(self, index: usize) -> Option<PipPosition> {
-        (index < self.count).then(|| PipPosition {
-            column: self.columns - index / ROWS,
-            row: self.rows() - index % ROWS,
+        (index < self.count).then(|| {
+            if index < self.columns {
+                PipPosition {
+                    column: self.columns - index,
+                    row: self.rows(),
+                }
+            } else {
+                let full_columns = self.count / ROWS;
+                PipPosition {
+                    column: full_columns - (index - self.columns),
+                    row: 1,
+                }
+            }
         })
     }
 
     pub(crate) fn columns_from_left(self) -> impl Iterator<Item = PipColumn> {
-        (0..self.columns).rev().map(move |column| {
-            let lower = column * ROWS;
-            PipColumn {
-                upper: (lower + 1 < self.count).then_some(lower + 1),
-                lower,
-            }
+        let full_columns = self.count / ROWS;
+        (1..=self.columns).map(move |column| PipColumn {
+            upper: (column <= full_columns).then_some(self.columns + full_columns - column),
+            lower: self.columns - column,
         })
     }
 }
@@ -57,7 +65,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fills_each_column_bottom_to_top_and_columns_right_to_left() {
+    fn fills_bottom_to_top_and_right_to_left_with_a_left_heavy_footprint() {
         let grid = PipGrid::new(8);
 
         assert_eq!(grid.rows(), 2);
@@ -68,12 +76,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 PipPosition { column: 4, row: 2 },
-                PipPosition { column: 4, row: 1 },
                 PipPosition { column: 3, row: 2 },
-                PipPosition { column: 3, row: 1 },
                 PipPosition { column: 2, row: 2 },
-                PipPosition { column: 2, row: 1 },
                 PipPosition { column: 1, row: 2 },
+                PipPosition { column: 4, row: 1 },
+                PipPosition { column: 3, row: 1 },
+                PipPosition { column: 2, row: 1 },
                 PipPosition { column: 1, row: 1 },
             ],
         );
@@ -82,18 +90,47 @@ mod tests {
             vec![
                 PipColumn {
                     upper: Some(7),
-                    lower: 6,
+                    lower: 3,
                 },
                 PipColumn {
-                    upper: Some(5),
-                    lower: 4,
-                },
-                PipColumn {
-                    upper: Some(3),
+                    upper: Some(6),
                     lower: 2,
                 },
                 PipColumn {
-                    upper: Some(1),
+                    upper: Some(5),
+                    lower: 1,
+                },
+                PipColumn {
+                    upper: Some(4),
+                    lower: 0,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn three_pips_complete_the_left_column_and_support_the_lower_right() {
+        let grid = PipGrid::new(3);
+
+        assert_eq!(
+            (0..3)
+                .map(|index| grid.position(index).unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                PipPosition { column: 2, row: 2 },
+                PipPosition { column: 1, row: 2 },
+                PipPosition { column: 1, row: 1 },
+            ],
+        );
+        assert_eq!(
+            grid.columns_from_left().collect::<Vec<_>>(),
+            vec![
+                PipColumn {
+                    upper: Some(2),
+                    lower: 1,
+                },
+                PipColumn {
+                    upper: None,
                     lower: 0,
                 },
             ],
@@ -120,15 +157,21 @@ mod tests {
                         position.column,
                     );
                 }
-                for column in position.column + 1..=grid.columns {
-                    for row in 1..=grid.rows() {
-                        assert!(
-                            positions.contains(&PipPosition { column, row }),
-                            "count {count} filled column {} before rightward ({column}, {row})",
-                            position.column,
-                        );
-                    }
-                }
+            }
+            for column in 2..=grid.columns {
+                let left_count = positions
+                    .iter()
+                    .filter(|position| position.column == column - 1)
+                    .count();
+                let right_count = positions
+                    .iter()
+                    .filter(|position| position.column == column)
+                    .count();
+                assert!(
+                    left_count >= right_count,
+                    "count {count} put {right_count} pips in column {column} but only \
+                     {left_count} in the column to its left",
+                );
             }
         }
     }
@@ -148,7 +191,7 @@ mod tests {
         );
         assert_eq!(
             grid.position(10_000),
-            Some(PipPosition { column: 1, row: 2 })
+            Some(PipPosition { column: 1, row: 1 })
         );
         assert_eq!(grid.position(10_001), None);
         assert_eq!(grid.columns_from_left().count(), 5_001);
