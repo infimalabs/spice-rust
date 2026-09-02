@@ -386,6 +386,64 @@ export async function assertCanonicalInlineTaskCode(surface) {
 
 async function assertInlineTaskChip(surface) {
   await assertCanonicalInlineTaskCode(surface);
+  assert.ok(
+    await surface.locator(".message-body .message-task-chip").count() >= 2,
+    "the reference lineage exercises multiple injected task chips",
+  );
+  const typography = await surface.evaluate((element) => {
+    const chip = element.querySelector(".message-body .message-task-chip");
+    const quote = element.querySelector(".message-body blockquote");
+    if (!chip || !quote) throw new Error("task-chip typography requires a chip and quoted prose");
+    const nested = chip.cloneNode(true);
+    quote.append(nested);
+    const root = document.documentElement;
+    const originalRootSize = root.style.fontSize;
+    const measured = () => {
+      const inspect = (node) => {
+        const style = getComputedStyle(node);
+        return {
+          clientWidth: node.clientWidth,
+          fontSize: Number.parseFloat(style.fontSize),
+          lineHeight: Number.parseFloat(style.lineHeight),
+          scrollWidth: node.scrollWidth,
+        };
+      };
+      return { chip: inspect(chip), nested: inspect(nested), quote: inspect(quote) };
+    };
+    try {
+      const ordinary = measured();
+      root.style.fontSize = "20px";
+      const zoomed = measured();
+      return { ordinary, zoomed };
+    } finally {
+      root.style.fontSize = originalRootSize;
+      nested.remove();
+    }
+  });
+  for (const [label, measured] of Object.entries(typography)) {
+    assert.ok(
+      Math.abs(measured.chip.fontSize - measured.quote.fontSize) <= 0.01,
+      `${label} task-chip type matches quoted prose: ${JSON.stringify(measured)}`,
+    );
+    assert.ok(
+      Math.abs(measured.nested.fontSize - measured.quote.fontSize) <= 0.01,
+      `${label} quoted task-chip type does not compound: ${JSON.stringify(measured)}`,
+    );
+    assert.ok(
+      measured.chip.lineHeight >= measured.chip.fontSize * 1.3
+        && measured.nested.lineHeight >= measured.nested.fontSize * 1.3,
+      `${label} task chips retain the quote line rhythm: ${JSON.stringify(measured)}`,
+    );
+    assert.ok(
+      measured.chip.scrollWidth <= measured.chip.clientWidth + 1
+        && measured.nested.scrollWidth <= measured.nested.clientWidth + 1,
+      `${label} task chips contain their complete handles: ${JSON.stringify(measured)}`,
+    );
+  }
+  assert.ok(
+    typography.zoomed.chip.fontSize > typography.ordinary.chip.fontSize,
+    `task-chip type follows root text zoom: ${JSON.stringify(typography)}`,
+  );
   const chiplessCard = surface
     .locator('.mosaic-message-card[data-card-kind="agent-message"]:not(:has(.message-task-chip))')
     .first();
@@ -550,6 +608,15 @@ export async function captureReferenceControls(page, team, artifactPath) {
     assert.equal(await speech.inputValue(), "0", "the native speech range selects Quiet");
     assert.equal(await lifetime.inputValue(), "2", "the native lifetime range selects Drain");
     await assertInlineTaskChip(surface);
+    const rootFontSize = await page.evaluate(() => document.documentElement.style.fontSize);
+    try {
+      await page.evaluate(() => { document.documentElement.style.fontSize = "20px"; });
+      await surface.locator(".message-body .message-task-chip").first().screenshot({
+        path: artifactPath.replace(/\.png$/u, "-task-chip-zoom.png"),
+      });
+    } finally {
+      await page.evaluate((fontSize) => { document.documentElement.style.fontSize = fontSize; }, rootFontSize);
+    }
     const geometry = await surface.evaluate(measureReference);
     assertReferenceGuardRejectsPerturbation(geometry);
     assertReferenceGeometry(geometry);
