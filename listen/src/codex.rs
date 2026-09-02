@@ -4,6 +4,7 @@ use tape::Locus;
 use crate::{
     Compaction, Event, Events, Failure, Object, Prose, ProseRole, Reasoning, ReasoningContent,
     ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage, array,
+    media::{self, OwnedContent},
     object, optional_unsigned, string, unsigned,
 };
 
@@ -50,7 +51,7 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
             let text = string(item, "text")?.to_owned();
             Ok(vec![Event::Prose(Prose {
                 role: ProseRole::Assistant,
-                media: crate::media::markdown(&text)?,
+                media: media::decompose(OwnedContent::AuthoredText(&text))?.media,
                 text,
                 phase: None,
                 locus,
@@ -173,7 +174,12 @@ fn tool(
                 .and_then(|code| i32::try_from(code).ok()),
             media: item
                 .get("aggregated_output")
-                .map(|output| crate::media::content(output, "tool-image"))
+                .map(|output| {
+                    media::decompose(OwnedContent::ProviderValue {
+                        value: output,
+                        default_name: "tool-image",
+                    })
+                })
                 .transpose()?
                 .map_or_else(Vec::new, |content| content.media),
         }),
@@ -251,7 +257,7 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
                 |text| {
                     Ok(vec![Event::Prose(Prose {
                         role: ProseRole::Assistant,
-                        media: crate::media::markdown(text)?,
+                        media: media::decompose(OwnedContent::AuthoredText(text))?.media,
                         text: text.to_owned(),
                         phase: Some("final_answer".to_owned()),
                         locus,
@@ -371,12 +377,18 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
                         _ => block_text,
                     };
                     retained_text = true;
-                    media.extend(crate::media::markdown(block_text)?);
+                    media.extend(media::decompose(OwnedContent::AuthoredText(block_text))?.media);
                     append_message_text(&mut text, block_text);
                 }
             }
             Some("image" | "input_image" | "output_image") => {
-                media.extend(crate::media::content(value, "message-image")?.media);
+                media.extend(
+                    media::decompose(OwnedContent::ProviderValue {
+                        value,
+                        default_name: "message-image",
+                    })?
+                    .media,
+                );
             }
             Some(other) => return Err(drift(&format!("message:content:{other}"))),
         }
@@ -566,7 +578,12 @@ fn rollout_tool_result(payload: &Object, locus: Locus) -> Events {
     let call_id = string(payload, "call_id")?.to_owned();
     let content = payload
         .get("output")
-        .map(|output| crate::media::content(output, "tool-image"))
+        .map(|output| {
+            media::decompose(OwnedContent::ProviderValue {
+                value: output,
+                default_name: "tool-image",
+            })
+        })
         .transpose()?;
     let output = content.as_ref().map(|content| content.text.clone());
     let media = content.map_or_else(Vec::new, |content| content.media);
@@ -593,7 +610,10 @@ fn rollout_mcp_result(payload: &Object, locus: Locus) -> Events {
     let result = payload.get("result").ok_or(ResidueKind::Absent {
         field: "payload.result",
     })?;
-    let content = crate::media::content(result, "tool-image")?;
+    let content = media::decompose(OwnedContent::ProviderValue {
+        value: result,
+        default_name: "tool-image",
+    })?;
     let standing = if result.get("Err").is_some() {
         ToolResult::Failed
     } else if let Some(ok) = result.get("Ok").and_then(Value::as_object) {
