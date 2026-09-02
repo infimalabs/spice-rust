@@ -15,7 +15,7 @@ use crate::{Decoded, Dialect, Event, LocusLengthError, RecordContext, Residue, d
 
 mod tail;
 
-pub use tail::{TailScan, scan_tail};
+pub use tail::{TailScan, scan_before, scan_tail};
 
 /// Serializable spelling of one durable tape span.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -195,7 +195,7 @@ pub fn scan(
         }
     };
     let extents_empty = extents.is_empty();
-    let state = scan_extents(&tape, dialect, &source, &extents, position)?;
+    let state = scan_extents(&tape, dialect, &source, &extents, position, None)?;
 
     let observed_source = tape.source_id().map_err(|source| ScanError::Tape {
         path: root.to_path_buf(),
@@ -233,6 +233,7 @@ fn scan_extents(
     source: &SourceId,
     extents: &[tape::Extent],
     position: Position,
+    end: Option<Position>,
 ) -> Result<ScanState, ScanError> {
     let mut state = ScanState {
         position,
@@ -241,7 +242,10 @@ fn scan_extents(
         spans: Vec::new(),
     };
     for extent in extents {
-        scan_extent(tape, dialect, source, extent, &mut state)?;
+        if end.is_some_and(|end| extent.member > end.member) {
+            break;
+        }
+        scan_extent(tape, dialect, source, extent, end, &mut state)?;
     }
     Ok(state)
 }
@@ -251,6 +255,7 @@ fn scan_extent(
     dialect: Dialect,
     source: &SourceId,
     extent: &tape::Extent,
+    end: Option<Position>,
     state: &mut ScanState,
 ) -> Result<(), ScanError> {
     if extent.member < state.position.member {
@@ -261,7 +266,13 @@ fn scan_extent(
     } else {
         0
     };
-    if start == extent.length {
+    let extent_end = end
+        .filter(|end| end.member == extent.member)
+        .map_or(extent.length, |end| end.offset.min(extent.length));
+    if start == extent_end {
+        if end.is_some() {
+            return Ok(());
+        }
         if extent.sealed && state.bytes.is_empty() {
             state.position = Position {
                 member: extent.member + 1,
@@ -271,7 +282,7 @@ fn scan_extent(
         return Ok(());
     }
 
-    let locus = Locus::new(extent.member, start, extent.length - start);
+    let locus = Locus::new(extent.member, start, extent_end - start);
     let fragment = tape.read(locus).map_err(|error| ScanError::Tape {
         path: tape.root().to_path_buf(),
         source: error,

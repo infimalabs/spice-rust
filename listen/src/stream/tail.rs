@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tape::{Extent, Locus, Tape};
 
-use super::{Checkpoint, Position, Scan, ScanError, scan};
+use super::{Checkpoint, Position, Scan, ScanError, scan, scan_extents, validate_position};
 use crate::Dialect;
 
 /// Bytes inspected at once while locating the preceding complete-record boundary.
@@ -55,6 +55,67 @@ pub fn scan_tail(
     Ok(TailScan { start, scan })
 }
 
+/// Scan a bounded complete-record window immediately before an authenticated boundary.
+///
+/// Unlike [`scan_tail`], this does not read records after `before`, so adjacent
+/// history pages can move backward without rescanning a page already served.
+///
+/// # Errors
+///
+/// Returns [`ScanError`] when the source identity or boundary no longer belongs
+/// to the observed tape generation, or when its bounded records cannot be read.
+pub fn scan_before(
+    root: impl AsRef<Path>,
+    dialect: Dialect,
+    before: &Checkpoint,
+    bytes: u64,
+) -> Result<TailScan, ScanError> {
+    let root = root.as_ref();
+    let tape = Tape::open_existing(root).map_err(|source| tape_error(root, source))?;
+    let source = tape
+        .source_id()
+        .map_err(|source| tape_error(root, source))?;
+    if before.source != source {
+        return Err(ScanError::SourceChanged {
+            expected: before.source.clone(),
+            observed: source,
+            next: before.next,
+        });
+    }
+    let extents = tape.extents().map_err(|source| tape_error(root, source))?;
+    let end = validate_position(before.next, &extents)?;
+    let candidate = window_candidate(&extents, end, bytes.max(1));
+    let next = preceding_boundary(&tape, &extents, candidate)
+        .map_err(|source| tape_error(root, source))?;
+    let start = Checkpoint {
+        source: before.source.clone(),
+        next,
+    };
+    let state = scan_extents(&tape, dialect, &before.source, &extents, next, Some(end))?;
+    let observed = tape
+        .source_id()
+        .map_err(|source| tape_error(root, source))?;
+    if observed != before.source {
+        return Err(ScanError::SourceChanged {
+            expected: before.source.clone(),
+            observed,
+            next: state.position,
+        });
+    }
+    Ok(TailScan {
+        start,
+        scan: Scan {
+            records: state.records,
+            checkpoint: Checkpoint {
+                source: before.source.clone(),
+                next: state.position,
+            },
+            pending: state.spans,
+            extents_empty: extents.is_empty(),
+        },
+    })
+}
+
 fn tail_candidate(extents: &[Extent], bytes: u64) -> Position {
     let mut remaining = bytes;
     for extent in extents.iter().rev() {
@@ -66,6 +127,31 @@ fn tail_candidate(extents: &[Extent], bytes: u64) -> Position {
             member: extent.member,
             offset: extent.length - remaining,
         };
+    }
+    Position::start()
+}
+
+fn window_candidate(extents: &[Extent], end: Position, bytes: u64) -> Position {
+    let mut remaining = bytes;
+    for extent in extents.iter().rev() {
+        if extent.member > end.member {
+            continue;
+        }
+        let length = if extent.member == end.member {
+            end.offset.min(extent.length)
+        } else {
+            extent.length
+        };
+        if length == 0 {
+            continue;
+        }
+        if remaining < length {
+            return Position {
+                member: extent.member,
+                offset: length - remaining,
+            };
+        }
+        remaining -= length;
     }
     Position::start()
 }

@@ -92,7 +92,7 @@ thread_local! {
     static VALIDATION_BYTES_READ: Cell<u64> = const { Cell::new(0) };
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FileStamp {
     length: u64,
     modified: SystemTime,
@@ -313,13 +313,35 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
 /// expanding only until it covers the requested visible-card limit, and continue live
 /// scanning from that authenticated snapshot.
 fn bootstrap(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
+    bootstrap_before(cursor, visible_limit, None, None).map(|(records, _)| records)
+}
+
+fn bootstrap_before(
+    cursor: &mut Cursor,
+    visible_limit: usize,
+    end: Option<u64>,
+    expected: Option<FileStamp>,
+) -> io::Result<(Vec<CompactionRecord>, u64)> {
     let mut window = INITIAL_WINDOW_BYTES;
     loop {
         let mut file = File::open(&cursor.path)?;
         let stamp = FileStamp::read(&file)?;
-        let start = tail_start(&mut file, stamp.length, window)?;
+        let length = end.unwrap_or(stamp.length);
+        if length > stamp.length {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "preserved session history checkpoint exceeds the current source",
+            ));
+        }
+        if expected.is_some_and(|expected| expected.extension(stamp, length).is_none()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "preserved session history source changed after Canvas bootstrap",
+            ));
+        }
+        let start = tail_start(&mut file, length, window)?;
         file.seek(SeekFrom::Start(start))?;
-        let mut reader = BufReader::new(file.take(stamp.length.saturating_sub(start)));
+        let mut reader = BufReader::new(file.take(length.saturating_sub(start)));
 
         cursor.next = start;
         cursor.prefix_start = start;
@@ -355,66 +377,146 @@ fn bootstrap(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<Compac
         }
         drop(reader);
 
-        if FileStamp::read(&File::open(&cursor.path)?)? != stamp {
+        let observed = FileStamp::read(&File::open(&cursor.path)?)?;
+        if stamp.extension(observed, length).is_none() {
             reset(cursor);
-            return Ok(Vec::new());
+            return Ok((Vec::new(), start));
         }
         if visible >= visible_limit || start == 0 {
             cursor.initialized = true;
             cursor.prefix_start = cursor.next;
             cursor.prefix = blake3::Hasher::new();
-            return Ok(records);
+            return Ok((records, start));
         }
         let expanded = window.saturating_mul(2);
         if expanded == window {
             cursor.initialized = true;
             cursor.prefix_start = cursor.next;
             cursor.prefix = blake3::Hasher::new();
-            return Ok(records);
+            return Ok((records, start));
         }
         window = expanded;
     }
 }
 
-pub(super) fn retained_messages(
-    path: PathBuf,
-    dialect: listen::Dialect,
-    thread: String,
-    lane: CanonicalUuid,
-    author: CanonicalUuid,
-    observations: &MessageObservations,
-) -> CommandResult<Vec<wire::AgentMessage>> {
-    let mut cursor = Cursor::new(thread, path, dialect, author);
-    let records = bootstrap(&mut cursor, canvas::stream::MESSAGE_CAPACITY)
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
-    let messages = HistoryMessages::default();
+#[derive(Clone, Debug)]
+pub(super) struct HistoryCheckpoint {
+    source: FileStamp,
+    next: u64,
+}
+
+impl HistoryCheckpoint {
+    pub(super) fn next(&self) -> u64 {
+        self.next
+    }
+
+    pub(super) fn retreat(&self, next: u64) -> Self {
+        Self {
+            source: self.source,
+            next,
+        }
+    }
+}
+
+pub(super) fn history_checkpoint(path: &PathBuf) -> io::Result<HistoryCheckpoint> {
+    let source = FileStamp::read(&File::open(path)?)?;
+    Ok(HistoryCheckpoint {
+        next: source.length,
+        source,
+    })
+}
+
+pub(super) struct HistoryScan {
+    pub(super) messages: Vec<wire::AgentMessage>,
+    pub(super) more: bool,
+    pub(super) start: u64,
+}
+
+pub(super) struct HistoryRequest<'a> {
+    pub(super) path: PathBuf,
+    pub(super) dialect: listen::Dialect,
+    pub(super) thread: String,
+    pub(super) lane: CanonicalUuid,
+    pub(super) author: CanonicalUuid,
+    pub(super) observations: &'a MessageObservations,
+    pub(super) before: &'a wire::AgentMessage,
+    pub(super) end: &'a HistoryCheckpoint,
+    pub(super) limit: usize,
+}
+
+pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<HistoryScan> {
+    let mut cursor = Cursor::new(
+        request.thread,
+        request.path,
+        request.dialect,
+        request.author,
+    );
+    let (records, source_start) = bootstrap_before(
+        &mut cursor,
+        request.limit,
+        Some(request.end.next),
+        Some(request.end.source),
+    )
+    .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+    let messages = HistoryMessages::new(request.limit);
     let mut state = MessageState {
         previews: CallPreviews::default(),
-        observations: observations.clone(),
+        observations: request.observations.clone(),
     };
     for record in records {
-        publish(record, lane, author, &messages, &mut state)?;
+        publish(record, request.lane, request.author, &messages, &mut state)?;
     }
-    messages.0.into_inner().map_err(|_| {
+    let collected = messages.inner.into_inner().map_err(|_| {
         store_fault(
             "canvas::message-history-unavailable",
             "history lock poisoned",
         )
+    })?;
+    let mut messages = collected.messages;
+    messages.retain(|message| message.chronology_key() < request.before.chronology_key());
+    let start = messages.len().saturating_sub(request.limit);
+    let selected = messages.split_off(start);
+    Ok(HistoryScan {
+        messages: selected,
+        more: collected.dropped || start > 0 || source_start > 0,
+        start: source_start,
     })
 }
 
+struct HistoryMessages {
+    limit: usize,
+    inner: std::sync::Mutex<HistoryCollection>,
+}
+
 #[derive(Default)]
-struct HistoryMessages(std::sync::Mutex<Vec<wire::AgentMessage>>);
+struct HistoryCollection {
+    messages: Vec<wire::AgentMessage>,
+    dropped: bool,
+}
+
+impl HistoryMessages {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            inner: std::sync::Mutex::new(HistoryCollection::default()),
+        }
+    }
+}
 
 impl AgentMessagePublisher for HistoryMessages {
     fn publish(
         &self,
         message: wire::AgentMessage,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
-        self.0
+        let mut collected = self
+            .inner
             .lock()
-            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?
-            .push(message);
+            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
+        collected.messages.push(message);
+        if collected.messages.len() > self.limit {
+            collected.messages.remove(0);
+            collected.dropped = true;
+        }
         Ok(true)
     }
 }
@@ -813,7 +915,7 @@ fn publish(
 
 /// Namespace preserved-session loci away from tape member ordinals while
 /// retaining a deterministic identity across resident and browser restarts.
-fn session_member(thread: &str) -> u64 {
+pub(super) fn session_member(thread: &str) -> u64 {
     let mut value = 0_u64;
     let mut digits = 0_u32;
     for byte in thread.bytes().filter(u8::is_ascii_hexdigit) {

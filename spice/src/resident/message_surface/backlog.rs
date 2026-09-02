@@ -1,6 +1,6 @@
 //! Startup replay of durable lane tapes into the one Canvas message feed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -75,6 +75,7 @@ pub(in crate::resident) fn restore_agent_messages(
 #[derive(Debug)]
 struct DurableHistory {
     lanes: BTreeMap<CanonicalUuid, DurableLane>,
+    continuations: Mutex<HashMap<(CanonicalUuid, wire::MessageLocus), HistoryContinuation>>,
     observations: MessageObservations,
     steering: PresentationDirectives,
 }
@@ -84,7 +85,7 @@ struct DurableLane {
     tape: std::path::PathBuf,
     dialect: listen::Dialect,
     author: CanonicalUuid,
-    source: Option<listen::SourceId>,
+    source: Option<listen::Checkpoint>,
     session: Option<DurableSession>,
 }
 
@@ -93,6 +94,13 @@ struct DurableSession {
     path: std::path::PathBuf,
     dialect: listen::Dialect,
     thread: String,
+    source: session_compaction::HistoryCheckpoint,
+}
+
+#[derive(Clone, Debug)]
+struct HistoryContinuation {
+    tape: Option<listen::Checkpoint>,
+    session: Option<session_compaction::HistoryCheckpoint>,
 }
 
 impl DurableHistory {
@@ -114,10 +122,14 @@ impl DurableHistory {
                         &environment,
                     )
                     .ok()
-                    .map(|(path, dialect)| DurableSession {
-                        path,
-                        dialect,
-                        thread: session.identity.clone(),
+                    .and_then(|(path, dialect)| {
+                        let source = session_compaction::history_checkpoint(&path).ok()?;
+                        Some(DurableSession {
+                            path,
+                            dialect,
+                            thread: session.identity.clone(),
+                            source,
+                        })
                     })
                 });
                 Some((
@@ -129,10 +141,7 @@ impl DurableHistory {
                             .join(row.vendor.as_str()),
                         dialect,
                         author,
-                        source: reader
-                            .cursors
-                            .get(&row.lane)
-                            .map(|checkpoint| checkpoint.source.clone()),
+                        source: reader.cursors.get(&row.lane).cloned(),
                         session,
                     },
                 ))
@@ -140,6 +149,7 @@ impl DurableHistory {
             .collect();
         Self {
             lanes,
+            continuations: Mutex::new(HashMap::new()),
             observations: reader.state.observations.clone(),
             steering: reader.steering.clone(),
         }
@@ -156,60 +166,131 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
         let Some(source) = self.lanes.get(&lane) else {
             return Ok(None);
         };
-        let mut visible = if source.tape.is_dir() {
-            self.tape_messages(lane, source)?
+        let continuation = self.continuation(lane, source, before)?;
+        let tape = if source.tape.is_dir() {
+            continuation
+                .tape
+                .as_ref()
+                .map(|end| self.tape_messages(lane, source, before, end, limit))
+                .transpose()?
         } else if source.source.is_some() {
             return Err("the transcript source disappeared after Canvas bootstrap".to_owned());
         } else {
-            Vec::new()
+            None
         };
-        if let Some(session) = &source.session {
-            visible.extend(
-                session_compaction::retained_messages(
-                    session.path.clone(),
-                    session.dialect,
-                    session.thread.clone(),
+        let session = source
+            .session
+            .as_ref()
+            .zip(continuation.session.as_ref())
+            .map(|(session, end)| {
+                session_compaction::retained_messages(session_compaction::HistoryRequest {
+                    path: session.path.clone(),
+                    dialect: session.dialect,
+                    thread: session.thread.clone(),
                     lane,
-                    source.author,
-                    &self.observations,
-                )
-                .map_err(|error| format!("{error:?}"))?,
-            );
+                    author: source.author,
+                    observations: &self.observations,
+                    before,
+                    end,
+                    limit,
+                })
+                .map_err(|error| format!("{error:?}"))
+            })
+            .transpose()?;
+        let mut visible = tape
+            .as_ref()
+            .map_or_else(Vec::new, |tape| tape.messages.clone());
+        let mut more = tape.as_ref().is_some_and(|tape| tape.more);
+        if let Some(session) = &session {
+            visible.extend(session.messages.clone());
+            more |= session.more;
         }
         visible.sort_by_key(wire::AgentMessage::chronology_key);
         visible.dedup_by(|right, left| right.locus == left.locus);
-        let activities = visible
-            .iter()
-            .map(|message| message.activity)
-            .collect::<Vec<_>>();
-        let floor =
-            wire::AgentActivityKind::retention_start(&activities, canvas::stream::MESSAGE_CAPACITY);
         let end =
             visible.partition_point(|message| message.chronology_key() < before.chronology_key());
-        let start = end.saturating_sub(limit).max(floor.min(end));
+        let start = end.saturating_sub(limit);
+        let messages = visible[start..end].to_vec();
+        if let Some(oldest) = messages.first() {
+            let next = HistoryContinuation {
+                tape: tape
+                    .as_ref()
+                    .and_then(|tape| tape_continuation(tape, continuation.tape.as_ref(), oldest)),
+                session: session.as_ref().and_then(|session| {
+                    session_continuation(session, continuation.session.as_ref(), oldest)
+                }),
+            };
+            self.continuations
+                .lock()
+                .map_err(|_| "durable history continuation is unavailable".to_owned())?
+                .insert((lane, oldest.locus), next);
+        }
         Ok(Some(canvas::stream::MessageHistoryPage {
-            messages: visible[start..end].to_vec(),
-            more: start > floor,
+            messages,
+            more: more || start > 0,
         }))
     }
 }
 
 impl DurableHistory {
+    fn continuation(
+        &self,
+        lane: CanonicalUuid,
+        source: &DurableLane,
+        before: &wire::AgentMessage,
+    ) -> Result<HistoryContinuation, String> {
+        if let Some(continuation) = self
+            .continuations
+            .lock()
+            .map_err(|_| "durable history continuation is unavailable".to_owned())?
+            .get(&(lane, before.locus))
+            .cloned()
+        {
+            return Ok(continuation);
+        }
+        let session_member = source
+            .session
+            .as_ref()
+            .map(|session| session_compaction::session_member(&session.thread));
+        let tape = source.source.as_ref().map(|source_end| {
+            if session_member == Some(before.locus.member) {
+                source_end.clone()
+            } else {
+                listen::Checkpoint {
+                    source: source_end.source.clone(),
+                    next: listen::Position {
+                        member: before.locus.member,
+                        offset: before.locus.offset,
+                    },
+                }
+            }
+        });
+        let session = source.session.as_ref().map(|session| {
+            if session_member == Some(before.locus.member) {
+                session.source.retreat(before.locus.offset)
+            } else {
+                session.source.clone()
+            }
+        });
+        Ok(HistoryContinuation { tape, session })
+    }
+
     fn tape_messages(
         &self,
         lane: CanonicalUuid,
         source: &DurableLane,
-    ) -> Result<Vec<wire::AgentMessage>, String> {
-        let scan =
-            retained_tail(&source.tape, source.dialect).map_err(|error| error.to_string())?;
-        if source
-            .source
-            .as_ref()
-            .is_some_and(|expected| *expected != scan.checkpoint.source)
-        {
-            return Err("the transcript source changed after Canvas bootstrap".to_owned());
-        }
-        let messages = CollectedMessages::default();
+        before: &wire::AgentMessage,
+        end: &listen::Checkpoint,
+        limit: usize,
+    ) -> Result<TapeHistoryScan, String> {
+        let tail = history_tail(&source.tape, source.dialect, end, limit).map_err(|error| {
+            if matches!(error, listen::ScanError::SourceChanged { .. }) {
+                "the transcript source changed after Canvas bootstrap".to_owned()
+            } else {
+                error.to_string()
+            }
+        })?;
+        let messages = CollectedMessages::new(limit);
         let mut reader = BacklogReader {
             cursors: BTreeMap::new(),
             state: MessageState {
@@ -220,7 +301,7 @@ impl DurableHistory {
         };
         let mut diagnostic = Vec::new();
         publish_scan(
-            scan,
+            tail.scan,
             lane,
             source.author,
             &messages,
@@ -231,26 +312,110 @@ impl DurableHistory {
         if !diagnostic.is_empty() {
             return Err(String::from_utf8_lossy(&diagnostic).trim().to_owned());
         }
-        messages
-            .0
+        let collected = messages
+            .inner
             .into_inner()
-            .map_err(|_| "durable history collection is unavailable".to_owned())
-            .map(|messages| messages.into_iter().filter(visible_message).collect())
+            .map_err(|_| "durable history collection is unavailable".to_owned())?;
+        let mut messages = collected.messages;
+        messages.retain(|message| message.chronology_key() < before.chronology_key());
+        let start = messages.len().saturating_sub(limit);
+        let selected = messages.split_off(start);
+        Ok(TapeHistoryScan {
+            messages: selected,
+            more: collected.dropped || start > 0 || tail.start.next != listen::Position::start(),
+            start: tail.start,
+        })
     }
 }
 
+struct TapeHistoryScan {
+    messages: Vec<wire::AgentMessage>,
+    more: bool,
+    start: listen::Checkpoint,
+}
+
+fn tape_continuation(
+    scan: &TapeHistoryScan,
+    end: Option<&listen::Checkpoint>,
+    before: &wire::AgentMessage,
+) -> Option<listen::Checkpoint> {
+    let end = end?.clone();
+    if scan.messages.is_empty() {
+        return Some(scan.start.clone());
+    }
+    let boundary = scan
+        .messages
+        .iter()
+        .filter(|message| message.chronology_key() >= before.chronology_key())
+        .min_by_key(|message| message.chronology_key());
+    let Some(message) = boundary else {
+        return Some(end);
+    };
+    Some(listen::Checkpoint {
+        source: end.source,
+        next: listen::Position {
+            member: message.locus.member,
+            offset: message.locus.offset,
+        },
+    })
+}
+
+fn session_continuation(
+    scan: &session_compaction::HistoryScan,
+    end: Option<&session_compaction::HistoryCheckpoint>,
+    before: &wire::AgentMessage,
+) -> Option<session_compaction::HistoryCheckpoint> {
+    let end = end?;
+    if scan.messages.is_empty() {
+        return Some(end.retreat(scan.start));
+    }
+    let next = scan
+        .messages
+        .iter()
+        .filter(|message| message.chronology_key() >= before.chronology_key())
+        .min_by_key(|message| message.chronology_key())
+        .map_or(end.next(), |message| message.locus.offset);
+    Some(end.retreat(next))
+}
+
+#[derive(Debug)]
+struct CollectedMessages {
+    limit: usize,
+    inner: Mutex<CollectedHistory>,
+}
+
 #[derive(Debug, Default)]
-struct CollectedMessages(Mutex<Vec<wire::AgentMessage>>);
+struct CollectedHistory {
+    messages: Vec<wire::AgentMessage>,
+    dropped: bool,
+}
+
+impl CollectedMessages {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            inner: Mutex::new(CollectedHistory::default()),
+        }
+    }
+}
 
 impl AgentMessagePublisher for CollectedMessages {
     fn publish(
         &self,
         message: wire::AgentMessage,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
-        self.0
+        if !visible_message(&message) {
+            return Ok(true);
+        }
+        let mut collected = self
+            .inner
             .lock()
-            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?
-            .push(message);
+            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
+        collected.messages.push(message);
+        if collected.messages.len() > self.limit {
+            collected.messages.remove(0);
+            collected.dropped = true;
+        }
         Ok(true)
     }
 }
@@ -417,18 +582,23 @@ fn tail_backlog(tape: &Path, dialect: listen::Dialect) -> Result<listen::Scan, l
     }
 }
 
-fn retained_tail(tape: &Path, dialect: listen::Dialect) -> Result<listen::Scan, listen::ScanError> {
+fn history_tail(
+    tape: &Path,
+    dialect: listen::Dialect,
+    before: &listen::Checkpoint,
+    visible_limit: usize,
+) -> Result<listen::TailScan, listen::ScanError> {
     let mut bytes = INITIAL_WINDOW_BYTES;
     loop {
-        let tail = listen::scan_tail(tape, dialect, bytes)?;
-        if visible_cards(&tail.scan) >= canvas::stream::MESSAGE_CAPACITY
+        let tail = listen::scan_before(tape, dialect, before, bytes)?;
+        if visible_cards(&tail.scan) >= visible_limit
             || tail.start.next == listen::Position::start()
         {
-            return Ok(tail.scan);
+            return Ok(tail);
         }
         let expanded = bytes.saturating_mul(2);
         if expanded == bytes {
-            return Ok(tail.scan);
+            return Ok(tail);
         }
         bytes = expanded;
     }
