@@ -260,17 +260,6 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
             ),
         "exec_command_end" => completed_command(payload, locus),
         "mcp_tool_call_end" => rollout_mcp_result(payload, locus),
-        "web_search" => Ok(vec![Event::Tool(Tool {
-            call_id: synthetic_id("web_search", locus),
-            moment: ToolMoment::Call {
-                name: "web_search".to_owned(),
-                arguments: argument(
-                    "query",
-                    payload.get("query").cloned().unwrap_or(Value::Null),
-                ),
-            },
-            locus,
-        })]),
         "token_count" => rollout_usage(payload, locus),
         "agent_message"
         | "user_message"
@@ -291,12 +280,32 @@ fn rollout_item(record: &Object, locus: Locus) -> Events {
         "function_call" | "custom_tool_call" => rollout_tool_call(payload, locus),
         "function_call_output" | "custom_tool_call_output" => rollout_tool_result(payload, locus),
         "token_count" => rollout_usage(payload, locus),
-        "web_search_call" => Ok(vec![Event::Tool(Tool {
-            call_id: payload
-                .get("call_id")
-                .or_else(|| payload.get("id"))
-                .and_then(Value::as_str)
-                .map_or_else(|| synthetic_id("web_search", locus), str::to_owned),
+        "web_search_call" => rollout_web_search(payload, locus),
+        other => Err(drift(&format!("response_item:{other}"))),
+    }
+}
+
+fn rollout_web_search(payload: &Object, locus: Locus) -> Events {
+    let call_id = payload
+        .get("call_id")
+        .or_else(|| payload.get("id"))
+        .ok_or(ResidueKind::Malformed {
+            field: "payload.id",
+            expected: "string",
+        })?
+        .as_str()
+        .ok_or(ResidueKind::Malformed {
+            field: "payload.id",
+            expected: "string",
+        })?
+        .to_owned();
+    match string(payload, "status")? {
+        "completed" => {}
+        other => return Err(drift(&format!("item:status:{other}"))),
+    }
+    Ok(vec![
+        Event::Tool(Tool {
+            call_id: call_id.clone(),
             moment: ToolMoment::Call {
                 name: "web_search".to_owned(),
                 arguments: argument(
@@ -305,9 +314,18 @@ fn rollout_item(record: &Object, locus: Locus) -> Events {
                 ),
             },
             locus,
-        })]),
-        other => Err(drift(&format!("response_item:{other}"))),
-    }
+        }),
+        Event::Tool(Tool {
+            call_id,
+            moment: ToolMoment::Result(ToolOutcome {
+                result: ToolResult::Succeeded,
+                output: None,
+                exit_code: None,
+                media: Vec::new(),
+            }),
+            locus,
+        }),
+    ])
 }
 
 fn rollout_message(payload: &Object, locus: Locus) -> Events {
