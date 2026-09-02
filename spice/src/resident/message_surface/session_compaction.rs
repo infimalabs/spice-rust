@@ -59,7 +59,7 @@ struct RecordGuard {
 }
 
 const RECORD_GUARD_BYTES: usize = 256;
-const INITIAL_WINDOW_BYTES: u64 = 256 * 1024;
+const INITIAL_WINDOW_BYTES: u64 = 32 * 1024;
 const SCAN_BYTE_BUDGET: usize = 256 * 1024;
 const SCAN_RECORD_BUDGET: usize = 128;
 const VALIDATION_BYTE_BUDGET: usize = 256 * 1024;
@@ -212,21 +212,7 @@ impl SessionCompactions {
                 self.reported.remove(&lane);
                 self.cursors.insert(
                     lane,
-                    Cursor {
-                        thread: session.identity.clone(),
-                        path,
-                        dialect,
-                        author: session.occupant,
-                        member: session_member(&session.identity),
-                        initialized: false,
-                        next: 0,
-                        prefix_start: 0,
-                        next_call: 0,
-                        pending: BTreeMap::new(),
-                        prefix: blake3::Hasher::new(),
-                        guard: None,
-                        validation: None,
-                    },
+                    Cursor::new(session.identity.clone(), path, dialect, session.occupant),
                 );
             }
             Err(error) => self.report_once(lane, error, diagnostic),
@@ -245,6 +231,26 @@ impl SessionCompactions {
     }
 }
 
+impl Cursor {
+    fn new(thread: String, path: PathBuf, dialect: listen::Dialect, author: CanonicalUuid) -> Self {
+        Self {
+            member: session_member(&thread),
+            thread,
+            path,
+            dialect,
+            author,
+            initialized: false,
+            next: 0,
+            prefix_start: 0,
+            next_call: 0,
+            pending: BTreeMap::new(),
+            prefix: blake3::Hasher::new(),
+            guard: None,
+            validation: None,
+        }
+    }
+}
+
 struct CompactionRecord {
     decoded: listen::Event,
     authored: String,
@@ -254,7 +260,7 @@ struct CompactionRecord {
 
 fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     if !cursor.initialized {
-        return bootstrap(cursor);
+        return bootstrap(cursor, canvas::stream::INITIAL_MESSAGE_LIMIT + 1);
     }
     if cursor.validation.is_some() {
         return advance_validation(cursor);
@@ -300,13 +306,13 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     advance_validation(cursor)
 }
 
-/// Seed a new resident from the same bounded visible tail Canvas retains.
+/// Seed a new resident from the bounded initial visible tail Canvas presents.
 ///
 /// A forward replay from byte zero makes the hundredth boundary pay for the
 /// first ninety-nine prefixes again. Read a stable newest-record window once,
-/// expanding only until it covers the visible-card capacity, and continue live
+/// expanding only until it covers the requested visible-card limit, and continue live
 /// scanning from that authenticated snapshot.
-fn bootstrap(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
+fn bootstrap(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
     let mut window = INITIAL_WINDOW_BYTES;
     loop {
         let mut file = File::open(&cursor.path)?;
@@ -353,7 +359,7 @@ fn bootstrap(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
             reset(cursor);
             return Ok(Vec::new());
         }
-        if visible >= canvas::stream::MESSAGE_CAPACITY || start == 0 {
+        if visible >= visible_limit || start == 0 {
             cursor.initialized = true;
             cursor.prefix_start = cursor.next;
             cursor.prefix = blake3::Hasher::new();
@@ -367,6 +373,49 @@ fn bootstrap(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
             return Ok(records);
         }
         window = expanded;
+    }
+}
+
+pub(super) fn retained_messages(
+    path: PathBuf,
+    dialect: listen::Dialect,
+    thread: String,
+    lane: CanonicalUuid,
+    author: CanonicalUuid,
+    observations: &MessageObservations,
+) -> CommandResult<Vec<wire::AgentMessage>> {
+    let mut cursor = Cursor::new(thread, path, dialect, author);
+    let records = bootstrap(&mut cursor, canvas::stream::MESSAGE_CAPACITY)
+        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+    let messages = HistoryMessages::default();
+    let mut state = MessageState {
+        previews: CallPreviews::default(),
+        observations: observations.clone(),
+    };
+    for record in records {
+        publish(record, lane, author, &messages, &mut state)?;
+    }
+    messages.0.into_inner().map_err(|_| {
+        store_fault(
+            "canvas::message-history-unavailable",
+            "history lock poisoned",
+        )
+    })
+}
+
+#[derive(Default)]
+struct HistoryMessages(std::sync::Mutex<Vec<wire::AgentMessage>>);
+
+impl AgentMessagePublisher for HistoryMessages {
+    fn publish(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        self.0
+            .lock()
+            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?
+            .push(message);
+        Ok(true)
     }
 }
 

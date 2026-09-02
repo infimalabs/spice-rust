@@ -205,6 +205,9 @@ pub(super) async fn run_surface(
         message_reader.state_mut(),
         progress,
     )?;
+    message_publisher
+        .bound_initial_history()
+        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
         .map_err(|error| store_fault("resident::read-materialization-failed", &error))?;
     let command_surface = command_surface::Surface::new(

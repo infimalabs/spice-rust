@@ -314,6 +314,111 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
 }
 
 #[test]
+fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
+    let (root, paths) = resident_fixture("message-history-source-replaced");
+    let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
+        .expect("backlog bus starts");
+    let epoch = test_uuid(64);
+    let lane = test_uuid(65);
+    let empty_lane = test_uuid(66);
+    let author = test_uuid(67);
+    seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
+    let tape_path = paths.tape.join(lane.to_string()).join("codex");
+    let tape = tape::Tape::open(&tape_path).expect("the backlog tape opens");
+    let history = (0..80)
+        .map(|index| {
+            format!(
+                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"message {index}\"}}}}\n"
+            )
+        })
+        .collect::<String>();
+    tape.tee(history.as_bytes())
+        .expect("durable history is captured");
+    drop(tape);
+
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let publisher = source.message_publisher();
+    let residency = current_residency(&bus, epoch).expect("residency reads");
+    let mut reader = message_surface::BacklogReader::default();
+    let mut diagnostic = Vec::new();
+    message_surface::restore_agent_messages(
+        &paths,
+        residency.body(),
+        &publisher,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("initial backlog restores");
+    assert!(diagnostic.is_empty());
+
+    let accepted = wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    };
+    let (_, frames) = source
+        .begin(
+            &accepted,
+            &wire::StreamRequest::Subscribe {
+                v: wire::WireVersion::CURRENT,
+                id: test_uuid(68),
+                epoch,
+                subjects: vec![wire::ViewSubject::Messages],
+                after: None,
+            },
+        )
+        .expect("Canvas subscription begins");
+    let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected message snapshot")
+    };
+    let before = messages[0].locus;
+
+    fs::remove_dir_all(&tape_path).expect("old tape source is removed");
+    let error = source
+        .message_history(
+            &accepted,
+            &wire::StreamRequest::MessageHistory {
+                v: wire::WireVersion::CURRENT,
+                id: test_uuid(69),
+                epoch,
+                lane,
+                before,
+            },
+        )
+        .expect_err("a missing authenticated source is refused");
+    assert!(
+        format!("{error:?}").contains("transcript source disappeared"),
+        "source disappearance remains explicit: {error:?}",
+    );
+
+    let replacement = tape::Tape::open(&tape_path).expect("replacement tape opens");
+    replacement
+        .tee(history.as_bytes())
+        .expect("replacement history is captured");
+
+    let error = source
+        .message_history(
+            &accepted,
+            &wire::StreamRequest::MessageHistory {
+                v: wire::WireVersion::CURRENT,
+                id: test_uuid(70),
+                epoch,
+                lane,
+                before,
+            },
+        )
+        .expect_err("a stale source cursor is refused");
+    assert!(
+        format!("{error:?}").contains("transcript source changed"),
+        "replacement diagnosis preserves the source mismatch: {error:?}",
+    );
+
+    drop(source);
+    bus.shutdown().expect("backlog bus stops");
+    fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+#[test]
 fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     let (root, paths) = resident_fixture("message-backlog-acknowledgements");
     let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))

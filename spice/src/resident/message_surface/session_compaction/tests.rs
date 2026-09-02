@@ -322,14 +322,14 @@ fn unchanged_append_only_prefix_never_replays_an_earlier_boundary() {
 }
 
 #[test]
-fn resident_reload_bootstraps_every_boundary_in_the_retained_visible_tail() {
+fn resident_reload_bootstraps_only_boundaries_in_the_initial_visible_tail() {
     let scratch = Scratch::new("retained-tail-bootstrap");
     let transcript = scratch.transcript();
     let filler = "x".repeat(1_800);
     let mut contents = String::new();
     for index in 0..300 {
         contents.push_str(&claude_assistant_record(index, &filler));
-        if matches!(index, 80 | 180 | 260) {
+        if matches!(index, 80 | 180 | 260 | 285) {
             contents.push_str(
                 "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
             );
@@ -341,7 +341,11 @@ fn resident_reload_bootstraps_every_boundary_in_the_retained_visible_tail() {
 
     let records = scan(&mut cursor).expect("resident tail bootstrap scans");
 
-    assert_eq!(records.len(), 3, "every retained-tail boundary is admitted");
+    assert_eq!(
+        records.len(),
+        1,
+        "only the initial-tail boundary is admitted"
+    );
     assert!(cursor.initialized);
     assert_eq!(
         cursor.next,
@@ -358,6 +362,41 @@ fn resident_reload_bootstraps_every_boundary_in_the_retained_visible_tail() {
                 < (later.member, later.offset, later.length)
         }),
         "tail boundaries preserve source chronology",
+    );
+}
+
+#[test]
+fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
+    let scratch = Scratch::new("retained-history");
+    let transcript = scratch.transcript();
+    let filler = "x".repeat(1_800);
+    let mut contents = String::new();
+    for index in 0..300 {
+        contents.push_str(&claude_assistant_record(index, &filler));
+        if matches!(index, 80 | 180 | 260 | 285) {
+            contents.push_str(
+                "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+            );
+        }
+    }
+    fs::write(&transcript, contents).expect("long preserved transcript is written");
+
+    let messages = retained_messages(
+        transcript,
+        listen::Dialect::Claude,
+        "018f7777-7777-7444-8888-999999999999".to_owned(),
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
+        &MessageObservations::default(),
+    )
+    .expect("retained compaction history reads");
+
+    assert_eq!(messages.len(), 4);
+    assert!(
+        messages
+            .windows(2)
+            .all(|pair| pair[0].chronology_key() < pair[1].chronology_key()),
+        "on-demand boundaries preserve source chronology",
     );
 }
 
