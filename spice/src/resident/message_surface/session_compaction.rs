@@ -481,6 +481,13 @@ fn advance_prefix_authentication(
     let Some(stamp) = authentication.stamp.extension(stamp, validation.length) else {
         return Ok(AuthenticationProgress::Invalid);
     };
+    if stamp != authentication.stamp {
+        // Metadata cannot distinguish append from rewrite-plus-append. Keep
+        // primary progress, but authenticate it again under one stable stamp
+        // before any held record can publish.
+        begin_prefix_authentication(validation, stamp);
+        return Ok(AuthenticationProgress::Pending);
+    }
     let remaining = authentication.length.saturating_sub(authentication.offset);
     let limit = usize::try_from(remaining.min(AUTHENTICATION_BYTE_BUDGET as u64))
         .expect("the bounded authentication read fits usize");
