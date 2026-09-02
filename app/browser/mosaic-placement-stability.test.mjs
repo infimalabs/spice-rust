@@ -20,11 +20,14 @@ test("stable placement names the first unexpected card movement", () => {
   );
 });
 
-test("declared movement changes every target and no unaffected tuple", () => {
+test("declared movement requires every exact target tuple and no unaffected movement", () => {
   const movement = Object.freeze({
     cause: "the target grows through an overlapping predecessor",
     label: "frozen content growth",
-    targets: Object.freeze(["ripple", "target"]),
+    targets: Object.freeze([
+      Object.freeze({ key: "ripple", tuple: Object.freeze([0, -2, 6, 3]) }),
+      Object.freeze({ key: "target", tuple: Object.freeze([0, 1, 6, 5]) }),
+    ]),
   });
   const before = [
     placed("ripple", [0, 0, 6, 3]),
@@ -38,6 +41,14 @@ test("declared movement changes every target and no unaffected tuple", () => {
   ];
 
   assert.doesNotThrow(() => assertDeclaredPlacementMovement(before, after, movement));
+  assert.throws(
+    () => assertDeclaredPlacementMovement(before, [
+      placed("ripple", [99, -99, 12, 999]),
+      after[1],
+      after[2],
+    ], movement),
+    /target "ripple" moved to an unexpected placement.*expected=\[0,-2,6,3\] actual=\[99,-99,12,999\]/,
+  );
   assert.throws(
     () => assertDeclaredPlacementMovement(before, [
       after[0],

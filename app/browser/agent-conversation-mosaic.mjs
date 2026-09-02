@@ -21,6 +21,7 @@ import {
 } from "./mosaic-image-reference.mjs";
 import {
   armPlacementProbe,
+  assertCanonicalProbeStable,
   assertUnmoved,
   finishPlacementProbe,
   settleMosaicActivity,
@@ -278,6 +279,11 @@ export async function assertPersistentMosaic(
         ?.dataset.layoutPhase === "committed",
       await card.getAttribute("data-mosaic-card-key"));
     const pending = await finishPlacementProbe(plane, pendingProbe);
+    assertCanonicalProbeStable(
+      pendingProbe,
+      pending,
+      `a pending image ${outcome} append`,
+    );
     assert.ok(pending.retained, `pending image ${outcome} retains untouched card nodes`);
     assert.deepEqual(pending.writes, [], `pending image ${outcome} writes no untouched placement`);
     assert.equal(pending.commits, pendingProbe.commits + 1, `pending image ${outcome} appends once`);
