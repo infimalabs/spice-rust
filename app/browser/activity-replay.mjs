@@ -192,6 +192,7 @@ export async function installActivityReplay(context) {
         messages,
       });
       return {
+        boundaryKey: agentMessageKey(boundary),
         chronological,
         newestKey: agentMessageKey(newer),
         stages,

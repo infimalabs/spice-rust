@@ -6,7 +6,10 @@
 //! whose extent comes from the same engine result.
 
 use crate::mosaic::{self, Candidate, Card, TRACK_COUNT};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+const CREATION_INDEX_STRIDE: usize = 1usize << (usize::BITS / 2);
+const CREATION_INDEX_ORIGIN: usize = 1usize << (usize::BITS - 1);
 
 /// One measured card offered to a persistent lane plane.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,7 +37,9 @@ pub enum Transition {
     Backfill,
     /// Existing content changed while horizontal placement stayed latched.
     ContentResize,
-    /// Geometry or membership removal required an explicit complete replay.
+    /// Structural membership changed inside one or more stable boundaries.
+    EpochReplay,
+    /// Geometry or structure without a stable boundary required a complete replay.
     FullReplay,
 }
 
@@ -46,6 +51,7 @@ impl Transition {
             Self::Append => "append",
             Self::Backfill => "backfill",
             Self::ContentResize => "content-resize",
+            Self::EpochReplay => "epoch-replay",
             Self::FullReplay => "full-replay",
         }
     }
@@ -131,7 +137,7 @@ impl<K: Clone + Ord> PersistentLanePlane<K> {
         }
 
         let Some((backfill_count, append_start)) = edge_additions(&self.cards, measured) else {
-            return Self::full_replay(geometry, measured, self.commits + 1);
+            return self.structural_replay(geometry, measured);
         };
         let retained = &measured[backfill_count..append_start];
         if self
@@ -140,7 +146,7 @@ impl<K: Clone + Ord> PersistentLanePlane<K> {
             .zip(retained)
             .any(|(entry, item)| entry.boundary != item.boundary)
         {
-            return Self::full_replay(geometry, measured, self.commits + 1);
+            return self.structural_replay(geometry, measured);
         }
 
         let mut next = self.clone();
@@ -172,12 +178,16 @@ impl<K: Clone + Ord> PersistentLanePlane<K> {
         let mut cards = measured
             .iter()
             .zip(cards)
-            .map(|(item, card)| PlaneCard {
-                key: item.key.clone(),
-                latched: item.latched,
-                content_revision: item.content_revision,
-                boundary: item.boundary,
-                card,
+            .enumerate()
+            .map(|(index, (item, mut card))| {
+                card.creation_index = creation_index(index);
+                PlaneCard {
+                    key: item.key.clone(),
+                    latched: item.latched,
+                    content_revision: item.content_revision,
+                    boundary: item.boundary,
+                    card,
+                }
             })
             .collect::<Vec<_>>();
         freeze_completed_epochs(&mut cards);
@@ -192,6 +202,205 @@ impl<K: Clone + Ord> PersistentLanePlane<K> {
             transition: Transition::FullReplay,
         }
     }
+
+    fn structural_replay(&self, geometry: i32, measured: &[MeasuredCard<K>]) -> Self {
+        let Some(cards) = replay_changed_epochs(&self.cards, measured) else {
+            return Self::full_replay(geometry, measured, self.commits + 1);
+        };
+        let mut next = self.clone();
+        next.cards = cards;
+        commit(next, Transition::EpochReplay)
+    }
+}
+
+fn creation_index(index: usize) -> usize {
+    index
+        .checked_mul(CREATION_INDEX_STRIDE)
+        .and_then(|offset| CREATION_INDEX_ORIGIN.checked_add(offset))
+        .expect("Mosaic creation index space is exhausted")
+}
+
+fn stable_boundary_matches<K: Eq>(entry: &PlaneCard<K>, measured: &MeasuredCard<K>) -> bool {
+    entry.key == measured.key
+        && entry.boundary
+        && measured.boundary
+        && entry.card.candidates == measured.candidates
+        && entry.latched == measured.latched
+}
+
+fn segment_identity_matches<K: Eq>(entries: &[PlaneCard<K>], measured: &[MeasuredCard<K>]) -> bool {
+    entries.len() == measured.len()
+        && entries.iter().zip(measured).all(|(entry, measured)| {
+            entry.key == measured.key && entry.boundary == measured.boundary
+        })
+}
+
+fn replay_changed_epochs<K: Clone + Ord>(
+    entries: &[PlaneCard<K>],
+    measured: &[MeasuredCard<K>],
+) -> Option<Vec<PlaneCard<K>>> {
+    let measured_by_key = measured
+        .iter()
+        .enumerate()
+        .map(|(index, item)| (&item.key, (index, item)))
+        .collect::<BTreeMap<_, _>>();
+    let stable_boundaries = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.boundary)
+        .filter_map(|(entry_index, entry)| {
+            let (measured_index, item) = measured_by_key.get(&entry.key)?;
+            stable_boundary_matches(entry, item).then_some((entry_index, *measured_index))
+        })
+        .collect::<Vec<_>>();
+    if stable_boundaries.is_empty()
+        || stable_boundaries
+            .windows(2)
+            .any(|pair| pair[0].1 >= pair[1].1)
+    {
+        return None;
+    }
+
+    let mut replayed_keys = BTreeSet::new();
+    let mut reconciled = Vec::with_capacity(measured.len());
+    let mut entry_start = 0;
+    let mut measured_start = 0;
+    for (entry_end, measured_end) in stable_boundaries
+        .into_iter()
+        .chain(std::iter::once((entries.len(), measured.len())))
+    {
+        let previous_epoch = &entries[entry_start..entry_end];
+        let desired_epoch = &measured[measured_start..measured_end];
+        if segment_identity_matches(previous_epoch, desired_epoch) {
+            reconciled.extend_from_slice(previous_epoch);
+        } else {
+            let upper = entries
+                .get(entry_end)
+                .map(|entry| entry.card.creation_index);
+            let replayed = replay_epoch(&reconciled, desired_epoch, upper);
+            replayed_keys.extend(replayed.iter().map(|entry| entry.key.clone()));
+            reconciled.extend(replayed);
+        }
+        if let Some(boundary) = entries.get(entry_end) {
+            reconciled.push(boundary.clone());
+            entry_start = entry_end + 1;
+            measured_start = measured_end + 1;
+        }
+    }
+
+    apply_content(&mut reconciled, measured);
+    assert_eq!(reconciled.len(), measured.len());
+    assert!(
+        reconciled
+            .iter()
+            .zip(measured)
+            .all(|(entry, item)| entry.key == item.key),
+        "Mosaic epoch replay preserves the measured chronology"
+    );
+    assert_epoch_disjoint(&reconciled, &replayed_keys);
+    Some(reconciled)
+}
+
+fn replay_epoch<K: Clone>(
+    older: &[PlaneCard<K>],
+    measured: &[MeasuredCard<K>],
+    upper: Option<usize>,
+) -> Vec<PlaneCard<K>> {
+    if measured.is_empty() {
+        return Vec::new();
+    }
+    let older_cards = placed_cards(older);
+    let placed = mosaic::append(&older_cards, &candidate_sets(measured), TRACK_COUNT);
+    let indexes = creation_indexes_between(
+        older.last().map(|entry| entry.card.creation_index),
+        upper,
+        measured.len(),
+    );
+    measured
+        .iter()
+        .zip(placed[older.len()..].iter())
+        .zip(indexes)
+        .map(|((item, card), creation_index)| {
+            let mut card = card.clone();
+            card.creation_index = creation_index;
+            plane_card(item, &card)
+        })
+        .collect()
+}
+
+fn creation_indexes_between(
+    lower: Option<usize>,
+    upper: Option<usize>,
+    count: usize,
+) -> Vec<usize> {
+    if count == 0 {
+        return Vec::new();
+    }
+    match (lower, upper) {
+        (Some(lower), Some(upper)) => {
+            let divisor = count
+                .checked_add(1)
+                .expect("Mosaic creation index space is exhausted");
+            let gap = upper
+                .checked_sub(lower)
+                .expect("Mosaic stable boundaries retain chronological order");
+            let step = gap / divisor;
+            assert!(step > 0, "Mosaic stable epoch has no creation-index space");
+            (1..=count)
+                .map(|offset| {
+                    lower
+                        .checked_add(
+                            step.checked_mul(offset)
+                                .expect("Mosaic creation index space is exhausted"),
+                        )
+                        .expect("Mosaic creation index space is exhausted")
+                })
+                .collect()
+        }
+        (Some(lower), None) => (1..=count)
+            .map(|offset| {
+                lower
+                    .checked_add(
+                        CREATION_INDEX_STRIDE
+                            .checked_mul(offset)
+                            .expect("Mosaic creation index space is exhausted"),
+                    )
+                    .expect("Mosaic creation index space is exhausted")
+            })
+            .collect(),
+        (None, Some(upper)) => (0..count)
+            .map(|offset| {
+                let distance = CREATION_INDEX_STRIDE
+                    .checked_mul(count - offset)
+                    .expect("Mosaic creation index space is exhausted");
+                upper
+                    .checked_sub(distance)
+                    .expect("Mosaic creation index space is exhausted")
+            })
+            .collect(),
+        (None, None) => (0..count).map(creation_index).collect(),
+    }
+}
+
+fn assert_epoch_disjoint<K: Ord>(entries: &[PlaneCard<K>], replayed: &BTreeSet<K>) {
+    for (index, entry) in entries.iter().enumerate() {
+        for other in &entries[index + 1..] {
+            if replayed.contains(&entry.key) == replayed.contains(&other.key) {
+                continue;
+            }
+            assert!(
+                !cards_overlap(&entry.card, &other.card),
+                "Mosaic epoch replay crossed a stable boundary"
+            );
+        }
+    }
+}
+
+fn cards_overlap(left: &Card, right: &Card) -> bool {
+    left.track < right.track + right.span
+        && right.track < left.track + left.span
+        && left.base < right.base + right.rows
+        && right.base < left.base + left.rows
 }
 
 fn apply_content<K: Clone + Eq>(
@@ -246,7 +455,7 @@ fn apply_content<K: Clone + Eq>(
 
 /// Return the contiguous older prefix and newer suffix around the complete
 /// committed key sequence. An unseen middle key or retained-order change is a
-/// structural insertion and must replay the complete chronological snapshot.
+/// structural insertion and must replay the affected compaction epochs.
 fn edge_additions<K: Eq>(
     committed: &[PlaneCard<K>],
     measured: &[MeasuredCard<K>],
@@ -269,13 +478,25 @@ fn edge_additions<K: Eq>(
 fn apply_backfill<K: Clone>(entries: &mut Vec<PlaneCard<K>>, older: &[MeasuredCard<K>]) {
     let current = placed_cards(entries);
     let placed = mosaic::backfill(&current, &candidate_sets(older), TRACK_COUNT);
+    let indexes = creation_indexes_between(
+        None,
+        entries.first().map(|entry| entry.card.creation_index),
+        older.len(),
+    );
     let mut introduced = older
         .iter()
         .zip(placed.iter())
-        .map(|(item, card)| plane_card(item, card))
+        .zip(indexes)
+        .map(|((item, card), creation_index)| {
+            let mut card = card.clone();
+            card.creation_index = creation_index;
+            plane_card(item, &card)
+        })
         .collect::<Vec<_>>();
     for (entry, card) in entries.iter_mut().zip(&placed[older.len()..]) {
+        let creation_index = entry.card.creation_index;
         entry.card = card.clone();
+        entry.card.creation_index = creation_index;
     }
     introduced.append(entries);
     *entries = introduced;
@@ -284,12 +505,22 @@ fn apply_backfill<K: Clone>(entries: &mut Vec<PlaneCard<K>>, older: &[MeasuredCa
 fn apply_append<K: Clone>(entries: &mut Vec<PlaneCard<K>>, appended: &[MeasuredCard<K>]) {
     let current = placed_cards(entries);
     let placed = mosaic::append(&current, &candidate_sets(appended), TRACK_COUNT);
+    let indexes = creation_indexes_between(
+        entries.last().map(|entry| entry.card.creation_index),
+        None,
+        appended.len(),
+    );
     replace_cards(entries, &placed[..current.len()]);
     entries.extend(
         appended
             .iter()
             .zip(&placed[current.len()..])
-            .map(|(item, card)| plane_card(item, card)),
+            .zip(indexes)
+            .map(|((item, card), creation_index)| {
+                let mut card = card.clone();
+                card.creation_index = creation_index;
+                plane_card(item, &card)
+            }),
     );
 }
 
