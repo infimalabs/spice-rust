@@ -174,11 +174,11 @@ fn available_subscription<'a>(
             "the vacant lane lineage has more than one durable task subscription",
         ));
     }
-    if subscription.policy != wire::intent::LineageLife::Drain {
+    if subscription.policy == wire::intent::LineageLife::Steer {
         return Err(refusal(
             "lifecycle::available-work-scope",
             Some(subscription.policy.as_str().to_owned()),
-            "use the all-assignable drain subscription for capacity-following wake",
+            "use a drive or drain team policy for capacity-following wake",
         ));
     }
     Ok(subscription)
